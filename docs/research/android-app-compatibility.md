@@ -48,14 +48,14 @@ There is nothing to run.
 
 Every section is open.
 
-- [Research Charter and Success Criteria](../../todo/18-future-research/TODO-06-android-app-compatibility.md#1-research-charter-and-success-criteria-sonnet)
-- [Architecture Options Record](../../todo/18-future-research/TODO-06-android-app-compatibility.md#2-architecture-options-record-sonnet)
-- [Host Kernel Prerequisites](../../todo/18-future-research/TODO-06-android-app-compatibility.md#3-host-kernel-prerequisites-sonnet)
-- [Guest Android Runtime Plan](../../todo/18-future-research/TODO-06-android-app-compatibility.md#4-guest-android-runtime-plan-sonnet)
-- [Display and Input Bridging](../../todo/18-future-research/TODO-06-android-app-compatibility.md#5-display-and-input-bridging-sonnet)
-- [ABI and ISA Strategy](../../todo/18-future-research/TODO-06-android-app-compatibility.md#6-abi-and-isa-strategy-sonnet)
-- [Distribution and Ecosystem Stance](../../todo/18-future-research/TODO-06-android-app-compatibility.md#7-distribution-and-ecosystem-stance-sonnet)
-- [Milestones, Exit Gates, and Deliverables](../../todo/18-future-research/TODO-06-android-app-compatibility.md#8-milestones-exit-gates-and-deliverables-sonnet)
+- [Research Charter and Success Criteria](../../todo/18-future-research/TODO-06-android-app-compatibility.md#1-research-charter-and-success-criteria)
+- [Architecture Options Record](../../todo/18-future-research/TODO-06-android-app-compatibility.md#2-architecture-options-record)
+- [Host Kernel Prerequisites](../../todo/18-future-research/TODO-06-android-app-compatibility.md#3-host-kernel-prerequisites)
+- [Guest Android Runtime Plan](../../todo/18-future-research/TODO-06-android-app-compatibility.md#4-guest-android-runtime-plan)
+- [Display and Input Bridging](../../todo/18-future-research/TODO-06-android-app-compatibility.md#5-display-and-input-bridging)
+- [ABI and ISA Strategy](../../todo/18-future-research/TODO-06-android-app-compatibility.md#6-abi-and-isa-strategy)
+- [Distribution and Ecosystem Stance](../../todo/18-future-research/TODO-06-android-app-compatibility.md#7-distribution-and-ecosystem-stance)
+- [Milestones, Exit Gates, and Deliverables](../../todo/18-future-research/TODO-06-android-app-compatibility.md#8-milestones-exit-gates-and-deliverables)
 
 Its prerequisites are themselves research: [the hypervisor](hypervisor.md) for Option A, [the GPU compositor](gpu-compositor.md) for a composited Android display, and [the ARM64 port study](multi-arch-port.md) for an ARM64 guest.
 

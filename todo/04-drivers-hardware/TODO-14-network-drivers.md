@@ -49,7 +49,7 @@ title: "TODO-14 -- Network Drivers"
 
 ---
 
-## 1. License Tracking `[Sonnet]`
+## 1. License Tracking
 
 Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` with a table of every ported file, upstream source, and SPDX identifier. Must be in place before any porting work begins.
 
@@ -69,7 +69,7 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 
 ---
 
-## 2. Intel e1000 Module `[Sonnet]`
+## 2. Intel e1000 Module
 
 Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `.kmod`. PCI match on common VirtualBox/QEMU e1000 device IDs. 16-entry TX+RX descriptor rings. IRQ handler drains RX descriptors into `net_rx()`.
 
@@ -91,7 +91,7 @@ Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `
 - [ ] Add to `NOTICE.md`: ported from SerenityOS `Kernel/Net/Intel/E1000NetworkAdapter.cpp` (BSD-2)
 - [ ] Commit: `"modules: Intel e1000 -- 16-entry TX/RX rings, IRQ drain, VirtualBox default NIC"`
 
-## 3. VirtIO-net Module `[Sonnet]`
+## 3. VirtIO-net Module
 
 Port VirtIO-net as a loadable module reusing the existing VirtIO transport (`virtio.c`). RX queue 0 pre-populated with descriptors; TX queue 1 sends with kick. MAC from VirtIO config space.
 
@@ -110,7 +110,7 @@ Port VirtIO-net as a loadable module reusing the existing VirtIO transport (`vir
 - [ ] Boot log: `[virtio-net] MAC %02x:%02x:... (modern=%d)`
 - [ ] Commit: `"modules: VirtIO-net -- RX pre-fill, TX kick, VIRTIO_NET_F_MAC, QEMU test"`
 
-## 4. RTL8169 / RTL8111 Gigabit Module `[Sonnet]`
+## 4. RTL8169 / RTL8111 Gigabit Module
 
 Port the RTL8169 gigabit driver as a loadable module using FreeBSD `re(4)` (BSD-2) as reference. DMA descriptor rings. Covers RTL8169, RTL8110, RTL8168, RTL8111 (8111 is the most common onboard NIC in 2015–2020 motherboards).
 
@@ -128,7 +128,7 @@ Port the RTL8169 gigabit driver as a loadable module using FreeBSD `re(4)` (BSD-
 - [ ] Boot log: `[rtl8169] MAC %02x:%02x:... PCI %04x:%04x`
 - [ ] Commit: `"modules: RTL8169/8111 -- DMA rings, ISR RX drain, FreeBSD re(4) port"`
 
-## 5. Intel igc (I225 / I226 2.5 GbE) Module `[Sonnet]`
+## 5. Intel igc (I225 / I226 2.5 GbE) Module
 
 Port the igc driver for Intel I225-V and I226-V (2.5 GbE) NICs, common on modern consumer and workstation motherboards. FreeBSD `igc(4)` BSD-2 as reference. P3 priority (newer hardware; skip in emulated environments).
 
@@ -144,7 +144,7 @@ Port the igc driver for Intel I225-V and I226-V (2.5 GbE) NICs, common on modern
 - [ ] Boot log: `[igc] I225/I226 2.5GbE MAC %02x:%02x:...`
 - [ ] Commit: `"modules: Intel igc -- I225/I226 2.5GbE, advanced TX/RX descriptors, FreeBSD igc(4) port"`
 
-## 6. RTL8125 2.5 GbE Module `[Sonnet]`
+## 6. RTL8125 2.5 GbE Module
 
 Port RTL8125 2.5 GbE as a loadable module. Common on AM5 and Intel 12th-gen+ motherboards. FreeBSD `re(4)` extended variant as reference.
 
@@ -160,7 +160,7 @@ Port RTL8125 2.5 GbE as a loadable module. Common on AM5 and Intel 12th-gen+ mot
 - [ ] Boot log: `[rtl8125] RTL8125 2.5GbE MAC %02x:%02x:...`
 - [ ] Commit: `"modules: RTL8125 2.5GbE -- 32-byte descriptors, single TX queue, FreeBSD re(4) port"`
 
-## 7. Network Driver Test Suite `[Sonnet]`
+## 7. Network Driver Test Suite
 
 Verify all five NIC modules end-to-end: each NIC sends an ARP request and receives an ARP reply, then `ping 8.8.8.8` (or gateway) succeeds. Document the QEMU command lines.
 
@@ -178,7 +178,7 @@ Verify all five NIC modules end-to-end: each NIC sends an ARP request and receiv
   - `pkt_len = hdr->length - 4` on `uint16_t` wraps for a length below 4 and is clamped to the caller's buffer, delivering stale ring bytes as a frame. The bad-status path also resyncs from CBR without writing CAPR.
 - [ ] Commit: `"docs: network driver test guide -- e1000, virtio-net, rtl8169 QEMU/VBox test commands"`
 
-## 8. WiFi 802.11 MAC Layer Stub `[Opus]`
+## 8. WiFi 802.11 MAC Layer Stub
 
 Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED → SCANNING → ASSOCIATING → ASSOCIATED). Provide WPA2-PSK handshake stubs. No firmware or supplicant implementation -- stub hooks only.
 
@@ -195,7 +195,7 @@ Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED
 - [ ] Registry: `HKLM\SYSTEM\Network\WiFi\SSID` (`REG_SZ`), `HKLM\SYSTEM\Network\WiFi\PSK` (`REG_SZ`, stored; full encryption P1)
 - [ ] Commit: `"net: WiFi 802.11 MAC stub -- wifi_mac_t, station state machine, WPA2-PSK hooks"`
 
-## 9. Intel iwlwifi Stub (P4 Stretch) `[Sonnet]`
+## 9. Intel iwlwifi Stub (P4 Stretch)
 
 Register an iwlwifi PCI device stub against the WiFi MAC layer. Clean-room implementation from Intel firmware interface public spec -- **not** derived from the Linux GPL driver.
 
@@ -210,7 +210,7 @@ Register an iwlwifi PCI device stub against the WiFi MAC layer. Clean-room imple
 - [ ] Add stub source origin to `NOTICE.md` (clean-room, no upstream copy)
 - [ ] Commit: `"modules: iwlwifi stub -- AX200/201/210 PCI detection, wifi_mac_t registration (P4)"`
 
-## 10. Realtek rtw89 Stub (P4 Stretch) `[Sonnet]`
+## 10. Realtek rtw89 Stub (P4 Stretch)
 
 Register an rtw89 PCI device stub against the WiFi MAC layer. Clean-room. Covers RTL8852AE (Wi-Fi 6) and RTL8852BE.
 

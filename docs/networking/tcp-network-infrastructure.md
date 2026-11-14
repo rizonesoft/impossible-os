@@ -63,9 +63,9 @@ The addresses are dotted IPv4 numbers; there is no name lookup.
 
 ## What is not implemented yet?
 
-- **Interfaces**: [Network Interface Manager](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#5-network-interface-manager-sonnet) and [Loopback Interface](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#6-loopback-interface-sonnet).
-- **TCP**: [TCP Header + Checksum](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#1-tcp-header--checksum-sonnet), [TCP Connection State Machine](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#2-tcp-connection-state-machine-opus), [TCP API](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#3-tcp-api-sonnet) and [TCP Robustness](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#4-tcp-robustness-opus).
-- **Firewall backing**: [Stateful Connection Tracking](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#7-stateful-connection-tracking-opus).
+- **Interfaces**: [Network Interface Manager](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#5-network-interface-manager) and [Loopback Interface](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#6-loopback-interface).
+- **TCP**: [TCP Header + Checksum](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#1-tcp-header--checksum), [TCP Connection State Machine](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#2-tcp-connection-state-machine), [TCP API](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#3-tcp-api) and [TCP Robustness](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#4-tcp-robustness).
+- **Firewall backing**: [Stateful Connection Tracking](../../todo/07-networking/TODO-01-tcp-network-infrastructure.md#7-stateful-connection-tracking).
 - **Receive-path hardening**: `ipv4_handle()` does not check the header length field or the header checksum, and `udp_handle()` trusts the UDP length field, so a malformed packet can make the stack read past the frame. The fix is filed under TCP Header + Checksum, which rewrites that path.
 
 No unit test covers the network stack today.

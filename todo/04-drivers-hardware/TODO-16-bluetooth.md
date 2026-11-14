@@ -51,7 +51,7 @@ title: "TODO-16 -- Bluetooth Full Stack"
 
 ---
 
-## 1. HCI Transport Layer `[Opus]`
+## 1. HCI Transport Layer
 
 Build the HCI command/event/ACL layer on top of the `bt_hci_ops_t` stub from TODO-10 §13. Parse all required HCI events. Maintain a `hci_conn[]` table of 16 BR/EDR + BLE connections. Send the baseline HCI initialisation sequence.
 
@@ -73,7 +73,7 @@ Build the HCI command/event/ACL layer on top of the `bt_hci_ops_t` stub from TOD
 - [ ] Boot log: `[BT-HCI] BD_ADDR %02x:%02x:... LMP version %u.%u`
 - [ ] Commit: `"drivers: BT HCI layer -- RESET/BD_ADDR/SCAN_ENABLE, event dispatch, hci_conn table, ACL"`
 
-## 2. HCI Firmware Loading `[Sonnet]`
+## 2. HCI Firmware Loading
 
 Bluetooth chipsets require firmware upload on each power-on. Implement vendor-specific firmware download for Intel AX200-BT and Realtek RTL8761B. Load firmware from `C:\Impossible\System\Firmware\bt\` via VFS.
 
@@ -91,7 +91,7 @@ Bluetooth chipsets require firmware upload on each power-on. Implement vendor-sp
 - [ ] Boot log: `[BT] Intel/Realtek firmware loaded, version %s`
 - [ ] Commit: `"drivers: BT firmware -- Intel AX200-BT TLV download, Realtek RTL8761B vendor opcodes"`
 
-## 3. L2CAP -- Logical Link Control and Adaptation Protocol `[Opus]`
+## 3. L2CAP -- Logical Link Control and Adaptation Protocol
 
 Implement L2CAP channel-based multiplexing over HCI ACL data. Handle the signalling channel (CID 0x0001): Connection Request/Response, Configuration Request/Response, Disconnection. Provide `l2cap_send()` / `l2cap_recv()` per channel.
 
@@ -111,7 +111,7 @@ Implement L2CAP channel-based multiplexing over HCI ACL data. Handle the signall
 - [ ] `l2cap_disconnect(chan)`: send `DISCONNECTION_REQ`; free channel entry
 - [ ] Commit: `"drivers: L2CAP -- channel multiplexing, sig handle, connect/config/disconnect, l2cap_send"`
 
-## 4. SDP -- Service Discovery Protocol `[Sonnet]`
+## 4. SDP -- Service Discovery Protocol
 
 Issue `SDP_ServiceSearchAttributeRequest` to remote devices to discover PSM/channel for HID, A2DP, and RFCOMM. Build a minimal local SDP server with records for local services.
 
@@ -127,7 +127,7 @@ Issue `SDP_ServiceSearchAttributeRequest` to remote devices to discover PSM/chan
 - [ ] `sdp_find_rfcomm_channel(handle, uuid, &channel)` → query given UUID, find RFCOMM channel number
 - [ ] Commit: `"drivers: SDP -- ServiceSearchAttributeRequest, PSM discovery, local SDP server records"`
 
-## 5. HID Profile -- Bluetooth HID `[Sonnet]`
+## 5. HID Profile -- Bluetooth HID
 
 Establish L2CAP control (PSM 0x0011) + interrupt (PSM 0x0013) channels. Receive HID INPUT reports on the interrupt channel. Reuse the HID report descriptor parser from TODO-12 §5. Register with the keyboard/mouse input pipeline identically to USB HID.
 
@@ -145,7 +145,7 @@ Establish L2CAP control (PSM 0x0011) + interrupt (PSM 0x0013) channels. Receive 
 - [ ] Boot log: `[BT-HID] Keyboard/Mouse paired: %s BD_ADDR %02x:%02x:...`
 - [ ] Commit: `"drivers: BT HID -- L2CAP ctrl/intr channels, SDP descriptor, boot-protocol, input injection"`
 
-## 6. BLE -- Bluetooth Low Energy `[Opus]`
+## 6. BLE -- Bluetooth Low Energy
 
 Implement BLE scanning (LE_SET_SCAN_PARAMETERS + LE_SET_SCAN_ENABLE), LE connection creation, ATT protocol over L2CAP CID 0x0004, and GATT profiles for Battery Service (0x180F) and Device Information (0x180A). Used for modern BLE mice, keyboards, and peripherals.
 
@@ -164,7 +164,7 @@ Implement BLE scanning (LE_SET_SCAN_PARAMETERS + LE_SET_SCAN_ENABLE), LE connect
 - [ ] Boot log: `[BLE] Scan enabled; device found: %s RSSI %d dBm`
 - [ ] Commit: `"drivers: BLE -- LE scan, LE_CREATE_CONNECTION, ATT, GATT Battery/DevInfo, BLE HID probe"`
 
-## 7. RFCOMM & Serial Port Profile (SPP) `[Sonnet]`
+## 7. RFCOMM & Serial Port Profile (SPP)
 
 Implement RFCOMM multiplexed serial over L2CAP PSM 0x0003. Support SABM/UA/DM/DISC frames, port negotiation (RPN), modem status (MSC). Expose `/dev/rfcomm0` VFS node for user-mode access.
 
@@ -182,7 +182,7 @@ Implement RFCOMM multiplexed serial over L2CAP PSM 0x0003. Support SABM/UA/DM/DI
 - [ ] `sdp_find_rfcomm_channel(handle, SPP_UUID, &ch)` → `rfcomm_open(handle, ch)` in SPP connect flow
 - [ ] Commit: `"drivers: BT RFCOMM/SPP -- SABM/UA/UIH frames, port negotiation, /dev/rfcomm0 VFS node"`
 
-## 8. A2DP + SBC Encoder + AVRCP `[Opus]`
+## 8. A2DP + SBC Encoder + AVRCP
 
 Implement A2DP audio streaming via AVDTP on L2CAP PSM 0x0019: SEP discovery, SBC configuration, stream start. Implement SBC encoder (8 subbands, 16 blocks, bitpool 53). Stream via RTP on the transport channel. Add AVRCP control channel for play/pause/volume.
 
@@ -204,7 +204,7 @@ Implement A2DP audio streaming via AVDTP on L2CAP PSM 0x0019: SEP discovery, SBC
 - [ ] Boot log: `[BT-A2DP] Headphones connected: %s, SBC bitpool=53`
 - [ ] Commit: `"drivers: BT A2DP -- AVDTP SEP discovery/config/start, SBC encoder, RTP, AVRCP control"`
 
-## 9. Bluetooth Manager + Pairing UI + `bluetooth.cpl` `[Opus]`
+## 9. Bluetooth Manager + Pairing UI + `bluetooth.cpl`
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -226,7 +226,7 @@ Implement `bt_manager.c` as the central Bluetooth state controller. Handle SSP J
 - [ ] Bluetooth power state honours airplane mode: `bt_set_enabled()` is driven by the radio coordinator -> XREF: `04-drivers-hardware/TODO-15-wifi-drivers.md` §11 (Airplane Mode Radio Coordinator)
 - [ ] Commit: `"desktop: BT manager -- SSP pairing, link key Registry, auto-reconnect, bluetooth.cpl applet"`
 
-## 10. `btctl` Shell Command `[Sonnet]`
+## 10. `btctl` Shell Command
 
 Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` syntax for diagnostic and scripting compatibility.
 

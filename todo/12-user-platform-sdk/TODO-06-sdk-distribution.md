@@ -54,11 +54,7 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 
 ## Outcome
 
-`make sdk` produces `sdk/impossible-os-sdk-{version}.zip` with headers, libs, tools, and
-docs. Developers install it, run `ixui-new MyApp`, get a skeleton that compiles with
-`tcc.exe` immediately. `profile myapp.exe` shows a flame-ready flat profile. `itest.h`
-lets any app ship self-tests that run via the `itest` shell command. `debugger.exe` shows
-call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Release.
+`make sdk` produces `sdk/impossible-os-sdk-{version}.zip` with headers, libs, tools, and docs. Developers install it, run `ixui-new MyApp`, get a skeleton that compiles with `tcc.exe` immediately. `profile myapp.exe` shows a flame-ready flat profile. `itest.h` lets any app ship self-tests that run via the `itest` shell command. `debugger.exe` shows call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Release.
 
 ---
 
@@ -77,7 +73,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 1. SDK Packaging (`make sdk`) `[Sonnet]`
+## 1. SDK Packaging (`make sdk`)
 
 **Source:** `scripts/sdk-package.sh`; integrated as `make sdk` target in root `Makefile`
 
@@ -101,7 +97,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 2. SDK Documentation (`gendoc.c`) `[Sonnet]`
+## 2. SDK Documentation (`gendoc.c`)
 
 **Host tool:** `tools/gendoc.c` (compiled with `gcc -O2`); integrated as `make docs` target
 
@@ -124,7 +120,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 3. Code Samples `[Sonnet]`
+## 3. Code Samples
 
 **Directory:** `sdk/samples/`; each has a `Makefile` using `impossible-cc`, a `README.md`, and expected output comment
 
@@ -147,7 +143,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 4. Sampling Profiler `[Opus]`
+## 4. Sampling Profiler
 
 > Novel: PIT interrupt at 1000 Hz samples RIP per thread; maps samples to symbol names
 > from ELF `.symtab` or PE export directory. No prior Impossible OS profiler exists.
@@ -186,7 +182,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 5. Unit Test Framework (`itest.h`) `[Sonnet]`
+## 5. Unit Test Framework (`itest.h`)
 
 **Output:** `sdk/include/itest.h` (single-header, ~250 lines); host-side integration via `scripts/test-libs.sh`
 
@@ -232,7 +228,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 6. Debugger Enhancements `[Opus]`
+## 6. Debugger Enhancements
 
 > Extends `10-platform-services/TODO-12 §2` base debugger. Novel additions: `.pdata`
 > section unwind, x86-64 disassembler, source-level debug map. Complex algorithm design.
@@ -258,7 +254,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 7. IxUI Starter Templates (`ixui-new`) `[Sonnet]`
+## 7. IxUI Starter Templates (`ixui-new`)
 
 **Source:** `src/tools/ixui_new.c` (host or on-OS tool); installed as `ixui-new.exe`
 
@@ -291,7 +287,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ---
 
-## 8. SDK Release Pipeline `[Sonnet]`
+## 8. SDK Release Pipeline
 
 **Source:** `scripts/release-sdk.sh`
 
@@ -330,10 +326,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 | ⭐  | IxUI skeleton generator                    | ✅ VS project wizard; `dotnet new`         | ✅ `gnome-builder` templates; `cookiecutter`      | ⬜ §7 -- 3 template types; post-generation TCC                               |
 | ⭐  | Automated SDK release pipeline             | ✅ Azure DevOps; GitHub Actions; WiX       | ✅ Launchpad PPA; Copr; GitHub Actions            | ⬜ §8 -- `git tag` → `gh release                                             |
 
-Impossible OS's `⭐` advantage: the **entire SDK is a single well-known ZIP** (not a GB
-installer), the **profiler is kernel-native** at 1000 Hz with zero user-space overhead,
-and `ixui-new` does a **live compile check** immediately after template generation --
-shortening the "zero to working app" time to under 2 minutes on-OS.
+Impossible OS's `⭐` advantage: the **entire SDK is a single well-known ZIP** (not a GB installer), the **profiler is kernel-native** at 1000 Hz with zero user-space overhead, and `ixui-new` does a **live compile check** immediately after template generation -- shortening the "zero to working app" time to under 2 minutes on-OS.
 
 ---
 

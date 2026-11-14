@@ -59,7 +59,7 @@ Nothing in this roadmap is implemented.
 - [GROUP_AFFINITY for Affinity APIs](../../todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md#4-group_affinity-for-affinity-apis)
 - [MADT Parsing for >64 LAPICs](../../todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md#5-madt-parsing-for-64-lapics)
 
-Three limits the roadmap did not name are filed in section 1: the 32-bit online mask that caps `MAX_CPUS` at 32, the silent drop of processors past the limit, and the BSP-only fallback when the BSP is listed after the sixteenth usable record. The parser itself has no 64-entry ceiling, so the real blockers for large machines are `MAX_CPUS` and x2APIC IPI delivery, which [x2APIC mode in the APIC routing roadmap](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#1-x2apic-mode----msr-register-access-opus) owns.
+Three limits the roadmap did not name are filed in section 1: the 32-bit online mask that caps `MAX_CPUS` at 32, the silent drop of processors past the limit, and the BSP-only fallback when the BSP is listed after the sixteenth usable record. The parser itself has no 64-entry ceiling, so the real blockers for large machines are `MAX_CPUS` and x2APIC IPI delivery, which [x2APIC mode in the APIC routing roadmap](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#1-x2apic-mode----msr-register-access) owns.
 
 ## How does it compare with Windows 11 and Linux?
 

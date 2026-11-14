@@ -52,12 +52,12 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 | 💎  |   5   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §4 shortcut parse; D08 T08 §4 desktop icon rendering                                                                                        |  [ ]   |
 | 💎  |   6   | §6 Recycle Bin icon states -- `trash_count()`, ICON_RECYCLE_BIN_EMPTY/FULL, right-click menu      | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; `context_menu_show()` (08-graphics-ui/TODO-09 §1); `trash_count()` (TODO-04 §1) |  [ ]   |
 | 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §2 (first-boot associations must be stable); audio driver 04-drivers-hardware/TODO-18 forward ref                                           |  [ ]   |
-| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                                                                                       |  [ ]   |
+| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                                                                                       |  [/]   |
 | 💎  |   9   | §9 Icon extraction -- EIF SVG and PE ICO resources at any size                                    | §1                                                                                                                                          |  [ ]   |
 
 ---
 
-## 1. Extension-to-App Mapping `[Sonnet]`
+## 1. Extension-to-App Mapping
 
 `file_assoc_get_app(ext)` reads `HKCR\.{ext}\(Default)` → prog ID → `HKCR\{progid}\shell\open\command`. `file_assoc_get_icon(ext)` reads `HKCR\.{ext}\DefaultIcon`. `file_assoc_set(ext, app_path)` writes Registry. `file_assoc_open(filepath)` extracts extension, looks up app, calls `task_exec`.
 
@@ -74,7 +74,7 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 - [ ] Error path: if no association → `file_assoc_open_with_dialog(filepath)` (§3); if app not found: `notify_send("Cannot Open", "No app for .{ext}", ICON_ERROR, 4000)`
 - [ ] Commit: `"file_assoc: extension-to-app mapping -- HKCR prog_id chain, file_assoc_open(), icon fallback"`
 
-## 2. Default Associations on First Boot `[Sonnet]`
+## 2. Default Associations on First Boot
 
 Register built-in defaults at first boot: `.txt/.log/.ini/.c/.h/.asm/.md` → `notepad.exe`, `.png/.jpg/.bmp/.gif` → `imgview.exe`, `.zip` → `archiver.exe`, `.lnk` → `shortcut_execute()`, `.ttf` → `fontmgr.exe`. Write to `HKCR` via `file_assoc_set()`. Guard with `HKLM\SYSTEM\FirstBoot\FileAssocsInit` flag.
 
@@ -90,7 +90,7 @@ Register built-in defaults at first boot: `.txt/.log/.ini/.c/.h/.asm/.md` → `n
 - [ ] `file_assoc_defaults_init()` called from `desktop_init()` after Registry is live
 - [ ] Commit: `"file_assoc: first-boot defaults -- txt/png/zip/lnk/ttf HKCR entries, FirstBoot guard flag"`
 
-## 3. Open With Dialog `[Sonnet]`
+## 3. Open With Dialog
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
@@ -109,7 +109,7 @@ Register built-in defaults at first boot: `.txt/.log/.ini/.c/.h/.asm/.md` → `n
 - [ ] OK + selected app: if "Always use" → `file_assoc_set(ext, ...)`; then `file_assoc_open_impl(filepath, cmd)`
 - [ ] Commit: `"file_assoc: Open With dialog -- CTRL_LISTVIEW app scan, Browse, Always use HKCR write"`
 
-## 4. Shortcut Files (.lnk) `[Sonnet]`
+## 4. Shortcut Files (.lnk)
 
 INI-format text file: `[Shortcut]`, `Target=`, `Args=`, `Icon=`, `WorkDir=`, `Description=`. `shortcut_parse(path, out)` reads INI fields via VFS. `shortcut_execute(path)` calls `task_exec(target, args)`. `shortcut_create(target, icon, desc, dest_path)` writes INI file.
 
@@ -125,7 +125,7 @@ INI-format text file: `[Shortcut]`, `Target=`, `Args=`, `Icon=`, `WorkDir=`, `De
 - [ ] `shortcut_is_valid(shortcut_t *sc)` -- check `target[0] != '\0'` and target file exists via `vfs_finddir()`
 - [ ] Commit: `"shortcut: INI .lnk format -- shortcut_parse/execute/create, VFS read, task_exec launch"`
 
-## 5. Desktop Shortcut Integration `[Sonnet]`
+## 5. Desktop Shortcut Integration
 
 Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as label. Shortcut arrow overlay (small ↗ glyph in lower-left of icon). Double-click → `shortcut_execute()`. Start Menu reads `.lnk` from `C:\Users\Default\AppData\StartMenu\`. First-boot default shortcuts: Terminal, Notepad, Settings, File Manager.
 
@@ -142,7 +142,7 @@ Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as la
 - [ ] `void shortcut_defaults_init(void)`: create `.lnk` files for Terminal/Notepad/Settings/File Manager in StartMenu + Desktop dirs; guard with `FirstBoot\ShortcutsInit` flag
 - [ ] Commit: `"shortcuts: desktop integration -- arrow overlay, .lnk double-click, Start Menu scan, first-boot defaults"`
 
-## 6. Recycle Bin Desktop Icon States `[Sonnet]`
+## 6. Recycle Bin Desktop Icon States
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
@@ -159,7 +159,7 @@ Desktop renderer detects `.lnk` files; uses `Icon=` field + `Description=` as la
 - [ ] Right-click trash icon → `context_menu_show()`: "Open Recycle Bin" (opens File Manager at `C:\Recycle\`), "Empty Recycle Bin" → `dialog_input`-style confirm → `trash_empty()`
 - [ ] Commit: `"desktop: Recycle Bin icon states and right-click menu over the TODO-04 trash core"`
 
-## 7. System Sounds `[Sonnet]`
+## 7. System Sounds
 
 WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossible\Media\`. Minimal WAV parser: 44-byte header, feed PCM samples to AC97/HDA driver (`04-drivers-hardware/TODO-18-audio-drivers.md`). Play on: boot splash finish, error dialogs, toast notifications, shutdown. Registry `HKLM\SYSTEM\Sound\SystemSounds` enable/disable.
 
@@ -177,23 +177,11 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 - [ ] Build: add `resources/sounds/` with stub silent WAV files (44-byte header + 1 sample); replace with real assets later
 - [ ] Commit: `"system_sounds: WAV parser, PCM output stub, SOUND_* events wired to splash/notify/dialog"`
 
-## 8. Font Manager App `[Sonnet]`
+## 8. Font Manager App
 
-`src/apps/fontmgr/fontmgr.c`: list `.ttf` from `C:\Impossible\Fonts\` via VFS. Preview at 12/16/24/36 px with "The quick brown fox…". Install button: copy file + `ttf_mgr_reload()`. Remove button (block system fonts Selawik/Cascadia). Set Default: write `HKCU\Software\Impossible\Theme\Font`.
+> **Deferred:** [L] superseded 2026-11-14: this app is owned by `11-apps/TODO-13-calendar-utilities.md` and the section body moved there -> XREF: 11-apps/TODO-13 §10 (item: "void fontmgr_open" at line 311)
 
-**Files:** `src/apps/fontmgr/fontmgr.c` (new), `include/apps/fontmgr.h` (new)
-
-> [!NOTE]
-> Launch as a desktop window app (not kernel-mode -- but still runs in kernel mode for now, like `gallery.c`). Window: 640×480 px. Left panel: `CTRL_LISTVIEW` of `.ttf` files in `C:\Impossible\Fonts\`; on selection-change: update right preview panel. Right panel: fixed preview strings at 4 sizes using `ttf_get(FONT_UI, px)` where the font slot is temporarily overridden with the selected TTF. **Install**: `dialog_file_open("*.ttf", "C:\\", src_path, MAX_PATH)` → `vfs_copy(src, "C:\\Impossible\\Fonts\\basename")` → `ttf_mgr_reload()` (re-scans `C:\Impossible\Fonts\` and rebuilds the font slot table) → `notify_send("Font installed", basename, ICON_INFO, 3000)`. **Remove guard**: check if font is Selawik or Cascadia (system fonts); if yes: `notify_send("Cannot remove", "System font", ICON_WARNING, 3000)`. **Set Default**: `RegSetValueEx(HKCU, "Software\\Impossible\\Theme\\Font", font_path)` + `wm_post_message_all(WM_THEME_CHANGED, ...)` (TODO-01 §7).
-
-- [ ] `void fontmgr_open(void)` -- create 640×480 px window; scan `C:\Impossible\Fonts\`; populate `CTRL_LISTVIEW`
-- [ ] `void fontmgr_draw_preview(gfx_surface_t *s, const char *ttf_path, int32_t x, int32_t y, int32_t w, int32_t h)` -- render preview string at 4 sizes using `ttf_get()` with the font loaded temporarily
-- [ ] `int ttf_mgr_reload(void)` -- re-scan `C:\Impossible\Fonts\`; rebuild font cache; return 0 or -1 (add to `font_mgr.h`)
-- [ ] Install button callback: `dialog_file_open()` → `vfs_copy()` → `ttf_mgr_reload()` → `notify_send()`; refresh list
-- [ ] Remove button callback: guard system fonts ("Selawik", "Cascadia"); `vfs_delete(font_path)`; `ttf_mgr_reload()`; refresh list
-- [ ] "Set Default" button: `RegSetValueEx(HKCU, "...\\Theme\\Font", REG_SZ, ttf_path)`; `wm_post_message_all(WM_THEME_CHANGED, 0, 0)`
-- [ ] `.ttf` file association (§1/§2) → launches `fontmgr.exe` with the TTF path as arg → preview the passed font
-- [ ] Commit: `"fontmgr: font manager app -- list/preview/install/remove TTF, set default, ttf_mgr_reload()"`
+- [/] Superseded: moved to `11-apps/TODO-13-calendar-utilities.md` §10; do not build a second copy here
 
 ---
 

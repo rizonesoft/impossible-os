@@ -45,12 +45,12 @@ bash scripts/test.sh SUITE=exec
 
 ## What is not implemented yet?
 
-- **An exported kernel symbol table** built from `EXPORT_SYMBOL` ([Kernel Symbol Table](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#1-kernel-symbol-table--export_symbol-sonnet)).
-- **A module build** under `src/modules/` that produces and installs `.kmod` files ([Module Build System](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#2-module-build-system-sonnet)).
-- **A driver model** with PCI match tables and operation vtables ([Driver Model + HAL Vtables + PCI Match Tables](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#3-driver-model--hal-vtables--pci-match-tables-sonnet)).
-- **The ELF relocatable loader** ([ELF Relocatable Module Loader](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#4-elf-relocatable-module-loader-opus)).
-- **Automatic loading at boot** ([Auto-Load Modules at Boot](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#5-auto-load-modules-at-boot-sonnet)).
-- **RTL8139 moved out of the kernel image** as the first module ([RTL8139 as First Loadable Module](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#6-rtl8139-as-first-loadable-module-sonnet)).
+- **An exported kernel symbol table** built from `EXPORT_SYMBOL` ([Kernel Symbol Table](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#1-kernel-symbol-table--export_symbol)).
+- **A module build** under `src/modules/` that produces and installs `.kmod` files ([Module Build System](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#2-module-build-system)).
+- **A driver model** with PCI match tables and operation vtables ([Driver Model + HAL Vtables + PCI Match Tables](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#3-driver-model--hal-vtables--pci-match-tables)).
+- **The ELF relocatable loader** ([ELF Relocatable Module Loader](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#4-elf-relocatable-module-loader)).
+- **Automatic loading at boot** ([Auto-Load Modules at Boot](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#5-auto-load-modules-at-boot)).
+- **RTL8139 moved out of the kernel image** as the first module ([RTL8139 as First Loadable Module](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#6-rtl8139-as-first-loadable-module)).
 - **Plug and Play system calls** behind the reserved service numbers ([Plug and Play syscalls wired to SSDT](../../todo/04-drivers-hardware/TODO-05-kernel-module-system.md#7-plug-and-play-syscalls-wired-to-ssdt)).
 
 ## How does it compare with Windows 11 and Linux?

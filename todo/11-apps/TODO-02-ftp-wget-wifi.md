@@ -68,7 +68,7 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 ---
 
-## 1. FTP Protocol Core `[Sonnet]`
+## 1. FTP Protocol Core
 
 Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer -- no UI, no shell integration.
 
@@ -106,7 +106,7 @@ Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer -- no UI
 
 ---
 
-## 2. FTP Shell Commands + `wget ftp://` `[Sonnet]`
+## 2. FTP Shell Commands + `wget ftp://`
 
 Interactive `ftp` command and anonymous single-file `wget ftp://` integration in `cmd.exe`.
 
@@ -132,7 +132,7 @@ Interactive `ftp` command and anonymous single-file `wget ftp://` integration in
 
 ---
 
-## 3. `wget` Command (HTTP/HTTPS + Progress) `[Sonnet]`
+## 3. `wget` Command (HTTP/HTTPS + Progress)
 
 Implements the full `wget` command-line tool backed by `http_get()`/`https_get()`.
 
@@ -149,7 +149,7 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 
 ---
 
-## 4. `curl` Command (Full Flag Set) `[Sonnet]`
+## 4. `curl` Command (Full Flag Set)
 
 `curl` is the developer-facing HTTP tool. Output defaults to stdout unless `-o` is given.
 
@@ -171,7 +171,7 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 
 ---
 
-## 5. FTP GUI Client (Dual-Pane, Stretch) `[Sonnet]`
+## 5. FTP GUI Client (Dual-Pane, Stretch)
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -191,7 +191,7 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 
 ---
 
-## 6. WiFi Framework (Stretch) `[Opus]`
+## 6. WiFi Framework (Stretch)
 
 > Long-term stretch goal. Requires USB host stack (`04-drivers-hardware/TODO-10-usb-stack.md`) and real hardware or QEMU virtio-wifi. Do not start until §1–5 are complete.
 

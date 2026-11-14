@@ -53,7 +53,7 @@ title: "TODO-08 -- SSH & FTP Clients"
 
 ---
 
-## 1. FTP Protocol `[Sonnet]`
+## 1. FTP Protocol
 
 TCP port 21 control connection. `ftp_connect(host, user, pass)` sends USER/PASS. PASV passive data port negotiation. `ftp_list()` (LIST → parse directory listing). `ftp_download(remote, local)` (RETR → stream to VFS file). `ftp_upload(local, remote)` (STOR). Commands: CWD, PWD, MKD, RMD, SIZE, DELE, RENAME, TYPE I/A.
 
@@ -75,7 +75,7 @@ TCP port 21 control connection. `ftp_connect(host, user, pass)` sends USER/PASS.
 - [ ] `ftp_disconnect(session)`: send `QUIT\r\n`; `kern_close(ctrl_fd)`
 - [ ] Commit: `"apps/ftp: FTP protocol -- TCP 21, USER/PASS, PASV, LIST/RETR/STOR, CWD/PWD/MKD/RMD/SIZE/DELE"`
 
-## 2. FTP Shell + GUI Integration `[Sonnet]`
+## 2. FTP Shell + GUI Integration
 
 **Design:** n/a -- the ftp> prompt runs in the terminal (its visuals are the terminal's); the GUI client is owned by `11-apps/TODO-02 §5`
 
@@ -93,7 +93,7 @@ Interactive `ftp host` with subcommands (ls, cd, get, put, mget, mput, pwd, mkdi
 - [ ] Register `ftp` in shell command table
 - [ ] Commit: `"shell/ftp: interactive ftp subcommands, mget/mput glob, wget ftp:// anonymous download"`
 
-## 3. FTPS / FTPES `[Sonnet]`
+## 3. FTPS / FTPES
 
 `AUTH TLS` upgrades the control connection to TLS (Explicit FTPS / FTPES). `PBSZ 0` declares no protection buffer. `PROT P` enables the encrypted data channel. Reuses Mbed TLS from TODO-03.
 
@@ -110,7 +110,7 @@ Interactive `ftp host` with subcommands (ls, cd, get, put, mget, mput, pwd, mkdi
 - [ ] `cmd_ftp` extension: add `ftps` alias that calls `ftp_connect_tls()` instead of `ftp_connect()`; log `[FTP] TLS secured` on success
 - [ ] Commit: `"apps/ftp: FTPS/FTPES -- AUTH TLS, PBSZ 0 PROT P, Mbed TLS control+data channel wrap"`
 
-## 4. SSH2 Transport Layer `[Opus]`
+## 4. SSH2 Transport Layer
 
 Port **monocypher** 4.x to a freestanding kernel static library. Version exchange `SSH-2.0-ImpossibleOS`. SSH binary packet protocol (length + padding + payload + MAC). Key exchange: `KEXINIT` → Curve25519 ECDH (`crypto_x25519()`) → derive session keys. ChaCha20-Poly1305 AEAD bulk cipher. Host key verification against `C:\Users\Default\AppData\SSH\known_hosts`.
 
@@ -131,7 +131,7 @@ Port **monocypher** 4.x to a freestanding kernel static library. Version exchang
 - [ ] Log: `[SSH] KEX complete: Curve25519-SHA256; session_id=%08x...`, `[SSH] Host key OK: %s`, `[SSH] WARNING: Host key mismatch for %s -- connection aborted`
 - [ ] Commit: `"apps/ssh: transport -- monocypher port, version exchange, Curve25519 KEX, ChaCha20-Poly1305, known_hosts"`
 
-## 5. SSH Authentication `[Opus]`
+## 5. SSH Authentication
 
 `SSH_MSG_SERVICE_REQUEST "ssh-userauth"`. Password auth (`SSH_MSG_USERAUTH_REQUEST` method "password"). Ed25519 public-key auth: sign challenge with `crypto_ed25519_sign()`. `ssh-keygen -t ed25519` generates key pair in `C:\Users\Default\AppData\SSH\id_ed25519`.
 
@@ -150,7 +150,7 @@ Port **monocypher** 4.x to a freestanding kernel static library. Version exchang
 - [ ] Log: `[SSH] Auth: password OK` or `[SSH] Auth: pubkey OK (Ed25519)` or `[SSH] Auth FAILED: %s`
 - [ ] Commit: `"apps/ssh: auth -- password + Ed25519 pubkey, ssh_connect_and_auth, ssh-keygen -t ed25519"`
 
-## 6. SSH Channel + PTY `[Sonnet]`
+## 6. SSH Channel + PTY
 
 `SSH_MSG_CHANNEL_OPEN "session"`. `SSH_MSG_CHANNEL_REQUEST "pty-req"` (term=xterm, cols/rows). `SSH_MSG_CHANNEL_REQUEST "shell"`. Forward terminal stdin → channel data → terminal stdout. Handle `SSH_MSG_CHANNEL_WINDOW_ADJUST`. `SSH_MSG_DISCONNECT` on close.
 
@@ -170,7 +170,7 @@ Port **monocypher** 4.x to a freestanding kernel static library. Version exchang
 - [ ] `ssh_disconnect(conn, reason)`: send `SSH_MSG_DISCONNECT`; `kern_close(conn->fd)`
 - [ ] Commit: `"apps/ssh: channel+PTY -- channel open, pty-req xterm, shell relay, window adjust, disconnect"`
 
-## 7. SSH Shell Integration `[Sonnet]`
+## 7. SSH Shell Integration
 
 `ssh user@host [-p port] [-i keyfile]` shell command running inside Terminal app. `scp user@host:src dst` file copy via `SSH_MSG_CHANNEL_REQUEST "exec"`. `ssh-keygen` command (already in §5).
 
@@ -186,7 +186,7 @@ Port **monocypher** 4.x to a freestanding kernel static library. Version exchang
 - [ ] Register `ssh`, `scp` in shell command table
 - [ ] Commit: `"shell/ssh: ssh user@host -p/-i, scp file copy via exec channel, Terminal relay loop"`
 
-## 8. SSH Agent Stub `[Sonnet]`
+## 8. SSH Agent Stub
 
 `SSH_AUTH_SOCK` environment variable. In-process key store (loaded keys survive for current session). `ssh-add keyfile` loads key into store. `ssh` command queries agent for authentication before prompting for password.
 
@@ -205,7 +205,7 @@ Port **monocypher** 4.x to a freestanding kernel static library. Version exchang
 - [ ] Register `ssh-add` in shell command table; register `ssh-agent` as alias for `ssh-add -l` (list)
 - [ ] Commit: `"apps/ssh: agent stub -- in-process key store, ssh-add, auto-use in ssh auth, SSH_AUTH_SOCK"`
 
-## 9. SFTP Subsystem `[Opus]`
+## 9. SFTP Subsystem
 
 SSH channel with `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"`. SFTP v3 protocol: `SSH_FXP_INIT`/`VERSION`, `SSH_FXP_OPEN`/`READ`/`WRITE`/`CLOSE`/`STAT`/`OPENDIR`/`READDIR`/`REALPATH`. Interactive `sftp user@host` session. `sftp://` URL in File Manager address bar.
 

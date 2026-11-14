@@ -43,12 +43,12 @@ Nothing can be switched on yet. Contributors can preview the magnifier and the h
 
 ## What is not implemented yet?
 
-- [High Contrast Mode](../../todo/10-platform-services/TODO-06-accessibility.md#1-high-contrast-mode-sonnet) and [Large Text and DPI Override](../../todo/10-platform-services/TODO-06-accessibility.md#2-large-text--dpi-override-sonnet)
-- [Sticky Keys](../../todo/10-platform-services/TODO-06-accessibility.md#3-sticky-keys-sonnet) and [Mouse Keys](../../todo/10-platform-services/TODO-06-accessibility.md#6-mouse-keys-sonnet)
-- [Large Cursor](../../todo/10-platform-services/TODO-06-accessibility.md#4-large-cursor-sonnet), which also needs `CURSOR_MAX_SIZE` raised above 48
-- [Screen Magnifier](../../todo/10-platform-services/TODO-06-accessibility.md#5-screen-magnifier-sonnet)
-- [Reduced Motion and Color Blind Mode](../../todo/10-platform-services/TODO-06-accessibility.md#7-reduced-motion--color-blind-mode-sonnet)
-- [`ease.cpl`](../../todo/10-platform-services/TODO-06-accessibility.md#8-easecpl----accessibility-settings-applet-sonnet)
+- [High Contrast Mode](../../todo/10-platform-services/TODO-06-accessibility.md#1-high-contrast-mode) and [Large Text and DPI Override](../../todo/10-platform-services/TODO-06-accessibility.md#2-large-text--dpi-override)
+- [Sticky Keys](../../todo/10-platform-services/TODO-06-accessibility.md#3-sticky-keys) and [Mouse Keys](../../todo/10-platform-services/TODO-06-accessibility.md#6-mouse-keys)
+- [Large Cursor](../../todo/10-platform-services/TODO-06-accessibility.md#4-large-cursor), which also needs `CURSOR_MAX_SIZE` raised above 48
+- [Screen Magnifier](../../todo/10-platform-services/TODO-06-accessibility.md#5-screen-magnifier)
+- [Reduced Motion and Color Blind Mode](../../todo/10-platform-services/TODO-06-accessibility.md#7-reduced-motion--color-blind-mode)
+- [`ease.cpl`](../../todo/10-platform-services/TODO-06-accessibility.md#8-easecpl----accessibility-settings-applet)
 
 Screen reader support, the accessibility tree and UI Automation are not part of this roadmap; they belong to [UI Accessibility, Automation and IME](../graphics/accessibility-ime.md).
 

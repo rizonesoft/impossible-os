@@ -46,10 +46,10 @@ There is nothing to run yet. For block-device error counts on AHCI disks, see th
 
 ## What is not implemented yet?
 
-- **Statistics on every disk** ([Generic `blkdev_stats_t` + Histogram API](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#4-generic-blkdev_stats_t--histogram-api-opus)) and their **view** ([Per-Device Latency Histogram + `/sys/ioqueue`](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#5-per-device-latency-histogram--sysioqueue-sonnet)). The roadmap describes a 64-bucket histogram; the VirtIO one has 7.
-- **Benchmarking** ([`diskbench` CLI](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#1-diskbench-cli-opus), [Disk Benchmark GUI](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#2-disk-benchmark-gui-sonnet)).
-- **Health** ([SMART Extended Diagnostics](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#3-smart-extended-diagnostics-sonnet), [Storage Health Monitor Daemon](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#7-storage-health-monitor-daemon-sonnet)), which builds on the SMART read in [AHCI SMART Read](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#5-ahci-smart-read-sonnet).
-- **Filesystem profiling** ([VFS Hot-Path Profiler](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#6-vfs-hot-path-profiler-sonnet)).
+- **Statistics on every disk** ([Generic `blkdev_stats_t` + Histogram API](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#4-generic-blkdev_stats_t--histogram-api)) and their **view** ([Per-Device Latency Histogram + `/sys/ioqueue`](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#5-per-device-latency-histogram--sysioqueue)). The roadmap describes a 64-bucket histogram; the VirtIO one has 7.
+- **Benchmarking** ([`diskbench` CLI](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#1-diskbench-cli), [Disk Benchmark GUI](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#2-disk-benchmark-gui)).
+- **Health** ([SMART Extended Diagnostics](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#3-smart-extended-diagnostics), [Storage Health Monitor Daemon](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#7-storage-health-monitor-daemon)), which builds on the SMART read in [AHCI SMART Read](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#5-ahci-smart-read).
+- **Filesystem profiling** ([VFS Hot-Path Profiler](../../todo/05-storage-filesystems/TODO-14-disk-benchmark-diagnostics.md#6-vfs-hot-path-profiler)).
 
 ## How does it compare with Windows 11 and Linux?
 

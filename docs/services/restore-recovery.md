@@ -43,13 +43,13 @@ After a crash, reboot and read the notice on the splash, then open `X:\Crash\las
 
 ## What is not implemented yet?
 
-- [Event Log](../../todo/10-platform-services/TODO-04-restore-recovery.md#1-event-log-sonnet)
-- [Restore Point Creation](../../todo/10-platform-services/TODO-04-restore-recovery.md#2-restore-point-creation-sonnet) and [System Rollback](../../todo/10-platform-services/TODO-04-restore-recovery.md#3-system-rollback-sonnet), which need Registry hive save and restore from the [Registry roadmap](../../todo/02-kernel-core/TODO-14-registry-completion.md) and the ZIP API
-- [`rstrui.cpl`](../../todo/10-platform-services/TODO-04-restore-recovery.md#4-rstruicpl----system-restore-ui-sonnet)
-- [First-Boot Setup Wizard](../../todo/10-platform-services/TODO-04-restore-recovery.md#5-first-boot-setup-wizard-sonnet)
-- [Crash Dump Viewer](../../todo/10-platform-services/TODO-04-restore-recovery.md#6-crash-dump-viewer-sonnet)
-- [F8 Recovery Environment](../../todo/10-platform-services/TODO-04-restore-recovery.md#7-f8-recovery-environment-opus)
-- [Factory Reset](../../todo/10-platform-services/TODO-04-restore-recovery.md#8-factory-reset-sonnet), [Startup Repair](../../todo/10-platform-services/TODO-04-restore-recovery.md#9-startup-repair-sonnet) and [Disk Cleanup](../../todo/10-platform-services/TODO-04-restore-recovery.md#10-disk-cleanup-utility-sonnet)
+- [Event Log](../../todo/10-platform-services/TODO-04-restore-recovery.md#1-event-log)
+- [Restore Point Creation](../../todo/10-platform-services/TODO-04-restore-recovery.md#2-restore-point-creation) and [System Rollback](../../todo/10-platform-services/TODO-04-restore-recovery.md#3-system-rollback), which need Registry hive save and restore from the [Registry roadmap](../../todo/02-kernel-core/TODO-14-registry-completion.md) and the ZIP API
+- [`rstrui.cpl`](../../todo/10-platform-services/TODO-04-restore-recovery.md#4-rstruicpl----system-restore-ui)
+- [First-Boot Setup Wizard](../../todo/10-platform-services/TODO-04-restore-recovery.md#5-first-boot-setup-wizard)
+- [Crash Dump Viewer](../../todo/10-platform-services/TODO-04-restore-recovery.md#6-crash-dump-viewer)
+- [F8 Recovery Environment](../../todo/10-platform-services/TODO-04-restore-recovery.md#7-f8-recovery-environment)
+- [Factory Reset](../../todo/10-platform-services/TODO-04-restore-recovery.md#8-factory-reset), [Startup Repair](../../todo/10-platform-services/TODO-04-restore-recovery.md#9-startup-repair) and [Disk Cleanup](../../todo/10-platform-services/TODO-04-restore-recovery.md#10-disk-cleanup-utility)
 
 ## How does it compare with Windows 11 and Linux?
 

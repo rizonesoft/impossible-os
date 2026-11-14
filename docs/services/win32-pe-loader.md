@@ -45,12 +45,12 @@ The loader is exercised by the kernel suite (`make test-exec`, which checks PE s
 
 ## What is not implemented yet?
 
-- [Fix Ring-3 User-Mode Execution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#1-fix-ring-3-user-mode-execution-opus): the MSR setup and GDT order are done; PE programs using `SYSCALL` directly is not yet proven
-- [Windows x64 Syscall ABI](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#2-windows-x64-syscall-abi-sonnet)
-- [PE Header Structures](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#3-pe-header-structures-sonnet) and [PE Loader Core](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#4-pe-loader-core-sonnet): shipped in `pe.h` and `pe.c`, except loading at a fallback base and complete rollback on failure
-- [Base Relocations](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#5-base-relocations-sonnet)
-- [Import Resolution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#6-import-resolution-sonnet): callable stubs instead of service numbers, and a clean failure for a missing import
-- [PE Execution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#7-pe-execution-opus), [EXE Format Precedence](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#8-exe-format-precedence-sonnet) and the [Minimal User-Mode Runtime](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#9-minimal-user-mode-runtime-sonnet)
+- [Fix Ring-3 User-Mode Execution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#1-fix-ring-3-user-mode-execution): the MSR setup and GDT order are done; PE programs using `SYSCALL` directly is not yet proven
+- [Windows x64 Syscall ABI](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#2-windows-x64-syscall-abi)
+- [PE Header Structures](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#3-pe-header-structures) and [PE Loader Core](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#4-pe-loader-core): shipped in `pe.h` and `pe.c`, except loading at a fallback base and complete rollback on failure
+- [Base Relocations](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#5-base-relocations)
+- [Import Resolution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#6-import-resolution): callable stubs instead of service numbers, and a clean failure for a missing import
+- [PE Execution](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#7-pe-execution), [EXE Format Precedence](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#8-exe-format-precedence) and the [Minimal User-Mode Runtime](../../todo/10-platform-services/TODO-07-win32-pe-loader.md#9-minimal-user-mode-runtime)
 
 ## How does it compare with Windows 11 and Linux?
 

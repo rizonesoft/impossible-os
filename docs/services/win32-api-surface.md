@@ -34,13 +34,13 @@ Only the test shim can be used: link an ELF test program against `user/libc.a` a
 
 ## What is not implemented yet?
 
-- [Win32 Type Definitions](../../todo/10-platform-services/TODO-08-win32-api-surface.md#1-win32-type-definitions-sonnet)
-- [Console and Process API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#2-console--process-api-kernel32dll-tier-1-sonnet), including the user-mode wrappers behind the firmware rows of the `kernel32` table
-- [C Runtime](../../todo/10-platform-services/TODO-08-win32-api-surface.md#3-c-runtime-msvcrtdll-sonnet) and [NT Runtime Stubs](../../todo/10-platform-services/TODO-08-win32-api-surface.md#4-nt-runtime-stubs-ntdlldll-sonnet)
-- [Memory Management API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#5-memory-management-api-sonnet), [Synchronization API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#6-synchronization-api-sonnet), [DLL Loading API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#7-dll-loading-api-opus) and [Error API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#8-error-api-sonnet)
-- [Unimplemented Function Logger](../../todo/10-platform-services/TODO-08-win32-api-surface.md#9-unimplemented-function-logger-sonnet)
-- [`user32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#10-window-management-user32dll-sonnet), [`gdi32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#11-gdi-rendering-gdi32dll-sonnet) and [`shell32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#12-shell--icon-api-shell32dll-sonnet)
-- [IxUI Native Toolkit](../../todo/10-platform-services/TODO-08-win32-api-surface.md#13-ixui-native-toolkit-opus), [Win32 Shell Integration](../../todo/10-platform-services/TODO-08-win32-api-surface.md#14-win32-shell-integration-sonnet) and the [Developer SDK](../../todo/10-platform-services/TODO-08-win32-api-surface.md#15-developer-sdk-sonnet)
+- [Win32 Type Definitions](../../todo/10-platform-services/TODO-08-win32-api-surface.md#1-win32-type-definitions)
+- [Console and Process API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#2-console--process-api-kernel32dll-tier-1), including the user-mode wrappers behind the firmware rows of the `kernel32` table
+- [C Runtime](../../todo/10-platform-services/TODO-08-win32-api-surface.md#3-c-runtime-msvcrtdll) and [NT Runtime Stubs](../../todo/10-platform-services/TODO-08-win32-api-surface.md#4-nt-runtime-stubs-ntdlldll)
+- [Memory Management API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#5-memory-management-api), [Synchronization API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#6-synchronization-api), [DLL Loading API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#7-dll-loading-api) and [Error API](../../todo/10-platform-services/TODO-08-win32-api-surface.md#8-error-api)
+- [Unimplemented Function Logger](../../todo/10-platform-services/TODO-08-win32-api-surface.md#9-unimplemented-function-logger)
+- [`user32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#10-window-management-user32dll), [`gdi32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#11-gdi-rendering-gdi32dll) and [`shell32`](../../todo/10-platform-services/TODO-08-win32-api-surface.md#12-shell--icon-api-shell32dll)
+- [IxUI Native Toolkit](../../todo/10-platform-services/TODO-08-win32-api-surface.md#13-ixui-native-toolkit), [Win32 Shell Integration](../../todo/10-platform-services/TODO-08-win32-api-surface.md#14-win32-shell-integration) and the [Developer SDK](../../todo/10-platform-services/TODO-08-win32-api-surface.md#15-developer-sdk)
 
 ## How does it compare with Windows 11 and Linux?
 

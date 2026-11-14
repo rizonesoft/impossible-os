@@ -58,7 +58,7 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 
 ---
 
-## 1. ACPICA AML Interpreter Integration `[Opus]`
+## 1. ACPICA AML Interpreter Integration
 
 Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACPI CA / BSD-3-Clause / GPL-2.0, BSD arm taken) as a static library. Replace the current hand-rolled table parsing stubs with ACPICA's `AcpiInitializeSubsystem()` → `AcpiLoadTables()` → `AcpiEnableSubsystem()` sequence. Provide the required OS Services Layer (`acpi_osl.c`) to connect ACPICA to Impossible OS memory, I/O, and synchronisation primitives.
 
@@ -122,7 +122,7 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
 - [ ] Boot log: `[ACPI] ACPICA %s initialised; namespace: %u objects`
 - [ ] Commit: `"acpi: ACPICA AML interpreter -- OSL, AcpiInitializeSubsystem, namespace load"`
 
-## 2. Clean Shutdown Sequence `[Sonnet]`
+## 2. Clean Shutdown Sequence
 
 `system_shutdown(reason)` is a deterministic multi-stage orchestrator: broadcast `WM_CLOSE` to all user processes, wait up to 5 s and force-kill stragglers, flush filesystem caches, flush Registry, release DHCP lease, unmount all volumes, then call `acpi_poweroff()` or `acpi_reboot()`.
 
@@ -145,7 +145,7 @@ Integrate ACPICA (Intel's open-source AML interpreter; triple-licensed Intel ACP
 - [ ] Stop-the-world barrier before storage quiesce: global shutting-down state rejecting new FS/block I/O, drain writers, park other CPUs (IPI), halt ALL CPUs on poweroff failure -> XREF `01-boot-platform/TODO-16` §6
 - [ ] Commit: `"kernel: clean shutdown orchestrator -- WM_CLOSE, flush, unmount, acpi_poweroff"`
 
-## 3. ACPI Power Button SCI `[Sonnet]`
+## 3. ACPI Power Button SCI
 
 **Design:** n/a -- a hardware button event path; it draws nothing
 
@@ -167,7 +167,7 @@ Configure the System Control Interrupt from FADT `SCI_INT`, route via IOAPIC as 
 - [ ] Boot log: `[ACPI] Power button SCI: GSI %u, vector 0x%02X`
 - [ ] Commit: `"acpi: power button SCI -- FADT SCI_INT routing, PWRBTN_STS, shutdown trigger"`
 
-## 4. Thermal Monitoring `[Sonnet]`
+## 4. Thermal Monitoring
 
 Read per-core temperature from `IA32_THERM_STATUS` MSR (`0x19C`): `Tj_max - digital_readout`. Configure the LAPIC Thermal LVT to deliver a thermal interrupt at Tj_max - 10 °C. Expose `QueryCpuTemperature(id)` syscall and color-coded per-core bars in Task Manager. Emergency shutdown above 100 °C.
 
@@ -186,7 +186,7 @@ Read per-core temperature from `IA32_THERM_STATUS` MSR (`0x19C`): `Tj_max - digi
 - [ ] Boot log: `[THERMAL] DTS active; Tj_max=%u °C`
 - [ ] Commit: `"acpi: thermal monitoring -- IA32_THERM_STATUS, Tj_max, LAPIC thermal LVT, Task Manager"`
 
-## 5. Battery Status (`_BST` / `_BIF`) `[Sonnet]`
+## 5. Battery Status (`_BST` / `_BIF`)
 
 Evaluate ACPI `_BST` (Battery Status) and `_BIF` (Battery Information) methods via ACPICA every 30 s. Expose battery percentage, state (charging/discharging/critical), and estimated time remaining to the system tray and Registry.
 
@@ -202,7 +202,7 @@ Evaluate ACPI `_BST` (Battery Status) and `_BIF` (Battery Information) methods v
 - [ ] System tray integration: set tray battery icon + tooltip string (→ XREF `09-desktop-shell` domain)
 - [ ] Commit: `"acpi: battery status -- _BST/_BIF evaluation, percentage, tray icon, Registry"`
 
-## 6. CPU Frequency Scaling -- DVFS `[Opus]`
+## 6. CPU Frequency Scaling -- DVFS
 
 Parse the `_PSS` (Performance Supported States) package for each processor via ACPICA. Detect Intel SpeedStep (`CPUID[01h].ECX[7]`) or AMD ACPI performance control. Register a `cpufreq_governor_t` driver (→ XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md §9`) that switches P-states by writing `IA32_PERF_CTL` MSR (Intel) or `PERF_CTL` (AMD). Performance governor when scheduler run-queue is non-empty; powersave on 100 ms idle.
 
@@ -219,7 +219,7 @@ Parse the `_PSS` (Performance Supported States) package for each processor via A
 - [ ] Boot log: `[CPUFREQ] ACPI P-states: %u levels, %u–%u MHz`
 - [ ] Commit: `"acpi: DVFS -- _PSS P-state table, IA32_PERF_CTL/PTC, cpufreq_register_driver"`
 
-## 7. Power Profiles `[Sonnet]`
+## 7. Power Profiles
 
 Three named power profiles -- Balanced, Performance, Power Saver -- configure the cpufreq governor, C-state latency budget, and display timeout. Active profile stored in Registry; `powercfg.cpl` stub allows selection.
 
@@ -231,7 +231,7 @@ Three named power profiles -- Balanced, Performance, Power Saver -- configure th
 
 ---
 
-## 8. ACPI C-States Idle `[Opus]`
+## 8. ACPI C-States Idle
 
 Read the `_CST` (C-States) package for each processor via ACPICA. Enter C1 via `hlt` on idle, C2/C3 via `mwait` with the appropriate hint from the `_CST` register descriptor. Track per-CPU idle depth histogram in `/sys/cpuidle`.
 
@@ -248,7 +248,7 @@ Read the `_CST` (C-States) package for each processor via ACPICA. Enter C1 via `
 - [ ] `/sys/cpuidle` VFS file: columns `CPU  C0%  C1%  C2%  C3%  deepest_entered`
 - [ ] Commit: `"acpi: C-states idle -- _CST parsing, hlt C1, mwait C2/C3, /sys/cpuidle stats"`
 
-## 9. ACPI S3 Suspend / Resume `[Opus]`
+## 9. ACPI S3 Suspend / Resume
 
 Enter S3 (Suspend to RAM): flush filesystem caches and Registry, save CPU register state + GDT/IDT/CR3/EFER, park APs, write `SLP_TYP_S3 | SLP_EN` to PM1a_CNT. On resume, the BIOS/firmware jumps to the 1 MiB wakeup trampoline; the trampoline re-enters long mode and calls `acpi_resume()` which restores full kernel state, re-inits APIC and drivers.
 
@@ -268,7 +268,7 @@ Enter S3 (Suspend to RAM): flush filesystem caches and Registry, save CPU regist
 - [ ] Re-init driver list: each driver with an `suspend`/`resume` callback in `driver_t` vtable; call `resume()` in registration order
 - [ ] Commit: `"acpi: S3 suspend/resume -- trampoline, CPU state save/restore, driver re-init"`
 
-## 10. Hibernate (S4) `[Opus]`
+## 10. Hibernate (S4)
 
 Serialise all physical RAM pages to `C:\Impossible\System\hiberfil.sys`, write an S4 signature header, then power off via S5. On next boot, the bootloader detects the hiberfil signature and passes `BOOT_HIBERNATE_RESUME=1` in `boot_info`; the kernel reads the file, restores all pages, and jumps to the saved resume instruction pointer.
 

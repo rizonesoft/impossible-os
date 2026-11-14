@@ -56,7 +56,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 
 ---
 
-## 1. ListView `[Opus]`
+## 1. ListView
 
 **Design:** [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
@@ -84,7 +84,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Icon-grid mode: `THEME_SIZE_EXPLORER_TILE_WIDTH` (96) px tiles; icon 48 px centred; two-line caption below (ellipsis on the second line); hover/selection fills with `radius.control`
 - [ ] Commit: `"controls: CTRL_LISTVIEW -- details+icon-grid, column sort, multi-select, virtual render"`
 
-## 2. TreeView `[Opus]`
+## 2. TreeView
 
 **Design:** [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
@@ -108,7 +108,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Key: Up/Down move; Right expand; Left collapse; Enter activate
 - [ ] Commit: `"controls: CTRL_TREEVIEW -- hierarchical nodes, expand/collapse, DFS visible list, indent"`
 
-## 3. Toolbar `[Sonnet]`
+## 3. Toolbar
 
 **Design:** [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
@@ -129,7 +129,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Mouse: hit-test per button; click → `cb(btn_idx)`; toggle: flip `active`; chevron click → overflow popup
 - [ ] Commit: `"controls: CTRL_TOOLBAR -- icon buttons, toggle, separator, overflow chevron popup"`
 
-## 4. MenuBar `[Sonnet]`
+## 4. MenuBar
 
 **Design:** [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
@@ -152,7 +152,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Mouse + keyboard handling: click header → open popup; item click → call `cb`; keyboard Alt, arrows, Escape
 - [ ] Commit: `"controls: CTRL_MENUBAR -- popup dropdown, Alt-navigation, accelerators, checked/separator items"`
 
-## 5. StatusBar `[Sonnet]`
+## 5. StatusBar
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -172,7 +172,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Draw case: layout pass (compute stretchy width); per-pane fill + border + icon + text
 - [ ] Commit: `"controls: CTRL_STATUSBAR -- multi-pane, stretchy first pane, icon+text per pane"`
 
-## 6. GroupBox + Separator `[Sonnet]`
+## 6. GroupBox + Separator
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -190,7 +190,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] Mouse/key handlers: no-op for both types
 - [ ] Commit: `"controls: CTRL_GROUPBOX + CTRL_SEPARATOR -- card grouping with heading, divider line"`
 
-## 7. Tooltip Integration `[Sonnet]`
+## 7. Tooltip Integration
 
 **Design:** [`controls.md#tooltip`](../../docs/design/controls.md#tooltip)
 
@@ -210,7 +210,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - [ ] `void tooltip_init(void)` called from `desktop_init()`; `void tooltip_shutdown(void)` (no-op for now)
 - [ ] Commit: `"desktop: tooltip system -- 400 ms hover, themed layer popup, auto-hide, wired to WM+toolbar buttons"`
 
-## 8. Dialog System `[Opus]`
+## 8. Dialog System
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 

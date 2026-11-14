@@ -12,7 +12,7 @@ title: "TODO-09 -- Calculator"
 > gap-free history side-panel, memory registers, keyboard input, and clipboard integration.
 
 > [!IMPORTANT]
-> **Base implementation spec:** `09-desktop-shell/TODO-12-utilities.md §2` covers the fixed
+> **Base implementation spec:** `§6` covers the fixed
 > 320×480 px window, 5×4 button grid, two-operand model, C/CE/⌫/±/1/x/x²/√, memory M±/R/C/S,
 > and keyboard shortcuts. This TODO is the full-app companion that adds: (a) calculation
 > history panel not specified in TODO-12; (b) full Scientific mode with degree/radian toggle;
@@ -20,13 +20,13 @@ title: "TODO-09 -- Calculator"
 >
 > `kmath_sin`, `kmath_tan`, `kmath_atan`, `kmath_asin`, `kmath_log`, `kmath_log10` and `kmath_exp` already ship in
 > `include/libc/math.h` (which includes `kmath.h`); §4 uses them, it does not add them.
-> Noted in `09-desktop-shell/TODO-12-utilities.md` Important Notes.
+> Noted in the base section §6 of this file.
 
 ---
 
 ## Inputs
 
-- `09-desktop-shell/TODO-12-utilities.md §2` -- base calculator spec (window, button grid, two-operand model, memory ops)
+- `§6` -- base calculator spec (window, button grid, two-operand model, memory ops)
 - `include/kernel/kmath.h` -- `kmath_sqrt`, `kmath_pow`, `kmath_cos`, `kmath_acos`, `kmath_floor`, `kmath_fabs`, `kmath_fmod`; `include/libc/math.h` adds `kmath_sin/tan/atan/asin/log/log10/exp` and `KM_PI`
 - `include/gfx.h` -- `gfx_fill_rounded_rect(s, x, y, w, h, radius, color)`, `gfx_fill_rect()`, `gfx_draw_rect()`
 - `include/font_mgr.h` -- `ttf_draw_string()`, `ttf_measure_width()`, `ttf_get(FONT_UI, px)`
@@ -51,18 +51,19 @@ title: "TODO-09 -- Calculator"
 | 3    | Memory + History       | ⭐    | §2 complete, `clipboard_set`                                   |
 | 4    | Scientific Mode        | 💎    | §2 complete; `kmath_*` trig and log (shipped)                  |
 | 5    | Programmer Mode        | 💎    | §2 complete                                                    |
+| 6    | Calculator             | 💎    | --                                                             |
 
 ---
 
-## 1. Standard Calculator UI `[Sonnet]`
+## 1. Standard Calculator UI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-> → XREF: `09-desktop-shell/TODO-12-utilities.md §2` -- window size, button layout, display area, button rendering detail.
+> → XREF: `§6` -- window size, button layout, display area, button rendering detail.
 
 **Source file:** `src/apps/calc/calc.c`; header `include/apps/calc/calc.h`
 
-- [ ] Reconcile with `09-desktop-shell/TODO-12-utilities.md` §2 (item: "Reconcile Calculator spec") before coding: both specify the keypad and engine
+- [ ] Reconcile §1 to §5 with the base section §6 of this file before coding: both specify the keypad and engine
   - Header `include/apps/calc/calc.h` here vs `include/apps/calc.h` there, and `calc_t` fields differ; keep §2 there as the base and build only history, Scientific and Programmer here.
 - [ ] `wm_create_window("Calculator", 200, 150, 320, 480, WM_DEFAULT_FLAGS & ~WM_FLAG_RESIZABLE)` -- fixed, non-resizable
 - [ ] **Display area** (top 80 px, right-aligned):
@@ -81,9 +82,9 @@ title: "TODO-09 -- Calculator"
 
 ---
 
-## 2. Arithmetic Engine `[Sonnet]`
+## 2. Arithmetic Engine
 
-> → XREF: `09-desktop-shell/TODO-12-utilities.md §2` -- two-operand model, division-by-zero, keyboard shortcuts.
+> → XREF: `§6` -- two-operand model, division-by-zero, keyboard shortcuts.
 
 - [ ] **State**: `typedef struct { char display[32]; double operand; char op; int after_op; int has_error; double memory; int mode; int deg_mode; } calc_t;`
 - [ ] **Two-operand model**: `operand1` → press `op` → `operand2` → `=` → `result`
@@ -98,7 +99,7 @@ title: "TODO-09 -- Calculator"
 
 ---
 
-## 3. Memory + History `[Sonnet]`
+## 3. Memory + History
 
 - [ ] **Memory register** (single `double g_memory`):
   - [ ] `MS` (Memory Store): `g_memory = parse(display)`; light `M` indicator in display top-left when non-zero
@@ -116,7 +117,7 @@ title: "TODO-09 -- Calculator"
 
 ---
 
-## 4. Scientific Mode `[Sonnet]`
+## 4. Scientific Mode
 
 - [/] Blocked on `02-kernel-core/TODO-03-kernel-libraries.md` §2 (item: "Unify float/double special values"): double `kmath_cos`/`kmath_acos`/`kmath_pow`/`kmath_sqrt` are font-grade
   - `kmath_acos(1.0)` returns about 0.254 (a four-term polynomial) and `kmath_cos` loops forever on infinity; the cos, acos, x^y and square-root keys need the hardened path.
@@ -139,7 +140,7 @@ title: "TODO-09 -- Calculator"
 
 ---
 
-## 5. Programmer Mode `[Sonnet]`
+## 5. Programmer Mode
 
 - [ ] **Window resize**: switching to Programmer → resize to 360×560; replaces number rows with extended layout
 - [ ] **Word-size selector** (radio buttons at top): `QWORD` `DWORD` `WORD` `BYTE` -- clips value to 64/32/16/8-bit unsigned integer; stored as `uint64_t g_int_val`; truncate on switch
@@ -154,6 +155,34 @@ title: "TODO-09 -- Calculator"
 - [ ] **Bitwise operators**: `AND` `OR` `XOR` `NOT` `LSH` (left shift) `RSH` (right shift); two-operand model same as standard; `NOT` is immediate (bitwise invert within word size); `LSH`/`RSH` take shift count as second operand
 - [ ] **Additional ops**: `NAND` `NOR` (stretch, computed via NOT(AND) / NOT(OR))
 - [ ] **Keyboard in HEX mode**: `A`–`F` keys active; digit keys 0–9 always active; `&` → AND; `|` → OR; `^` → XOR; `~` → NOT; `<` → LSH; `>` → RSH
+
+## 6. Calculator
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §2** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+Compact fixed window; 5×4 button grid; two-operand model; `gfx_fill_rounded_rect` buttons with hover/press; ops: +/−/×/÷/=/C/CE/⌫/±/1x/x²/√; keyboard numpad; Memory M+/−/R/C/S. Stretch: Scientific (sin/cos/tan/log/π), Programmer (hex/bin/oct/bitwise), history.
+
+**Files:** `src/apps/calc/calc.c` (new), `include/apps/calc.h` (new)
+
+> [!NOTE]
+> Window: 320×480 px fixed (no resize). Display area: top 80 px -- right-aligned number (`ttf_draw_string(FONT_UI, 28px)`) + small operation preview above it. **Two-operand model**: `g_display` (current entry string), `g_operand` (double), `g_op` (char: +−×÷), `g_after_op` flag. `=` → compute `g_operand op parse(g_display)`; update display; set `g_after_op=1`. C → clear all; CE → clear display only; ⌫ → remove last char. `±` → negate display string; `1/x` → `1.0 / val`; `x²` → `val * val`; `√x` → `kmath_sqrt(val)`. Division by zero → `g_display = "Error"`. **Button grid** per `docs/design/shell.md#app-window-layout` (keypad apps): standard buttons that grow to fill the window on a 2 px gap, never smaller than `THEME_SIZE_KEYPAD_BUTTON_MIN` (40); row order: MC MR M+ M− MS / % CE C ⌫ / 1/x x² √x ÷ / 7 8 9 × / 4 5 6 − / 1 2 3 + / ± 0 . =. Operators are subtle buttons, digits standard buttons, "=" the accent button, memory keys subtle; all colours from theme tokens. **Keyboard**: numpad 0–9 + `.` + operators; Enter = `=`; Backspace = ⌫; Delete = CE; Escape = C. **Scientific stretch**: `kmath_sin/cos/tan/log` (add to kmath.h); buttons: sin/cos/tan/log/10^x/1/x/x^y/π/e/n!/mod. **Programmer stretch**: hex/bin/oct base picker; bit-width dropdown (8/16/32/64); AND/OR/XOR/NOT/SHL/SHR buttons; display shows number in selected base.
+
+- [ ] Reconcile Calculator spec with the earlier sections of this file: it restates this keypad and engine with another header path and `calc_t` layout
+- [ ] `typedef struct { char display[32]; double operand; char op; int after_op; double memory; } calc_t;`
+- [ ] `void calc_open(void)` -- `wm_create_window(200, 150, 320, 480, "Calculator", WM_FLAG_NO_RESIZE)`
+- [ ] `void calc_render(calc_t *c, gfx_surface_t *s)` -- display area + 5×4 button grid
+- [ ] `gfx_fill_rounded_rect(s, x, y, w, h, r, color)` -- add if missing (or use `gfx_fill_rect` with clipped corners)
+- [ ] Button press: digit → append to `g_display`; operator → store `g_operand` + `g_op`; `=` → evaluate
+- [ ] Division by zero, overflow → `"Error"` display; next digit clears
+- [ ] Memory ops: MS → `memory = val`; MR → display `memory`; M+ → `memory += val`; M− → `memory -= val`; MC → `memory = 0`
+- [ ] Keyboard handler in WM `WM_KEYDOWN`: map VK_NUMPAD0–9 + operators + Enter/Backspace/Delete/Escape
+- [ ] Stretch: scientific mode on the existing `sin/cos/tan/log` in `include/libc/math.h` (no new `kmath_*` needed)
+- [ ] Stretch: Scientific layout toggle (expand window to 480 px); Programmer base picker
+- [ ] Commit: `"calc: calculator -- 5×4 grid, two-operand model, memory, keyboard, rounded-rect buttons"`
 
 ---
 
@@ -170,9 +199,7 @@ title: "TODO-09 -- Calculator"
 | ⭐  | BYTE/WORD/DWORD/QWORD word-size selector in Programmer mode   | ✅ Windows Calculator (word-size selector) | ⚠️ KCalc: no per-type clipping  | ⬜ §5 -- `uint64_t` clamp to selected width             |
 | ⭐  | All 4 bases (HEX/DEC/OCT/BIN) shown at once, clickable switch | ✅ Windows Calculator (shows all 4         | ⚠️ KCalc: one base at a         | ⬜ §5 -- 4 always-visible rows, active-row highlight    |
 
-Impossible OS Calculator ships all three modes (Standard/Scientific/Programmer) with a
-simultaneous four-base display in Programmer mode and a one-click clipboard history panel --
-matching Windows Calculator feature-for-feature with no external dependencies.
+Impossible OS Calculator ships all three modes (Standard/Scientific/Programmer) with a simultaneous four-base display in Programmer mode and a one-click clipboard history panel -- matching Windows Calculator feature-for-feature with no external dependencies.
 
 ---
 

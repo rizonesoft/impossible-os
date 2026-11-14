@@ -40,11 +40,11 @@ Boot the desktop (`bash scripts/build.sh run`), click Start, and choose Terminal
 
 ## What is not implemented yet?
 
-- **Icon actions**: [section 1](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#1-desktop-icon-click-actions), owned by [Desktop Icons](../../todo/08-graphics-ui/TODO-08-window-manager.md#4-desktop-icons-sonnet) in the window manager roadmap.
-- **Desktop right-click menu**: [section 2](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#2-desktop-right-click-context-menu), owned by [Desktop Right-Click Menu](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#2-desktop-right-click-menu-sonnet).
-- **Taskbar minimize and restore**: [section 3](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#3-taskbar-window-state-sync), owned by [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list-sonnet). The hand-cursor and click areas of the window buttons also disagree today (120 versus 100 pixels), filed there.
+- **Icon actions**: [section 1](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#1-desktop-icon-click-actions), owned by [Desktop Icons](../../todo/08-graphics-ui/TODO-08-window-manager.md#4-desktop-icons) in the window manager roadmap.
+- **Desktop right-click menu**: [section 2](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#2-desktop-right-click-context-menu), owned by [Desktop Right-Click Menu](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#2-desktop-right-click-menu).
+- **Taskbar minimize and restore**: [section 3](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#3-taskbar-window-state-sync), owned by [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list). The hand-cursor and click areas of the window buttons also disagree today (120 versus 100 pixels), filed there.
 - **Persistent settings**: wallpaper and other Registry changes are lost at reboot until hives load at boot, owned by [Registry Tree SMP Synchronization and Hive Durability](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#1-registry-tree-smp-synchronization-and-hive-durability).
-- **Start menu**: [section 4](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#4-start-menu-program-launch) and [section 5](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#5-power-and-settings-buttons). The Windows 11 layout (pinned grid, recommended list, power menu) is owned by [Start Menu Data Loading](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#1-start-menu-data-loading-sonnet) and the two sections after it.
+- **Start menu**: [section 4](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#4-start-menu-program-launch) and [section 5](../../todo/06-desktop-foundation/TODO-05-desktop-shell.md#5-power-and-settings-buttons). The Windows 11 layout (pinned grid, recommended list, power menu) is owned by [Start Menu Data Loading](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#1-start-menu-data-loading) and the two sections after it.
 
 ## How does it compare with Windows 11 and Linux?
 

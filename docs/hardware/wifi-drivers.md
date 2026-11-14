@@ -37,12 +37,12 @@ You cannot yet. A machine whose only network is Wi-Fi boots without networking. 
 
 Everything:
 
-- **The driver interface and frame layer** ([WiFi Driver Abstraction Layer](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#1-wifi-driver-abstraction-layer-opus), [802.11 Frame Layer](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#2-80211-frame-layer-sonnet)).
-- **Scanning and association** ([WiFi Scan & Association State Machine](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#3-wifi-scan--association-state-machine-opus)).
-- **WPA2-PSK** ([WPA2-PSK Supplicant](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#5-wpa2-psk-supplicant----eapol-4-way-handshake--ccmp-opus)).
-- **Chip drivers**: [RTL8188 / RTL8192 USB](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#4-rtl8188--rtl8192-usb-wifi-driver-opus), [RTL8821CE / RTL8822BE](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#6-rtl8821ce--rtl8822be-pcie-wifi-driver-opus), [Intel AX200 / AX210](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#7-intel-ax200--ax210-iwlwifi-pcie-driver-opus) and [MediaTek MT7921 / MT7922](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#8-mediatek-mt7921--mt7922-pcie-wifi-driver-sonnet). The USB driver also needs the unshipped USB core and hub support ([USB Stack](usb-stack.md)).
-- **Power management** ([WiFi Power Management](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#9-wifi-power-management-sonnet)).
-- **User interface** ([`ncpa.cpl` WiFi Tab + `netsh wlan` Commands](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#10-ncpacpl-wifi-tab--netsh-wlan-commands-sonnet)) and **Airplane mode** ([Airplane Mode Radio Coordinator](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#11-airplane-mode-radio-coordinator)), shared with [Bluetooth](bluetooth.md).
+- **The driver interface and frame layer** ([WiFi Driver Abstraction Layer](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#1-wifi-driver-abstraction-layer), [802.11 Frame Layer](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#2-80211-frame-layer)).
+- **Scanning and association** ([WiFi Scan & Association State Machine](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#3-wifi-scan--association-state-machine)).
+- **WPA2-PSK** ([WPA2-PSK Supplicant](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#5-wpa2-psk-supplicant----eapol-4-way-handshake--ccmp)).
+- **Chip drivers**: [RTL8188 / RTL8192 USB](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#4-rtl8188--rtl8192-usb-wifi-driver), [RTL8821CE / RTL8822BE](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#6-rtl8821ce--rtl8822be-pcie-wifi-driver), [Intel AX200 / AX210](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#7-intel-ax200--ax210-iwlwifi-pcie-driver) and [MediaTek MT7921 / MT7922](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#8-mediatek-mt7921--mt7922-pcie-wifi-driver). The USB driver also needs the unshipped USB core and hub support ([USB Stack](usb-stack.md)).
+- **Power management** ([WiFi Power Management](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#9-wifi-power-management)).
+- **User interface** ([`ncpa.cpl` WiFi Tab + `netsh wlan` Commands](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#10-ncpacpl-wifi-tab--netsh-wlan-commands)) and **Airplane mode** ([Airplane Mode Radio Coordinator](../../todo/04-drivers-hardware/TODO-15-wifi-drivers.md#11-airplane-mode-radio-coordinator)), shared with [Bluetooth](bluetooth.md).
 
 ## How does it compare with Windows 11 and Linux?
 

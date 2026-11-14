@@ -59,7 +59,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 1. pl_mpeg Integration `[Sonnet]`
+## 1. pl_mpeg Integration
 
 **Source file:** `src/apps/player/pl_mpeg_port.c`; copy `PL_MPEG_IMPLEMENTATION` header to `include/libs/pl_mpeg.h`
 
@@ -82,7 +82,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 2. YCbCr → RGB Conversion `[Opus]`
+## 2. YCbCr → RGB Conversion
 
 **Source file:** `src/apps/player/yuv_convert.c`
 
@@ -112,7 +112,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 3. A/V Sync Engine `[Opus]`
+## 3. A/V Sync Engine
 
 > A/V sync requires a 3-frame ring buffer, wall-clock PTS comparison, and drift correction.
 > The audio feed path runs asynchronously through the mixer DMA ISR; the video decode loop
@@ -156,7 +156,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 4. Player UI `[Sonnet]`
+## 4. Player UI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -183,7 +183,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 5. File Operations `[Sonnet]`
+## 5. File Operations
 
 **Source file:** `src/apps/player/player_files.c`
 
@@ -200,7 +200,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 6. Playlist `[Sonnet]`
+## 6. Playlist
 
 **Source file:** `src/apps/player/playlist.c`
 
@@ -219,7 +219,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 7. Subtitle Support (Stretch) `[Sonnet]`
+## 7. Subtitle Support (Stretch)
 
 **Source file:** `src/apps/player/subtitles.c`
 
@@ -233,7 +233,7 @@ title: "TODO-06 -- Video Player"
 
 ---
 
-## 8. Format Support Roadmap `[Sonnet]`
+## 8. Format Support Roadmap
 
 > Planning section -- no new code; defines the codec extension path.
 
@@ -266,10 +266,7 @@ title: "TODO-06 -- Video Player"
 | 💎  | File associations                        | ✅ WMP default              | ✅ `xdg-open`         | ⬜ §5 -- `file_assoc_set`                            |
 | 💎  | H.264 / MP4 support                      | ✅ WMP / HEVC codec         | ✅ VLC / mpv          | ⬜ §8 -- (Phase 2) -- ; h264bsd                      |
 
-Impossible OS ships a fully native, zero-dependency video player backed by a public-domain
-single-header codec -- no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter
-and 3-frame ring buffer with drift correction give smooth playback on commodity hardware from
-day one.
+Impossible OS ships a fully native, zero-dependency video player backed by a public-domain single-header codec -- no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter and 3-frame ring buffer with drift correction give smooth playback on commodity hardware from day one.
 
 ---
 

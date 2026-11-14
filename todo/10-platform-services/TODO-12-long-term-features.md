@@ -82,7 +82,7 @@ title: "TODO-12 -- Long-Term Features"
 
 ---
 
-## 1. Kernel Debugger (GDB RSP Stub) `[Opus]`
+## 1. Kernel Debugger (GDB RSP Stub)
 
 Implement the GDB Remote Serial Protocol over COM1 so a host GDB session can attach to the live kernel.
 
@@ -107,7 +107,7 @@ Implement the GDB Remote Serial Protocol over COM1 so a host GDB session can att
 
 ---
 
-## 2. User-Mode Debugger (`debugger.exe`) `[Opus]`
+## 2. User-Mode Debugger (`debugger.exe`)
 
 Win32-compatible debug API + `debugger.exe` GUI application. Hooks into the kernel via privilege-controlled debug syscalls.
 
@@ -140,7 +140,7 @@ Win32-compatible debug API + `debugger.exe` GUI application. Hooks into the kern
 
 ---
 
-## 3. Developer Tools `[Sonnet]`
+## 3. Developer Tools
 
 F12 debug overlay and shell diagnostics. All gated by registry flags (disabled by default).
 
@@ -158,7 +158,7 @@ F12 debug overlay and shell diagnostics. All gated by registry flags (disabled b
 
 ---
 
-## 4. Touch Input + Gesture Recognizer `[Opus]`
+## 4. Touch Input + Gesture Recognizer
 
 Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB HID driver (XREF: `04-drivers-hardware/TODO-10-usb-stack.md`).
 
@@ -183,7 +183,7 @@ Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB H
 
 ---
 
-## 5. Gamepad / Controller Input + XInput Stubs `[Sonnet]`
+## 5. Gamepad / Controller Input + XInput Stubs
 
 USB HID gamepad driver + XInput-compatible API. Requires USB HID (XREF: `04-drivers-hardware/TODO-10-usb-stack.md`).
 
@@ -205,7 +205,7 @@ USB HID gamepad driver + XInput-compatible API. Requires USB HID (XREF: `04-driv
 
 ---
 
-## 6. Print Support `[Sonnet]`
+## 6. Print Support
 
 PDF export as the primary print target. IPP network printing and USB printing as stretch goals.
 
@@ -225,7 +225,7 @@ PDF export as the primary print target. IPP network printing and USB printing as
 
 ---
 
-## 7. Text-to-Speech (SAM → eSpeak-NG) `[Sonnet]`
+## 7. Text-to-Speech (SAM → eSpeak-NG)
 
 Port SAM (Software Automatic Mouth, public domain, ~2 K lines) as the initial TTS engine. eSpeak-NG is the upgrade path.
 
@@ -245,7 +245,7 @@ Port SAM (Software Automatic Mouth, public domain, ~2 K lines) as the initial TT
 
 ---
 
-## 8. Software OpenGL (TinyGL Port) `[Opus]`
+## 8. Software OpenGL (TinyGL Port)
 
 Port TinyGL (~5 K lines, zlib license) to render to the Impossible OS framebuffer. Enables 3D apps and games.
 
@@ -262,7 +262,7 @@ Port TinyGL (~5 K lines, zlib license) to render to the Impossible OS framebuffe
 
 ---
 
-## 9. Multi-User Session Management + Fast Switching `[Opus]`
+## 9. Multi-User Session Management + Fast Switching
 
 Per-user sessions with isolated compositor surfaces. Depends on user accounts (`09-desktop-shell/TODO-06`) and the window manager (`08-graphics-ui/TODO-08`).
 
@@ -280,7 +280,7 @@ Per-user sessions with isolated compositor surfaces. Depends on user accounts (`
 
 ---
 
-## 10. Telemetry (Opt-In, Anonymous) `[Sonnet]`
+## 10. Telemetry (Opt-In, Anonymous)
 
 Privacy-first, zero-by-default telemetry. All collection requires explicit user consent.
 
@@ -300,7 +300,7 @@ Privacy-first, zero-by-default telemetry. All collection requires explicit user 
 
 ---
 
-## 11. Parental Controls (`parcon.cpl`) `[Sonnet]`
+## 11. Parental Controls (`parcon.cpl`)
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 

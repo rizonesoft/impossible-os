@@ -53,18 +53,18 @@ The mail app cannot be launched yet, and the OS cannot open a TCP or TLS connect
 
 ## Which roadmap owns which half?
 
-The [Email Protocols](../networking/email-client.md) roadmap owns the message parser, SMTP, POP3, IMAP, server autodiscovery and search; its window, compose and notification sections are marked as moved here. This roadmap owns the app, the credential store, notifications, contacts and the spam filter. Two details disagree between the files and are filed in [section 8](../../todo/11-apps/TODO-04-email-client.md#8-contacts-store-sonnet): contacts are a CSV file under the user's folder here and a JSON file under `C:\Users\Default\` there, and the message store path differs the same way.
+The [Email Protocols](../networking/email-client.md) roadmap owns the message parser, SMTP, POP3, IMAP, server autodiscovery and search; its window, compose and notification sections are marked as moved here. This roadmap owns the app, the credential store, notifications, contacts and the spam filter. Two details disagree between the files and are filed in [section 8](../../todo/11-apps/TODO-04-email-client.md#8-contacts-store): contacts are a CSV file under the user's folder here and a JSON file under `C:\Users\Default\` there, and the message store path differs the same way.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [SMTP Client](../../todo/11-apps/TODO-04-email-client.md#1-smtp-client-sonnet) and [POP3 Client](../../todo/11-apps/TODO-04-email-client.md#2-pop3-client--message-storage-sonnet), which need TLS
-- [IMAP Client](../../todo/11-apps/TODO-04-email-client.md#3-imap-client-stretch-opus), a stretch goal
-- [Three-Panel Email GUI](../../todo/11-apps/TODO-04-email-client.md#4-three-panel-email-gui-opus) and the [Compose Window](../../todo/11-apps/TODO-04-email-client.md#5-compose-window-sonnet)
-- [Account Management and Credential Store](../../todo/11-apps/TODO-04-email-client.md#6-account-management--credential-store-sonnet), which needs AES-GCM in the CNG roadmap
-- [Auto-Check, Notifications and Tray](../../todo/11-apps/TODO-04-email-client.md#7-auto-check--notifications--tray-sonnet)
-- [Contacts Store](../../todo/11-apps/TODO-04-email-client.md#8-contacts-store-sonnet) and the [Spam and Junk Filter](../../todo/11-apps/TODO-04-email-client.md#9-spam--junk-filter-sonnet)
+- [SMTP Client](../../todo/11-apps/TODO-04-email-client.md#1-smtp-client) and [POP3 Client](../../todo/11-apps/TODO-04-email-client.md#2-pop3-client--message-storage), which need TLS
+- [IMAP Client](../../todo/11-apps/TODO-04-email-client.md#3-imap-client-stretch), a stretch goal
+- [Three-Panel Email GUI](../../todo/11-apps/TODO-04-email-client.md#4-three-panel-email-gui) and the [Compose Window](../../todo/11-apps/TODO-04-email-client.md#5-compose-window)
+- [Account Management and Credential Store](../../todo/11-apps/TODO-04-email-client.md#6-account-management--credential-store), which needs AES-GCM in the CNG roadmap
+- [Auto-Check, Notifications and Tray](../../todo/11-apps/TODO-04-email-client.md#7-auto-check--notifications--tray)
+- [Contacts Store](../../todo/11-apps/TODO-04-email-client.md#8-contacts-store) and the [Spam and Junk Filter](../../todo/11-apps/TODO-04-email-client.md#9-spam--junk-filter)
 
 ## How does it compare with Windows 11 and Linux?
 

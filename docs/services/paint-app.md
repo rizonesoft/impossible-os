@@ -40,11 +40,11 @@ Paint cannot be launched yet. Of the image calls it will use, `image_load()` and
 
 ## What is not implemented yet?
 
-- [Canvas and Viewport](../../todo/10-platform-services/TODO-02-paint-app.md#1-canvas--viewport-sonnet), which also needs the menu bar and status bar controls
-- [Drawing Tools](../../todo/10-platform-services/TODO-02-paint-app.md#2-drawing-tools-sonnet) and the [Color System](../../todo/10-platform-services/TODO-02-paint-app.md#3-color-system-sonnet)
-- [Undo and Redo](../../todo/10-platform-services/TODO-02-paint-app.md#4-undoredo-sonnet)
-- [File Operations](../../todo/10-platform-services/TODO-02-paint-app.md#5-file-operations-sonnet), which needs the file dialogs
-- [Selection Tool](../../todo/10-platform-services/TODO-02-paint-app.md#6-selection-tool-stretch-sonnet) and [Zoom and Resize](../../todo/10-platform-services/TODO-02-paint-app.md#7-zoom--resize-stretch-sonnet), both stretch goals
+- [Canvas and Viewport](../../todo/10-platform-services/TODO-02-paint-app.md#1-canvas--viewport), which also needs the menu bar and status bar controls
+- [Drawing Tools](../../todo/10-platform-services/TODO-02-paint-app.md#2-drawing-tools) and the [Color System](../../todo/10-platform-services/TODO-02-paint-app.md#3-color-system)
+- [Undo and Redo](../../todo/10-platform-services/TODO-02-paint-app.md#4-undoredo)
+- [File Operations](../../todo/10-platform-services/TODO-02-paint-app.md#5-file-operations), which needs the file dialogs
+- [Selection Tool](../../todo/10-platform-services/TODO-02-paint-app.md#6-selection-tool-stretch) and [Zoom and Resize](../../todo/10-platform-services/TODO-02-paint-app.md#7-zoom--resize-stretch), both stretch goals
 
 ## How does it compare with Windows 11 and Linux?
 

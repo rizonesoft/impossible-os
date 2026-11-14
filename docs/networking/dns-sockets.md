@@ -56,8 +56,8 @@ It cannot be used yet. To see the DNS server a program would query, run `ifconfi
 
 ## What is not implemented yet?
 
-- **Resolver**: [DNS Query Builder](../../todo/07-networking/TODO-02-dns-sockets.md#1-dns-query-builder-sonnet), [DNS Response Parser](../../todo/07-networking/TODO-02-dns-sockets.md#2-dns-response-parser-sonnet), [DNS Cache](../../todo/07-networking/TODO-02-dns-sockets.md#3-dns-cache-sonnet) and [AAAA Query Stub](../../todo/07-networking/TODO-02-dns-sockets.md#4-aaaa-query-stub-sonnet).
-- **Sockets**: [Kernel Socket Layer](../../todo/07-networking/TODO-02-dns-sockets.md#5-kernel-socket-layer-opus), [Server Sockets](../../todo/07-networking/TODO-02-dns-sockets.md#6-server-sockets-sonnet), [Socket Options + Syscalls](../../todo/07-networking/TODO-02-dns-sockets.md#7-socket-options--syscalls-sonnet) and [`select()`](../../todo/07-networking/TODO-02-dns-sockets.md#8-select-opus).
+- **Resolver**: [DNS Query Builder](../../todo/07-networking/TODO-02-dns-sockets.md#1-dns-query-builder), [DNS Response Parser](../../todo/07-networking/TODO-02-dns-sockets.md#2-dns-response-parser), [DNS Cache](../../todo/07-networking/TODO-02-dns-sockets.md#3-dns-cache) and [AAAA Query Stub](../../todo/07-networking/TODO-02-dns-sockets.md#4-aaaa-query-stub).
+- **Sockets**: [Kernel Socket Layer](../../todo/07-networking/TODO-02-dns-sockets.md#5-kernel-socket-layer), [Server Sockets](../../todo/07-networking/TODO-02-dns-sockets.md#6-server-sockets), [Socket Options + Syscalls](../../todo/07-networking/TODO-02-dns-sockets.md#7-socket-options--syscalls) and [`select()`](../../todo/07-networking/TODO-02-dns-sockets.md#8-select).
 - **Pointer checking**: `SYS_NETINFO` writes to the caller's buffer without checking that it is a user address. That defect belongs to the legacy system call audit in [Kernel Security Hardening](../kernel/kernel-security-hardening.md).
 - **Win32 surface**: `ws2_32.dll` and Winsock belong to [Time Sync, Network Status and Winsock](ntp-status-winsock.md).
 

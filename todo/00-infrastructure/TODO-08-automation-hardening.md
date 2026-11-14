@@ -43,7 +43,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 - [`CLAUDE.md`](../../CLAUDE.md) -- master doctrine; §2 adds a one-paragraph "Codex invocation policy" section under Model Roles
 - -> XREF: [`00-infrastructure/TODO-02 §3 Hook Routing Matrix`](TODO-02-ai-development-system.md) -- §3 + §4 add new hook rows, this TODO is the implementation owner; TODO-02 is the documentation owner
 - -> XREF: [`00-infrastructure/TODO-02 §4 External-Reviewer Contract`](TODO-02-ai-development-system.md) -- §5 enforces the contract via tool-call gating; TODO-02 owns the doctrine paragraph
-- -> XREF: [`00-infrastructure/TODO-06 §8 todo-graph MCP server`](TODO-06-todo-metadata-layer.md#8-mcp-server-read-only-ai-agent-transport-over-4) -- consumer; §1 + §6 specify when Claude AND Codex must call which MCP method
+- -> XREF: [`00-infrastructure/TODO-06 §8 todo-graph MCP server`](TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) -- consumer; §1 + §6 specify when Claude AND Codex must call which MCP method
 - -> XREF: [`00-infrastructure/TODO-07 §1, §7, §8`](TODO-07-lsp-mcp-bridge.md) -- consumer; §1 wires the bridge into Codex; §6 wires usage discipline into both sides
 
 ## Outcome

@@ -42,6 +42,7 @@ title: "TODO-09 -- C/C++ Compiler & SDK"
 | → XREF: `TODO-07 §2` | `SYS_*` Win32 syscall ABI, `handle_table` in task |
 | → XREF: `TODO-08 §5–5,13,15` | Win32 types, process API, memory API, IxUI, `impossible-cc` host SDK |
 | Related | `11-apps/TODO-08-notepad.md` | Native IDE integration (`cc` build action, error parse) |
+| `D11 T05 §11` | The C++23 user-mode runtime (libc++, libc++abi, libunwind) for bundled apps is built there; §11 here keeps on-device compilers |
 
 ---
 
@@ -77,7 +78,7 @@ title: "TODO-09 -- C/C++ Compiler & SDK"
 
 ---
 
-## 1. SDK C Headers `[Sonnet]`
+## 1. SDK C Headers
 
 Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impossible\Include\` on disk). Compatible with TCC and MinGW cross-compiler. No stdlib -- freestanding only.
 
@@ -101,7 +102,7 @@ Create the canonical on-OS C header set at `sdk/include/` (installed to `C:\Impo
 
 ---
 
-## 2. SDK GUI Headers `[Sonnet]`
+## 2. SDK GUI Headers
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -121,7 +122,7 @@ GUI-facing headers for Win32 window/GDI programs and IxUI native apps. These com
 
 ---
 
-## 3. SDK Import Libraries `[Sonnet]`
+## 3. SDK Import Libraries
 
 Build COFF `.lib` import stub libraries for the PE linker. These let MinGW-compiled and TCC-compiled programs link against Impossible OS DLL stubs.
 
@@ -137,7 +138,7 @@ Build COFF `.lib` import stub libraries for the PE linker. These let MinGW-compi
 
 ---
 
-## 4. Cross-Compile TCC for Impossible OS `[Opus]`
+## 4. Cross-Compile TCC for Impossible OS
 
 TCC already supports PE/x86-64 output (`-m64`). Patch and configure for Impossible OS paths. This section requires careful integration of TCC's allocator and I/O routines against the SDK.
 
@@ -160,7 +161,7 @@ TCC already supports PE/x86-64 output (`-m64`). Patch and configure for Impossib
 
 ---
 
-## 5. Install TCC on OS Disk Image `[Sonnet]`
+## 5. Install TCC on OS Disk Image
 
 - [ ] Copy `tcc.exe` → `C:\Impossible\Bin\tcc.exe` on the IXFS partition
 - [ ] Copy `libtcc1.a` → `C:\Impossible\Lib\libtcc1.a`
@@ -175,7 +176,7 @@ TCC already supports PE/x86-64 output (`-m64`). Patch and configure for Impossib
 
 ---
 
-## 6. TCC Self-Hosting Tests `[Sonnet]`
+## 6. TCC Self-Hosting Tests
 
 Run all TCC tests natively inside QEMU after §5. Each test validates a different compiler capability.
 
@@ -191,7 +192,7 @@ Run all TCC tests natively inside QEMU after §5. Each test validates a differen
 
 ---
 
-## 7. TCC IxUI Integration `[Sonnet]`
+## 7. TCC IxUI Integration
 
 Enables on-OS GUI app development with TCC and the IxUI toolkit.
 
@@ -205,7 +206,7 @@ Enables on-OS GUI app development with TCC and the IxUI toolkit.
 
 ---
 
-## 8. Shell Compiler Integration `[Sonnet]`
+## 8. Shell Compiler Integration
 
 Integrates TCC into `cmd.exe` for a first-class developer experience on Impossible OS.
 
@@ -224,7 +225,7 @@ Integrates TCC into `cmd.exe` for a first-class developer experience on Impossib
 
 ---
 
-## 9. SDK Installer + On-OS Pre-Install `[Sonnet]`
+## 9. SDK Installer + On-OS Pre-Install
 
 Packages the SDK for host cross-compilation and pre-installs it on the OS disk image.
 
@@ -238,7 +239,7 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 
 ---
 
-## 10. SDK Documentation `[Sonnet]`
+## 10. SDK Documentation
 
 - [ ] Update `sdk/docs/api-reference.md` -- full API reference for all headers (§1–2): function signatures, parameter descriptions, return values, error codes
 - [ ] Create `sdk/docs/getting-started.md` -- "Hello World" tutorial: install SDK, cross-compile, copy to QEMU, run; covers both console and GUI app paths
@@ -249,7 +250,7 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 
 ---
 
-## 11. GCC/Clang (Long-Term C++ Support) `[Opus]`
+## 11. GCC/Clang (Long-Term C++ Support)
 
 > Long-term goal. Requires a mature userland environment. TCC milestones (§4–8) are the prerequisite -- do not start §11 until TCC is self-hosting.
 

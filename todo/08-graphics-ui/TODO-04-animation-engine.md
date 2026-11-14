@@ -48,7 +48,7 @@ title: "TODO-04 -- Animation Engine"
 
 ---
 
-## 1. Core Tween Engine `[Sonnet]`
+## 1. Core Tween Engine
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -67,7 +67,7 @@ title: "TODO-04 -- Animation Engine"
 - [ ] `int gfx_tween_active(const gfx_tween_t *tw)` → `tw->active`
 - [ ] Commit: `"gfx/anim: gfx_tween_t -- start/update/value, 16.16 fixed-point, on_complete callback"`
 
-## 2. Easing Functions `[Sonnet]`
+## 2. Easing Functions
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -100,7 +100,7 @@ title: "TODO-04 -- Animation Engine"
   - Shell surfaces use ONLY these three curves and the `THEME_MOTION_*_MS` durations; the quad/cubic/bounce/back set stays for app content
 - [ ] Commit: `"gfx/anim: easing functions -- quad/cubic/bounce/back plus the design's decelerate/accelerate/standard curves"`
 
-## 3. Global Animation Manager `[Sonnet]`
+## 3. Global Animation Manager
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -127,7 +127,7 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx/anim: anim_mgr -- 64-slot table, tick/add/cancel, wired into wm_composite()"`
 
-## 4. Registry Controls `[Sonnet]`
+## 4. Registry Controls
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -149,7 +149,7 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
   - Flyouts and menus fade and rise `THEME_SIZE_FLYOUT_RISE` (12) px over `THEME_MOTION_NORMAL_MS` (`docs/design/shell.md#materials`); taskbar indicator width animates over the same; curves are the `motion.ease_*` control points in `docs/design/tokens.json`
 - [ ] Commit: `"gfx/anim: registry controls -- EnableAnimations + AnimationSpeed, snap reduce-motion path"`
 
-## 5. Window Transition Animations `[Opus]`
+## 5. Window Transition Animations
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#materials`](../../docs/design/shell.md#materials), [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
@@ -176,7 +176,7 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
   - Found by the `00-infrastructure/TODO-10-documentation-site.md` §16 review; verified at source
 - [ ] Commit: `"desktop/wm_anim: window open/close/minimize/restore/maximize/snap/menu animations"`
 
-## 6. Spring Physics `[Opus]`
+## 6. Spring Physics
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -198,7 +198,7 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx/spring: integer Hooke's law spring -- critically-damped default, spring_settled, substep"`
 
-## 7. Compositor Integration `[Sonnet]`
+## 7. Compositor Integration
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 

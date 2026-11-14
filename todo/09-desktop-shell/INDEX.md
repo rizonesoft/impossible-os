@@ -1,4 +1,4 @@
-# 08 Desktop Shell
+# 09 Desktop Shell
 
 This domain covers the user-visible desktop shell: compositor policy, shell surfaces, desktop workflows, and the overall shell experience.
 
@@ -10,8 +10,8 @@ This domain covers the user-visible desktop shell: compositor policy, shell surf
 
 ## Does Not Belong Here
 
-- Low-level graphics primitives, theme internals, or reusable controls. Put that in [07 Graphics UI](../08-graphics-ui/INDEX.md).
-- Standalone built-in applications. Put that in [10 Apps](../11-apps/INDEX.md).
+- Low-level graphics primitives, theme internals, or reusable controls. Put that in [08 Graphics UI](../08-graphics-ui/INDEX.md).
+- Standalone built-in applications. Put that in [11 Apps](../11-apps/INDEX.md).
 
 ## Likely Source Areas
 

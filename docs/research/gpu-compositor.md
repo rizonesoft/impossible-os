@@ -42,14 +42,14 @@ There is no GPU path to switch on. The CPU compositor runs on every boot; its fr
 
 Every section is open.
 
-- [GPU Access Strategy Options](../../todo/18-future-research/TODO-03-gpu-compositor.md#1-gpu-access-strategy-options-sonnet)
-- [TinyGL to Mesa lavapipe Upgrade Research](../../todo/18-future-research/TODO-03-gpu-compositor.md#2-tinygl--mesa-lavapipe-upgrade-research-sonnet)
-- [Display Engine Research (AMD DCN + Intel Arc)](../../todo/18-future-research/TODO-03-gpu-compositor.md#3-display-engine-research-amd-dcn--intel-arc-sonnet)
-- [Vulkan Kernel Driver Architecture](../../todo/18-future-research/TODO-03-gpu-compositor.md#4-vulkan-kernel-driver-architecture-opus)
-- [Compositor GPU Path Design](../../todo/18-future-research/TODO-03-gpu-compositor.md#5-compositor-gpu-path-design-opus)
-- [Research Deliverables](../../todo/18-future-research/TODO-03-gpu-compositor.md#6-research-deliverables-sonnet)
+- [GPU Access Strategy Options](../../todo/18-future-research/TODO-03-gpu-compositor.md#1-gpu-access-strategy-options)
+- [TinyGL to Mesa lavapipe Upgrade Research](../../todo/18-future-research/TODO-03-gpu-compositor.md#2-tinygl--mesa-lavapipe-upgrade-research)
+- [Display Engine Research (AMD DCN + Intel Arc)](../../todo/18-future-research/TODO-03-gpu-compositor.md#3-display-engine-research-amd-dcn--intel-arc)
+- [Vulkan Kernel Driver Architecture](../../todo/18-future-research/TODO-03-gpu-compositor.md#4-vulkan-kernel-driver-architecture)
+- [Compositor GPU Path Design](../../todo/18-future-research/TODO-03-gpu-compositor.md#5-compositor-gpu-path-design)
+- [Research Deliverables](../../todo/18-future-research/TODO-03-gpu-compositor.md#6-research-deliverables)
 
-The VirtIO-GPU driver itself is also planned as a loadable module in [section 4 of the GPU and display drivers roadmap](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#4-virtio-gpu-display-module-opus), behind a `display_device_t` table. This spike's `display_plane_ops_t` would be a second display abstraction for the same hardware; reconciling the two is filed in section 5 here, so the research builds on the driver plan rather than beside it. Native-GPU work also waits on an IOMMU driver, which [the hypervisor research](hypervisor.md) records as a prerequisite.
+The VirtIO-GPU driver itself is also planned as a loadable module in [section 4 of the GPU and display drivers roadmap](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#4-virtio-gpu-display-module), behind a `display_device_t` table. This spike's `display_plane_ops_t` would be a second display abstraction for the same hardware; reconciling the two is filed in section 5 here, so the research builds on the driver plan rather than beside it. Native-GPU work also waits on an IOMMU driver, which [the hypervisor research](hypervisor.md) records as a prerequisite.
 
 ## How does it compare with Windows 11 and Linux?
 

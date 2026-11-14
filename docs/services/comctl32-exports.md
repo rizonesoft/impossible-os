@@ -33,7 +33,7 @@ Before adding a comctl32 export, find its row, confirm the native control it wra
 ## What is not implemented yet?
 
 - [Tier 1](../../todo/10-platform-services/TODO-B-comctl32-export-master-table.md#tier-1----init-and-version), owned by the [Win32 API Surface](../../todo/10-platform-services/TODO-08-win32-api-surface.md) roadmap and the PE loader's built-in tables
-- [Tier 2](../../todo/10-platform-services/TODO-B-comctl32-export-master-table.md#tier-2----control-class-roadmap-ixui-mapping-not-pe-names), which waits on the [ListView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#1-listview-opus) and [TreeView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#2-treeview-opus) controls
+- [Tier 2](../../todo/10-platform-services/TODO-B-comctl32-export-master-table.md#tier-2----control-class-roadmap-ixui-mapping-not-pe-names), which waits on the [ListView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#1-listview) and [TreeView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#2-treeview) controls
 - [Tier 3](../../todo/10-platform-services/TODO-B-comctl32-export-master-table.md#tier-3----full-named-export-roster-alphabetical-wine-scaffold)
 
 ## How does it compare with Windows 11 and Linux?

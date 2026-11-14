@@ -34,14 +34,14 @@ bash scripts/test.sh SUITE=mm
 
 ## What is not implemented yet?
 
-- **Guards on every stack.** Guards ship under different names on the `task_create()` and user-thread paths, but user processes created by `task_create_user()`, forked tasks and kernel threads still run on unguarded `kmalloc()` stacks, and a guard installed after a process root was cloned is not enforced under it ([Thread Stack Guard Pages](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#1-thread-stack-guard-pages-sonnet)).
-- **Preemption debugging.** No `preempt_disable()`, depth limit or `preemptible()` check ([Preemption Count -- Debug Extensions](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#2-preemption-count----debug-extensions-opus)).
-- **SLAB red zones and a free-time canary** ([Heap Canaries + SLAB Red Zones](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#3-heap-canaries--slab-red-zones-sonnet)).
-- **Lockdep** for lock-order validation ([Lock Dependency Validator](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#4-lock-dependency-validator-lockdep-opus)).
-- **A soft-lockup watchdog thread.** The ACPI hardware watchdog in [Boot Watchdog](../boot/boot-watchdog.md) is a different feature ([Kernel Watchdog Thread](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#5-kernel-watchdog-thread-sonnet)).
-- **KCSAN and KASAN** ([KCSAN](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#6-kcsan----kernel-concurrency-sanitiser-opus), [KASAN](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#9-kasan----kernel-address-sanitiser-opus)).
-- **A graphical deadlock view and `/sys/locks`** ([Graphical Deadlock Visualisation](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#7-graphical-deadlock-visualisation-opus), [Named Lock Browser](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#8-named-lock-browser-syslocks-sonnet)).
-- **`/sys/mem`**, one memory statistics file for Win32 and Linux-style readers ([`/sys/mem` Unified Memory Observability](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#10-sysmem-unified-memory-observability-sonnet)).
+- **Guards on every stack.** Guards ship under different names on the `task_create()` and user-thread paths, but user processes created by `task_create_user()`, forked tasks and kernel threads still run on unguarded `kmalloc()` stacks, and a guard installed after a process root was cloned is not enforced under it ([Thread Stack Guard Pages](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#1-thread-stack-guard-pages)).
+- **Preemption debugging.** No `preempt_disable()`, depth limit or `preemptible()` check ([Preemption Count -- Debug Extensions](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#2-preemption-count----debug-extensions)).
+- **SLAB red zones and a free-time canary** ([Heap Canaries + SLAB Red Zones](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#3-heap-canaries--slab-red-zones)).
+- **Lockdep** for lock-order validation ([Lock Dependency Validator](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#4-lock-dependency-validator-lockdep)).
+- **A soft-lockup watchdog thread.** The ACPI hardware watchdog in [Boot Watchdog](../boot/boot-watchdog.md) is a different feature ([Kernel Watchdog Thread](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#5-kernel-watchdog-thread)).
+- **KCSAN and KASAN** ([KCSAN](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#6-kcsan----kernel-concurrency-sanitiser), [KASAN](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#9-kasan----kernel-address-sanitiser)).
+- **A graphical deadlock view and `/sys/locks`** ([Graphical Deadlock Visualisation](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#7-graphical-deadlock-visualisation), [Named Lock Browser](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#8-named-lock-browser-syslocks)).
+- **`/sys/mem`**, one memory statistics file for Win32 and Linux-style readers ([`/sys/mem` Unified Memory Observability](../../todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md#10-sysmem-unified-memory-observability)).
 
 ## How does it compare with Windows 11 and Linux?
 

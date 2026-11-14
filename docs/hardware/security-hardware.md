@@ -49,14 +49,14 @@ On a booted system, the `[Phase0] CPU security` line shows the live SMEP and SMA
 
 ## What is not implemented yet?
 
-- **SMEP and SMAP enabled on every CPU.** Blocked until kernel pages lose the User bit ([SMEP + SMAP Late Init on All APs](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#1-smep--smap-late-init-on-all-aps-sonnet)).
-- **A kernel hardware RNG API that prefers RDSEED.** The generator and the bootloader's RDSEED-first seed exist; the roadmap's `hwrng_read()` does not ([Hardware RNG](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#2-hardware-rng----rdrand--rdseed--chacha20-csprng-fallback-opus)).
-- **DMA bounce buffers** for devices that cannot reach all of memory ([DMA Bounce Buffer Manager](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#3-dma-bounce-buffer-manager-sonnet)).
-- **An IOMMU driver.** The ACPI DMAR and IVRS table definitions arrive with ACPICA, but nothing reads them ([IOMMU / VT-d + AMD-Vi](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#4-iommu--vt-d--amd-vi-opus)).
-- **The roadmap's `Enabled` value and `secboot_is_enabled()` helper.** The state ships under different names, listed above ([Secure Boot UEFI Variable Read](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#5-secure-boot-uefi-variable-read-sonnet)).
-- **TPM PCR_Extend, GetCapability and an IOCTL surface** ([TPM 2.0 Command Layer and IOCTL Surface](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#6-tpm-20-command-layer-and-ioctl-surface-opus)).
-- **Measuring the kernel's own code into PCR 10.** A SHA-256 implementation exists; the measurement does not ([Boot-Time Kernel Integrity Check](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#7-boot-time-kernel-integrity-check-opus)).
-- **CET shadow stacks.** The CPU feature bit and the control-protection exception vector are known; nothing enables CET ([Intel CET Shadow Stacks](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#8-intel-cet-shadow-stacks-opus)).
+- **SMEP and SMAP enabled on every CPU.** Blocked until kernel pages lose the User bit ([SMEP + SMAP Late Init on All APs](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#1-smep--smap-late-init-on-all-aps)).
+- **A kernel hardware RNG API that prefers RDSEED.** The generator and the bootloader's RDSEED-first seed exist; the roadmap's `hwrng_read()` does not ([Hardware RNG](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#2-hardware-rng----rdrand--rdseed--chacha20-csprng-fallback)).
+- **DMA bounce buffers** for devices that cannot reach all of memory ([DMA Bounce Buffer Manager](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#3-dma-bounce-buffer-manager)).
+- **An IOMMU driver.** The ACPI DMAR and IVRS table definitions arrive with ACPICA, but nothing reads them ([IOMMU / VT-d + AMD-Vi](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#4-iommu--vt-d--amd-vi)).
+- **The roadmap's `Enabled` value and `secboot_is_enabled()` helper.** The state ships under different names, listed above ([Secure Boot UEFI Variable Read](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#5-secure-boot-uefi-variable-read)).
+- **TPM PCR_Extend, GetCapability and an IOCTL surface** ([TPM 2.0 Command Layer and IOCTL Surface](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#6-tpm-20-command-layer-and-ioctl-surface)).
+- **Measuring the kernel's own code into PCR 10.** A SHA-256 implementation exists; the measurement does not ([Boot-Time Kernel Integrity Check](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#7-boot-time-kernel-integrity-check)).
+- **CET shadow stacks.** The CPU feature bit and the control-protection exception vector are known; nothing enables CET ([Intel CET Shadow Stacks](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#8-intel-cet-shadow-stacks)).
 
 ## How does it compare with Windows 11 and Linux?
 

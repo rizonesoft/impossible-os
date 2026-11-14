@@ -53,11 +53,11 @@ It cannot be used yet.
 
 ## What is not implemented yet?
 
-- **Lists**: [ListView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#1-listview-opus) and [TreeView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#2-treeview-opus).
-- **Bars**: [Toolbar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#3-toolbar-sonnet), [MenuBar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#4-menubar-sonnet), [StatusBar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#5-statusbar-sonnet) and [GroupBox + Separator](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#6-groupbox--separator-sonnet).
-- **Tooltips**: [Tooltip Integration](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#7-tooltip-integration-sonnet). Its plan to add tooltips to the caption buttons needs another route, because those buttons are drawn by the window manager and are not controls.
-- **Dialogs**: [Dialog System](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#8-dialog-system-opus) and [Info Bar Control](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#9-info-bar-control).
-- Right-click menus are not here; they use the single engine in [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine-opus).
+- **Lists**: [ListView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#1-listview) and [TreeView](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#2-treeview).
+- **Bars**: [Toolbar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#3-toolbar), [MenuBar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#4-menubar), [StatusBar](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#5-statusbar) and [GroupBox + Separator](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#6-groupbox--separator).
+- **Tooltips**: [Tooltip Integration](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#7-tooltip-integration). Its plan to add tooltips to the caption buttons needs another route, because those buttons are drawn by the window manager and are not controls.
+- **Dialogs**: [Dialog System](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#8-dialog-system) and [Info Bar Control](../../todo/08-graphics-ui/TODO-06-widget-dialogs.md#9-info-bar-control).
+- Right-click menus are not here; they use the single engine in [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine).
 
 ## How does it compare with Windows 11 and Linux?
 

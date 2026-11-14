@@ -50,14 +50,14 @@ The installer pipeline itself (disk selection, partitioning, formatting, file co
 
 ## What is not implemented yet?
 
-- [Answer File Format and INI Parser](../../todo/15-installer-release/TODO-02-unattended-install.md#1-answer-file-format--ini-parser-sonnet)
-- [Unattended Install Mode](../../todo/15-installer-release/TODO-02-unattended-install.md#2-unattended-install-mode-sonnet), which needs the installer first
-- [`sysprep.exe`](../../todo/15-installer-release/TODO-02-unattended-install.md#3-sysprepexe-generalize--oobe-seal-opus)
-- [OEM Customization](../../todo/15-installer-release/TODO-02-unattended-install.md#4-oem-customization-sonnet)
-- [WIM and Image Capture](../../todo/15-installer-release/TODO-02-unattended-install.md#5-wim--image-capture-imagexexe-opus)
-- [Network Boot (PXE and TFTP Server)](../../todo/15-installer-release/TODO-02-unattended-install.md#6-network-boot-pxe--tftp-server-opus)
-- [VM Provisioning Templates](../../todo/15-installer-release/TODO-02-unattended-install.md#7-vm-provisioning-templates-sonnet)
-- [Enterprise Deployment Guide](../../todo/15-installer-release/TODO-02-unattended-install.md#8-enterprise-deployment-guide-sonnet)
+- [Answer File Format and INI Parser](../../todo/15-installer-release/TODO-02-unattended-install.md#1-answer-file-format--ini-parser)
+- [Unattended Install Mode](../../todo/15-installer-release/TODO-02-unattended-install.md#2-unattended-install-mode), which needs the installer first
+- [`sysprep.exe`](../../todo/15-installer-release/TODO-02-unattended-install.md#3-sysprepexe-generalize--oobe-seal)
+- [OEM Customization](../../todo/15-installer-release/TODO-02-unattended-install.md#4-oem-customization)
+- [WIM and Image Capture](../../todo/15-installer-release/TODO-02-unattended-install.md#5-wim--image-capture-imagexexe)
+- [Network Boot (PXE and TFTP Server)](../../todo/15-installer-release/TODO-02-unattended-install.md#6-network-boot-pxe--tftp-server)
+- [VM Provisioning Templates](../../todo/15-installer-release/TODO-02-unattended-install.md#7-vm-provisioning-templates)
+- [Enterprise Deployment Guide](../../todo/15-installer-release/TODO-02-unattended-install.md#8-enterprise-deployment-guide)
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -54,7 +54,7 @@ title: "TODO-12 -- I2C/SMBus Bus & Precision Touchpad"
 
 ---
 
-## 1. I2C/SMBus Host Controller Driver `[Opus]`
+## 1. I2C/SMBus Host Controller Driver
 
 Detect Intel PCH and AMD FCH SMBus controllers via PCI class `0x0C/0x05` and via ACPI `_HID` `PNP0C50`. Map MMIO or I/O base. Implement `i2c_transfer(addr, wbuf, wlen, rbuf, rlen)` for combined write+read transactions. Register multiple host adapters (PCH, embedded controller) as separate `bus_controller_t` instances.
 
@@ -74,7 +74,7 @@ Detect Intel PCH and AMD FCH SMBus controllers via PCI class `0x0C/0x05` and via
 - [ ] Boot log: `[I2C] Controller %u: Intel PCH/AMD FCH MMIO 0x%lx`
 - [ ] Commit: `"drivers: I2C/SMBus host controller -- Intel PCH + AMD FCH, i2c_transfer, bus_controller_t"`
 
-## 2. Synaptics PS/2 Touchpad Fallback `[Sonnet]`
+## 2. Synaptics PS/2 Touchpad Fallback
 
 Send the Synaptics PS/2 magic identify sequence to detect Synaptics capability bits. Switch to 6-byte extended absolute packet mode. Map absolute X/Y to relative delta via a low-pass filter. Detect multi-finger from pressure + width heuristics. Implement scroll zone.
 
@@ -91,7 +91,7 @@ Send the Synaptics PS/2 magic identify sequence to detect Synaptics capability b
 - [ ] Boot log: `[PS2] Synaptics touchpad detected (capability byte = 0x%02x)`
 - [ ] Commit: `"drivers: Synaptics PS/2 touchpad -- 6-byte absolute, delta filter, scroll zone, I2C yield"`
 
-## 3. ACPI I2C Device Enumeration `[Sonnet]`
+## 3. ACPI I2C Device Enumeration
 
 Walk the ACPI namespace for I2C slave children under each I2C controller node. Extract `_CRS` for I2C address, IRQ, and GPIO interrupt pin. Build `i2c_device_db[]` so touchpad and sensor probes have a list of devices to bind against.
 
@@ -107,7 +107,7 @@ Walk the ACPI namespace for I2C slave children under each I2C controller node. E
 - [ ] Boot log: `[I2C] Enumerated %u devices from ACPI (DSDT)`; per-device: `[I2C] %s @ 0x%02x IRQ %u`
 - [ ] Commit: `"drivers: ACPI I2C device enumeration -- I2CSerialBusV2 CRS, i2c_device_db[], probe dispatch"`
 
-## 4. HID-over-I2C (HoI2C) Transport `[Opus]`
+## 4. HID-over-I2C (HoI2C) Transport
 
 Detect the ACPI `PNP0C50` HID-over-I2C host. Fetch the HID descriptor at `wHIDDescRegister` (from `_DSM`). Issue `RESET`, wait for GPIO interrupt, then read reports via `wInputRegister` on each interrupt. Dispatch raw report bytes to the HID report parser (§5).
 
@@ -124,7 +124,7 @@ Detect the ACPI `PNP0C50` HID-over-I2C host. Fetch the HID descriptor at `wHIDDe
 - [ ] Boot log: `[HoI2C] Descriptor OK: reportDesc=%u bytes, maxInput=%u, VID=%04x PID=%04x`
 - [ ] Commit: `"drivers: HID-over-I2C -- HID descriptor fetch, RESET, GPIO interrupt, report dispatch"`
 
-## 5. HID Report Descriptor Parser `[Opus]`
+## 5. HID Report Descriptor Parser
 
 Parse binary HID report descriptors into a `hid_field[]` array mapping byte+bit offsets to usage codes, logical/physical ranges, and report size/count. Support `Generic Desktop`, `Digitizer`, and `Button` usage pages. Used by PTP (§5) and USB HID (TODO-10).
 
@@ -141,7 +141,7 @@ Parse binary HID report descriptors into a `hid_field[]` array mapping byte+bit 
 - [ ] `hid_find_field(fields, count, usage_page, usage)` → find first matching field; used by PTP to locate contact array
 - [ ] Commit: `"drivers: HID report descriptor parser -- hid_field[], hid_get_field_value, Digitizer+Desktop usage"`
 
-## 6. Microsoft Precision Touchpad (PTP) Multi-Touch `[Sonnet]`
+## 6. Microsoft Precision Touchpad (PTP) Multi-Touch
 
 Detect PTP via HID usage `Digitizer/TouchPad (0x0D/0x05)` in the parsed descriptor. Parse multi-touch contact reports (up to 10 contacts × contact_id, tip_switch, x, y, confidence, azimuth, width, height). Emit `touch_contact[]` array for the gesture engine (§8).
 
@@ -159,7 +159,7 @@ Detect PTP via HID usage `Digitizer/TouchPad (0x0D/0x05)` in the parsed descript
 - [ ] Boot log: `[PTP] %u contacts max, logical X [%d..%d] Y [%d..%d]`
 - [ ] Commit: `"drivers: PTP multi-touch -- contact parsing, touch_contact_t[], TouchpadEnabled Registry"`
 
-## 7. ELAN and Goodix I2C Touchpad Quirks `[Sonnet]`
+## 7. ELAN and Goodix I2C Touchpad Quirks
 
 Register device-specific probe functions for ELAN (`ELAN1000`–`ELAN9008`) and Goodix (`GT9110`/`GT9271`) touchpads. ELAN requires a wake-up I2C sequence before HoI2C. Goodix uses a direct I2C register protocol (not HID-over-I2C) and may require firmware update on first boot.
 
@@ -176,7 +176,7 @@ Register device-specific probe functions for ELAN (`ELAN1000`–`ELAN9008`) and 
 - [ ] Boot log: `[ELAN] Touchpad woken: %s` / `[Goodix] GT%s firmware checksum OK/corrected`
 - [ ] Commit: `"drivers: ELAN + Goodix I2C touchpad quirks -- wake-up, firmware check, direct register read"`
 
-## 8. PTP Gesture Engine `[Opus]`
+## 8. PTP Gesture Engine
 
 Recognise two-finger scroll, pinch-to-zoom, three-finger swipe, tap-to-click, two-finger right-click, and palm rejection from the `touch_contact[]` array. Synthesise `MOUSE_WHEEL`, `WM_GESTURE_ZOOM`, `WM_GESTURE_SWIPE`, and click events. All thresholds configurable via Registry.
 
@@ -195,7 +195,7 @@ Recognise two-finger scroll, pinch-to-zoom, three-finger swipe, tap-to-click, tw
 - [ ] Registry hot-reload: on report enter, call `gesture_reload_config()` if `g_gesture_config_dirty` flag is set (set by `mouse.cpl` on settings change)
 - [ ] Commit: `"drivers: PTP gesture engine -- scroll, pinch, 3-finger swipe, tap-click, palm reject, Registry cfg"`
 
-## 9. Touchpad Control Panel (`mouse.cpl` Touchpad Tab) `[Sonnet]`
+## 9. Touchpad Control Panel (`mouse.cpl` Touchpad Tab)
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -213,7 +213,7 @@ Extend `mouse.cpl` with a "Touchpad" settings tab: enable/disable toggle, tap-to
 - [ ] "Reset to defaults" button: restore all Registry keys to documented defaults
 - [ ] Commit: `"desktop: mouse.cpl Touchpad tab -- enable/tap/scroll/gestures/palm, Registry hot-reload"`
 
-## 10. `xinput list` / `touchpad-info` Shell Commands `[Sonnet]`
+## 10. `xinput list` / `touchpad-info` Shell Commands
 
 Print connected input devices and detailed touchpad diagnostics from the shell. For compatibility with scripts that expect Linux `xinput` output format.
 

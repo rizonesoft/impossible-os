@@ -47,17 +47,17 @@ The calculator cannot be launched yet. Nothing in this roadmap is runnable today
 
 ## Which roadmap owns the calculator?
 
-The utilities roadmap ([Task Manager, Device Manager and Core Utilities](../desktop/utilities.md)) owns the basic calculator in its section 2: the window, keypad, memory keys and keyboard input. This roadmap is the full app on top: history, scientific mode with degrees and radians, and programmer mode with word sizes. Both restate the same keypad and engine, and they name different header paths; that is filed in [section 1](../../todo/11-apps/TODO-09-calculator.md#1-standard-calculator-ui-sonnet) so one layout wins.
+The utilities roadmap ([Task Manager, Device Manager and Core Utilities](../desktop/utilities.md)) owns the basic calculator in its section 2: the window, keypad, memory keys and keyboard input. This roadmap is the full app on top: history, scientific mode with degrees and radians, and programmer mode with word sizes. Both restate the same keypad and engine, and they name different header paths; that is filed in [section 1](../../todo/11-apps/TODO-09-calculator.md#1-standard-calculator-ui) so one layout wins.
 
 ## What is not implemented yet?
 
 No calculator code exists yet, and only part of the maths section 4 relies on is ready:
 
-- [Standard Calculator UI](../../todo/11-apps/TODO-09-calculator.md#1-standard-calculator-ui-sonnet)
-- [Arithmetic Engine](../../todo/11-apps/TODO-09-calculator.md#2-arithmetic-engine-sonnet)
-- [Memory and History](../../todo/11-apps/TODO-09-calculator.md#3-memory--history-sonnet), which needs the clipboard
-- [Scientific Mode](../../todo/11-apps/TODO-09-calculator.md#4-scientific-mode-sonnet), which waits on the double maths unification in the [Kernel Embedded Libraries](../kernel/kernel-libraries.md) roadmap
-- [Programmer Mode](../../todo/11-apps/TODO-09-calculator.md#5-programmer-mode-sonnet)
+- [Standard Calculator UI](../../todo/11-apps/TODO-09-calculator.md#1-standard-calculator-ui)
+- [Arithmetic Engine](../../todo/11-apps/TODO-09-calculator.md#2-arithmetic-engine)
+- [Memory and History](../../todo/11-apps/TODO-09-calculator.md#3-memory--history), which needs the clipboard
+- [Scientific Mode](../../todo/11-apps/TODO-09-calculator.md#4-scientific-mode), which waits on the double maths unification in the [Kernel Embedded Libraries](../kernel/kernel-libraries.md) roadmap
+- [Programmer Mode](../../todo/11-apps/TODO-09-calculator.md#5-programmer-mode)
 
 ## How does it compare with Windows 11 and Linux?
 

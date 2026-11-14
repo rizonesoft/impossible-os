@@ -53,7 +53,7 @@ title: "TODO-08 -- Core Built-in Driver Enhancements"
 
 ---
 
-## 1. PCI Enhanced Config Space (ECAM) `[Sonnet]`
+## 1. PCI Enhanced Config Space (ECAM)
 
 Read the ACPI MCFG table to find the PCIe ECAM base address. Map the region and implement `pci_read_config32_ext(bus, dev, fn, reg)` / `pci_write_config32_ext(...)` using MMIO at `ecam_base + ((bus << 20) | (dev << 15) | (fn << 12) | reg)`. Fall back to legacy I/O CF8/CFC for buses not in the MCFG table.
 
@@ -70,7 +70,7 @@ Read the ACPI MCFG table to find the PCIe ECAM base address. Map the region and 
 - [ ] Boot log: `[PCI] ECAM: %u segment(s) mapped, %u buses`; `[PCI] ECAM: not available, using legacy I/O` if no MCFG
 - [ ] Commit: `"drivers: PCIe ECAM config access via ACPI MCFG -- pci_read/write_config32_ext, CF8 fallback"`
 
-## 2. PCIe Capability Chain Scanner `[Sonnet]`
+## 2. PCIe Capability Chain Scanner
 
 Walk the PCI standard capability list (pointer at config offset 0x34) and the PCIe extended capability list (starting at 0x100 in ECAM space). Expose `pci_find_capability(dev, cap_id)` and `pcie_find_extended_capability(dev, ext_cap_id)` returning the offset of the matching capability structure, or 0 if absent. Decode the PCIe Link Status register.
 
@@ -84,7 +84,7 @@ Walk the PCI standard capability list (pointer at config offset 0x34) and the PC
 - [ ] Log per PCIe device at enumeration: `[PCI] %04x:%04x PCIe Gen%u x%u`
 - [ ] Commit: `"drivers: PCIe capability chain scanner -- pci_find_capability, pcie_find_extended_capability, link speed"`
 
-## 3. MSI / MSI-X Interrupt Support `[Opus]`
+## 3. MSI / MSI-X Interrupt Support
 
 Enable Message Signalled Interrupts for PCIe devices. MSI writes a single `uint32_t` to a LAPIC-format address; MSI-X writes per-entry tables in device MMIO BAR space. Both eliminate shared legacy INTx pins and are required for multi-queue NVMe and high-bandwidth NICs.
 
@@ -111,7 +111,7 @@ Enable Message Signalled Interrupts for PCIe devices. MSI writes a single `uint3
 - [ ] Gate every MSI/MSI-X enable on `acpi_msi_supported()` (FADT IAPC_BOOT_ARCH bit 3); today it has no production caller and xHCI, AHCI, VirtIO enable MSI unconditionally
 - [ ] Commit: `"drivers: MSI/MSI-X -- pci_enable_msi/msix, LAPIC message format, INTx disable"`
 
-## 4. HPET Timer Driver `[Opus]`
+## 4. HPET Timer Driver
 
 Map the HPET MMIO registers from the ACPI HPET table base address. Parse the capabilities register for comparator count and `COUNTER_CLK_PERIOD`. Enable the main counter. Expose `hpet_read_ns()` returning monotonic nanoseconds. Use HPET as the reference clock for LAPIC timer calibration, replacing the hardcoded ICR.
 
@@ -130,7 +130,7 @@ Map the HPET MMIO registers from the ACPI HPET table base address. Parse the cap
 - [ ] Boot log: `[HPET] %u comparators, period=%u fs (%.3f MHz)`
 - [ ] Commit: `"drivers: HPET timer -- MMIO map, hpet_read_ns(), LAPIC calibration reference"`
 
-## 5. NVMe Storage Driver (Built-in) `[Opus]`
+## 5. NVMe Storage Driver (Built-in)
 
 Port from SerenityOS BSD-2 (`Kernel/Devices/Storage/NVMe/`) and adapt to the Impossible OS driver model. Detect PCI class `0x01/0x08/0x02`, map BAR0 MMIO, initialise Admin Queue, run Identify commands, create one I/O Queue pair, and register the namespace via `blkdev_register`. Must complete before IXFS mounts.
 
@@ -158,7 +158,7 @@ Port from SerenityOS BSD-2 (`Kernel/Devices/Storage/NVMe/`) and adapt to the Imp
 - [ ] Boot log: `[NVMe] Controller ready: %s, %llu GB, %u B/sector`
 - [ ] Commit: `"drivers: NVMe 1.4 built-in driver -- Admin+IO queues, Identify, read/write, blkdev_register"`
 
-## 6. PCIe Hot-Plug `[Opus]`
+## 6. PCIe Hot-Plug
 
 Subscribe to the Hot-Plug interrupt via the PCIe Slot Control register. On a Presence Detect Changed event, scan the downstream port for a new device or mark the departed device removed. Call `driver_probe_all()` for newly arrived devices to trigger driver `probe()`.
 

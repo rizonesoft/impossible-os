@@ -49,7 +49,7 @@ title: "TODO-14 -- Disk Benchmark & I/O Diagnostics"
 
 ---
 
-## 1. `diskbench` CLI `[Opus]`
+## 1. `diskbench` CLI
 
 Sequential read/write, random 4 KiB read/write, mixed 70/30, queue-depth sweep (QD=1/4/16/32). TSC-delta timing for latency percentiles. Bypass VFS -- raw `blkdev_read`/`blkdev_write` on a scratch LBA range.
 
@@ -68,7 +68,7 @@ Sequential read/write, random 4 KiB read/write, mixed 70/30, queue-depth sweep (
 - [ ] CLI: `diskbench <device_idx> <start_lba> <lba_count> [/seq] [/rand] [/mixed] [/qd=N] [/warmup=<mb>]`; require `YES` confirmation before writes; output aligned result table; exit if `lba_count < 131072` (64 MiB minimum)
 - [ ] Commit: `"shell: diskbench CLI -- seq/rand/mixed MB/s + IOPS, TSC-delta latency percentiles, QD sweep"`
 
-## 2. Disk Benchmark GUI `[Sonnet]`
+## 2. Disk Benchmark GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -87,7 +87,7 @@ Drive selector, queue depth picker, Start button. Real-time bar chart updating a
 - [ ] Export: `diskbench_export_txt(result, path)` writes a human-readable table to `C:\Temp\diskbench_YYYYMMDD_HHMMSS.txt`
 - [ ] Commit: `"desktop: Disk Benchmark GUI -- real-time bar chart, latency histogram, run history, export"`
 
-## 3. SMART Extended Diagnostics `[Sonnet]`
+## 3. SMART Extended Diagnostics
 
 ATA SMART READ DATA and READ THRESHOLDS commands. Full 30-attribute table with color-coded failure detection. Disk health score (0–100%). Registry export to `HKLM\HARDWARE\Disk\<id>\SMART\*`.
 
@@ -106,7 +106,7 @@ ATA SMART READ DATA and READ THRESHOLDS commands. Full 30-attribute table with c
 - [ ] CLI: `smart <drive>` → prints full attribute table with color codes; failing attrs shown in red; health score bar; exports to registry
 - [ ] Commit: `"drivers: ATA SMART -- READ DATA + THRESHOLDS, attribute parse, health score, registry export"`
 
-## 4. Generic `blkdev_stats_t` + Histogram API `[Opus]`
+## 4. Generic `blkdev_stats_t` + Histogram API
 
 Generalize VirtIO's `blk_telemetry.c` primitives into a kernel-wide `blkdev_stats_t` and `blkdev_latency_hist_t`. Add `blkdev_stats_record()` to every driver's completion path. Expose AHCI NCQ tag occupancy.
 
@@ -126,7 +126,7 @@ Generalize VirtIO's `blk_telemetry.c` primitives into a kernel-wide `blkdev_stat
 - [ ] `tsc_get_freq_hz()`: expose `s_tsc_freq` from `boot_timing.c` as a public function; update `blkdev_stats.h` to use it
 - [ ] Commit: `"drivers: generic blkdev_stats_t -- 64-bucket histogram, atomic counters, AHCI NCQ occupancy, VirtIO migration"`
 
-## 5. Per-Device Latency Histogram + `/sys/ioqueue` `[Sonnet]`
+## 5. Per-Device Latency Histogram + `/sys/ioqueue`
 
 Expose per-device `blkdev_stats_t` via a `/sys/ioqueue` VFS virtual file. Implement `NtQuerySystemInformation(SystemDiskPerformanceInformation)` parity. Provide a `latency` shell command.
 
@@ -142,7 +142,7 @@ Expose per-device `blkdev_stats_t` via a `/sys/ioqueue` VFS virtual file. Implem
 - [ ] Task Manager sparkline hook: export `blkdev_stats_get_recent_throughput(dev, &read_mbs, &write_mbs)` computing a 1-second sliding average from the running byte counters; Task Manager "Storage" tab calls this every 1 s
 - [ ] Commit: `"kernel: /sys/ioqueue + NtQuerySystemInformation disk perf + latency CLI command"`
 
-## 6. VFS Hot-Path Profiler `[Sonnet]`
+## 6. VFS Hot-Path Profiler
 
 Wrap `vfs_read`, `vfs_write`, and `vfs_readdir` with TSC-delta measurement. Per-filesystem per-op running average. Expose via `/sys/fsperfstats`. Highlight slowest driver.
 
@@ -159,7 +159,7 @@ Wrap `vfs_read`, `vfs_write`, and `vfs_readdir` with TSC-delta measurement. Per-
 - [ ] `sysctl vfs_perf [0|1|reset]` shell command: read/write `vfs_perf_enabled`; print current stats; reset
 - [ ] Commit: `"kernel: VFS hot-path profiler -- per-fs per-op EMA, /sys/fsperfstats, sysctl vfs_perf"`
 
-## 7. Storage Health Monitor Daemon `[Sonnet]`
+## 7. Storage Health Monitor Daemon
 
 SCHED_IDLE background thread. Polls SMART every 60 seconds. Compares attribute deltas. Logs `[WARN] Disk health degraded` to serial + event log. Posts desktop notification when health score drops below 80%.
 

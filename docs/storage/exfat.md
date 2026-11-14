@@ -44,12 +44,12 @@ It cannot be used yet. A USB drive or SD card formatted exFAT is detected as a d
 
 Everything in the roadmap:
 
-- **The on-disk foundation**: [VBR Parser + Boot Checksum](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#1-vbr-parser--boot-checksum-sonnet), [Allocation Bitmap](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#2-allocation-bitmap-sonnet), [Up-Case Table](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#3-up-case-table-sonnet) and [Directory Entry Sets](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#4-directory-entry-sets-opus).
-- **The read path**: [Directory Read](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#5-directory-read-sonnet) and [File Read](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#6-file-read-sonnet).
-- **The write path**: [File Write](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#7-file-write-opus), [Create / Delete / Rename](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#8-file-create--delete--rename-sonnet) and [Timestamp Encoding](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#9-timestamp-encoding-sonnet).
-- **Integration and edges**: [VFS Registration + Probe + fsck](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#10-vfs-registration--probe--fsck-sonnet), [Unicode Edge Cases](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#11-unicode-edge-cases-sonnet) and [Large File Support](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#12-large-file-support--4-gib-sonnet).
+- **The on-disk foundation**: [VBR Parser + Boot Checksum](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#1-vbr-parser--boot-checksum), [Allocation Bitmap](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#2-allocation-bitmap), [Up-Case Table](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#3-up-case-table) and [Directory Entry Sets](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#4-directory-entry-sets).
+- **The read path**: [Directory Read](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#5-directory-read) and [File Read](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#6-file-read).
+- **The write path**: [File Write](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#7-file-write), [Create / Delete / Rename](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#8-file-create--delete--rename) and [Timestamp Encoding](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#9-timestamp-encoding).
+- **Integration and edges**: [VFS Registration + Probe + fsck](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#10-vfs-registration--probe--fsck), [Unicode Edge Cases](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#11-unicode-edge-cases) and [Large File Support](../../todo/05-storage-filesystems/TODO-08-exfat-readwrite.md#12-large-file-support--4-gib).
 
-The probe chain the driver plugs into is itself unbuilt ([Filesystem Probe Chain](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#1-filesystem-probe-chain--drive-letter-assignment-opus)).
+The probe chain the driver plugs into is itself unbuilt ([Filesystem Probe Chain](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#1-filesystem-probe-chain--drive-letter-assignment)).
 
 ## How does it compare with Windows 11 and Linux?
 

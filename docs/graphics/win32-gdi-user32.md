@@ -52,10 +52,10 @@ Nothing is callable yet. The primitives these calls will wrap are covered by `ba
 
 ## What is not implemented yet?
 
-- [Win32 Shell Icon Index Map](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#1-win32-shell-icon-index-map-sonnet).
-- [GDI Device Context Stubs](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#2-gdi-device-context-stubs-sonnet), [GDI Drawing Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#3-gdi-drawing-functions-sonnet) and [GDI Text Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#4-gdi-text-functions-sonnet).
-- [USER32 Window Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#5-user32-window-functions-sonnet) and [USER32 Message Loop](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#6-user32-message-loop-opus).
-- [USER32 Cursor, Icon & System Metrics](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#7-user32-cursor-icon--system-metrics-sonnet) and [USER32 Dialogs](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#8-user32-dialogs-sonnet).
+- [Win32 Shell Icon Index Map](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#1-win32-shell-icon-index-map).
+- [GDI Device Context Stubs](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#2-gdi-device-context-stubs), [GDI Drawing Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#3-gdi-drawing-functions) and [GDI Text Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#4-gdi-text-functions).
+- [USER32 Window Functions](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#5-user32-window-functions) and [USER32 Message Loop](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#6-user32-message-loop).
+- [USER32 Cursor, Icon & System Metrics](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#7-user32-cursor-icon--system-metrics) and [USER32 Dialogs](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md#8-user32-dialogs).
 - The kernel side of these calls, the `NtGdi` and `NtUser` system calls, is the [Win32k Shadow SSDT](win32k-shadow-ssdt.md).
 
 ## How does it compare with Windows 11 and Linux?

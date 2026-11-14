@@ -62,8 +62,8 @@ It cannot be used yet. The closest check today is confirming the library is vend
 ## What is not implemented yet?
 
 - **Prerequisites**: TCP ([TCP and Network Infrastructure](tcp-network-infrastructure.md)) and name resolution and sockets ([DNS Resolver and Sockets](dns-sockets.md)).
-- **Plain HTTP**: [URL Parser](../../todo/07-networking/TODO-03-http-tls.md#1-url-parser-sonnet), [HTTP GET](../../todo/07-networking/TODO-03-http-tls.md#2-http-get-sonnet), [HTTP POST + Chunked Transfer Encoding](../../todo/07-networking/TODO-03-http-tls.md#3-http-post--chunked-transfer-encoding-sonnet) and [`wget` / `curl` Shell Commands](../../todo/07-networking/TODO-03-http-tls.md#4-wget--curl-shell-commands-sonnet).
-- **TLS**: [Mbed TLS Kernel Port](../../todo/07-networking/TODO-03-http-tls.md#5-mbed-tls-kernel-port-opus), [CA Certificate Store](../../todo/07-networking/TODO-03-http-tls.md#6-ca-certificate-store-sonnet), [HTTPS GET / POST](../../todo/07-networking/TODO-03-http-tls.md#7-https-get--post-opus) and [HTTP/1.1 Keep-Alive Connection Pool](../../todo/07-networking/TODO-03-http-tls.md#8-http11-keep-alive-connection-pool-opus).
+- **Plain HTTP**: [URL Parser](../../todo/07-networking/TODO-03-http-tls.md#1-url-parser), [HTTP GET](../../todo/07-networking/TODO-03-http-tls.md#2-http-get), [HTTP POST + Chunked Transfer Encoding](../../todo/07-networking/TODO-03-http-tls.md#3-http-post--chunked-transfer-encoding) and [`wget` / `curl` Shell Commands](../../todo/07-networking/TODO-03-http-tls.md#4-wget--curl-shell-commands).
+- **TLS**: [Mbed TLS Kernel Port](../../todo/07-networking/TODO-03-http-tls.md#5-mbed-tls-kernel-port), [CA Certificate Store](../../todo/07-networking/TODO-03-http-tls.md#6-ca-certificate-store), [HTTPS GET / POST](../../todo/07-networking/TODO-03-http-tls.md#7-https-get--post) and [HTTP/1.1 Keep-Alive Connection Pool](../../todo/07-networking/TODO-03-http-tls.md#8-http11-keep-alive-connection-pool).
 - **HTTP/2 and HTTP/3** are not planned.
 
 ## How does it compare with Windows 11 and Linux?

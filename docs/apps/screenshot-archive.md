@@ -53,17 +53,17 @@ Screenshots and archives are planned in three places, and the overlap is not yet
 - **Screenshots.** The [Desktop Shell Features](../graphics/desktop-shell-features.md) roadmap owns the basic PrtSc and Alt+PrtSc capture in its section 5, and the utilities roadmap ([Task Manager, Device Manager and Core Utilities](../desktop/utilities.md)) owns Win+Shift+S region capture in its section 4. This roadmap restates both and adds the snipping tool window and annotation.
 - **Archives.** The utilities roadmap's section 5 plans an archive manager at the same source path this roadmap uses, and the ZIP API and shell commands belong to the ZIP roadmap.
 
-These are filed in [section 1](../../todo/11-apps/TODO-12-screenshot-archive.md#1-full--window-capture--hotkeys-sonnet) and [section 4](../../todo/11-apps/TODO-12-screenshot-archive.md#4-archive-manager-sonnet) so that each capability has one owner.
+These are filed in [section 1](../../todo/11-apps/TODO-12-screenshot-archive.md#1-full--window-capture--hotkeys) and [section 4](../../todo/11-apps/TODO-12-screenshot-archive.md#4-archive-manager) so that each capability has one owner.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [Full and Window Capture and Hotkeys](../../todo/11-apps/TODO-12-screenshot-archive.md#1-full--window-capture--hotkeys-sonnet), which needs the hotkey table and clipboard
-- [Region Select Overlay](../../todo/11-apps/TODO-12-screenshot-archive.md#2-region-select-overlay-opus)
-- [Snipping Tool UI](../../todo/11-apps/TODO-12-screenshot-archive.md#3-snipping-tool-ui-sonnet)
-- [Archive Manager](../../todo/11-apps/TODO-12-screenshot-archive.md#4-archive-manager-sonnet), which needs the ZIP API and miniz in the build
-- [ZIP Shell Integration](../../todo/11-apps/TODO-12-screenshot-archive.md#5-zip-shell-integration-sonnet)
+- [Full and Window Capture and Hotkeys](../../todo/11-apps/TODO-12-screenshot-archive.md#1-full--window-capture--hotkeys), which needs the hotkey table and clipboard
+- [Region Select Overlay](../../todo/11-apps/TODO-12-screenshot-archive.md#2-region-select-overlay)
+- [Snipping Tool UI](../../todo/11-apps/TODO-12-screenshot-archive.md#3-snipping-tool-ui)
+- [Archive Manager](../../todo/11-apps/TODO-12-screenshot-archive.md#4-archive-manager), which needs the ZIP API and miniz in the build
+- [ZIP Shell Integration](../../todo/11-apps/TODO-12-screenshot-archive.md#5-zip-shell-integration)
 
 ## How does it compare with Windows 11 and Linux?
 

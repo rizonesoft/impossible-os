@@ -35,7 +35,7 @@ title: "TODO-09 -- File Manager"
 - → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §2` -- §6 Delete uses `trash_delete()` from there
 - → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §1` -- `file_assoc_open()` for double-click; §3 Open With dialog
 - → XREF: `09-desktop-shell/TODO-06-security-accounts.md §9` -- §5 Properties dialog shows `i_uid/i_mode` permissions
-- -> XREF: `D08 T17 §33,§34,§35,§36` -- the File Explorer inventory; `D08 T18 §17,§18,§19` supply the namespace, property and extension engines
+- -> XREF: `D08 T17 §12` -- the File Explorer inventory; `D08 T18 §17,§18,§19` supply the namespace, property and extension engines
 
 ## Outcome
 
@@ -63,7 +63,7 @@ title: "TODO-09 -- File Manager"
 
 ---
 
-## 1. Core Layout `[Sonnet]`
+## 1. Core Layout
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -91,7 +91,7 @@ The Windows 11 File Explorer frame of `docs/design/shell.md#file-explorer`: a 40
   - Content: "Devices and drives" with 48 px drive icons and 6 px accent usage bars, then "Folders" as 48 px folder tiles
 - [ ] Commit: `"filemgr: File Explorer frame -- tabbed title bar, address row, command bar, nav pane, status bar, vfs_readdir listing, history"`
 
-## 2. Sidebar `[Sonnet]`
+## 2. Sidebar
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -110,7 +110,7 @@ The navigation pane of `docs/design/shell.md#file-explorer`: one flat list -- De
 - [ ] Active item highlight: compare row path to `g_current_path`; draw 3 px accent left bar
 - [ ] Commit: `"filemgr: navigation pane -- design-order folders, This PC, drives, Network, accent selection bar"`
 
-## 3. View Modes `[Sonnet]`
+## 3. View Modes
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -131,7 +131,7 @@ Icon view and details view per `docs/design/controls.md#list-tree-and-grid-views
 - [ ] Command bar "View" menu (context menu engine): Large icons / Details; choice sets `g_view_mode`; Registry save
 - [ ] Commit: `"filemgr: icon view, detail view, column sort, multi-select Ctrl+Shift+click, view mode persist"`
 
-## 4. File Operations `[Sonnet]`
+## 4. File Operations
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -155,7 +155,7 @@ Ctrl+C → `clipboard_set(CLIP_FILES, path_list)`. Ctrl+X → cut mark. Ctrl+V �
   - Uses the standard dialog (`docs/design/controls.md#dialog`); the safe choice (Skip) is the default button; applies equally to paste, drag and drop, and restore from the Recycle Bin
 - [ ] Commit: `"filemgr: file ops -- copy/cut/paste, trash delete, inline F2 rename, new folder, progress, Ctrl+Z undo"`
 
-## 5. Context Menus `[Sonnet]`
+## 5. Context Menus
 
 **Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
@@ -179,7 +179,7 @@ Right-click file → Open/Open With/Cut/Copy/Delete/Rename/Properties. Right-cli
 - [ ] WM right-click: hit-test → file/folder/empty → dispatch to correct menu
 - [ ] Commit: `"filemgr: context menus -- file/folder/empty, Properties dialog with size/dates/perms, Open With"`
 
-## 6. File Search `[Sonnet]`
+## 6. File Search
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -199,7 +199,7 @@ The 260 px search box at the right of the address row ("Search <location>") → 
 - [ ] In detail view search results: add full-path column (or tooltip on hover)
 - [ ] Commit: `"filemgr: search -- toolbar search bar, search_query_scoped, 150ms debounce, in-search banner, clear"`
 
-## 7. Drag and Drop `[Sonnet]`
+## 7. Drag and Drop
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
@@ -219,7 +219,7 @@ Drag files from file area to desktop (create shortcut or copy). Drag between two
 - [ ] Sidebar drop: drop on a navigation pane folder row → `filemgr_copy_file()` to that row's path
 - [ ] Commit: `"filemgr: drag and drop -- ghost with count badge, drop to desktop/trash/other window, sidebar drop target"`
 
-## 8. Advanced Features `[Sonnet]`
+## 8. Advanced Features
 
 **Design:** [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 

@@ -57,18 +57,18 @@ It rewrites `CHANGELOG.md` at the repository root, grouping commits by their con
 
 ## Who owns what?
 
-The on-OS client (`update_check()`, download, apply and the IPKG installer) belongs to the [System Updates and IPKG Packages](../services/updates-packages.md) roadmap (`10-platform-services/TODO-03`). This file's sections 1, 4 and 6 change that client (a JSON manifest instead of INI, repository commands, delta apply); a reconcile item is filed in [section 1](../../todo/15-installer-release/TODO-03-update-server.md#1-version-manifest-api-sonnet) here and in section 1 of the client roadmap. The on-OS telemetry sender is the [long-term features](../services/long-term-features.md) roadmap's section 10. Release artifacts and signing are the release artifacts roadmap (`15-installer-release/TODO-01`), documented in [Boot Artifacts](boot-artifacts.md).
+The on-OS client (`update_check()`, download, apply and the IPKG installer) belongs to the [System Updates and IPKG Packages](../services/updates-packages.md) roadmap (`10-platform-services/TODO-03`). This file's sections 1, 4 and 6 change that client (a JSON manifest instead of INI, repository commands, delta apply); a reconcile item is filed in [section 1](../../todo/15-installer-release/TODO-03-update-server.md#1-version-manifest-api) here and in section 1 of the client roadmap. The on-OS telemetry sender is the [long-term features](../services/long-term-features.md) roadmap's section 10. Release artifacts and signing are the release artifacts roadmap (`15-installer-release/TODO-01`), documented in [Boot Artifacts](boot-artifacts.md).
 
 ## What is not implemented yet?
 
-- [Version Manifest API](../../todo/15-installer-release/TODO-03-update-server.md#1-version-manifest-api-sonnet)
-- [CDN and Hosting](../../todo/15-installer-release/TODO-03-update-server.md#2-cdn--hosting-sonnet)
-- [Release Promotion Pipeline](../../todo/15-installer-release/TODO-03-update-server.md#3-release-promotion-pipeline-sonnet), which should extend the shipped changelog script
-- [IPKG Package Repository](../../todo/15-installer-release/TODO-03-update-server.md#4-ipkg-package-repository-sonnet)
-- [Package Submission](../../todo/15-installer-release/TODO-03-update-server.md#5-package-submission-sonnet)
-- [Update Delta Packages](../../todo/15-installer-release/TODO-03-update-server.md#6-update-delta-packages-sonnet)
-- [Telemetry Pipeline](../../todo/15-installer-release/TODO-03-update-server.md#7-telemetry-pipeline-sonnet)
-- [Status Page](../../todo/15-installer-release/TODO-03-update-server.md#8-status-page-sonnet)
+- [Version Manifest API](../../todo/15-installer-release/TODO-03-update-server.md#1-version-manifest-api)
+- [CDN and Hosting](../../todo/15-installer-release/TODO-03-update-server.md#2-cdn--hosting)
+- [Release Promotion Pipeline](../../todo/15-installer-release/TODO-03-update-server.md#3-release-promotion-pipeline), which should extend the shipped changelog script
+- [IPKG Package Repository](../../todo/15-installer-release/TODO-03-update-server.md#4-ipkg-package-repository)
+- [Package Submission](../../todo/15-installer-release/TODO-03-update-server.md#5-package-submission)
+- [Update Delta Packages](../../todo/15-installer-release/TODO-03-update-server.md#6-update-delta-packages)
+- [Telemetry Pipeline](../../todo/15-installer-release/TODO-03-update-server.md#7-telemetry-pipeline)
+- [Status Page](../../todo/15-installer-release/TODO-03-update-server.md#8-status-page)
 
 The roadmap still names `impossible-os.dev` subdomains, a separate `impossible-os-updates` repository's `gh-pages` branch and SemVer-style versions such as `1.0.22100`. The live site is the address above, deployed by workflow rather than from a branch, and releases use the CalVer `vYY.M.D` tags described in [GitHub Repository Setup](../infrastructure/github-setup.md); both need settling before section 1 is built.
 

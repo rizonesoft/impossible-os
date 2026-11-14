@@ -53,7 +53,7 @@ title: "TODO-15 -- WiFi Hardware Drivers"
 
 ---
 
-## 1. WiFi Driver Abstraction Layer `[Opus]`
+## 1. WiFi Driver Abstraction Layer
 
 Define `wifi_device_t` vtable and `wifi_manager.c` singleton. Expose `SYS_WIFI_SCAN`, `SYS_WIFI_CONNECT`, `SYS_WIFI_DISCONNECT`, and `SYS_WIFI_STATUS` syscalls. Maintain preferred-network list in Registry.
 
@@ -83,7 +83,7 @@ Define `wifi_device_t` vtable and `wifi_manager.c` singleton. Expose `SYS_WIFI_S
 - [ ] Auto-connect on boot: after scan completes, compare `ssid` against `PreferredNetworks` list; if match and `AutoConnect=1`, call `wifi_manager_connect()`
 - [ ] Commit: `"net: wifi_device_t abstraction -- vtable, wifi_manager.c, SYS_WIFI_* syscalls, preferred networks"`
 
-## 2. 802.11 Frame Layer `[Sonnet]`
+## 2. 802.11 Frame Layer
 
 Parse and build IEEE 802.11 data frames. Strip the 802.11 header + LLC/SNAP on RX and deliver the Ethernet payload to `net_rx()`. Add 802.11 header + LLC/SNAP on TX. Handle management frame subtypes for scan and association.
 
@@ -103,7 +103,7 @@ Parse and build IEEE 802.11 data frames. Strip the 802.11 header + LLC/SNAP on R
 - [ ] `wifi_send_assoc_req(bssid, ssid, ssid_len, rsn_ie)`: FC=`0x0000`; capability=`0x0431`; SSID IE + supported rates IE + RSN IE
 - [ ] Commit: `"net: 802.11 frame layer -- RX strip/deliver, TX header build, LLC/SNAP, mgmt frames"`
 
-## 3. WiFi Scan & Association State Machine `[Opus]`
+## 3. WiFi Scan & Association State Machine
 
 Implement `wifi_scan()` (channel sweep with probe requests) and `wifi_connect()` state machine (scan → authenticate → associate → WPA2 handshake → DHCP). Retry logic with exponential backoff.
 
@@ -121,7 +121,7 @@ Implement `wifi_scan()` (channel sweep with probe requests) and `wifi_connect()`
 - [ ] Boot log: `[WiFi] Scanning... found %u networks`; `[WiFi] Connected to %s (ch %u, RSSI %d dBm)`
 - [ ] Commit: `"net: WiFi scan+association SM -- channel sweep, auth/assoc/WPA2/DHCP, retry, auto-reconnect"`
 
-## 4. RTL8188 / RTL8192 USB WiFi Driver `[Opus]`
+## 4. RTL8188 / RTL8192 USB WiFi Driver
 
 Implement USB WiFi for Realtek RTL8188EUS/RTL8192EU/RTL8812AU. Upload embedded firmware via USB control transfer. Use bulk-IN for RX, bulk-OUT for TX. Inject received frames into the 802.11 frame layer (§2).
 
@@ -140,7 +140,7 @@ Implement USB WiFi for Realtek RTL8188EUS/RTL8192EU/RTL8812AU. Upload embedded f
 - [ ] Boot log: `[RTL8188] USB WiFi %04x:%04x FW ready, MAC %02x:%02x:...`
 - [ ] Commit: `"drivers: RTL8188EUS USB WiFi -- firmware upload, bulk RX/TX, channel set, MAC read"`
 
-## 5. WPA2-PSK Supplicant -- EAPOL 4-Way Handshake + CCMP `[Opus]`
+## 5. WPA2-PSK Supplicant -- EAPOL 4-Way Handshake + CCMP
 
 Implement the WPA2-PSK 4-way EAPOL handshake and AES-128-CCM (CCMP) per-frame decryption. Security-critical code: constant-time MIC comparison, no timing side-channels in key derivation.
 
@@ -162,7 +162,7 @@ Implement the WPA2-PSK 4-way EAPOL handshake and AES-128-CCM (CCMP) per-frame de
 - [ ] Key installation: `wifi_install_keys(bssid, ptk, gtk)` writes TK to hardware key table via driver-specific register (or software decrypt path if no hardware offload)
 - [ ] Commit: `"net: WPA2-PSK supplicant -- PBKDF2/HMAC-SHA1 PMK/PTK, EAPOL 4-way, AES-128-CCM CCMP"`
 
-## 6. RTL8821CE / RTL8822BE PCIe WiFi Driver `[Opus]`
+## 6. RTL8821CE / RTL8822BE PCIe WiFi Driver
 
 Implement PCIe WiFi for RTL8821CE and RTL8822BE -- the most common WiFi chipset in 2018–2023 laptops. BAR0 MMIO. Load firmware from VFS. DMA descriptor rings for RX/TX. PCIe MSI IRQ for RX.
 
@@ -182,7 +182,7 @@ Implement PCIe WiFi for RTL8821CE and RTL8822BE -- the most common WiFi chipset 
 - [ ] Boot log: `[RTL8821CE] PCIe WiFi BAR0 0x%lx FW ready, MAC %02x:%02x:...`
 - [ ] Commit: `"drivers: RTL8821CE PCIe WiFi -- MMIO, firmware load from VFS, DMA rings, MSI IRQ"`
 
-## 7. Intel AX200 / AX210 iwlwifi PCIe Driver `[Opus]`
+## 7. Intel AX200 / AX210 iwlwifi PCIe Driver
 
 Implement Intel iwlwifi for AX200 and AX210 -- the most prevalent WiFi chipset in modern x86-64 laptops (>40% market share). BAR0 MMIO transport layer. Load `iwlwifi-cc-a0-72.ucode` (BSD-licensed) from VFS. Firmware command/response protocol.
 
@@ -204,7 +204,7 @@ Implement Intel iwlwifi for AX200 and AX210 -- the most prevalent WiFi chipset i
 - [ ] Boot log: `[iwlwifi] AX200/AX210 FW v%u.%u, MAC %02x:%02x:...`
 - [ ] Commit: `"drivers: iwlwifi -- AX200/AX210 transport, ucode load, host command ring, RX demux"`
 
-## 8. MediaTek MT7921 / MT7922 PCIe WiFi Driver `[Sonnet]`
+## 8. MediaTek MT7921 / MT7922 PCIe WiFi Driver
 
 Implement PCIe WiFi for MT7921/MT7922 -- common in AMD Ryzen laptops (ASUS, MSI, Lenovo). WFDMA (WiFi DMA) TX/RX rings. Load firmware from MediaTek open-source firmware project.
 
@@ -225,7 +225,7 @@ Implement PCIe WiFi for MT7921/MT7922 -- common in AMD Ryzen laptops (ASUS, MSI,
 - [ ] Boot log: `[MT7921] PCIe WiFi FW ready, MAC %02x:%02x:...`
 - [ ] Commit: `"drivers: MT7921/MT7922 PCIe WiFi -- WFDMA rings, MediaTek open firmware, MIT license"`
 
-## 9. WiFi Power Management `[Sonnet]`
+## 9. WiFi Power Management
 
 Implement 802.11 Power Save Poll (PS-Poll) after association: set the Power Management bit in the frame control field so the AP buffers frames while the station sleeps. Wire wake-on-WLAN to the ACPI S3 resume path.
 
@@ -242,7 +242,7 @@ Implement 802.11 Power Save Poll (PS-Poll) after association: set the Power Mana
 - [ ] `wifi_set_powersave` Registry key: `HKLM\SYSTEM\Network\WiFi\PowerSave (REG_DWORD, default 1)`
 - [ ] Commit: `"net: WiFi power management -- PS-Poll, wake-on-WLAN, S3 register save/restore"`
 
-## 10. `ncpa.cpl` WiFi Tab + `netsh wlan` Commands `[Sonnet]`
+## 10. `ncpa.cpl` WiFi Tab + `netsh wlan` Commands
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 

@@ -62,7 +62,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 1. Rich Text Document Model `[Opus]`
+## 1. Rich Text Document Model
 
 > Novel data structure: no prior Impossible OS precedent for a paragraph-level editor.
 > Doubly-linked paragraph list with per-paragraph run chains; snapshot-based undo must
@@ -84,7 +84,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 2. RTF File Format `[Sonnet]`
+## 2. RTF File Format
 
 > RTF 1.5 is a well-specified format with clear Windows reference docs.
 
@@ -121,7 +121,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 3. Rich Text Rendering + Layout Engine `[Opus]`
+## 3. Rich Text Rendering + Layout Engine
 
 > Multi-run line-breaking, per-run glyph metrics, and a ruler with draggable tab stop markers
 > are novel layout infrastructure with no prior Impossible OS precedent.
@@ -153,7 +153,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 4. Toolbar + Menus `[Sonnet]`
+## 4. Toolbar + Menus
 
 **Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
@@ -177,7 +177,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 5. Formatting Interactions `[Sonnet]`
+## 5. Formatting Interactions
 
 - [ ] **Ctrl+B / I / U / Strikethrough**: check if all chars in selection already have format → if yes, remove; else apply; update toolbar toggle state
 - [ ] **Tab key**: insert tab character `\t` into run; advance cursor to next tab stop (scan `para_fmt.tab_stops[]`; default tab stops every 720 twips)
@@ -191,7 +191,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 6. File Operations + File Associations `[Sonnet]`
+## 6. File Operations + File Associations
 
 - [ ] **File→Open**: `dialog_file_open("Rich Text|*.rtf|Text Files|*.txt|All Files|*.*")` → `rtf_load(path, doc)` or plain-text load; update window title; `modified=0`
 - [ ] **File→Save**: if `filepath==""` → Save As; else `rtf_save(filepath, doc)` (always saves as RTF); `modified=0`
@@ -207,7 +207,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ---
 
-## 7. Print (Stretch) `[Sonnet]`
+## 7. Print (Stretch)
 
 > → XREF: `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
 
@@ -235,9 +235,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 | 💎  | `.rtf` + `.doc` file associations                   | ✅ WordPad (`.rtf` default)       | ⚠️ AbiWord (`.rtf`; no built-in `.doc`) | ⬜ §6 -- `file_assoc_set` for both                                 |
 | 💎  | Print preview + PDF export                          | ✅ WordPad (Print dialog → PDF    | ✅ AbiWord (PDF via evince/cups)        | ⬜ §7 -- (Stretch) -- ; `pdf_begin/draw_text/end` TODO-12          |
 
-Impossible OS WordPad uses the same native TTF stack as every other desktop component --
-no RichEdit COM object, no GTK, no external layout engine -- giving consistent glyph metrics
-and a zero-dependency rich-text editing surface from day one.
+Impossible OS WordPad uses the same native TTF stack as every other desktop component -- no RichEdit COM object, no GTK, no external layout engine -- giving consistent glyph metrics and a zero-dependency rich-text editing surface from day one.
 
 ---
 

@@ -22,11 +22,12 @@ title: "TODO-19 -- Fluent Component Library"
 - [`docs/design/tokens.json`](../../docs/design/tokens.json) -- sizes, radii, colours and motion every template resolves through resources
 - [`src/desktop/controls.c`](../../src/desktop/controls.c) -- the existing button and text box, superseded by §2 and §4 on the new engine
 - -> XREF: `TODO-18-ui-framework-engines.md §1,§5,§7,§9,§11,§14,§24` -- element tree, styles and states, input, commands, markup, popups and automation peers every control is built on
-- -> XREF: `TODO-17-win11-parity-inventory.md §5,§49` -- the `controls` baseline this library is complete against, and the measured state matrix each template implements
+- -> XREF: `TODO-17-win11-parity-inventory.md §5,§14` -- the `controls` baseline this library is complete against, and the measured state matrix each template implements
 - -> XREF: `TODO-05-widget-library-core.md §1,§2,§3,§4,§5,§6,§9` -- check box, radio, slider, progress bar, combo box, tab strip and overlay scroll bar stay owned there and adopt the contract of §1
 - -> XREF: `TODO-06-widget-dialogs.md §1,§2,§3,§4,§5,§7,§8,§9` -- list view, tree view, toolbar, menu bar, status bar, tooltip, dialog system and info bar stay owned there and adopt the contract of §1
 - -> XREF: `TODO-02-text-font-internationalization.md §4` -- caret, selection and composition services the text controls of §4 to §7 use
 - -> XREF: `D10 TB §2` -- the classic common control classes §24 maps onto these controls
+- -> XREF: `D11 T05 §15` -- Recto, the bundled PDF app, uses the tab view of §17 and the title bar of §22
 
 ## Outcome
 
@@ -78,7 +79,7 @@ title: "TODO-19 -- Fluent Component Library"
 | 💎  |  23   | §23 Media transport controls                      | §2, T18 §12          |  [ ]   |
 | ⭐  |  24   | §24 Classic control parity                        | §2, §4, §8, §12      |  [ ]   |
 | ⭐  |  25   | §25 Controls gallery app                          | §2, §4, §12, §15     |  [ ]   |
-| ⭐  |  26   | §26 State matrix conformance suite                | §25, T17 §49         |  [ ]   |
+| ⭐  |  26   | §26 State matrix conformance suite                | §25, T17 §14         |  [ ]   |
 
 > 💎 = parity work: the control exists in Windows 11 and in the Linux toolkits.
 > ⭐ = exclusive work: one contract for every control, one dialog frame, classic and modern controls sharing one look, and a conformance suite measured against a reference.
@@ -483,7 +484,7 @@ An app that shows every control, for people to browse and for tests to read.
 - [ ] A state strip per control: the control frozen in each visual state (rest, hover, pressed, focused, disabled, selected), for capture without injected input
 - [ ] Each page shows the markup that produced it, read from the compiled page's source
 - [ ] A deep link per page and per state (`gallery:<control>/<state>`), used by the conformance suite and the visual regression tests
-- [ ] The gallery is the fixture for `TODO-17 §51`: its pages carry inventory ids so the layout check has a surface from the first control onward
+- [ ] The gallery is the fixture for `TODO-17 §16`: its pages carry inventory ids so the layout check has a surface from the first control onward
 - [ ] Retire `src/desktop/gallery.c` once its content is covered, or record in this section why it stays
 - [ ] Commit: `"apps: controls gallery"`
 

@@ -45,11 +45,11 @@ A port that keeps failing queued commands logs `Port <n>: NCQ disabled (cmd_fail
 
 ## What is not implemented yet?
 
-- **A write-back queue and `fsync()`** for VirtIO-blk ([VirtIO-blk Flush & Write-back](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#1-virtio-blk-flush--write-back-sonnet)); the retry tests in [VirtIO-blk Error Recovery](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#2-virtio-blk-error-recovery-sonnet).
-- **The NCQ race guard and tests** ([AHCI Native Command Queuing](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#3-ahci-native-command-queuing-ncq-opus)) and **recovery on every task-file error** with an offline state ([AHCI Error Recovery](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#4-ahci-error-recovery-opus)).
-- **SMART data**: nothing sends ATA SMART READ DATA ([AHCI SMART Read](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#5-ahci-smart-read-sonnet)).
-- **Per-device I/O counters** and an `iostat` command ([Block Device I/O Metrics](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#6-block-device-io-metrics-sonnet)).
-- **A block cache** ([Block-Level Disk Cache](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#7-block-level-disk-cache-opus)) and **I/O rate limits** per owner ([Block-I/O QoS](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#8-block-io-qos-iops--bandwidth-caps-opus)).
+- **A write-back queue and `fsync()`** for VirtIO-blk ([VirtIO-blk Flush & Write-back](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#1-virtio-blk-flush--write-back)); the retry tests in [VirtIO-blk Error Recovery](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#2-virtio-blk-error-recovery).
+- **The NCQ race guard and tests** ([AHCI Native Command Queuing](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#3-ahci-native-command-queuing-ncq)) and **recovery on every task-file error** with an offline state ([AHCI Error Recovery](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#4-ahci-error-recovery)).
+- **SMART data**: nothing sends ATA SMART READ DATA ([AHCI SMART Read](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#5-ahci-smart-read)).
+- **Per-device I/O counters** and an `iostat` command ([Block Device I/O Metrics](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#6-block-device-io-metrics)).
+- **A block cache** ([Block-Level Disk Cache](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#7-block-level-disk-cache)) and **I/O rate limits** per owner ([Block-I/O QoS](../../todo/05-storage-filesystems/TODO-01-block-storage-hardening.md#8-block-io-qos-iops--bandwidth-caps)).
 
 ## How does it compare with Windows 11 and Linux?
 

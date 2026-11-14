@@ -46,10 +46,10 @@ bash scripts/test.sh SUITE=desktop
 
 ## What is not implemented yet?
 
-- **A driver interface** that the compositor presents through, with the GOP framebuffer as the lowest-priority fallback ([`display_device_t` Vtable + Compositor Hook](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#1-display_device_t-vtable--compositor-hook-opus), [VBE/GOP Fallback Display Device](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#2-vbegop-fallback-display-device-sonnet)).
-- **Mode setting and a hardware cursor** on virtual GPUs: [Bochs/BGA](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#3-bochsbga-display-module-sonnet), [VirtIO-GPU](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#4-virtio-gpu-display-module-opus) and [VMSVGA](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#5-vmsvga-2d-display-module-opus). These are planned as loadable modules, which need the [Kernel Module System](kernel-modules.md).
-- **More than one screen** ([Multi-Head Support](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#6-multi-head-support-opus)).
-- **Native modesetting on real GPUs** ([Intel HD/UHD](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#7-intel-hduhd-igpu-modesetting-stub-p3-opus), [AMD APU](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#8-amd-apu-vegardna-display-stub-p4-opus)).
+- **A driver interface** that the compositor presents through, with the GOP framebuffer as the lowest-priority fallback ([`display_device_t` Vtable + Compositor Hook](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#1-display_device_t-vtable--compositor-hook), [VBE/GOP Fallback Display Device](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#2-vbegop-fallback-display-device)).
+- **Mode setting and a hardware cursor** on virtual GPUs: [Bochs/BGA](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#3-bochsbga-display-module), [VirtIO-GPU](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#4-virtio-gpu-display-module) and [VMSVGA](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#5-vmsvga-2d-display-module). These are planned as loadable modules, which need the [Kernel Module System](kernel-modules.md).
+- **More than one screen** ([Multi-Head Support](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#6-multi-head-support)).
+- **Native modesetting on real GPUs** ([Intel HD/UHD](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#7-intel-hduhd-igpu-modesetting-stub-p3), [AMD APU](../../todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md#8-amd-apu-vegardna-display-stub-p4)).
 
 ## How does it compare with Windows 11 and Linux?
 

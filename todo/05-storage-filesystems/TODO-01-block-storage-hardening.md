@@ -49,7 +49,7 @@ title: "TODO-01 -- Block Storage Hardening"
 
 ---
 
-## 1. VirtIO-blk Flush & Write-back `[Sonnet]`
+## 1. VirtIO-blk Flush & Write-back
 
 Add `VIRTIO_BLK_T_FLUSH` support and a write-back queue so dirty sectors are periodically committed and `fsync()` can block until the drive confirms completion.
 
@@ -64,7 +64,7 @@ Add `VIRTIO_BLK_T_FLUSH` support and a write-back queue so dirty sectors are per
 - [ ] Log: `[VirtIO-BLK] Flush OK / Flush failed EIO`
 - [ ] Commit: `"drivers: virtio-blk flush -- VIRTIO_BLK_T_FLUSH, write-back queue, fsync()"`
 
-## 2. VirtIO-blk Error Recovery `[Sonnet]`
+## 2. VirtIO-blk Error Recovery
 
 Parse the `status` byte in the completion descriptor. Retry transient errors up to 3 times before surfacing `EIO` to the VFS caller.
 
@@ -78,7 +78,7 @@ Parse the `status` byte in the completion descriptor. Retry transient errors up 
 - [ ] Error counters: increment `dev->stats.errors` in `blkdev_t` on any non-OK completion (feeds §6)
 - [ ] Commit: `"drivers: virtio-blk error recovery -- status parse, 3× retry, EIO surface, error counters"`
 
-## 3. AHCI Native Command Queuing (NCQ) `[Opus]`
+## 3. AHCI Native Command Queuing (NCQ)
 
 Detect NCQ capability via `CAP.SNCQ`. Issue `READ_FPDMA_QUEUED (0x60)` / `WRITE_FPDMA_QUEUED (0x61)` commands. Track up to 32 in-flight commands per port via `SATA_ACTIVE` bitmask. Handle `SDB` FIS completion.
 
@@ -97,7 +97,7 @@ Detect NCQ capability via `CAP.SNCQ`. Issue `READ_FPDMA_QUEUED (0x60)` / `WRITE_
 - [ ] Log: `[AHCI] Port %u NCQ enabled, depth=%u`
 - [ ] Commit: `"drivers: AHCI NCQ -- CAP.SNCQ detect, READ/WRITE_FPDMA_QUEUED, 32-deep tag allocator, SDB FIS"`
 
-## 4. AHCI Error Recovery `[Opus]`
+## 4. AHCI Error Recovery
 
 Handle `PxIS.TFES` (Task File Error Status). Issue COMRESET on persistent failure. Retry the current command. Surface `EIO` to the VFS layer on unrecoverable errors.
 
@@ -116,7 +116,7 @@ Handle `PxIS.TFES` (Task File Error Status). Issue COMRESET on persistent failur
 - [ ] NCQ-aware recovery: before COMRESET, abort all in-flight NCQ tags: for each set bit in `port->ncq_active`: call pending callback with `-EIO`; clear bitmask
 - [ ] Commit: `"drivers: AHCI error recovery -- PxIS.TFES, 3× retry, COMRESET, EIO surface, NCQ abort"`
 
-## 5. AHCI SMART Read `[Sonnet]`
+## 5. AHCI SMART Read
 
 Issue ATA SMART READ DATA (`0xB0/0xD0`) via an AHCI non-data command. Parse the 512-byte SMART attribute table. Expose `blkdev_smart_query()` returning temperature, reallocated sector count, and remaining life.
 
@@ -131,7 +131,7 @@ Issue ATA SMART READ DATA (`0xB0/0xD0`) via an AHCI non-data command. Parse the 
 - [ ] Log at boot: `[AHCI] Port %u SMART: temp=%u°C realloc=%u life=%u%%`
 - [ ] Commit: `"drivers: AHCI SMART -- ATA 0xB0/0xD0, attribute parse, blkdev_smart_query API"`
 
-## 6. Block Device I/O Metrics `[Sonnet]`
+## 6. Block Device I/O Metrics
 
 Add per-device atomic counters to `blkdev_t`. Expose `blkdev_stats()`. Add `iostat` shell command. Hook the Task Manager performance tab.
 
@@ -149,7 +149,7 @@ Add per-device atomic counters to `blkdev_t`. Expose `blkdev_stats()`. Add `iost
 - [ ] Task Manager hook: `blkdev_stats()` called by the Task Manager performance tab's disk section (coordinate with `09-desktop-shell` Task Manager TODO)
 - [ ] Commit: `"kernel: blkdev I/O metrics -- atomic counters, blkdev_stats API, iostat shell command"`
 
-## 7. Block-Level Disk Cache `[Opus]`
+## 7. Block-Level Disk Cache
 
 Implement an LRU sector cache (2–8 MiB configurable) in `blkdev.c` as a write-back layer shared by all filesystem drivers. Flush every 5 s. `cache_flush()` on shutdown. `cache_invalidate(dev)` on unmount.
 
@@ -171,7 +171,7 @@ Implement an LRU sector cache (2–8 MiB configurable) in `blkdev.c` as a write-
 
 ---
 
-## 8. Block-I/O QoS (IOPS / Bandwidth Caps) `[Opus]`
+## 8. Block-I/O QoS (IOPS / Bandwidth Caps)
 
 Enforce the I/O rate-limit records published by the quota subsystem at the `blkdev` dispatch layer: per-owner IOPS and bytes-per-second caps with a per-period refill, applied to read, write, and control traffic independently. §6 MEASURES per-device traffic; this section THROTTLES it per owner.
 

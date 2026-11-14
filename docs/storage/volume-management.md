@@ -60,11 +60,11 @@ There is no command to list, mount or unmount volumes yet. The VFS suites in [`t
 
 ## What is not implemented yet?
 
-- **A probe chain and letter allocator** recorded in the Registry ([Filesystem Probe Chain + Drive-Letter Assignment](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#1-filesystem-probe-chain--drive-letter-assignment-opus)), and the **boot mount rewrite** onto it ([Boot Mount Sequence Rewrite](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#2-boot-mount-sequence-rewrite-sonnet)).
-- **USB hot-plug mounting** ([USB Hot-Plug Volume Arrival](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#3-usb-hot-plug-volume-arrival-opus)) and **safe removal** ([USB Safe Removal](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#4-usb-safe-removal-sonnet)).
-- **`mount` and `umount` commands** ([Manual `mount` / `umount` Shell Commands](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#5-manual-mount--umount-shell-commands-sonnet)).
-- **Real Win32 volume answers** such as `GetLogicalDrives` and `GetVolumeInformationW` ([Win32 Volume Query APIs](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#6-win32-volume-query-apis-sonnet)).
-- **Optical discs** ([Optical Drive Handling](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#7-optical-drive-handling-sonnet)) and **volume control codes** such as dismount and lock ([Volume Control Ioctls](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#8-volume-control-ioctls-sonnet)).
+- **A probe chain and letter allocator** recorded in the Registry ([Filesystem Probe Chain + Drive-Letter Assignment](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#1-filesystem-probe-chain--drive-letter-assignment)), and the **boot mount rewrite** onto it ([Boot Mount Sequence Rewrite](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#2-boot-mount-sequence-rewrite)).
+- **USB hot-plug mounting** ([USB Hot-Plug Volume Arrival](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#3-usb-hot-plug-volume-arrival)) and **safe removal** ([USB Safe Removal](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#4-usb-safe-removal)).
+- **`mount` and `umount` commands** ([Manual `mount` / `umount` Shell Commands](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#5-manual-mount--umount-shell-commands)).
+- **Real Win32 volume answers** such as `GetLogicalDrives` and `GetVolumeInformationW` ([Win32 Volume Query APIs](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#6-win32-volume-query-apis)).
+- **Optical discs** ([Optical Drive Handling](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#7-optical-drive-handling)) and **volume control codes** such as dismount and lock ([Volume Control Ioctls](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#8-volume-control-ioctls)).
 
 ## How does it compare with Windows 11 and Linux?
 

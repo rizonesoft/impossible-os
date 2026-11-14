@@ -513,7 +513,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 - [x] QR payload: `https://impossibleos.co/err/XXXX` (4 lowercase hex digits matching the published `gh-pages/err/<code>/` static pages and the BOOT_ERR_REGISTRY_MAX domain (0x0013 currently, well under 16 bits); both QR-only and graphical BSOD paths produce the identical string via `format_recovery_url()`)
 - [x] QR module size: 4px at 1280x720, 6px at 1920x1080, 8px at 2560+ -- with 4-module white quiet zone
 - [x] If GOP unavailable (gFramebuffer NULL or size 0): QR rendering silently skipped, text error screen still shows
-- [x] Standalone encoder ([TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----depends-on-5) not yet implemented) -- when that section lands, the kernel-side encoder can be factored from this implementation
+- [x] Standalone encoder ([TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----multi-version-qr-encoder-needs-segno-module-diff--phone-scan-validation-unavailable-in-the-autonomous-env-bootloader-v3-encoder-is-the-reuse-seed) not yet implemented) -- when that section lands, the kernel-side encoder can be factored from this implementation
 - [x] `error_screen_test=1` boot.conf key triggers `boot_fatal()` before kernel load for QR/BSOD testing (halts instead of rebooting so screen stays visible)
 - [x] Commit: `"boot: QR code on boot error screen -- scan for recovery instructions"` (134702ae)
 
@@ -526,7 +526,7 @@ Add a QR code to the boot failure error screen (§9) that encodes a recovery URL
 > - How it runs: `boot_fatal()` invokes `qr_render_error_url()` when ConOut is unavailable but GOP is; full graphical BSOD calls a parallel inline QR block. Both paths now share `format_recovery_url()` so QR payload and on-screen caption are byte-identical.
 > - Downstream effects: QR encoder remains self-contained and 0-diff vs segno. URL width matches `gh-pages/err/<code>/` static pages 1:1; new error codes need a matching directory added to gh-pages.
 > - Canonical doc: this section + the `format_recovery_url()` doc-comment in bootx64.c.
-> - Scope boundary: §14 owns the bootloader QR encoder, the QR/caption renderer, and the error_screen_test trigger. The kernel-side panic-QR factor-out is owned by [TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----depends-on-5).
+> - Scope boundary: §14 owns the bootloader QR encoder, the QR/caption renderer, and the error_screen_test trigger. The kernel-side panic-QR factor-out is owned by [TODO-14 §6 Panic QR Code](../01-boot-platform/TODO-14-boot-diagnostics.md#6-panic-qr-code-deferred----multi-version-qr-encoder-needs-segno-module-diff--phone-scan-validation-unavailable-in-the-autonomous-env-bootloader-v3-encoder-is-the-reuse-seed).
 
 > **Verified:** 2026-05-02 | commit `134702ae` | 8/8 items | build OK | manual (phone-scan @ 1280x720, 1920x1080)
 > **Quality reviewed:** 2026-05-02 | Codex 3x (adversarial + consistency + perf) | 1H+0M+0L fixed, 0 open | scope: boot-code-quality

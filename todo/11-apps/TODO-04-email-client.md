@@ -68,7 +68,7 @@ title: "TODO-04 -- Email Client"
 
 ---
 
-## 1. SMTP Client `[Sonnet]`
+## 1. SMTP Client
 
 > → XREF: `07-networking/TODO-09-email-client.md §2` -- base implementation spec.
 > This section adds the STARTTLS negotiation detail and error-code retry behavior.
@@ -88,7 +88,7 @@ title: "TODO-04 -- Email Client"
 
 ---
 
-## 2. POP3 Client + Message Storage `[Sonnet]`
+## 2. POP3 Client + Message Storage
 
 > → XREF: `07-networking/TODO-09-email-client.md §3` -- base implementation spec.
 
@@ -108,7 +108,7 @@ title: "TODO-04 -- Email Client"
 
 ---
 
-## 3. IMAP Client (Stretch) `[Opus]`
+## 3. IMAP Client (Stretch)
 
 > → XREF: `07-networking/TODO-09-email-client.md §4` -- base implementation spec.
 > This section adds IDLE push notification and flag sync detail.
@@ -127,7 +127,7 @@ title: "TODO-04 -- Email Client"
 
 ---
 
-## 4. Three-Panel Email GUI `[Opus]`
+## 4. Three-Panel Email GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -151,7 +151,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ---
 
-## 5. Compose Window `[Sonnet]`
+## 5. Compose Window
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -172,7 +172,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ---
 
-## 6. Account Management + Credential Store `[Sonnet]`
+## 6. Account Management + Credential Store
 
 > → XREF: `07-networking/TODO-09-email-client.md §5` -- base spec.
 > This section specifies the CNG AES-256-GCM credential encryption and Registry layout.
@@ -190,7 +190,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ---
 
-## 7. Auto-Check + Notifications + Tray `[Sonnet]`
+## 7. Auto-Check + Notifications + Tray
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
@@ -210,7 +210,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ---
 
-## 8. Contacts Store `[Sonnet]`
+## 8. Contacts Store
 
 > → XREF: `07-networking/TODO-09-email-client.md §9` -- base spec.
 
@@ -229,7 +229,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ---
 
-## 9. Spam & Junk Filter `[Sonnet]`
+## 9. Spam & Junk Filter
 
 **Source file:** `src/apps/mail/spam.c`; header `include/apps/mail/spam.h`
 
@@ -264,10 +264,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 | 💎  | Contacts book with To-field autocomplete       | ✅ Outlook + People app               | ✅ Thunderbird address book     | ⬜ §8 -- CSV store, `contact_lookup()`, dropdown               |
 | ⭐  | Built-in spam filter with trainable thresholds | ✅ Outlook (server-side, Junk filter) | ⚠️ SpamAssassin plugin needed   | ⬜ §9 -- keyword score + whitelist/blacklist, `[Mark           |
 
-Impossible OS encrypts credentials natively in the Registry using the same CNG key store as the
-rest of the OS (no separate credential manager needed), and ships a built-in trainable spam filter
-with zero plugin dependencies -- parity with Windows Credential Manager + Outlook Junk Filter
-from day one.
+Impossible OS encrypts credentials natively in the Registry using the same CNG key store as the rest of the OS (no separate credential manager needed), and ships a built-in trainable spam filter with zero plugin dependencies -- parity with Windows Credential Manager + Outlook Junk Filter from day one.
 
 ---
 

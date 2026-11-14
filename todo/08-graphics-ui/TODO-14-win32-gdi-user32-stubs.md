@@ -58,7 +58,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 
 ---
 
-## 1. Win32 Shell Icon Index Map `[Sonnet]`
+## 1. Win32 Shell Icon Index Map
 
 **Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons), [`icons.md#the-set`](../../docs/design/icons.md#the-set)
 
@@ -77,7 +77,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `system_icon_t win32_idi_to_sysicon(uintptr_t idi)` -- maps Win32 `IDI_APPLICATION=32512`, `IDI_ERROR=32513`, `IDI_QUESTION=32514`, `IDI_WARNING=32515`, `IDI_INFORMATION=32516` to corresponding `system_icon_t` values
 - [ ] Commit: `"win32: shell icon index map -- shell32/imageres tables, win32_shell_icon(), IDI_* mapping"`
 
-## 2. GDI Device Context Stubs `[Sonnet]`
+## 2. GDI Device Context Stubs
 
 `HDC`, `HBITMAP`, `HBRUSH`, `HPEN`, `HFONT`, `HGDIOBJ` as opaque kernel handles backed by a 256-slot object table. `CreateCompatibleDC/CreateCompatibleBitmap` → allocate `gfx_surface_t`. `SelectObject/DeleteObject/DeleteDC`. `GetDC(hWnd)` / `ReleaseDC(hWnd, hdc)` → window surface handle.
 
@@ -100,7 +100,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `int DeleteObject(HGDIOBJ h)` + `int DeleteDC(HDC hdc)` -- free backing memory; zero slot
 - [ ] Commit: `"gdi: device context stubs -- 256-slot object table, GetDC/CreateCompatibleDC/HBITMAP, DC state"`
 
-## 3. GDI Drawing Functions `[Sonnet]`
+## 3. GDI Drawing Functions
 
 `SetPixel/GetPixel`, `MoveToEx/LineTo`, `Rectangle`, `Ellipse`, `FillRect`, `SetBkColor/SetTextColor/SetBkMode`. `BitBlt` (SRCCOPY → `gfx_blit`; PATCOPY stub). `StretchBlt` → `gfx_blit` with scale via `image_scale`.
 
@@ -123,7 +123,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `int StretchBlt(HDC dst, int dx, int dy, int dw, int dh, HDC src, int sx, int sy, int sw, int sh, uint32_t rop)` -- `image_scale` + blit
 - [ ] Commit: `"gdi: drawing functions -- SetPixel/LineTo/Rectangle/Ellipse/FillRect/BitBlt/StretchBlt wired to gfx_*"`
 
-## 4. GDI Text Functions `[Sonnet]`
+## 4. GDI Text Functions
 
 `TextOutA(hdc, x, y, str, len)` → `ttf_draw_string`. `DrawTextA(hdc, text, len, rect, flags)` → multi-line word-wrap. `CreateFontA(height, ..., facename)` → `ttf_get` nearest match. `GetTextMetricsA(hdc, tm)` → `TEXTMETRIC` from `ttf_line_height`.
 
@@ -140,7 +140,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `BOOL GetTextExtentPoint32A(HDC hdc, const char *str, int len, SIZE *sz)` -- measure string width/height without drawing
 - [ ] Commit: `"gdi: text functions -- TextOutA/DrawTextA word-wrap/CreateFontA/GetTextMetricsA wired to ttf_*"`
 
-## 5. USER32 Window Functions `[Sonnet]`
+## 5. USER32 Window Functions
 
 `CreateWindowExA(exstyle, classname, title, style, x, y, w, h, parent, ...)` → `wm_create_window`. `ShowWindow(hWnd, nCmdShow)` → minimize/maximize/restore/show. `DestroyWindow` → `wm_destroy_window`. `SetWindowTextA` → `wm_set_title`. `GetClientRect/GetWindowRect`. `InvalidateRect/UpdateWindow`.
 
@@ -163,7 +163,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `HWND SetFocus(HWND hWnd)` → `wm_focus_window(hWnd)`; return previous focused
 - [ ] Commit: `"user32: window functions -- CreateWindowExA/ShowWindow/DestroyWindow/GetClientRect wired to WM"`
 
-## 6. USER32 Message Loop `[Opus]`
+## 6. USER32 Message Loop
 
 `GetMessageA(msg, hWnd, min, max)` blocks on kernel per-window message queue. `TranslateMessage(msg)` synthesizes `WM_CHAR` from `WM_KEYDOWN` + layout. `DispatchMessageA(msg)` calls `WNDPROC`. `PostMessage/SendMessage`. Standard `WM_*` IDs: `WM_CREATE`, `WM_DESTROY`, `WM_PAINT`, `WM_CLOSE`, `WM_KEY*`, `WM_CHAR`, `WM_LBUTTONDOWN/UP`, `WM_MOUSEMOVE`, `WM_SIZE`, `WM_COMMAND`.
 
@@ -186,7 +186,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] Compositor integration: in `wm_handle_mouse/key()`, after processing input: `PostMessageA(target_wnd, WM_LBUTTONDOWN, ...)` etc. into target window's queue
 - [ ] Commit: `"user32: message loop -- per-window MSG queue, GetMessageA blocking, TranslateMessage WM_CHAR, DispatchMessageA WNDPROC"`
 
-## 7. USER32 Cursor, Icon & System Metrics `[Sonnet]`
+## 7. USER32 Cursor, Icon & System Metrics
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
@@ -208,7 +208,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - [ ] `int SetForegroundWindow(HWND hWnd)` → `wm_focus_window(hWnd)`
 - [ ] Commit: `"user32: cursor/icon/metrics -- LoadCursor/SetCursor IDC_* map, LoadIcon IDI_*, GetSystemMetrics SM_*"`
 
-## 8. USER32 Dialogs `[Sonnet]`
+## 8. USER32 Dialogs
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 

@@ -52,7 +52,7 @@ title: "TODO-05 -- File Search & Indexing"
 
 ---
 
-## 1. Search Index Core `[Opus]`
+## 1. Search Index Core
 
 `struct search_entry` (name[64], full_path[256], type: FILE/FOLDER/APP, size, modified_ts). `search_index_rebuild()` walks VFS tree via `vfs_readdir` recursively; fills PMM-allocated flat array; caches to `C:\Impossible\System\Cache\search.idx`. Background kernel thread at boot + every 30 min via scheduler.
 
@@ -72,7 +72,7 @@ title: "TODO-05 -- File Search & Indexing"
 - [ ] Boot log: `klog(LOG_OK, "search", "index: %u entries (cached)", count)` or `"(rebuilding in background)"`
 - [ ] Commit: `"search: index core -- PMM flat array, VFS tree walk, binary cache, background thread, lock-swap"`
 
-## 2. Search Query API `[Sonnet]`
+## 2. Search Query API
 
 `search_query(query, results[], max)` -- case-insensitive substring match; scoring: exact name = 3, prefix = 2, substring = 1; apps first, then folders, then files. Live scan app dirs for fresh installs. `SYS_SEARCH=58` syscall.
 
@@ -89,7 +89,7 @@ title: "TODO-05 -- File Search & Indexing"
 - [ ] `int sys_search(const char *query, search_result_t *out, int max)` syscall handler; `#define SYS_SEARCH 58` in `syscall.h`
 - [ ] Commit: `"search: query API -- scoring 3/2/1, apps-first sort, live app scan, SYS_SEARCH=58"`
 
-## 3. `find` Shell Command `[Sonnet]`
+## 3. `find` Shell Command
 
 `find <query>` searches index, prints full paths sorted by relevance. `--type file/folder/app` filter. `--path <dir>` limits to subtree. One full path per line.
 
@@ -105,7 +105,7 @@ title: "TODO-05 -- File Search & Indexing"
 - [ ] Register `find` in command table: `{ "find", cmd_find, "find <query> [--type file|folder|app] [--path <dir>]" }`
 - [ ] Commit: `"shell: find command -- search index query, --type/--path filters, relevance-sorted output"`
 
-## 4. Start Menu Integration `[Sonnet]`
+## 4. Start Menu Integration
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
@@ -123,7 +123,7 @@ Feeds the file index into Start search. The Start search box, the results layout
 - [ ] Hand results to the Start search UI of `08-graphics-ui/TODO-11` §3 as the "Documents" group; do not draw a second results list, highlight or empty state here
 - [ ] Commit: `"startmenu: file index feeds Start search -- 150 ms debounce, Documents result group"`
 
-## 5. File Manager Integration `[Sonnet]`
+## 5. File Manager Integration
 
 Provides `search_query_scoped()` for the File Explorer search box (the 260 px box in the address row, `docs/design/shell.md#file-explorer`), which is drawn and wired by `09-desktop-shell/TODO-09` §6. Results are constrained to the current directory subtree; File Explorer renders them in its details view. Click result → navigate or `file_assoc_open()`.
 
@@ -137,7 +137,7 @@ Provides `search_query_scoped()` for the File Explorer search box (the 260 px bo
 - [ ] Do not draw a search box or results here: `09-desktop-shell/TODO-09` §6 owns that UI
 - [ ] Commit: `"search: search_query_scoped() for File Explorer search"`
 
-## 6. Index Change Notifications `[Sonnet]`
+## 6. Index Change Notifications
 
 Hook `vfs_create`/`vfs_unlink`/`vfs_rename` to mark index dirty. `search_index_add_entry(path)` and `search_index_remove_entry(path)` for incremental updates. Dirty flag triggers rebuild within 60 s via scheduler.
 

@@ -7,7 +7,7 @@ The camera roadmap plans the driver layer for webcams, built-in laptop cameras, 
 
 ## Why does a webcam not work today?
 
-Two missing foundations. First, the USB driver only claims mass storage and boot keyboards and mice ([`xhci_dev.h`](../../include/kernel/drivers/xhci_dev.h) defines no video class), so a UVC camera (class `0x0E`) is ignored. Second, video streams over USB isochronous transfers, which the USB stack does not support yet ([Isochronous Endpoint Support](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support-opus)). Many recent Intel laptops are harder still: their cameras sit behind an IPU image processor that needs vendor firmware and its own processing pipeline, not UVC.
+Two missing foundations. First, the USB driver only claims mass storage and boot keyboards and mice ([`xhci_dev.h`](../../include/kernel/drivers/xhci_dev.h) defines no video class), so a UVC camera (class `0x0E`) is ignored. Second, video streams over USB isochronous transfers, which the USB stack does not support yet ([Isochronous Endpoint Support](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support)). Many recent Intel laptops are harder still: their cameras sit behind an IPU image processor that needs vendor firmware and its own processing pipeline, not UVC.
 
 ## How will it work?
 

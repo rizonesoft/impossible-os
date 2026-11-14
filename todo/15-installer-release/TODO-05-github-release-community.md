@@ -52,12 +52,7 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 
 ## Outcome
 
-Visiting `https://github.com/rizonesoft/impossible-os` shows a polished README with a
-desktop screenshot, 3-command quick start, and download links. New contributors find
-`CONTRIBUTING.md`, structured issue templates, and a `good-first-issue` label queue.
-Every stable release tags the repo, posts a GitHub Release with all signed artifacts,
-and announces on Discord. The public roadmap maps TODO domains to GitHub Milestones so
-outsiders can track progress without reading 100+ TODO files.
+Visiting `https://github.com/rizonesoft/impossible-os` shows a polished README with a desktop screenshot, 3-command quick start, and download links. New contributors find `CONTRIBUTING.md`, structured issue templates, and a `good-first-issue` label queue. Every stable release tags the repo, posts a GitHub Release with all signed artifacts, and announces on Discord. The public roadmap maps TODO domains to GitHub Milestones so outsiders can track progress without reading 100+ TODO files.
 
 ---
 
@@ -76,7 +71,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 1. GitHub Release Workflow `[Sonnet]`
+## 1. GitHub Release Workflow
 
 **Source:** `scripts/create-release.sh`; `.github/workflows/release.yml`
 
@@ -100,7 +95,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 2. Changelog Discipline `[Sonnet]`
+## 2. Changelog Discipline
 
 **Source:** `CHANGELOG.md` (overhaul existing); `scripts/gen-changelog.sh` (from `D10T03 §5`)
 
@@ -133,7 +128,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 3. Contribution Guide Overhaul `[Sonnet]`
+## 3. Contribution Guide Overhaul
 
 **Source:** `CONTRIBUTING.md` (overhaul existing file)
 
@@ -153,7 +148,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 4. Issue & PR Templates `[Sonnet]`
+## 4. Issue & PR Templates
 
 **Source:** `.github/ISSUE_TEMPLATE/` (replace existing); `.github/PULL_REQUEST_TEMPLATE.md` (replace existing)
 
@@ -212,7 +207,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 5. README Overhaul `[Sonnet]`
+## 5. README Overhaul
 
 **Source:** `README.md` (overhaul existing file)
 
@@ -268,7 +263,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 6. Project Website `[Sonnet]`
+## 6. Project Website
 
 **Source:** `docs/website/` directory; deployed to `gh-pages` branch → `impossible-os.dev`
 
@@ -291,7 +286,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 7. Community Channels `[Sonnet]`
+## 7. Community Channels
 
 **Sources:** GitHub repository settings; Discord server; `CODE_OF_CONDUCT.md` (enhance existing)
 
@@ -316,7 +311,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 ---
 
-## 8. Roadmap Publication + GitHub Milestones Sync `[Sonnet]`
+## 8. Roadmap Publication + GitHub Milestones Sync
 
 **Source:** `docs/roadmap.md`; `scripts/sync-milestones.sh`; `scripts/sync-issues.sh`
 
@@ -356,12 +351,7 @@ outsiders can track progress without reading 100+ TODO files.
 | 💎  | Discord + GitHub Discussions community                              | ✅ Windows Insider Hub; not Discord               | ✅ Kernel mailing list; many distros                        | ⬜ §7 -- Discussions categories; Discord server +                     |
 | ⭐  | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no     | ✅ kernel.org merge window schedule; no                     | ⬜ §8 -- `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
 
-Impossible OS's `⭐` advantage: the release workflow, changelog, README, and roadmap are
-all connected -- `create-release.sh` updates the README download table, posts to Discord,
-and the public roadmap shows live Win32 compat progress as a percentage bar sourced
-directly from CI. A new contributor can go from `git clone` to a running OS in 3
-commands, and the `#good-first-issues` Discord bot means help-wanted items surface
-immediately to community members without polling GitHub.
+Impossible OS's `⭐` advantage: the release workflow, changelog, README, and roadmap are all connected -- `create-release.sh` updates the README download table, posts to Discord, and the public roadmap shows live Win32 compat progress as a percentage bar sourced directly from CI. A new contributor can go from `git clone` to a running OS in 3 commands, and the `#good-first-issues` Discord bot means help-wanted items surface immediately to community members without polling GitHub.
 
 ---
 

@@ -55,14 +55,14 @@ Open the terminal and type `help` to see the commands. `ps` lists running tasks;
 
 ## What is not implemented yet?
 
-- [Shell Command Expansion](../../todo/09-desktop-shell/TODO-12-utilities.md#1-shell-command-expansion-sonnet)
-- [Calculator](../../todo/09-desktop-shell/TODO-12-utilities.md#2-calculator-sonnet) and [Image Viewer](../../todo/09-desktop-shell/TODO-12-utilities.md#3-image-viewer-sonnet)
-- [Screenshot Enhancements](../../todo/09-desktop-shell/TODO-12-utilities.md#4-screenshot-enhancements-sonnet), on the capture owned by [Desktop Shell Features](../graphics/desktop-shell-features.md)
-- [Archive Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#5-archive-manager-sonnet), on the ZIP API in [Recycle Bin, ZIP and Task Scheduler](recycle-bin-zip-scheduler.md)
-- [Calendar App](../../todo/09-desktop-shell/TODO-12-utilities.md#6-calendar-app-sonnet)
-- [Task Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#7-task-manager-sonnet)
-- [Device Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#8-device-manager-sonnet)
-- [System Info](../../todo/09-desktop-shell/TODO-12-utilities.md#9-system-info-sonnet)
+- [Shell Command Expansion](../../todo/09-desktop-shell/TODO-12-utilities.md#1-shell-command-expansion)
+- [Calculator](../../todo/09-desktop-shell/TODO-12-utilities.md#2-calculator) and [Image Viewer](../../todo/09-desktop-shell/TODO-12-utilities.md#3-image-viewer)
+- [Screenshot Enhancements](../../todo/09-desktop-shell/TODO-12-utilities.md#4-screenshot-enhancements), on the capture owned by [Desktop Shell Features](../graphics/desktop-shell-features.md)
+- [Archive Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#5-archive-manager), on the ZIP API in [Recycle Bin, ZIP and Task Scheduler](recycle-bin-zip-scheduler.md)
+- [Calendar App](../../todo/09-desktop-shell/TODO-12-utilities.md#6-calendar-app)
+- [Task Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#7-task-manager)
+- [Device Manager](../../todo/09-desktop-shell/TODO-12-utilities.md#8-device-manager)
+- [System Info](../../todo/09-desktop-shell/TODO-12-utilities.md#9-system-info)
 
 ## How does it compare with Windows 11 and Linux?
 

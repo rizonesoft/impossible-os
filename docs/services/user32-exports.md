@@ -38,7 +38,7 @@ Before implementing a `user32` export, find its row, make sure its Owner names a
 
 Every row. The tiers are worked through their owners:
 
-- [Tier 1](../../todo/10-platform-services/TODO-A-user32-export-master-table.md#tier-1----core-window-class-and-message-pump-from-todo-08-section-10), owned by [Window Management (`user32.dll`)](../../todo/10-platform-services/TODO-08-win32-api-surface.md#10-window-management-user32dll-sonnet) and the [Win32 GDI and USER32 roadmap](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md)
+- [Tier 1](../../todo/10-platform-services/TODO-A-user32-export-master-table.md#tier-1----core-window-class-and-message-pump-from-todo-08-section-10), owned by [Window Management (`user32.dll`)](../../todo/10-platform-services/TODO-08-win32-api-surface.md#10-window-management-user32dll) and the [Win32 GDI and USER32 roadmap](../../todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md)
 - [Tier 2](../../todo/10-platform-services/TODO-A-user32-export-master-table.md#tier-2----todo-14-stub-suite-extend-rows-as-sections-2-to-8-land), owned by sections 2 to 8 of the Win32 GDI and USER32 roadmap
 - [Tier 3](../../todo/10-platform-services/TODO-A-user32-export-master-table.md#tier-3----full-named-export-roster-alphabetical-wine-scaffold), mostly `NO_OWNING_TODO`
 - A dump of a pinned Windows 11 `user32.dll` to reconcile against the Wine scaffold ([Implementation Order](../../todo/10-platform-services/TODO-A-user32-export-master-table.md#implementation-order) step 3)

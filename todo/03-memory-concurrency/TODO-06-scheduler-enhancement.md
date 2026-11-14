@@ -309,7 +309,7 @@ Mirror of §12 applied to tasks (processes): the current `tasks[TASK_MAX]` stora
 
 **Test checkpoint:** Running the user-mode test launcher (TODO-04 §4) with a 64-entry manifest (synthetic test binaries generated for this regression) succeeds end-to-end; every binary spawns, runs, exits, and its slot is reused by a later binary with no `task_create failed` log. The existing TASK_MAX ceiling no longer gates boot-time test runs. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-## 14. Process/Job CPU Bandwidth Control `[Opus]`
+## 14. Process/Job CPU Bandwidth Control
 
 Enforce the CPU rate-limit records published by the quota subsystem: a per-period runtime budget for a process or job, refilled each period, with reservation admission and throttle/unthrottle. This is the CONSUMER of the policy record; §3 owns proportional weights within a priority level and does NOT own caps, periods, or reservations.
 
@@ -330,7 +330,7 @@ Enforce the CPU rate-limit records published by the quota subsystem: a per-perio
 
 ---
 
-## 15. Wait/Wake Transaction Locking (Lost-Wakeup Class) `[Opus]`
+## 15. Wait/Wake Transaction Locking (Lost-Wakeup Class)
 
 Every wait primitive publishes its waiter into the queue BEFORE setting `THREAD_BLOCKED`, and checks its predicate outside any lock. A waker running in that window finds the thread not yet blocked, dequeues it, and the wake is LOST: the waiter then stores `THREAD_BLOCKED` and sleeps forever. Confirmed in `enqueue_and_block` (`src/kernel/sched/event.c`) and present in the semaphore, mutex, condvar, and rwlock wait paths plus the `thread_join`/`thread_exit` handshake.
 

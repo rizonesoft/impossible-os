@@ -27,7 +27,7 @@ title: "TODO-10 -- Taskbar"
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- §1 window list wires to `wm_minimize/maximize/restore`; §3 Aero Peek temporarily overrides compositor window opacity
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- context menu engine must exist before §2 right-click and §7 jump list popup; §9 vdesk present for "Move to Desktop ►"
 - Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (notifications) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-11 §5 is live
-- -> XREF: `TODO-17-win11-parity-inventory.md §9,§10,§50` -- the taskbar and tray records this file's sections are assigned as owners of
+- -> XREF: `TODO-17-win11-parity-inventory.md §8,§15` -- the taskbar and tray records this file's sections are assigned as owners of
 
 ## Outcome
 
@@ -55,7 +55,7 @@ title: "TODO-10 -- Taskbar"
 
 ---
 
-## 1. Taskbar Window List `[Sonnet]`
+## 1. Taskbar Window List
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -90,7 +90,7 @@ title: "TODO-10 -- Taskbar"
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"taskbar: window list -- taskbar_entry, add/remove/active/flash wired from WM events"`
 
-## 2. Taskbar Button Context Menu `[Sonnet]`
+## 2. Taskbar Button Context Menu
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
@@ -109,7 +109,7 @@ Right-click window button → `context_menu_show()`: Close, Restore/Maximize (to
 - [ ] Right-click detection in `desktop_handle_mouse()`: if right-button and hit-tests a window button → `taskbar_show_win_menu(entry, mx, my)`
 - [ ] Commit: `"taskbar: window button context menu -- close/restore/maximize/minimize/pin/move-to-desktop"`
 
-## 3. Aero Peek `[Opus]`
+## 3. Aero Peek
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -130,7 +130,7 @@ Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the 
 - [ ] `int g_peek_enabled` from `HKCU\Software\Impossible\Shell\EnablePeek` (default 1); if 0: skip hover timer + draw "Show Desktop" strip without peek behavior
 - [ ] Commit: `"taskbar: Aero Peek -- per-window peek_alpha in compositor, 500ms hover, Show Desktop strip"`
 
-## 4. Taskbar Progress Badges `[Sonnet]`
+## 4. Taskbar Progress Badges
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -149,7 +149,7 @@ Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the 
 - [ ] Wire `SYS_TASKBAR_SET_PROGRESS` into syscall dispatch table in `src/kernel/sched/syscall.c`
 - [ ] Commit: `"taskbar: progress badges -- NORMAL/PAUSED/ERROR states, 3px bar, SYS_TASKBAR_SET_PROGRESS=52"`
 
-## 5. Pinned Apps `[Sonnet]`
+## 5. Pinned Apps
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -171,7 +171,7 @@ Load from `HKCU\Software\Impossible\Shell\TaskbarPins` (comma-separated paths) a
 - [ ] Match heuristic: compare `basename(pin->path)` vs `win->title` (case-insensitive); secondary: `win->exe_path` if struct supports it
 - [ ] Commit: `"taskbar: pinned apps -- Registry CSV pins, icon-only launch, combined running+pin button"`
 
-## 6. Jump Lists `[Sonnet]`
+## 6. Jump Lists
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -191,7 +191,7 @@ Right-click pinned or window button → jump list popup above context menu showi
 - [ ] Wire `SYS_JUMPLIST_NOTIFY` into syscall dispatch table
 - [ ] Commit: `"taskbar: jump lists -- SYS_JUMPLIST_NOTIFY=53, Registry ring buffer, popup above context menu"`
 
-## 7. Taskbar Auto-Hide `[Sonnet]`
+## 7. Taskbar Auto-Hide
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
@@ -212,7 +212,7 @@ Right-click pinned or window button → jump list popup above context menu showi
 - [ ] Context menus / jump lists open above taskbar: auto-show taskbar while any popup is open
 - [ ] Commit: `"taskbar: auto-hide -- anim_mgr slide in/out, proximity trigger, full usable height when hidden"`
 
-## 8. Taskbar Customization `[Sonnet]`
+## 8. Taskbar Customization
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 

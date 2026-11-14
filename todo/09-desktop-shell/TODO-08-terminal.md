@@ -54,7 +54,7 @@ title: "TODO-08 -- Terminal Emulator"
 
 ---
 
-## 1. Terminal Cell Grid `[Opus]`
+## 1. Terminal Cell Grid
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -82,7 +82,7 @@ title: "TODO-08 -- Terminal Emulator"
 - [ ] One shell per terminal: Start > Terminal (`src/desktop/desktop.c`) calls `task_create(shell_loader_func, ...)` even when `terminal_open()` returned early because the window exists, so each click adds a `cmd.exe` reading the same input ring
 - [ ] Commit: `"terminal: cell grid rewrite -- terminal_cell_t, 200×2000 PMM grid, shell pipe, Unicode codepoints"`
 
-## 2. Character Rendering `[Sonnet]`
+## 2. Character Rendering
 
 **Design:** [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -102,7 +102,7 @@ title: "TODO-08 -- Terminal Emulator"
 - [ ] `cell_w` + `cell_h` cached on font change; `ttf_get(FONT_MONO, font_px)` called in `terminal_create()`
 - [ ] Commit: `"terminal: cell renderer -- bg fill, ttf_draw_char, inverse/underline/blink attrs, scroll-up, cursor blink"`
 
-## 3. ANSI Escape Parser `[Sonnet]`
+## 3. ANSI Escape Parser
 
 **Design:** n/a -- the escape-sequence parser is a state machine; colours it produces come from the terminal_* tokens applied in §2
 
@@ -124,7 +124,7 @@ State machine: Normal → ESC → CSI → collect params → command. SGR (m): r
 - [ ] Stretch: `\e[38;5;Nm` 256-color: if `params[0]==38 && params[1]==5` → `ansi.fg = xterm256_palette[params[2]]`; `static uint32_t xterm256_palette[256]` (standard xterm colors)
 - [ ] Commit: `"terminal: ANSI parser -- SGR 16-color+bold+ul+inv, cursor H/ABCD, erase J/K, show/hide, save/restore"`
 
-## 4. Scrollback & Text Selection `[Sonnet]`
+## 4. Scrollback & Text Selection
 
 **Design:** [`controls.md#scroll-bar`](../../docs/design/controls.md#scroll-bar), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
@@ -146,7 +146,7 @@ State machine: Normal → ESC → CSI → collect params → command. SGR (m): r
 - [ ] Ctrl+Shift+V: `clipboard_get(CLIP_TEXT, buf, 4096)`; `pipe_write(stdin_pipe, buf, len)`
 - [ ] Commit: `"terminal: scrollback + selection -- viewport scroll, proportional scrollbar, drag select, Ctrl+Shift+C/V"`
 
-## 5. Resize Handling `[Sonnet]`
+## 5. Resize Handling
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
@@ -163,7 +163,7 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
 - [ ] WM `WM_RESIZE` event handler in `terminal.c` → call `terminal_resize()`
 - [ ] Commit: `"terminal: resize + SIGWINCH -- terminal_resize(), SIGWINCH=28, visible_cols/rows recalc, WM_RESIZE hook"`
 
-## 6. Registry Settings `[Sonnet]`
+## 6. Registry Settings
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -184,7 +184,7 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
   - Stored under `HKCU\Software\Impossible\Terminal\Profiles\<name>`; the existing single global settings become the default profile
 - [ ] Commit: `"terminal: Registry settings -- FontName/Size/CursorStyle/Blink/Opacity/Scrollback, WM_THEME_CHANGED"`
 
-## 7. Advanced Features `[Sonnet]`
+## 7. Advanced Features
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#tabs`](../../docs/design/controls.md#tabs)
 

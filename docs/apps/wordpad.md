@@ -52,13 +52,13 @@ WordPad cannot be launched yet. Nothing in this roadmap is runnable today.
 
 Nothing in this roadmap has started:
 
-- [Rich Text Document Model](../../todo/11-apps/TODO-10-wordpad.md#1-rich-text-document-model-opus)
-- [RTF File Format](../../todo/11-apps/TODO-10-wordpad.md#2-rtf-file-format-sonnet)
-- [Rich Text Rendering and Layout Engine](../../todo/11-apps/TODO-10-wordpad.md#3-rich-text-rendering--layout-engine-opus), which needs the font catalog's lookup by family name
-- [Toolbar and Menus](../../todo/11-apps/TODO-10-wordpad.md#4-toolbar--menus-sonnet), which needs the combo box and menu bar
-- [Formatting Interactions](../../todo/11-apps/TODO-10-wordpad.md#5-formatting-interactions-sonnet)
-- [File Operations and File Associations](../../todo/11-apps/TODO-10-wordpad.md#6-file-operations--file-associations-sonnet)
-- [Print](../../todo/11-apps/TODO-10-wordpad.md#7-print-stretch-sonnet), a stretch goal that needs the PDF writer
+- [Rich Text Document Model](../../todo/11-apps/TODO-10-wordpad.md#1-rich-text-document-model)
+- [RTF File Format](../../todo/11-apps/TODO-10-wordpad.md#2-rtf-file-format)
+- [Rich Text Rendering and Layout Engine](../../todo/11-apps/TODO-10-wordpad.md#3-rich-text-rendering--layout-engine), which needs the font catalog's lookup by family name
+- [Toolbar and Menus](../../todo/11-apps/TODO-10-wordpad.md#4-toolbar--menus), which needs the combo box and menu bar
+- [Formatting Interactions](../../todo/11-apps/TODO-10-wordpad.md#5-formatting-interactions)
+- [File Operations and File Associations](../../todo/11-apps/TODO-10-wordpad.md#6-file-operations--file-associations)
+- [Print](../../todo/11-apps/TODO-10-wordpad.md#7-print-stretch), a stretch goal that needs the PDF writer
 
 ## How does it compare with Windows 11 and Linux?
 

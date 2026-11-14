@@ -42,12 +42,12 @@ title: "TODO-13 -- Boot Splash & F8 Recovery"
 | 💎  |   2   | §2 Loading spinner -- confirm `spinner_draw_faded()` integrated into fade path; no re-implementation      | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)          |  [ ]   |
 | 💎  |   4   | §4 Boot progress milestones -- `BOOT_MILESTONE_*` constants + `boot_splash_milestone()` call sites        | §1 (`boot_splash_progress()` must exist before milestones can drive it) |  [ ]   |
 | ⭐  |   5   | §5 F8 boot menu -- early PS/2 polling, text-mode menu, `boot_mode_t`, boot flag propagation               | §1 (splash must be functional so F8 path can abort it cleanly)          |  [ ]   |
-| 💎  |   6   | ~~§6 Crash loop protection~~ → MOVED to `TODO-28 §7-§8`                                                   | --                                                                      |  N/A   |
-| 💎  |   7   | ~~§7 BSOD validation~~ → MOVED to `TODO-28` Verification                                                  | --                                                                      |  N/A   |
+| 💎  |   6   | ~~§6 Crash loop protection~~ → MOVED to `TODO-28 §7-§8`                                                   | --                                                                      |  [/]   |
+| 💎  |   7   | ~~§7 BSOD validation~~ → MOVED to `TODO-28` Verification                                                  | --                                                                      |  [/]   |
 
 ---
 
-## 1. Boot Splash Renderer `[Sonnet]`
+## 1. Boot Splash Renderer
 
 **Design:** [`shell.md#boot-splash`](../../docs/design/shell.md#boot-splash)
 
@@ -65,7 +65,7 @@ Extend existing `boot_splash.c` with: (a) `boot_splash_progress(uint8_t pct)`: a
 - [ ] `boot_splash_status(msg)` already calls `boot_font_render`; add `klog(LOG_INFO, "boot", "%s", msg)` at the top of the function body so serial output is never lost
 - [ ] Commit: `"boot/splash: progress bar, fade-to-black, logo alpha-blend, klog in status"`
 
-## 2. Loading Spinner `[Sonnet]`
+## 2. Loading Spinner
 
 **Design:** [`shell.md#boot-splash`](../../docs/design/shell.md#boot-splash)
 
@@ -82,7 +82,7 @@ The arc ring spinner is fully implemented via `spinner.c` + `arc_ring.h`. This s
 - [ ] QEMU: splash fades to black smoothly over ~128 ms; arc ring fades with background
 - [ ] Commit: `"boot/splash: confirm spinner_draw_faded integrated into fade-out path"`
 
-## 3. Build Pipeline `[Sonnet]`
+## 3. Build Pipeline
 
 **Design:** [`shell.md#boot-splash`](../../docs/design/shell.md#boot-splash)
 
@@ -98,7 +98,7 @@ The splash uses the canonical logo mark (`resources/brand/logo.svg`, spec in `do
 - [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
 - [ ] Commit: `"boot splash: draw the canonical logo mark from os_logo.h"`
 
-## 4. Boot Progress Milestones `[Sonnet]`
+## 4. Boot Progress Milestones
 
 **Design:** [`shell.md#boot-splash`](../../docs/design/shell.md#boot-splash), [`controls.md#progress`](../../docs/design/controls.md#progress)
 
@@ -116,7 +116,7 @@ The splash uses the canonical logo mark (`resources/brand/logo.svg`, spec in `do
 - [ ] Call sites: `pmm_init()` → `BOOT_MILESTONE_PMM`; `acpi_init()` → `ACPI`; `drivers_init()` → `DRIVERS`; `vfs_init()` → `FS`; `net_init()` → `NETWORK`; `registry_init()` → `REGISTRY`; `desktop_init()` → `DESKTOP`; `desktop_ready()` → `DONE` + `boot_splash_finish()`
 - [ ] Commit: `"boot/splash: BOOT_MILESTONE_* constants, boot_splash_milestone(), wired into subsystem inits"`
 
-## 5. F8 Boot Menu `[Opus]`
+## 5. F8 Boot Menu
 
 **Design:** n/a -- drawn before the compositor exists, on the boot framebuffer; follows the boot splash and boot error screen styles, not the desktop
 
@@ -142,11 +142,23 @@ Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key dete
 
 ## 6. [MOVED] Crash Loop Protection
 
+**Design:** n/a -- moved to the panic screen roadmap, nothing is drawn here
+
 > **Moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md §7-§8`.** Crash loop tracking (NVRAM stats + consecutive crash counter) and safe mode suggestion are owned by TODO-28 alongside all other panic screen behavior.
+
+> **Deferred:** [L] superseded: owned by `02-kernel-core/TODO-28-bsod-ux-enhancements.md` -> XREF: 02-kernel-core/TODO-28 §7 (item: "Define ImpossibleCrashStats NVRAM variable" at line 214)
+
+- [/] Superseded: moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md` §7; do not build a second copy here
 
 ## 7. [MOVED] BSOD Auto-Restart Validation
 
+**Design:** n/a -- moved to the panic screen roadmap, nothing is drawn here
+
 > **Moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md` Verification section.** BSOD test plan now uses runtime `crash_test=1` boot.conf flag (no recompile) and `scripts/debug/panic/` test runners.
+
+> **Deferred:** [L] superseded: validation owned by `02-kernel-core/TODO-28-bsod-ux-enhancements.md` -> XREF: 02-kernel-core/TODO-28 §5 (item: "Smooth progress bar" at line 174)
+
+- [/] Superseded: moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md` (its Verification section and §5); do not build a second copy here
 
 ---
 

@@ -34,7 +34,7 @@ title: "TODO-11 -- Control Panel & Settings"
 - → XREF: `08-graphics-ui/TODO-12-clock-time.md §1` -- `time_now/set/set_timezone()` + `SYS_TIME` for `timedate.cpl`
 - → XREF: `07-networking/TODO-05-firewall.md` -- `firewall_enable/rule_add/remove()` for `firewall.cpl`
 - → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` for `timedate.cpl` sync button
-- -> XREF: `D08 T17 §38,§39` -- the Windows 11 applet list and property sheets are inventoried there; `D08 T18 §16` supplies the single-definition settings platform
+- -> XREF: `D08 T17 §13` -- the Windows 11 applet list and property sheets are inventoried there; `D08 T18 §16` supplies the single-definition settings platform
 
 ## Outcome
 
@@ -56,7 +56,7 @@ title: "TODO-11 -- Control Panel & Settings"
 
 ---
 
-## 1. CPL Framework `[Sonnet]`
+## 1. CPL Framework
 
 **Design:** n/a -- the Win32 CPL message and struct contract; the visible host and applets are §2 and §3
 
@@ -73,7 +73,7 @@ title: "TODO-11 -- Control Panel & Settings"
 - [ ] `int cpl_load_and_run(const char *cpl_path)` -- future: load `.cpl` as dynamic lib; for now: scan compiled-in table by filename match
 - [ ] Commit: `"cpl: framework -- cpl.h Win32-compatible messages, NEWCPLINFO, CPlApplet_t typedef"`
 
-## 2. Control Panel Host App `[Sonnet]`
+## 2. Control Panel Host App
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -95,7 +95,7 @@ title: "TODO-11 -- Control Panel & Settings"
 - [ ] Keyboard nav: arrow keys move between rows; Enter → `control_open_applet(focused)`; Escape → Back
 - [ ] Commit: `"control: settings frame -- 280 px nav pane, settings rows, CPL_DBLCLK dispatch, Win+I hotkey, keyboard nav"`
 
-## 3. Core Applets `[Sonnet]`
+## 3. Core Applets
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -141,7 +141,7 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
   - Available once multi-head lands (`04-drivers-hardware/TODO-17-gpu-display-drivers.md` multi-head section)
 - [ ] Commit: `"control: core applets -- sysdm/desk/ncpa/mmsys/timedate/powercfg/main/intl/taskbar.cpl"`
 
-## 4. Additional Applets `[Sonnet]`
+## 4. Additional Applets
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -165,7 +165,7 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 - [ ] Register `nusrmgr/appwiz/firewall/datetime` in `g_cpl_entries[]`
 - [ ] Commit: `"control: additional applets -- nusrmgr/appwiz/firewall/datetime.cpl"`
 
-## 5. Settings Search `[Sonnet]`
+## 5. Settings Search
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 

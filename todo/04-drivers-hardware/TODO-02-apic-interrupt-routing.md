@@ -50,7 +50,7 @@ title: "TODO-02 -- APIC Architecture & Advanced Interrupt Routing"
 
 ---
 
-## 1. x2APIC Mode -- MSR Register Access `[Opus]`
+## 1. x2APIC Mode -- MSR Register Access
 
 Detect `CPUID.01H:ECX[21]` and switch from xAPIC MMIO to x2APIC MSR register access. Refactor `lapic_read()` / `lapic_write()` to dispatch based on a runtime flag. Widen APIC IDs to 32 bits for systems with >255 cores. The ICR becomes a single atomic 64-bit MSR write in x2APIC mode, eliminating the xAPIC write-ordering hazard.
 
@@ -77,7 +77,7 @@ Detect `CPUID.01H:ECX[21]` and switch from xAPIC MMIO to x2APIC MSR register acc
 - [ ] Boot log: `[LAPIC] x2APIC mode active` or `[LAPIC] xAPIC mode (x2APIC not supported)`
 - [ ] Commit: `"lapic: x2APIC MSR register access -- mode detection, 32-bit APIC IDs, atomic IPI"`
 
-## 2. LAPIC Timer Calibration via HPET `[Opus]`
+## 2. LAPIC Timer Calibration via HPET
 
 Replace the hardcoded `ICR=10000000` with a `lapic_calibrate_timer()` that measures the LAPIC bus frequency against a 10 ms HPET reference window. Store the result in `g_lapic_ticks_per_ms`; set periodic mode with the derived ICR. Write `g_tick_ns` for the unified timer HAL.
 
@@ -98,7 +98,7 @@ Replace the hardcoded `ICR=10000000` with a `lapic_calibrate_timer()` that measu
 - [ ] Boot log: `[LAPIC] Timer calibrated: %u ticks/ms via HPET (±%u ticks jitter)`
 - [ ] Commit: `"lapic: HPET-calibrated timer -- 10 ms reference window, median ticks/ms, periodic 1 ms tick"`
 
-## 3. MSI Vector Bitmap Allocator `[Sonnet]`
+## 3. MSI Vector Bitmap Allocator
 
 Maintain a bitmap of vectors 32–254. `apic_alloc_msi_vector()` finds the lowest free bit, marks it, and returns the LAPIC `Message Address` + `Message Data` pair ready for `pci_enable_msi`. `apic_free_msi_vector(vec)` clears the bit. Both are protected by a `ticket_lock_t`.
 
@@ -114,7 +114,7 @@ Maintain a bitmap of vectors 32–254. `apic_alloc_msi_vector()` finds the lowes
 - [ ] Per-vector dispatch gating for shared GSI chains: split the global `irq_chain_lock` entry gate in `src/kernel/irq.c` (`irq_shared_dispatch_wrapper` entry increment, `irq_chain_drain` callers) into per-`irq_entry` locks so a registration/release drain on one GSI cannot stall ISR entry on unrelated shared lines; filed from `01-boot-platform/TODO-11` §5 perf review
 - [ ] Commit: `"lapic: MSI vector bitmap allocator -- apic_alloc/free_msi_vector, address/data helpers"`
 
-## 4. TLB Shootdown IPI `[Opus]`
+## 4. TLB Shootdown IPI
 
 Install the `IPI_TLB_FLUSH` ISR that runs `invlpg` over the requested VA range and atomically acks. The VMM/scheduler side (`03-memory-concurrency/TODO-07-smp-phase2.md §2`) calls `tlb_shootdown(cpu_mask, vaddr, len)` which invokes `lapic_send_ipi` per target CPU; this section provides the hardware send path and the per-CPU handler.
 
@@ -131,7 +131,7 @@ Install the `IPI_TLB_FLUSH` ISR that runs `invlpg` over the requested VA range a
 - [ ] Boot log: `[APIC] TLB shootdown IPI registered (vector 0x%02X)`
 - [ ] Commit: `"lapic: TLB shootdown IPI -- invlpg handler, atomic ack counter, per-CPU work slot"`
 
-## 5. NMI Watchdog via PMI Counter Overflow `[Opus]`
+## 5. NMI Watchdog via PMI Counter Overflow
 
 Configure `IA32_PERFEVTSEL0` as a fixed CPU-cycles counter and set its overflow to deliver an NMI via the LAPIC PMI vector. The NMI fires approximately every 1 s regardless of `CLI` or held spinlocks. The NMI handler checks the per-CPU `cpu_heartbeat` counter; a stall triggers a serial backtrace and the red framebuffer banner.
 
@@ -149,7 +149,7 @@ Configure `IA32_PERFEVTSEL0` as a fixed CPU-cycles counter and set its overflow 
 - [ ] Boot log: `[NMI WD] NMI watchdog armed: counter=0x%016llx, ~%u s interval` or `[NMI WD] PMI not available, NMI watchdog disabled`
 - [ ] Commit: `"lapic: NMI watchdog -- IA32_PERFEVTSEL0 PMI, NMI LVT, heartbeat check, backtrace on stall"`
 
-## 6. Interrupt Profiler -- `/sys/interrupts` `[Sonnet]`
+## 6. Interrupt Profiler -- `/sys/interrupts`
 
 Increment a per-vector `irq_count` and accumulate `irq_ns` in each IDT stub before dispatching to the registered handler. Expose the table via a `/sys/interrupts` VFS file and `irqstats` shell command. Wire `NtQuerySystemInformation(SystemInterruptInformation)` to return the same data.
 

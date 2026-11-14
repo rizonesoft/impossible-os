@@ -46,13 +46,13 @@ There is nothing to run. To see what the CPU offers, boot the image and read the
 
 Every section is open, and `src/kernel/hypervisor/` does not exist.
 
-- [Intel VT-x / AMD-V Gap Analysis](../../todo/18-future-research/TODO-02-hypervisor.md#1-intel-vt-x--amd-v-gap-analysis-opus)
-- [Minimal Hypervisor Design](../../todo/18-future-research/TODO-02-hypervisor.md#2-minimal-hypervisor-design-type-15-vmm-opus)
-- [Minimal Linux Guest Proof-of-Concept](../../todo/18-future-research/TODO-02-hypervisor.md#3-minimal-linux-guest-proof-of-concept-opus)
-- [virtio Device Emulation Design](../../todo/18-future-research/TODO-02-hypervisor.md#4-virtio-device-emulation-design-host-side-opus)
-- [Snapshot and Live Migration Research](../../todo/18-future-research/TODO-02-hypervisor.md#5-snapshot--live-migration-research-opus)
-- [GPU Passthrough Research](../../todo/18-future-research/TODO-02-hypervisor.md#6-gpu-passthrough-research-vt-d--amd-vi-sonnet)
-- [Research Deliverables](../../todo/18-future-research/TODO-02-hypervisor.md#7-research-deliverables-sonnet)
+- [Intel VT-x / AMD-V Gap Analysis](../../todo/18-future-research/TODO-02-hypervisor.md#1-intel-vt-x--amd-v-gap-analysis)
+- [Minimal Hypervisor Design](../../todo/18-future-research/TODO-02-hypervisor.md#2-minimal-hypervisor-design-type-15-vmm)
+- [Minimal Linux Guest Proof-of-Concept](../../todo/18-future-research/TODO-02-hypervisor.md#3-minimal-linux-guest-proof-of-concept)
+- [virtio Device Emulation Design](../../todo/18-future-research/TODO-02-hypervisor.md#4-virtio-device-emulation-design-host-side)
+- [Snapshot and Live Migration Research](../../todo/18-future-research/TODO-02-hypervisor.md#5-snapshot--live-migration-research)
+- [GPU Passthrough Research](../../todo/18-future-research/TODO-02-hypervisor.md#6-gpu-passthrough-research-vt-d--amd-vi)
+- [Research Deliverables](../../todo/18-future-research/TODO-02-hypervisor.md#7-research-deliverables)
 
 The IOMMU driver that GPU passthrough needs has no owner yet; section 6 records it as a prerequisite, not a plan.
 

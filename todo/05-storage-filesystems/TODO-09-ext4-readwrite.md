@@ -62,7 +62,7 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 
 ---
 
-## 1. Superblock + Block Group Descriptors `[Sonnet]`
+## 1. Superblock + Block Group Descriptors
 
 Parse the ext4 superblock at offset 1024. Validate magic. Check feature bits: refuse the mount on unknown incompatible bits, mount read-only on unknown read-only-compatible bits. Read the block group descriptor table.
 
@@ -81,7 +81,7 @@ Parse the ext4 superblock at offset 1024. Validate magic. Check feature bits: re
 - [ ] Log: `[ext4] Mounted %c: blocks=%llu inode_size=%u block_size=%u groups=%u`
 - [ ] Commit: `"fs/ext4: superblock parser -- magic, feature gating, block group descriptors, block I/O helpers"`
 
-## 2. Inode Reader `[Sonnet]`
+## 2. Inode Reader
 
 Read a 256-byte ext4 inode. Decode `i_flags`, `i_size` (64-bit), `i_block[15]`, `i_extra_isize`. Handle 128-byte legacy inodes.
 
@@ -97,7 +97,7 @@ Read a 256-byte ext4 inode. Decode `i_flags`, `i_size` (64-bit), `i_block[15]`, 
 - [ ] Handle `ino == 2` as root directory (always mounted as VFS root)
 - [ ] Commit: `"fs/ext4: inode reader -- group lookup, 64-bit size, flags, i_extra_isize, inode→vfs_node"`
 
-## 3. Extent Tree Decoder `[Opus]`
+## 3. Extent Tree Decoder
 
 Walk the extent tree rooted at `i_block[0..14]`. Implement `ext4_extent_lookup(inode, logical_block)` → physical block. Add triple-indirect fallback for `!EXTENTS` inodes.
 
@@ -116,7 +116,7 @@ Walk the extent tree rooted at `i_block[0..14]`. Implement `ext4_extent_lookup(i
 - [ ] Log on sparse hole: `[ext4] sparse hole at logical block %u in inode %u`
 - [ ] Commit: `"fs/ext4: extent tree decoder -- header, leaf lookup, index descent, sparse holes, triple-indirect fallback"`
 
-## 4. Directory htree (B+ Tree) + Readdir `[Opus]`
+## 4. Directory htree (B+ Tree) + Readdir
 
 Walk the htree index for fast name lookup. Fall back to linear scan for small directories. Implement `ext4_readdir()` iterating all `ext4_dir_entry_2` entries.
 
@@ -133,7 +133,7 @@ Walk the htree index for fast name lookup. Fall back to linear scan for small di
 - [ ] VFS `readdir` callback: `ext4_vfs_readdir(vfs_node, index)` → `ext4_readdir()` counting to `index`-th entry; return `vfs_dirent`
 - [ ] Commit: `"fs/ext4: directory htree -- half_md4/tea hash, htree descent, linear fallback, readdir VFS callbacks"`
 
-## 5. File Read `[Sonnet]`
+## 5. File Read
 
 Read file data by mapping logical blocks to physical blocks via the extent tree. Handle multi-block reads, sparse holes (return zeros), and inline data.
 
@@ -150,7 +150,7 @@ Read file data by mapping logical blocks to physical blocks via the extent tree.
 - [ ] VFS `read` callback: `ext4_vfs_read(vfs_node, buf, offset, len)` → `ext4_file_read()`
 - [ ] Commit: `"fs/ext4: file read -- extent-mapped, sparse-hole zero-fill, inline data, VFS read callback"`
 
-## 6. JBD2 Journal Replay `[Opus]`
+## 6. JBD2 Journal Replay
 
 Read the JBD2 journal inode (always inode 8). Replay committed but not yet checkpointed transactions before mounting read-write. Update the journal sequence after replay.
 
@@ -168,7 +168,7 @@ Read the JBD2 journal inode (always inode 8). Replay committed but not yet check
 - [ ] Mount-time: if `s_state != EXT4_VALID_FS || EXT4_SB_DIRTY`: run `jbd2_replay()`; then set `s_state = EXT4_VALID_FS`; write superblock
 - [ ] Commit: `"fs/ext4: JBD2 journal replay -- descriptor/commit/revoke walk, block apply, transaction start/commit"`
 
-## 7. File Write `[Opus]`
+## 7. File Write
 
 Within-block read-modify-write. Block append via `ext4_alloc_block()`. All mutations wrapped in JBD2 transactions. Update `i_size`, `i_mtime`, `i_ctime` on every write.
 
@@ -187,7 +187,7 @@ Within-block read-modify-write. Block append via `ext4_alloc_block()`. All mutat
 - [ ] VFS `write` callback: `ext4_vfs_write(vfs_node, buf, offset, len)` → `ext4_file_write()`
 - [ ] Commit: `"fs/ext4: file write -- within-block RMW, block alloc, JBD2 transaction wrap, i_size/i_mtime update"`
 
-## 8. Extent Tree Write `[Opus]`
+## 8. Extent Tree Write
 
 Insert and remove leaf extents. Split full leaves and propagate index to parent. Goal: sequential writes produce single unfragmented extents.
 
@@ -204,7 +204,7 @@ Insert and remove leaf extents. Split full leaves and propagate index to parent.
 - [ ] `ext4_free_block(sb, phys_block)`: clear bit in block bitmap; `jbd2_transaction_add_block()` for bitmap; update `bg_free_blocks_count` in group descriptor
 - [ ] Commit: `"fs/ext4: extent tree write -- insert with merge, leaf split, index propagation, remove + block free"`
 
-## 9. Directory Write `[Sonnet]`
+## 9. Directory Write
 
 Add, remove, and maintain directory entries. Maintain htree index when `EXT4_INDEX_FL`. Allocate new directory blocks when current ones are full.
 
@@ -219,7 +219,7 @@ Add, remove, and maintain directory entries. Maintain htree index when `EXT4_IND
 - [ ] VFS callbacks: `ext4_vfs_mkdir`, `ext4_vfs_rmdir` -- create/remove directory entry + allocate/free directory inode + add `.` and `..` entries
 - [ ] Commit: `"fs/ext4: directory write -- gap-fill add, rec_len merge delete, atomic rename, JBD2 wrapping"`
 
-## 10. File Create / Delete / Rename `[Sonnet]`
+## 10. File Create / Delete / Rename
 
 Allocate inodes from inode bitmaps. Manage `i_links_count`. Free all blocks and the inode on unlink when link count reaches zero. Atomic rename via JBD2.
 
@@ -236,7 +236,7 @@ Allocate inodes from inode bitmaps. Manage `i_links_count`. Free all blocks and 
 - [ ] VFS callbacks: `ext4_vfs_create`, `ext4_vfs_unlink`, `ext4_vfs_rename`, `ext4_vfs_link` → call the above
 - [ ] Commit: `"fs/ext4: create/delete/rename -- inode alloc/free, link count, block free on last unlink, JBD2 atomic"`
 
-## 11. Extended Attributes `[Sonnet]`
+## 11. Extended Attributes
 
 Read and write inline xattrs (in the extra inode space) and xattr blocks. Support `system.posix_acl_access` and `security.capability` for Linux interoperability.
 
@@ -252,7 +252,7 @@ Read and write inline xattrs (in the extra inode space) and xattr blocks. Suppor
 - [ ] Expose via `NtQueryEaFile` / `NtSetEaFile` stubs (→ XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §9` for EA interface pattern)
 - [ ] Commit: `"fs/ext4: extended attributes -- inline xattr, xattr block, ACL + capability namespaces"`
 
-## 12. VFS Registration + Probe + fsck `[Sonnet]`
+## 12. VFS Registration + Probe + fsck
 
 Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `ext4_fsck()`. Add `chkdsk <drive> /ext4`. Mount read-only if journal replay fails or unknown read-only-compatible features are present; refuse the mount on unknown incompatible features.
 

@@ -57,12 +57,7 @@ title: "TODO-05 -- Win32 Subsystem Server (CSRSS)"
 
 ## Outcome
 
-Every GUI process has a per-thread MSG ring buffer (1000 entries). `GetMessage` blocks via
-`SYS_WAIT_MESSAGE` until an entry is available. Window classes register globally (256 slots)
-or per-process (64 slots), with built-in classes mapping to `CTRL_*` widgets. HDC from
-`BeginPaint` maps to the window's `gfx_surface_t`; `EndPaint` flushes the dirty region to
-the compositor. `SendMessage` across processes goes through a kernel IPC pipe with
-synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `08-graphics-ui/TODO-06 §8`.
+Every GUI process has a per-thread MSG ring buffer (1000 entries). `GetMessage` blocks via `SYS_WAIT_MESSAGE` until an entry is available. Window classes register globally (256 slots) or per-process (64 slots), with built-in classes mapping to `CTRL_*` widgets. HDC from `BeginPaint` maps to the window's `gfx_surface_t`; `EndPaint` flushes the dirty region to the compositor. `SendMessage` across processes goes through a kernel IPC pipe with synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `08-graphics-ui/TODO-06 §8`.
 
 ---
 
@@ -82,7 +77,7 @@ synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `08-g
 
 ---
 
-## 1. Win32 Subsystem Architecture + Message Queue `[Opus]`
+## 1. Win32 Subsystem Architecture + Message Queue
 
 > Novel CSRSS-style architecture: per-thread ring-buffer MSG queue bridging user-mode
 > Win32 calls and the kernel WM event loop. No prior Impossible OS per-thread message
@@ -132,7 +127,7 @@ process in future iteration)
 
 ---
 
-## 2. Window Class Registry + Built-in Classes `[Sonnet]`
+## 2. Window Class Registry + Built-in Classes
 
 **Source:** `src/user/csrss/class_registry.c`; header `include/win32/class_registry.h`
 
@@ -185,7 +180,7 @@ process in future iteration)
 
 ---
 
-## 3. WndProc Dispatch + DefWindowProc `[Sonnet]`
+## 3. WndProc Dispatch + DefWindowProc
 
 **Source:** `src/user/csrss/dispatch.c`
 
@@ -216,7 +211,7 @@ process in future iteration)
 
 ---
 
-## 4. Win32 Painting Model (HDC + Dirty Rect) `[Opus]`
+## 4. Win32 Painting Model (HDC + Dirty Rect)
 
 > Novel: maps Win32 HDC to compositor `gfx_surface_t`; integrates dirty-rect tracking
 > with the WM compositor update cycle. No prior Impossible OS HDC model exists.
@@ -255,7 +250,7 @@ process in future iteration)
 
 ---
 
-## 5. Message Filters + Accelerator Tables `[Sonnet]`
+## 5. Message Filters + Accelerator Tables
 
 **Source:** `src/user/csrss/translate.c`
 
@@ -279,7 +274,7 @@ process in future iteration)
 
 ---
 
-## 6. Window Subclassing + Property Store `[Sonnet]`
+## 6. Window Subclassing + Property Store
 
 **Source:** `src/user/csrss/subclass.c`
 
@@ -303,7 +298,7 @@ process in future iteration)
 
 ---
 
-## 7. Inter-Process Window Messaging `[Opus]`
+## 7. Inter-Process Window Messaging
 
 > Novel cross-process mechanism: kernel IPC pipe for `SendMessage` synchronous reply;
 > kernel-allocated shared buffer for `WM_COPYDATA`. Security-sensitive.
@@ -333,7 +328,7 @@ process in future iteration)
 
 ---
 
-## 8. Common Dialog Boxes `[Sonnet]`
+## 8. Common Dialog Boxes
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
@@ -358,7 +353,7 @@ process in future iteration)
 
 ---
 
-## 9. Win11 Visual Opt-In Surface: `dwmapi`, `uxtheme`, Personalization Broadcast `[Opus]`
+## 9. Win11 Visual Opt-In Surface: `dwmapi`, `uxtheme`, Personalization Broadcast
 
 > **Spawned-by:** root
 
@@ -404,12 +399,7 @@ process in future iteration)
 | 💎  | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                                 | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                         |
 | 💎  | Win11 visual opt-in (`dwmapi` / `uxtheme`)    | ✅ `DwmSetWindowAttribute`, `SetWindowTheme`, `ImmersiveColorSet` | ❌ No equivalent (toolkit CSS)                  | ⬜ §9 -- same `CTRL_*` renderer; Microsoft Registry keys; ordinal exports       |
 
-Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** -- not a
-user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory;
-`SYS_WAIT_MESSAGE` uses the real scheduler (`sched_sleep`/`sched_wake`) so a thread
-waiting for messages consumes zero CPU. The HDC→`gfx_surface_t` mapping means GDI calls
-translate directly to the same `gfx_*` primitives used by the compositor -- no format
-conversion overhead.
+Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** -- not a user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory; `SYS_WAIT_MESSAGE` uses the real scheduler (`sched_sleep`/`sched_wake`) so a thread waiting for messages consumes zero CPU. The HDC→`gfx_surface_t` mapping means GDI calls translate directly to the same `gfx_*` primitives used by the compositor -- no format conversion overhead.
 
 ---
 

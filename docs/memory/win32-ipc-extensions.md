@@ -46,12 +46,12 @@ bash scripts/test.sh SUITE=abi
 
 ## What is not implemented yet?
 
-- **Named pipe servers, instances and overlapped I/O** ([Named Pipes (NPFS)](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#1-named-pipes-npfs----server-endpoint-opus), [Named Pipe Instances + Overlapped I/O](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#2-named-pipe-instances--overlapped-io-opus)).
-- **Mailslots** ([Mailslots (MSFS)](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#3-mailslots-msfs-sonnet)).
-- **Object-backed completion ports** with file-handle association, a worker pool and a completion hook for device interrupts ([I/O Completion Ports](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#4-io-completion-ports-iocp-opus), [IOCP Worker Thread Pool](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#5-iocp-worker-thread-pool--dma-completion-hook-opus)).
-- **Waitable named sync objects** through the shared wait interface ([Win32 Ob-Backed Named Sync Objects](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#6-win32-ob-backed-named-sync-objects-sonnet)).
-- **LPC and the ALPC extensions** ([LPC Basic](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#7-lpc-basic----local-procedure-call-opus), [ALPC Extensions](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#8-alpc-extensions-opus)).
-- **`ImpossibleRing`**, the asynchronous submission ring ([`ImpossibleRing`](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#9-impossiblering----async-submission-rings-opus)).
+- **Named pipe servers, instances and overlapped I/O** ([Named Pipes (NPFS)](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#1-named-pipes-npfs----server-endpoint), [Named Pipe Instances + Overlapped I/O](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#2-named-pipe-instances--overlapped-io)).
+- **Mailslots** ([Mailslots (MSFS)](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#3-mailslots-msfs)).
+- **Object-backed completion ports** with file-handle association, a worker pool and a completion hook for device interrupts ([I/O Completion Ports](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#4-io-completion-ports-iocp), [IOCP Worker Thread Pool](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#5-iocp-worker-thread-pool--dma-completion-hook)).
+- **Waitable named sync objects** through the shared wait interface ([Win32 Ob-Backed Named Sync Objects](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#6-win32-ob-backed-named-sync-objects)).
+- **LPC and the ALPC extensions** ([LPC Basic](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#7-lpc-basic----local-procedure-call), [ALPC Extensions](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#8-alpc-extensions)).
+- **`ImpossibleRing`**, the asynchronous submission ring ([`ImpossibleRing`](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#9-impossiblering----async-submission-rings)).
 - **The remaining IPC system calls** ([IPC Syscalls Wired to SSDT](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#10-ipc-syscalls-wired-to-ssdt)).
 - **Anonymous pipe hardening.** Slot claims are not atomic across CPUs, and `pipe_create()` returns the same `-1` for a full pool and an allocation failure ([Anonymous-Pipe Hardening](../../todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md#11-anonymous-pipe-hardening----smp-safe-slot-state-real-error-codes-honest-capacity)).
 

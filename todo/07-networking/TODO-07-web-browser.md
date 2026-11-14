@@ -56,7 +56,7 @@ title: "TODO-07 -- Web Browser"
 
 ---
 
-## 1. Text-Only Browser `[Sonnet]`
+## 1. Text-Only Browser
 
 `http_get(url)` → in-tag/not-in-tag state machine strips HTML tags → display plain text in a scrollable window. Extract `<a href>` links as a numbered list. Address bar (type URL + Enter). Back/forward URL history stack.
 
@@ -75,7 +75,7 @@ title: "TODO-07 -- Web Browser"
 - [ ] `browser_open()`: `wm_create_window("Impossible Browser", 50, 50, 900, 600)`; navigate to default page (`about:blank` → show "Welcome" message)
 - [ ] Commit: `"apps/browser: text-only browser -- tag strip, link list, address bar, back/forward"`
 
-## 2. HTML Parser + DOM Tree `[Opus]`
+## 2. HTML Parser + DOM Tree
 
 Tokenizer → token stream (start tag, end tag, text, comment, DOCTYPE) → DOM tree (node: tag, attributes array, parent, children, text content). Support 20 essential tags.
 
@@ -94,7 +94,7 @@ Tokenizer → token stream (start tag, end tag, text, comment, DOCTYPE) → DOM 
 - [ ] Replace text-strip renderer in §1 with a `dom_walk` callback that emits text nodes
 - [ ] Commit: `"apps/browser: HTML tokenizer + DOM tree -- 20 tags, attrs, text nodes, void element auto-close"`
 
-## 3. Tab Management `[Sonnet]`
+## 3. Tab Management
 
 **Design:** [`controls.md#tabs`](../../docs/design/controls.md#tabs)
 
@@ -114,7 +114,7 @@ Tokenizer → token stream (start tag, end tag, text, comment, DOCTYPE) → DOM 
 - [ ] Keyboard: `Ctrl+T` → `tab_new`; `Ctrl+W` → `tab_close(active)`; `Ctrl+Tab` → `active_tab = (active_tab+1) % tab_count`
 - [ ] Commit: `"apps/browser: tab management -- browser_tab_t, tab bar UI, Ctrl+T/W/Tab, 16-tab limit"`
 
-## 4. Block / Inline Layout Engine `[Opus]`
+## 4. Block / Inline Layout Engine
 
 Block flow (top-to-bottom): each block-level element (`div`, `p`, `h*`, `ul`, `table`) starts a new vertical flow. Inline flow (left-to-right + word wrap at viewport width). Intrinsic widths. Relative lengths (em, %). Vertical scroll for long pages. Clip overflow.
 
@@ -133,7 +133,7 @@ Block flow (top-to-bottom): each block-level element (`div`, `p`, `h*`, `ul`, `t
 - [ ] Replace §1 text renderer with `layout_build` + `layout_paint` for HTML pages
 - [ ] Commit: `"apps/browser: block/inline layout engine -- block flow, inline word wrap, scroll, box model"`
 
-## 5. Image Loading in Browser `[Sonnet]`
+## 5. Image Loading in Browser
 
 `<img src>` triggers `http_get()` for the URL, pipes bytes through `image_load_mem()`, renders the decoded image at the intrinsic or specified dimensions. Alt text fallback if load fails.
 
@@ -151,7 +151,7 @@ Block flow (top-to-bottom): each block-level element (`div`, `p`, `h*`, `ul`, `t
 - [ ] Lazy loading: kick off image fetches after initial text layout so the page is readable first; images trigger a re-layout on completion
 - [ ] Commit: `"apps/browser: image loading -- http_get → image_load_mem, inline blit, alt fallback, 16-entry cache"`
 
-## 6. CSS Parser + Style Engine `[Opus]`
+## 6. CSS Parser + Style Engine
 
 CSS tokenizer → rule list (selector, property-value pairs). Cascade (specificity + `!important`). Computed style per DOM node: color, background-color, font-size/weight/style, margin/padding/border, display (block/inline/none), width/height.
 
@@ -170,7 +170,7 @@ CSS tokenizer → rule list (selector, property-value pairs). Cascade (specifici
 - [ ] Extract `<style>` block text from DOM during parse; call `css_parse()` on it; also parse `style=""` inline attributes
 - [ ] Commit: `"apps/browser: CSS parser + cascade -- specificity, element/class/id selectors, box model props"`
 
-## 7. JavaScript Stub `[Sonnet]`
+## 7. JavaScript Stub
 
 Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline placeholder where scripts would have run. Expose `window.location`, `document.title`, `document.write` as no-ops to prevent hard crashes if JS stubs are exercised. Note QuickJS as the future full-engine upgrade path.
 
@@ -186,7 +186,7 @@ Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline plac
 - [ ] `js_stub_init()`: log `[Browser] JavaScript: stub mode (QuickJS upgrade path available)`
 - [ ] Commit: `"apps/browser: JS stub -- script placeholder, window.location/document.title no-ops, QuickJS hook point"`
 
-## 8. Bookmarks Manager `[Sonnet]`
+## 8. Bookmarks Manager
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
@@ -207,7 +207,7 @@ Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline plac
 - [ ] `bookmarks_import_html(path)`: `vfs_open`; scan `<A HREF=` + `>title<`; call `bookmark_add()` for each
 - [ ] Commit: `"apps/browser: bookmarks -- JSON save/load, Ctrl+D add/edit, dropdown menu, HTML import/export"`
 
-## 9. Download Manager `[Sonnet]`
+## 9. Download Manager
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#progress`](../../docs/design/controls.md#progress), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
@@ -227,7 +227,7 @@ Detect `<script>` blocks in the DOM. Display `[JavaScript disabled]` inline plac
 - [ ] `download_manager_open()`: `wm_create_window("Downloads", ...)` showing `downloads[]` table; auto-refreshes every 500 ms
 - [ ] Commit: `"apps/browser: download manager -- Range resume, progress window, pause/cancel, Downloads save"`
 
-## 10. Privacy + Security `[Opus]`
+## 10. Privacy + Security
 
 Block mixed content (HTTP resource on HTTPS page). TLS padlock icon in address bar. Cookie jar (session-only default, persistent opt-in). `Cache-Control` + `ETag` HTTP caching.
 

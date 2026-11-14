@@ -55,7 +55,7 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 
 ---
 
-## 1. Crypto Primitives `[Opus]`
+## 1. Crypto Primitives
 
 `cng_*` wrappers: AES-256-GCM and RSA-2048 over the vendored Mbed TLS 3.6.2 (`src/libs/mbedtls/`, freestanding port owned by 02-kernel-core/TODO-03 §7); SHA-256 and SHA-1 over the shipped `src/kernel/crypto/`; HMAC-SHA256 over the shipped SHA-256; BLAKE2b-256 and ECDH Curve25519 via monocypher.
 
@@ -85,7 +85,7 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 - [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 SHA-1 HMAC RSA-2048 X25519 BLAKE2b")`
 - [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, SHA-1, HMAC, RSA-2048, X25519, BLAKE2b"`
 
-## 2. TLS Handshake Helper `[Sonnet]`
+## 2. TLS Handshake Helper
 
 `cng_tls_prf(secret, label, seed, out, len)` HMAC-SHA256-based PRF. `cng_rsa_pkcs1_sign(priv, data, dlen, sig_out)`, `cng_rsa_pkcs1_verify(pub, data, dlen, sig)`. Consumed by Mbed TLS integration in TODO-03.
 
@@ -100,7 +100,7 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 - [ ] `cng_sha256_digest_info[19]` static DER prefix constant for SHA-256 AlgorithmIdentifier
 - [ ] Commit: `"cng: TLS helper -- cng_tls_prf (RFC 5246 P_hash), RSA PKCS#1 v1.5 sign/verify"`
 
-## 3. X.509 Certificate Store `[Opus]`
+## 3. X.509 Certificate Store
 
 `struct x509_cert` (subject, issuer, public_key, validity, DER buffer). `cng_cert_parse_der()` over Mbed TLS `x509_crt` (vendored), shared with the 07-networking/TODO-03 §6 CA store rather than a second parser. `cng_cert_store_add/find/verify_chain()`. Mozilla CA bundle loaded at boot.
 
@@ -119,7 +119,7 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 - [ ] Boot log: `klog(LOG_OK, "cng", "cert store: %u CA roots loaded", root_count)`
 - [ ] Commit: `"cng: X.509 cert store -- DER parser, Registry store, CA bundle, chain verification"`
 
-## 4. Key Store `[Sonnet]`
+## 4. Key Store
 
 Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_import/get/delete`. Keys in `HKCU\SECURITY\Keys\{name}` encrypted with user password-derived KEK.
 
@@ -135,7 +135,7 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 - [ ] `int cng_key_store_delete(const char *name)` -- delete Registry subtree
 - [ ] Commit: `"cng: key store -- per-user AES-256-GCM encrypted keys in HKCU\\SECURITY\\Keys, KEK derivation"`
 
-## 5. BCrypt API `[Sonnet]`
+## 5. BCrypt API
 
 `BCryptOpenAlgorithmProvider`, `BCryptEncrypt/Decrypt`, `BCryptHash/FinishHash`, `BCryptGenRandom`, `BCryptGenerateKeyPair`, `BCryptImportKeyPair`, `BCryptExportKey`. Registered in `bcrypt.dll` stub table.
 
@@ -159,7 +159,7 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 - [ ] `#define STATUS_SUCCESS 0`, `STATUS_INVALID_PARAMETER 0xC000000D`, `STATUS_NOT_SUPPORTED 0xC00000BB` (NT status codes)
 - [ ] Commit: `"cng: BCrypt API stubs -- OpenAlgorithmProvider/Encrypt/Hash/GenRandom/KeyPair, bcrypt.dll table"`
 
-## 6. NCrypt API `[Sonnet]`
+## 6. NCrypt API
 
 `NCryptOpenStorageProvider`, `NCryptOpenKey`, `NCryptEncrypt/Decrypt`, `NCryptImportKey`, `NCryptFreeObject`. Registered in `ncrypt.dll` stub table.
 
@@ -180,7 +180,7 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 - [ ] Register in `ncrypt.dll` stub table
 - [ ] Commit: `"cng: NCrypt API stubs -- OpenStorageProvider/OpenKey/Encrypt/Import/Free, ncrypt.dll table"`
 
-## 7. Code Signing `[Opus]`
+## 7. Code Signing
 
 `codesign_sign(exe_path, priv_key)` appends Ed25519 signature to PE32+. `codesign_verify(exe_path, cert_store)` validates. Optional enforcement: `HKLM\SECURITY\CodeSigning\Required` (default 0).
 
@@ -198,7 +198,7 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 - [ ] `#define TASK_ERR_UNSIGNED -42` in `task.h` (or return existing permission error)
 - [ ] Commit: `"cng: code signing -- Ed25519 PE32+ trailer, verify in task_create_user, optional enforcement"`
 
-## 8. EFS Integration `[Opus]`
+## 8. EFS Integration
 
 `efs_encrypt_file(path)` generates a 256-bit file key (FEK), encrypts the file with AES-256 in the sector-based mode Windows EFS uses (CBC or XTS with an IV derived from the file offset, as the `ntfs_efs.c` stubs document), and RSA-OAEP-wraps the FEK into the Windows-format `$EFS` stream. AES-256-GCM is not used here: it is not the Windows EFS format. `efs_decrypt_file(path)` reverses. The NTFS driver already parses `$EFS` (a `$LOGGED_UTILITY_STREAM`, type 0x100, named `$EFS`, with DDF entries) and routes encrypted reads and writes through `src/kernel/fs/ntfs/ntfs_efs.c`; this section fills that file's unwrap and cipher stubs and adds the write-side stream, so files stay compatible with Windows.
 

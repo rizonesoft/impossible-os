@@ -59,18 +59,18 @@ The workflow builds, tests and publishes the release on its own. A stable tag de
 
 ## Who owns what?
 
-The repository setup page, [GitHub Repository Setup](../infrastructure/github-setup.md), already documents the release workflow, CalVer, templates and community files; this roadmap overlaps it on sections 1 to 4 and 7. The update server roadmap's section 2 plans a second workflow on the same `v*` tag. A reconcile item in [section 1](../../todo/15-installer-release/TODO-05-github-release-community.md#1-github-release-workflow-sonnet) asks for the shipped `release.yml` to be extended instead. [Section 3](../../todo/15-installer-release/TODO-05-github-release-community.md#3-contribution-guide-overhaul-sonnet) asks for DCO sign-off and "no direct pushes to `main`", which conflict with the project's zero-trailer commit policy and main-only workflow, so a reconcile item is filed there too.
+The repository setup page, [GitHub Repository Setup](../infrastructure/github-setup.md), already documents the release workflow, CalVer, templates and community files; this roadmap overlaps it on sections 1 to 4 and 7. The update server roadmap's section 2 plans a second workflow on the same `v*` tag. A reconcile item in [section 1](../../todo/15-installer-release/TODO-05-github-release-community.md#1-github-release-workflow) asks for the shipped `release.yml` to be extended instead. [Section 3](../../todo/15-installer-release/TODO-05-github-release-community.md#3-contribution-guide-overhaul) asks for DCO sign-off and "no direct pushes to `main`", which conflict with the project's zero-trailer commit policy and main-only workflow, so a reconcile item is filed there too.
 
 ## What is not implemented yet?
 
-- [GitHub Release Workflow](../../todo/15-installer-release/TODO-05-github-release-community.md#1-github-release-workflow-sonnet): the workflow exists; `create-release.sh` does not
-- [Changelog Discipline](../../todo/15-installer-release/TODO-05-github-release-community.md#2-changelog-discipline-sonnet): a hand-kept changelog would conflict with the generator
-- [Contribution Guide Overhaul](../../todo/15-installer-release/TODO-05-github-release-community.md#3-contribution-guide-overhaul-sonnet)
-- [Issue and PR Templates](../../todo/15-installer-release/TODO-05-github-release-community.md#4-issue--pr-templates-sonnet): the forms exist under hyphenated names
-- [README Overhaul](../../todo/15-installer-release/TODO-05-github-release-community.md#5-readme-overhaul-sonnet)
-- [Project Website](../../todo/15-installer-release/TODO-05-github-release-community.md#6-project-website-sonnet): the site exists; the roadmap still names an `impossible-os.dev` domain and a `docs/website/` folder
-- [Community Channels](../../todo/15-installer-release/TODO-05-github-release-community.md#7-community-channels-sonnet)
-- [Roadmap Publication and GitHub Milestones Sync](../../todo/15-installer-release/TODO-05-github-release-community.md#8-roadmap-publication--github-milestones-sync-sonnet)
+- [GitHub Release Workflow](../../todo/15-installer-release/TODO-05-github-release-community.md#1-github-release-workflow): the workflow exists; `create-release.sh` does not
+- [Changelog Discipline](../../todo/15-installer-release/TODO-05-github-release-community.md#2-changelog-discipline): a hand-kept changelog would conflict with the generator
+- [Contribution Guide Overhaul](../../todo/15-installer-release/TODO-05-github-release-community.md#3-contribution-guide-overhaul)
+- [Issue and PR Templates](../../todo/15-installer-release/TODO-05-github-release-community.md#4-issue--pr-templates): the forms exist under hyphenated names
+- [README Overhaul](../../todo/15-installer-release/TODO-05-github-release-community.md#5-readme-overhaul)
+- [Project Website](../../todo/15-installer-release/TODO-05-github-release-community.md#6-project-website): the site exists; the roadmap still names an `impossible-os.dev` domain and a `docs/website/` folder
+- [Community Channels](../../todo/15-installer-release/TODO-05-github-release-community.md#7-community-channels)
+- [Roadmap Publication and GitHub Milestones Sync](../../todo/15-installer-release/TODO-05-github-release-community.md#8-roadmap-publication--github-milestones-sync)
 
 ## How does it compare with Windows 11 and Linux?
 

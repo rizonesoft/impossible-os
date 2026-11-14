@@ -63,7 +63,7 @@ title: "TODO-08 -- Advanced Synchronisation Primitives"
 
 ---
 
-## 1. Ticket Locks -- FIFO Fair Spinlocks `[Opus]`
+## 1. Ticket Locks -- FIFO Fair Spinlocks
 
 Replace the CAS-spinlock with a ticket lock for high-contention sites. `atomic_fetch_add` on `next_ticket` gives each caller their position; they spin on `now_serving == my_ticket`. On release, `now_serving` is incremented, handing the lock to the next waiter in arrival order.
 
@@ -85,7 +85,7 @@ typedef struct { uint32_t next_ticket; uint32_t now_serving; } ticket_lock_t;
 - [ ] Boot log: `[SCHED] run-queue lock: ticket_lock_t (FIFO ordering)`
 - [ ] Commit: `"sched: ticket locks -- FIFO spinlock, run-queue lock replacement"`
 
-## 2. Preemption Count `[Opus]`
+## 2. Preemption Count
 
 Add a `preempt_count` field to `task_t`. `preempt_disable()` increments it; `preempt_enable()` decrements and reschedules if `preempt_count == 0` and `need_resched` is set. The scheduler tick ISR sets `need_resched` instead of switching when the count is non-zero. IRQs remain fully enabled -- only the voluntary scheduler switch is inhibited.
 
@@ -103,7 +103,7 @@ Add a `preempt_count` field to `task_t`. `preempt_disable()` increments it; `pre
 - [ ] Boot log: `[SCHED] preemption count active`
 - [ ] Commit: `"sched: preemption count -- preempt_disable/enable, need_resched, RCU read-side"`
 
-## 3. Thread-Local Storage (TLS) `[Opus]`
+## 3. Thread-Local Storage (TLS)
 
 Every thread gets a `tls_block_t` pointed to by `FS:0`. On context switch the kernel saves and restores `IA32_FS_BASE` via `WRMSR`/`RDMSR`. Dynamic keys map to per-thread pointer slots; destructors run on `thread_exit()`. ELF `PT_TLS` template is copied per-thread at `exec()`. Per-thread `errno` uses `FS`-relative access.
 
@@ -122,7 +122,7 @@ Every thread gets a `tls_block_t` pointed to by `FS:0`. On context switch the ke
 - [ ] Test: two threads set `errno` to different values concurrently -- verify no interference
 - [ ] Commit: `"kernel: thread-local storage -- FS base MSR, tls_key_create/set/get, per-thread errno"`
 
-## 4. Futexes `[Opus]`
+## 4. Futexes
 
 Fast userspace mutexes: `FUTEX_WAIT(uaddr, expected)` atomically checks that `*uaddr == expected` and sleeps; `FUTEX_WAKE(uaddr, n)` wakes up to N waiters sleeping on `uaddr`. The per-process futex hash table maps user-space virtual addresses to kernel wait queues. User-mode `pthread_mutex_lock` avoids syscalls on the uncontended path entirely.
 
@@ -140,7 +140,7 @@ Fast userspace mutexes: `FUTEX_WAIT(uaddr, expected)` atomically checks that `*u
 - [ ] On `thread_exit()`: drain any remaining futex wait-table entries to avoid dangling waiter records
 - [ ] Commit: `"kernel: futex syscall -- WAIT/WAKE/WAKE_OP, per-process hash table, NtWaitForKeyedEvent"`
 
-## 5. `pthread_once` / `call_once` `[Sonnet]`
+## 5. `pthread_once` / `call_once`
 
 Guarantee a one-time initialisation function runs exactly once across any number of concurrent callers. The fast path is a single atomic read -- free once initialised. All concurrent callers block on the mutex while the first caller runs the init function.
 
@@ -158,7 +158,7 @@ typedef struct { mutex_t mu; bool done; } once_flag_t;
 - [ ] Test: 8 concurrent threads calling `pthread_once` -- verify `fn` runs exactly once (serial log shows one `"init called"`)
 - [ ] Commit: `"sched: pthread_once / call_once -- double-checked locking, atomic fast path"`
 
-## 6. `pthread_barrier_t` -- Kernel-Level Barrier `[Sonnet]`
+## 6. `pthread_barrier_t` -- Kernel-Level Barrier
 
 A reusable phase barrier that releases all threads simultaneously after the last one arrives. Phase-toggle prevents spurious early release on reuse. First-class kernel primitive -- available to kernel threads and user processes alike without user-space pthread scaffolding.
 
@@ -186,7 +186,7 @@ typedef struct {
 - [ ] Test: N=4 threads -- none proceed until all 4 call `barrier_wait`; reuse across 3 generations without reinit
 - [ ] Commit: `"sched: pthread_barrier_t -- phase-toggle, kernel-level, compositor frame sync"`
 
-## 7. Thread Cancellation `[Sonnet]`
+## 7. Thread Cancellation
 
 Deferred POSIX cancellation: `thread_cancel(tid)` marks the target thread; it exits cleanly at the next cancellation point. `pthread_cleanup_push/pop` registers LIFO cleanup handlers for lock release and resource cleanup on cancellation.
 
@@ -206,7 +206,7 @@ Deferred POSIX cancellation: `thread_cancel(tid)` marks the target thread; it ex
 - [ ] Test: cancel a thread blocked in `cond_wait()` -- verify cleanup handler runs; verify `pthread_join` returns `PTHREAD_CANCELED`
 - [ ] Commit: `"sched: thread cancellation -- deferred pthread_cancel, cleanup handler stack, cancellation points"`
 
-## 8. `WaitForMultipleObjects` (`waitable_t` vtable) `[Opus]`
+## 8. `WaitForMultipleObjects` (`waitable_t` vtable)
 
 A `waitable_t` vtable pointer is embedded in every sync object (`mutex_t`, `semaphore_t`, `event_t`, `condvar_t`). `wait_any(handles[], n, ms)` sleeps until any one handle is signalled; `wait_all(handles[], n, ms)` sleeps until all are signalled. Returns the index of the first-signalled handle or `WAIT_TIMEOUT`.
 
@@ -224,7 +224,7 @@ A `waitable_t` vtable pointer is embedded in every sync object (`mutex_t`, `sema
 - [ ] Test: `wait_any` on `[mutex, event]` -- verify correct index returned when event fires first
 - [ ] Commit: `"sched: WaitForMultipleObjects -- waitable_t vtable, wait_any/wait_all, NtWaitForMultipleObjects"`
 
-## 9. Unified `_timeout(ms)` API `[Sonnet]`
+## 9. Unified `_timeout(ms)` API
 
 Every blocking primitive gets a `_timeout(ms)` variant with identical semantics: pass milliseconds relative to now, receive `WAIT_SIGNALLED (0)` or `WAIT_TIMEOUT (-1)`. All variants use the calibrated tick counter from `TODO-06 §8` for ms-accurate measurement.
 

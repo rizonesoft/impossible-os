@@ -55,7 +55,7 @@ A kernel path that must require a privilege calls `SeSinglePrivilegeCheck(&SeXxx
 - AppContainer/LowBox tokens cascade on `SeAccessCheck` and UAC ([AppContainer / LowBox Tokens](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md#14-appcontainer--lowbox-tokens)).
 - `ACCESS_TOKEN` has no per-token lock yet, so the token query, adjust and set syscalls are not safe against two threads of one process touching the same token concurrently ([ACCESS_TOKEN Object](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md#4-access_token-object)).
 - SD inheritance (`SeAssignSecurity`) has no live caller: neither the Object Manager nor the VFS wires it into object creation yet ([SD Inheritance / SeAssignSecurity](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md#13-security-descriptor-inheritance-seassignsecurity)).
-- SHA-1 service-SID derivation and constant-time SID comparison wait on `cng_sha1()` and `cng_consttime_compare()` from the [CNG crypto primitives](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#1-crypto-primitives-opus) ([Security Primitive Hardening](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md#16-security-primitive-hardening)).
+- SHA-1 service-SID derivation and constant-time SID comparison wait on `cng_sha1()` and `cng_consttime_compare()` from the [CNG crypto primitives](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#1-crypto-primitives) ([Security Primitive Hardening](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md#16-security-primitive-hardening)).
 
 ## How does it compare with Windows 11 and Linux?
 

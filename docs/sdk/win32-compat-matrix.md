@@ -64,11 +64,11 @@ The functions each tier needs come from other roadmaps: the PE loader and ring-3
 
 ## What is not implemented yet?
 
-- [API Coverage Tracker](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#1-api-coverage-tracker-sonnet)
-- [Bring-Up Ladder Framework](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#2-bring-up-ladder-framework-sonnet)
-- Tiers [1](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#3-tier-1----process-exit-only-sonnet), [2](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#4-tier-2----console-io-sonnet), [3](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#5-tier-3----file-io-sonnet), [4](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#6-tier-4----process--registry-sonnet), [5](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#7-tier-5----memory--sync-sonnet), [6](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#8-tier-6----messagebox--basic-gui-sonnet), [7](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#9-tier-7----full-win32-window--controls-sonnet), [8](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#10-tier-8----extended-win32-surface-sonnet) and [9](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#13-tier-9----winrt--directx--winui-3--windows-app-sdk-apps-opus)
-- [Stub Call Log Analysis](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#11-stub-call-log-analysis-sonnet)
-- [CI Compatibility Gate](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#12-ci-compatibility-gate-sonnet)
+- [API Coverage Tracker](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#1-api-coverage-tracker)
+- [Bring-Up Ladder Framework](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#2-bring-up-ladder-framework)
+- Tiers [1](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#3-tier-1----process-exit-only), [2](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#4-tier-2----console-io), [3](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#5-tier-3----file-io), [4](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#6-tier-4----process--registry), [5](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#7-tier-5----memory--sync), [6](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#8-tier-6----messagebox--basic-gui), [7](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#9-tier-7----full-win32-window--controls), [8](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#10-tier-8----extended-win32-surface) and [9](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#13-tier-9----winrt--directx--winui-3--windows-app-sdk-apps)
+- [Stub Call Log Analysis](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#11-stub-call-log-analysis)
+- [CI Compatibility Gate](../../todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md#12-ci-compatibility-gate)
 
 ## How does it compare with Windows 11 and Linux?
 

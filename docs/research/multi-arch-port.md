@@ -47,13 +47,13 @@ rg -l 'rdmsr|wrmsr|invlpg|iretq|__asm__' src/kernel include/kernel
 
 No section has started, and the planned `docs/architecture/multi-arch-port-plan.md` does not exist.
 
-- [x86-64 Gap Analysis](../../todo/18-future-research/TODO-01-multi-arch-port.md#1-x86-64-gap-analysis-opus)
-- [Build System Multi-Arch](../../todo/18-future-research/TODO-01-multi-arch-port.md#2-build-system-multi-arch-sonnet)
-- [AArch64 Boot Path (Minimal Kernel Prototype)](../../todo/18-future-research/TODO-01-multi-arch-port.md#3-aarch64-boot-path-minimal-kernel-prototype-opus)
-- [RISC-V (RV64GC) Gap Analysis](../../todo/18-future-research/TODO-01-multi-arch-port.md#4-risc-v-rv64gc-gap-analysis-sonnet)
-- [ABI Considerations](../../todo/18-future-research/TODO-01-multi-arch-port.md#5-abi-considerations-sonnet)
-- [AArch64 Port Plan](../../todo/18-future-research/TODO-01-multi-arch-port.md#6-aarch64-port-plan-srcarcharm64-layer-design-opus)
-- [Research Deliverables](../../todo/18-future-research/TODO-01-multi-arch-port.md#7-research-deliverables-sonnet)
+- [x86-64 Gap Analysis](../../todo/18-future-research/TODO-01-multi-arch-port.md#1-x86-64-gap-analysis)
+- [Build System Multi-Arch](../../todo/18-future-research/TODO-01-multi-arch-port.md#2-build-system-multi-arch)
+- [AArch64 Boot Path (Minimal Kernel Prototype)](../../todo/18-future-research/TODO-01-multi-arch-port.md#3-aarch64-boot-path-minimal-kernel-prototype)
+- [RISC-V (RV64GC) Gap Analysis](../../todo/18-future-research/TODO-01-multi-arch-port.md#4-risc-v-rv64gc-gap-analysis)
+- [ABI Considerations](../../todo/18-future-research/TODO-01-multi-arch-port.md#5-abi-considerations)
+- [AArch64 Port Plan](../../todo/18-future-research/TODO-01-multi-arch-port.md#6-aarch64-port-plan-srcarcharm64-layer-design)
+- [Research Deliverables](../../todo/18-future-research/TODO-01-multi-arch-port.md#7-research-deliverables)
 
 The spike and the active ports roadmaps disagree on layout. This file proposes `src/arch/arm64/` and `ARCH=arm64`; the [abstraction layer](../ports/arch-abstraction-layer.md) plans `src/kernel/arch/aarch64/` and `ARCH=aarch64`. The active roadmap is the one to follow, and the spike's section 7 should adopt its names rather than a second scheme.
 

@@ -56,19 +56,19 @@ Several roadmaps meet here, and this file states that it does not re-specify the
 
 - The `user32` and `gdi32` stubs are the [Win32 API Surface](../services/win32-api-surface.md) roadmap's sections 10 and 11, and the Win32 GDI and USER32 stubs roadmap (`08-graphics-ui/TODO-14`) owns the GDI object table in its section 2.
 - The dialogs themselves are `08-graphics-ui/TODO-06` section 8; this file only adapts the Win32 structures.
-- The [ALPC and Message Ports](../kernel/alpc-message-ports.md) roadmap's section 10 defines the CSRSS ApiPort bootstrap and places the server at `src/apps/csrss/csrss.c`, talking over ALPC. This file says `src/user/csrss/` over pipes and shared memory. That is filed as a reconcile item in [section 1](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#1-win32-subsystem-architecture--message-queue-opus).
+- The [ALPC and Message Ports](../kernel/alpc-message-ports.md) roadmap's section 10 defines the CSRSS ApiPort bootstrap and places the server at `src/apps/csrss/csrss.c`, talking over ALPC. This file says `src/user/csrss/` over pipes and shared memory. That is filed as a reconcile item in [section 1](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#1-win32-subsystem-architecture--message-queue).
 
 ## What is not implemented yet?
 
-- [Win32 Subsystem Architecture and Message Queue](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#1-win32-subsystem-architecture--message-queue-opus)
-- [Window Class Registry and Built-in Classes](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#2-window-class-registry--built-in-classes-sonnet)
-- [WndProc Dispatch and DefWindowProc](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#3-wndproc-dispatch--defwindowproc-sonnet)
-- [Win32 Painting Model](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#4-win32-painting-model-hdc--dirty-rect-opus)
-- [Message Filters and Accelerator Tables](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#5-message-filters--accelerator-tables-sonnet)
-- [Window Subclassing and Property Store](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#6-window-subclassing--property-store-sonnet)
-- [Inter-Process Window Messaging](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#7-inter-process-window-messaging-opus)
-- [Common Dialog Boxes](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#8-common-dialog-boxes-sonnet)
-- [Win11 Visual Opt-In Surface](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#9-win11-visual-opt-in-surface-dwmapi-uxtheme-personalization-broadcast-opus)
+- [Win32 Subsystem Architecture and Message Queue](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#1-win32-subsystem-architecture--message-queue)
+- [Window Class Registry and Built-in Classes](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#2-window-class-registry--built-in-classes)
+- [WndProc Dispatch and DefWindowProc](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#3-wndproc-dispatch--defwindowproc)
+- [Win32 Painting Model](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#4-win32-painting-model-hdc--dirty-rect)
+- [Message Filters and Accelerator Tables](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#5-message-filters--accelerator-tables)
+- [Window Subclassing and Property Store](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#6-window-subclassing--property-store)
+- [Inter-Process Window Messaging](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#7-inter-process-window-messaging)
+- [Common Dialog Boxes](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#8-common-dialog-boxes)
+- [Win11 Visual Opt-In Surface](../../todo/12-user-platform-sdk/TODO-05-win32-subsystem.md#9-win11-visual-opt-in-surface-dwmapi-uxtheme-personalization-broadcast)
 
 ## How does it compare with Windows 11 and Linux?
 

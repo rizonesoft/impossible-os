@@ -50,18 +50,18 @@ The `klibs:` suites registered in [`test_klibs.c`](../../src/kernel/test/test_kl
 
 ## Who owns what?
 
-The kernel libraries roadmap, `02-kernel-core/TODO-03`, owns this ground. It shipped strings (its section 1), maths (2), Monocypher and the CSPRNG (5) and cJSON (6). miniz (4) and Mbed TLS (7) are vendored there with their ports deferred: miniz still needs a caller-owned workspace allocator before it can be compiled, and its first consumer is HTTP gzip decoding. This file's ZIP writer and TLS client depend on those ports. This file restates the owner's sections with other paths. That overlap is filed as a rescope item in this roadmap's [section 1](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation-sonnet), which keeps only the deltas.
+The kernel libraries roadmap, `02-kernel-core/TODO-03`, owns this ground. It shipped strings (its section 1), maths (2), Monocypher and the CSPRNG (5) and cJSON (6). miniz (4) and Mbed TLS (7) are vendored there with their ports deferred: miniz still needs a caller-owned workspace allocator before it can be compiled, and its first consumer is HTTP gzip decoding. This file's ZIP writer and TLS client depend on those ports. This file restates the owner's sections with other paths. That overlap is filed as a rescope item in this roadmap's [section 1](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation), which keeps only the deltas.
 
 ## What is not implemented yet?
 
-- [String Library Consolidation](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation-sonnet): `strcasestr()`, `itoa()` and `strtoull()` do not exist yet
-- [Math Library Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#2-math-library-extension-sonnet): most functions shipped in `math.h`; `kmath_remainder()` and the `KMATH_PI`, `KMATH_E`, `KMATH_SQRT2` and `KMATH_LN2` constants are still missing
-- [miniz ZIP Writer and Stream Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#3-miniz-zip-writer--stream-extension-sonnet)
-- [monocypher, CSPRNG and SYS_GETRANDOM](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#4-monocypher--csprng--sys_getrandom-opus): shipped as `NtGetRandom` under the kernel libraries roadmap
-- [cJSON](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#5-cjson-sonnet): shipped; the roadmap's lowercase file names and `cJSON_InitHooks()` set-up do not match the tree
-- [Mbed TLS Subset](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#6-mbed-tls-subset-opus)
-- [STB Consolidation and stb_image_write](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#7-stb-consolidation--stb_image_write-sonnet)
-- [Library Integration Tests and README](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#8-library-integration-tests--readme-sonnet)
+- [String Library Consolidation](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation): `strcasestr()`, `itoa()` and `strtoull()` do not exist yet
+- [Math Library Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#2-math-library-extension): most functions shipped in `math.h`; `kmath_remainder()` and the `KMATH_PI`, `KMATH_E`, `KMATH_SQRT2` and `KMATH_LN2` constants are still missing
+- [miniz ZIP Writer and Stream Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#3-miniz-zip-writer--stream-extension)
+- [monocypher, CSPRNG and SYS_GETRANDOM](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#4-monocypher--csprng--sys_getrandom): shipped as `NtGetRandom` under the kernel libraries roadmap
+- [cJSON](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#5-cjson): shipped; the roadmap's lowercase file names and `cJSON_InitHooks()` set-up do not match the tree
+- [Mbed TLS Subset](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#6-mbed-tls-subset)
+- [STB Consolidation and stb_image_write](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#7-stb-consolidation--stb_image_write)
+- [Library Integration Tests and README](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#8-library-integration-tests--readme)
 
 ## How does it compare with Windows 11 and Linux?
 

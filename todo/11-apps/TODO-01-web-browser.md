@@ -73,7 +73,7 @@ title: "TODO-01 -- Web Browser"
 
 ---
 
-## 1. Text-Only Browser (Phase 1) `[Sonnet]`
+## 1. Text-Only Browser (Phase 1)
 
 ~500 lines. Proves the full network → render pipeline end-to-end.
 
@@ -99,7 +99,7 @@ title: "TODO-01 -- Web Browser"
 
 ---
 
-## 2. HTML Tokenizer + DOM Tree `[Opus]`
+## 2. HTML Tokenizer + DOM Tree
 
 Tokenize raw HTML into a `dom_node` tree. This is the foundation for both §3 (layout) and §4 (CSS).
 
@@ -119,7 +119,7 @@ Tokenize raw HTML into a `dom_node` tree. This is the foundation for both §3 (l
 
 ---
 
-## 3. Layout Engine (Block + Inline Flow) `[Opus]`
+## 3. Layout Engine (Block + Inline Flow)
 
 Converts the DOM tree into a rendered page on a `gfx_surface_t`. Core of a real browser.
 
@@ -145,7 +145,7 @@ Converts the DOM tree into a rendered page on a `gfx_surface_t`. Core of a real 
 
 ---
 
-## 4. CSS Parser + Cascade (Stretch) `[Opus]`
+## 4. CSS Parser + Cascade (Stretch)
 
 Adds styling to the layout engine. Stretch goal -- only start after §3 is complete and stable.
 
@@ -163,7 +163,7 @@ Adds styling to the layout engine. Stretch goal -- only start after §3 is compl
 
 ---
 
-## 5. JavaScript Engine (Long-Term Stretch) `[Opus]`
+## 5. JavaScript Engine (Long-Term Stretch)
 
 > Long-term. Do not start until §3 is complete and §6 (NetSurf/Dillo) evaluation is done -- a port may include a JS engine.
 
@@ -182,7 +182,7 @@ Adds styling to the layout engine. Stretch goal -- only start after §3 is compl
 
 ---
 
-## 6. Alternative: NetSurf / Dillo Port Evaluation `[Sonnet]`
+## 6. Alternative: NetSurf / Dillo Port Evaluation
 
 Evaluate before investing in §2–§5. A port may deliver a full browser faster than building from scratch.
 
@@ -197,7 +197,7 @@ Evaluate before investing in §2–§5. A port may deliver a full browser faster
 
 ---
 
-## 7. Browser Chrome `[Sonnet]`
+## 7. Browser Chrome
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -229,7 +229,7 @@ Multi-tab UI, toolbar, bookmarks bar, and context menu. Built on top of §1 (tex
 
 ---
 
-## 8. Browser Settings + History + Cookie Jar `[Sonnet]`
+## 8. Browser Settings + History + Cookie Jar
 
 Settings page (`browser://settings`) and privacy controls. All state in `HKCU\Software\Impossible\Browser\`.
 

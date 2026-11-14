@@ -42,15 +42,15 @@ No filesystem interface exists yet.
 
 ## How do I use it?
 
-Do not boot with a data disc in an optical drive yet. The boot partition scan reads the disc's first 2048-byte sector into a 512-byte stack buffer and overwrites 1536 bytes of kernel stack; the fix is filed under [Boot Mount Sequence Rewrite](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#2-boot-mount-sequence-rewrite-sonnet). An empty drive is safe: it logs the INQUIRY line above and registers as `cdromN`. Even with the fix, no drive letter appears and no program can open files on a disc. No unit suite covers the optical path.
+Do not boot with a data disc in an optical drive yet. The boot partition scan reads the disc's first 2048-byte sector into a 512-byte stack buffer and overwrites 1536 bytes of kernel stack; the fix is filed under [Boot Mount Sequence Rewrite](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#2-boot-mount-sequence-rewrite). An empty drive is safe: it logs the INQUIRY line above and registers as `cdromN`. Even with the fix, no drive letter appears and no program can open files on a disc. No unit suite covers the optical path.
 
 ## What is not implemented yet?
 
-- **The MMC command layer** ([SCSI MMC Layer](../../todo/05-storage-filesystems/TODO-11-optical-media.md#1-scsi-mmc-layer----read-toc-disc-info-track-info-sonnet)).
-- **Disc filesystems**: [ISO 9660 Base](../../todo/05-storage-filesystems/TODO-11-optical-media.md#2-iso-9660-base-sonnet), [Rock Ridge Extensions](../../todo/05-storage-filesystems/TODO-11-optical-media.md#3-rock-ridge-extensions-sonnet), [Joliet](../../todo/05-storage-filesystems/TODO-11-optical-media.md#4-joliet-sonnet) and [UDF](../../todo/05-storage-filesystems/TODO-11-optical-media.md#5-udf-opus).
-- **Choosing and naming the volume**: [Auto-Probe Priority](../../todo/05-storage-filesystems/TODO-11-optical-media.md#6-auto-probe-priority-sonnet) and [Disc Label + Metadata](../../todo/05-storage-filesystems/TODO-11-optical-media.md#7-disc-label--metadata-sonnet).
-- **Audio CDs** ([Audio CD Raw Reads](../../todo/05-storage-filesystems/TODO-11-optical-media.md#8-audio-cd-raw-reads-sonnet)).
-- **Eject, disc-change events and the drive letter itself** belong to [Optical Drive Handling](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#7-optical-drive-handling-sonnet).
+- **The MMC command layer** ([SCSI MMC Layer](../../todo/05-storage-filesystems/TODO-11-optical-media.md#1-scsi-mmc-layer----read-toc-disc-info-track-info)).
+- **Disc filesystems**: [ISO 9660 Base](../../todo/05-storage-filesystems/TODO-11-optical-media.md#2-iso-9660-base), [Rock Ridge Extensions](../../todo/05-storage-filesystems/TODO-11-optical-media.md#3-rock-ridge-extensions), [Joliet](../../todo/05-storage-filesystems/TODO-11-optical-media.md#4-joliet) and [UDF](../../todo/05-storage-filesystems/TODO-11-optical-media.md#5-udf).
+- **Choosing and naming the volume**: [Auto-Probe Priority](../../todo/05-storage-filesystems/TODO-11-optical-media.md#6-auto-probe-priority) and [Disc Label + Metadata](../../todo/05-storage-filesystems/TODO-11-optical-media.md#7-disc-label--metadata).
+- **Audio CDs** ([Audio CD Raw Reads](../../todo/05-storage-filesystems/TODO-11-optical-media.md#8-audio-cd-raw-reads)).
+- **Eject, disc-change events and the drive letter itself** belong to [Optical Drive Handling](../../todo/05-storage-filesystems/TODO-03-volume-management-automount.md#7-optical-drive-handling).
 
 ## How does it compare with Windows 11 and Linux?
 

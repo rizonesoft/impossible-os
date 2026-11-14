@@ -56,7 +56,7 @@ title: "TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only)"
 
 ---
 
-## 1. APFS Container Superblock + Fletcher-64 `[Sonnet]`
+## 1. APFS Container Superblock + Fletcher-64
 
 Read block 0 of the partition. Verify the `obj_phys_t` header checksum using Apple's Fletcher-64 variant. Locate the latest valid checkpoint and read the container superblock.
 
@@ -73,7 +73,7 @@ Read block 0 of the partition. Verify the `obj_phys_t` header checksum using App
 - [ ] Log: `[APFS] Container: block_size=%u blocks=%llu fs_count=%u xid=%llu`
 - [ ] Commit: `"fs/apfs: container superblock -- BSXN magic, Fletcher-64, checkpoint resolution, block read+verify"`
 
-## 2. APFS Object Map B-Tree `[Opus]`
+## 2. APFS Object Map B-Tree
 
 Read the container object map. Walk `btree_node_phys_t` nodes. Implement `apfs_omap_lookup(oid, xid)` → physical block address. Cache the omap root node.
 
@@ -90,7 +90,7 @@ Read the container object map. Walk `btree_node_phys_t` nodes. Implement `apfs_o
 - [ ] Node cache: LRU cache of last 32 nodes (paddr → buffer); `apfs_btree_node_read()` checks cache first
 - [ ] Commit: `"fs/apfs: object map B-tree -- btree_node descent, omap MVCC lookup, OID→paddr resolution, node cache"`
 
-## 3. APFS Volume Mount `[Sonnet]`
+## 3. APFS Volume Mount
 
 Resolve each non-zero `nx_fs_oid` to its volume superblock (`APSB`). Parse volume name, size, and fstree root OID. Mount the first non-sealed volume as the VFS root.
 
@@ -106,7 +106,7 @@ Resolve each non-zero `nx_fs_oid` to its volume superblock (`APSB`). Parse volum
 - [ ] Log: `[APFS] Volume "%s": files=%llu dirs=%llu%s` where `%s` = ` [sealed, skipped]` or empty
 - [ ] Commit: `"fs/apfs: volume mount -- APSB parse, volume omap, non-sealed selection, multi-volume enumeration"`
 
-## 4. APFS Filesystem B-Tree Search + Walk `[Opus]`
+## 4. APFS Filesystem B-Tree Search + Walk
 
 Implement generic filesystem B-tree search and range walk over the volume's fstree. Dispatch on `j_key_t` type field. Implement `apfs_fstree_walk()` for sequential directory and extent enumeration.
 
@@ -121,7 +121,7 @@ Implement generic filesystem B-tree search and range walk over the volume's fstr
 - [ ] `apfs_fstree_node_read(fsvol, oid, &node_buf)`: `apfs_fsvol_resolve_oid(oid)` → `apfs_btree_node_read()`; verify object type `OBJECT_TYPE_FSTREE (0x000E)`
 - [ ] Commit: `"fs/apfs: filesystem B-tree -- j_key_t dispatch, virtual OID resolution, search + range walk"`
 
-## 5. APFS Inode Reader `[Sonnet]`
+## 5. APFS Inode Reader
 
 Read `APFS_TYPE_INODE` items from the fstree. Decode `j_inode_val_t` including variable-length extended fields. Extract `j_dstream_t` for file size. Build VFS nodes.
 
@@ -137,7 +137,7 @@ Read `APFS_TYPE_INODE` items from the fstree. Decode `j_inode_val_t` including v
 - [ ] APFS epoch: timestamps are nanoseconds since Unix epoch (1970-01-01 UTC); convert to `FILETIME` (100 ns since 1601-01-01): `filetime = (nsec / 100) + 116444736000000000ULL`
 - [ ] Commit: `"fs/apfs: inode reader -- j_inode_val_t, xf_blob decode, dstream size, nanosec→FILETIME, VFS node"`
 
-## 6. APFS File Extent Reader `[Sonnet]`
+## 6. APFS File Extent Reader
 
 Walk `APFS_TYPE_FILE_EXTENT` items for a file's `private_id`. Map logical offsets to physical blocks. Detect FileVault-encrypted extents and return `STATUS_ACCESS_DENIED`.
 
@@ -154,7 +154,7 @@ Walk `APFS_TYPE_FILE_EXTENT` items for a file's `private_id`. Map logical offset
 - [ ] VFS `read` callback: `apfs_vfs_read(vfs_node, buf, offset, len)` → `apfs_file_read()`
 - [ ] Commit: `"fs/apfs: file extent reader -- FILE_EXTENT walk, physical block read, sparse zeros, FileVault deny"`
 
-## 7. APFS Directory Reader `[Sonnet]`
+## 7. APFS Directory Reader
 
 Walk `APFS_TYPE_DIR_REC` items in the fstree for a given directory OID. Decode hashed keys. Apply NFD→NFC normalization for display. Implement VFS `finddir` and `readdir`.
 
@@ -172,7 +172,7 @@ Walk `APFS_TYPE_DIR_REC` items in the fstree for a given directory OID. Decode h
 - [ ] VFS `readdir` callback: `apfs_vfs_readdir(vfs_node, index)` → `apfs_readdir()` counting to `index`-th entry; return `vfs_dirent`
 - [ ] Commit: `"fs/apfs: directory reader -- j_drec_hashed_key, CRC32c hash, NFD→NFC normalization, VFS callbacks"`
 
-## 8. APFS Symlinks + XAttrs `[Sonnet]`
+## 8. APFS Symlinks + XAttrs
 
 Read symlink targets from `APFS_TYPE_XATTR` items using the `com.apple.fs.symlink` xattr name. Read arbitrary xattrs -- inline data or stream dnode. Implement VFS `readlink`.
 
@@ -187,7 +187,7 @@ Read symlink targets from `APFS_TYPE_XATTR` items using the `com.apple.fs.symlin
 - [ ] VFS `readlink` callback: `apfs_vfs_readlink(vfs_node, buf, len)` → `apfs_readlink()`
 - [ ] Commit: `"fs/apfs: symlinks + xattrs -- j_xattr_key, inline + stream, com.apple.fs.symlink, VFS readlink"`
 
-## 9. HFS+ Volume Header + Journal Replay `[Sonnet]`
+## 9. HFS+ Volume Header + Journal Replay
 
 Read the HFS+ volume header at partition byte offset 1024. Replay the journal if dirty. Decode fork data for the Catalog and Extents Overflow files.
 
@@ -203,7 +203,7 @@ Read the HFS+ volume header at partition byte offset 1024. Replay the journal if
 - [ ] Log: `[HFS+] Mounted: blockSize=%u totalBlocks=%u free=%u variant=%s` where variant=`HFS+` or `HFSX`
 - [ ] Commit: `"fs/hfsplus: volume header -- H+/HX magic, fork data, dirty flag, journal replay, block layout"`
 
-## 10. HFS+ Catalog B-Tree + Directory Reader `[Opus]`
+## 10. HFS+ Catalog B-Tree + Directory Reader
 
 Walk the HFS+ Catalog B-tree. Search by `(parentCNID, filename)` key. Decode `HFSUniStr255` (UTF-16BE) filenames to UTF-8. List directories. Handle HFSX case-sensitivity.
 
@@ -223,7 +223,7 @@ Walk the HFS+ Catalog B-tree. Search by `(parentCNID, filename)` key. Decode `HF
 - [ ] VFS `readdir`: `hfsplus_vfs_readdir(vfs_node, index)` → `hfsplus_readdir()` counting to `index`-th entry
 - [ ] Commit: `"fs/hfsplus: Catalog B-tree -- header node, key compare, leaf search, readdir, UTF-16BE decode"`
 
-## 11. HFS+ File Read + Extents Overflow B-Tree `[Sonnet]`
+## 11. HFS+ File Read + Extents Overflow B-Tree
 
 Map CNID logical blocks to physical blocks using inline catalog extents. For fragmented files (> 8 extents), look up additional extents in the Extents Overflow B-tree.
 
@@ -238,7 +238,7 @@ Map CNID logical blocks to physical blocks using inline catalog extents. For fra
 - [ ] VFS `read` callback: `hfsplus_vfs_read(vfs_node, buf, offset, len)` → `hfsplus_file_read()`
 - [ ] Commit: `"fs/hfsplus: file read -- inline extents, Extents Overflow B-tree, CNID→physical block walk"`
 
-## 12. VFS Registration -- `apfs_probe`, `hfsplus_probe`, Read-Only Mount `[Sonnet]`
+## 12. VFS Registration -- `apfs_probe`, `hfsplus_probe`, Read-Only Mount
 
 Register both drivers with `vfs_probe()`. Probe APFS then HFS+ for Apple-partitioned volumes. Display "(read-only, Apple)" in volume properties for both.
 

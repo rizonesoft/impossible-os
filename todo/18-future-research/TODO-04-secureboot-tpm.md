@@ -56,12 +56,7 @@ title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
 
 ## Outcome
 
-A `docs/architecture/secure-boot-tpm-plan.md` document defining the full security chain
-from UEFI firmware through kernel to encrypted disk: PK/KEK/db key hierarchy, PCR
-assignment table (PCR 0–10), FDE key derivation and sealing, remote attestation quote
-format, and vTPM per-VM architecture. A QEMU `swtpm`-based prototype validates that
-`tpm2_get_random()`, `tpm2_pcr_extend()`, and `tpm2_pcr_read()` work before any
-bare-metal deployment.
+A `docs/architecture/secure-boot-tpm-plan.md` document defining the full security chain from UEFI firmware through kernel to encrypted disk: PK/KEK/db key hierarchy, PCR assignment table (PCR 0–10), FDE key derivation and sealing, remote attestation quote format, and vTPM per-VM architecture. A QEMU `swtpm`-based prototype validates that `tpm2_get_random()`, `tpm2_pcr_extend()`, and `tpm2_pcr_read()` work before any bare-metal deployment.
 
 ---
 
@@ -78,7 +73,7 @@ bare-metal deployment.
 
 ---
 
-## 1. TPM 2.0 CSPRNG Integration + `swtpm` Dev Setup `[Opus]`
+## 1. TPM 2.0 CSPRNG Integration + `swtpm` Dev Setup
 
 > Security-critical: feeds hardware entropy from TPM RNG into the kernel CSPRNG pool.
 > QEMU `swtpm` setup validates the driver before bare-metal. Extends `TODO-11 §8` --
@@ -102,7 +97,7 @@ bare-metal deployment.
 
 ---
 
-## 2. Measured Boot Chain (PCR 8–10 Extensions) `[Opus]`
+## 2. Measured Boot Chain (PCR 8–10 Extensions)
 
 > Novel: extending the TPM PCR chain beyond what UEFI firmware measures (PCR 0–7).
 > Bootloader and kernel must extend PCRs before loading each component. Security-critical:
@@ -144,7 +139,7 @@ bare-metal deployment.
 
 ---
 
-## 3. UEFI Secure Boot PK/KEK/db Key Hierarchy `[Opus]`
+## 3. UEFI Secure Boot PK/KEK/db Key Hierarchy
 
 > Security-critical: establishing the full UEFI Secure Boot chain-of-trust for
 > enterprise deployment. Extends `TODO-01` shim foundation with self-generated
@@ -182,7 +177,7 @@ bare-metal deployment.
 
 ---
 
-## 4. AES-256-XTS Full Disk Encryption (FDE) `[Opus]`
+## 4. AES-256-XTS Full Disk Encryption (FDE)
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -221,7 +216,7 @@ bare-metal deployment.
 
 ---
 
-## 5. vTPM for ImpossibleHV Guests `[Sonnet]`
+## 5. vTPM for ImpossibleHV Guests
 
 > Each VM guest in ImpossibleHV gets an isolated virtual TPM with independent PCR
 > hierarchy and sealed key material. Extends `18-future-research/TODO-02` (ImpossibleHV
@@ -240,7 +235,7 @@ bare-metal deployment.
 
 ---
 
-## 6. Research Deliverables `[Sonnet]`
+## 6. Research Deliverables
 
 **Source:** `docs/architecture/secure-boot-tpm-plan.md`
 
@@ -280,12 +275,7 @@ bare-metal deployment.
 | ⭐  | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 -- `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
 | 💎  | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 -- `vtpm_t` per ImpossibleHV VM; co-process                             |
 
-Impossible OS's `⭐` advantage: the `tpm2_get_random()` → CSPRNG entropy feed runs
-on a background task every 30 minutes -- not just at boot -- so entropy quality improves
-throughout uptime even on systems where RDRAND is unavailable or distrusted. The
-`bitlocker.cpl` FDE UI deliberately mirrors BitLocker's UX (Enable, Suspend, Backup
-recovery key) so enterprise administrators already trained on Windows can manage
-Impossible OS encryption with zero retraining.
+Impossible OS's `⭐` advantage: the `tpm2_get_random()` → CSPRNG entropy feed runs on a background task every 30 minutes -- not just at boot -- so entropy quality improves throughout uptime even on systems where RDRAND is unavailable or distrusted. The `bitlocker.cpl` FDE UI deliberately mirrors BitLocker's UX (Enable, Suspend, Backup recovery key) so enterprise administrators already trained on Windows can manage Impossible OS encryption with zero retraining.
 
 ---
 

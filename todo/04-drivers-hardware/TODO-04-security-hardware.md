@@ -52,7 +52,7 @@ title: "TODO-04 -- Security Hardware & DMA Safety"
 
 ---
 
-## 1. SMEP + SMAP Late Init on All APs `[Sonnet]`
+## 1. SMEP + SMAP Late Init on All APs
 
 `CR4.SMEP` (bit 20) and `CR4.SMAP` (bit 21) are detected in `cpuid.c` but not enabled in `CR4`. Enable them on the BSP during early boot and ensure each Application Processor enables them after SMP bringup -- currently the AP trampoline does not set these bits.
 
@@ -68,7 +68,7 @@ title: "TODO-04 -- Security Hardware & DMA Safety"
 - [ ] Boot log: `[CPU] SMEP=%s SMAP=%s` for BSP and each AP at `LOG_DEBUG`
 - [ ] Commit: `"kernel: SMEP+SMAP -- CR4 enable on BSP+APs, copy_from/to_user STAC/CLAC, smep_smap_assert"`
 
-## 2. Hardware RNG -- `RDRAND` / `RDSEED` + ChaCha20 CSPRNG Fallback `[Opus]`
+## 2. Hardware RNG -- `RDRAND` / `RDSEED` + ChaCha20 CSPRNG Fallback
 
 Detect `RDRAND` (CPUID leaf `01h` ECX bit 30) and `RDSEED` (leaf `07h` EBX bit 18). Implement `hwrng_read(buf, len)` with up to 10 retry loops for CF=0. Fall back to a HPET+TSC-seeded ChaCha20 CSPRNG. Seed the kernel entropy pool.
 
@@ -87,7 +87,7 @@ Detect `RDRAND` (CPUID leaf `01h` ECX bit 30) and `RDSEED` (leaf `07h` EBX bit 1
 - [ ] Boot log: `[HWRNG] RDRAND=%s RDSEED=%s source=%s` (`hw` / `sw-ChaCha20`)
 - [ ] Commit: `"kernel: hwrng -- RDRAND/RDSEED, ChaCha20 CSPRNG fallback, entropy pool seeding"`
 
-## 3. DMA Bounce Buffer Manager `[Sonnet]`
+## 3. DMA Bounce Buffer Manager
 
 Provide `dma_alloc(dev, size)` for legacy 32-bit DMA devices (RTL8139, AC97, EHCI) that cannot address memory above 4 GiB. Allocate from a PMM low zone (< 4 GiB physical). Support scatter-gather `dma_map/unmap_single`.
 
@@ -105,7 +105,7 @@ Provide `dma_alloc(dev, size)` for legacy 32-bit DMA devices (RTL8139, AC97, EHC
 - [ ] After IOMMU init (§4): `dma_alloc` additionally calls `iommu_map(dev, phys, phys, len, IOMMU_READ|IOMMU_WRITE)` to register bounce buffers with IOMMU
 - [ ] Commit: `"kernel: DMA bounce buffer manager -- low-zone pool, dma_alloc/map/unmap_single, IOMMU hook"`
 
-## 4. IOMMU / VT-d + AMD-Vi `[Opus]`
+## 4. IOMMU / VT-d + AMD-Vi
 
 Parse the ACPI DMAR table (Intel VT-d) and IVRS table (AMD-Vi). Build per-device IOMMU page tables and enable hardware DMA remapping. Default-deny policy: only explicitly mapped physical ranges are DMA-accessible.
 
@@ -126,7 +126,7 @@ Parse the ACPI DMAR table (Intel VT-d) and IVRS table (AMD-Vi). Build per-device
 - [ ] Map the inherited xHCI handover DMA pages before default-deny, or the handover forces the TODO-17 fallback -> XREF: `01-boot-platform/TODO-20 §7` (item: "IOMMU default-deny")
 - [ ] Commit: `"kernel: IOMMU -- VT-d DMAR parse, 4-level page tables, default-deny, AMD-Vi IVRS"`
 
-## 5. Secure Boot UEFI Variable Read `[Sonnet]`
+## 5. Secure Boot UEFI Variable Read
 
 Call `EFI_RUNTIME_SERVICES.GetVariable("SecureBoot", &EFI_GLOBAL_VARIABLE, ...)` during the post-ExitBootServices boot phase to retrieve the Secure Boot active flag. Expose as `HKLM\SYSTEM\SecureBoot\Enabled` Registry value.
 
@@ -143,7 +143,7 @@ Call `EFI_RUNTIME_SERVICES.GetVariable("SecureBoot", &EFI_GLOBAL_VARIABLE, ...)`
 - [ ] Boot log: `[SECBOOT] Secure Boot: %s` (`enabled` / `disabled` / `setup mode`)
 - [ ] Commit: `"kernel: Secure Boot state -- EFI GetVariable SecureBoot, Registry HKLM\\SYSTEM\\SecureBoot"`
 
-## 6. TPM 2.0 Command Layer and IOCTL Surface `[Opus]`
+## 6. TPM 2.0 Command Layer and IOCTL Surface
 
 Build the TPM 2.0 command layer ON TOP of the shipped transport: discovery, TIS/CRB submission, locality, timeouts, and `TPM2_Startup` all live in `src/kernel/tpm_transport.c` (`tpm2_submit()`; shipped at `01-boot-platform/TODO-13` §2 -- do NOT re-implement transport here). This section owns the command marshaling above the transport plus the user-visible device surface.
 
@@ -160,7 +160,7 @@ Build the TPM 2.0 command layer ON TOP of the shipped transport: discovery, TIS/
 - [ ] Boot log: `[TPM2] command layer ready, firmware version=%u.%u` (interface + Startup already logged by the transport)
 - [ ] Commit: `"kernel: TPM2 command layer -- GetCapability/PCR/GetRandom over tpm2_submit, IOCTL surface"`
 
-## 7. Boot-Time Kernel Integrity Check `[Opus]`
+## 7. Boot-Time Kernel Integrity Check
 
 At boot, compute SHA-256 of the kernel `.text` and `.rodata` sections. Extend TPM PCR[10] with the hash. Compare against any stored baseline. Log a critical security event on mismatch.
 
@@ -187,7 +187,7 @@ At boot, compute SHA-256 of the kernel `.text` and `.rodata` sections. Extend TP
 
 ---
 
-## 8. Intel CET Shadow Stacks `[Opus]`
+## 8. Intel CET Shadow Stacks
 
 Enable Intel Control-flow Enforcement Technology for user mode. Set `CR4.CET` and `MSR_IA32_U_CET`. Allocate a per-thread shadow stack. Wire `INCSSPQ`/`RSTORSSP` into syscall entry/exit to maintain kernel shadow stack pointer. Kernel `PL0_SSP` configured at task switch.
 

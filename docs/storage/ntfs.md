@@ -48,11 +48,11 @@ Files can be listed and read from that letter. A volume Windows left dirty adds 
 
 ## What is not implemented yet?
 
-- **An audited, journaled B+ tree** and an armed journal ([B+ Tree Mutation Audit + Journaling](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#1-b-tree-mutation-audit--journaling-opus)).
-- **Writes through the drive letter** ([Write Data Path Wiring](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#2-write-data-path-wiring-sonnet)).
-- **Formatting a volume**: no `ntfs_format()` exists ([NTFS Volume Initialiser](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#3-ntfs-volume-initialiser-opus)).
-- **`$Secure`**: security IDs are found but not looked up ([`$Secure` Security Stream](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#4-secure-security-stream-sonnet)).
-- **Replay at mount** ([Dirty Volume Recovery Wiring](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#5-dirty-volume-recovery-wiring-sonnet)) and a **format, crash and replay test** ([NTFS Format + Crash + Replay Test](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#6-ntfs-format--crash--replay-test-sonnet)).
+- **An audited, journaled B+ tree** and an armed journal ([B+ Tree Mutation Audit + Journaling](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#1-b-tree-mutation-audit--journaling)).
+- **Writes through the drive letter** ([Write Data Path Wiring](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#2-write-data-path-wiring)).
+- **Formatting a volume**: no `ntfs_format()` exists ([NTFS Volume Initialiser](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#3-ntfs-volume-initialiser)).
+- **`$Secure`**: security IDs are found but not looked up ([`$Secure` Security Stream](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#4-secure-security-stream)).
+- **Replay at mount** ([Dirty Volume Recovery Wiring](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#5-dirty-volume-recovery-wiring)) and a **format, crash and replay test** ([NTFS Format + Crash + Replay Test](../../todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md#6-ntfs-format--crash--replay-test)).
 
 ## How does it compare with Windows 11 and Linux?
 

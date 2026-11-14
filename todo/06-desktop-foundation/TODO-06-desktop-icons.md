@@ -49,6 +49,8 @@ The desktop icon list, grid and drawing are owned by `08-graphics-ui/TODO-08` §
 
 **Files:** `src/desktop/desktop.c`, `include/desktop/desktop.h`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §4 (item: "struct desktop_icon + desktop_icon_t + max-64 array in desktop_ic" at line 148)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §4`, which follows `docs/design/shell.md#desktop`; do not build a second desktop icon list or grid here
 
 **Test checkpoint:** Desktop shows icons from dynamic list. Same visual as before but data-driven.

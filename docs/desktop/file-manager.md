@@ -48,12 +48,12 @@ It cannot be used yet. Use `dir` and `type` in the terminal to look at files.
 
 ## What is not implemented yet?
 
-- [Core Layout](../../todo/09-desktop-shell/TODO-09-file-manager.md#1-core-layout-sonnet) and [Sidebar](../../todo/09-desktop-shell/TODO-09-file-manager.md#2-sidebar-sonnet)
-- [View Modes](../../todo/09-desktop-shell/TODO-09-file-manager.md#3-view-modes-sonnet), needing the list view in [Complex Controls and Dialogs](../graphics/complex-controls-dialogs.md)
-- [File Operations](../../todo/09-desktop-shell/TODO-09-file-manager.md#4-file-operations-sonnet), with delete going to the [Recycle Bin](recycle-bin-zip-scheduler.md)
-- [Context Menus](../../todo/09-desktop-shell/TODO-09-file-manager.md#5-context-menus-sonnet), on the engine in [Desktop Shell Features](../graphics/desktop-shell-features.md)
-- [File Search](../../todo/09-desktop-shell/TODO-09-file-manager.md#6-file-search-sonnet), on [File Search and Indexing](file-search.md)
-- [Drag and Drop](../../todo/09-desktop-shell/TODO-09-file-manager.md#7-drag-and-drop-sonnet) and [Advanced Features](../../todo/09-desktop-shell/TODO-09-file-manager.md#8-advanced-features-sonnet)
+- [Core Layout](../../todo/09-desktop-shell/TODO-09-file-manager.md#1-core-layout) and [Sidebar](../../todo/09-desktop-shell/TODO-09-file-manager.md#2-sidebar)
+- [View Modes](../../todo/09-desktop-shell/TODO-09-file-manager.md#3-view-modes), needing the list view in [Complex Controls and Dialogs](../graphics/complex-controls-dialogs.md)
+- [File Operations](../../todo/09-desktop-shell/TODO-09-file-manager.md#4-file-operations), with delete going to the [Recycle Bin](recycle-bin-zip-scheduler.md)
+- [Context Menus](../../todo/09-desktop-shell/TODO-09-file-manager.md#5-context-menus), on the engine in [Desktop Shell Features](../graphics/desktop-shell-features.md)
+- [File Search](../../todo/09-desktop-shell/TODO-09-file-manager.md#6-file-search), on [File Search and Indexing](file-search.md)
+- [Drag and Drop](../../todo/09-desktop-shell/TODO-09-file-manager.md#7-drag-and-drop) and [Advanced Features](../../todo/09-desktop-shell/TODO-09-file-manager.md#8-advanced-features)
 
 ## How does it compare with Windows 11 and Linux?
 

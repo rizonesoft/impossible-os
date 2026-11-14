@@ -48,11 +48,11 @@ The IRQ and addresses depend on the machine and the DHCP server. No unit suite c
 
 ## What is not implemented yet?
 
-- **A licence record per driver** ([License Tracking](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#1-license-tracking-sonnet)).
-- **Intel e1000** ([Intel e1000 Module](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#2-intel-e1000-module-sonnet)) and **VirtIO-net** ([VirtIO-net Module](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#3-virtio-net-module-sonnet)).
-- **Gigabit and 2.5 GbE cards**: [RTL8169 / RTL8111](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#4-rtl8169--rtl8111-gigabit-module-sonnet), [Intel igc](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#5-intel-igc-i225--i226-25-gbe-module-sonnet) and [RTL8125](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#6-rtl8125-25-gbe-module-sonnet).
-- **A driver test suite** ([Network Driver Test Suite](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#7-network-driver-test-suite-sonnet)).
-- **Wi-Fi stubs** ([WiFi 802.11 MAC Layer Stub](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#8-wifi-80211-mac-layer-stub-opus), [iwlwifi](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#9-intel-iwlwifi-stub-p4-stretch-sonnet), [rtw89](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#10-realtek-rtw89-stub-p4-stretch-sonnet)), which the [Wi-Fi Drivers](wifi-drivers.md) roadmap supersedes.
+- **A licence record per driver** ([License Tracking](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#1-license-tracking)).
+- **Intel e1000** ([Intel e1000 Module](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#2-intel-e1000-module)) and **VirtIO-net** ([VirtIO-net Module](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#3-virtio-net-module)).
+- **Gigabit and 2.5 GbE cards**: [RTL8169 / RTL8111](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#4-rtl8169--rtl8111-gigabit-module), [Intel igc](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#5-intel-igc-i225--i226-25-gbe-module) and [RTL8125](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#6-rtl8125-25-gbe-module).
+- **A driver test suite** ([Network Driver Test Suite](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#7-network-driver-test-suite)).
+- **Wi-Fi stubs** ([WiFi 802.11 MAC Layer Stub](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#8-wifi-80211-mac-layer-stub), [iwlwifi](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#9-intel-iwlwifi-stub-p4-stretch), [rtw89](../../todo/04-drivers-hardware/TODO-14-network-drivers.md#10-realtek-rtw89-stub-p4-stretch)), which the [Wi-Fi Drivers](wifi-drivers.md) roadmap supersedes.
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -54,9 +54,9 @@ Boot the desktop (`bash scripts/build.sh run`), click the Start button and choos
 
 ## What is not implemented yet?
 
-- [Start Menu Data Loading](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#1-start-menu-data-loading-sonnet), [Start Menu Interaction](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#2-start-menu-interaction-sonnet) and [Start Menu Search](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#3-start-menu-search-sonnet).
-- [System Tray Icons](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons-sonnet).
-- [Toast Notifications](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#5-toast-notifications-opus), [Notification Center](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#6-notification-center-sonnet) and [Notification Settings](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#7-notification-settings-sonnet).
+- [Start Menu Data Loading](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#1-start-menu-data-loading), [Start Menu Interaction](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#2-start-menu-interaction) and [Start Menu Search](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#3-start-menu-search).
+- [System Tray Icons](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#4-system-tray-icons).
+- [Toast Notifications](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#5-toast-notifications), [Notification Center](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#6-notification-center) and [Notification Settings](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#7-notification-settings).
 - A confirmed shutdown and restart choice belongs to section 2; the Power button today powers off immediately.
 
 ## How does it compare with Windows 11 and Linux?

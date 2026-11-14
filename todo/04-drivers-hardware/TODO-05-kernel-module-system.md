@@ -52,7 +52,7 @@ title: "TODO-05 -- Kernel Module System"
 
 ---
 
-## 1. Kernel Symbol Table + `EXPORT_SYMBOL` `[Sonnet]`
+## 1. Kernel Symbol Table + `EXPORT_SYMBOL`
 
 Export ~60 core kernel functions into a `.ksymtab` linker section. The module loader resolves undefined ELF symbols against this table. A linear search by name is acceptable at load time -- modules load once and symbol resolution is not on the hot path.
 
@@ -79,7 +79,7 @@ Export ~60 core kernel functions into a `.ksymtab` linker section. The module lo
 - [ ] Boot log: `[OK] ksymtab: %u symbols exported`
 - [ ] Commit: `"kernel: symbol table -- EXPORT_SYMBOL macro, .ksymtab section, ksym_lookup"`
 
-## 2. Module Build System `[Sonnet]`
+## 2. Module Build System
 
 Add `src/modules/` to the build tree. Each subdirectory compiles to a freestanding relocatable `.kmod`. The build script installs `.kmod` files into the IXFS disk image at `C:\Impossible\System\Drivers\`.
 
@@ -97,7 +97,7 @@ Add `src/modules/` to the build tree. Each subdirectory compiles to a freestandi
 - [ ] Disk image creation: copy `build/modules/*.kmod` to `C:\Impossible\System\Drivers\` on the IXFS partition
 - [ ] Commit: `"build: module build system -- src/modules/, MODULE_INIT/CLEANUP macros, IXFS install"`
 
-## 3. Driver Model + HAL Vtables + PCI Match Tables `[Sonnet]`
+## 3. Driver Model + HAL Vtables + PCI Match Tables
 
 Define `struct driver` with a PCI match table and `probe()`/`remove()` lifecycle. Three HAL vtable structs -- `blk_ops`, `net_ops`, `input_ops` -- form the Hardware Abstraction Layer. `driver_register()` adds to the global list and immediately probes all known PCI devices for a match.
 
@@ -115,7 +115,7 @@ Define `struct driver` with a PCI match table and `probe()`/`remove()` lifecycle
 - [ ] Boot log per match: `[DRIVER] <name>: probe PCI %04x:%04x OK`
 - [ ] Commit: `"kernel: driver model -- struct driver, pci_match, blk_ops/net_ops/input_ops HAL vtables"`
 
-## 4. ELF Relocatable Module Loader `[Opus]`
+## 4. ELF Relocatable Module Loader
 
 Parse an `ET_REL`/`EM_X86_64` ELF file from disk, allocate PMM-backed executable memory, copy sections, apply the four standard x86-64 relocation types, resolve undefined externals via `ksym_lookup()`, and call `module_init()`. `module_unload()` calls `module_cleanup()` and frees the PMM pages.
 
@@ -143,7 +143,7 @@ Parse an `ET_REL`/`EM_X86_64` ELF file from disk, allocate PMM-backed executable
 - [ ] Test: load a trivial `.kmod` that calls `klog(LOG_INFO, "TEST", "Hello from module")` -- verify serial output
 - [ ] Commit: `"kernel: ELF module loader -- ET_REL parser, R_X86_64_* relocations, ksym resolution"`
 
-## 5. Auto-Load Modules at Boot `[Sonnet]`
+## 5. Auto-Load Modules at Boot
 
 After IXFS mounts `C:\`, scan `C:\Impossible\System\Drivers\` and load every `.kmod` file. Each load is non-fatal -- a failed module logs `[WARN]` and boot continues. The `[modinfo]` `.modinfo` section data is parsed to produce the log line.
 
@@ -159,7 +159,7 @@ After IXFS mounts `C:\`, scan `C:\Impossible\System\Drivers\` and load every `.k
 - [ ] Parse `module_param` declarations from `.modinfo`, accept `module.<name>.<param>=` boot-arg injection, and register each as a `module.<name>.` tunable. -> XREF: D02 T02 §6.
 - [ ] Commit: `"kernel: auto-load modules at boot -- module_load_all, .modinfo parse, non-fatal scan"`
 
-## 6. RTL8139 as First Loadable Module `[Sonnet]`
+## 6. RTL8139 as First Loadable Module
 
 Convert the existing built-in RTL8139 driver to `src/modules/rtl8139/rtl8139.kmod`. This exercises the complete module pipeline end-to-end and validates that networking survives the transition from static to dynamic loading.
 

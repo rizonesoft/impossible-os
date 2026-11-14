@@ -47,17 +47,17 @@ Notepad cannot be launched yet. To read a text file today, use `type` (or `cat`)
 
 ## Which roadmap is the specification?
 
-The desktop shell's [Notepad](../desktop/notepad.md) roadmap is the canonical specification; this file says so itself and asks to be read alongside it. The two plan different source file names and different default extensions (`.c`, `.h` and `.asm` there; `.log`, `.ini` and `.conf` here), and the default file associations themselves are owned by the file associations roadmap. Those differences are filed in [section 5](../../todo/11-apps/TODO-08-notepad.md#5-file-associations--app-registration-sonnet) so one list and one file layout win.
+The desktop shell's [Notepad](../desktop/notepad.md) roadmap is the canonical specification; this file says so itself and asks to be read alongside it. The two plan different source file names and different default extensions (`.c`, `.h` and `.asm` there; `.log`, `.ini` and `.conf` here), and the default file associations themselves are owned by the file associations roadmap. Those differences are filed in [section 5](../../todo/11-apps/TODO-08-notepad.md#5-file-associations--app-registration) so one list and one file layout win.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [Gap Buffer Text Engine](../../todo/11-apps/TODO-08-notepad.md#1-gap-buffer-text-engine-opus)
-- [Text Rendering and Cursor](../../todo/11-apps/TODO-08-notepad.md#2-text-rendering--cursor-sonnet)
-- [File Operations](../../todo/11-apps/TODO-08-notepad.md#3-file-operations-sonnet), which needs the file dialogs
-- [Editing Features](../../todo/11-apps/TODO-08-notepad.md#4-editing-features-sonnet), which needs the clipboard
-- [File Associations and App Registration](../../todo/11-apps/TODO-08-notepad.md#5-file-associations--app-registration-sonnet)
+- [Gap Buffer Text Engine](../../todo/11-apps/TODO-08-notepad.md#1-gap-buffer-text-engine)
+- [Text Rendering and Cursor](../../todo/11-apps/TODO-08-notepad.md#2-text-rendering--cursor)
+- [File Operations](../../todo/11-apps/TODO-08-notepad.md#3-file-operations), which needs the file dialogs
+- [Editing Features](../../todo/11-apps/TODO-08-notepad.md#4-editing-features), which needs the clipboard
+- [File Associations and App Registration](../../todo/11-apps/TODO-08-notepad.md#5-file-associations--app-registration)
 
 ## How does it compare with Windows 11 and Linux?
 

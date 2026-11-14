@@ -53,7 +53,7 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 
 ---
 
-## 1. Hypervisor Detection `[Sonnet]`
+## 1. Hypervisor Detection
 
 Use CPUID leaf `0x40000000` (the hypervisor brand-string leaf) to identify the platform. Fall back to PCI device `80EE:CAFE` for VBox when CPUID is inconclusive. Expose `hypervisor_type()` and write a boot log entry.
 
@@ -66,7 +66,7 @@ Use CPUID leaf `0x40000000` (the hypervisor brand-string leaf) to identify the p
 - [ ] Boot log: `[HV] Hypervisor: VirtualBox` / `KVM` / `Hyper-V` / `None (bare metal)`
 - [ ] Commit: `"drivers: hypervisor detection -- CPUID 0x40000000 brand, PCI 80EE:CAFE fallback"`
 
-## 2. Unified `hv.h` Interface + Backend Dispatch `[Sonnet]`
+## 2. Unified `hv.h` Interface + Backend Dispatch
 
 Define the `hv_ops_t` vtable with all cross-hypervisor operations. `hypervisor_init()` detects the platform (§1), selects the right backend, and fills `g_hv_ops`. Inline helpers in `hv.h` delegate to the vtable. Replace any three-tier `if/else` in `kernel/main.c`.
 
@@ -78,7 +78,7 @@ Define the `hv_ops_t` vtable with all cross-hypervisor operations. `hypervisor_i
 - [ ] Remove hypervisor `if/else` chains from `kernel/main.c`; replace with `hypervisor_init()` call + `hv_*` API usage
 - [ ] Commit: `"kernel: hv_ops_t dispatch table -- unified hypervisor backend interface"`
 
-## 3. Bare-Metal Null Backend `[Sonnet]`
+## 3. Bare-Metal Null Backend
 
 Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the correct "not supported" result so that non-hypervisor code paths (PS/2, USB HID, VBE framebuffer) continue unchanged.
 
@@ -92,7 +92,7 @@ Implement the `hv_ops_t` null backend for `HV_NONE`. Every function returns the 
 
 ---
 
-## 4. VBox Display Auto-Resize `[Sonnet]`
+## 4. VBox Display Auto-Resize
 
 Handle the VBox display-change IRQ to read the new resolution and reconfigure the VBE framebuffer. Notify the window manager. Set `VBOX_GUEST_CAP_GRAPHICS` so VBox knows the guest handles resize events.
 
@@ -106,7 +106,7 @@ Handle the VBox display-change IRQ to read the new resolution and reconfigure th
 - [ ] Boot log: `[VBOX] Display auto-resize enabled`; on each resize: `[VBOX] Display resized to %ux%u`
 - [ ] Commit: `"drivers: VBox display auto-resize -- SetGuestCaps, DISPLAY_CHANGE IRQ, VBE reconfigure"`
 
-## 5. VBox HGCM Client `[Sonnet]`
+## 5. VBox HGCM Client
 
 Implement the Host-Guest Communication Manager (HGCM) channel layer. Provides `HGCM_CONNECT`, `HGCM_DISCONNECT`, and `HGCM_CALL` with parameter encoding for `uint32`, `uint64`, and pointer types. Used as the foundation for shared folders and clipboard.
 
@@ -119,7 +119,7 @@ Implement the Host-Guest Communication Manager (HGCM) channel layer. Provides `H
 - [ ] Handle async completion: HGCM calls may complete asynchronously (`VINF_HGCM_ASYNC_EXECUTE`); poll/wait on `request.rc` with timeout
 - [ ] Commit: `"drivers: VBox HGCM client -- CONNECT/DISCONNECT/CALL, param encoding, async completion"`
 
-## 6. VBox Shared Folders `[Sonnet]`
+## 6. VBox Shared Folders
 
 Use HGCM to connect to `"VBoxSharedFolders"`, enumerate mappings, map the first share, and expose it as a VFS drive at `H:\`. Implement the file operations: `CreateFile`, `ReadFile`, `WriteFile`, `ListDir`.
 
@@ -135,7 +135,7 @@ Use HGCM to connect to `"VBoxSharedFolders"`, enumerate mappings, map the first 
 - [ ] Boot log: `[VBOX] Shared folder "%s" mounted as H:\`; if none available: `[VBOX] No shared folders configured`
 - [ ] Commit: `"drivers: VBox shared folders -- HGCM QueryMappings/MapFolder, VFS H:\\ mount"`
 
-## 7. VBox Shared Clipboard `[Sonnet]`
+## 7. VBox Shared Clipboard
 
 Connect to `"VBoxSharedClipboard"` via HGCM. Support bidirectional plain-text clipboard synchronization: guest reads host text and host can read guest text.
 
@@ -147,7 +147,7 @@ Connect to `"VBoxSharedClipboard"` via HGCM. Support bidirectional plain-text cl
 - [ ] Register as clipboard backend: `clipboard_register_backend(&vbox_clipboard_ops)` (kernel clipboard API)
 - [ ] Commit: `"drivers: VBox shared clipboard -- HGCM bidirectional text, CF_UNICODETEXT"`
 
-## 8. VirtIO GPU Display Resize + Page Flip `[Sonnet]`
+## 8. VirtIO GPU Display Resize + Page Flip
 
 Drive the VirtIO GPU device (`PCI 1AF4:1050`) through its control queue: `GET_DISPLAY_INFO` on startup, `RESOURCE_CREATE_2D` → `SET_SCANOUT` → `TRANSFER_TO_HOST_2D` → `RESOURCE_FLUSH` for page flip. Handle resolution-change events. Provide hardware cursor via cursor queue.
 
@@ -167,7 +167,7 @@ Drive the VirtIO GPU device (`PCI 1AF4:1050`) through its control queue: `GET_DI
 - [ ] Boot log: `[VIRTIO-GPU] Display %ux%u, scanout_id=%u`
 - [ ] Commit: `"drivers: VirtIO GPU -- GET_DISPLAY_INFO, RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor"`
 
-## 9. VirtIO 9P Shared Folders `[Sonnet]`
+## 9. VirtIO 9P Shared Folders
 
 Attach to the VirtIO 9P device (PCI transport, subsystem 9) and implement 9P2000.L: `version`/`attach`/`walk`/`open`/`read`/`write`/`stat`/`clunk`. Mount at `I:\` via VFS. Compatible with QEMU `-virtfs local,path=...`.
 
@@ -182,7 +182,7 @@ Attach to the VirtIO 9P device (PCI transport, subsystem 9) and implement 9P2000
 - [ ] Boot log: `[9P] VirtIO-9P mounted as I:\\` if device present; skip silently if absent
 - [ ] Commit: `"drivers: VirtIO 9P -- 9P2000.L version/attach/walk/read/write, VFS I:\\ mount"`
 
-## 10. Hyper-V Synthetic HID `[Opus]`
+## 10. Hyper-V Synthetic HID
 
 Open two VMBus channels (Keyboard VSP and Mouse VSP GUIDs) and parse synthetic HID reports. Inject key and mouse events into the existing keyboard/mouse subsystem so all upper-layer input handling (layout, acceleration, raw grab) works transparently.
 
@@ -199,7 +199,7 @@ Open two VMBus channels (Keyboard VSP and Mouse VSP GUIDs) and parse synthetic H
 - [ ] Boot log: `[HYPERV] Synthetic keyboard channel open`, `[HYPERV] Synthetic mouse channel open`
 - [ ] Commit: `"drivers: Hyper-V synthetic HID -- VMBus kbd/mouse VSP channels, keystroke + mouse injection"`
 
-## 11. Hyper-V Synthetic Video `[Opus]`
+## 11. Hyper-V Synthetic Video
 
 Open the VMBus Video VSP channel, negotiate a resolution, and map the synthetic framebuffer via shared memory. Send dirty-region notifications to trigger screen updates. Implement `hv_ops.display_resize` for the Hyper-V backend.
 

@@ -53,7 +53,7 @@ title: "TODO-05 -- Screensaver, Widgets & Display"
 
 ---
 
-## 1. Screensaver System `[Sonnet]`
+## 1. Screensaver System
 
 **Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -82,7 +82,7 @@ Idle detection: track `g_last_input_ticks` in WM input handler. PIT tick compari
 - [ ] `scr_check_idle()` called from compositor tick loop
 - [ ] Commit: `"desktop: screensaver -- idle tracking, scr_entry_fn API, Blank/Starfield/Matrix/Logo/Clock"`
 
-## 2. Screensaver → Lock Screen `[Sonnet]`
+## 2. Screensaver → Lock Screen
 
 **Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -99,7 +99,7 @@ After dismiss: if `HKCU\Software\Impossible\Screensaver\RequirePassword=1` (defa
 - [ ] Screensaver Settings UI (in §5 desk.cpl or separate): `RequirePassword` checkbox; `IdleTimeout` slider; type selector
 - [ ] Commit: `"desktop: screensaver lock bridge -- RequirePassword Registry, lock_screen_show() on dismiss"`
 
-## 3. Desktop Widget Framework `[Sonnet]`
+## 3. Desktop Widget Framework
 
 **Design:** [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -120,7 +120,7 @@ After dismiss: if `HKCU\Software\Impossible\Screensaver\RequirePassword=1` (defa
 - [ ] Call `widget_manager_render()` + `widget_manager_tick()` from compositor main loop
 - [ ] Commit: `"desktop: widget framework -- struct widget, WGT lifecycle, acrylic bg, drag, Registry positions"`
 
-## 4. Built-in Widgets `[Sonnet]`
+## 4. Built-in Widgets
 
 **Design:** [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -140,7 +140,7 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 - [ ] Precomputed `sin_table[60]` + `cos_table[60]` at degree steps to avoid floating-point in ISR context
 - [ ] Commit: `"desktop: built-in widgets -- analog clock, CPU meter, RAM monitor, mini calendar, quick notes"`
 
-## 5. Display Management `[Sonnet]`
+## 5. Display Management
 
 `display_enum_modes()` returns `boot_info->gop_modes[]` array. `display_get_current_mode()` from `gop_mode_selected`. Store in `HKLM\HARDWARE\Display\CurrentMode`. Update `desk.cpl` resolution `CTRL_DROPDOWN`. Stretch: `display_set_mode()` via VirtIO-GPU.
 
@@ -160,7 +160,7 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 - [ ] Stretch: VirtIO-GPU `VIRTIO_GPU_CMD_SET_SCANOUT` for live resolution switch
 - [ ] Commit: `"kernel: display_enum_modes -- GOP mode list, boot Registry write, desk.cpl dropdown, DPI setting"`
 
-## 6. Multi-Monitor Stubs `[Sonnet]`
+## 6. Multi-Monitor Stubs
 
 `struct monitor` (id, resolution, position, DPI, framebuffer_addr). `monitor_enum()`. Virtual coordinate space stub. Taskbar on primary. Window draggable across monitors.
 

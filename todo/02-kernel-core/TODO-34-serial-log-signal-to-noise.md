@@ -61,14 +61,9 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 
 ## 1. Mark Expected Test-Path Log Output at Emission
 
-~30 of the ~40 distinct WARN/FAIL messages are a test deliberately exercising a refusal or fault-injection path. The message is
-correct and its severity is correct FOR PRODUCTION -- `ex: lookaside use-after-free` must be `[FAIL]` when it happens for real.
-The defect is that nothing records that a test ASKED for it, so the only way to classify a line today is to read the emitting
-source, which is what the 2026-07-27 audit had to do for all forty.
+~30 of the ~40 distinct WARN/FAIL messages are a test deliberately exercising a refusal or fault-injection path. The message is correct and its severity is correct FOR PRODUCTION -- `ex: lookaside use-after-free` must be `[FAIL]` when it happens for real. The defect is that nothing records that a test ASKED for it, so the only way to classify a line today is to read the emitting source, which is what the 2026-07-27 audit had to do for all forty.
 
-Do NOT lower these severities. A test-only severity would hide the production line that must still fire, which is the trap the
-audit explicitly warned against. Mark the WINDOW instead: a test declares the output it expects, and lines emitted inside that
-window are tagged as expected while everything else stays exactly as it is.
+Do NOT lower these severities. A test-only severity would hide the production line that must still fire, which is the trap the audit explicitly warned against. Mark the WINDOW instead: a test declares the output it expects, and lines emitted inside that window are tagged as expected while everything else stays exactly as it is.
 
 - [ ] Add `TEST_EXPECT_LOG(substr, reason)` scoping a declaration that lines matching `substr` are expected until the suite ends; auto-cleared by the existing action-drain so no test can leak a suppression into the next one.
 - [ ] Tag matched lines at emission with a marker the log carries (e.g. `[WARN*]` / a trailing `(expected: <reason>)`) so a human reading raw serial sees the classification without a tool.
@@ -82,13 +77,9 @@ window are tagged as expected while everything else stays exactly as it is.
 
 ## 2. Log-Cleanliness Gate in the Kernel Test Runner
 
-Once §1 makes expectation explicit, "the log was clean" becomes checkable. Today it is not: `scripts/test.sh` parses the
-framework's own pass/fail counters and displays `[FAIL]` lines without ever failing on them, so a run reporting
-`PASS: 25509 kernel tests passed` can and does contain unexpected `[FAIL]` output.
+Once §1 makes expectation explicit, "the log was clean" becomes checkable. Today it is not: `scripts/test.sh` parses the framework's own pass/fail counters and displays `[FAIL]` lines without ever failing on them, so a run reporting `PASS: 25509 kernel tests passed` can and does contain unexpected `[FAIL]` output.
 
-The gate belongs in the KERNEL runner, not in the shell script. The runner is the only place that knows which suite was active
-when a line was emitted, and it already owns the summary the shell parses. A shell-side regex over the whole log cannot
-attribute a line to a suite and would re-introduce the same "which of these forty is real" problem at a different layer.
+The gate belongs in the KERNEL runner, not in the shell script. The runner is the only place that knows which suite was active when a line was emitted, and it already owns the summary the shell parses. A shell-side regex over the whole log cannot attribute a line to a suite and would re-introduce the same "which of these forty is real" problem at a different layer.
 
 - [ ] Extend the run summary with `unexpected` alongside `passed/failed/skipped/pending/leaked/quota-leaked`, and make a non-zero count fail the run.
 - [ ] Baseline file for the environment-class lines (no TPM, no RDRAND, OVMF table quirks) that are correct on QEMU and would otherwise fail every local run; entries carry a reason and are reviewed, not auto-generated.
@@ -106,10 +97,7 @@ attribute a line to a suite and would re-introduce the same "which of these fort
 > **Do not naively "fail on ANY `[FAIL]`" without settling the third item below first.** A current WHPX capture carries `[FAIL] BOOT-BUDGET: TOTAL boot took 16246ms (target 4000ms)` and several more; those are performance budgets missed on a slow accelerator, not correctness failures, and gating a smoke run on them would make the gate red on every WHPX boot and train everyone to ignore it. Decide the BOOT-BUDGET question first, then implement.
 
 
-`scripts/test-smoke.sh` passes on two markers (`Boot complete in`, `C:\>`) and fails only on a nine-string fatal allowlist. A
-`[FAIL]` outside that list passes straight through. Demonstrated 2026-07-27: a local smoke run reported `SMOKE TEST PASSED`
-while its own log held `[FAIL] BOOT-BUDGET: EXEC -> DESKTOP_READY took 1139ms (target 100ms)` and 32 `[WARN]` lines. This is
-the specific reason an operator's reasonable assumption -- that smoke testing after each section would catch these -- did not hold.
+`scripts/test-smoke.sh` passes on two markers (`Boot complete in`, `C:\>`) and fails only on a nine-string fatal allowlist. A `[FAIL]` outside that list passes straight through. Demonstrated 2026-07-27: a local smoke run reported `SMOKE TEST PASSED` while its own log held `[FAIL] BOOT-BUDGET: EXEC -> DESKTOP_READY took 1139ms (target 100ms)` and 32 `[WARN]` lines. This is the specific reason an operator's reasonable assumption -- that smoke testing after each section would catch these -- did not hold.
 
 - [x] Fail the smoke run on ANY `[FAIL]` in the captured log, not only the nine fatal strings; the nine stay as the fast-path early abort.
   - Shipped in `6fbf3719a`: `scripts/test-smoke.sh` collects every `[FAIL]` line not matched by the baseline into `UNEXPECTED_FAILS` and fails the run (reconciled 2026-09-28 by the TODO-10 section 10 docs review).
@@ -128,11 +116,7 @@ the specific reason an operator's reasonable assumption -- that smoke testing af
 65% of the warnings in the 2026-07-27 capture (1776 DPC-watchdog lines) CANNOT appear on the development host. The watchdog
 needs a calibrated invariant TSC and prints `single-DPC threshold 100 us (no TSC -- timing off)` without one, timing nothing.
 
-**This is NOT just a TCG limitation** -- corrected 2026-07-27 after re-checking. It is off on BOTH local tiers: `/dev/kvm` is
-writable on the dev host and `scripts/test-smoke.sh` does select KVM, yet `build/smoke-test.log` and `build/test.log` both carry
-the `no TSC -- timing off` banner. So neither the KVM inner loop nor the CI-parity tier can observe DPC timing at all, and the
-only place those 1776 lines exist is a native WHPX or bare-metal run that no gate covers. A developer runs the full local suite,
-sees green, and concludes the DPC path is healthy when the measurement was switched off on every engine available to them.
+**This is NOT just a TCG limitation** -- corrected 2026-07-27 after re-checking. It is off on BOTH local tiers: `/dev/kvm` is writable on the dev host and `scripts/test-smoke.sh` does select KVM, yet `build/smoke-test.log` and `build/test.log` both carry the `no TSC -- timing off` banner. So neither the KVM inner loop nor the CI-parity tier can observe DPC timing at all, and the only place those 1776 lines exist is a native WHPX or bare-metal run that no gate covers. A developer runs the full local suite, sees green, and concludes the DPC path is healthy when the measurement was switched off on every engine available to them.
 
 The same class of gap hides `BOOT-BUDGET` wherever `boot_timing_tsc_freq()` reads below 1000. A check that is silently disabled
 is worse than one that fails, because it reports success -- and here two of them are disabled on every tier a developer can run.
@@ -191,17 +175,8 @@ This section owns the LOG-NOISE half only. The underlying performance defect -- 
 
 ## History
 
-**2026-07-27 -- filed from a native-QEMU serial audit.** Source capture: `run-all-tests.bat` kernel layer, 30244 lines, 2712
-`[WARN]` + 21 `[FAIL]`. A `serial-log-auditor` pass classified all ~40 distinct messages at their emitting file:line; three
-classifications were independently spot-checked against the test source before this TODO was written.
+**2026-07-27 -- filed from a native-QEMU serial audit.** Source capture: `run-all-tests.bat` kernel layer, 30244 lines, 2712 `[WARN]` + 21 `[FAIL]`. A `serial-log-auditor` pass classified all ~40 distinct messages at their emitting file:line; three classifications were independently spot-checked against the test source before this TODO was written.
 
-Result: **1 real defect** (`boot_trend` `vfs_rename_ex` failure leaving a stray `.tmp` -- filed to `01-boot-platform/TODO-29 §18`,
-not owned here), ~11 environment-class (absent TPM/RDRAND, OVMF firmware-table placement, stale dirty FAT32 bit), ~30
-test-induced (fault injection, refusal paths, `TEST_SKIP`/`TEST_PENDING`). Excluded from the count as already-owned: 1776
-DPC-watchdog and 567 quota pressure-tick lines, together 86% of all warning volume.
+Result: **1 real defect** (`boot_trend` `vfs_rename_ex` failure leaving a stray `.tmp` -- filed to `01-boot-platform/TODO-29 §18`, not owned here), ~11 environment-class (absent TPM/RDRAND, OVMF firmware-table placement, stale dirty FAT32 bit), ~30 test-induced (fault injection, refusal paths, `TEST_SKIP`/`TEST_PENDING`). Excluded from the count as already-owned: 1776 DPC-watchdog and 567 quota pressure-tick lines, together 86% of all warning volume.
 
-The audit is the reason this TODO exists in its current form. The obvious reading of a 2712-warning log is "fix the warnings";
-the evidence says almost nothing is broken and the real defect is that a clean log is not a testable property. Two contemporaneous
-fixes came out of the same capture and are NOT items here: repeated-PASS run-length collapse in `test_runner.c` (the AVL suite
-alone dropped 3500 lines to 25), and `BOOT-BUDGET` naming both interval endpoints after "VFS took 3212ms" turned out to be the
-VFS -> PARTITION interval rather than `vfs_init`.
+The audit is the reason this TODO exists in its current form. The obvious reading of a 2712-warning log is "fix the warnings"; the evidence says almost nothing is broken and the real defect is that a clean log is not a testable property. Two contemporaneous fixes came out of the same capture and are NOT items here: repeated-PASS run-length collapse in `test_runner.c` (the AVL suite alone dropped 3500 lines to 25), and `BOOT-BUDGET` naming both interval endpoints after "VFS took 3212ms" turned out to be the VFS -> PARTITION interval rather than `vfs_init`.

@@ -60,7 +60,7 @@ title: "TODO-06 -- NTP, Network Status & Win32 Winsock"
 
 ---
 
-## 1. DHCP Renewal Daemon `[Sonnet]`
+## 1. DHCP Renewal Daemon
 
 Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5% of lease). Background thread sends DHCP REQUEST at T1 (unicast to server), sends broadcast REQUEST at T2, triggers full DISCOVER on expiry. Update `netif` IP/gateway/DNS on renewal ACK.
 
@@ -83,7 +83,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
   - Server check depends on state (RFC 2131 4.4.5): REQUESTING and RENEWING accept an ACK only from the selected server (keep it apart from option 54 of later packets); REBINDING accepts any server's valid ACK. Test a replacement server completing a rebind.
 - [ ] Commit: `"net/dhcp: lease renewal daemon -- opt51/58/59, T1 unicast, T2 broadcast, rebind, netif update"`
 
-## 2. NTP Client `[Opus]`
+## 2. NTP Client
 
 48-byte NTP v4 client packet. Resolve `pool.ntp.org` via DNS → `udp_send()` to port 123. Parse Transmit Timestamp (64-bit NTP fixed-point). Convert to FILETIME epoch. Hand the measured offset to the shipped `ke_ntp_adjtime()`, which slews or steps. Retry 3×. Background thread syncs at boot + every 24 h. Store last-sync and NTP server in Registry.
 
@@ -113,7 +113,7 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 - [ ] Log: `[NTP] Synced to %u.%u.%u.%u: delta=%+d ms (slew=%d)` or `[NTP] Hard set to %04u-%02u-%02u %02u:%02u:%02u UTC`
 - [ ] Commit: `"net/ntp: NTP v4 client -- 48-byte packet, pool.ntp.org, FILETIME convert, slew/hard-set, 24h thread"`
 
-## 3. Network Statistics API `[Sonnet]`
+## 3. Network Statistics API
 
 Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stats(iface, &stats)` API. Link state drives the network glyph of the system cluster (`08-graphics-ui/TODO-11 §4`, `systray_update_net_glyph()`), whose tooltip shows the IP; no separate tray icon. Task Manager "Network" tab hook.
 
@@ -131,7 +131,7 @@ Add per-interface RX/TX byte/packet/error counters to `net_interface`. `net_stat
 - [ ] Task Manager hook: expose `net_stats()` result in `/sys/net` (§8); Task Manager reads that file for the network graph
 - [ ] Commit: `"net/stats: per-interface RX/TX counters, net_stats() API, tray icon with IP tooltip, 2s refresh"`
 
-## 4. `ifconfig` Command `[Sonnet]`
+## 4. `ifconfig` Command
 
 Display all interfaces: name, MAC, IPv4 (addr/mask/gateway), IPv6 (link-local + global), MTU, RX/TX bytes/packets/errors, up/down state. `ifconfig <iface> up|down|<ip> <mask>` for manual configuration.
 
@@ -148,7 +148,7 @@ Display all interfaces: name, MAC, IPv4 (addr/mask/gateway), IPv6 (link-local + 
 - [ ] Register `ifconfig` in shell command table (or extend registration from TODO-04)
 - [ ] Commit: `"shell/ifconfig: multi-NIC display with stats, IPv4/IPv6, RX/TX counters, manual IP/up/down config"`
 
-## 5. Extended `ping` Command `[Sonnet]`
+## 5. Extended `ping` Command
 
 Add ICMPv6 Echo Request (type 128) / Echo Reply (type 129) for IPv6 targets. Add flags: `-6` (force IPv6), `-4` (force IPv4), `-c count` (loop N times), `-t` (continuous until Ctrl+C).
 
@@ -164,7 +164,7 @@ Add ICMPv6 Echo Request (type 128) / Echo Reply (type 129) for IPv6 targets. Add
 - [ ] RTT measurement: record `uint64_t send_ms = uptime_ms()` before echo send; compute `rtt_ms = uptime_ms() - send_ms` on reply
 - [ ] Commit: `"shell/ping: ICMPv6 echo, -6/-4/-c count/-t continuous flags, RTT per-packet, packet-loss summary"`
 
-## 6. `traceroute` Command `[Opus]`
+## 6. `traceroute` Command
 
 Send UDP packets with TTL 1→30. Collect ICMP Time Exceeded (type 11) responses. Reverse-DNS-lookup each hop IP. Print hop table with RTT. IPv4 and IPv6 modes.
 
@@ -181,7 +181,7 @@ Send UDP packets with TTL 1→30. Collect ICMP Time Exceeded (type 11) responses
 - [ ] Register `traceroute` (and alias `tracert`) in shell command table
 - [ ] Commit: `"shell/traceroute: TTL probe, ICMP Time Exceeded cb, per-hop RTT×3, reverse DNS, tracert alias"`
 
-## 7. `netstat` Command `[Sonnet]`
+## 7. `netstat` Command
 
 List all active TCP connections (local addr:port, remote addr:port, TCP state), bound UDP sockets, and listening TCP sockets. Reads from the kernel socket table.
 
@@ -198,7 +198,7 @@ List all active TCP connections (local addr:port, remote addr:port, TCP state), 
 - [ ] Register `netstat` in shell command table
 - [ ] Commit: `"shell/netstat: TCP/UDP socket table display, state strings, -n -a flags, sock_iterate API"`
 
-## 8. `/sys/net` VFS Aggregation File `[Sonnet]`
+## 8. `/sys/net` VFS Aggregation File
 
 Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, ARP table, NDP neighbor cache, DNS cache contents, and firewall hit counter summary.
 
@@ -215,7 +215,7 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 - [ ] `cat /sys/net` accessible from shell; also readable by Task Manager network graph
 - [ ] Commit: `"sysfs: /sys/net -- per-interface stats, ARP, NDP, DNS cache, firewall summary in one VFS file"`
 
-## 9. `ws2_32.dll` Winsock Stubs `[Sonnet]`
+## 9. `ws2_32.dll` Winsock Stubs
 
 `WSAStartup`/`WSACleanup` no-ops. `socket`/`connect`/`send`/`recv`/`closesocket`/`bind`/`listen`/`accept` map to BSD socket syscalls. `gethostbyname`/`getaddrinfo` wrap `dns_resolve`. `WSAGetLastError` maps `errno` to Winsock error codes. `htons`/`ntohs`/`htonl`/`ntohl`. `setsockopt`/`getsockopt`. `select`. Register in the built-in DLL stub table.
 

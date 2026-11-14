@@ -39,10 +39,10 @@ You cannot yet. No sound device is driven, so the system is silent on every mach
 
 Everything:
 
-- **The interface** ([Audio HAL](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#1-audio-hal----audio_device_t-vtable-opus)).
-- **Drivers**: [AC97](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#2-ac97-sound-driver-opus), [Intel HDA](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#3-intel-hda-driver-opus), [VirtIO Sound](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#4-virtio-sound-module-sonnet) and [USB Audio Class 1.0](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#5-usb-audio-class-10-uac1-playback-opus), which also needs [isochronous USB transfers](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support-opus).
-- **Device switching** ([Audio Device Hot-Plug](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#6-audio-device-hot-plug-sonnet)).
-- **Loadable modules** ([Convert All Audio Drivers to `.kmod`](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#7-convert-all-audio-drivers-to-kmod-sonnet)), which needs the [Kernel Module System](kernel-modules.md).
+- **The interface** ([Audio HAL](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#1-audio-hal----audio_device_t-vtable)).
+- **Drivers**: [AC97](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#2-ac97-sound-driver), [Intel HDA](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#3-intel-hda-driver), [VirtIO Sound](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#4-virtio-sound-module) and [USB Audio Class 1.0](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#5-usb-audio-class-10-uac1-playback), which also needs [isochronous USB transfers](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support).
+- **Device switching** ([Audio Device Hot-Plug](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#6-audio-device-hot-plug)).
+- **Loadable modules** ([Convert All Audio Drivers to `.kmod`](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md#7-convert-all-audio-drivers-to-kmod)), which needs the [Kernel Module System](kernel-modules.md).
 
 ## How does it compare with Windows 11 and Linux?
 

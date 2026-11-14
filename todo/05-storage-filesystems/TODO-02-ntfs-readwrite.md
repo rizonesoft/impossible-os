@@ -49,7 +49,7 @@ title: "TODO-02 -- NTFS Read/Write Driver"
 
 ---
 
-## 1. B+ Tree Mutation Audit + Journaling `[Opus]`
+## 1. B+ Tree Mutation Audit + Journaling
 
 Audit `ntfs_index_insert()` and `ntfs_index_delete()` for split/merge completeness. Ensure all tree mutations are logged via the existing `$LogFile` journal engine and that `$BITMAP` is updated on every INDX buffer alloc/free.
 
@@ -66,7 +66,7 @@ Audit `ntfs_index_insert()` and `ntfs_index_delete()` for split/merge completene
 - [ ] Integration test: create directory; insert 500 filenames (forces multiple splits); delete 250 filenames (forces merges); verify B+ tree invariant (`all keys sorted, all leaves at same depth`) via `ntfs_index_check(vol, dir_inode)`
 - [ ] Commit: `"fs/ntfs: B+ tree mutation -- split cascade, merge, $BITMAP, full journal coverage"`
 
-## 2. Write Data Path Wiring `[Sonnet]`
+## 2. Write Data Path Wiring
 
 Wire `ntfs_write_data()` and `ntfs_truncate()` from `ntfs_data_write.c` into `ntfs_vfs.c`'s VFS operation table. Confirm all cluster allocation and `$DATA` attribute extension are journaled.
 
@@ -84,7 +84,7 @@ Wire `ntfs_write_data()` and `ntfs_truncate()` from `ntfs_data_write.c` into `nt
 - [ ] Compressed-write `$STANDARD_INFORMATION` timestamps: `ntfs_write_compressed_data()` skips `update_std_info_times()`, leaving compressed writes with stale mod/MFT-change times; stamp before the compressed MFT commit. (TODO-08 §13 review.)
 - [ ] Commit: `"fs/ntfs: wire write/truncate into VFS, dirty-on-write flag, clean unmount"`
 
-## 3. NTFS Volume Initialiser `[Opus]`
+## 3. NTFS Volume Initialiser
 
 Implement `ntfs_format(blkdev, label, cluster_size)` to create a mountable NTFS volume with VBR, `$MFT`, `$MFTMirr`, all 16 system files, and `$Bitmap`.
 
@@ -109,7 +109,7 @@ Implement `ntfs_format(blkdev, label, cluster_size)` to create a mountable NTFS 
 - [ ] Boot log: `[NTFS] Formatted volume "%s" -- %llu clusters, %u B/cluster, MFT @ LCN %llu`
 - [ ] Commit: `"fs/ntfs: ntfs_format() -- VBR, 16 system files, $Bitmap, $UpCase, $MFTMirr"`
 
-## 4. `$Secure` Security Stream `[Sonnet]`
+## 4. `$Secure` Security Stream
 
 Implement `$Secure` stream write support: initialise `$SDS`/`$SDH`/`$SII` B+ tree indexes during format, and stamp a default security descriptor (`Everyone:Full-Control`) on each newly created file.
 
@@ -126,7 +126,7 @@ Implement `$Secure` stream write support: initialise `$SDS`/`$SDH`/`$SII` B+ tre
 - [ ] Boot log: `[NTFS] $Secure loaded -- %u descriptors, next_id=%u`
 - [ ] Commit: `"fs/ntfs: $Secure -- $SDS/$SDH/$SII streams, default SD on file create, security_id lookup"`
 
-## 5. Dirty Volume Recovery Wiring `[Sonnet]`
+## 5. Dirty Volume Recovery Wiring
 
 Wire `ntfs_recovery_replay()` (which already exists in `ntfs_recovery.c`) into the `ntfs_vfs.c` mount path so a dirty volume is automatically recovered before returning a VFS handle.
 
@@ -141,7 +141,7 @@ Wire `ntfs_recovery_replay()` (which already exists in `ntfs_recovery.c`) into t
 - [ ] Verify `ntfs_vfs_unmount()` calls `ntfs_journal_checkpoint(vol)` and clears `VOLUME_IS_DIRTY` in `$Volume` before returning (complement of §2 dirty-on-write)
 - [ ] Commit: `"fs/ntfs: wire dirty volume recovery -- mount checks VOLUME_IS_DIRTY, ntfs_recovery_replay()"`
 
-## 6. NTFS Format + Crash + Replay Test `[Sonnet]`
+## 6. NTFS Format + Crash + Replay Test
 
 Extend `ntfs_test.c` with an end-to-end scenario: format a 64 MiB in-memory image, write/read/rename/delete 100 files across all size classes, simulate a crash, verify journal replay, and confirm no corruption via an fsck-equivalent walk.
 

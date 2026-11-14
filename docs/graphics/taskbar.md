@@ -10,7 +10,7 @@ This roadmap plans the full Windows 11 taskbar: a live window list shown as cent
 **Today.** [`desktop_draw_taskbar()`](../../src/desktop/desktop.c) draws a full-width 48 pixel acrylic bar, described in [Desktop Shell Today](../desktop/desktop-shell.md). What already exists toward this roadmap:
 
 - **Start button.** A 48 by 40 pixel button with the 32 pixel logo, anchored at the left edge rather than centred. It toggles the Start menu.
-- **Window list (partial, section 1).** One 100 by 42 pixel text button per open window, starting at x = 58 and stopping 120 pixels short of the right edge; the focused window's button is highlighted. There are no icons, no indicator pill, no flashing and no overflow. The draw, click and cursor code each compute this geometry on their own and disagree (100 against 120 pixel buttons, and only the cursor code skips hidden windows); the fix is filed in [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list-sonnet).
+- **Window list (partial, section 1).** One 100 by 42 pixel text button per open window, starting at x = 58 and stopping 120 pixels short of the right edge; the focused window's button is highlighted. There are no icons, no indicator pill, no flashing and no overflow. The draw, click and cursor code each compute this geometry on their own and disagree (100 against 120 pixel buttons, and only the cursor code skips hidden windows); the fix is filed in [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list).
 - **Clicks.** Clicking a window button raises and focuses that window. It never minimizes it, because minimize does not exist yet in the [window manager](window-manager.md). There is no right-click.
 - **Clock.** Drawn at the right end; see [Kernel Time and Taskbar Clock](clock-time.md).
 - **Work area.** `desktop_get_usable_height()` returns the screen height minus the bar, so maximized windows can stop above it once maximize exists.
@@ -53,11 +53,11 @@ Boot the desktop (`bash scripts/build.sh run`), open the terminal from the Start
 
 ## What is not implemented yet?
 
-- [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list-sonnet), including the geometry defect above, and [Taskbar Button Context Menu](../../todo/08-graphics-ui/TODO-10-taskbar.md#2-taskbar-button-context-menu-sonnet).
-- [Aero Peek](../../todo/08-graphics-ui/TODO-10-taskbar.md#3-aero-peek-opus) and [Taskbar Progress Badges](../../todo/08-graphics-ui/TODO-10-taskbar.md#4-taskbar-progress-badges-sonnet).
-- [Pinned Apps](../../todo/08-graphics-ui/TODO-10-taskbar.md#5-pinned-apps-sonnet) and [Jump Lists](../../todo/08-graphics-ui/TODO-10-taskbar.md#6-jump-lists-sonnet).
-- [Taskbar Auto-Hide](../../todo/08-graphics-ui/TODO-10-taskbar.md#7-taskbar-auto-hide-sonnet) and [Taskbar Customization](../../todo/08-graphics-ui/TODO-10-taskbar.md#8-taskbar-customization-sonnet).
-- Button minimize and restore wait on [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore-sonnet); the button menu uses the [context menu engine](desktop-shell-features.md).
+- [Taskbar Window List](../../todo/08-graphics-ui/TODO-10-taskbar.md#1-taskbar-window-list), including the geometry defect above, and [Taskbar Button Context Menu](../../todo/08-graphics-ui/TODO-10-taskbar.md#2-taskbar-button-context-menu).
+- [Aero Peek](../../todo/08-graphics-ui/TODO-10-taskbar.md#3-aero-peek) and [Taskbar Progress Badges](../../todo/08-graphics-ui/TODO-10-taskbar.md#4-taskbar-progress-badges).
+- [Pinned Apps](../../todo/08-graphics-ui/TODO-10-taskbar.md#5-pinned-apps) and [Jump Lists](../../todo/08-graphics-ui/TODO-10-taskbar.md#6-jump-lists).
+- [Taskbar Auto-Hide](../../todo/08-graphics-ui/TODO-10-taskbar.md#7-taskbar-auto-hide) and [Taskbar Customization](../../todo/08-graphics-ui/TODO-10-taskbar.md#8-taskbar-customization).
+- Button minimize and restore wait on [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore); the button menu uses the [context menu engine](desktop-shell-features.md).
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -78,7 +78,7 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 
 ---
 
-## 1. `task_t` Linux Flags + FD Table `[Sonnet]`
+## 1. `task_t` Linux Flags + FD Table
 
 Extend `struct task` in `include/kernel/sched/task.h` with Linux compat fields. These fields are only populated when `is_linux_elf = 1`.
 
@@ -98,7 +98,7 @@ Extend `struct task` in `include/kernel/sched/task.h` with Linux compat fields. 
 
 ---
 
-## 2. ELF Linux Loader (SYSV Stack + auxv) `[Opus]`
+## 2. ELF Linux Loader (SYSV Stack + auxv)
 
 Create `src/compat/linux/elf_linux.c` with `elf_linux_load()`. Unlike the kernel `elf_load()` (used for `kernel.exe`), this path sets up a full Linux user-mode process stack with the SYSV ABI initial stack layout required by `_start` in musl/glibc.
 
@@ -127,7 +127,7 @@ Create `src/compat/linux/elf_linux.c` with `elf_linux_load()`. Unlike the kernel
 
 ---
 
-## 3. Syscall Entry Dispatch (`is_linux_elf` Branch) `[Opus]`
+## 3. Syscall Entry Dispatch (`is_linux_elf` Branch)
 
 Extend the `syscall_entry.asm` handler from `TODO-07 §1` to branch to the Linux translation layer when the current task has `is_linux_elf = 1`. This is a security-critical dispatch path -- the wrong branch would allow Linux binaries to call Win32 syscalls with SYSV register layout.
 
@@ -145,7 +145,7 @@ Extend the `syscall_entry.asm` handler from `TODO-07 §1` to branch to the Linux
 
 ---
 
-## 4. Linux Syscall Translation Table `[Sonnet]`
+## 4. Linux Syscall Translation Table
 
 Populate `linux_syscall_table[]`. All translations go through the fd table (§1) and path translator (§5).
 
@@ -204,7 +204,7 @@ Populate `linux_syscall_table[]`. All translations go through the fd table (§1)
 
 ---
 
-## 5. Path Translation `[Sonnet]`
+## 5. Path Translation
 
 Create `src/compat/linux/linux_path.c`. All file-related Linux syscalls call `linux_path_to_win32()` before touching the VFS.
 
@@ -229,7 +229,7 @@ Create `src/compat/linux/linux_path.c`. All file-related Linux syscalls call `li
 
 ---
 
-## 6. Linux File Descriptor Table `[Sonnet]`
+## 6. Linux File Descriptor Table
 
 > The data structures are defined in §1. This section implements the full fd lifecycle wiring in `src/compat/linux/linux_fd.c`.
 
@@ -242,7 +242,7 @@ Create `src/compat/linux/linux_path.c`. All file-related Linux syscalls call `li
 
 ---
 
-## 7. POSIX Filesystem Stubs `[Sonnet]`
+## 7. POSIX Filesystem Stubs
 
 Add `opendir`/`readdir`/`closedir`/`getdents64` emulation using `FindFirstFile`/`FindNextFile` under the hood.
 
@@ -256,7 +256,7 @@ Add `opendir`/`readdir`/`closedir`/`getdents64` emulation using `FindFirstFile`/
 
 ---
 
-## 8. Signal Stubs `[Opus]`
+## 8. Signal Stubs
 
 Basic signal delivery for foreground process control. Full POSIX signal semantics are not required -- only the subset needed by static Linux apps (busybox, musl programs).
 
@@ -277,7 +277,7 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 
 ---
 
-## 9. Shell ELF Integration + `[Linux]` Process Tag `[Sonnet]`
+## 9. Shell ELF Integration + `[Linux]` Process Tag
 
 - [ ] `exec_load()` (TODO-07 §8): on `\x7FELF` magic, call `elf_linux_load()` (§2) and set `task->is_linux_elf = 1`; fall-through to ELF error only for `ENOEXEC` (e.g. dynamic binary)
 - [ ] Shell (`cmd.exe`) process list (`tasklist` built-in) → append `[Linux]` tag to processes where `is_linux_elf = 1`
@@ -287,7 +287,7 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 
 ---
 
-## 10. Test: Static Hello + Busybox `[Sonnet]`
+## 10. Test: Static Hello + Busybox
 
 - [ ] Cross-compile static hello: `x86_64-linux-gnu-gcc -static -o hello_linux hello.c`; place at `C:\` on disk image
 - [ ] QEMU: `hello_linux` in shell → prints "Hello, World!" via `sys_write(1, ...)`
@@ -303,7 +303,7 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 
 ---
 
-## 11. Future: Dynamic ELF (Stretch) `[Opus]`
+## 11. Future: Dynamic ELF (Stretch)
 
 > Out of scope for initial implementation. Tracked here for planning. Do not start until §2–8 are complete and busybox runs.
 

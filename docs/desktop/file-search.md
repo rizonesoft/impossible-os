@@ -50,12 +50,12 @@ It cannot be used yet. To find a file today, list directories one by one.
 
 ## What is not implemented yet?
 
-- [Search Index Core](../../todo/09-desktop-shell/TODO-05-file-search.md#1-search-index-core-opus)
-- [Search Query API](../../todo/09-desktop-shell/TODO-05-file-search.md#2-search-query-api-sonnet)
-- [`find` Shell Command](../../todo/09-desktop-shell/TODO-05-file-search.md#3-find-shell-command-sonnet)
-- [Start Menu Integration](../../todo/09-desktop-shell/TODO-05-file-search.md#4-start-menu-integration-sonnet), whose search box is owned by [Start Menu Search](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#3-start-menu-search-sonnet)
-- [File Manager Integration](../../todo/09-desktop-shell/TODO-05-file-search.md#5-file-manager-integration-sonnet), consumed by the [File Manager](file-manager.md)
-- [Index Change Notifications](../../todo/09-desktop-shell/TODO-05-file-search.md#6-index-change-notifications-sonnet)
+- [Search Index Core](../../todo/09-desktop-shell/TODO-05-file-search.md#1-search-index-core)
+- [Search Query API](../../todo/09-desktop-shell/TODO-05-file-search.md#2-search-query-api)
+- [`find` Shell Command](../../todo/09-desktop-shell/TODO-05-file-search.md#3-find-shell-command)
+- [Start Menu Integration](../../todo/09-desktop-shell/TODO-05-file-search.md#4-start-menu-integration), whose search box is owned by [Start Menu Search](../../todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md#3-start-menu-search)
+- [File Manager Integration](../../todo/09-desktop-shell/TODO-05-file-search.md#5-file-manager-integration), consumed by the [File Manager](file-manager.md)
+- [Index Change Notifications](../../todo/09-desktop-shell/TODO-05-file-search.md#6-index-change-notifications)
 
 The scheduled rebuild depends on the task scheduler in [Recycle Bin, ZIP and Task Scheduler](recycle-bin-zip-scheduler.md), which has not shipped either.
 

@@ -39,14 +39,14 @@ bash scripts/test.sh SUITE=ob
 
 ## What is not implemented yet?
 
-- **Copy-on-write `fork`** with frame reference counts ([COW `fork()`](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#1-cow-fork-opus)).
-- **User 2 MiB pages** and `MAP_HUGE` ([Huge Pages (2 MiB)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#2-huge-pages-2-mib-opus)).
-- **1 GiB pages for device MMIO.** The kernel promotion exists; its use for PCI BARs and the boot report line do not ([1 GiB Pages (Kernel MMIO)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#3-1-gib-pages-kernel-mmio-opus)).
-- **`madvise` and `MEM_RESET` hints** ([`madvise` / `MEM_RESET` Hints](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#4-madvise--mem_reset-hints-sonnet)).
-- **Cross-process section views and sparse `SEC_RESERVE` sections** ([Section Object Multi-View Mappings](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#5-section-object-multi-view-mappings-opus)).
-- **Job Object memory limits** ([Per-Process Memory Limits (Job Objects)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#6-per-process-memory-limits-job-objects-sonnet)).
-- **DMA buffer pool, compressed memory, NUMA-aware allocation and transparent huge pages** ([Zero-Copy DMA Buffer Pool](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#7-zero-copy-dma-buffer-pool-opus), [Compressed Memory](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#8-compressed-memory-zram-style-opus), [NUMA-Aware PMM](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#9-numa-aware-pmm-sonnet), [Transparent Huge Pages Collapser](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#10-transparent-huge-pages-collapser-opus)).
-- **Address Windowing Extensions** ([AWE](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#11-address-windowing-extensions-awe-opus)).
+- **Copy-on-write `fork`** with frame reference counts ([COW `fork()`](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#1-cow-fork)).
+- **User 2 MiB pages** and `MAP_HUGE` ([Huge Pages (2 MiB)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#2-huge-pages-2-mib)).
+- **1 GiB pages for device MMIO.** The kernel promotion exists; its use for PCI BARs and the boot report line do not ([1 GiB Pages (Kernel MMIO)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#3-1-gib-pages-kernel-mmio)).
+- **`madvise` and `MEM_RESET` hints** ([`madvise` / `MEM_RESET` Hints](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#4-madvise--mem_reset-hints)).
+- **Cross-process section views and sparse `SEC_RESERVE` sections** ([Section Object Multi-View Mappings](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#5-section-object-multi-view-mappings)).
+- **Job Object memory limits** ([Per-Process Memory Limits (Job Objects)](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#6-per-process-memory-limits-job-objects)).
+- **DMA buffer pool, compressed memory, NUMA-aware allocation and transparent huge pages** ([Zero-Copy DMA Buffer Pool](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#7-zero-copy-dma-buffer-pool), [Compressed Memory](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#8-compressed-memory-zram-style), [NUMA-Aware PMM](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#9-numa-aware-pmm), [Transparent Huge Pages Collapser](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#10-transparent-huge-pages-collapser)).
+- **Address Windowing Extensions** ([AWE](../../todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md#11-address-windowing-extensions-awe)).
 
 ## How does it compare with Windows 11 and Linux?
 

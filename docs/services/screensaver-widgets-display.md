@@ -41,10 +41,10 @@ Boot and look for the `GOP` line in the serial log, in the form `<width>x<height
 
 ## What is not implemented yet?
 
-- [Screensaver System](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#1-screensaver-system-sonnet) and the [lock screen bridge](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#2-screensaver--lock-screen-sonnet)
-- [Desktop Widget Framework](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#3-desktop-widget-framework-sonnet) and [Built-in Widgets](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#4-built-in-widgets-sonnet); the CPU meter needs the per-task list from the [utilities roadmap](../../todo/09-desktop-shell/TODO-12-utilities.md)
-- [Display Management](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#5-display-management-sonnet), whose Display applet is in the [Control Panel roadmap](../../todo/09-desktop-shell/TODO-11-control-panel.md)
-- [Multi-Monitor Stubs](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#6-multi-monitor-stubs-sonnet); real multi-head support belongs to the display driver roadmap
+- [Screensaver System](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#1-screensaver-system) and the [lock screen bridge](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#2-screensaver--lock-screen)
+- [Desktop Widget Framework](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#3-desktop-widget-framework) and [Built-in Widgets](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#4-built-in-widgets); the CPU meter needs the per-task list from the [utilities roadmap](../../todo/09-desktop-shell/TODO-12-utilities.md)
+- [Display Management](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#5-display-management), whose Display applet is in the [Control Panel roadmap](../../todo/09-desktop-shell/TODO-11-control-panel.md)
+- [Multi-Monitor Stubs](../../todo/10-platform-services/TODO-05-screensaver-widgets-display.md#6-multi-monitor-stubs); real multi-head support belongs to the display driver roadmap
 
 ## How does it compare with Windows 11 and Linux?
 

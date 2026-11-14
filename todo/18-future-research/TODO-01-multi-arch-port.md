@@ -51,11 +51,7 @@ title: "TODO-01 -- ARM64 & RISC-V Architecture Port"
 
 ## Outcome
 
-A `docs/architecture/multi-arch-port-plan.md` document that answers: how many lines
-of code need to change, what the `src/arch/` abstraction layer looks like, how long the
-ARM64 port would take, and whether RISC-V is worth pursuing in parallel. A minimal
-AArch64 "Hello via PL011 UART" kernel boots under `qemu-system-aarch64` as proof that
-the toolchain and UEFI boot path work.
+A `docs/architecture/multi-arch-port-plan.md` document that answers: how many lines of code need to change, what the `src/arch/` abstraction layer looks like, how long the ARM64 port would take, and whether RISC-V is worth pursuing in parallel. A minimal AArch64 "Hello via PL011 UART" kernel boots under `qemu-system-aarch64` as proof that the toolchain and UEFI boot path work.
 
 ---
 
@@ -73,7 +69,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 1. x86-64 Gap Analysis `[Opus]`
+## 1. x86-64 Gap Analysis
 
 > Novel: first comprehensive ISA audit of the codebase. Requires mapping x86-64
 > hardware constructs to AArch64/RISC-V equivalents across assembly, MSRs, interrupt
@@ -123,7 +119,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 2. Build System Multi-Arch `[Sonnet]`
+## 2. Build System Multi-Arch
 
 **Source:** `scripts/build.sh`; arch-specific linker scripts; `include/arch/`
 
@@ -156,7 +152,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 3. AArch64 Boot Path (Minimal Kernel Prototype) `[Opus]`
+## 3. AArch64 Boot Path (Minimal Kernel Prototype)
 
 > Novel: first hardware-interface code targeting AArch64. Exception vector table at
 > `VBAR_EL1`, `mrs`/`msr` system register access, EL1 setup -- no prior Impossible OS
@@ -191,7 +187,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 4. RISC-V (RV64GC) Gap Analysis `[Sonnet]`
+## 4. RISC-V (RV64GC) Gap Analysis
 
 > Methodology established by §1; RISC-V has simpler privilege model than AArch64.
 > Primary question: is RV64GC worth pursuing given the simpler ecosystem versus ARM64?
@@ -224,7 +220,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 5. ABI Considerations `[Sonnet]`
+## 5. ABI Considerations
 
 > Win32 ABI is architecturally specific. Mapping to ARM64 and RISC-V requires defining
 > ABI-conditional headers so the same Win32 API surface works on both.
@@ -251,7 +247,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 6. AArch64 Port Plan (`src/arch/arm64/` Layer Design) `[Opus]`
+## 6. AArch64 Port Plan (`src/arch/arm64/` Layer Design)
 
 > Novel architectural design: defining the arch abstraction boundary and the ARM64
 > hardware driver layer. Produces the design section of §7 deliverable, not actual code.
@@ -291,7 +287,7 @@ the toolchain and UEFI boot path work.
 
 ---
 
-## 7. Research Deliverables `[Sonnet]`
+## 7. Research Deliverables
 
 > Output of the entire research spike -- no code merged to main.
 
@@ -324,13 +320,7 @@ the toolchain and UEFI boot path work.
 | 💎  | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in              | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
 | 💎  | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                     | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI                  |
 
-Impossible OS's `⭐` advantage: the arch abstraction layer design starts from a greenfield
-clean state -- all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is
-already isolated in a handful of files and can move cleanly into `src/arch/x86_64/`
-without touching the scheduler, memory manager, filesystem, or networking. The public
-gap analysis document (`x86-arch-inventory.md`) gives the community transparency into
-exactly how much work remains, something neither Microsoft nor the Linux kernel project
-publishes in structured machine-readable form.
+Impossible OS's `⭐` advantage: the arch abstraction layer design starts from a greenfield clean state -- all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is already isolated in a handful of files and can move cleanly into `src/arch/x86_64/` without touching the scheduler, memory manager, filesystem, or networking. The public gap analysis document (`x86-arch-inventory.md`) gives the community transparency into exactly how much work remains, something neither Microsoft nor the Linux kernel project publishes in structured machine-readable form.
 
 ---
 

@@ -52,18 +52,18 @@ sequenceDiagram
 
 ## Which roadmap owns which half?
 
-The networking roadmap [SSH, FTP and SMB Clients](../networking/ssh-ftp.md) owns the protocol: transport, authentication, channels, `ssh-keygen` and the agent. This roadmap owns the program the user runs: host trust, the configuration file, `scp` and `sftp` sessions. Three details still disagree between the two files and are filed in [section 4](../../todo/11-apps/TODO-03-ssh-client.md#4-shell-integration--tofu--known-hosts-sonnet) for a decision: where known host keys live (a `known_hosts` file there, a Registry key here), the case of the `AppData` folder name, and the fingerprint format.
+The networking roadmap [SSH, FTP and SMB Clients](../networking/ssh-ftp.md) owns the protocol: transport, authentication, channels, `ssh-keygen` and the agent. This roadmap owns the program the user runs: host trust, the configuration file, `scp` and `sftp` sessions. Three details still disagree between the two files and are filed in [section 4](../../todo/11-apps/TODO-03-ssh-client.md#4-shell-integration--tofu--known-hosts) for a decision: where known host keys live (a `known_hosts` file there, a Registry key here), the case of the `AppData` folder name, and the fingerprint format.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [SSH2 Transport Layer](../../todo/11-apps/TODO-03-ssh-client.md#1-ssh2-transport-layer-opus), which needs TCP sockets
-- [SSH Authentication](../../todo/11-apps/TODO-03-ssh-client.md#2-ssh-authentication-opus)
-- [Interactive Channel and PTY Relay](../../todo/11-apps/TODO-03-ssh-client.md#3-interactive-channel--pty-relay-sonnet)
-- [Shell Integration and Known Hosts](../../todo/11-apps/TODO-03-ssh-client.md#4-shell-integration--tofu--known-hosts-sonnet)
-- [SCP File Transfer](../../todo/11-apps/TODO-03-ssh-client.md#5-scp-file-transfer-sonnet) and the [SSH Config File](../../todo/11-apps/TODO-03-ssh-client.md#6-ssh-config-file-sonnet)
-- [`sftp`](../../todo/11-apps/TODO-03-ssh-client.md#7-sftp-command-stretch-sonnet), a stretch goal
+- [SSH2 Transport Layer](../../todo/11-apps/TODO-03-ssh-client.md#1-ssh2-transport-layer), which needs TCP sockets
+- [SSH Authentication](../../todo/11-apps/TODO-03-ssh-client.md#2-ssh-authentication)
+- [Interactive Channel and PTY Relay](../../todo/11-apps/TODO-03-ssh-client.md#3-interactive-channel--pty-relay)
+- [Shell Integration and Known Hosts](../../todo/11-apps/TODO-03-ssh-client.md#4-shell-integration--tofu--known-hosts)
+- [SCP File Transfer](../../todo/11-apps/TODO-03-ssh-client.md#5-scp-file-transfer) and the [SSH Config File](../../todo/11-apps/TODO-03-ssh-client.md#6-ssh-config-file)
+- [`sftp`](../../todo/11-apps/TODO-03-ssh-client.md#7-sftp-command-stretch), a stretch goal
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -3,7 +3,7 @@
 
 ## What is it?
 
-The compositor is the kernel loop that turns the desktop into pixels: it reads the mouse, hands clicks to the desktop and the window manager, and when something changed it repaints the whole scene into a back buffer and copies it to the screen. This roadmap planned to make that cheaper with damage (dirty rectangle) tracking, partial wallpaper restores, per-window damage, frame timing and VSync. Its first four sections are superseded by [Compositor Performance](../../todo/08-graphics-ui/TODO-08-window-manager.md#8-compositor-performance-opus) in the window manager roadmap, and only their leftovers stay here. Frame timing is already measured; everything else is unstarted.
+The compositor is the kernel loop that turns the desktop into pixels: it reads the mouse, hands clicks to the desktop and the window manager, and when something changed it repaints the whole scene into a back buffer and copies it to the screen. This roadmap planned to make that cheaper with damage (dirty rectangle) tracking, partial wallpaper restores, per-window damage, frame timing and VSync. Its first four sections are superseded by [Compositor Performance](../../todo/08-graphics-ui/TODO-08-window-manager.md#8-compositor-performance) in the window manager roadmap, and only their leftovers stay here. Frame timing is already measured; everything else is unstarted.
 
 ## How does it work?
 
@@ -54,7 +54,7 @@ The compositor starts on its own when the desktop boots (`bash scripts/build.sh 
 
 ## What is not implemented yet?
 
-- **Damage tracking**: a rectangle list, per-window damage and a composite that repaints only damaged areas. Owned by [Compositor Performance](../../todo/08-graphics-ui/TODO-08-window-manager.md#8-compositor-performance-opus); leftovers in [section 1](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#1-dirty-rect-tracking-infrastructure) and [section 3](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#3-per-window-damage-and-compositor-loop).
+- **Damage tracking**: a rectangle list, per-window damage and a composite that repaints only damaged areas. Owned by [Compositor Performance](../../todo/08-graphics-ui/TODO-08-window-manager.md#8-compositor-performance); leftovers in [section 1](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#1-dirty-rect-tracking-infrastructure) and [section 3](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#3-per-window-damage-and-compositor-loop).
 - **Partial wallpaper restore**: the clipped repaint exists and needs wiring in, including the taskbar edge case. [Section 2](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#2-partial-wallpaper-restore).
 - **VSync and a late-frame warning**: frames are counted as late but nothing is logged. [Section 4](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#4-frame-timing-and-vsync).
 - **Terminal text at boot**: a report of Command Prompt text briefly appearing at the top left before the first frame. [Section 5](../../todo/06-desktop-foundation/TODO-02-compositor-optimization.md#5-terminal-render-clipping-boot-bleed-fix) owns it. Its stated cause is not confirmed by today's code, which writes terminal text only into the window's own buffer through a bounds-checked pixel call.

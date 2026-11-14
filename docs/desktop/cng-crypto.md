@@ -43,13 +43,13 @@ It cannot be used by programs yet. The kernel uses the existing hashes and Ed255
 
 ## What is not implemented yet?
 
-- [Crypto Primitives](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#1-crypto-primitives-opus)
-- [TLS Handshake Helper](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#2-tls-handshake-helper-sonnet)
-- [X.509 Certificate Store](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#3-x509-certificate-store-opus), overlapping the [CA certificate store](../../todo/07-networking/TODO-03-http-tls.md#6-ca-certificate-store-sonnet) in the HTTP and TLS roadmap
-- [Key Store](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#4-key-store-sonnet)
-- [BCrypt API](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#5-bcrypt-api-sonnet) and [NCrypt API](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#6-ncrypt-api-sonnet)
-- [Code Signing](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#7-code-signing-opus)
-- [EFS Integration](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#8-efs-integration-opus), which has to build on the existing `$EFS` parser rather than define a new on-disk format
+- [Crypto Primitives](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#1-crypto-primitives)
+- [TLS Handshake Helper](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#2-tls-handshake-helper)
+- [X.509 Certificate Store](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#3-x509-certificate-store), overlapping the [CA certificate store](../../todo/07-networking/TODO-03-http-tls.md#6-ca-certificate-store) in the HTTP and TLS roadmap
+- [Key Store](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#4-key-store)
+- [BCrypt API](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#5-bcrypt-api) and [NCrypt API](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#6-ncrypt-api)
+- [Code Signing](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#7-code-signing)
+- [EFS Integration](../../todo/09-desktop-shell/TODO-07-cng-crypto.md#8-efs-integration), which has to build on the existing `$EFS` parser rather than define a new on-disk format
 
 ## How does it compare with Windows 11 and Linux?
 

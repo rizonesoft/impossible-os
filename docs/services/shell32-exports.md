@@ -37,8 +37,8 @@ Before adding a shell32 export, find its row and give it a real owner. Two rows 
 
 ## What is not implemented yet?
 
-- [Tier 1](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-1----paths-icons-folder-resolution-from-todo-08-section-12), owned by [Shell and Icon API (`shell32.dll`)](../../todo/10-platform-services/TODO-08-win32-api-surface.md#12-shell--icon-api-shell32dll-sonnet)
-- [Tier 1b](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-1b----shell-execute-from-todo-08-section-14), owned by [Win32 Shell Integration](../../todo/10-platform-services/TODO-08-win32-api-surface.md#14-win32-shell-integration-sonnet)
+- [Tier 1](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-1----paths-icons-folder-resolution-from-todo-08-section-12), owned by [Shell and Icon API (`shell32.dll`)](../../todo/10-platform-services/TODO-08-win32-api-surface.md#12-shell--icon-api-shell32dll)
+- [Tier 1b](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-1b----shell-execute-from-todo-08-section-14), owned by [Win32 Shell Integration](../../todo/10-platform-services/TODO-08-win32-api-surface.md#14-win32-shell-integration)
 - [Tier 2](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-2----shell-roadmap-not-pe-names) and [Tier 3](../../todo/10-platform-services/TODO-C-shell32-export-master-table.md#tier-3----full-named-export-roster-alphabetical-wine-scaffold)
 
 ## How does it compare with Windows 11 and Linux?

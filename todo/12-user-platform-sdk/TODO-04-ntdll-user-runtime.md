@@ -57,11 +57,7 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 
 ## Outcome
 
-Every Win32 process has a fully-functional user-mode runtime on startup: a process heap
-(`GetProcessHeap()` returns a live allocator), DLLs load recursively with `LdrLoadDll`,
-TLS indexes work, exceptions route through VEH handlers before the SEH fallback, and
-`main`/`WinMain` is called after all static C++ constructors run. Fiber-based coroutines
-are available via `CreateFiber`/`SwitchToFiber`.
+Every Win32 process has a fully-functional user-mode runtime on startup: a process heap (`GetProcessHeap()` returns a live allocator), DLLs load recursively with `LdrLoadDll`, TLS indexes work, exceptions route through VEH handlers before the SEH fallback, and `main`/`WinMain` is called after all static C++ constructors run. Fiber-based coroutines are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
@@ -82,7 +78,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 1. ntdll.dll Structure + TEB / PEB Extensions `[Sonnet]`
+## 1. ntdll.dll Structure + TEB / PEB Extensions
 
 **Source layout:** `src/user/ntdll/` split into:
 - `ntdll_syscalls.asm` -- thin `SYSCALL` wrappers for all `Nt*` functions
@@ -168,7 +164,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 2. RtlHeap Process Heap Allocator `[Opus]`
+## 2. RtlHeap Process Heap Allocator
 
 > Novel user-mode heap: free-list + best-fit with coalescing. No prior Impossible OS
 > user-mode allocator exists; `kmalloc` is ring-0 only.
@@ -197,7 +193,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 3. LdrLoadDll (PE DLL Loader) `[Opus]`
+## 3. LdrLoadDll (PE DLL Loader)
 
 > Novel: ntdll-side DLL loading pipeline. No prior Impossible OS in-ntdll loader. Manages
 > the PEB loaded-modules list and drives recursive import resolution.
@@ -232,7 +228,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 4. Thread-Local Storage (TLS) `[Sonnet]`
+## 4. Thread-Local Storage (TLS)
 
 **Source file:** `src/user/ntdll/ntdll_tls.c`
 
@@ -251,7 +247,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 5. Vectored Exception Handling (VEH) `[Opus]`
+## 5. Vectored Exception Handling (VEH)
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#status-colours`](../../docs/design/controls.md#status-colours)
 
@@ -308,7 +304,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 6. Process Startup (CRT0) `[Sonnet]`
+## 6. Process Startup (CRT0)
 
 **Source file:** `user/lib/crt0_pe.asm` (extend existing); `src/user/ntdll/ntdll_crt.c`
 
@@ -332,7 +328,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 7. User-Mode libc Shims `[Sonnet]`
+## 7. User-Mode libc Shims
 
 **Output:** `user/lib/libc.lib` (static; linked by default by `impossible-cc` wrapper)
 
@@ -356,7 +352,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 8. Fiber API `[Opus]`
+## 8. Fiber API
 
 > Novel user-mode context switching. No prior Impossible OS fiber/coroutine mechanism.
 > Requires explicit register save/restore at user level without OS involvement.
@@ -393,7 +389,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 9. Local Atom Tables (RtlAtomTable) `[Sonnet]`
+## 9. Local Atom Tables (RtlAtomTable)
 
 > Win32 LOCAL atom tables (`AddAtom`/`FindAtom`/`DeleteAtom`) are USER-MODE, per Windows parity: they live in the process heap and are destroyed at process exit, unlike the kernel-owned GLOBAL atom table (`GlobalAddAtom` -> `NtAddAtom`, kept global-only in the kernel per `D02T13 §3`). This section owns the user-mode local-table implementation the kernel deliberately does not host. **Source file:** `src/user/ntdll/ntdll_atom.c`.
 
@@ -407,7 +403,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
-## 10. WNF User Runtime (RtlPublish / RtlSubscribe) `[Sonnet]`
+## 10. WNF User Runtime (RtlPublish / RtlSubscribe)
 
 > The user-mode Rtl surface over the kernel notification facility (WNF-compatible SSDT surface owned by `D02 T16 §8`). Windows keeps the WNF `Rtl*` layer in `ntdll`: it owns the per-process subscription table + the single delivery worker that turns a kernel wake into user callback dispatch, while the kernel owns state storage, coalescing, and the syscall boundary. This section owns ONLY the user-mode half; it must not duplicate kernel state. **Source file:** `src/user/ntdll/ntdll_wnf.c`. -> XREF: D02 T16 §3 (waitable user subscriptions), D02 T16 §8 (WNF-compatible SSDT surface).
 
@@ -437,12 +433,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 | ⭐  | Fiber API                                | ✅ Windows fibers                                            | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 -- `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
 | 💎  | WNF user runtime (Rtl publish/subscribe) | ✅ `ntdll!RtlSubscribeWnfStateChangeNotification` + dispatch | ✅ inotify/`sd-bus`/kdbus signals (different model)         | ⬜ §10 -- Rtl wrappers over kernel KNF; per-process table + 1 worker |
 
-Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies**
-and issues raw `SYSCALL` instructions for all `Nt*` functions -- identical to Windows NT's design.
-The heap and Ldr are built on `VirtualAlloc` (no kernel-heap backing), giving the same
-performance profile as Windows. The `⭐` edge: the fiber API will serve as the foundation
-for a future async I/O runtime (completion-port + fiber-yield model) with no POSIX
-compatibility burden.
+Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies** and issues raw `SYSCALL` instructions for all `Nt*` functions -- identical to Windows NT's design. The heap and Ldr are built on `VirtualAlloc` (no kernel-heap backing), giving the same performance profile as Windows. The `⭐` edge: the fiber API will serve as the foundation for a future async I/O runtime (completion-port + fiber-yield model) with no POSIX compatibility burden.
 
 ---
 

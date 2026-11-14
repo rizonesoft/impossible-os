@@ -61,7 +61,7 @@ title: "TODO-07 -- SMP Phase 2"
 
 ---
 
-## 1. SMP-Safe Atomics Audit + `smp_mb` Barriers `[Opus]`
+## 1. SMP-Safe Atomics Audit + `smp_mb` Barriers
 
 Audit every lock, atomic, and shared-variable access in the codebase for missing `LOCK` prefixes and implicit ordering assumptions that hold only on uniprocessor. Enable `smp_mb()`, `smp_rmb()`, and `smp_wmb()` as hardware `MFENCE`/`LFENCE`/`SFENCE` under `CONFIG_SMP` and as compiler barriers only on UP.
 
@@ -81,7 +81,7 @@ Audit every lock, atomic, and shared-variable access in the codebase for missing
 - [ ] Boot log (SMP only): `[SMP] atomics audit: LOCK-prefix verified, smp_mb/rmb/wmb active`
 - [ ] Commit: `"smp: SMP-safe atomics audit -- LOCK-prefix, smp_mb/rmb/wmb barriers"`
 
-## 2. TLB Shootdown IPI `[Opus]`
+## 2. TLB Shootdown IPI
 
 After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, all CPUs that have the address space active must flush the affected TLB entries. Send an `IPI_TLB_FLUSH` to the CPU mask, have each receiver run `invlpg` for the range, then acknowledge via an atomic counter; the sender spins until the counter reaches zero.
 
@@ -104,7 +104,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] `irq_send_ipi(cpu, vector)` arch-neutral wrapper over `lapic_send_ipi()` in `src/kernel/irq.c`; retrofit direct callers so neutral code drops `kernel/drivers/lapic.h` (filed from `01-boot-platform/TODO-11` §10)
 - [ ] Commit: `"smp: TLB shootdown IPI -- invlpg range, atomic ack counter, vmm_unmap/mprotect hook"`
 
-## 3. Per-CPU Run Queues `[Opus]`
+## 3. Per-CPU Run Queues
 
 Replace the single global run queue with one `struct rq` per logical CPU. `schedule()` dequeues only from the local CPU's run queue. New tasks are assigned to the CPU with the fewest ready threads at creation time. All existing priority-queue and CFS structure from `TODO-05` is preserved; the change is in run-queue ownership, not queue internals.
 
@@ -138,7 +138,7 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] Keep the user-mode kernel error window correct once a captured task can run on an AP: `klog_watch_ctx_owns` (`src/kernel/klog.c`) owns an error only on the window owner's CPU
       - Today every task dispatches on the BSP, so the CPU check is what keeps the global `task_current()` cursor honest. Once dispatch is per-CPU, a declared line a captured child logs on an AP is counted as unexpected and fails its binary (loud, not silent): make ownership follow the capture pid on any CPU, with a per-CPU current task -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 13 (item: "The launcher opens a SUITE window per binary")
 
-## 4. Work-Stealing Load Balancer `[Opus]`
+## 4. Work-Stealing Load Balancer
 
 An idle CPU checks all other run queues and steals roughly half of the ready threads from the busiest one. Stealing respects `affinity_mask` (a thread pinned to CPU 0 is never stolen by CPU 1). The balance loop runs every `SCHED_BALANCE_INTERVAL_MS` milliseconds (default 4 ms) from the idle thread.
 
@@ -154,7 +154,7 @@ An idle CPU checks all other run queues and steals roughly half of the ready thr
 - [ ] Load metric `load_weight` = sum of `priority_weight` of all READY tasks in the queue (not just count)
 - [ ] Commit: `"sched: work-stealing load balancer -- lock ordering, affinity-aware steal, 4 ms interval"`
 
-## 5. Adaptive Mutex Spin-on-Owner `[Opus]`
+## 5. Adaptive Mutex Spin-on-Owner
 
 Before a contended mutex blocks the calling thread, spin for up to `MUTEX_SPIN_CYCLES` (default 200) checking whether the lock owner is currently running on another CPU. If the owner is preempted, stop spinning and sleep immediately -- there is no point waiting for a thread that is not making progress.
 
@@ -170,7 +170,7 @@ Before a contended mutex blocks the calling thread, spin for up to `MUTEX_SPIN_C
 - [ ] Boot log (SMP only): `[SCHED] adaptive mutex spin-on-owner active (%u cycles)`
 - [ ] Commit: `"sched: adaptive mutex spin-on-owner -- 200-cycle spin, owner-on-cpu check, CONFIG_SMP"`
 
-## 6. Per-CPU RCU Upgrade `[Opus]`
+## 6. Per-CPU RCU Upgrade
 
 Replace the current `scheduler_disable()` RCU read-side primitive with a per-CPU preempt counter. `synchronize_rcu()` sends a quiescent-state IPI to each online CPU and waits for acknowledgement via a per-CPU flag. `call_rcu(cb)` defers callbacks to a per-CPU list drained after each quiescent state.
 
@@ -187,7 +187,7 @@ Replace the current `scheduler_disable()` RCU read-side primitive with a per-CPU
 - [ ] Boot log: `[RCU] per-CPU Tree RCU active; grace-period IPI registered`
 - [ ] Commit: `"rcu: per-CPU RCU -- preempt counter, quiescent-state IPI, call_rcu deferred callbacks"`
 
-## 7. CPU Hotplug Stub `[Sonnet]`
+## 7. CPU Hotplug Stub
 
 Provide `cpu_up(id)` and `cpu_down(id)` kernel functions that manage the online CPU set. `cpu_down` migrates all tasks off the target CPU's run queue and sends an INIT IPI to park the AP in its spin loop. `cpu_up` re-activates a parked AP and re-initialises its run queue.
 
@@ -205,7 +205,7 @@ Provide `cpu_up(id)` and `cpu_down(id)` kernel functions that manage the online 
 - [ ] Boot log: `[SMP] hotplug: cpu_up/cpu_down registered for %u CPUs`
 - [ ] Commit: `"smp: CPU hotplug stub -- cpu_up/cpu_down, task migration, INIT IPI park"`
 
-## 8. `READ_ONCE` / `WRITE_ONCE` Macros `[Sonnet]`
+## 8. `READ_ONCE` / `WRITE_ONCE` Macros
 
 Define `READ_ONCE(x)` and `WRITE_ONCE(x, val)` as volatile-cast + compiler barrier macros. Annotate all intentionally racy per-CPU accesses (owner field in §5, `nr_running` sampling in §4, `rcu_preempt_cnt` in §6) to eliminate compiler-induced load/store elimination and reordering.
 
@@ -219,7 +219,7 @@ Define `READ_ONCE(x)` and `WRITE_ONCE(x, val)` as volatile-cast + compiler barri
 - [ ] Annotate `rcu_preempt_cnt` read in `synchronize_rcu()` polling with `READ_ONCE()`
 - [ ] Commit: `"smp: READ_ONCE/WRITE_ONCE macros -- volatile-cast, barrier(), racy-access annotations"`
 
-## 9. CPU Feature Intersection at AP Bringup `[Opus]`
+## 9. CPU Feature Intersection at AP Bringup
 
 During SMP bringup each AP executes CPUID and reports its feature flags to the BSP. The BSP computes the intersection; the result becomes the system-wide `cpu_features` mask used for context-switch state save selection (`XSAVE` vs `FXSAVE`). Any AP that fails the mandatory feature check (SSE2, NX) is left offline.
 

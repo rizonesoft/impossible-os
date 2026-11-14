@@ -37,13 +37,13 @@ bash scripts/test.sh SUITE=x86
 
 ## What is not implemented yet?
 
-- **User-space ASLR.** Every process loads at fixed bases ([User-Space ASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#1-user-space-aslr-opus)).
-- **KASLR.** The kernel loads at a fixed address; the owner is the hardening roadmap's KASLR section ([KASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#2-kaslr----kernel-address-space-randomization-opus)).
-- **SMEP and SMAP enforcement.** Blocked on per-process page tables that drop the User bit from kernel pages ([SMEP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#3-smep-opus), [SMAP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#4-smap--copy_from_user--copy_to_user-opus)).
-- **An audit of every mapping for NX** and the boot log line that reports it ([NX / DEP Mapping Audit](../../todo/03-memory-concurrency/TODO-02-memory-security.md#5-nx--dep-mapping-audit-opus)).
-- **KPTI switching.** No entry path changes CR3 yet ([KPTI Basic](../../todo/03-memory-concurrency/TODO-02-memory-security.md#6-kpti-basic-opus)).
-- **CET shadow stacks** ([CET Shadow Stack Stub](../../todo/03-memory-concurrency/TODO-02-memory-security.md#7-cet-shadow-stack-stub-opus)).
-- **The `secinfo` boot security report** ([Security Layout Report](../../todo/03-memory-concurrency/TODO-02-memory-security.md#8-security-layout-report-sonnet)).
+- **User-space ASLR.** Every process loads at fixed bases ([User-Space ASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#1-user-space-aslr)).
+- **KASLR.** The kernel loads at a fixed address; the owner is the hardening roadmap's KASLR section ([KASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#2-kaslr----kernel-address-space-randomization)).
+- **SMEP and SMAP enforcement.** Blocked on per-process page tables that drop the User bit from kernel pages ([SMEP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#3-smep), [SMAP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#4-smap--copy_from_user--copy_to_user)).
+- **An audit of every mapping for NX** and the boot log line that reports it ([NX / DEP Mapping Audit](../../todo/03-memory-concurrency/TODO-02-memory-security.md#5-nx--dep-mapping-audit)).
+- **KPTI switching.** No entry path changes CR3 yet ([KPTI Basic](../../todo/03-memory-concurrency/TODO-02-memory-security.md#6-kpti-basic)).
+- **CET shadow stacks** ([CET Shadow Stack Stub](../../todo/03-memory-concurrency/TODO-02-memory-security.md#7-cet-shadow-stack-stub)).
+- **The `secinfo` boot security report** ([Security Layout Report](../../todo/03-memory-concurrency/TODO-02-memory-security.md#8-security-layout-report)).
 
 ## How does it compare with Windows 11 and Linux?
 

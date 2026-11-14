@@ -57,7 +57,7 @@ title: "TODO-03 -- Service Manager & Core Daemons"
 
 ---
 
-## 1. User Account Stub `[Sonnet]`
+## 1. User Account Stub
 
 Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create default "Default" user on first boot. Per-user `HKU\{username}\` Registry hive. Home directories: `C:\Users\{username}\{Desktop,Documents,Downloads,Pictures,AppData}`. `%USERPROFILE%` env var. Current user tracked in kernel state.
 
@@ -76,7 +76,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] `user_init()` called from `kernel_main()` after Registry and VFS are live
 - [ ] Commit: `"user: account stub -- default user, home dirs, HKU\\Default Registry hive, USERPROFILE env"`
 
-## 2. Service Manager Core `[Opus]`
+## 2. Service Manager Core
 
 `struct service` (name[32], exe_path[256], state: STOPPED/STARTING/RUNNING/FAILED, pid, auto_start, critical, restart_count, last_exit_time). Static table of 32 services. `svc_start/stop/restart/status/list`. Service definitions in `HKLM\SYSTEM\Services\{name}`.
 
@@ -99,7 +99,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] `int svc_register(const char *name, const char *exe_path, uint8_t auto_start, uint8_t critical, uint8_t policy)` -- find free slot; write to Registry; populate slot
 - [ ] Commit: `"svc: service manager core -- 32-slot table, svc_start/stop/restart/status, Registry definitions"`
 
-## 3. Auto-Restart & Crash Recovery `[Opus]`
+## 3. Auto-Restart & Crash Recovery
 
 `svc_monitor_tick()` called from PIT once per second: check each RUNNING service's process state; on unexpected exit: schedule restart with exponential backoff (1→2→4→8→16→32→60 s). After 5 failures: FAILED state + toast. Reset counter after 60 s successful run.
 
@@ -117,7 +117,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] Explicit stop race: `svc_stop()` sets `svc->last_exit_ticks = 0` AND `svc->restart_policy = SVC_RESTART_NEVER` temporarily; `svc_monitor_tick()` skips services in STOPPING state
 - [ ] Commit: `"svc: crash monitor -- svc_monitor_tick, exponential backoff 1-60s, 5-failure FAILED state, task_is_alive"`
 
-## 4. Graceful Degradation `[Sonnet]`
+## 4. Graceful Degradation
 
 `critical` flag: if critical service fails unrecoverably → `kernel_panic()` BSOD. Normal services: log + auto-restart + toast. Desktop remains usable. `sc list` shows ✅ RUNNING / ⚠ RESTARTING / ❌ FAILED display.
 
@@ -132,7 +132,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] `svc_format_status(svc, buf, size)` -- format: `"{emoji} {name:16} PID:{pid:5} Restarts:{n} Backoff:{s}s"`
 - [ ] Commit: `"svc: degradation -- critical BSOD gate, persistent FAILED toast, svc_state_emoji display"`
 
-## 5. `sc` Shell Command `[Sonnet]`
+## 5. `sc` Shell Command
 
 `sc list`, `sc start <name>`, `sc stop <name>`, `sc restart <name>`, `sc status <name>` (shows state + PID + restart count + backoff delay).
 
@@ -149,7 +149,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] Register `sc` in command table with `{ "sc", cmd_sc, "Service control: list/start/stop/restart/status" }`
 - [ ] Commit: `"shell: sc command -- list/start/stop/restart/status with emoji state display"`
 
-## 6. Built-In Services `[Sonnet]`
+## 6. Built-In Services
 
 `netd` (DHCP renewal + ARP cache + network polling -- auto-start), `ntpd` (NTP sync every 60 min -- auto-start after netd), `registryd` (Registry dirty flush every 2 s -- auto-start, critical=true), `indexd` (file search rebuild every 30 min -- auto-start). Dependency order enforced.
 
@@ -168,7 +168,7 @@ Minimal `struct user_account` (uid, username, home_dir, privilege_level). Create
 - [ ] `svc_builtins_register()` called from `svc_init()`; auto-start ordering enforced by dependency walk
 - [ ] Commit: `"svc: built-in daemons -- registryd(critical)/netd/ntpd/indexd with dependency order"`
 
-## 7. Notification Service `[Sonnet]`
+## 7. Notification Service
 
 Kernel-side `struct kernel_notification` queue (source[32], message[256], severity: INFO/WARN/ERROR, timestamp). `knotify_send(source, msg, severity)` enqueues. Compositor drains queue per frame → calls `notify_send()`. Used by: NTP sync, disk mount/unmount, network up/down.
 
@@ -185,7 +185,7 @@ Kernel-side `struct kernel_notification` queue (source[32], message[256], severi
 - [ ] Severity → icon: `KNOTIFY_INFO → ICON_INFO`, `KNOTIFY_WARN → ICON_WARNING`, `KNOTIFY_ERROR → ICON_ERROR`
 - [ ] Commit: `"knotify: kernel notification queue -- knotify_send() ring buffer, knotify_drain() to notify_send()"`
 
-## 8. Autostart Programs `[Sonnet]`
+## 8. Autostart Programs
 
 Scan `C:\Users\Default\AppData\Startup\` for `.lnk` files after desktop fully initialized; execute via `shortcut_execute()`. `HKLM\SYSTEM\Boot\RunOnce` (run once, then delete). `HKLM\SYSTEM\Boot\Run` (run every boot).
 
@@ -203,7 +203,7 @@ Scan `C:\Users\Default\AppData\Startup\` for `.lnk` files after desktop fully in
 - [ ] Log each autostart execution: `[autostart] run: %s`
 - [ ] Commit: `"autostart: Startup folder scan, Run/RunOnce Registry execution, error knotify"`
 
-## 9. Win32 System Info Stubs `[Sonnet]`
+## 9. Win32 System Info Stubs
 
 `GetSystemInfo()` (CPU count, page size, architecture). `GetVersionExA()` (Win11 compat: 11.0 build 22000, "Impossible OS 1.0"). `GetComputerNameA/GetUserNameA/GetTempPathA/GetSystemDirectoryA/GetWindowsDirectoryA`. All in `kernel32.dll` stub table.
 

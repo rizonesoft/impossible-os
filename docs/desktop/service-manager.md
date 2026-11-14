@@ -45,13 +45,13 @@ It cannot be used yet. `ps` and `kill` in the shell are the only process control
 
 ## What is not implemented yet?
 
-- [User Account Stub](../../todo/09-desktop-shell/TODO-03-service-manager.md#1-user-account-stub-sonnet); the full multi-user system is [Security and User Accounts](security-accounts.md)
-- [Service Manager Core](../../todo/09-desktop-shell/TODO-03-service-manager.md#2-service-manager-core-opus), [Auto-Restart and Crash Recovery](../../todo/09-desktop-shell/TODO-03-service-manager.md#3-auto-restart--crash-recovery-opus) and [Graceful Degradation](../../todo/09-desktop-shell/TODO-03-service-manager.md#4-graceful-degradation-sonnet)
-- [`sc` Shell Command](../../todo/09-desktop-shell/TODO-03-service-manager.md#5-sc-shell-command-sonnet)
-- [Built-In Services](../../todo/09-desktop-shell/TODO-03-service-manager.md#6-built-in-services-sonnet)
-- [Notification Service](../../todo/09-desktop-shell/TODO-03-service-manager.md#7-notification-service-sonnet), feeding the toasts in [Start Menu, System Tray and Notifications](../graphics/start-menu-tray-notifications.md)
-- [Autostart Programs](../../todo/09-desktop-shell/TODO-03-service-manager.md#8-autostart-programs-sonnet)
-- [Win32 System Info Stubs](../../todo/09-desktop-shell/TODO-03-service-manager.md#9-win32-system-info-stubs-sonnet)
+- [User Account Stub](../../todo/09-desktop-shell/TODO-03-service-manager.md#1-user-account-stub); the full multi-user system is [Security and User Accounts](security-accounts.md)
+- [Service Manager Core](../../todo/09-desktop-shell/TODO-03-service-manager.md#2-service-manager-core), [Auto-Restart and Crash Recovery](../../todo/09-desktop-shell/TODO-03-service-manager.md#3-auto-restart--crash-recovery) and [Graceful Degradation](../../todo/09-desktop-shell/TODO-03-service-manager.md#4-graceful-degradation)
+- [`sc` Shell Command](../../todo/09-desktop-shell/TODO-03-service-manager.md#5-sc-shell-command)
+- [Built-In Services](../../todo/09-desktop-shell/TODO-03-service-manager.md#6-built-in-services)
+- [Notification Service](../../todo/09-desktop-shell/TODO-03-service-manager.md#7-notification-service), feeding the toasts in [Start Menu, System Tray and Notifications](../graphics/start-menu-tray-notifications.md)
+- [Autostart Programs](../../todo/09-desktop-shell/TODO-03-service-manager.md#8-autostart-programs)
+- [Win32 System Info Stubs](../../todo/09-desktop-shell/TODO-03-service-manager.md#9-win32-system-info-stubs)
 
 ## How does it compare with Windows 11 and Linux?
 

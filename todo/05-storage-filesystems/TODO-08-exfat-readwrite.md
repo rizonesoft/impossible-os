@@ -57,7 +57,7 @@ title: "TODO-08 -- exFAT Read/Write Driver"
 
 ---
 
-## 1. VBR Parser + Boot Checksum `[Sonnet]`
+## 1. VBR Parser + Boot Checksum
 
 Parse the exFAT Volume Boot Record. Verify the 11-sector boot checksum. Fall back to the backup VBR at sector offset 12 on primary failure.
 
@@ -75,7 +75,7 @@ Parse the exFAT Volume Boot Record. Verify the 11-sector boot checksum. Fall bac
 - [ ] Log: `[exFAT] Mounted %c: vol=%s cluster_size=%u sectors=%llu`
 - [ ] Commit: `"fs/exfat: VBR parser -- geometry, boot checksum, backup VBR fallback, dirty flag"`
 
-## 2. Allocation Bitmap `[Sonnet]`
+## 2. Allocation Bitmap
 
 Load the Allocation Bitmap cluster into memory. Implement `exfat_alloc_cluster(n)` (first-fit contiguous) and `exfat_free_cluster(start, n)`. Flush on `fsync` and unmount.
 
@@ -92,7 +92,7 @@ Load the Allocation Bitmap cluster into memory. Implement `exfat_alloc_cluster(n
 - [ ] `exfat_fat_chain_len(vol, first_cluster)` → count FAT entries until end-of-chain (`>= 0xFFFFFFF8`)
 - [ ] Commit: `"fs/exfat: Allocation Bitmap -- load, alloc/free contiguous, dirty flush, free_clusters tracking"`
 
-## 3. Up-Case Table `[Sonnet]`
+## 3. Up-Case Table
 
 Load and verify the Up-Case Table. Cache in memory. Implement `exfat_upcase(codepoint)` for all name comparisons. Implement `exfat_name_hash()`.
 
@@ -107,7 +107,7 @@ Load and verify the Up-Case Table. Cache in memory. Implement `exfat_upcase(code
 - [ ] `exfat_name_cmp(vol, a_utf16, a_len, b_utf16, b_len)` → upcase both; compare; return 0 if equal (case-insensitive)
 - [ ] Commit: `"fs/exfat: Up-Case Table -- load+verify CRC32, exfat_upcase(), exfat_name_hash(), case-insensitive cmp"`
 
-## 4. Directory Entry Sets `[Opus]`
+## 4. Directory Entry Sets
 
 Parse File Entry (type `0x85`), Stream Extension (type `0xC0`), and Filename Extension (type `0xC1`) entry sets. Decode UTF-16LE names. Verify SetChecksum. Assemble into `exfat_inode_t`.
 
@@ -124,7 +124,7 @@ Parse File Entry (type `0x85`), Stream Extension (type `0xC0`), and Filename Ext
 - [ ] UTF-16LE → UTF-8 decode: `exfat_utf16_to_utf8(name_utf16, name_len, name_utf8, 768)`; handle surrogate pairs for emoji (U+1F000+)
 - [ ] Commit: `"fs/exfat: directory entry sets -- File/Stream/Filename parse, UTF-16 decode, SetChecksum verify"`
 
-## 5. Directory Read `[Sonnet]`
+## 5. Directory Read
 
 Walk directory cluster chains. Assemble entry sets. Emit `vfs_dirent` per valid file. Handle multi-cluster directories. Skip deleted entries.
 
@@ -140,7 +140,7 @@ Walk directory cluster chains. Assemble entry sets. Emit `vfs_dirent` per valid 
 - [ ] VFS `readdir` callback: `exfat_vfs_readdir(vfs_node, index)` → walk to `index`-th entry; return `vfs_dirent`
 - [ ] Commit: `"fs/exfat: directory read -- cluster chain walk, entry set scan, finddir, readdir VFS callbacks"`
 
-## 6. File Read `[Sonnet]`
+## 6. File Read
 
 Read file data via FAT cluster chain. Add `NoFatChain` fast path (contiguous allocation, no FAT traversal). Handle offsets spanning multiple clusters.
 
@@ -158,7 +158,7 @@ Read file data via FAT cluster chain. Add `NoFatChain` fast path (contiguous all
 - [ ] VFS `read` callback: `exfat_vfs_read(vfs_node, buf, offset, len)` → `exfat_file_read()`
 - [ ] Commit: `"fs/exfat: file read -- FAT-chain + NoFatChain fast path, ValidDataLength zero-fill, VFS read callback"`
 
-## 7. File Write `[Opus]`
+## 7. File Write
 
 Within-cluster update, cluster append (alloc + extend FAT chain), truncation (free tail clusters). Update `DataLength`, `ValidDataLength`, `LastModifiedTimestamp`, `SetChecksum` on every write.
 
@@ -175,7 +175,7 @@ Within-cluster update, cluster append (alloc + extend FAT chain), truncation (fr
 - [ ] VFS `write` callback: `exfat_vfs_write(vfs_node, buf, offset, len)` → `exfat_file_write()`
 - [ ] Commit: `"fs/exfat: file write -- within-cluster, cluster append, truncate, DataLength/SetChecksum update"`
 
-## 8. File Create / Delete / Rename `[Sonnet]`
+## 8. File Create / Delete / Rename
 
 Write a complete File/Stream/Filename entry set in the parent directory. Free cluster chains and bitmap bits on delete. Atomic move within the same volume.
 
@@ -191,7 +191,7 @@ Write a complete File/Stream/Filename entry set in the parent directory. Free cl
 - [ ] VFS callbacks: `exfat_vfs_create`, `exfat_vfs_unlink`, `exfat_vfs_rename` → call the above
 - [ ] Commit: `"fs/exfat: create/delete/rename -- entry set write, SetChecksum, bitmap cleanup, VFS callbacks"`
 
-## 9. Timestamp Encoding `[Sonnet]`
+## 9. Timestamp Encoding
 
 Convert between `FILETIME` (100 ns ticks since 1601 UTC) and exFAT binary timestamps (2 s granularity + 10 ms offset field + UTC offset byte).
 
@@ -205,7 +205,7 @@ Convert between `FILETIME` (100 ns ticks since 1601 UTC) and exFAT binary timest
 - [ ] Wire into §7 (`exfat_update_dir_entry`): update `LastModifiedTime` on write; `LastAccessedTime` on read (date only, not time); `CreateTime` on create
 - [ ] Commit: `"fs/exfat: timestamp encoding -- FILETIME↔exFAT binary, 10ms precision, UTC offset, year-2107 clamp"`
 
-## 10. VFS Registration + Probe + fsck `[Sonnet]`
+## 10. VFS Registration + Probe + fsck
 
 Register exFAT with `vfs_probe()`. Wire dirty-volume auto-fsck. Implement `exfat_fsck()`. Add `chkdsk <drive> /exfat` shell command.
 
@@ -225,7 +225,7 @@ Register exFAT with `vfs_probe()`. Wire dirty-volume auto-fsck. Implement `exfat
 - [ ] Log: `[exFAT] Mounted %c: "%s", %llu clusters, cluster_size=%u`
 - [ ] Commit: `"fs/exfat: VFS registration -- probe, mount, dirty-volume fsck, chkdsk /exfat, clean unmount"`
 
-## 11. Unicode Edge Cases `[Sonnet]`
+## 11. Unicode Edge Cases
 
 Filenames up to 255 UTF-16 characters. Emoji and CJK round-trip correctly. `NameHash` validated. Illegal characters rejected with `STATUS_OBJECT_NAME_INVALID`.
 
@@ -240,7 +240,7 @@ Filenames up to 255 UTF-16 characters. Emoji and CJK round-trip correctly. `Name
 - [ ] 255-char name test: create file with 255 Japanese characters; read back; verify round-trip
 - [ ] Commit: `"fs/exfat: Unicode -- 255-char names, emoji/CJK round-trip, surrogate pairs, illegal char reject"`
 
-## 12. Large File Support (> 4 GiB) `[Sonnet]`
+## 12. Large File Support (> 4 GiB)
 
 Verify 64-bit `DataLength` and `ValidDataLength` in the Stream Extension are handled correctly throughout the read, write, and truncate paths. Test with a 5 GiB sparse file.
 

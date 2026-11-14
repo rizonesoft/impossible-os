@@ -49,18 +49,18 @@ In the shell, `echo` works today; it does not expand `%VAR%` yet, and `set`, `en
 
 ## Who owns what?
 
-`02-kernel-core/TODO-22` owns and shipped storage, defaults, expansion, the native calls, the search path and `CommandLineToArgvW()`. This file restates much of that with names the kernel did not adopt (`env_get()`, `SYS_GETENV`, `src/desktop/terminal.c`). A rescope item in [section 1](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#1-per-process-environ-storage-sdk-contract-sonnet) keeps only the parts no other roadmap covers. The initial user stack that carries `argc`, `argv` and `envp` belongs to the [PEB, TEB and the User-Mode ABI](../kernel/peb-teb-user-abi.md) roadmap.
+`02-kernel-core/TODO-22` owns and shipped storage, defaults, expansion, the native calls, the search path and `CommandLineToArgvW()`. This file restates much of that with names the kernel did not adopt (`env_get()`, `SYS_GETENV`, `src/desktop/terminal.c`). A rescope item in [section 1](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#1-per-process-environ-storage-sdk-contract) keeps only the parts no other roadmap covers. The initial user stack that carries `argc`, `argv` and `envp` belongs to the [PEB, TEB and the User-Mode ABI](../kernel/peb-teb-user-abi.md) roadmap.
 
 ## What is not implemented yet?
 
-- [Per-Process Environ Storage (SDK Contract)](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#1-per-process-environ-storage-sdk-contract-sonnet): shipped in the kernel under different names
-- [System Default Variables](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#2-system-default-variables-sonnet): shipped as `env_init_defaults()`
-- [`%VAR%` Expansion and `env_expand_path`](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#3-var-expansion--env_expand_path-sonnet): `env_expand_path()` does not exist
-- [SYS_GETENV, SYS_SETENV, SYS_UNSETENV](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#4-sys_getenv--sys_setenv--sys_unsetenv-sonnet): shipped as `Nt` calls
-- [PATH-Based Command Lookup and Session Cache](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#5-path-based-command-lookup--session-cache-sonnet): the cache and shell lookup are missing
-- [argv and argc Process ABI and `cmd_tokenize`](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#6-argv--argc-process-abi--cmd_tokenize-sonnet)
-- [Shell `.profile` Startup Script](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#7-shell-profile-startup-script-sonnet)
-- [`set`, `echo`, `env` and `where` Shell Commands](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#8-set--echo--env--where-shell-commands-sonnet)
+- [Per-Process Environ Storage (SDK Contract)](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#1-per-process-environ-storage-sdk-contract): shipped in the kernel under different names
+- [System Default Variables](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#2-system-default-variables): shipped as `env_init_defaults()`
+- [`%VAR%` Expansion and `env_expand_path`](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#3-var-expansion--env_expand_path): `env_expand_path()` does not exist
+- [SYS_GETENV, SYS_SETENV, SYS_UNSETENV](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#4-sys_getenv--sys_setenv--sys_unsetenv): shipped as `Nt` calls
+- [PATH-Based Command Lookup and Session Cache](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#5-path-based-command-lookup--session-cache): the cache and shell lookup are missing
+- [argv and argc Process ABI and `cmd_tokenize`](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#6-argv--argc-process-abi--cmd_tokenize)
+- [Shell `.profile` Startup Script](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#7-shell-profile-startup-script)
+- [`set`, `echo`, `env` and `where` Shell Commands](../../todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md#8-set--echo--env--where-shell-commands)
 
 ## How does it compare with Windows 11 and Linux?
 

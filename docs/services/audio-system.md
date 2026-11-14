@@ -44,11 +44,11 @@ There is nothing to run yet. When the driver and the first two sections land, th
 
 Everything in this roadmap, in dependency order:
 
-- [Audio Abstraction Layer](../../todo/10-platform-services/TODO-01-audio-system.md#1-audio-abstraction-layer-sonnet), which needs a driver from the [Audio Drivers roadmap](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md)
-- [Audio Mixer](../../todo/10-platform-services/TODO-01-audio-system.md#2-audio-mixer-opus)
-- [WAV](../../todo/10-platform-services/TODO-01-audio-system.md#3-wav-decoder-sonnet), [MP3](../../todo/10-platform-services/TODO-01-audio-system.md#4-mp3-decoder-sonnet), [Ogg Vorbis](../../todo/10-platform-services/TODO-01-audio-system.md#5-ogg-vorbis-decoder-sonnet) and [FLAC](../../todo/10-platform-services/TODO-01-audio-system.md#6-flac-decoder-stretch-sonnet) decoders, none of which is vendored yet
-- [Unified Audio Loader](../../todo/10-platform-services/TODO-01-audio-system.md#7-unified-audio-loader-sonnet)
-- [Media Player App](../../todo/10-platform-services/TODO-01-audio-system.md#8-media-player-app-sonnet), [Volume Control](../../todo/10-platform-services/TODO-01-audio-system.md#9-volume-control-popup-sonnet) and [`mmsys.cpl`](../../todo/10-platform-services/TODO-01-audio-system.md#10-mmsyscpl----sound-settings-applet-sonnet)
+- [Audio Abstraction Layer](../../todo/10-platform-services/TODO-01-audio-system.md#1-audio-abstraction-layer), which needs a driver from the [Audio Drivers roadmap](../../todo/04-drivers-hardware/TODO-18-audio-drivers.md)
+- [Audio Mixer](../../todo/10-platform-services/TODO-01-audio-system.md#2-audio-mixer)
+- [WAV](../../todo/10-platform-services/TODO-01-audio-system.md#3-wav-decoder), [MP3](../../todo/10-platform-services/TODO-01-audio-system.md#4-mp3-decoder), [Ogg Vorbis](../../todo/10-platform-services/TODO-01-audio-system.md#5-ogg-vorbis-decoder) and [FLAC](../../todo/10-platform-services/TODO-01-audio-system.md#6-flac-decoder-stretch) decoders, none of which is vendored yet
+- [Unified Audio Loader](../../todo/10-platform-services/TODO-01-audio-system.md#7-unified-audio-loader)
+- [Media Player App](../../todo/10-platform-services/TODO-01-audio-system.md#8-media-player-app), [Volume Control](../../todo/10-platform-services/TODO-01-audio-system.md#9-volume-control-popup) and [`mmsys.cpl`](../../todo/10-platform-services/TODO-01-audio-system.md#10-mmsyscpl----sound-settings-applet)
 
 Two design questions are open in the roadmaps and need settling before code: the driver roadmap defines its own `audio_device_t` vtable and says the mixer lives on the desktop side, while this roadmap puts the mixer in the kernel; and `mmsys.cpl` is also specified, with different calls, in the [Control Panel roadmap](../../todo/09-desktop-shell/TODO-11-control-panel.md).
 

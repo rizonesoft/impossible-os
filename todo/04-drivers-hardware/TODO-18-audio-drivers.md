@@ -47,7 +47,7 @@ title: "TODO-18 -- Audio Drivers"
 
 ---
 
-## 1. Audio HAL -- `audio_device_t` Vtable `[Opus]`
+## 1. Audio HAL -- `audio_device_t` Vtable
 
 Define the `audio_device_t` abstraction. All audio drivers register against it; the desktop audio subsystem calls only these functions. Priority-sorted registration mirrors `display_device_t` from `TODO-17`.
 
@@ -75,7 +75,7 @@ Define the `audio_device_t` abstraction. All audio drivers register against it; 
 - [ ] `audio_switch_device(audio_device_t *dev)` -- force-select a specific device (used by hot-plug §6 and user preference)
 - [ ] Commit: `"kernel: audio_device_t HAL -- register/get_active, priority system, write/volume/stop"`
 
-## 2. AC97 Sound Driver `[Opus]`
+## 2. AC97 Sound Driver
 
 Implement the AC97 driver against the Intel ICH AC97 specification. Cold reset sequence, codec ready poll, NAM (mixer) register access for volume, and a 32-entry Buffer Descriptor List DMA ring on the NAB (bus master) PCM Out channel. IRQ completion handler refills the ring.
 
@@ -99,7 +99,7 @@ Implement the AC97 driver against the Intel ICH AC97 specification. Cold reset s
 - [ ] Boot log: `[AC97] Codec ready, PCM Out DMA initialized, %u Hz`
 - [ ] Commit: `"drivers: AC97 -- cold reset, NAM codec, 32-entry BDL DMA ring, IRQ refill, volume"`
 
-## 3. Intel HDA Driver `[Opus]`
+## 3. Intel HDA Driver
 
 Implement the Intel High Definition Audio driver. CORB/RIRB for codec verb communication. Enumerate codecs on the HDA link; parse the audio function group widget tree to find the DAC → output pin path. Configure a DMA stream descriptor for PCM playback.
 
@@ -123,7 +123,7 @@ Implement the Intel High Definition Audio driver. CORB/RIRB for codec verb commu
 - [ ] Boot log: `[HDA] Codec %u: widget[%u..%u], DAC node %u → PIN node %u, stream 0 armed`
 - [ ] Commit: `"drivers: Intel HDA -- CORB/RIRB, widget tree walk, DMA stream descriptor, PCM playback"`
 
-## 4. VirtIO Sound Module `[Sonnet]`
+## 4. VirtIO Sound Module
 
 Implement VirtIO Sound (`PCI 1AF4:1059`) using the VirtIO transport from `virtio.c`. Three virtqueues: `controlq` for PCM set-params/start/stop commands, `txq` (PCM Out), `rxq` (PCM In / microphone). Implements both playback and capture via the `audio_device_t` vtable.
 
@@ -144,7 +144,7 @@ Implement VirtIO Sound (`PCI 1AF4:1059`) using the VirtIO transport from `virtio
 - [ ] Boot log: `[virtio-snd] PCM streams: %u playback, %u capture`
 - [ ] Commit: `"drivers: VirtIO Sound -- controlq PCM params/start/stop, txq write, rxq capture"`
 
-## 5. USB Audio Class 1.0 (UAC1) Playback `[Opus]`
+## 5. USB Audio Class 1.0 (UAC1) Playback
 
 Detect USB Audio Class 1.0 devices (interface class `0x01`). Configure an isochronous OUT endpoint for PCM playback using the USB core isochronous API (→ XREF `04-drivers-hardware/TODO-10-usb-stack.md §3`). Issue `SET_CUR` for volume and mute on the feature unit.
 
@@ -163,7 +163,7 @@ Detect USB Audio Class 1.0 devices (interface class `0x01`). Configure an isochr
 - [ ] Boot log: `[USB-AUDIO] UAC1 device, isochronous OUT, %u Hz %u-bit %u-ch`
 - [ ] Commit: `"drivers: USB Audio UAC1 -- xHCI isoch endpoint, SET_CUR volume, fractional packet fill"`
 
-## 6. Audio Device Hot-Plug `[Sonnet]`
+## 6. Audio Device Hot-Plug
 
 Notify the audio subsystem when a new audio device appears or disappears. Switch the active device to the highest-priority newly available device. Persist user preference to Registry.
 
@@ -181,7 +181,7 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 
 ---
 
-## 7. Convert All Audio Drivers to `.kmod` `[Sonnet]`
+## 7. Convert All Audio Drivers to `.kmod`
 
 Move AC97, HDA, VirtIO Sound, and USB Audio out of the built-in kernel and into `src/modules/` as loadable `.kmod` files. Depends on the module loader from `04-drivers-hardware/TODO-05-kernel-module-system.md`.
 

@@ -49,11 +49,11 @@ It sends four ICMP echo requests; replies are logged by the kernel rather than p
 
 Nothing in this roadmap has started:
 
-- [VNC Client](../../todo/11-apps/TODO-07-collaboration-apps.md#1-vnc-client-opus), which needs TCP sockets
-- [IRC Chat Client](../../todo/11-apps/TODO-07-collaboration-apps.md#2-irc--chat-client-sonnet) and the [RSS and News Reader](../../todo/11-apps/TODO-07-collaboration-apps.md#3-rss--news-reader-sonnet)
-- [`ping` and `traceroute` Commands](../../todo/11-apps/TODO-07-collaboration-apps.md#4-ping--traceroute-commands-sonnet)
-- [`arp -a` and `route print`](../../todo/11-apps/TODO-07-collaboration-apps.md#5-network-diagnostic-tools-arp--a--route-print-sonnet), which need a routing table
-- [VNC Server](../../todo/11-apps/TODO-07-collaboration-apps.md#6-vnc-server-stretch-opus), a stretch goal that overlaps the remote-session idea in [Long-Term Features](../services/long-term-features.md)
+- [VNC Client](../../todo/11-apps/TODO-07-collaboration-apps.md#1-vnc-client), which needs TCP sockets
+- [IRC Chat Client](../../todo/11-apps/TODO-07-collaboration-apps.md#2-irc--chat-client) and the [RSS and News Reader](../../todo/11-apps/TODO-07-collaboration-apps.md#3-rss--news-reader)
+- [`ping` and `traceroute` Commands](../../todo/11-apps/TODO-07-collaboration-apps.md#4-ping--traceroute-commands)
+- [`arp -a` and `route print`](../../todo/11-apps/TODO-07-collaboration-apps.md#5-network-diagnostic-tools-arp--a--route-print), which need a routing table
+- [VNC Server](../../todo/11-apps/TODO-07-collaboration-apps.md#6-vnc-server-stretch), a stretch goal that overlaps the remote-session idea in [Long-Term Features](../services/long-term-features.md)
 
 ## How does it compare with Windows 11 and Linux?
 

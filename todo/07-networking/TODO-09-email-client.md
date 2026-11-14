@@ -55,7 +55,7 @@ title: "TODO-09 -- Email Client"
 
 ---
 
-## 1. Message Parser `[Sonnet]`
+## 1. Message Parser
 
 RFC 2822 header parsing (From, To, CC, BCC, Subject, Date, Message-ID, In-Reply-To). MIME multipart (text/plain + text/html alternatives, `application/octet-stream` attachments). `Content-Transfer-Encoding: base64` decode. Quoted-printable decode. Attachment save-to-disk. Defines `mail_message_t` used by all protocol sections.
 
@@ -76,7 +76,7 @@ RFC 2822 header parsing (From, To, CC, BCC, Subject, Date, Message-ID, In-Reply-
 - [ ] `mail_save_attachment(part, dir_path)` → 0 or -errno: decode body; `vfs_open(CREATE)` path; `vfs_write()`; log filename + size
 - [ ] Commit: `"apps/mail: message parser -- RFC 2822 headers, MIME multipart, base64/QP decode, attachment save"`
 
-## 2. SMTP Client `[Sonnet]`
+## 2. SMTP Client
 
 TCP port 587 + STARTTLS upgrade (EHLO → `STARTTLS` capability → `tls_connect` → re-EHLO). AUTH LOGIN (base64 username + base64 password). MAIL FROM, RCPT TO (multiple), DATA + `\r\n.\r\n`. MIME encoding for UTF-8 body (Content-Type + `Content-Transfer-Encoding: quoted-printable`).
 
@@ -96,7 +96,7 @@ TCP port 587 + STARTTLS upgrade (EHLO → `STARTTLS` capability → `tls_connect
 - [ ] `smtp_quit(sess)`: send `QUIT\r\n`; recv `221`; `tls_close(tls)` + `kern_close(fd)`
 - [ ] Commit: `"apps/mail/smtp: TCP 587 STARTTLS, AUTH LOGIN base64, MAIL FROM/RCPT TO/DATA, QP-encoded MIME"`
 
-## 3. POP3 Client `[Sonnet]`
+## 3. POP3 Client
 
 TCP port 995 + TLS (immediate TLS -- no STARTTLS for POP3S). USER/PASS auth. STAT (count+size), LIST (per-message sizes), RETR N (download message N), DELE N (mark for deletion), QUIT (commits deletions). Store downloaded messages as `.eml` files in local mailbox folder.
 
@@ -117,7 +117,7 @@ TCP port 995 + TLS (immediate TLS -- no STARTTLS for POP3S). USER/PASS auth. STA
 - [ ] `pop3_sync(account)`: connect + auth; UIDL → compare with stored `.uidl` file; for new UIDs: RETR → save `.eml`; append UID to file; QUIT
 - [ ] Commit: `"apps/mail/pop3: TCP 995 TLS, USER/PASS, STAT/LIST/UIDL/RETR/DELE, .eml local store"`
 
-## 4. IMAP Client `[Opus]`
+## 4. IMAP Client
 
 TCP port 993 + TLS. Tagged command protocol: `A001 CAPABILITY`, `A002 LOGIN`, `A003 SELECT INBOX`, `A004 FETCH 1:* (FLAGS ENVELOPE)`, `A005 FETCH N BODY[]`, `A006 STORE N +FLAGS (\Seen)`, `A007 SEARCH DATE/FROM/SUBJECT`, `A008 EXPUNGE`. IDLE command for push notification. Sync state to local message cache.
 
@@ -141,7 +141,7 @@ TCP port 993 + TLS. Tagged command protocol: `A001 CAPABILITY`, `A002 LOGIN`, `A
 - [ ] `imap_sync(account)`: select INBOX; fetch all envelopes; for each new UID not in cache: `imap_fetch_body()`; update cache; update unread count
 - [ ] Commit: `"apps/mail/imap: TCP 993 TLS, LOGIN/SELECT/FETCH/STORE/SEARCH/EXPUNGE/IDLE, local cache sync"`
 
-## 5. Email Account Manager `[Sonnet]`
+## 5. Email Account Manager
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#text-box-password-box-and-search-box`](../../docs/design/controls.md#text-box-password-box-and-search-box)
 
@@ -162,7 +162,7 @@ Account settings (server host, port, TLS mode, username, password in credential 
 - [ ] `accounts_wizard_open()`: `wm_create_window("Add Email Account", ...)`; fields: email, password; button "Auto-configure"; fallback to manual fields; Save → `accounts_save()` + `accounts_set_password()`
 - [ ] Commit: `"apps/mail: account manager -- Registry, MX autodiscover, credential store, 8-account multi"`
 
-## 6. Notifications `[Sonnet]`
+## 6. Notifications
 
 Background thread polls POP3/IMAP every 5 minutes. The toast, taskbar badge and tray icon are owned by `11-apps/TODO-04 §7` (taskbar badge per `docs/design/shell.md#taskbar`, not a tray badge).
 
@@ -175,7 +175,7 @@ Background thread polls POP3/IMAP every 5 minutes. The toast, taskbar badge and 
 - [ ] `mail_unread_count` global atomic counter updated by `pop3_sync()` / `imap_sync()`; `11-apps/TODO-04 §7` reads it for the badge and toast
 - [ ] Commit: `"apps/mail: notifications -- 5-min poll, toast auto-dismiss, tray envelope badge"`
 
-## 7. Email GUI `[Opus]`
+## 7. Email GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -190,7 +190,7 @@ Three-panel layout: sidebar (account tree: Inbox/Sent/Drafts/Trash/custom folder
 - [ ] Keyboard shortcuts in that window: `R` reply, `F` forward, `Del` move to Trash (+ IMAP `STORE \\Deleted`); header click sorts by date, from or subject
 - [ ] Commit: `"apps/mail: three-panel GUI -- sidebar/list/viewer, sort, keyboard shortcuts, attachment viewer"`
 
-## 8. Compose Window `[Sonnet]`
+## 8. Compose Window
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -205,7 +205,7 @@ To/CC/BCC/Subject fields. Rich-text body (bold/italic/underline via inline marku
 - [ ] Extend that window with CC and BCC fields, `Ctrl+Enter` to send, and a Discard confirmation per `docs/design/controls.md#dialog` (default button: keep editing)
 - [ ] Commit: `"apps/mail: compose window -- To/CC/BCC/Subject, body markup, attachments, reply/forward"`
 
-## 9. Contacts Integration `[Sonnet]`
+## 9. Contacts Integration
 
 Parse `From:` addresses from all received messages into a contacts cache. Autocomplete To/CC from contacts in compose. Store in `C:\Users\Default\AppData\Contacts\contacts.json`.
 
@@ -224,7 +224,7 @@ Parse `From:` addresses from all received messages into a contacts cache. Autoco
 - [ ] `mail_harvest_contacts(msg)`: call `contacts_update()` from `From:` and `Reply-To:` header values of each newly synced message; call `contacts_save()` after batch
 - [ ] Commit: `"apps/mail: contacts -- JSON load/save, From: harvest, autocomplete in compose To/CC"`
 
-## 10. Search `[Sonnet]`
+## 10. Search
 
 Full-text search over local message cache (grep headers + body). `SEARCH <term>` shell command. IMAP server-side `SEARCH` forwarding. Search box in sidebar.
 

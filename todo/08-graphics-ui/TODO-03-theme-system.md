@@ -21,7 +21,7 @@ title: "TODO-03 -- Theme System"
 - `include/desktop/wm.h` -- WM message constants and window list -- extended in §8 to add `WM_THEME_CHANGED` and `wm_post_message_all()`
 - Related (no stable XREF target): `08-graphics-ui/TODO-05-widget-library-core.md` (controls TODO) -- must use `theme_get()->field` from day one; this TODO is a hard prerequisite for all graphics-ui work
 - Related (no stable XREF target): `08-graphics-ui/TODO-10-taskbar.md` and `TODO-11-startmenu-tray-notifications.md` (desktop shell) -- Start Menu, taskbar, compositor all depend on theme tokens being live
-- -> XREF: `TODO-17-win11-parity-inventory.md §52` -- tokens are re-measured against the captured Windows 11 reference
+- -> XREF: `TODO-17-win11-parity-inventory.md §17` -- tokens are re-measured against the captured Windows 11 reference
 - -> XREF: `TODO-18-ui-framework-engines.md §6` -- theme resource dictionaries resolve through `theme_get()` and the hot reload of §8
 
 ## Outcome
@@ -48,7 +48,7 @@ title: "TODO-03 -- Theme System"
 
 ---
 
-## 1. `theme_t` Struct `[Sonnet]`
+## 1. `theme_t` Struct
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -71,7 +71,7 @@ Define `theme_t` so it carries every theme-dependent token of the design (`docs/
 - [ ] `_Static_assert` that `theme_colors_t` has exactly as many fields as there are colour tokens (count emitted by `gen_theme_header.py` as `THEME_COLOR_TOKEN_COUNT`, add that define to the generator)
 - [ ] Commit: `"desktop/theme: theme_t struct -- colour tokens + materials per theme, named after docs/design/tokens.json"`
 
-## 2. `theme_get()` Singleton `[Sonnet]`
+## 2. `theme_get()` Singleton
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -88,7 +88,7 @@ Static global `theme_t g_theme` in `theme.c`. `theme_get()` returns `const theme
 - [ ] Call `theme_init()` from `desktop_init()` before first compositor frame
 - [ ] Commit: `"desktop/theme: theme_get() singleton, theme_init() called from desktop_init()"`
 
-## 3. Built-in Presets `[Sonnet]`
+## 3. Built-in Presets
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -104,7 +104,7 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`, built entirely fr
 - [ ] `extern const theme_t THEME_DARK;` and `extern const theme_t THEME_LIGHT;` in `include/desktop/theme.h`
 - [ ] Commit: `"desktop/theme: THEME_DARK + THEME_LIGHT presets built from the generated design tokens"`
 
-## 4. Registry Load `[Sonnet]`
+## 4. Registry Load
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -125,7 +125,7 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`, built entirely fr
 - [ ] Log: `[theme] loaded mode=%s accent=#%06X`
 - [ ] Commit: `"desktop/theme: theme_load() -- Registry HKCU read, preset selection, field overrides"`
 
-## 5. Custom Accent Color `[Sonnet]`
+## 5. Custom Accent Color
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -143,7 +143,7 @@ When a custom accent is set, derive `accent_hover` and `accent_pressed` the way 
 - [ ] Call `theme_compute_accent_variants()` at the end of `theme_load()`
 - [ ] Commit: `"desktop/theme: computed accent_hover/accent_pressed variants from loaded accent"`
 
-## 6. Migration Pass `[Sonnet]`
+## 6. Migration Pass
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -172,7 +172,7 @@ Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `
 - [ ] After all replacements: `rg "0x[0-9A-Fa-f]{6}" src/desktop/` should return zero results outside ANSI color tables and known intentional literals (leave a `/* intentional: ANSI VT100 */` comment for those)
 - [ ] Commit: `"desktop/theme: migration -- replace all hardcoded hex colors with theme_get()->field"`
 
-## 7. Theme-Aware Shadow Rendering `[Sonnet]`
+## 7. Theme-Aware Shadow Rendering
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -189,7 +189,7 @@ Update every `gfx_drop_shadow()` call to use the elevation token for its surface
 - [ ] Shadows come from the elevation tokens (`THEME_ELEV_*`): control, card, tooltip, flyout, start, window_active, window_inactive, each `[offset_y, blur, alpha]` for `gfx_drop_shadow()`
 - [ ] Commit: `"desktop/theme: shadows from elevation tokens, acrylic and mica from theme materials"`
 
-## 8. Hot-Reload `[Sonnet]`
+## 8. Hot-Reload
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
@@ -209,7 +209,7 @@ Update every `gfx_drop_shadow()` call to use the elevation token for its surface
 
 ---
 
-## 9. Fluent Token Corpus and Win11 Personalization Contract `[Opus]`
+## 9. Fluent Token Corpus and Win11 Personalization Contract
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 

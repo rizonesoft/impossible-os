@@ -47,18 +47,18 @@ The browser cannot be launched yet, and the OS has no HTTP client for it to call
 
 ## Which roadmap owns which half?
 
-Two roadmaps describe a browser. The networking roadmap ([Web Browser engine](../networking/web-browser.md)) owns the engine and its data: tabs as data, HTTP fetches, bookmarks, downloads and privacy state. This apps roadmap owns the app window and its chrome; its tab strip section is the single implementation, and the networking roadmap marks its own tab bar drawing as superseded by it. The split is not yet clean: sections 1 to 5 here restate the engine work with different file, function and Registry names (for example a bookmarks store in the Registry here and `bookmarks.json` there). That conflict is filed in [section 1](../../todo/11-apps/TODO-01-web-browser.md#1-text-only-browser-phase-1-sonnet) to be settled before either side is built.
+Two roadmaps describe a browser. The networking roadmap ([Web Browser engine](../networking/web-browser.md)) owns the engine and its data: tabs as data, HTTP fetches, bookmarks, downloads and privacy state. This apps roadmap owns the app window and its chrome; its tab strip section is the single implementation, and the networking roadmap marks its own tab bar drawing as superseded by it. The split is not yet clean: sections 1 to 5 here restate the engine work with different file, function and Registry names (for example a bookmarks store in the Registry here and `bookmarks.json` there). That conflict is filed in [section 1](../../todo/11-apps/TODO-01-web-browser.md#1-text-only-browser-phase-1) to be settled before either side is built.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [Text-Only Browser](../../todo/11-apps/TODO-01-web-browser.md#1-text-only-browser-phase-1-sonnet), which needs the HTTP client first
-- [HTML Tokenizer and DOM Tree](../../todo/11-apps/TODO-01-web-browser.md#2-html-tokenizer--dom-tree-opus) and the [Layout Engine](../../todo/11-apps/TODO-01-web-browser.md#3-layout-engine-block--inline-flow-opus)
-- [CSS](../../todo/11-apps/TODO-01-web-browser.md#4-css-parser--cascade-stretch-opus) and [JavaScript](../../todo/11-apps/TODO-01-web-browser.md#5-javascript-engine-long-term-stretch-opus), both stretch goals
-- [NetSurf or Dillo Port Evaluation](../../todo/11-apps/TODO-01-web-browser.md#6-alternative-netsurf--dillo-port-evaluation-sonnet)
-- [Browser Chrome](../../todo/11-apps/TODO-01-web-browser.md#7-browser-chrome-sonnet), which needs the tab strip control
-- [Settings, History and Cookie Jar](../../todo/11-apps/TODO-01-web-browser.md#8-browser-settings--history--cookie-jar-sonnet)
+- [Text-Only Browser](../../todo/11-apps/TODO-01-web-browser.md#1-text-only-browser-phase-1), which needs the HTTP client first
+- [HTML Tokenizer and DOM Tree](../../todo/11-apps/TODO-01-web-browser.md#2-html-tokenizer--dom-tree) and the [Layout Engine](../../todo/11-apps/TODO-01-web-browser.md#3-layout-engine-block--inline-flow)
+- [CSS](../../todo/11-apps/TODO-01-web-browser.md#4-css-parser--cascade-stretch) and [JavaScript](../../todo/11-apps/TODO-01-web-browser.md#5-javascript-engine-long-term-stretch), both stretch goals
+- [NetSurf or Dillo Port Evaluation](../../todo/11-apps/TODO-01-web-browser.md#6-alternative-netsurf--dillo-port-evaluation)
+- [Browser Chrome](../../todo/11-apps/TODO-01-web-browser.md#7-browser-chrome), which needs the tab strip control
+- [Settings, History and Cookie Jar](../../todo/11-apps/TODO-01-web-browser.md#8-browser-settings--history--cookie-jar)
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -48,10 +48,10 @@ The clock shows in the taskbar after boot (`bash scripts/build.sh run`), and `up
 
 ## What is not implemented yet?
 
-- [Kernel Time API](../../todo/08-graphics-ui/TODO-12-clock-time.md#1-kernel-time-api-sonnet) and [Time Formatting](../../todo/08-graphics-ui/TODO-12-clock-time.md#2-time-formatting-sonnet).
-- [Taskbar Clock](../../todo/08-graphics-ui/TODO-12-clock-time.md#3-taskbar-clock-sonnet), which also owns a small defect: without a CMOS clock the fallback path formats a zero-filled date.
-- [Date/Time Control Panel](../../todo/08-graphics-ui/TODO-12-clock-time.md#4-datetime-control-panel-sonnet) and [Timezone Database](../../todo/08-graphics-ui/TODO-12-clock-time.md#5-timezone-database-sonnet).
-- [Monotonic Uptime Extension](../../todo/08-graphics-ui/TODO-12-clock-time.md#6-monotonic-uptime-extension-sonnet).
+- [Kernel Time API](../../todo/08-graphics-ui/TODO-12-clock-time.md#1-kernel-time-api) and [Time Formatting](../../todo/08-graphics-ui/TODO-12-clock-time.md#2-time-formatting).
+- [Taskbar Clock](../../todo/08-graphics-ui/TODO-12-clock-time.md#3-taskbar-clock), which also owns a small defect: without a CMOS clock the fallback path formats a zero-filled date.
+- [Date/Time Control Panel](../../todo/08-graphics-ui/TODO-12-clock-time.md#4-datetime-control-panel) and [Timezone Database](../../todo/08-graphics-ui/TODO-12-clock-time.md#5-timezone-database).
+- [Monotonic Uptime Extension](../../todo/08-graphics-ui/TODO-12-clock-time.md#6-monotonic-uptime-extension).
 - Network time sync is planned in [NTP, Network Status and Winsock](../networking/ntp-status-winsock.md).
 
 ## How does it compare with Windows 11 and Linux?

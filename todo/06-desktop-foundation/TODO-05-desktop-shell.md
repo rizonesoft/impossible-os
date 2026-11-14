@@ -51,6 +51,8 @@ The desktop right-click menu is owned by `08-graphics-ui/TODO-09` §2 on the eng
 
 **Files:** `src/desktop/desktop.c`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-09-desktop-shell-features.md` -> XREF: 08-graphics-ui/TODO-09 §2 (item: "static struct menu_item desktop_menu[" at line 102)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-09-desktop-shell-features.md §2`, which follows `docs/design/shell.md#context-menus`; do not build a second desktop right-click menu here
 
 **Test checkpoint:** Right-click desktop → menu appears. Click "Refresh" → screen redraws. Click outside → menu closes.
@@ -62,6 +64,8 @@ Taskbar entries, the running and focused indicator pill, and click-to-minimize/r
 
 **Files:** `src/desktop/desktop.c`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-10-taskbar.md` -> XREF: 08-graphics-ui/TODO-10 §1 (item: "typedef struct { wm_window_t *win" at line 71)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-10-taskbar.md §1`, which follows `docs/design/shell.md#taskbar`; do not build a second taskbar window list here
 
 **Test checkpoint:** Open terminal + gallery. Click terminal taskbar entry -- minimizes. Click again -- restores. Click gallery entry -- focuses gallery.
@@ -72,6 +76,8 @@ Taskbar entries, the running and focused indicator pill, and click-to-minimize/r
 Start is the Windows 11 layout owned by `08-graphics-ui/TODO-11` §1-§3: search on top, a 6 x 3 Pinned grid with an All apps view, Recommended, and a user and power footer. There is no All Programs list and no right column.
 
 **Files:** `src/desktop/desktop.c`
+
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` -> XREF: 08-graphics-ui/TODO-11 §1 (item: "typedef struct { char name[64" at line 73)
 
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md §1 and §2`, which follows `docs/design/shell.md#start-menu`; do not build a second Start menu here
 

@@ -43,11 +43,11 @@ It cannot be used yet. Nothing opens a file by type today: the shell runs only i
 
 ## What is not implemented yet?
 
-- [Extension-to-App Mapping](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#1-extension-to-app-mapping-sonnet) and [Default Associations on First Boot](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#2-default-associations-on-first-boot-sonnet)
-- [Open With Dialog](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#3-open-with-dialog-sonnet)
-- [Shortcut Files (.lnk)](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#4-shortcut-files-lnk-sonnet) and [Desktop Shortcut Integration](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#5-desktop-shortcut-integration-sonnet)
-- [Recycle Bin Desktop Icon States](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#6-recycle-bin-desktop-icon-states-sonnet), with the Recycle Bin itself owned by [Recycle Bin, ZIP and Task Scheduler](recycle-bin-zip-scheduler.md)
-- [System Sounds](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#7-system-sounds-sonnet), [Font Manager App](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#8-font-manager-app-sonnet) and [Icon Extraction](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#9-icon-extraction-eif-svg-and-pe-ico-resources)
+- [Extension-to-App Mapping](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#1-extension-to-app-mapping) and [Default Associations on First Boot](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#2-default-associations-on-first-boot)
+- [Open With Dialog](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#3-open-with-dialog)
+- [Shortcut Files (.lnk)](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#4-shortcut-files-lnk) and [Desktop Shortcut Integration](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#5-desktop-shortcut-integration)
+- [Recycle Bin Desktop Icon States](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#6-recycle-bin-desktop-icon-states), with the Recycle Bin itself owned by [Recycle Bin, ZIP and Task Scheduler](recycle-bin-zip-scheduler.md)
+- [System Sounds](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#7-system-sounds), [Font Manager App](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#8-font-manager-app) and [Icon Extraction](../../todo/09-desktop-shell/TODO-02-file-associations-resources.md#9-icon-extraction-eif-svg-and-pe-ico-resources)
 
 The desktop icon roadmap also plans a `.lnk` format and file-type icons ([Desktop Icons](desktop-icons.md)); both plans describe the same plain-text shortcut, and the missing leading-dot and case handling in `icon_for_extension()` is owned there.
 

@@ -45,11 +45,11 @@ It cannot be used yet. Each control will appear in the Control Gallery window as
 
 ## What is not implemented yet?
 
-- [Checkbox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#1-checkbox-sonnet), which also carries defects in the existing library found while writing these pages: destroyed controls never free their slot, buttons fire on press so the pressed look never shows, and `ctrl_set_text()` does not accept a null string.
-- [Radio Button](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#2-radio-button-sonnet), [Slider / TrackBar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#3-slider--trackbar-sonnet) and [Progress Bar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#4-progress-bar-sonnet).
-- [Dropdown / ComboBox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#5-dropdown--combobox-opus) and [Tab Strip](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#6-tab-strip-sonnet).
-- [Theming](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#7-theming-sonnet), which waits for the [Theme System](theme-system.md).
-- [Accessibility Stubs](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#8-accessibility-stubs-sonnet) and [Overlay Scroll Bar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#9-overlay-scroll-bar-collapse-and-expand-on-hover).
+- [Checkbox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#1-checkbox), which also carries defects in the existing library found while writing these pages: destroyed controls never free their slot, buttons fire on press so the pressed look never shows, and `ctrl_set_text()` does not accept a null string.
+- [Radio Button](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#2-radio-button), [Slider / TrackBar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#3-slider--trackbar) and [Progress Bar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#4-progress-bar).
+- [Dropdown / ComboBox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#5-dropdown--combobox) and [Tab Strip](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#6-tab-strip).
+- [Theming](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#7-theming), which waits for the [Theme System](theme-system.md).
+- [Accessibility Stubs](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#8-accessibility-stubs) and [Overlay Scroll Bar](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#9-overlay-scroll-bar-collapse-and-expand-on-hover).
 - Keyboard operation of all controls depends on [Keyboard and Mouse Input](../desktop/input-system.md).
 
 ## How does it compare with Windows 11 and Linux?

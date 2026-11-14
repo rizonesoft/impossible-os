@@ -56,7 +56,7 @@ title: "TODO-13 -- Partition Management & Storage Tools"
 
 ---
 
-## 1. GPT Partition Write `[Sonnet]`
+## 1. GPT Partition Write
 
 Add `gpt_partition_create`, `gpt_partition_delete`, and `gpt_partition_resize` to the GPT layer. On every mutation: recalculate the partition entry array CRC, update both the primary and backup GPT headers, and write all three areas atomically.
 
@@ -75,7 +75,7 @@ Add `gpt_partition_create`, `gpt_partition_delete`, and `gpt_partition_resize` t
   - Requested by [`01-boot-platform/TODO-21 §3`](../01-boot-platform/TODO-21-ab-boot-rollback.md) (item: "Kernel GPT split-brain hardening"), where a divergent slot-root entry would mount the wrong A/B slot. Not reachable single-disk, so it needs a synthetic divergent-backup fixture rather than a live repro
 - [ ] Commit: `"fs/gpt: partition write -- create/delete/resize, dual-header CRC update, atomic write order"`
 
-## 2. MBR Partition Write `[Sonnet]`
+## 2. MBR Partition Write
 
 Add `mbr_partition_create` and `mbr_partition_delete` to the MBR layer. Encode CHS geometry. Write the updated MBR sector. Manage the four primary slots and extended partition chains.
 
@@ -91,7 +91,7 @@ Add `mbr_partition_create` and `mbr_partition_delete` to the MBR layer. Encode C
 - [ ] `mbr_partition_type_for_fs(fs_name)` → type byte: `"fat32"` → `0x0C` (FAT32 LBA), `"ntfs"` → `0x07`, `"ixfs"` → `0xAB` (custom), `"exfat"` → `0x07` (exFAT uses NTFS type byte conventionally), `"linux"` → `0x83`
 - [ ] Commit: `"fs/mbr: partition write -- create/delete, CHS saturation, active flag, MBR sector write"`
 
-## 3. `diskpart` CLI `[Sonnet]`
+## 3. `diskpart` CLI
 
 Interactive disk management shell. Commands: `list disk`, `list part <disk>`, `create part primary size=<mb>`, `delete part`, `format`, `assign letter=<c>`, `active`, `info`. Mandatory confirmation for destructive ops.
 
@@ -113,7 +113,7 @@ Interactive disk management shell. Commands: `list disk`, `list part <disk>`, `c
 - [ ] `clean`: write zeros to MBR/GPT headers and partition entry array; print confirmation requirement
 - [ ] Commit: `"shell: diskpart CLI -- interactive CRUD, format, assign letter, active flag, confirmation guards"`
 
-## 4. `chkdsk` CLI + GUI `[Sonnet]`
+## 4. `chkdsk` CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -132,7 +132,7 @@ Run per-filesystem validation and optional repair. Real-time progress output. GU
 - [ ] Progress callback: emit `{phase, percent, message}` triples; GUI receives via message queue; CLI prints to stdout
 - [ ] Commit: `"shell: chkdsk CLI + GUI -- per-FS dispatch, progress callback, boot-schedule, results log"`
 
-## 5. `defrag` CLI + GUI `[Opus]`
+## 5. `defrag` CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -151,7 +151,7 @@ Fragmentation analysis per filesystem. Journal-safe block relocation engine runn
 - [ ] Defrag schedule: write `HKLM\SYSTEM\Storage\Defrag\Schedule\{letter}` with `{interval_days, last_run}`; kernel scheduler wakes the defrag thread on schedule
 - [ ] Commit: `"shell: defrag CLI + GUI -- journal-safe relocation, TRIM, SCHED_IDLE thread, animated block map"`
 
-## 6. `sfc` CLI + GUI `[Sonnet]`
+## 6. `sfc` CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -170,7 +170,7 @@ System File Checker. Build-time: generate a manifest of system files (path, CRC3
 - [ ] GUI dialog `dlg_sfc_open()`: `Scan Now` / `Verify Only` buttons; progress bar; results table (path, status: OK/MODIFIED/MISSING/REPAIRED); `Export Log` button; `Close`
 - [ ] Commit: `"shell: sfc CLI + GUI -- build-time CRC manifest, runtime scan+repair, recovery image, CBS.log"`
 
-## 7. `recover` CLI + GUI `[Opus]`
+## 7. `recover` CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -189,7 +189,7 @@ Deleted file recovery: IXFS (scan inode table for `i_links == 0`), FAT32 (scan `
 - [ ] GUI wizard `dlg_recover_open()`: page 1: drive selector + scan options (IXFS / FAT32 / Data Carving checkboxes); page 2: scan progress; page 3: results table (filename/path, size, type, confidence %, recoverable?); multi-select; page 4: destination picker + `Recover` button; page 5: per-file success/failure summary
 - [ ] Commit: `"shell: recover CLI + GUI -- IXFS inode scan, FAT32 0xE5, data carving JPEG/PNG/PDF/ZIP, wizard"`
 
-## 8. Disk Management GUI `[Sonnet]`
+## 8. Disk Management GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -210,7 +210,7 @@ Two-panel window: upper table (drives + partitions + health), lower graphical pa
 - [ ] `New Simple Volume` wizard: size slider (min 8 MiB, max free space); filesystem picker; label; drive letter; creates partition + formats
 - [ ] Commit: `"desktop: Disk Management GUI -- partition bar, SMART panel, context menus, New Simple Volume wizard"`
 
-## 9. `diskuse` CLI + GUI `[Sonnet]`
+## 9. `diskuse` CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -228,7 +228,7 @@ Recursive directory size walker. CLI tree output. GUI treemap (rectangles sized 
 - [ ] Export: `Save Report...` → writes a flat CSV of `path, size_bytes, is_dir`
 - [ ] Commit: `"shell: diskuse CLI + GUI -- recursive walker, squarified treemap, largest files, right-click actions"`
 
-## 10. Snapshot Manager CLI + GUI `[Sonnet]`
+## 10. Snapshot Manager CLI + GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 

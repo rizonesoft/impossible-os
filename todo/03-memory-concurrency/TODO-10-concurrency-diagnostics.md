@@ -59,7 +59,7 @@ title: "TODO-10 -- Concurrency & Memory Diagnostics"
 
 ---
 
-## 1. Thread Stack Guard Pages `[Sonnet]`
+## 1. Thread Stack Guard Pages
 
 Map a `PROT_NONE` page immediately below each thread's stack at `thread_create()` time. The page fault handler checks whether the faulting address is in any thread's guard range; if so, it panics cleanly with thread name and stack pointer rather than silently corrupting adjacent memory.
 
@@ -76,7 +76,7 @@ Map a `PROT_NONE` page immediately below each thread's stack at `thread_create()
 - [ ] Test: thread that recurses infinitely -- verify clean stack overflow panic, not silent corruption
 - [ ] Commit: `"sched: thread stack guard pages -- vmm_map_guard, #PF overflow detection"`
 
-## 2. Preemption Count -- Debug Extensions `[Opus]`
+## 2. Preemption Count -- Debug Extensions
 
 Extend the `preempt_disable()` / `preempt_enable()` definition from `TODO-08 §2` with debug-mode assertions, a nesting depth cap, and documentation of the interaction with lockdep and KCSAN (both of which call `preempt_disable()` internally to prevent races during their shadow-memory checks).
 
@@ -92,7 +92,7 @@ Extend the `preempt_disable()` / `preempt_enable()` definition from `TODO-08 §2
 - [ ] Document in header: lockdep and KCSAN call `preempt_disable()` during their internal checks; this is safe and expected
 - [ ] Commit: `"sched: preemption count debug extensions -- nesting cap, schedule assert, preemptible()"`
 
-## 3. Heap Canaries + SLAB Red Zones `[Sonnet]`
+## 3. Heap Canaries + SLAB Red Zones
 
 Place a magic-word canary at the end of every `kmalloc` block; validate it on `kfree`. For SLAB caches, map a `PROT_NONE` red-zone page after each object's backing physical pages. Both mechanisms are gated on `KMALLOC_DEBUG` and catch out-of-bounds writes at free time rather than silently propagating corruption.
 
@@ -106,7 +106,7 @@ Place a magic-word canary at the end of every `kmalloc` block; validate it on `k
 - [ ] Boot log (debug): `[HEAP] canary protection active (KMALLOC_DEBUG=1)`
 - [ ] Commit: `"mm: heap canaries + SLAB red zones -- kmalloc canary, SLAB_POISON, guard page"`
 
-## 4. Lock Dependency Validator (Lockdep) `[Opus]`
+## 4. Lock Dependency Validator (Lockdep)
 
 Build a directed lock-class dependency graph at runtime. On every `mutex_lock`, `rwlock_write_lock`, and `spin_lock`, record the transition from each already-held lock class to the acquiring class. A DFS cycle check on this graph fires immediately -- before the thread sleeps -- with the full held-locks stack printed to the serial log and `/sys/locks`.
 
@@ -126,7 +126,7 @@ Build a directed lock-class dependency graph at runtime. On every `mutex_lock`, 
 - [ ] All state inside `#ifdef LOCKDEP`; release builds compile to zero instructions
 - [ ] Commit: `"debug: lockdep -- lock-class graph, DFS cycle detection, held-locks stack"`
 
-## 5. Kernel Watchdog Thread `[Sonnet]`
+## 5. Kernel Watchdog Thread
 
 A high-priority kernel thread checks per-CPU heartbeat counters every 5 seconds. If a CPU's counter has not advanced since the last check (indicating the PIT ISR has not fired -- a spinlock hold, infinite loop, or interrupt storm), the watchdog fires: logs to serial, draws a red banner on the framebuffer, and optionally panics or reboots per Registry configuration.
 
@@ -144,7 +144,7 @@ A high-priority kernel thread checks per-CPU heartbeat counters every 5 seconds.
 - [ ] Test: create a kernel thread that spins with IRQs disabled -- verify watchdog fires within threshold
 - [ ] Commit: `"debug: kernel watchdog -- per-CPU heartbeat, soft lockup detection, framebuffer banner"`
 
-## 6. KCSAN -- Kernel Concurrency Sanitiser `[Opus]`
+## 6. KCSAN -- Kernel Concurrency Sanitiser
 
 Instrument every kernel memory read and write with `__tsan_read*` / `__tsan_write*` callbacks (via `-fsanitize=thread` adapted for freestanding). Each access checks a per-location shadow cell; a concurrent write without a common lock is reported with both access addresses, sizes, and call stacks. `READ_ONCE`, `WRITE_ONCE`, and `data_race()` annotations suppress known-benign races.
 
@@ -162,7 +162,7 @@ Instrument every kernel memory read and write with `__tsan_read*` / `__tsan_writ
 - [ ] All KCSAN state inside `#ifdef KCSAN`; `KCSAN=1` added to `Makefile` for debug builds only
 - [ ] Commit: `"debug: KCSAN -- __tsan_read/write callbacks, shadow cells, data_race() suppressor"`
 
-## 7. Graphical Deadlock Visualisation `[Opus]`
+## 7. Graphical Deadlock Visualisation
 
 **Design:** n/a -- a LOCKDEP-only debug overlay drawn straight to the framebuffer before the compositor; never shipped in a user build
 
@@ -182,7 +182,7 @@ When lockdep detects a cycle (§4), instead of a serial text dump, draw the depe
 - [ ] Gate on `#ifdef LOCKDEP`; no GFX calls in release builds
 - [ ] Commit: `"debug: graphical deadlock visualisation -- framebuffer graph, cycle edges red, lock labels"`
 
-## 8. Named Lock Browser (`/sys/locks`) `[Sonnet]`
+## 8. Named Lock Browser (`/sys/locks`)
 
 Register every initialised synchronisation primitive in a global lock registry. Expose the registry as a `/sys/locks` VFS virtual file showing type, name, owner thread, waiter count, and hold time. A `locks` shell command reads and formats it; the Task Manager lock viewer panel queries the same file.
 
@@ -197,7 +197,7 @@ Register every initialised synchronisation primitive in a global lock registry. 
 - [ ] Wire lock registry to Task Manager lock viewer panel (→ XREF: `09-desktop-shell` domain)
 - [ ] Commit: `"kernel: /sys/locks named lock browser -- registry, VFS file, locks shell command"`
 
-## 9. KASAN -- Kernel Address Sanitiser `[Opus]`
+## 9. KASAN -- Kernel Address Sanitiser
 
 Map one shadow byte per 8 kernel heap bytes. `kmalloc` poisons shadow bytes as `KASAN_FREE` on free and `KASAN_ALLOC` on alloc. Any load or store to a poisoned address fires with a precise stack trace. Freed objects enter a per-CPU quarantine queue before their shadow bytes are cleared, catching use-after-free across the allocation/free boundary.
 
@@ -217,7 +217,7 @@ Map one shadow byte per 8 kernel heap bytes. `kmalloc` poisons shadow bytes as `
 - [ ] Boot log (debug): `[KASAN] shadow memory at 0x%016llx–0x%016llx (%zu KB shadow for %zu MB heap)`
 - [ ] Commit: `"mm: KASAN -- 1:8 shadow memory, kmalloc intercept, quarantine, use-after-free detection"`
 
-## 10. `/sys/mem` Unified Memory Observability `[Sonnet]`
+## 10. `/sys/mem` Unified Memory Observability
 
 Aggregate statistics from PMM, SLAB, huge pages, compressed memory, and swap into a single `/sys/mem` VFS file readable by any process. A `memstats` shell command formats it. Win32 `GlobalMemoryStatusEx` and `NtQuerySystemInformation(SystemPerformanceInformation)` read from the same data source.
 

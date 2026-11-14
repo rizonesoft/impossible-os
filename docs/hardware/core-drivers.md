@@ -42,12 +42,12 @@ bash scripts/test.sh SUITE=storage
 
 ## What is not implemented yet?
 
-- **PCIe ECAM** through the ACPI MCFG table ([PCI Enhanced Config Space (ECAM)](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#1-pci-enhanced-config-space-ecam-sonnet)).
-- **A capability chain scanner** with link speed and width ([PCIe Capability Chain Scanner](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#2-pcie-capability-chain-scanner-sonnet)).
-- **A common MSI and MSI-X layer** replacing the per-driver code ([MSI / MSI-X Interrupt Support](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#3-msi--msi-x-interrupt-support-opus)).
-- **The HPET section's remaining items.** The clock ships as described above; the section's bookkeeping has not been reconciled with it ([HPET Timer Driver](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#4-hpet-timer-driver-opus)).
-- **Multi-queue, interrupt-driven NVMe** on top of the shipped polled driver ([NVMe Storage Driver (Built-in)](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#5-nvme-storage-driver-built-in-opus)).
-- **PCIe hot-plug** ([PCIe Hot-Plug](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#6-pcie-hot-plug-opus)).
+- **PCIe ECAM** through the ACPI MCFG table ([PCI Enhanced Config Space (ECAM)](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#1-pci-enhanced-config-space-ecam)).
+- **A capability chain scanner** with link speed and width ([PCIe Capability Chain Scanner](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#2-pcie-capability-chain-scanner)).
+- **A common MSI and MSI-X layer** replacing the per-driver code ([MSI / MSI-X Interrupt Support](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#3-msi--msi-x-interrupt-support)).
+- **The HPET section's remaining items.** The clock ships as described above; the section's bookkeeping has not been reconciled with it ([HPET Timer Driver](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#4-hpet-timer-driver)).
+- **Multi-queue, interrupt-driven NVMe** on top of the shipped polled driver ([NVMe Storage Driver (Built-in)](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#5-nvme-storage-driver-built-in)).
+- **PCIe hot-plug** ([PCIe Hot-Plug](../../todo/04-drivers-hardware/TODO-08-core-driver-enhancements.md#6-pcie-hot-plug)).
 
 ## How does it compare with Windows 11 and Linux?
 

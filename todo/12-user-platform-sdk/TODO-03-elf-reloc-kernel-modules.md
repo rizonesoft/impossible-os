@@ -51,10 +51,7 @@ title: "TODO-03 -- ELF Relocations & Kernel Module System"
 
 ## Outcome
 
-`kmod_load("C:\\Impossible\\System\\Drivers\\foo.kmod")` validates, relocates, and
-calls `init_fn` of a `.kmod` ELF relocatable object. `ksym_lookup("pmm_alloc_contiguous")`
-returns the kernel function address. `EXPORT_SYMBOL(fn)` populates the `__ksymtab` section
-at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/PLT lazy-binding engine is available for the Linux ELF compat `dlopen` path.
+`kmod_load("C:\\Impossible\\System\\Drivers\\foo.kmod")` validates, relocates, and calls `init_fn` of a `.kmod` ELF relocatable object. `ksym_lookup("pmm_alloc_contiguous")` returns the kernel function address. `EXPORT_SYMBOL(fn)` populates the `__ksymtab` section at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/PLT lazy-binding engine is available for the Linux ELF compat `dlopen` path.
 
 ---
 
@@ -73,7 +70,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 1. ELF Relocation Engine `[Opus]`
+## 1. ELF Relocation Engine
 
 > Novel architecture: applies CPU-specific `R_X86_64_*` relocation types against
 > live kernel address space. No prior Impossible OS relocation engine exists.
@@ -136,7 +133,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 2. Kernel Module Format `.kmod` `[Sonnet]`
+## 2. Kernel Module Format `.kmod`
 
 **Header:** `include/kernel/kmod.h`
 
@@ -170,7 +167,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 3. Kernel Module Loader `[Opus]`
+## 3. Kernel Module Loader
 
 > Ring-0 code loaded from disk into kernel address space. Novel; security-sensitive.
 
@@ -208,7 +205,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 4. Kernel Symbol Export (`EXPORT_SYMBOL`) `[Opus]`
+## 4. Kernel Symbol Export (`EXPORT_SYMBOL`)
 
 > Novel linker-script + macro infrastructure. No prior Impossible OS `__ksymtab` exists.
 
@@ -246,7 +243,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 5. `dlopen` / `dlsym` for Linux Compat `[Sonnet]`
+## 5. `dlopen` / `dlsym` for Linux Compat
 
 > Implements the kernel-side infrastructure for `10-platform-services/TODO-10 §11`.
 > The Linux compat layer calls these; the native PE equivalent is
@@ -275,7 +272,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 6. GOT / PLT Lazy Binding `[Opus]`
+## 6. GOT / PLT Lazy Binding
 
 > Novel lazy-binding PLT trampoline patching GOT entries. No prior Impossible OS precedent.
 
@@ -303,7 +300,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 7. Module Hot-Swap (Stretch) `[Sonnet]`
+## 7. Module Hot-Swap (Stretch)
 
 **Source file:** extension of `src/kernel/kmod.c`
 
@@ -320,7 +317,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 ---
 
-## 8. `lsmod` / `insmod` / `rmmod` / `modprobe` Shell Commands `[Sonnet]`
+## 8. `lsmod` / `insmod` / `rmmod` / `modprobe` Shell Commands
 
 **Source file:** `src/shell/cmd_kmod.c`
 
@@ -354,11 +351,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 | ⭐  | Module hot-swap without reboot                     | ✅ Partial (driver update via WU,       | ✅ `rmmod`+`insmod` (limited)          | ⬜ §7 -- (Stretch) -- ; `kmod_reload` with                 |
 | 💎  | `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands | ✅ `sc.exe` / `devcon.exe` (PE drivers) | ✅ `lsmod`/`insmod`/`rmmod`/`modprobe` | ⬜ §8 -- full command suite with dependency                |
 
-Impossible OS kernel modules use **ELF `ET_REL` format** (the same format the Linux kernel
-uses for `.ko` files), giving access to the entire LLVM/Clang toolchain for driver
-development, while the native user-mode binary format remains PE for Win32 compatibility.
-The `EXPORT_SYMBOL` + `__ksymtab` model explicitly bounds the attack surface: a malicious
-module cannot call arbitrary kernel addresses -- only the kernel's published symbol table.
+Impossible OS kernel modules use **ELF `ET_REL` format** (the same format the Linux kernel uses for `.ko` files), giving access to the entire LLVM/Clang toolchain for driver development, while the native user-mode binary format remains PE for Win32 compatibility. The `EXPORT_SYMBOL` + `__ksymtab` model explicitly bounds the attack surface: a malicious module cannot call arbitrary kernel addresses -- only the kernel's published symbol table.
 
 ---
 

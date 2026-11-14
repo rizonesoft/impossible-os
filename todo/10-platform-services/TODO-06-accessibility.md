@@ -57,7 +57,7 @@ title: "TODO-06 -- Accessibility Features"
 
 ---
 
-## 1. High Contrast Mode `[Sonnet]`
+## 1. High Contrast Mode
 
 High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_CONTRAST`, owned by `08-graphics-ui/TODO-03 §9`, which replaces every design token per `docs/design/shell.md#accessibility`); this TODO defines no palette of its own. `accessibility_set_high_contrast(enabled)` → `theme_reload(THEME_FLUENT_HIGH_CONTRAST)` + `WM_THEME_CHANGED` broadcast. Registry `HKLM\SYSTEM\Accessibility\HighContrast`. Toggle in `ease.cpl` and via the Accessibility tile of quick settings (`08-graphics-ui/TODO-09 §8`).
 
@@ -74,7 +74,7 @@ High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_C
 - [ ] Accessibility tile in quick settings (`08-graphics-ui/TODO-09 §8`) opens the accessibility quick list with the high contrast toggle; no separate tray icon
 - [ ] Commit: `"accessibility: high_contrast -- theme system high-contrast preset, theme_reload(), boot restore"`
 
-## 2. Large Text / DPI Override `[Sonnet]`
+## 2. Large Text / DPI Override
 
 `accessibility_set_dpi(pct)` forces scale factor (125/150/200/250/300%) via `HKCU\Software\Impossible\Display\ScaleFactor`; overrides display-detected DPI. Broadcasts `WM_DPI_CHANGED` to all open windows. `HKLM\SYSTEM\Accessibility\DPIScale`.
 
@@ -89,7 +89,7 @@ High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_C
 - [ ] Preset labels: 100/125/150/200/250/300% → Combo box in `ease.cpl`
 - [ ] Commit: `"accessibility: large_text_dpi -- dpi_set_scale override, WM_DPI_CHANGED broadcast, boot restore"`
 
-## 3. Sticky Keys `[Sonnet]`
+## 3. Sticky Keys
 
 5× Shift activates sticky keys (visual + audio cue). Modifier keys (Shift/Ctrl/Alt/Win) latch after press+release until next non-modifier key. Tray indicator: modifier names shown when latched. `HKLM\SYSTEM\Accessibility\StickyKeys` toggle.
 
@@ -107,7 +107,7 @@ High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_C
 - [ ] 5× Shift also toggles off if already active
 - [ ] Commit: `"accessibility: sticky_keys -- 5x Shift activate, modifier latch, tray indicator, audio cue"`
 
-## 4. Large Cursor `[Sonnet]`
+## 4. Large Cursor
 
 **Design:** n/a -- cursors are the existing Adwaita set; a Windows 11 cursor redesign is not part of the design system yet
 
@@ -125,7 +125,7 @@ High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_C
 - [ ] Registry: `HKLM\SYSTEM\Accessibility\CursorSize` + `CursorColor`; boot restore in `accessibility_init()`
 - [ ] Commit: `"accessibility: large_cursor -- cursor_set_size 32/48/64/96, color WHITE/BLACK/XOR, boot restore"`
 
-## 5. Screen Magnifier `[Sonnet]`
+## 5. Screen Magnifier
 
 **Design:** [`shell.md#magnifier`](../../docs/design/shell.md#magnifier)
 
@@ -145,7 +145,7 @@ Win+Plus zoom in (2×/4×/6×/8×), Win+Minus zoom out, Win+Escape close. Magnif
 - [ ] `HKLM\SYSTEM\Accessibility\MagnifierZoom` persist; boot restore if `g_magnifier_active` was set
 - [ ] Commit: `"accessibility: magnifier -- Win+Plus/Minus zoom 2-8x, compositor blit overlay, cursor track"`
 
-## 6. Mouse Keys `[Sonnet]`
+## 6. Mouse Keys
 
 Numpad controls mouse cursor: 4/6=L/R, 2/8=D/U, 7/9/1/3=diagonals, 5=click, +=double-click, 0=mouse-down, .=mouse-up. Activated by Alt+Shift+Numlock. Movement speed configurable. `HKLM\SYSTEM\Accessibility\MouseKeys`.
 
@@ -162,7 +162,7 @@ Numpad controls mouse cursor: 4/6=L/R, 2/8=D/U, 7/9/1/3=diagonals, 5=click, +=do
 - [ ] Registry: `MouseKeys` toggle + `MouseKeysSpeed` persist; boot restore
 - [ ] Commit: `"accessibility: mouse_keys -- Numpad mouse control, Alt+Shift+Numlock toggle, synthetic events"`
 
-## 7. Reduced Motion & Color Blind Mode `[Sonnet]`
+## 7. Reduced Motion & Color Blind Mode
 
 `HKLM\SYSTEM\Accessibility\ReducedMotion=1` → `anim_set_enabled(0)` in animation engine; all transitions instant. Stretch: color blind simulation via `fb_set_color_matrix()` -- 3×3 LUT applied at compositor output stage for Deuteranopia/Protanopia/Tritanopia.
 
@@ -183,7 +183,7 @@ Numpad controls mouse cursor: 4/6=L/R, 2/8=D/U, 7/9/1/3=diagonals, 5=click, +=do
 - [ ] Boot restore: read `ColorBlindMode` → apply matrix before first frame
 - [ ] Commit: `"accessibility: reduced_motion + color_blind -- anim_set_enabled, fb color matrix, 3 CB presets"`
 
-## 8. `ease.cpl` -- Accessibility Settings Applet `[Sonnet]`
+## 8. `ease.cpl` -- Accessibility Settings Applet
 
 **Design:** [`shell.md#accessibility`](../../docs/design/shell.md#accessibility)
 

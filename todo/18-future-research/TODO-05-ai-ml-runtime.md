@@ -52,11 +52,7 @@ title: "TODO-05 -- AI/ML Native Inference Runtime"
 
 ## Outcome
 
-A `docs/architecture/ai-ml-runtime-plan.md` with: option comparison, SIMD enablement
-design (per-thread XSAVE layout), memory budget analysis (Q4 model sizes vs. RAM),
-`SYS_AI_INFER` syscall spec, token throughput targets (tokens/s for Phi-3-mini).
-A QEMU prototype boots a 2B-parameter GGUF model and generates one token, proving
-the ggml port and XSAVE context switch work end-to-end.
+A `docs/architecture/ai-ml-runtime-plan.md` with: option comparison, SIMD enablement design (per-thread XSAVE layout), memory budget analysis (Q4 model sizes vs. RAM), `SYS_AI_INFER` syscall spec, token throughput targets (tokens/s for Phi-3-mini). A QEMU prototype boots a 2B-parameter GGUF model and generates one token, proving the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
@@ -74,7 +70,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 1. Inference Runtime Options Survey `[Sonnet]`
+## 1. Inference Runtime Options Survey
 
 > Compare three options; determine which is achievable within 6 months post-compiler.
 
@@ -108,7 +104,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 2. SIMD Enablement for User Mode `[Opus]`
+## 2. SIMD Enablement for User Mode
 
 > [!NOTE]
 > **Shipped since this spike was written (verified 2026-09-30):** `cpu_configure_xcr0()` (`src/kernel/cpuid.c`) enables AVX and AVX-512 state (the AVX-512 bits are cleared again if `simd_enable_avx512()`'s throttle guard trips, so select paths on `g_cpu.xcr0_active`, not CPUID), and each `struct task` (process) gets a lazily allocated `xsave_area` (`#NM` in `src/kernel/sched/task.c`) saved with XSAVEOPT on switch, per `02-kernel-core/TODO-09` §1-§3. The area is per PROCESS, so sibling threads share it; per-thread areas are owned by `03-memory-concurrency/TODO-06` §16. The kernel also uses AVX2/AVX-512 in its memops, so the "kernel never uses AVX" bullet below is stale. Still open here: per-thread areas (via that owner), `TEB.XSaveArea`, the benchmark.
@@ -157,7 +153,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 3. ggml C99 Kernel Port `[Opus]`
+## 3. ggml C99 Kernel Port
 
 > Novel: porting a 40 K LOC ML compute library to a freestanding OS environment.
 > Replacing POSIX threading, POSIX I/O, and libc allocation with kernel primitives
@@ -200,7 +196,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 4. GGUF Model Format & Loading `[Sonnet]`
+## 4. GGUF Model Format & Loading
 
 **Source:** `src/libs/ggml/gguf.c` (vendored, VFS-adapted); GGUF format spec v3
 
@@ -242,7 +238,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 5. OS Integration Points (`SYS_AI_INFER` + Apps) `[Sonnet]`
+## 5. OS Integration Points (`SYS_AI_INFER` + Apps)
 
 - [ ] **`SYS_AI_INFER = 95` syscall** (add to `include/kernel/sched/syscall.h`):
   ```c
@@ -282,7 +278,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 6. GPU Inference Research (Stretch) `[Sonnet]`
+## 6. GPU Inference Research (Stretch)
 
 > Depends entirely on `18-future-research/TODO-03` Vulkan driver being available.
 > Research-only section; no prototype code.
@@ -301,7 +297,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ---
 
-## 7. Research Deliverables `[Sonnet]`
+## 7. Research Deliverables
 
 **Source:** `docs/architecture/ai-ml-runtime-plan.md`
 
@@ -339,14 +335,7 @@ the ggml port and XSAVE context switch work end-to-end.
 | ⭐  | Start Menu semantic search                        | ✅ Windows Search AI (Copilot+, NPU,                  | ✅ GNOME/KDE: no on-device semantic search         | ⬜ §5 -- `all-MiniLM-L6-v2` 25 MB resident; cosine                      |
 | 💎  | GPU inference via Vulkan compute                  | ✅ DirectML Vulkan; CUDA; ROCm                        | ✅ Vulkan compute (`kompute`, `ggml-vulkan`)       | ⬜ §6 -- (stretch); `ggml-vulkan.c` backend; blocked by                 |
 
-Impossible OS's `⭐` advantage: `SYS_AI_INFER` makes inference a first-class kernel
-primitive -- the OS schedules inference workloads alongside threads, applies power
-management policies to AI background tasks, and allows the scheduler to pre-empt
-inference workers in favor of user-interactive tasks. No other OS exposes inference
-at the syscall level; Windows Copilot+ and Linux both delegate entirely to user-mode
-libraries. The Start Menu semantic search (`all-MiniLM-L6-v2`, 25 MB, always resident)
-also sets a standard -- a local-first AI search feature that works offline without
-cloud calls or NPU hardware.
+Impossible OS's `⭐` advantage: `SYS_AI_INFER` makes inference a first-class kernel primitive -- the OS schedules inference workloads alongside threads, applies power management policies to AI background tasks, and allows the scheduler to pre-empt inference workers in favor of user-interactive tasks. No other OS exposes inference at the syscall level; Windows Copilot+ and Linux both delegate entirely to user-mode libraries. The Start Menu semantic search (`all-MiniLM-L6-v2`, 25 MB, always resident) also sets a standard -- a local-first AI search feature that works offline without cloud calls or NPU hardware.
 
 ---
 

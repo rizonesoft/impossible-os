@@ -52,11 +52,7 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 
 ## Outcome
 
-A `docs/architecture/gpu-compositor-plan.md` document that recommends VirtIO-GPU as
-the first GPU acceleration target (QEMU today, bare-metal later), defines the Vulkan
-kernel driver syscall surface (`SYS_GPU_SUBMIT/WAIT/MAP`), assesses the Mesa lavapipe
-porting cost, and provides a LOC-estimated phased roadmap from the current CPU
-compositor to 4K 120 Hz.
+A `docs/architecture/gpu-compositor-plan.md` document that recommends VirtIO-GPU as the first GPU acceleration target (QEMU today, bare-metal later), defines the Vulkan kernel driver syscall surface (`SYS_GPU_SUBMIT/WAIT/MAP`), assesses the Mesa lavapipe porting cost, and provides a LOC-estimated phased roadmap from the current CPU compositor to 4K 120 Hz.
 
 ---
 
@@ -73,7 +69,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 1. GPU Access Strategy Options `[Sonnet]`
+## 1. GPU Access Strategy Options
 
 > Survey three access paths; recommend the one feasible within 12 months.
 
@@ -106,7 +102,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 2. TinyGL → Mesa lavapipe Upgrade Research `[Sonnet]`
+## 2. TinyGL → Mesa lavapipe Upgrade Research
 
 > Assesses upgrade path from TinyGL (OpenGL 1.1) to Mesa lavapipe (CPU Vulkan, no GPU
 > required). TinyGL baseline is specced in `TODO-12 §8`.
@@ -137,7 +133,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 3. Display Engine Research (AMD DCN + Intel Arc) `[Sonnet]`
+## 3. Display Engine Research (AMD DCN + Intel Arc)
 
 > Documentation-only section. Surveys required firmware, register access patterns, and
 > open-source reference for eventual bare-metal GPU display programming.
@@ -166,7 +162,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 4. Vulkan Kernel Driver Architecture `[Opus]`
+## 4. Vulkan Kernel Driver Architecture
 
 > Novel: first GPU memory management subsystem in Impossible OS. Defines the
 > kernel-userspace GPU API boundary, GPU-visible memory allocator separate from PMM,
@@ -202,7 +198,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 5. Compositor GPU Path Design `[Opus]`
+## 5. Compositor GPU Path Design
 
 > Novel architectural redesign: replace CPU `wm_composite()` + `gfx_blit()` with GPU
 > texture management + single-pass GPU composite. Requires careful dirty tracking to
@@ -243,7 +239,7 @@ compositor to 4K 120 Hz.
 
 ---
 
-## 6. Research Deliverables `[Sonnet]`
+## 6. Research Deliverables
 
 **Source:** `docs/architecture/gpu-compositor-plan.md`
 
@@ -280,12 +276,7 @@ compositor to 4K 120 Hz.
 | 💎  | DirectX / Vulkan on GPU                   | ✅ WDDM 3.x; D3D12; Vulkan via            | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 -- §4; blocked by IOMMU +                               |
 | ⭐  | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip               | ✅ KWin/Mutter: DRM page-flip, atomic commit    | ⬜ §5 -- VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K             |
 
-Impossible OS's `⭐` advantage: the `display_plane_ops_t` abstraction layer means VirtIO-GPU
-in QEMU and bare-metal AMD/Intel share the same compositor call path from day one --
-switching from VirtIO-GPU to native AMD RDNA is a driver swap, not a compositor
-rewrite. The GPU path is purely additive (full CPU fallback preserved), so the research
-spike produces zero regression risk while delivering the architectural foundation for
-4K 120 Hz compositing.
+Impossible OS's `⭐` advantage: the `display_plane_ops_t` abstraction layer means VirtIO-GPU in QEMU and bare-metal AMD/Intel share the same compositor call path from day one -- switching from VirtIO-GPU to native AMD RDNA is a driver swap, not a compositor rewrite. The GPU path is purely additive (full CPU fallback preserved), so the research spike produces zero regression risk while delivering the architectural foundation for 4K 120 Hz compositing.
 
 ---
 

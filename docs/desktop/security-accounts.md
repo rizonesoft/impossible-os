@@ -45,12 +45,12 @@ It cannot be used yet. The system starts straight to the desktop as the default 
 
 ## What is not implemented yet?
 
-- [CSPRNG](../../todo/09-desktop-shell/TODO-06-security-accounts.md#1-csprng-opus) (in progress) and [Password Hashing](../../todo/09-desktop-shell/TODO-06-security-accounts.md#2-password-hashing-opus)
-- [User Account System](../../todo/09-desktop-shell/TODO-06-security-accounts.md#3-user-account-system-sonnet), [Authentication API](../../todo/09-desktop-shell/TODO-06-security-accounts.md#4-authentication-api-sonnet) and [User Home Directories](../../todo/09-desktop-shell/TODO-06-security-accounts.md#5-user-home-directories-sonnet)
-- [Login Screen UI](../../todo/09-desktop-shell/TODO-06-security-accounts.md#6-login-screen-ui-sonnet) and [Login Flow](../../todo/09-desktop-shell/TODO-06-security-accounts.md#7-login-flow-sonnet)
-- [Lock Screen](../../todo/09-desktop-shell/TODO-06-security-accounts.md#8-lock-screen-sonnet) and [User Switching](../../todo/09-desktop-shell/TODO-06-security-accounts.md#9-user-switching-sonnet)
-- [File Permissions](../../todo/09-desktop-shell/TODO-06-security-accounts.md#10-file-permissions-opus)
-- [UAC-Equivalent Elevation](../../todo/09-desktop-shell/TODO-06-security-accounts.md#11-uac-equivalent-elevation-opus), which may use the kernel's filtered-token elevation once [UAC and token filtering](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md) ships
+- [CSPRNG](../../todo/09-desktop-shell/TODO-06-security-accounts.md#1-csprng) (in progress) and [Password Hashing](../../todo/09-desktop-shell/TODO-06-security-accounts.md#2-password-hashing)
+- [User Account System](../../todo/09-desktop-shell/TODO-06-security-accounts.md#3-user-account-system), [Authentication API](../../todo/09-desktop-shell/TODO-06-security-accounts.md#4-authentication-api) and [User Home Directories](../../todo/09-desktop-shell/TODO-06-security-accounts.md#5-user-home-directories)
+- [Login Screen UI](../../todo/09-desktop-shell/TODO-06-security-accounts.md#6-login-screen-ui) and [Login Flow](../../todo/09-desktop-shell/TODO-06-security-accounts.md#7-login-flow)
+- [Lock Screen](../../todo/09-desktop-shell/TODO-06-security-accounts.md#8-lock-screen) and [User Switching](../../todo/09-desktop-shell/TODO-06-security-accounts.md#9-user-switching)
+- [File Permissions](../../todo/09-desktop-shell/TODO-06-security-accounts.md#10-file-permissions)
+- [UAC-Equivalent Elevation](../../todo/09-desktop-shell/TODO-06-security-accounts.md#11-uac-equivalent-elevation), which may use the kernel's filtered-token elevation once [UAC and token filtering](../../todo/02-kernel-core/TODO-15-security-reference-monitor.md) ships
 
 ## How does it compare with Windows 11 and Linux?
 

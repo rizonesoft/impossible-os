@@ -25,7 +25,7 @@ title: "TODO-07 -- UI Accessibility, Automation, and IME Foundation"
 - -> XREF: `TODO-15-win32k-shadow-ssdt.md §21,§22` -- USER IME, accessibility, and automation-facing syscalls consume the shared foundation
 - -> XREF: `D06 T03 §2,§3` -- IME and accessibility events build on the existing key-event and focus-routing pipeline
 - -> XREF: `D00 T05 §14` -- WCAG sweep consumer; the test framework walks the §6 automation tree and gates CI on contrast / keyboard / focus rules
-- -> XREF: `TODO-17-win11-parity-inventory.md §51` -- the built-OS layout check reads the automation tree through §6 and matches nodes to inventory records
+- -> XREF: `TODO-17-win11-parity-inventory.md §16` -- the built-OS layout check reads the automation tree through §6 and matches nodes to inventory records
 - -> XREF: `TODO-18-ui-framework-engines.md §24` -- automation peers on every element fill the §1 semantic tree
 
 ## Outcome

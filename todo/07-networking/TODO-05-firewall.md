@@ -52,7 +52,7 @@ title: "TODO-05 -- Network Firewall & Packet Filter"
 
 ---
 
-## 1. Packet Filter Engine `[Opus]`
+## 1. Packet Filter Engine
 
 Define `struct fw_rule`. Implement the 64-rule ordered table with first-match-wins semantics. `fw_check()` linear scan returns ALLOW or BLOCK. `fw_add_rule()`, `fw_remove_rule(index)`, `fw_set_default_policy(action)`.
 
@@ -75,7 +75,7 @@ Define `struct fw_rule`. Implement the 64-rule ordered table with first-match-wi
 - [ ] `fw_init()`: zero table; set defaults (see §4); called from network init
 - [ ] Commit: `"net/fw: packet filter engine -- fw_rule, 64-rule table, fw_check(), add/remove/set-default"`
 
-## 2. IP Layer Hooks `[Sonnet]`
+## 2. IP Layer Hooks
 
 Add `fw_check()` calls to `ipv4_handle()` (inbound) and `ipv4_send()` (outbound) in `ip.c`. Blocked packets are dropped silently (stealth mode). Blocked packets logged to serial in debug builds.
 
@@ -91,7 +91,7 @@ Add `fw_check()` calls to `ipv4_handle()` (inbound) and `ipv4_send()` (outbound)
 - [ ] Log (debug only): `[FW] DROP IN src=%u.%u.%u.%u:%u dst=%u.%u.%u.%u:%u proto=%u rule=%d` (rule index or -1 for default policy)
 - [ ] Commit: `"net/fw: ipv4_handle + ipv4_send hooks -- fw_check inbound/outbound, stealth drop, debug log"`
 
-## 3. Stateful Connection Tracking Integration `[Opus]`
+## 3. Stateful Connection Tracking Integration
 
 Before the rule table scan, `fw_check()` for inbound packets consults the CT table from TODO-01 §7. If the packet matches an established or related outbound session, auto-allow without scanning rules.
 
@@ -108,7 +108,7 @@ Before the rule table scan, `fw_check()` for inbound packets consults the CT tab
 - [ ] Log (debug): `[FW] CT bypass: established %u.%u.%u.%u:%u → local:%u` and `[FW] CT miss: new inbound → rule scan`
 - [ ] Commit: `"net/fw: CT stateful integration -- established inbound auto-allow, SYN guard, ICMPv6 NDP bypass"`
 
-## 4. Default Ruleset `[Sonnet]`
+## 4. Default Ruleset
 
 Load the default allow-outbound / block-inbound ruleset on boot. Allow established via CT (§3). Explicit ALLOW rules for inbound ICMP, ICMPv6, DHCP (UDP 67/68), DHCPv6 (UDP 546), DNS responses (UDP 53), and NTP responses (UDP 123). Load from Registry if available; else install defaults.
 
@@ -131,7 +131,7 @@ Load the default allow-outbound / block-inbound ruleset on boot. Allow establish
 - [ ] Log: `[FW] Loaded N rules from Registry` or `[FW] No Registry config -- installing defaults (N rules)`
 - [ ] Commit: `"net/fw: default ruleset -- allow-out/block-in, ICMP/DHCP/DNS/NTP allow, Registry load at boot"`
 
-## 5. IPv6 Firewall `[Sonnet]`
+## 5. IPv6 Firewall
 
 Extend the same engine to filter IPv6 packets. Add `fw_check()` hooks in `ipv6_receive()` and `ipv6_send()`. `fw_rule` already carries IPv6 prefix fields; add IPv6-specific default rules.
 
@@ -148,7 +148,7 @@ Extend the same engine to filter IPv6 packets. Add `fw_check()` hooks in `ipv6_r
 - [ ] Add IPv6 default rules to `fw_install_defaults()` if not already covered by proto=ICMPV6 rule
 - [ ] Commit: `"net/fw: IPv6 filter -- fw_check IPv6 prefix match, ipv6_receive/send hooks, dual-stack rules"`
 
-## 6. Firewall CLI `[Sonnet]`
+## 6. Firewall CLI
 
 `fw list` (rules with index + hit counter), `fw add <in|out> <proto> <port|any> <allow|block> [log]`, `fw remove <index>`, `fw flush`, `fw enable`/`fw disable`, `fw status`.
 
@@ -167,7 +167,7 @@ Extend the same engine to filter IPv6 packets. Add `fw_check()` hooks in `ipv6_r
 - [ ] Register `fw` in shell command table
 - [ ] Commit: `"shell/fw: firewall CLI -- list/add/remove/flush/enable/disable/status, port range parser"`
 
-## 7. Registry Persistence `[Sonnet]`
+## 7. Registry Persistence
 
 Serialize rules to `HKLM\SYSTEM\Network\Firewall\Rules\Rule0`…`RuleN`. Each subkey stores DWORD/string values for all `fw_rule_t` fields. `fw_save_registry()` called after any rule add/remove. `fw_load_registry()` at boot.
 
@@ -183,7 +183,7 @@ Serialize rules to `HKLM\SYSTEM\Network\Firewall\Rules\Rule0`…`RuleN`. Each su
 - [ ] `fw_export_rules(path)` optional: write human-readable text dump of all rules to a VFS file path (for backup/restore)
 - [ ] Commit: `"net/fw: Registry persistence -- HKLM\\SYSTEM\\Network\\Firewall, save/load rules + policy, auto-save on change"`
 
-## 8. `firewall.cpl` Control Panel Applet `[Sonnet]`
+## 8. `firewall.cpl` Control Panel Applet
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#tabs`](../../docs/design/controls.md#tabs), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views), [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
@@ -203,7 +203,7 @@ Enable/disable toggle. Rule list with add/remove buttons (inbound/outbound tabs)
 - [ ] Register `firewall.cpl` in the Control Panel launcher (same mechanism as other `.cpl` applets)
 - [ ] Commit: `"desktop: firewall.cpl -- enable toggle, rule list CRUD, blocked packet log viewer"`
 
-## 9. Per-Rule Hit Counters `[Sonnet]`
+## 9. Per-Rule Hit Counters
 
 Atomic `u64 hits` per `fw_rule_t` entry, incremented on each rule match in `fw_check()`. Global counters for CT bypass, blocked inbound, and blocked outbound. Exposed via read-only `/sys/firewall` VFS file.
 

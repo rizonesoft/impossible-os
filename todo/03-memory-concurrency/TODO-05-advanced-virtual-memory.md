@@ -60,7 +60,7 @@ title: "TODO-05 -- Advanced Virtual Memory"
 
 ---
 
-## 1. COW `fork()` `[Opus]`
+## 1. COW `fork()`
 
 `fork()` creates a child process sharing the parent's physical pages until either writes -- at which point the written page is copied (copy-on-write). After `fork()` both address spaces are identical; COW makes it nearly instant by sharing frames and deferring copies to the first write.
 
@@ -79,7 +79,7 @@ title: "TODO-05 -- Advanced Virtual Memory"
 - [ ] Boot test: `fork()` a process, parent and child write different pages -- verify no data mixing and no double-free
 - [ ] Commit: `"mm: COW fork() -- page-table duplication + write-fault copy, SYS_FORK"`
 
-## 2. Huge Pages (2 MiB) `[Opus]`
+## 2. Huge Pages (2 MiB)
 
 Map large contiguous regions with 2 MiB PD entries (`PS=1`) instead of 512 × 4 KiB PTEs. Reduces TLB pressure dramatically for large buffers -- framebuffer back-buffer (3.6 MiB), file mmaps, DMA staging.
 
@@ -96,7 +96,7 @@ Map large contiguous regions with 2 MiB PD entries (`PS=1`) instead of 512 × 4 
 - [ ] Boot log: `[VMM] 2 MiB huge page support: available` (check `CPUID.01H:EDX.PSE` bit 3)
 - [ ] Commit: `"mm: 2 MiB huge pages -- pmm_alloc_huge, MAP_HUGE, PD PS-bit entry"`
 
-## 3. 1 GiB Pages (Kernel MMIO) `[Opus]`
+## 3. 1 GiB Pages (Kernel MMIO)
 
 Map large MMIO regions and reserved physical ranges with 1 GiB PDPTE entries (`PS=1`) to eliminate PT walks for device memory. Kernel-only -- user processes always use 4 KiB or 2 MiB pages.
 
@@ -109,7 +109,7 @@ Map large MMIO regions and reserved physical ranges with 1 GiB PDPTE entries (`P
 - [ ] Boot log: `[VMM] 1 GiB page support: available` / `not supported (old CPU)`
 - [ ] Commit: `"mm: 1 GiB pages -- vmm_map_1g for kernel MMIO, PDPTE PS-bit entry"`
 
-## 4. `madvise` / `MEM_RESET` Hints `[Sonnet]`
+## 4. `madvise` / `MEM_RESET` Hints
 
 Allow callers to communicate access patterns and reclaim committed pages without unmapping -- mirrors POSIX `madvise` and Win32 `VirtualAlloc(MEM_RESET)`.
 
@@ -124,7 +124,7 @@ Allow callers to communicate access patterns and reclaim committed pages without
 - [ ] Wire `VirtualAlloc(base, size, MEM_RESET_UNDO)` → re-commit with zero-fill on next access
 - [ ] Commit: `"mm: madvise / MEM_RESET -- page reclaim hints and MADV_HUGEPAGE region flag"`
 
-## 5. Section Object Multi-View Mappings `[Opus]`
+## 5. Section Object Multi-View Mappings
 
 `NtCreateSection` / `NtMapViewOfSection` implement Windows shared-memory and file-backed section semantics: the same physical pages mapped simultaneously at different virtual addresses in different processes, with COW splitting on write.
 
@@ -148,7 +148,7 @@ Allow callers to communicate access patterns and reclaim committed pages without
 - [ ] **Implement `SEC_RESERVE` sparse pagefile-backed sections**: today `src/kernel/ob/ob_section.c::ObCreateSectionEx` always calls `pmm_alloc_contiguous(page_count)` + `memset(0)` for pagefile-backed sections even when `AllocationAttributes & SEC_RESERVE` is set. Spec-correct behavior: reserve the address range in the section (track `page_count` as reserved but allocate no physical frames); install zero-page PTEs on `NtMapViewOfSection`; on first write fault, allocate a frame from PMM and install writable PTE. Requires demand paging from TODO-01 §3 (`→ XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §3`). This auto-closes TODO-06 §18 Accepted #3 (SEC_RESERVE-only sparse pagefile sections).
 - [ ] Commit: `"mm: Section Object -- NtCreateSection / NtMapViewOfSection / NtUnmapViewOfSection"`
 
-## 6. Per-Process Memory Limits (Job Objects) `[Sonnet]`
+## 6. Per-Process Memory Limits (Job Objects)
 
 Enforce committed-page limits per process or group of processes via the Win32 Job Object API, returning `STATUS_COMMITMENT_LIMIT` instead of silently failing or OOM-killing.
 
@@ -166,7 +166,7 @@ Enforce committed-page limits per process or group of processes via the Win32 Jo
 - [ ] Increment / decrement `job->committed` atomically at each commit / release
 - [ ] Commit: `"mm: Job Object ProcessMemoryLimit -- committed-page enforcement, STATUS_COMMITMENT_LIMIT"`
 
-## 7. Zero-Copy DMA Buffer Pool `[Opus]`
+## 7. Zero-Copy DMA Buffer Pool
 
 A kernel DMA buffer API that allocates physically contiguous, cache-coherent memory for device drivers -- replacing ad-hoc `pmm_alloc_contiguous()` calls in AHCI, VirtIO, and RTL8139 with a unified scatter-gather interface.
 
@@ -185,7 +185,7 @@ A kernel DMA buffer API that allocates physically contiguous, cache-coherent mem
 - [ ] Boot log: `[DMA] pool ready`
 - [ ] Commit: `"mm: zero-copy DMA buffer pool -- dma_alloc_coherent, dma_map_sg, migrate AHCI/VirtIO"`
 
-## 8. Compressed Memory (zRAM-style) `[Opus]`
+## 8. Compressed Memory (zRAM-style)
 
 LZ4-compress pages that would otherwise be written to the pagefile under `MM_PRESSURE_HIGH` -- a vmalloc-backed in-kernel swap cache that reduces pagefile I/O by 2–5× for compressible data.
 
@@ -206,7 +206,7 @@ LZ4-compress pages that would otherwise be written to the pagefile under `MM_PRE
 - [ ] Boot log: `[ZRAM] pool: %u MiB reserved`; `[ZRAM] %u pages compressed (%u MiB saved)` at 1-minute intervals
 - [ ] Commit: `"mm: compressed memory (zRAM) -- LZ4 in-kernel swap cache, vmalloc pool"`
 
-## 9. NUMA-Aware PMM `[Sonnet]`
+## 9. NUMA-Aware PMM
 
 Parse the ACPI SRAT table at boot to identify NUMA nodes and their physical memory ranges; allocate frames from the node closest to the requesting CPU to minimize cross-socket memory latency.
 
@@ -220,7 +220,7 @@ Parse the ACPI SRAT table at boot to identify NUMA nodes and their physical memo
 - [ ] Boot log: `[NUMA] %u nodes: node 0 [0x%llx–0x%llx], ...`; `[NUMA] not available (single node)` on non-NUMA systems
 - [ ] Commit: `"mm: NUMA-aware PMM -- ACPI SRAT parse, pmm_alloc_node, task preferred node"`
 
-## 10. Transparent Huge Pages Collapser `[Opus]`
+## 10. Transparent Huge Pages Collapser
 
 A background kernel thread that promotes regions marked `MADV_HUGEPAGE` from 512 contiguous committed 4 KiB pages into a single 2 MiB page, reducing TLB miss rate for hot anonymous memory without requiring the application to use `MAP_HUGE` explicitly.
 
@@ -236,7 +236,7 @@ A background kernel thread that promotes regions marked `MADV_HUGEPAGE` from 512
 - [ ] Emit `[THP] collapsed 0x%llx → 2 MiB` in serial log (debug builds only)
 - [ ] Commit: `"mm: THP collapser -- background promotion of 512×4KiB to 2MiB for MADV_HUGEPAGE regions"`
 
-## 11. Address Windowing Extensions (AWE) `[Opus]`
+## 11. Address Windowing Extensions (AWE)
 
 Windows AWE lets a process reserve physical pages it owns (`NtAllocateUserPhysicalPages`) and remap them into a fixed reserved virtual window (`NtMapUserPhysicalPages`) without the pagefile -- the mechanism large-memory / NUMA / large-page workloads use to control physical placement. It is the concrete owner for the three AWE SSDT stubs registered by 02-kernel-core/TODO-12 §9 (`nt_memory.c::NtAWE_stub`, SSDT 0x0059-0x005B), which return `STATUS_NOT_IMPLEMENTED` today. **Blocker:** AWE requires per-process physical-page ownership tracking and a per-process page-table window, neither of which exists while all user pages share the kernel's identity map (CLAUDE.md "User-mode pages need User bit at all 4 levels"; per-process isolation is planned for the Win32 PE loader / VirtualAlloc work). Do not implement until per-process page tables land.
 

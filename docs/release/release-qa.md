@@ -67,14 +67,14 @@ The [Boot Validation and Certification Matrix](../boot/boot-validation-matrix.md
 
 ## What is not implemented yet?
 
-- [Automated Regression Test Suite](../../todo/15-installer-release/TODO-04-release-qa.md#1-automated-regression-test-suite-sonnet), which should build on `test.sh`
-- [QEMU Validation](../../todo/15-installer-release/TODO-04-release-qa.md#2-qemu-validation-sonnet)
-- [Hyper-V Certification](../../todo/15-installer-release/TODO-04-release-qa.md#3-hyper-v-certification-sonnet), which needs the unattended installer
-- [VirtualBox Certification](../../todo/15-installer-release/TODO-04-release-qa.md#4-virtualbox-certification-sonnet)
-- [Real Hardware Test Checklist](../../todo/15-installer-release/TODO-04-release-qa.md#5-real-hardware-test-checklist-sonnet)
-- [Performance Benchmarks](../../todo/15-installer-release/TODO-04-release-qa.md#6-performance-benchmarks-sonnet)
-- [Release Readiness Checklist](../../todo/15-installer-release/TODO-04-release-qa.md#7-release-readiness-checklist-sonnet)
-- [Crash Analytics Review](../../todo/15-installer-release/TODO-04-release-qa.md#8-crash-analytics-review-sonnet)
+- [Automated Regression Test Suite](../../todo/15-installer-release/TODO-04-release-qa.md#1-automated-regression-test-suite), which should build on `test.sh`
+- [QEMU Validation](../../todo/15-installer-release/TODO-04-release-qa.md#2-qemu-validation)
+- [Hyper-V Certification](../../todo/15-installer-release/TODO-04-release-qa.md#3-hyper-v-certification), which needs the unattended installer
+- [VirtualBox Certification](../../todo/15-installer-release/TODO-04-release-qa.md#4-virtualbox-certification)
+- [Real Hardware Test Checklist](../../todo/15-installer-release/TODO-04-release-qa.md#5-real-hardware-test-checklist)
+- [Performance Benchmarks](../../todo/15-installer-release/TODO-04-release-qa.md#6-performance-benchmarks)
+- [Release Readiness Checklist](../../todo/15-installer-release/TODO-04-release-qa.md#7-release-readiness-checklist)
+- [Crash Analytics Review](../../todo/15-installer-release/TODO-04-release-qa.md#8-crash-analytics-review)
 
 The roadmap's Implementation Order runs in a different order from its section numbers (benchmarks and crash review come before the hypervisor runs), so read the order table rather than the section numbers when planning.
 

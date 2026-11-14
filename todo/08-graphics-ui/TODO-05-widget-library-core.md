@@ -52,7 +52,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 ---
 
-## 1. Checkbox `[Sonnet]`
+## 1. Checkbox
 
 **Design:** [`controls.md#check-box-and-radio-button`](../../docs/design/controls.md#check-box-and-radio-button)
 
@@ -79,7 +79,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"controls: CTRL_CHECKBOX -- box+checkmark, checked/hover/focus/disabled states"`
 
-## 2. Radio Button `[Sonnet]`
+## 2. Radio Button
 
 **Design:** [`controls.md#check-box-and-radio-button`](../../docs/design/controls.md#check-box-and-radio-button)
 
@@ -101,7 +101,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Mouse handler: on click → deselect all in same group → select this one → `on_change` callbacks
 - [ ] Commit: `"controls: CTRL_RADIO -- circle+dot, group_id mutual exclusion, hover/focus/disabled"`
 
-## 3. Slider / TrackBar `[Sonnet]`
+## 3. Slider / TrackBar
 
 **Design:** [`controls.md#slider`](../../docs/design/controls.md#slider)
 
@@ -120,7 +120,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Mouse-down/move/up handler: dragging logic; track-click jump
 - [ ] Commit: `"controls: CTRL_SLIDER -- track+thumb, drag, track-click, horiz/vert, on_change callback"`
 
-## 4. Progress Bar `[Sonnet]`
+## 4. Progress Bar
 
 **Design:** [`controls.md#progress`](../../docs/design/controls.md#progress)
 
@@ -141,7 +141,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Draw case: 1 px `control_strong_stroke` track + 3 px `accent` bar (determinate) or sweeping 30% segment (indeterminate); paused `text_tertiary`, error `caption_close_hover`; no gradient
 - [ ] Commit: `"controls: CTRL_PROGRESSBAR -- 1 px track, 3 px accent bar, sweeping indeterminate segment, paused/error states"`
 
-## 5. Dropdown / ComboBox `[Opus]`
+## 5. Dropdown / ComboBox
 
 **Design:** [`controls.md#combo-box-and-drop-down`](../../docs/design/controls.md#combo-box-and-drop-down)
 
@@ -172,7 +172,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Key handler: if popup open: Up/Down move `hovered_idx`; Enter selects; Escape closes
 - [ ] Commit: `"controls: CTRL_DROPDOWN -- floating popup overlay, z_order=9999, keyboard nav, 64 items"`
 
-## 6. Tab Strip `[Sonnet]`
+## 6. Tab Strip
 
 **Design:** [`controls.md#tabs`](../../docs/design/controls.md#tabs)
 
@@ -195,7 +195,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Key handler: Left/Right arrows on focused tabstrip → navigate; Enter/Space → same as click
 - [ ] Commit: `"controls: CTRL_TABSTRIP -- Windows 11 tabs, selected layer tab, dividers, close glyph, keyboard arrows"`
 
-## 7. Theming `[Sonnet]`
+## 7. Theming
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -212,7 +212,7 @@ Audit all 6 new controls and confirm zero hardcoded hex colors. All color refere
   - `theme_get()->colors.control_fill*`, `subtle_fill_*`, `accent*`, `text_*`, `stroke_*`, `control_strong_stroke`, `focus_*`, and `THEME_SIZE_*` / `THEME_RADIUS_*` for geometry (`docs/design/controls.md`)
 - [ ] Commit: `"controls: theming audit -- all new controls use theme_get() only, CTRL_COLOR_* removed"`
 
-## 8. Accessibility Stubs `[Sonnet]`
+## 8. Accessibility Stubs
 
 **Design:** [`shell.md#accessibility`](../../docs/design/shell.md#accessibility)
 

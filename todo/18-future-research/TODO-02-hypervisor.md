@@ -77,7 +77,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 1. Intel VT-x / AMD-V Gap Analysis `[Opus]`
+## 1. Intel VT-x / AMD-V Gap Analysis
 
 > Novel: first hypervisor feasibility study for Impossible OS. Requires reading Intel
 > SDM Vol. 3C (VMX) and AMD APM Vol. 2 (SVM). Documents VMCS field layout, EPT
@@ -125,7 +125,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 2. Minimal Hypervisor Design (Type-1.5 VMM) `[Opus]`
+## 2. Minimal Hypervisor Design (Type-1.5 VMM)
 
 > Novel architectural design: kernel transitions into VMX root mode; VMCS per vCPU
 > allocated from PMM. Ring-transition primitives (VMXON, VMLAUNCH, VMRESUME) are
@@ -182,7 +182,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 3. Minimal Linux Guest Proof-of-Concept `[Opus]`
+## 3. Minimal Linux Guest Proof-of-Concept
 
 > Novel: VMLAUNCH with EPT setup, Linux boot protocol, and VM exit dispatch loop.
 > Hardware-interface primitives throughout. Prototype only -- not production quality.
@@ -232,7 +232,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 4. virtio Device Emulation Design (Host-Side) `[Opus]`
+## 4. virtio Device Emulation Design (Host-Side)
 
 > Novel: host-side virtio ring emulation. The existing `src/kernel/drivers/virtio/`
 > code implements the *guest driver* (consuming virtio devices). This section designs
@@ -258,7 +258,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 5. Snapshot & Live Migration Research `[Opus]`
+## 5. Snapshot & Live Migration Research
 
 > Complex algorithm: dirty page tracking via EPT write bits while vCPU runs; concurrent
 > memory copy; brief pause to copy final pages. No prior Impossible OS VM migration.
@@ -281,7 +281,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 6. GPU Passthrough Research (VT-d / AMD-Vi) `[Sonnet]`
+## 6. GPU Passthrough Research (VT-d / AMD-Vi)
 
 > Documentation/feasibility study. GPU passthrough has substantial hardware prerequisites
 > that do not yet exist in Impossible OS. This section documents what is needed.
@@ -300,7 +300,7 @@ loop works end-to-end before committing to full implementation.
 
 ---
 
-## 7. Research Deliverables `[Sonnet]`
+## 7. Research Deliverables
 
 > Primary output: `docs/architecture/hypervisor-design.md`. Prototype code (non-production)
 > in `src/kernel/hypervisor/` gated by `#ifdef ENABLE_HYPERVISOR`. No changes to kernel
@@ -344,12 +344,7 @@ loop works end-to-end before committing to full implementation.
 | ⭐  | GPU passthrough                            | ⚠️ DDA on Windows Server only, not client Win11       | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 -- research only; blocking: IOMMU driver                 |
 | ⭐  | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in          | ⬜ §7 -- `hypervisor-design.md` with VMCS layout, guest        |
 
-Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem
-from the start -- not a separate binary (unlike Hyper-V), not a loadable module requiring
-a frontend (unlike KVM + QEMU). The `#ifdef ENABLE_HYPERVISOR` gate means the hypervisor
-adds zero binary size or boot overhead to normal builds. The phase plan targets
-Impossible OS as a *guest of itself* in Phase 2 -- enabling nested virtualization for
-CI test isolation without any external hypervisor dependency.
+Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem from the start -- not a separate binary (unlike Hyper-V), not a loadable module requiring a frontend (unlike KVM + QEMU). The `#ifdef ENABLE_HYPERVISOR` gate means the hypervisor adds zero binary size or boot overhead to normal builds. The phase plan targets Impossible OS as a *guest of itself* in Phase 2 -- enabling nested virtualization for CI test isolation without any external hypervisor dependency.
 
 ---
 

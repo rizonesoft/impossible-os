@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **934 of 2711 sections complete (34%).** 136 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **968 of 2701 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -34,10 +34,26 @@ implement todo section: | [ ] | `D01 T14 §2` | Boot Progress Named-Stage API | 
 
 ### Phase 0 -- Infrastructure: tooling, test harnesses and the roadmap machinery
 
-Everything later is proven by these gates, so they come first: the build and analysis tooling, the kernel, user-mode and desktop test harnesses, the TODO graph this plan is derived from, the documentation site and the repository's own housekeeping.
+Everything later is proven by these gates, so they come first: the build and analysis tooling, the kernel, user-mode and desktop test harnesses, the TODO graph this plan is derived from, the documentation site and the repository's own housekeeping. The Windows 11 parity inventory (`D08 T17`) runs first, ahead of everything else in this phase (operator decision 2026-11-14): it is host-side tooling with no kernel dependency, and every interface section authored after it is measured from its records. Its built-OS layout check stays in Phase 8, behind the automation transport it reads.
 
 | Done | Section       | Deliverable                                                                                                           | Needs    | Items |
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | -------- | ----: |
+| [ ]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none     |     9 |
+| [ ]  | `D08 T17 §2`  | Reference Build and Capture Profile                                                                                   | none     |     9 |
+| [ ]  | `D08 T17 §4`  | Microsoft-Free Rule                                                                                                   | none     |     7 |
+| [ ]  | `D08 T17 §3`  | UIA Capture Tool                                                                                                      | none     |    10 |
+| [ ]  | `D08 T17 §5`  | Completeness Baselines                                                                                                | none     |     9 |
+| [ ]  | `D08 T17 §6`  | Record Dispositions and Consistency Ledger                                                                            | none     |     6 |
+| [ ]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none     |     8 |
+| [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | none     |     8 |
+| [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none     |     6 |
+| [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none     |     7 |
+| [ ]  | `D08 T17 §11` | Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update                               | none     |     8 |
+| [ ]  | `D08 T17 §12` | File Explorer and Common Dialogs Inventory                                                                            | none     |     6 |
+| [ ]  | `D08 T17 §13` | Control Panel, System Tools and Inbox Apps Inventory                                                                  | none     |     9 |
+| [ ]  | `D08 T17 §14` | Shortcut, Gesture, Metric, Motion and State Catalogues                                                                | none     |     5 |
+| [ ]  | `D08 T17 §15` | Inventory-to-Roadmap Authoring                                                                                        | none     |     9 |
+| [ ]  | `D08 T17 §17` | Design Spec Reconciliation                                                                                            | none     |     8 |
 | [x]  | `D00 T01 §1`  | Host Bootstrap and Dependency Contract                                                                                | none     |     5 |
 | [x]  | `D00 T01 §2`  | Supported Host Profiles and Reproducible Environments                                                                 | none     |     7 |
 | [x]  | `D00 T01 §3`  | Build, Test, Lint, and Run Wrapper Contract                                                                           | none     |     7 |
@@ -1878,11 +1894,11 @@ The window manager, the compositor, the input system and the control library are
 
 | Done | Section      | Deliverable                               | Needs | Items |
 | :--: | ------------ | ----------------------------------------- | ----- | ----: |
-| [/]  | `D06 T01 §1` | Minimize, Maximize, Restore               | none  |     1 |
-| [/]  | `D06 T01 §2` | Resize by Dragging Window Edges           | none  |     1 |
-| [/]  | `D06 T01 §3` | Snap to Left/Right Half                   | none  |     1 |
-| [/]  | `D06 T01 §4` | Global Hotkeys                            | none  |     1 |
-| [/]  | `D06 T02 §1` | Dirty Rect Tracking Infrastructure        | none  |     1 |
+| [x]  | `D06 T01 §1` | Minimize, Maximize, Restore               | none  |     1 |
+| [x]  | `D06 T01 §2` | Resize by Dragging Window Edges           | none  |     1 |
+| [x]  | `D06 T01 §3` | Snap to Left/Right Half                   | none  |     1 |
+| [x]  | `D06 T01 §4` | Global Hotkeys                            | none  |     1 |
+| [x]  | `D06 T02 §1` | Dirty Rect Tracking Infrastructure        | none  |     1 |
 | [/]  | `D06 T02 §2` | Partial Wallpaper Restore                 | none  |     2 |
 | [/]  | `D06 T02 §3` | Per-Window Damage and Compositor Loop     | none  |     3 |
 | [/]  | `D06 T02 §4` | Frame Timing and VSync                    | none  |     2 |
@@ -1898,9 +1914,9 @@ The window manager, the compositor, the input system and the control library are
 | [/]  | `D06 T04 §4` | Combobox (Dropdown)                       | none  |     2 |
 | [/]  | `D06 T04 §5` | Context Menu (Popup)                      | none  |     2 |
 | [/]  | `D06 T05 §1` | Desktop Icon Click Actions                | none  |     2 |
-| [/]  | `D06 T05 §4` | Start Menu Program Launch                 | none  |     1 |
+| [x]  | `D06 T05 §4` | Start Menu Program Launch                 | none  |     1 |
 | [/]  | `D06 T05 §5` | Power and Settings Buttons                | none  |     2 |
-| [/]  | `D06 T06 §1` | Icon Data Model and Grid Layout           | none  |     1 |
+| [x]  | `D06 T06 §1` | Icon Data Model and Grid Layout           | none  |     1 |
 | [ ]  | `D06 T06 §2` | Special Folder Icons (Always Present)     | none  |     8 |
 | [/]  | `D06 T06 §3` | Dynamic Icons from Desktop Directory      | none  |     3 |
 | [/]  | `D06 T06 §4` | Icon Interaction (Select, Drag, Rename)   | none  |     4 |
@@ -1994,11 +2010,11 @@ The network stack needs drivers and the kernel's I/O model but nothing from the 
 | [/]  | `D07 T09 §8`  | Compose Window                                              | none  |     3 |
 | [ ]  | `D07 T09 §9`  | Contacts Integration                                        | none  |     9 |
 | [ ]  | `D07 T09 §10` | Search                                                      | none  |     7 |
-| [ ]  | `D07 T10 §1`  | PDF Structure Parser                                        | none  |    12 |
-| [ ]  | `D07 T10 §2`  | Object Model                                                | none  |    12 |
-| [ ]  | `D07 T10 §3`  | Page Tree                                                   | none  |     8 |
-| [ ]  | `D07 T10 §4`  | Content Stream Interpreter                                  | none  |    11 |
-| [ ]  | `D07 T10 §5`  | Font Handling                                               | none  |     9 |
+| [x]  | `D07 T10 §1`  | PDF Structure Parser                                        | none  |     1 |
+| [x]  | `D07 T10 §2`  | Object Model                                                | none  |     1 |
+| [x]  | `D07 T10 §3`  | Page Tree                                                   | none  |     1 |
+| [x]  | `D07 T10 §4`  | Content Stream Interpreter                                  | none  |     1 |
+| [x]  | `D07 T10 §5`  | Font Handling                                               | none  |     1 |
 | [ ]  | `D07 T11 §1`  | RFC 5424 Packet Formatter and UDP Sender                    | none  |     5 |
 | [ ]  | `D07 T11 §2`  | Registry-Gated Syslog Init                                  | none  |     5 |
 | [ ]  | `D07 T11 §3`  | Network-Down Resilience                                     | none  |     4 |
@@ -2015,11 +2031,11 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T01 §4`  | Theme-Aware Icon, Cursor, and Scalable Asset Pipeline                   | none  |    13 |
 | [ ]  | `D08 T01 §5`  | Thumbnail, Preview, and Multi-Size Asset Cache                          | none  |     9 |
 | [ ]  | `D07 T07 §5`  | Image Loading in Browser                                                | none  |     8 |
-| [ ]  | `D07 T10 §6`  | Image Rendering                                                         | none  |     9 |
-| [ ]  | `D07 T10 §7`  | Page Renderer                                                           | none  |     9 |
-| [/]  | `D07 T10 §8`  | PDF Viewer App                                                          | none  |     5 |
+| [x]  | `D07 T10 §6`  | Image Rendering                                                         | none  |     1 |
+| [x]  | `D07 T10 §7`  | Page Renderer                                                           | none  |     1 |
+| [x]  | `D07 T10 §8`  | PDF Viewer App                                                          | none  |     1 |
 | [ ]  | `D07 T10 §9`  | PDF from HTTP                                                           | none  |     6 |
-| [ ]  | `D07 T10 §10` | PDF Forms Stub                                                          | none  |     8 |
+| [x]  | `D07 T10 §10` | PDF Forms Stub                                                          | none  |     1 |
 | [ ]  | `D08 T01 §6`  | Recorded Scene Lists and Deterministic Re-render                        | none  |     6 |
 | [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none  |     8 |
 | [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none  |    10 |
@@ -2071,6 +2087,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T07 §4`  | IME and Text-Composition Framework                                      | none  |     6 |
 | [ ]  | `D08 T07 §5`  | Win32 and Platform-Service Wiring                                       | none  |     6 |
 | [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
+| [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none  |     6 |
@@ -2085,14 +2102,14 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T09 §1`  | Context Menu Engine                                                     | none  |    11 |
 | [ ]  | `D06 T06 §7`  | Icon Right-Click Context Menu                                           | none  |     9 |
 | [ ]  | `D08 T09 §2`  | Desktop Right-Click Menu                                                | none  |    10 |
-| [/]  | `D06 T05 §2`  | Desktop Right-Click Context Menu                                        | none  |     1 |
+| [x]  | `D06 T05 §2`  | Desktop Right-Click Context Menu                                        | none  |     1 |
 | [ ]  | `D08 T09 §5`  | Screenshot                                                              | none  |     8 |
 | [ ]  | `D08 T09 §6`  | Night Light                                                             | none  |     7 |
 | [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none  |     8 |
 | [ ]  | `D08 T09 §8`  | Quick Settings Panel                                                    | none  |    11 |
 | [ ]  | `D08 T09 §9`  | Virtual Desktops                                                        | none  |    11 |
 | [ ]  | `D08 T10 §1`  | Taskbar Window List                                                     | none  |    12 |
-| [/]  | `D06 T05 §3`  | Taskbar Window State Sync                                               | none  |     1 |
+| [x]  | `D06 T05 §3`  | Taskbar Window State Sync                                               | none  |     1 |
 | [ ]  | `D08 T10 §3`  | Aero Peek                                                               | none  |     9 |
 | [ ]  | `D08 T10 §4`  | Taskbar Progress Badges                                                 | none  |     7 |
 | [ ]  | `D08 T10 §5`  | Pinned Apps                                                             | none  |    10 |
@@ -2118,8 +2135,8 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T13 §2`  | Loading Spinner                                                         | none  |     5 |
 | [ ]  | `D08 T13 §4`  | Boot Progress Milestones                                                | none  |     6 |
 | [ ]  | `D08 T13 §5`  | F8 Boot Menu                                                            | none  |    11 |
-| [ ]  | `D08 T13 §6`  | [MOVED] Crash Loop Protection                                           | none  |     0 |
-| [ ]  | `D08 T13 §7`  | [MOVED] BSOD Auto-Restart Validation                                    | none  |     0 |
+| [x]  | `D08 T13 §6`  | [MOVED] Crash Loop Protection                                           | none  |     1 |
+| [x]  | `D08 T13 §7`  | [MOVED] BSOD Auto-Restart Validation                                    | none  |     1 |
 | [ ]  | `D08 T14 §1`  | Win32 Shell Icon Index Map                                              | none  |     7 |
 | [ ]  | `D08 T14 §2`  | GDI Device Context Stubs                                                | none  |    13 |
 | [ ]  | `D08 T14 §3`  | GDI Drawing Functions                                                   | none  |    13 |
@@ -2160,58 +2177,6 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T16 §3`  | Static asserts, headers, and audits                                     | none  |     2 |
 | [ ]  | `D08 T16 §4`  | User-mode index contract                                                | none  |     1 |
 | [ ]  | `D08 T16 §5`  | KeUserModeCallback integration review                                   | none  |     2 |
-| [ ]  | `D08 T17 §1`  | Inventory Schema and Checker                                            | none  |     9 |
-| [ ]  | `D08 T17 §2`  | Reference Build and Capture Profile                                     | none  |     9 |
-| [ ]  | `D08 T17 §4`  | Microsoft-Free Rule                                                     | none  |     7 |
-| [ ]  | `D08 T17 §3`  | UIA Capture Tool                                                        | none  |    10 |
-| [ ]  | `D08 T17 §5`  | Completeness Baselines                                                  | none  |     9 |
-| [ ]  | `D08 T17 §6`  | Record Dispositions and Consistency Ledger                              | none  |     6 |
-| [ ]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                     | none  |     8 |
-| [ ]  | `D08 T17 §8`  | Desktop Surface Inventory                                               | none  |     8 |
-| [ ]  | `D08 T17 §9`  | Taskbar Inventory                                                       | none  |     9 |
-| [ ]  | `D08 T17 §10` | System Tray and Overflow Inventory                                      | none  |     8 |
-| [ ]  | `D08 T17 §11` | Start Menu Inventory                                                    | none  |     9 |
-| [ ]  | `D08 T17 §12` | Search Flyout Inventory                                                 | none  |     7 |
-| [ ]  | `D08 T17 §13` | Quick Settings Inventory                                                | none  |     9 |
-| [ ]  | `D08 T17 §14` | Notification Center, Calendar and Toast Inventory                       | none  |     8 |
-| [ ]  | `D08 T17 §15` | Window Chrome and System Menu Inventory                                 | none  |     9 |
-| [ ]  | `D08 T17 §16` | Snap, Alt+Tab, Task View and Virtual Desktops Inventory                 | none  |     8 |
-| [ ]  | `D08 T17 §17` | Lock, Sign-In and Secure Screens Inventory                              | none  |     8 |
-| [ ]  | `D08 T17 §18` | First-Run Setup Inventory                                               | none  |     7 |
-| [ ]  | `D08 T17 §19` | Shell Overlays Inventory                                                | none  |    10 |
-| [ ]  | `D08 T17 §20` | Settings Frame and Home Inventory                                       | none  |     9 |
-| [ ]  | `D08 T17 §21` | Settings: System, Part 1                                                | none  |     9 |
-| [ ]  | `D08 T17 §22` | Settings: System, Part 2                                                | none  |    10 |
-| [ ]  | `D08 T17 §23` | Settings: Bluetooth and Devices                                         | none  |     9 |
-| [ ]  | `D08 T17 §24` | Settings: Network and Internet                                          | none  |     8 |
-| [ ]  | `D08 T17 §25` | Settings: Personalization                                               | none  |    10 |
-| [ ]  | `D08 T17 §26` | Settings: Apps                                                          | none  |     8 |
-| [ ]  | `D08 T17 §27` | Settings: Accounts                                                      | none  |     8 |
-| [ ]  | `D08 T17 §28` | Settings: Time and Language                                             | none  |     8 |
-| [ ]  | `D08 T17 §29` | Settings: Gaming                                                        | none  |     7 |
-| [ ]  | `D08 T17 §30` | Settings: Accessibility                                                 | none  |     7 |
-| [ ]  | `D08 T17 §31` | Settings: Privacy and Security                                          | none  |     7 |
-| [ ]  | `D08 T17 §32` | Settings: Windows Update                                                | none  |     7 |
-| [ ]  | `D08 T17 §33` | File Explorer Frame Inventory                                           | none  |     8 |
-| [ ]  | `D08 T17 §34` | File Explorer Views and Columns Inventory                               | none  |     8 |
-| [ ]  | `D08 T17 §35` | File Explorer Context Menus and Commands Inventory                      | none  |     8 |
-| [ ]  | `D08 T17 §36` | File Explorer Dialogs Inventory                                         | none  |     8 |
-| [ ]  | `D08 T17 §37` | Common Dialogs Inventory                                                | none  |     8 |
-| [ ]  | `D08 T17 §38` | Control Panel Frame and Applet List Inventory                           | none  |     7 |
-| [ ]  | `D08 T17 §39` | Control Panel Property Sheets Inventory                                 | none  |     9 |
-| [ ]  | `D08 T17 §40` | Task Manager Inventory                                                  | none  |     8 |
-| [ ]  | `D08 T17 §41` | Management Consoles Inventory                                           | none  |     9 |
-| [ ]  | `D08 T17 §42` | System Utilities Inventory                                              | none  |     9 |
-| [ ]  | `D08 T17 §43` | Inbox Apps Inventory: Notepad, Calculator, Paint                        | none  |     8 |
-| [ ]  | `D08 T17 §44` | Inbox Apps Inventory: Capture, Media, Clock and Terminal                | none  |     8 |
-| [ ]  | `D08 T17 §45` | Accessibility Tools Inventory                                           | none  |     8 |
-| [ ]  | `D08 T17 §46` | Keyboard Shortcut Catalogue                                             | none  |     8 |
-| [ ]  | `D08 T17 §47` | Pointer, Touch and Pen Gesture Catalogue                                | none  |     8 |
-| [ ]  | `D08 T17 §48` | Metrics, Motion, Sound and Cursor Catalogue                             | none  |     8 |
-| [ ]  | `D08 T17 §49` | Visual States, Themes and Scale Variants                                | none  |     8 |
-| [ ]  | `D08 T17 §50` | Inventory-to-Roadmap Authoring                                          | none  |     9 |
-| [ ]  | `D08 T17 §51` | Built-OS Layout Check                                                   | none  |     8 |
-| [ ]  | `D08 T17 §52` | Design Spec Reconciliation                                              | none  |     8 |
 | [ ]  | `D08 T18 §1`  | Element Tree and Property System                                        | none  |     9 |
 | [ ]  | `D08 T18 §2`  | Layout Engine: Measure and Arrange                                      | none  |     8 |
 | [ ]  | `D08 T18 §3`  | Layout Panels                                                           | none  |     8 |
@@ -2249,7 +2214,7 @@ The taskbar, Start, the file manager and the settings surfaces are built from th
 | [ ]  | `D09 T02 §4`  | Shortcut Files (.lnk)                         | none  |     6 |
 | [ ]  | `D09 T02 §5`  | Desktop Shortcut Integration                  | none  |     6 |
 | [ ]  | `D09 T02 §7`  | System Sounds                                 | none  |     8 |
-| [ ]  | `D09 T02 §8`  | Font Manager App                              | none  |     8 |
+| [x]  | `D09 T02 §8`  | Font Manager App                              | none  |     1 |
 | [ ]  | `D09 T02 §9`  | Icon Extraction: EIF SVG and PE ICO Resources | none  |     5 |
 | [ ]  | `D09 T03 §1`  | User Account Stub                             | none  |     9 |
 | [ ]  | `D09 T03 §2`  | Service Manager Core                          | none  |    13 |
@@ -2301,13 +2266,13 @@ The taskbar, Start, the file manager and the settings surfaces are built from th
 | [ ]  | `D09 T09 §2`  | Sidebar                                       | none  |     6 |
 | [ ]  | `D09 T09 §6`  | File Search                                   | none  |     8 |
 | [ ]  | `D09 T05 §5`  | File Manager Integration                      | none  |     4 |
-| [ ]  | `D09 T10 §1`  | Gap Buffer                                    | none  |    16 |
-| [ ]  | `D09 T10 §2`  | Text Rendering & Cursor                       | none  |    11 |
-| [ ]  | `D09 T10 §3`  | Undo/Redo                                     | none  |    10 |
-| [ ]  | `D09 T10 §4`  | File Menu                                     | none  |     9 |
-| [ ]  | `D09 T10 §5`  | Editing Features                              | none  |    10 |
-| [ ]  | `D09 T10 §6`  | Find & Replace                                | none  |    10 |
-| [ ]  | `D09 T10 §7`  | Stretch Features                              | none  |    10 |
+| [x]  | `D09 T10 §1`  | Gap Buffer                                    | none  |     1 |
+| [x]  | `D09 T10 §2`  | Text Rendering & Cursor                       | none  |     1 |
+| [x]  | `D09 T10 §3`  | Undo/Redo                                     | none  |     1 |
+| [x]  | `D09 T10 §4`  | File Menu                                     | none  |     1 |
+| [x]  | `D09 T10 §5`  | Editing Features                              | none  |     1 |
+| [x]  | `D09 T10 §6`  | Find & Replace                                | none  |     1 |
+| [x]  | `D09 T10 §7`  | Stretch Features                              | none  |     1 |
 | [ ]  | `D09 T09 §3`  | View Modes                                    | none  |     9 |
 | [ ]  | `D09 T11 §1`  | CPL Framework                                 | none  |     5 |
 | [ ]  | `D09 T11 §2`  | Control Panel Host App                        | none  |    10 |
@@ -2323,14 +2288,14 @@ The taskbar, Start, the file manager and the settings surfaces are built from th
 | [ ]  | `D09 T09 §7`  | Drag and Drop                                 | none  |     8 |
 | [ ]  | `D09 T09 §8`  | Advanced Features                             | none  |     9 |
 | [ ]  | `D09 T12 §1`  | Shell Command Expansion                       | none  |    12 |
-| [ ]  | `D09 T12 §2`  | Calculator                                    | none  |    12 |
-| [ ]  | `D09 T12 §3`  | Image Viewer                                  | none  |    11 |
-| [ ]  | `D09 T12 §4`  | Screenshot Enhancements                       | none  |     9 |
-| [ ]  | `D09 T12 §5`  | Archive Manager                               | none  |     9 |
-| [ ]  | `D09 T12 §6`  | Calendar App                                  | none  |     9 |
+| [x]  | `D09 T12 §2`  | Calculator                                    | none  |     1 |
+| [x]  | `D09 T12 §3`  | Image Viewer                                  | none  |     1 |
+| [x]  | `D09 T12 §4`  | Screenshot Enhancements                       | none  |     1 |
+| [x]  | `D09 T12 §5`  | Archive Manager                               | none  |     1 |
+| [x]  | `D09 T12 §6`  | Calendar App                                  | none  |     1 |
 | [ ]  | `D09 T12 §7`  | Task Manager                                  | none  |    12 |
 | [ ]  | `D09 T12 §8`  | Device Manager                                | none  |     9 |
-| [ ]  | `D09 T12 §9`  | System Info                                   | none  |     8 |
+| [x]  | `D09 T12 §9`  | System Info                                   | none  |     1 |
 | [ ]  | `D09 T13 §3`  | Taskbar and desktop integration               | none  |     3 |
 | [ ]  | `D09 T14 §1`  | Post-Desktop-Init Test Harness                | none  |     5 |
 | [ ]  | `D09 T14 §2`  | Failure Capture Hook and Artifact Bundle      | none  |     7 |
@@ -2516,96 +2481,121 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 
 The bundled applications are the proof that the platform beneath them is complete, so they follow the services they call.
 
-| Done | Section      | Deliverable                                        | Needs | Items |
-| :--: | ------------ | -------------------------------------------------- | ----- | ----: |
-| [ ]  | `D11 T01 §1` | Text-Only Browser (Phase 1)                        | none  |    12 |
-| [ ]  | `D11 T01 §2` | HTML Tokenizer + DOM Tree                          | none  |     5 |
-| [ ]  | `D11 T01 §3` | Layout Engine (Block + Inline Flow)                | none  |    12 |
-| [ ]  | `D11 T01 §4` | CSS Parser + Cascade (Stretch)                     | none  |     8 |
-| [ ]  | `D11 T01 §5` | JavaScript Engine (Long-Term Stretch)              | none  |     6 |
-| [ ]  | `D11 T01 §6` | Alternative: NetSurf / Dillo Port Evaluation       | none  |     5 |
-| [ ]  | `D11 T01 §7` | Browser Chrome                                     | none  |     8 |
-| [ ]  | `D11 T01 §8` | Browser Settings + History + Cookie Jar            | none  |     7 |
-| [ ]  | `D11 T02 §1` | FTP Protocol Core                                  | none  |    11 |
-| [ ]  | `D11 T02 §2` | FTP Shell Commands + `wget ftp://`                 | none  |     4 |
-| [ ]  | `D11 T02 §3` | `wget` Command (HTTP/HTTPS + Progress)             | none  |     9 |
-| [ ]  | `D11 T02 §4` | `curl` Command (Full Flag Set)                     | none  |    15 |
-| [ ]  | `D11 T02 §5` | FTP GUI Client (Dual-Pane, Stretch)                | none  |     9 |
-| [ ]  | `D11 T02 §6` | WiFi Framework (Stretch)                           | none  |     8 |
-| [ ]  | `D11 T05 §1` | PDF Structure Parser                               | none  |     8 |
-| [ ]  | `D11 T05 §2` | Page Tree Traversal                                | none  |     5 |
-| [ ]  | `D11 T05 §3` | Stream Decompression                               | none  |     2 |
-| [ ]  | `D11 T05 §4` | Content Stream Renderer                            | none  |     5 |
-| [ ]  | `D11 T05 §5` | Image Rendering                                    | none  |     2 |
-| [ ]  | `D11 T05 §6` | PDF Viewer UI                                      | none  |     7 |
-| [ ]  | `D11 T05 §7` | Text Search                                        | none  |     6 |
-| [ ]  | `D11 T05 §8` | Continuous Scroll View (Stretch)                   | none  |     8 |
-| [ ]  | `D11 T05 §9` | File Association                                   | none  |     7 |
-| [ ]  | `D11 T06 §1` | pl_mpeg Integration                                | none  |    10 |
-| [ ]  | `D11 T06 §2` | YCbCr → RGB Conversion                             | none  |     3 |
-| [ ]  | `D11 T06 §3` | A/V Sync Engine                                    | none  |     7 |
-| [ ]  | `D11 T06 §4` | Player UI                                          | none  |     5 |
-| [ ]  | `D11 T06 §5` | File Operations                                    | none  |     6 |
-| [ ]  | `D11 T06 §6` | Playlist                                           | none  |     7 |
-| [ ]  | `D11 T06 §7` | Subtitle Support (Stretch)                         | none  |     5 |
-| [ ]  | `D11 T06 §8` | Format Support Roadmap                             | none  |     4 |
-| [ ]  | `D11 T07 §4` | `ping` + `traceroute` Commands                     | none  |     3 |
-| [ ]  | `D11 T07 §5` | Network Diagnostic Tools: `arp -a` + `route print` | none  |     5 |
-| [ ]  | `D11 T08 §1` | Gap Buffer Text Engine                             | none  |     8 |
-| [ ]  | `D11 T08 §2` | Text Rendering + Cursor                            | none  |     7 |
-| [ ]  | `D11 T08 §3` | File Operations                                    | none  |     7 |
-| [ ]  | `D11 T08 §4` | Editing Features                                   | none  |     9 |
-| [ ]  | `D11 T08 §5` | File Associations + App Registration               | none  |     5 |
-| [ ]  | `D11 T09 §1` | Standard Calculator UI                             | none  |     7 |
-| [ ]  | `D11 T09 §2` | Arithmetic Engine                                  | none  |     7 |
-| [ ]  | `D11 T09 §3` | Memory + History                                   | none  |     3 |
-| [ ]  | `D11 T09 §4` | Scientific Mode                                    | none  |    14 |
-| [ ]  | `D11 T09 §5` | Programmer Mode                                    | none  |     8 |
-| [ ]  | `D11 T10 §1` | Rich Text Document Model                           | none  |    11 |
-| [ ]  | `D11 T10 §2` | RTF File Format                                    | none  |     3 |
-| [ ]  | `D11 T10 §3` | Rich Text Rendering + Layout Engine                | none  |     8 |
-| [ ]  | `D11 T10 §4` | Toolbar + Menus                                    | none  |     3 |
-| [ ]  | `D11 T10 §5` | Formatting Interactions                            | none  |     9 |
-| [ ]  | `D11 T10 §6` | File Operations + File Associations                | none  |     9 |
-| [ ]  | `D11 T10 §7` | Print (Stretch)                                    | none  |     5 |
-| [ ]  | `D11 T11 §1` | Image Loading + Display                            | none  |    10 |
-| [ ]  | `D11 T11 §2` | Zoom + Pan                                         | none  |     8 |
-| [ ]  | `D11 T11 §3` | Folder Navigation + Thumbnail Strip                | none  |     4 |
-| [ ]  | `D11 T11 §4` | Toolbar + Menus                                    | none  |     3 |
-| [ ]  | `D11 T11 §5` | Slideshow                                          | none  |     5 |
-| [ ]  | `D11 T11 §6` | EXIF Metadata Panel                                | none  |     3 |
-| [ ]  | `D11 T11 §7` | Basic Editing                                      | none  |     6 |
-| [ ]  | `D11 T11 §8` | File Associations + App Registration               | none  |     4 |
-| [ ]  | `D11 T12 §1` | Full + Window Capture + Hotkeys                    | none  |     6 |
-| [ ]  | `D11 T12 §2` | Region Select Overlay                              | none  |     8 |
-| [ ]  | `D11 T12 §3` | Snipping Tool UI                                   | none  |     4 |
-| [ ]  | `D11 T13 §1` | Calendar App (Recurring Events + ICS Export)       | none  |     3 |
-| [ ]  | `D11 T13 §2` | Sticky Notes                                       | none  |     7 |
-| [ ]  | `D11 T13 §3` | System Information (`sysinfo.exe`)                 | none  |     3 |
-| [ ]  | `D11 T13 §4` | On-Screen Keyboard                                 | none  |     8 |
-| [ ]  | `D11 T13 §5` | Color Picker                                       | none  |     6 |
-| [ ]  | `D11 T13 §6` | Font Manager (OS/2 + Unicode Coverage)             | none  |     4 |
-| [ ]  | `D11 T13 §7` | Shared Help / About Dialog                         | none  |     3 |
-| [ ]  | `D11 T03 §1` | SSH2 Transport Layer                               | none  |    10 |
-| [ ]  | `D11 T03 §2` | SSH Authentication                                 | none  |     4 |
-| [ ]  | `D11 T03 §3` | Interactive Channel + PTY Relay                    | none  |     5 |
-| [ ]  | `D11 T03 §4` | Shell Integration + TOFU + Known Hosts             | none  |     6 |
-| [ ]  | `D11 T03 §5` | SCP File Transfer                                  | none  |     8 |
-| [ ]  | `D11 T03 §6` | SSH Config File                                    | none  |     7 |
-| [ ]  | `D11 T03 §7` | sftp Command (Stretch)                             | none  |     5 |
-| [ ]  | `D11 T04 §1` | SMTP Client                                        | none  |     6 |
-| [ ]  | `D11 T04 §2` | POP3 Client + Message Storage                      | none  |     7 |
-| [ ]  | `D11 T04 §3` | IMAP Client (Stretch)                              | none  |     9 |
-| [ ]  | `D11 T04 §4` | Three-Panel Email GUI                              | none  |     6 |
-| [ ]  | `D11 T04 §7` | Auto-Check + Notifications + Tray                  | none  |     5 |
-| [ ]  | `D11 T04 §9` | Spam & Junk Filter                                 | none  |     9 |
-| [ ]  | `D11 T07 §1` | VNC Client                                         | none  |    10 |
-| [ ]  | `D11 T07 §2` | IRC / Chat Client                                  | none  |     9 |
-| [ ]  | `D11 T07 §3` | RSS / News Reader                                  | none  |    10 |
-| [ ]  | `D11 T07 §6` | VNC Server (Stretch)                               | none  |     9 |
-| [ ]  | `D11 T04 §6` | Account Management + Credential Store              | none  |     6 |
-| [ ]  | `D11 T04 §8` | Contacts Store                                     | none  |     9 |
-| [ ]  | `D11 T04 §5` | Compose Window                                     | none  |     8 |
+| Done | Section       | Deliverable                                        | Needs       | Items |
+| :--: | ------------- | -------------------------------------------------- | ----------- | ----: |
+| [ ]  | `D11 T01 §1`  | Text-Only Browser (Phase 1)                        | none        |    12 |
+| [ ]  | `D11 T01 §2`  | HTML Tokenizer + DOM Tree                          | none        |     5 |
+| [ ]  | `D11 T01 §3`  | Layout Engine (Block + Inline Flow)                | none        |    12 |
+| [ ]  | `D11 T01 §4`  | CSS Parser + Cascade (Stretch)                     | none        |     8 |
+| [ ]  | `D11 T01 §5`  | JavaScript Engine (Long-Term Stretch)              | none        |     6 |
+| [ ]  | `D11 T01 §6`  | Alternative: NetSurf / Dillo Port Evaluation       | none        |     5 |
+| [ ]  | `D11 T01 §7`  | Browser Chrome                                     | none        |     8 |
+| [ ]  | `D11 T01 §8`  | Browser Settings + History + Cookie Jar            | none        |     7 |
+| [ ]  | `D11 T02 §1`  | FTP Protocol Core                                  | none        |    11 |
+| [ ]  | `D11 T02 §2`  | FTP Shell Commands + `wget ftp://`                 | none        |     4 |
+| [ ]  | `D11 T02 §3`  | `wget` Command (HTTP/HTTPS + Progress)             | none        |     9 |
+| [ ]  | `D11 T02 §4`  | `curl` Command (Full Flag Set)                     | none        |    15 |
+| [ ]  | `D11 T02 §5`  | FTP GUI Client (Dual-Pane, Stretch)                | none        |     9 |
+| [ ]  | `D11 T02 §6`  | WiFi Framework (Stretch)                           | none        |     8 |
+| [ ]  | `D11 T05 §1`  | PDF Structure Parser                               | none        |     1 |
+| [ ]  | `D11 T05 §2`  | Page Tree Traversal                                | none        |     1 |
+| [ ]  | `D11 T05 §3`  | Stream Decompression                               | none        |     1 |
+| [ ]  | `D11 T05 §4`  | Content Stream Renderer                            | none        |     1 |
+| [ ]  | `D11 T05 §5`  | Image Rendering                                    | none        |     1 |
+| [ ]  | `D11 T05 §6`  | PDF Viewer UI                                      | none        |     1 |
+| [ ]  | `D11 T05 §7`  | Text Search                                        | none        |     1 |
+| [ ]  | `D11 T05 §8`  | Continuous Scroll View (Stretch)                   | none        |     1 |
+| [ ]  | `D11 T05 §9`  | File Association                                   | none        |     7 |
+| [ ]  | `D11 T05 §10` | Recto Source Import and Provenance                 | none        |     6 |
+| [ ]  | `D11 T05 §11` | C++23 User-Mode Runtime                            | none        |     7 |
+| [ ]  | `D11 T05 §12` | Recto Platform Seam                                | third-party |     5 |
+| [ ]  | `D11 T05 §13` | Recto PDF Engine on Impossible OS                  | third-party |     6 |
+| [ ]  | `D11 T05 §14` | Recto UI Backend on Impossible OS Engines          | third-party |     7 |
+| [ ]  | `D11 T05 §15` | Recto App on Impossible OS                         | third-party |     7 |
+| [ ]  | `D11 T05 §16` | OCR Provider                                       | third-party |     5 |
+| [ ]  | `D11 T05 §17` | Convert and Organize Features                      | third-party |     5 |
+| [ ]  | `D11 T05 §18` | System Integration                                 | none        |     6 |
+| [ ]  | `D11 T05 §19` | Packaging and Updates                              | none        |     5 |
+| [ ]  | `D11 T05 §20` | Recto Conformance on Impossible OS                 | none        |     4 |
+| [ ]  | `D11 T06 §1`  | pl_mpeg Integration                                | none        |    10 |
+| [ ]  | `D11 T06 §2`  | YCbCr → RGB Conversion                             | none        |     3 |
+| [ ]  | `D11 T06 §3`  | A/V Sync Engine                                    | none        |     7 |
+| [ ]  | `D11 T06 §4`  | Player UI                                          | none        |     5 |
+| [ ]  | `D11 T06 §5`  | File Operations                                    | none        |     6 |
+| [ ]  | `D11 T06 §6`  | Playlist                                           | none        |     7 |
+| [ ]  | `D11 T06 §7`  | Subtitle Support (Stretch)                         | none        |     5 |
+| [ ]  | `D11 T06 §8`  | Format Support Roadmap                             | none        |     4 |
+| [ ]  | `D11 T07 §4`  | `ping` + `traceroute` Commands                     | none        |     3 |
+| [ ]  | `D11 T07 §5`  | Network Diagnostic Tools: `arp -a` + `route print` | none        |     5 |
+| [ ]  | `D11 T08 §6`  | Gap Buffer                                         | none        |    16 |
+| [ ]  | `D11 T08 §7`  | Text Rendering & Cursor                            | none        |    11 |
+| [ ]  | `D11 T08 §8`  | Undo/Redo                                          | none        |    10 |
+| [ ]  | `D11 T08 §9`  | File Menu                                          | none        |     9 |
+| [ ]  | `D11 T08 §10` | Editing Features                                   | none        |    10 |
+| [ ]  | `D11 T08 §11` | Find & Replace                                     | none        |    10 |
+| [ ]  | `D11 T08 §12` | Stretch Features                                   | none        |    10 |
+| [ ]  | `D11 T08 §1`  | Gap Buffer Text Engine                             | none        |     8 |
+| [ ]  | `D11 T08 §2`  | Text Rendering + Cursor                            | none        |     7 |
+| [ ]  | `D11 T08 §3`  | File Operations                                    | none        |     7 |
+| [ ]  | `D11 T08 §4`  | Editing Features                                   | none        |     9 |
+| [ ]  | `D11 T08 §5`  | File Associations + App Registration               | none        |     5 |
+| [ ]  | `D11 T09 §6`  | Calculator                                         | none        |    12 |
+| [ ]  | `D11 T09 §1`  | Standard Calculator UI                             | none        |     7 |
+| [ ]  | `D11 T09 §2`  | Arithmetic Engine                                  | none        |     7 |
+| [ ]  | `D11 T09 §3`  | Memory + History                                   | none        |     3 |
+| [ ]  | `D11 T09 §4`  | Scientific Mode                                    | none        |    14 |
+| [ ]  | `D11 T09 §5`  | Programmer Mode                                    | none        |     8 |
+| [ ]  | `D11 T10 §1`  | Rich Text Document Model                           | none        |    11 |
+| [ ]  | `D11 T10 §2`  | RTF File Format                                    | none        |     3 |
+| [ ]  | `D11 T10 §3`  | Rich Text Rendering + Layout Engine                | none        |     8 |
+| [ ]  | `D11 T10 §4`  | Toolbar + Menus                                    | none        |     3 |
+| [ ]  | `D11 T10 §5`  | Formatting Interactions                            | none        |     9 |
+| [ ]  | `D11 T10 §6`  | File Operations + File Associations                | none        |     9 |
+| [ ]  | `D11 T10 §7`  | Print (Stretch)                                    | none        |     5 |
+| [ ]  | `D11 T11 §9`  | Image Viewer                                       | none        |    11 |
+| [ ]  | `D11 T11 §1`  | Image Loading + Display                            | none        |    10 |
+| [ ]  | `D11 T11 §2`  | Zoom + Pan                                         | none        |     8 |
+| [ ]  | `D11 T11 §3`  | Folder Navigation + Thumbnail Strip                | none        |     4 |
+| [ ]  | `D11 T11 §4`  | Toolbar + Menus                                    | none        |     3 |
+| [ ]  | `D11 T11 §5`  | Slideshow                                          | none        |     5 |
+| [ ]  | `D11 T11 §6`  | EXIF Metadata Panel                                | none        |     3 |
+| [ ]  | `D11 T11 §7`  | Basic Editing                                      | none        |     6 |
+| [ ]  | `D11 T11 §8`  | File Associations + App Registration               | none        |     4 |
+| [ ]  | `D11 T12 §6`  | Screenshot Enhancements                            | none        |     9 |
+| [ ]  | `D11 T12 §7`  | Archive Manager                                    | none        |     9 |
+| [ ]  | `D11 T12 §1`  | Full + Window Capture + Hotkeys                    | none        |     6 |
+| [ ]  | `D11 T12 §2`  | Region Select Overlay                              | none        |     8 |
+| [ ]  | `D11 T12 §3`  | Snipping Tool UI                                   | none        |     4 |
+| [ ]  | `D11 T13 §8`  | Calendar App                                       | none        |     9 |
+| [ ]  | `D11 T13 §9`  | System Info                                        | none        |     8 |
+| [ ]  | `D11 T13 §10` | Font Manager App                                   | none        |     8 |
+| [ ]  | `D11 T13 §1`  | Calendar App (Recurring Events + ICS Export)       | none        |     3 |
+| [ ]  | `D11 T13 §2`  | Sticky Notes                                       | none        |     7 |
+| [ ]  | `D11 T13 §3`  | System Information (`sysinfo.exe`)                 | none        |     3 |
+| [ ]  | `D11 T13 §4`  | On-Screen Keyboard                                 | none        |     8 |
+| [ ]  | `D11 T13 §5`  | Color Picker                                       | none        |     6 |
+| [ ]  | `D11 T13 §6`  | Font Manager (OS/2 + Unicode Coverage)             | none        |     4 |
+| [ ]  | `D11 T13 §7`  | Shared Help / About Dialog                         | none        |     3 |
+| [ ]  | `D11 T03 §1`  | SSH2 Transport Layer                               | none        |    10 |
+| [ ]  | `D11 T03 §2`  | SSH Authentication                                 | none        |     4 |
+| [ ]  | `D11 T03 §3`  | Interactive Channel + PTY Relay                    | none        |     5 |
+| [ ]  | `D11 T03 §4`  | Shell Integration + TOFU + Known Hosts             | none        |     6 |
+| [ ]  | `D11 T03 §5`  | SCP File Transfer                                  | none        |     8 |
+| [ ]  | `D11 T03 §6`  | SSH Config File                                    | none        |     7 |
+| [ ]  | `D11 T03 §7`  | sftp Command (Stretch)                             | none        |     5 |
+| [ ]  | `D11 T04 §1`  | SMTP Client                                        | none        |     6 |
+| [ ]  | `D11 T04 §2`  | POP3 Client + Message Storage                      | none        |     7 |
+| [ ]  | `D11 T04 §3`  | IMAP Client (Stretch)                              | none        |     9 |
+| [ ]  | `D11 T04 §4`  | Three-Panel Email GUI                              | none        |     6 |
+| [ ]  | `D11 T04 §7`  | Auto-Check + Notifications + Tray                  | none        |     5 |
+| [ ]  | `D11 T04 §9`  | Spam & Junk Filter                                 | none        |     9 |
+| [ ]  | `D11 T07 §1`  | VNC Client                                         | none        |    10 |
+| [ ]  | `D11 T07 §2`  | IRC / Chat Client                                  | none        |     9 |
+| [ ]  | `D11 T07 §3`  | RSS / News Reader                                  | none        |    10 |
+| [ ]  | `D11 T07 §6`  | VNC Server (Stretch)                               | none        |     9 |
+| [ ]  | `D11 T04 §6`  | Account Management + Credential Store              | none        |     6 |
+| [ ]  | `D11 T04 §8`  | Contacts Store                                     | none        |     9 |
+| [ ]  | `D11 T04 §5`  | Compose Window                                     | none        |     8 |
 
 ### Phase 12 -- User platform and SDK
 

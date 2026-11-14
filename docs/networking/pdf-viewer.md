@@ -1,7 +1,9 @@
-<!-- docs: covers=todo/07-networking/TODO-10-pdf-viewer.md sources=include/stb_image.h,include/stb_truetype.h,src/kernel/image.c,include/kernel/image.h,include/font_mgr.h reviewed=2026-09-29 order=10 -->
+<!-- docs: covers=todo/07-networking/TODO-10-pdf-viewer.md sources=include/stb_image.h,include/stb_truetype.h,src/kernel/image.c,include/kernel/image.h,include/font_mgr.h reviewed=2026-11-14 order=10 -->
 # PDF Viewer Engine
 
 ## What is it?
+
+**Superseded on 2026-11-14.** Impossible OS will bundle Recto as its PDF app, so the in-house engine described below will not be built. Its sections are kept as pointers to the [PDF app roadmap](../../todo/11-apps/TODO-05-pdf-viewer.md); only opening a PDF straight from the web stays here, handing the file to Recto. The rest of this page records the earlier plan.
 
 This roadmap plans a PDF reader written for Impossible OS with no third-party PDF library: a file structure parser, the object model with stream decompression, the page tree, a content stream interpreter, embedded fonts, images, a page rasteriser, opening PDFs straight from the web, and a stub for fillable forms. The viewer window itself (toolbar, zoom, page navigation, search box) is built by the [PDF Viewer app roadmap](../../todo/11-apps/TODO-05-pdf-viewer.md). No PDF code exists yet. Nine sections are unstarted; the viewer app section is marked in progress only because its window moved to the app roadmap.
 
@@ -51,9 +53,9 @@ It cannot be used yet.
 
 ## What is not implemented yet?
 
-- **Parsing**: [PDF Structure Parser](../../todo/07-networking/TODO-10-pdf-viewer.md#1-pdf-structure-parser-opus), [Object Model](../../todo/07-networking/TODO-10-pdf-viewer.md#2-object-model-opus) and [Page Tree](../../todo/07-networking/TODO-10-pdf-viewer.md#3-page-tree-sonnet).
-- **Rendering**: [Content Stream Interpreter](../../todo/07-networking/TODO-10-pdf-viewer.md#4-content-stream-interpreter-opus), [Font Handling](../../todo/07-networking/TODO-10-pdf-viewer.md#5-font-handling-opus), [Image Rendering](../../todo/07-networking/TODO-10-pdf-viewer.md#6-image-rendering-sonnet) and [Page Renderer](../../todo/07-networking/TODO-10-pdf-viewer.md#7-page-renderer-opus).
-- **Integration**: [PDF Viewer App](../../todo/07-networking/TODO-10-pdf-viewer.md#8-pdf-viewer-app-sonnet), [PDF from HTTP](../../todo/07-networking/TODO-10-pdf-viewer.md#9-pdf-from-http-sonnet) and [PDF Forms Stub](../../todo/07-networking/TODO-10-pdf-viewer.md#10-pdf-forms-stub-sonnet).
+- **Parsing**: [PDF Structure Parser](../../todo/07-networking/TODO-10-pdf-viewer.md#1-pdf-structure-parser), [Object Model](../../todo/07-networking/TODO-10-pdf-viewer.md#2-object-model) and [Page Tree](../../todo/07-networking/TODO-10-pdf-viewer.md#3-page-tree).
+- **Rendering**: [Content Stream Interpreter](../../todo/07-networking/TODO-10-pdf-viewer.md#4-content-stream-interpreter), [Font Handling](../../todo/07-networking/TODO-10-pdf-viewer.md#5-font-handling), [Image Rendering](../../todo/07-networking/TODO-10-pdf-viewer.md#6-image-rendering) and [Page Renderer](../../todo/07-networking/TODO-10-pdf-viewer.md#7-page-renderer).
+- **Integration**: [PDF Viewer App](../../todo/07-networking/TODO-10-pdf-viewer.md#8-pdf-viewer-app), [PDF from HTTP](../../todo/07-networking/TODO-10-pdf-viewer.md#9-pdf-from-http) and [PDF Forms Stub](../../todo/07-networking/TODO-10-pdf-viewer.md#10-pdf-forms-stub).
 - **Two plans for one engine**: the app roadmap also plans its own structure parser, stream decompression (through the vendored but unbuilt miniz library rather than stb's zlib decoder) and content renderer. Only one of them should be built; settling which is filed as an item in both roadmaps' structure parser sections.
 - **Image decoder safety**: `image_load_mem()` has a buffer-growth over-read on PNG data split into small chunks, filed under [Thumbnail, Preview, and Multi-Size Asset Cache](../../todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md#5-thumbnail-preview-and-multi-size-asset-cache); PDF images are untrusted input, so it blocks this roadmap's image section.
 - **Not planned here**: opening password-protected (encrypted) PDFs and annotations.

@@ -49,12 +49,12 @@ Nothing Linux-specific can run yet: a real Linux binary would issue Linux system
 
 ## What is not implemented yet?
 
-- [Linux Flags and FD Table](../../todo/10-platform-services/TODO-10-linux-compat.md#1-task_t-linux-flags--fd-table-sonnet) and the [ELF Linux Loader](../../todo/10-platform-services/TODO-10-linux-compat.md#2-elf-linux-loader-sysv-stack--auxv-opus) (the stack and auxv part already runs for every exec)
-- [Syscall Entry Dispatch](../../todo/10-platform-services/TODO-10-linux-compat.md#3-syscall-entry-dispatch-is_linux_elf-branch-opus) and the [Linux Syscall Translation Table](../../todo/10-platform-services/TODO-10-linux-compat.md#4-linux-syscall-translation-table-sonnet)
-- [Path Translation](../../todo/10-platform-services/TODO-10-linux-compat.md#5-path-translation-sonnet), the [Linux File Descriptor Table](../../todo/10-platform-services/TODO-10-linux-compat.md#6-linux-file-descriptor-table-sonnet) and [POSIX Filesystem Stubs](../../todo/10-platform-services/TODO-10-linux-compat.md#7-posix-filesystem-stubs-sonnet)
-- [Signal Stubs](../../todo/10-platform-services/TODO-10-linux-compat.md#8-signal-stubs-opus), which also need the native signal delivery owned by the [process model roadmap](../../todo/02-kernel-core/TODO-21-process-model-extensions.md)
-- [Shell ELF Integration](../../todo/10-platform-services/TODO-10-linux-compat.md#9-shell-elf-integration--linux-process-tag-sonnet) and the [busybox test](../../todo/10-platform-services/TODO-10-linux-compat.md#10-test-static-hello--busybox-sonnet)
-- [Dynamic ELF](../../todo/10-platform-services/TODO-10-linux-compat.md#11-future-dynamic-elf-stretch-opus), a stretch goal
+- [Linux Flags and FD Table](../../todo/10-platform-services/TODO-10-linux-compat.md#1-task_t-linux-flags--fd-table) and the [ELF Linux Loader](../../todo/10-platform-services/TODO-10-linux-compat.md#2-elf-linux-loader-sysv-stack--auxv) (the stack and auxv part already runs for every exec)
+- [Syscall Entry Dispatch](../../todo/10-platform-services/TODO-10-linux-compat.md#3-syscall-entry-dispatch-is_linux_elf-branch) and the [Linux Syscall Translation Table](../../todo/10-platform-services/TODO-10-linux-compat.md#4-linux-syscall-translation-table)
+- [Path Translation](../../todo/10-platform-services/TODO-10-linux-compat.md#5-path-translation), the [Linux File Descriptor Table](../../todo/10-platform-services/TODO-10-linux-compat.md#6-linux-file-descriptor-table) and [POSIX Filesystem Stubs](../../todo/10-platform-services/TODO-10-linux-compat.md#7-posix-filesystem-stubs)
+- [Signal Stubs](../../todo/10-platform-services/TODO-10-linux-compat.md#8-signal-stubs), which also need the native signal delivery owned by the [process model roadmap](../../todo/02-kernel-core/TODO-21-process-model-extensions.md)
+- [Shell ELF Integration](../../todo/10-platform-services/TODO-10-linux-compat.md#9-shell-elf-integration--linux-process-tag) and the [busybox test](../../todo/10-platform-services/TODO-10-linux-compat.md#10-test-static-hello--busybox)
+- [Dynamic ELF](../../todo/10-platform-services/TODO-10-linux-compat.md#11-future-dynamic-elf-stretch), a stretch goal
 
 ## How does it compare with Windows 11 and Linux?
 

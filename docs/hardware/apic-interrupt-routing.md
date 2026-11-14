@@ -49,12 +49,12 @@ At boot, look for the calibration tier line and a `LAPIC/IOAPIC` line in the ser
 
 ## What is not implemented yet?
 
-- **x2APIC mode** with MSR register access and 32-bit APIC IDs ([x2APIC Mode](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#1-x2apic-mode----msr-register-access-opus)).
-- **The roadmap's HPET-only calibration and 1 ms tick.** Calibration ships as the three-tier design above; the section's specific items differ ([LAPIC Timer Calibration via HPET](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#2-lapic-timer-calibration-via-hpet-opus)).
-- **MSI address and data helpers** on top of the vector allocator ([MSI Vector Bitmap Allocator](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#3-msi-vector-bitmap-allocator-sonnet)).
-- **TLB shootdown.** Vector `0xFE` is reserved with no handler ([TLB Shootdown IPI](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#4-tlb-shootdown-ipi-opus)).
-- **An NMI watchdog** that catches a CPU stuck with interrupts off ([NMI Watchdog via PMI Counter Overflow](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#5-nmi-watchdog-via-pmi-counter-overflow-opus)).
-- **An interrupt profiler** with per-vector time as well as counts ([Interrupt Profiler](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#6-interrupt-profiler----sysinterrupts-sonnet)).
+- **x2APIC mode** with MSR register access and 32-bit APIC IDs ([x2APIC Mode](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#1-x2apic-mode----msr-register-access)).
+- **The roadmap's HPET-only calibration and 1 ms tick.** Calibration ships as the three-tier design above; the section's specific items differ ([LAPIC Timer Calibration via HPET](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#2-lapic-timer-calibration-via-hpet)).
+- **MSI address and data helpers** on top of the vector allocator ([MSI Vector Bitmap Allocator](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#3-msi-vector-bitmap-allocator)).
+- **TLB shootdown.** Vector `0xFE` is reserved with no handler ([TLB Shootdown IPI](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#4-tlb-shootdown-ipi)).
+- **An NMI watchdog** that catches a CPU stuck with interrupts off ([NMI Watchdog via PMI Counter Overflow](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#5-nmi-watchdog-via-pmi-counter-overflow)).
+- **An interrupt profiler** with per-vector time as well as counts ([Interrupt Profiler](../../todo/04-drivers-hardware/TODO-02-apic-interrupt-routing.md#6-interrupt-profiler----sysinterrupts)).
 
 ## How does it compare with Windows 11 and Linux?
 

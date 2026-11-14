@@ -40,11 +40,11 @@ Boot the desktop (`bash scripts/build.sh run`) and drag the Command Prompt or Co
 
 ## What is not implemented yet?
 
-- **Minimize, maximize, restore**: there are no minimized or maximized flags and no saved restore rectangle. Owned by [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore-sonnet); the pointer is [section 1](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#1-minimize-maximize-restore).
-- **Edge resizing**: only the cursor shape exists. Pointer: [section 2](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#2-resize-by-dragging-window-edges); owner [Window Decorations](../../todo/08-graphics-ui/TODO-08-window-manager.md#2-window-decorations-sonnet).
-- **Snapping**: none. Pointer: [section 3](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#3-snap-to-leftright-half); owner [Snap Layouts](../../todo/08-graphics-ui/TODO-08-window-manager.md#3-snap-layouts-sonnet).
-- **Hotkeys beyond Alt+F4**: no Alt+Tab, Win+D or hotkey table. Pointer: [section 4](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#4-global-hotkeys); owners [Keyboard Shortcuts](../../todo/08-graphics-ui/TODO-08-window-manager.md#5-keyboard-shortcuts--task-switching-sonnet) and [Alt+Tab](../../todo/08-graphics-ui/TODO-08-window-manager.md#6-alttab-task-switcher-opus).
-- **Teardown gaps**: destroying a window does not clear an in-progress drag or the controls attached to its slot, filed under [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore-sonnet).
+- **Minimize, maximize, restore**: there are no minimized or maximized flags and no saved restore rectangle. Owned by [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore); the pointer is [section 1](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#1-minimize-maximize-restore).
+- **Edge resizing**: only the cursor shape exists. Pointer: [section 2](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#2-resize-by-dragging-window-edges); owner [Window Decorations](../../todo/08-graphics-ui/TODO-08-window-manager.md#2-window-decorations).
+- **Snapping**: none. Pointer: [section 3](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#3-snap-to-leftright-half); owner [Snap Layouts](../../todo/08-graphics-ui/TODO-08-window-manager.md#3-snap-layouts).
+- **Hotkeys beyond Alt+F4**: no Alt+Tab, Win+D or hotkey table. Pointer: [section 4](../../todo/06-desktop-foundation/TODO-01-wm-completion.md#4-global-hotkeys); owners [Keyboard Shortcuts](../../todo/08-graphics-ui/TODO-08-window-manager.md#5-keyboard-shortcuts--task-switching) and [Alt+Tab](../../todo/08-graphics-ui/TODO-08-window-manager.md#6-alttab-task-switcher).
+- **Teardown gaps**: destroying a window does not clear an in-progress drag or the controls attached to its slot, filed under [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore).
 
 ## How does it compare with Windows 11 and Linux?
 

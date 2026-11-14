@@ -86,7 +86,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 
 ---
 
-## 1. Win32 Type Definitions `[Sonnet]`
+## 1. Win32 Type Definitions
 
 Create `include/win32/types.h` (included by `include/win32.h`). All Windows types map to Impossible OS primitives -- no stdlib required.
 
@@ -106,7 +106,7 @@ Create `include/win32/types.h` (included by `include/win32.h`). All Windows type
 
 ---
 
-## 2. Console & Process API (`kernel32.dll` tier 1) `[Sonnet]`
+## 2. Console & Process API (`kernel32.dll` tier 1)
 
 Create `src/win32/kernel32.c`. File I/O functions are **re-exports** of the native API from `TODO-07 §2`.
 
@@ -135,7 +135,7 @@ Create `src/win32/kernel32.c`. File I/O functions are **re-exports** of the nati
 
 ---
 
-## 3. C Runtime (`msvcrt.dll`) `[Sonnet]`
+## 3. C Runtime (`msvcrt.dll`)
 
 Create `src/win32/msvcrt.c`. All functions map directly to the kernel's freestanding implementations.
 
@@ -155,7 +155,7 @@ Create `src/win32/msvcrt.c`. All functions map directly to the kernel's freestan
 
 ---
 
-## 4. NT Runtime Stubs (`ntdll.dll`) `[Sonnet]`
+## 4. NT Runtime Stubs (`ntdll.dll`)
 
 Create `src/win32/ntdll.c`. These are minimal stubs that satisfy the import resolver for programs that link against `ntdll`.
 
@@ -170,7 +170,7 @@ Create `src/win32/ntdll.c`. These are minimal stubs that satisfy the import reso
 
 ---
 
-## 5. Memory Management API `[Sonnet]`
+## 5. Memory Management API
 
 Extend `src/win32/kernel32.c` with virtual memory and heap management. Backed by `vmm_alloc_user()` and `vmm_free_user()` from `TODO-07 §4`.
 
@@ -190,7 +190,7 @@ Extend `src/win32/kernel32.c` with virtual memory and heap management. Backed by
 
 ---
 
-## 6. Synchronization API `[Sonnet]`
+## 6. Synchronization API
 
 Add to `src/win32/kernel32.c`. All Win32 sync objects are thin wrappers over kernel primitives (`mutex_t`, `semaphore_t`, `event_t`) stored in the task handle table.
 
@@ -209,7 +209,7 @@ Add to `src/win32/kernel32.c`. All Win32 sync objects are thin wrappers over ker
 
 ---
 
-## 7. DLL Loading API `[Opus]`
+## 7. DLL Loading API
 
 Add to `src/win32/kernel32.c` and extend `src/win32/pe_loader.c`. Enables loading PE DLLs (same loader as EXEs but `IMAGE_FILE_DLL` flag) and resolving exports at runtime.
 
@@ -222,7 +222,7 @@ Add to `src/win32/kernel32.c` and extend `src/win32/pe_loader.c`. Enables loadin
 
 ---
 
-## 8. Error API `[Sonnet]`
+## 8. Error API
 
 - [ ] `GetLastError()` → read `TEB.LastErrorValue` (set during all Win32 API failures)
 - [ ] `SetLastError(code)` → write `TEB.LastErrorValue`
@@ -232,7 +232,7 @@ Add to `src/win32/kernel32.c` and extend `src/win32/pe_loader.c`. Enables loadin
 
 ---
 
-## 9. Unimplemented Function Logger `[Sonnet]`
+## 9. Unimplemented Function Logger
 
 Prevents crashes when a PE calls a function not yet implemented. Maps to Impossible OS's superior diagnostics story.
 
@@ -244,7 +244,7 @@ Prevents crashes when a PE calls a function not yet implemented. Maps to Impossi
 
 ---
 
-## 10. Window Management (`user32.dll`) `[Sonnet]`
+## 10. Window Management (`user32.dll`)
 
 Create `src/win32/user32.c`. Maps Win32 window and message API to the native WM (`wm_create_window`, `wm_destroy_window`).
 
@@ -255,7 +255,7 @@ Create `src/win32/user32.c`. Maps Win32 window and message API to the native WM 
 
 ---
 
-## 11. GDI Rendering (`gdi32.dll`) `[Sonnet]`
+## 11. GDI Rendering (`gdi32.dll`)
 
 Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel `gfx_*` and `ttf_*` APIs.
 
@@ -265,7 +265,7 @@ Create `src/win32/gdi32.c`. Maps GDI primitives to the kernel `gfx_*` and `ttf_*
 
 ---
 
-## 12. Shell & Icon API (`shell32.dll`) `[Sonnet]`
+## 12. Shell & Icon API (`shell32.dll`)
 
 **Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
@@ -276,7 +276,7 @@ Create `src/win32/shell32.c`.
 - [ ] Commit: `"win32: shell32.dll shell + icon API"
 ---
 
-## 13. IxUI Native Toolkit `[Opus]`
+## 13. IxUI Native Toolkit
 
 IxUI is Impossible OS's **native** Win32-compatible GUI framework. Unlike Wine's user32 emulation, IxUI is a first-class, kernel-backed GUI toolkit for native app development. Apps link `sdk/lib/libixui.a` or use Win32 `#include <windows.h>`.
 
@@ -301,7 +301,7 @@ IxUI is Impossible OS's **native** Win32-compatible GUI framework. Unlike Wine's
 
 ---
 
-## 14. Win32 Shell Integration `[Sonnet]`
+## 14. Win32 Shell Integration
 
 Add to `src/win32/shell32.c`. Enables `ShellExecute` and file-association-aware launching from both shell and desktop.
 
@@ -320,7 +320,7 @@ Add to `src/win32/shell32.c`. Enables `ShellExecute` and file-association-aware 
 
 ---
 
-## 15. Developer SDK `[Sonnet]`
+## 15. Developer SDK
 
 Provides the cross-compilation toolchain for targeting Impossible OS from a host Linux system.
 

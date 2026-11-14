@@ -54,7 +54,7 @@ title: "TODO-10 -- Btrfs Read-Only Driver"
 
 ---
 
-## 1. Superblock Parse + CRC32C Verify `[Sonnet]`
+## 1. Superblock Parse + CRC32C Verify
 
 Read the primary superblock at byte offset 65 536. Verify CRC32C. Fall back to backup superblocks at 64 MiB and 256 GiB on failure. Populate `btrfs_vol_t`.
 
@@ -70,7 +70,7 @@ Read the primary superblock at byte offset 65 536. Verify CRC32C. Fall back to b
 - [ ] Log: `[Btrfs] Superblock OK: label="%s" fsid=%02x%02x... nodesize=%u sectorsize=%u`
 - [ ] Commit: `"fs/btrfs: superblock parser -- magic, CRC32C verify, backup superblock fallback"`
 
-## 2. B-Tree Node Format `[Sonnet]`
+## 2. B-Tree Node Format
 
 Decode `btrfs_header` (32 bytes). Parse internal nodes (`btrfs_key_ptr` array) and leaf nodes (`btrfs_item` array + item data area). Verify per-node CRC32C.
 
@@ -86,7 +86,7 @@ Decode `btrfs_header` (32 bytes). Parse internal nodes (`btrfs_key_ptr` array) a
 - [ ] `btrfs_node_binary_search(node, key)` → index of entry where `key[i] <= target < key[i+1]`; works for both leaf items and internal key_ptrs
 - [ ] Commit: `"fs/btrfs: B-tree node format -- header CRC verify, leaf/internal decode, binary search, item data accessor"`
 
-## 3. Chunk Tree -- Logical→Physical Map `[Opus]`
+## 3. Chunk Tree -- Logical→Physical Map
 
 Load the chunk tree. Build an in-memory logical→physical chunk map. Implement `btrfs_logical_to_physical()`. Handle SINGLE and RAID1 stripes; reject RAID5/6.
 
@@ -103,7 +103,7 @@ Load the chunk tree. Build an in-memory logical→physical chunk map. Implement 
 - [ ] Wire into `btrfs_node_read()` (§2): replace stub with real translation
 - [ ] Commit: `"fs/btrfs: chunk tree -- sys_chunk_array bootstrap, full chunk map load, logical→physical, RAID1 fallback"`
 
-## 4. Tree Search + Walk `[Sonnet]`
+## 4. Tree Search + Walk
 
 Generic B-tree descent by key. `btrfs_tree_search()` for single-item point lookup. `btrfs_tree_walk()` for range iteration. All subtree I/O goes through the chunk map.
 
@@ -118,7 +118,7 @@ Generic B-tree descent by key. `btrfs_tree_search()` for single-item point looku
 - [ ] `btrfs_node_cache_t` -- LRU cache of last 16 nodes (node logical addr → heap buffer); `btrfs_node_read()` checks cache first; evict LRU on miss
 - [ ] Commit: `"fs/btrfs: tree search + walk -- B-tree descent, min_key walk, path context, 16-entry node cache"`
 
-## 5. Root Tree + Subvolume Enumeration `[Sonnet]`
+## 5. Root Tree + Subvolume Enumeration
 
 Read the root tree from `super.root`. Walk all `ROOT_ITEM` entries. Mount FS_TREE (subvolume id 5) as the VFS root. Expose other subvolumes under `/.btrfs/<name>`.
 
@@ -135,7 +135,7 @@ Read the root tree from `super.root`. Walk all `ROOT_ITEM` entries. Mount FS_TRE
 - [ ] Log: `[Btrfs] %u subvolume(s) found; default root=subvol:%llu`
 - [ ] Commit: `"fs/btrfs: root tree + subvolumes -- ROOT_ITEM walk, FS_TREE mount, subvol virtual dir listing"`
 
-## 6. Inode Reader `[Sonnet]`
+## 6. Inode Reader
 
 Read `INODE_ITEM` (type `0x01`) from a subvolume tree. Decode `INODE_REF` for name and parent. Build `vfs_node_t`.
 
@@ -150,7 +150,7 @@ Read `INODE_ITEM` (type `0x01`) from a subvolume tree. Decode `INODE_REF` for na
 - [ ] Root inode: `btrfs_read_inode(vol, fs_tree_root, BTRFS_FIRST_FREE_OBJECTID=256)` -- or objectid 256 may not exist; use objectid from `btrfs_root_item.inode.ino` for the subvolume's root dir inode
 - [ ] Commit: `"fs/btrfs: inode reader -- INODE_ITEM decode, INODE_REF name+parent, vfs_node construction"`
 
-## 7. Extent Data Decoder `[Opus]`
+## 7. Extent Data Decoder
 
 Walk `EXTENT_DATA` items for a file. Handle inline extents (data in item body), regular extents (physical block + window), and preallocated extents (zeros). Decompress zlib, LZO, and Zstd extents.
 
@@ -172,7 +172,7 @@ Walk `EXTENT_DATA` items for a file. Handle inline extents (data in item body), 
 - [ ] VFS `read` callback: `btrfs_vfs_read(vfs_node, buf, offset, len)` → `btrfs_file_read()`
 - [ ] Commit: `"fs/btrfs: extent data -- inline/regular/prealloc, zlib/LZO/Zstd decompression, VFS read callback"`
 
-## 8. Directory Reader `[Sonnet]`
+## 8. Directory Reader
 
 Walk `DIR_INDEX` items for fast readdir. Decode `DIR_ITEM` entries for name lookup. Implement VFS `finddir` and `readdir` callbacks.
 
@@ -189,7 +189,7 @@ Walk `DIR_INDEX` items for fast readdir. Decode `DIR_ITEM` entries for name look
 - [ ] VFS `readdir` callback: `btrfs_vfs_readdir(vfs_node, index)` → `btrfs_readdir()` counting to `index`-th DIR_INDEX entry; return `vfs_dirent`
 - [ ] Commit: `"fs/btrfs: directory reader -- DIR_INDEX walk, DIR_ITEM hash lookup, name chain scan, VFS callbacks"`
 
-## 9. Symlinks + XAttrs `[Sonnet]`
+## 9. Symlinks + XAttrs
 
 Read symlink targets from inline `EXTENT_DATA`. Read `XATTR_ITEM` entries for `security.capability` and `system.posix_acl_*` Linux interoperability.
 
@@ -205,7 +205,7 @@ Read symlink targets from inline `EXTENT_DATA`. Read `XATTR_ITEM` entries for `s
 - [ ] Expose via `NtQueryEaFile` stub (→ XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §9`)
 - [ ] Commit: `"fs/btrfs: symlinks + xattrs -- inline extent target, XATTR_ITEM name-hash lookup, VFS readlink"`
 
-## 10. VFS Registration + Probe + Read-Only Mount `[Sonnet]`
+## 10. VFS Registration + Probe + Read-Only Mount
 
 Register Btrfs with `vfs_probe()`. Mount unconditionally read-only. Show subvolume count in log. Display "(read-only)" in volume properties.
 

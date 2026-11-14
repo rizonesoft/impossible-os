@@ -44,16 +44,16 @@ Until the registry exists, the boot serial log is the device list: search it for
 
 ## What is not implemented yet?
 
-- **A PCI device registry** that the scan fills and drivers bind to ([PCI Device Registry](../../todo/04-drivers-hardware/TODO-07-device-manager.md#1-pci-device-registry-sonnet)).
-- **Device names** from an embedded PCI ID database ([Embedded PCI ID Database](../../todo/04-drivers-hardware/TODO-07-device-manager.md#2-embedded-pci-id-database-sonnet)).
-- **Live interrupt counters** with rates ([Live Interrupt Counter](../../todo/04-drivers-hardware/TODO-07-device-manager.md#3-live-interrupt-counter-sonnet)).
-- **A driver health registry** ([Driver Health Registry](../../todo/04-drivers-hardware/TODO-07-device-manager.md#4-driver-health-registry-sonnet)).
-- **`/sys/devices` and `/sys/interrupts` files** ([VFS Files](../../todo/04-drivers-hardware/TODO-07-device-manager.md#5-sysdevices--sysinterrupts-vfs-files-sonnet)).
-- **`lspci` and `lsusb` shell commands** ([Shell Commands](../../todo/04-drivers-hardware/TODO-07-device-manager.md#6-lspci--lsusb-shell-commands-sonnet)).
-- **The Device Manager window** ([Device Manager GUI](../../todo/04-drivers-hardware/TODO-07-device-manager.md#7-device-manager-gui-opus)).
-- **USB devices in the tree** ([USB Device Tree Integration](../../todo/04-drivers-hardware/TODO-07-device-manager.md#8-usb-device-tree-integration-sonnet)).
-- **The `SetupDi` Win32 API** ([Win32 API](../../todo/04-drivers-hardware/TODO-07-device-manager.md#9-setupdigetclassdevs--setupdienumdeviceinfo-win32-api-sonnet)).
-- **Driver unload and reload** ([Driver Unload / Reload](../../todo/04-drivers-hardware/TODO-07-device-manager.md#10-driver-unload--reload-sonnet)).
+- **A PCI device registry** that the scan fills and drivers bind to ([PCI Device Registry](../../todo/04-drivers-hardware/TODO-07-device-manager.md#1-pci-device-registry)).
+- **Device names** from an embedded PCI ID database ([Embedded PCI ID Database](../../todo/04-drivers-hardware/TODO-07-device-manager.md#2-embedded-pci-id-database)).
+- **Live interrupt counters** with rates ([Live Interrupt Counter](../../todo/04-drivers-hardware/TODO-07-device-manager.md#3-live-interrupt-counter)).
+- **A driver health registry** ([Driver Health Registry](../../todo/04-drivers-hardware/TODO-07-device-manager.md#4-driver-health-registry)).
+- **`/sys/devices` and `/sys/interrupts` files** ([VFS Files](../../todo/04-drivers-hardware/TODO-07-device-manager.md#5-sysdevices--sysinterrupts-vfs-files)).
+- **`lspci` and `lsusb` shell commands** ([Shell Commands](../../todo/04-drivers-hardware/TODO-07-device-manager.md#6-lspci--lsusb-shell-commands)).
+- **The Device Manager window** ([Device Manager GUI](../../todo/04-drivers-hardware/TODO-07-device-manager.md#7-device-manager-gui)).
+- **USB devices in the tree** ([USB Device Tree Integration](../../todo/04-drivers-hardware/TODO-07-device-manager.md#8-usb-device-tree-integration)).
+- **The `SetupDi` Win32 API** ([Win32 API](../../todo/04-drivers-hardware/TODO-07-device-manager.md#9-setupdigetclassdevs--setupdienumdeviceinfo-win32-api)).
+- **Driver unload and reload** ([Driver Unload / Reload](../../todo/04-drivers-hardware/TODO-07-device-manager.md#10-driver-unload--reload)).
 
 ## How does it compare with Windows 11 and Linux?
 

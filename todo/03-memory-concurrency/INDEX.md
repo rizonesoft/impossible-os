@@ -36,6 +36,7 @@ This domain tracks the execution and memory model of the OS: allocation, virtual
 - [TODO-08 Advanced Synchronisation Primitives](./TODO-08-advanced-sync.md) -- ticket locks, preemption count, TLS via `FS` base MSR, futexes, `pthread_once`/`call_once`, `pthread_barrier_t` (kernel-level), thread cancellation, `WaitForMultipleObjects`/`waitable_t`, unified `_timeout(ms)` API.
 - [TODO-09 Win32 IPC Extensions & Async I/O](./TODO-09-win32-ipc-extensions.md) -- named pipes (NPFS), pipe instances + overlapped I/O, mailslots (MSFS), IOCP, IOCP worker pool + DMA hook, Ob-backed named sync objects, LPC, ALPC, `ImpossibleRing` zero-syscall async submission.
 - [TODO-10 Concurrency & Memory Diagnostics](./TODO-10-concurrency-diagnostics.md) -- stack guard pages, preemption count debug, heap canaries + SLAB red zones, lockdep (lock-class graph + DFS), kernel watchdog, KCSAN, graphical deadlock visualiser, `/sys/locks` named lock browser, KASAN, `/sys/mem` unified memory stats.
+- [TODO-11 Warm-Kernel-Update Runtime](./TODO-11-warm-kernel-update-runtime.md) -- Runtime that uses the warm-kernel-update handoff ABI to replace a running kernel image without bouncing user processes
 
 ## Completed / Doc-converted
 

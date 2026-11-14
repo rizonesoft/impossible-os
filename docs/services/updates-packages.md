@@ -52,12 +52,12 @@ There is nothing to run yet. The server side of updates (feeds, channels and sig
 
 ## What is not implemented yet?
 
-- [Update Check API](../../todo/10-platform-services/TODO-03-updates-packages.md#1-update-check-api-sonnet), which needs the HTTP client from the [HTTP and TLS roadmap](../../todo/07-networking/TODO-03-http-tls.md)
-- [Update Download and Verification](../../todo/10-platform-services/TODO-03-updates-packages.md#2-update-download--verification-sonnet) and [Update Application](../../todo/10-platform-services/TODO-03-updates-packages.md#3-update-application-sonnet), which needs restore points from [System Restore and Recovery](restore-recovery.md)
-- [`wuapp.cpl`](../../todo/10-platform-services/TODO-03-updates-packages.md#4-wuappcpl----windows-update-applet-sonnet)
-- [IPKG Package Format](../../todo/10-platform-services/TODO-03-updates-packages.md#5-ipkg-package-format-sonnet), [App Installer Wizard](../../todo/10-platform-services/TODO-03-updates-packages.md#6-app-installer-wizard-sonnet) and [App Uninstaller](../../todo/10-platform-services/TODO-03-updates-packages.md#7-app-uninstaller-sonnet)
-- [`appwiz.cpl`](../../todo/10-platform-services/TODO-03-updates-packages.md#8-appwizcpl----programs--features-applet-sonnet)
-- [IPKG Build Tool](../../todo/10-platform-services/TODO-03-updates-packages.md#9-ipkg-build-tool-host-sonnet)
+- [Update Check API](../../todo/10-platform-services/TODO-03-updates-packages.md#1-update-check-api), which needs the HTTP client from the [HTTP and TLS roadmap](../../todo/07-networking/TODO-03-http-tls.md)
+- [Update Download and Verification](../../todo/10-platform-services/TODO-03-updates-packages.md#2-update-download--verification) and [Update Application](../../todo/10-platform-services/TODO-03-updates-packages.md#3-update-application), which needs restore points from [System Restore and Recovery](restore-recovery.md)
+- [`wuapp.cpl`](../../todo/10-platform-services/TODO-03-updates-packages.md#4-wuappcpl----windows-update-applet)
+- [IPKG Package Format](../../todo/10-platform-services/TODO-03-updates-packages.md#5-ipkg-package-format), [App Installer Wizard](../../todo/10-platform-services/TODO-03-updates-packages.md#6-app-installer-wizard) and [App Uninstaller](../../todo/10-platform-services/TODO-03-updates-packages.md#7-app-uninstaller)
+- [`appwiz.cpl`](../../todo/10-platform-services/TODO-03-updates-packages.md#8-appwizcpl----programs--features-applet)
+- [IPKG Build Tool](../../todo/10-platform-services/TODO-03-updates-packages.md#9-ipkg-build-tool-host)
 
 The Registry layout for installed apps is not settled: this roadmap writes `HKLM\SOFTWARE\{name}`, the [Control Panel roadmap](../../todo/09-desktop-shell/TODO-11-control-panel.md) reads the Windows `Uninstall` key, and the update server roadmap assumes a third layout.
 

@@ -56,7 +56,7 @@ title: "TODO-07 -- Native Win32 Execution & PE Loader"
 
 ---
 
-## 1. Fix Ring-3 User-Mode Execution `[Opus]`
+## 1. Fix Ring-3 User-Mode Execution
 
 Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` address), `MSR_SFMASK` (clear IF on entry). Write `syscall_entry` in NASM: `SWAPGS`, save all registers (including R12-R15, RBX, RBP), dispatch by RAX, restore + `SYSRETQ`. Minimal ring-3 test: `SYSRET` to stub calling `SYS_EXIT(0)`.
 
@@ -74,7 +74,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Update existing `INT 0x80` handler to forward to same `syscall_dispatch()` (keep for ELF compat during transition)
 - [ ] Commit: `"kernel: ring3 fix -- STAR/LSTAR/SFMASK MSRs, syscall_entry SWAPGS, per-CPU RSP, ring-3 test OK"`
 
-## 2. Windows x64 Syscall ABI `[Sonnet]`
+## 2. Windows x64 Syscall ABI
 
 `include/kernel/sched/abi.h`: Win32-named `SYS_*` constants mapping to existing numeric IDs. Windows x64 calling convention: args in RCX, RDX, R8, R9 (then stack), syscall number in RAX. New file I/O, process, memory, and UI syscall numbers.
 
@@ -93,7 +93,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] `SYS_MSGBOX` stub: enqueue message box request to compositor
 - [ ] Commit: `"kernel: win32 abi -- SYS_CREATEFILE/READFILE/WRITEFILE/CLOSEHANDLE/VIRTUALALLOC, handle table"`
 
-## 3. PE Header Structures `[Sonnet]`
+## 3. PE Header Structures
 
 `include/pe.h`: `pe_dos_header`, `pe_coff_header`, `pe_optional_header64`, `pe_section_header`, `pe_data_directory`, `pe_import_descriptor`, `pe_thunk_data64`, `pe_base_reloc_block`, `pe_base_reloc_entry`. Constants: `PE_DOS_MAGIC`, `PE_SIGNATURE`, `PE_MACHINE_AMD64`, `PE32PLUS_MAGIC`.
 
@@ -110,7 +110,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Import hint/name table entry struct: `pe_import_by_name { uint16_t hint; char name[]; }`
 - [ ] Commit: `"kernel: pe.h -- PE32+ struct definitions, constants, section/import/reloc descriptors"`
 
-## 4. PE Loader Core `[Sonnet]`
+## 4. PE Loader Core
 
 `pe_load(data, size, base_out)`: validate `MZ`→`e_lfanew`→`PE\0\0`→COFF Machine==AMD64→PE32+ magic. Allocate `SizeOfImage` bytes at preferred `ImageBase` (fall back if taken). Map each section via `memcpy` raw→VA, zero BSS. Return entry VA.
 
@@ -135,7 +135,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
   - Today `pe_load` allocates and zeroes every page below the aligned `SizeOfImage` (up to 256 MiB) before the program runs, so a small file can demand that much memory; Windows commits these pages demand-zero. Found by the 2026-11-11 perf review (XREF: `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` section 16).
 - [ ] Commit: `"kernel: pe_load -- header validation, section mapping, BSS zero, vmm_alloc_user at ImageBase"`
 
-## 5. Base Relocations `[Sonnet]`
+## 5. Base Relocations
 
 `pe_apply_relocations(base, data, delta)`: parse DataDirectory[5] (BASE_RELOCATION). Walk relocation blocks. For each `IMAGE_REL_BASED_DIR64` entry: add `delta` to the 64-bit value at `base + page_rva + entry_offset`. Skip type=0 (padding).
 
@@ -152,7 +152,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Call `pe_apply_relocations()` from `pe_load()` after section mapping, passing `actual_base - preferred_base` as delta
 - [ ] Commit: `"kernel: pe_apply_relocations -- DIR64 delta patch, block walk, skip ABSOLUTE padding"`
 
-## 6. Import Resolution `[Sonnet]`
+## 6. Import Resolution
 
 `pe_resolve_imports(base, data)`: parse DataDirectory[1] (IMPORT_TABLE). For each `IMAGE_IMPORT_DESCRIPTOR`, find matching built-in DLL stub table. For each `IMAGE_THUNK_DATA`: by name → name hash lookup; by ordinal → ordinal lookup. Write resolved function pointer to IAT. Fail with detailed klog on missing symbols.
 
@@ -170,7 +170,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] **Harden `pe_resolve_dll_imports` RVA bounds** (`pe.c`): the `name_rva+2`/`hint_rva+3` checks add in 32-bit and wrap near `UINT32_MAX` -> OOB read on a malformed PE; use non-wrapping/64-bit math + malformed-PE tests. (TODO-12 §31 review)
 - [ ] Commit: `"kernel: pe_resolve_imports -- IAT walk, dll_find name/ordinal, stub tables, missing import trap"`
 
-## 7. PE Execution `[Opus]`
+## 7. PE Execution
 
 `pe_exec(path)`: VFS load → `pe_load()` → TEB/PEB minimal setup (`PEB.ImageBaseAddress`, `TEB.StackBase/StackLimit`, `PEB.ProcessParameters.CommandLine`) → switch to ring-3 at PE entry point. Process exit via `SYS_EXITPROCESS` → kernel reclaims memory.
 
@@ -188,7 +188,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Test: `pe_exec("C:\\Users\\Default\\hello.exe")` → serial log "Hello from ring 3!" + clean exit
 - [ ] Commit: `"kernel: pe_exec -- TEB/PEB setup, iretq ring-3 launch, ExitProcess memory reclaim"`
 
-## 8. EXE Format Precedence `[Sonnet]`
+## 8. EXE Format Precedence
 
 `exec_load(path)`: try PE (first 2 bytes == `MZ` + valid PE signature) → if valid: `pe_exec(path)`. Else try ELF (`\x7FELF`) → `task_exec()` existing. Else error. `file_assoc_open` uses `exec_load` for `.exe` files.
 
@@ -204,7 +204,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Refresh stale exec comments: `src/kernel/exec.c:5` says only ELF is supported (ELF, EIF and PE32+ all register), `syscall.h:21` documents `SYS_EXEC(name, len)` (it takes path, argv, envp), `task.c` cites PE loading as future work
 - [ ] Commit: `"kernel: exec_load -- PE32+ first, ELF fallback, format probe, .exe file assoc"`
 
-## 9. Minimal User-Mode Runtime `[Sonnet]`
+## 9. Minimal User-Mode Runtime
 
 `user/lib/crt0_pe.asm`: Windows `_start` entry (RCX=PEB ptr), sets up stack, calls `main(argc, argv)`, calls `ExitProcess(ret)`. `user/lib/kernel32_stub.c`: thin `CreateFile/ReadFile/WriteFile/ExitProcess/GetStdHandle` wrappers using `SYSCALL` instruction + Windows x64 calling convention. Compile to `user/lib/libcrt.a`.
 

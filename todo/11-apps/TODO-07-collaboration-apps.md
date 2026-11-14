@@ -58,7 +58,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 1. VNC Client `[Opus]`
+## 1. VNC Client
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -98,7 +98,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 2. IRC / Chat Client `[Sonnet]`
+## 2. IRC / Chat Client
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -133,7 +133,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 3. RSS / News Reader `[Sonnet]`
+## 3. RSS / News Reader
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -157,7 +157,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 4. `ping` + `traceroute` Commands `[Sonnet]`
+## 4. `ping` + `traceroute` Commands
 
 > → XREF: `07-networking/TODO-06-ntp-status-winsock.md §5` -- `ping` (IPv4 + IPv6 + flags).
 > → XREF: `07-networking/TODO-06-ntp-status-winsock.md §6` -- `traceroute` (TTL probe + rDNS).
@@ -171,7 +171,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 5. Network Diagnostic Tools: `arp -a` + `route print` `[Sonnet]`
+## 5. Network Diagnostic Tools: `arp -a` + `route print`
 
 > → XREF: `07-networking/TODO-06-ntp-status-winsock.md §4` -- `ifconfig` (fully specified).
 > → XREF: `07-networking/TODO-06-ntp-status-winsock.md §7` -- `netstat` (fully specified).
@@ -191,7 +191,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ---
 
-## 6. VNC Server (Stretch) `[Opus]`
+## 6. VNC Server (Stretch)
 
 > Captures the live compositor framebuffer and serves it via RFB to remote VNC clients.
 > Injects keyboard and mouse events into the WM input queue. Novel: no prior Impossible OS
@@ -227,9 +227,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 | 💎  | `arp -a` + `route print`                         | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`           | ⬜ §5 -- `arp_cache_dump` wrapper + routing table      |
 | ⭐  | VNC server for headless remote access            | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 -- (Stretch) -- ; compositor fb                  |
 
-Impossible OS ships RSS news reader and IRC client out of the box -- features Windows 11 dropped
-years ago -- plus a built-in VNC server enabling zero-install remote desktop for QEMU testing,
-all without any external dependencies beyond the existing TCP/TLS stack.
+Impossible OS ships RSS news reader and IRC client out of the box -- features Windows 11 dropped years ago -- plus a built-in VNC server enabling zero-install remote desktop for QEMU testing, all without any external dependencies beyond the existing TCP/TLS stack.
 
 ---
 

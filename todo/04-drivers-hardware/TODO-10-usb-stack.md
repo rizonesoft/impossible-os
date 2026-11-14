@@ -65,7 +65,7 @@ title: "TODO-10 -- USB Stack Completion"
 
 ---
 
-## 1. USB Core Abstraction Layer `[Opus]`
+## 1. USB Core Abstraction Layer
 
 Define a transport-agnostic USB core API so class drivers (HID, MSC, hub, CDC-ECM, CDC-ACM, Bluetooth HCI, USB Audio) never call xHCI or EHCI functions directly. Each host controller driver registers a `usb_hcd_ops_t` vtable; class drivers call `usb_submit_control()` / `usb_submit_bulk()` / `usb_submit_interrupt()` / `usb_submit_isoch()` which dispatch through the vtable. This is the layer that makes EHCI fallback (§10) possible without `if (xhci) ... else if (ehci) ...` branches in every class driver.
 
@@ -91,7 +91,7 @@ Define a transport-agnostic USB core API so class drivers (HID, MSC, hub, CDC-EC
   - -> XREF: `02-kernel-core/TODO-26-power-management.md` §9 (item: "Each major driver registers in its `init()` -- EC done, the other four BLOCKED on a per-driver quiesce primitive that does not exist yet")
 - [ ] Commit: `"drivers: USB core abstraction layer -- usb_device_t, usb_hcd_ops_t, transport-agnostic API"`
 
-## 2. USB String Descriptor Retrieval `[Sonnet]`
+## 2. USB String Descriptor Retrieval
 
 Implement `GET_DESCRIPTOR(STRING)` to read manufacturer, product, and serial number strings from USB devices. These strings are needed by Device Manager (`lsusb`), safe-remove toast messages, CDC-ECM MAC address retrieval, and general USB diagnostics.
 
@@ -106,7 +106,7 @@ Implement `GET_DESCRIPTOR(STRING)` to read manufacturer, product, and serial num
 - [ ] Log: `"[USB] Device: %s %s (S/N: %s)"` with retrieved strings (or "unknown" if index is 0)
 - [ ] Commit: `"drivers: USB string descriptor retrieval -- manufacturer, product, serial number strings"`
 
-## 3. Isochronous Endpoint Support `[Opus]`
+## 3. Isochronous Endpoint Support
 
 Add isochronous endpoint configuration and transfer submission to the USB core and xHCI backend. Isochronous transfers are the fourth fundamental USB transfer type (alongside control, bulk, interrupt) and are required for USB Audio (→ XREF `04-drivers-hardware/TODO-18-audio-drivers.md §5`) and USB Video class devices.
 
@@ -121,7 +121,7 @@ Add isochronous endpoint configuration and transfer submission to the USB core a
 - [ ] Error handling: isochronous transfers do not retry on failure (real-time data is time-sensitive); log dropped frames; return actual bytes transferred
 - [ ] Commit: `"drivers: xHCI isochronous endpoint support -- configure + Isoch TRB submission"`
 
-## 4. Interrupt Endpoint Setup for HID `[Opus]`
+## 4. Interrupt Endpoint Setup for HID
 
 Extend `xhci_dev.c` to configure interrupt-IN endpoints. HID devices have a single interrupt-IN endpoint on their first interface; call `xhci_configure_interrupt_ep()` from the enumeration path when interface class == `0x03`.
 
@@ -136,7 +136,7 @@ Extend `xhci_dev.c` to configure interrupt-IN endpoints. HID devices have a sing
 - [ ] Error path: if Configure Endpoint fails (CC != SUCCESS), log `[xHCI] EP config failed slot=%u ep=%u cc=%u`; mark device as non-functional
 - [ ] Commit: `"drivers: xhci -- interrupt-IN endpoint setup, INTERRUPT_IN context type, HID probe hook"`
 
-## 5. USB HID Class Driver `[Sonnet]`
+## 5. USB HID Class Driver
 
 Implement `usb_hid.c` with boot-protocol keyboard and mouse parsers. `usb_hid_probe()` issues `SET_PROTOCOL(0)` to request boot-protocol reports. Completions decode reports and inject into the existing keyboard/mouse event pipeline.
 
@@ -153,7 +153,7 @@ Implement `usb_hid.c` with boot-protocol keyboard and mouse parsers. `usb_hid_pr
 - [ ] Boot log: `[USB-HID] Keyboard slot=%u` / `[USB-HID] Mouse slot=%u`
 - [ ] Commit: `"drivers: USB HID -- boot-protocol keyboard/mouse, SET_PROTOCOL(0), event injection"`
 
-## 6. PS/2 ↔ USB Input Fallback `[Sonnet]`
+## 6. PS/2 ↔ USB Input Fallback
 
 When USB HID claims a keyboard or mouse, the PS/2 driver must yield and stop injecting duplicate events. When the USB HID device disconnects, PS/2 must automatically re-activate. No application-layer changes required.
 
@@ -167,7 +167,7 @@ When USB HID claims a keyboard or mouse, the PS/2 driver must yield and stop inj
 - [ ] Boot log: `[INPUT] USB keyboard claimed -- PS/2 keyboard suspended` / `PS/2 keyboard resumed`
 - [ ] Commit: `"drivers: PS/2↔USB fallback -- usb_keyboard/mouse_active flag, yield/resume on attach/detach"`
 
-## 7. USB MSC BOT Completion `[Opus]`
+## 7. USB MSC BOT Completion
 
 Complete the USB Mass Storage Class Bulk-Only Transport layer. Bulk endpoints are already set up in `xhci_dev.c`; add `usb_msc_scsi.c` implementing SCSI CBW/CSW framing and `INQUIRY`, `READ CAPACITY`, `READ(10)`, `WRITE(10)` commands. Support multi-LUN devices (card readers). Register via `blkdev_register()`.
 
@@ -188,7 +188,7 @@ Complete the USB Mass Storage Class Bulk-Only Transport layer. Bulk endpoints ar
 - [ ] Boot log: `[USB-MSC] slot=%u LUN=%u vendor="%s" product="%s" %llu sectors mounted as %c:\\`
 - [ ] Commit: `"drivers: USB MSC BOT -- SCSI INQUIRY/READ_CAPACITY/READ/WRITE CBW/CSW, multi-LUN, blkdev_register"`
 
-## 8. Hot-Plug Interrupt Handling `[Opus]`
+## 8. Hot-Plug Interrupt Handling
 
 Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On connect: enumerate device. On disconnect: tear down class driver, unregister blkdev, notify desktop with toast.
 
@@ -216,7 +216,7 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
 - [ ] Runtime attach without MSI: `xhci_wait_command`/transfer waits drop Port Status Change events, so a no-MSI controller never enumerates a hot-plugged device (`xhci.c:893` log says otherwise)
 - [ ] Commit: `"drivers: xHCI hot-plug -- Port Status Change TRB, attach/detach, MSC unmount, HID disconnect"`
 
-## 9. USB Hub Class Driver `[Opus]`
+## 9. USB Hub Class Driver
 
 Implement the USB hub class driver (interface class `0x09`). Issue GET_DESCRIPTOR(HUB) to read port count. Power each port. Poll via interrupt-IN for port-change bitmask. Enumerate or detach downstream devices on change events. Cascade hot-plug to xHCI.
 
@@ -235,7 +235,7 @@ Implement the USB hub class driver (interface class `0x09`). Issue GET_DESCRIPTO
 - [ ] Boot log: `[USB-HUB] slot=%u ports=%u`
 - [ ] Commit: `"drivers: USB hub class -- GET_DESCRIPTOR(HUB), port power, interrupt-IN, downstream enumerate"`
 
-## 10. EHCI Fallback (USB 2.0) `[Opus]`
+## 10. EHCI Fallback (USB 2.0)
 
 Implement an EHCI host controller driver for USB 2.0-only systems. PCI prog-if `0x20`. Async schedule (QH→QTD chain) for control/bulk; periodic schedule (256-entry frame list) for interrupt transfers. Register as a `usb_hcd_t` via §1's `usb_hcd_register()`; all class drivers (§5–§9, §13–§12) work automatically via the USB core abstraction layer.
 
@@ -259,7 +259,7 @@ Implement an EHCI host controller driver for USB 2.0-only systems. PCI prog-if `
 - [ ] Boot log: `[EHCI] USB 2.0 controller %04x:%04x, %u ports`
 - [ ] Commit: `"drivers: EHCI -- async/periodic schedule, QH/QTD, USB 2.0 enumeration, reuse HID/MSC"`
 
-## 11. USB CDC-ECM Ethernet `[Sonnet]`
+## 11. USB CDC-ECM Ethernet
 
 Implement CDC-ECM (Communication Device Class, Ethernet Control Model) for USB-to-Ethernet adapters and USB-tethered devices. Interface class `0x02` subclass `0x06`. Bulk IN/OUT for data; interrupt-IN for network notifications. Register as a NIC via `net_register_nic()`.
 
@@ -279,7 +279,7 @@ Implement CDC-ECM (Communication Device Class, Ethernet Control Model) for USB-t
 - [ ] Boot log: `[USB-ECM] MAC %02x:%02x:... registered as NIC`
 - [ ] Commit: `"drivers: USB CDC-ECM -- iMACAddress, bulk RX/TX, SET_PACKET_FILTER, net_register_nic"`
 
-## 12. USB CDC-ACM Serial `[Sonnet]`
+## 12. USB CDC-ACM Serial
 
 Implement CDC-ACM (Abstract Control Model) for USB serial adapters, Arduinos, GPS receivers, and debug consoles. Interface class `0x02` subclass `0x02`. Expose as a virtual serial port. `SET_LINE_CODING` + `SET_CONTROL_LINE_STATE` on open.
 
@@ -300,7 +300,7 @@ Implement CDC-ACM (Abstract Control Model) for USB serial adapters, Arduinos, GP
 
 ---
 
-## 13. Bluetooth HCI via USB `[Opus]`
+## 13. Bluetooth HCI via USB
 
 Detect USB Bluetooth adapters (class `0xE0` subclass `0x01` protocol `0x01`). Send `HCI_RESET` command over control endpoint. Receive HCI Command Complete event over interrupt-IN. Expose `hci_send_command()` / `hci_recv_event()` API for the future Bluetooth stack.
 

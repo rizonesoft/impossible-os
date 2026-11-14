@@ -50,7 +50,7 @@ title: "TODO-01 -- TCP Protocol & Network Infrastructure"
 
 ---
 
-## 1. TCP Header + Checksum `[Sonnet]`
+## 1. TCP Header + Checksum
 
 Define `struct tcp_header`. Declare TCP flag constants. Implement the TCP pseudo-header checksum. Route `IP_PROTO_TCP` in `ipv4_handle()`.
 
@@ -71,7 +71,7 @@ Define `struct tcp_header`. Declare TCP flag constants. Implement the TCP pseudo
   - Also verify the IPv4 header checksum on receive (`ipv4_checksum()` exists) and drop packets not addressed to this host or broadcast; add a negative unit test for each malformed shape.
 - [ ] Commit: `"net/tcp: TCP header, flag constants, pseudo-header checksum, IP_PROTO_TCP routing"`
 
-## 2. TCP Connection State Machine `[Opus]`
+## 2. TCP Connection State Machine
 
 Implement `struct tcp_connection` with a 32-connection table. Drive all 11 RFC 793 states. Handle SYN, SYN+ACK, ACK, FIN, RST on both active and passive sides.
 
@@ -88,7 +88,7 @@ Implement `struct tcp_connection` with a 32-connection table. Drive all 11 RFC 7
 - [ ] TIME_WAIT: set `conn->retransmit_deadline = now_ms() + 120000`; timer tick clears the slot
 - [ ] Commit: `"net/tcp: 11-state RFC 793 machine, 32-slot connection table, SYN/ACK/FIN/RST transitions"`
 
-## 3. TCP API `[Sonnet]`
+## 3. TCP API
 
 Expose `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`. Allocate ephemeral source ports from the range 49152–65535. Wire `tcp_recv()` to the per-connection 4 KiB ring buffer filled by `tcp_handle()`.
 
@@ -106,7 +106,7 @@ Expose `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()`. Allocate ephe
 - [ ] Declare in `net.h`: `tcp_connection* tcp_connect(uint32_t dst_ip, uint16_t dst_port)`, `int tcp_send(...)`, `int tcp_recv(...)`, `void tcp_close(...)`, `tcp_connection* tcp_listen(uint16_t port)`, `tcp_connection* tcp_accept(...)`
 - [ ] Commit: `"net/tcp: connect/send/recv/close API, listen/accept, ephemeral ports 49152–65535, ring buffer"`
 
-## 4. TCP Robustness `[Opus]`
+## 4. TCP Robustness
 
 Retransmission timer (1 s, exponential backoff, 3 retries). Sequence window validation. RST abort. Nagle's algorithm. Congestion window slow-start. Out-of-order segment hold queue.
 
@@ -123,7 +123,7 @@ Retransmission timer (1 s, exponential backoff, 3 retries). Sequence window vali
 - [ ] OOO hold queue: `conn->ooo_buf[4]` of `{uint32_t seq; uint8_t data[1460]; uint16_t len;}`; on segment with `seg_seq > rcv_nxt`: store in hold queue; on `rcv_nxt` advance: check if head of hold queue matches; inject
 - [ ] Commit: `"net/tcp: retransmit 1s/3x backoff, window validation, Nagle 200ms, slow-start cwnd, OOO 4-slot"`
 
-## 5. Network Interface Manager `[Sonnet]`
+## 5. Network Interface Manager
 
 Replace the single global `net_cfg` with `struct net_interface` and `netif_register/get_default/set_ip/get_by_name`. Maintain backward compatibility via a `netif_get_default()` shim.
 
@@ -143,7 +143,7 @@ Replace the single global `net_cfg` with `struct net_interface` and `netif_regis
 - [ ] RTL8139 init: call `netif_register("eth0", mac, 1500, rtl8139_send_frame)` during driver init
 - [ ] Commit: `"net: netif manager -- struct net_interface, register/get_default, net_cfg shim, ipv4_send decoupled"`
 
-## 6. Loopback Interface `[Sonnet]`
+## 6. Loopback Interface
 
 Register a virtual `lo` interface. Detect `127.0.0.0/8` in `ipv4_send()` and short-circuit directly to `ipv4_handle()` without touching the NIC.
 
@@ -159,7 +159,7 @@ Register a virtual `lo` interface. Detect `127.0.0.0/8` in `ipv4_send()` and sho
 - [ ] `ping 127.0.0.1` in shell → round-trip via loopback, no NIC traffic; `[ICMP] echo reply from 127.0.0.1` in serial log
 - [ ] Commit: `"net: loopback interface lo -- 127/8 short-circuit in ipv4_send, loopback_tx → ipv4_handle direct"`
 
-## 7. Stateful Connection Tracking `[Opus]`
+## 7. Stateful Connection Tracking
 
 Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on outbound SYN and outbound UDP. Auto-allow inbound packets that match an established entry. Expire on FIN/RST (TCP) or timeout (UDP 60 s, TCP 300 s).
 

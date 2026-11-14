@@ -53,11 +53,7 @@ title: "TODO-01 -- Disk Image, USB & Release Artifacts"
 
 ## Outcome
 
-`make release` produces a complete set of versioned, zstd-compressed, SHA-256-verified
-artifacts: `impossible-os-1.0.22000.img.zst`, `.iso`, `.vmdk`, `.vhd`, `.vhdx`, and
-`release-1.0.22000.json`. `codesign_sign` is called on `kernel.exe` and `BOOTX64.EFI`.
-`make verify-reproducible` confirms byte-identical output from same source. `winver.exe`
-shows `Impossible OS 1.0 (Build 22000)`.
+`make release` produces a complete set of versioned, zstd-compressed, SHA-256-verified artifacts: `impossible-os-1.0.22000.img.zst`, `.iso`, `.vmdk`, `.vhd`, `.vhdx`, and `release-1.0.22000.json`. `codesign_sign` is called on `kernel.exe` and `BOOTX64.EFI`. `make verify-reproducible` confirms byte-identical output from same source. `winver.exe` shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
@@ -77,7 +73,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 1. Versioning Scheme `[Sonnet]`
+## 1. Versioning Scheme
 
 **Source:** `scripts/set-version.sh`; extends `include/version.h` + `include/build_info.h`
 
@@ -97,7 +93,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 2. GPT Disk Image Release `[Sonnet]`
+## 2. GPT Disk Image Release
 
 **Source:** `scripts/release-image.sh`
 
@@ -120,7 +116,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 3. USB-Bootable Image `[Sonnet]`
+## 3. USB-Bootable Image
 
 **Source:** `scripts/make-usb.sh`; `tools/usb-creator/usb_creator.c` (host-side, GCC)
 
@@ -141,7 +137,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 4. Bootable ISO (Joliet + Rock Ridge) `[Sonnet]`
+## 4. Bootable ISO (Joliet + Rock Ridge)
 
 > Extends `10-platform-services/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
 > extensions, versioned output filename, and `README.txt` at ISO root.
@@ -176,7 +172,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 5. Code Signing `[Opus]`
+## 5. Code Signing
 
 > Security-critical: bootloader-side kernel signature verification is novel (no prior
 > Impossible OS bootloader verification path). Extends `09-desktop-shell/TODO-07 §7` code signing.
@@ -208,7 +204,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 6. Artifact Manifest `[Sonnet]`
+## 6. Artifact Manifest
 
 **Source:** `scripts/make-manifest.sh`; output: `build/release-{version}.json`
 
@@ -243,7 +239,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 7. VM Image Variants `[Sonnet]`
+## 7. VM Image Variants
 
 **Source:** `scripts/make-vm-images.sh`
 
@@ -282,7 +278,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 8. Reproducible Builds `[Sonnet]`
+## 8. Reproducible Builds
 
 **Source:** modifications to `scripts/build.sh` + `Makefile`; new `docs/infrastructure/reproducible-builds.md`
 
@@ -315,7 +311,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ---
 
-## 9. Third-Party Attribution Shipped With Artifacts `[Sonnet]`
+## 9. Third-Party Attribution Shipped With Artifacts
 
 > **Spawned-by:** root
 
@@ -362,11 +358,7 @@ The permissive licenses this project vendors under (BSD-2-Clause, MIT, CC0-1.0, 
 | 💎  | Third-party attribution shipped with artifacts          | ✅ Per-component licenses under `C:\Windows\System32\license.rtf` + OEM notices | ✅ `/usr/share/doc/*/copyright`; distro license manifests | ⬜ §9 `C:\Impossible\License\`; `third_party` manifest array; drift gate  |
 | ⭐  | Byte-reproducible builds                                | ❌ Windows builds are not reproducible                                          | ✅ Debian/NixOS reproducible builds                       | ⬜ §8 -- `make verify-reproducible`; `llvm-ar rcsD`; documented           |
 
-Impossible OS's `⭐` advantages: the **artifact manifest JSON** closes the loop to the
-on-OS update check (no separate update metadata infrastructure needed), **Ed25519 code
-signing** in the bootloader is faster and uses a smaller key than Windows Authenticode
-RSA, and **reproducible builds** from day one establish a trust baseline that most
-operating systems never achieve.
+Impossible OS's `⭐` advantages: the **artifact manifest JSON** closes the loop to the on-OS update check (no separate update metadata infrastructure needed), **Ed25519 code signing** in the bootloader is faster and uses a smaller key than Windows Authenticode RSA, and **reproducible builds** from day one establish a trust baseline that most operating systems never achieve.
 
 ---
 

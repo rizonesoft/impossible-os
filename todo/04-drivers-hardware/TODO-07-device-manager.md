@@ -51,7 +51,7 @@ title: "TODO-07 -- Device Manager & Driver Diagnostics"
 
 ---
 
-## 1. PCI Device Registry `[Sonnet]`
+## 1. PCI Device Registry
 
 During `pci_scan()`, populate a static `pci_device_db[]` array with one entry per found device: BDF, vendor/device/class IDs, BAR addresses, IRQ vector, and bound driver name. Provide iteration and lookup APIs. Retrofit `pci_find_device()` to search the registry.
 
@@ -66,7 +66,7 @@ During `pci_scan()`, populate a static `pci_device_db[]` array with one entry pe
 - [ ] `pci_bind_driver(entry, driver_name)` → copy `driver_name` into entry; called from each driver's probe function
 - [ ] Commit: `"drivers: PCI device registry -- pci_device_db[], pci_bind_driver, pci_enumerate_devices"`
 
-## 2. Embedded PCI ID Database `[Sonnet]`
+## 2. Embedded PCI ID Database
 
 Embed a compact binary lookup table of the top-2000 PCI vendor/device IDs by market share (~60 KiB). Provide `pci_vendor_name(vid)` and `pci_device_name(vid, did)` returning static strings.
 
@@ -83,7 +83,7 @@ Embed a compact binary lookup table of the top-2000 PCI vendor/device IDs by mar
 - [ ] Boot log: `[PCI] ID database: %u entries loaded`
 - [ ] Commit: `"drivers: embedded PCI ID database -- gen_pci_ids.py, 2000-entry binary-search table"`
 
-## 3. Live Interrupt Counter `[Sonnet]`
+## 3. Live Interrupt Counter
 
 Maintain a per-IRQ-vector `irq_count[]` (u64) array incremented in each IDT stub. Track `irq_last_ns[]` timestamps. `irq_rate(vec)` computes interrupts-per-second over a 1-second sliding window. Match `NtQuerySystemInformation(SystemInterruptInformation)` semantics.
 
@@ -100,7 +100,7 @@ Maintain a per-IRQ-vector `irq_count[]` (u64) array incremented in each IDT stub
 - [ ] `NtQuerySystemInformation(SystemInterruptInformation, buf, size, NULL)`: fill `SYSTEM_INTERRUPT_INFORMATION[256]` with `{ Count, Time, Rate }` per vector
 - [ ] Commit: `"kernel: irq_stats -- irq_count[] per-vector, irq_rate() 1s window, NtQuerySystemInformation"`
 
-## 4. Driver Health Registry `[Sonnet]`
+## 4. Driver Health Registry
 
 Provide a global `driver_health_map` where each driver reports `DRIVER_HEALTH_OK`, `DRIVER_HEALTH_WARN`, or `DRIVER_HEALTH_ERROR`. Updated in probe and error-handling paths. Device Manager reads health per device to display status badges.
 
@@ -114,7 +114,7 @@ Provide a global `driver_health_map` where each driver reports `DRIVER_HEALTH_OK
 - [ ] Each existing driver (`rtl8139`, `ahci`, `virtio_blk`, etc.): add `driver_health_set(name, OK, "")` at end of successful probe; add `driver_health_set(name, ERROR, strerror)` on fatal init failure
 - [ ] Commit: `"kernel: driver health registry -- driver_health_set/get, OK/WARN/ERROR badges"`
 
-## 5. `/sys/devices` + `/sys/interrupts` VFS Files `[Sonnet]`
+## 5. `/sys/devices` + `/sys/interrupts` VFS Files
 
 Register two read-only VFS files under `/sys/` that expose `pci_device_db[]` and `irq_stats_snapshot()` in human-readable tabular format.
 
@@ -131,7 +131,7 @@ Register two read-only VFS files under `/sys/` that expose `pci_device_db[]` and
 - [ ] `sys_interrupts_read(buf, offset, len)`: call `irq_stats_snapshot()`; write one line per active vector
 - [ ] Commit: `"kernel: /sys/devices + /sys/interrupts VFS files -- tabular PCI + IRQ stats"`
 
-## 6. `lspci` / `lsusb` Shell Commands `[Sonnet]`
+## 6. `lspci` / `lsusb` Shell Commands
 
 Implement `lspci` and `lsusb` as built-in shell commands outputting Linux-compatible tabular format. Suitable for diagnostic scripts and headless environments.
 
@@ -144,7 +144,7 @@ Implement `lspci` and `lsusb` as built-in shell commands outputting Linux-compat
 - [ ] `lspci --version` → `lspci 1.0 -- Impossible OS`; `lsusb --version` → same
 - [ ] Commit: `"shell: lspci + lsusb -- PCI device registry + USB topology, Linux-compatible format"`
 
-## 7. Device Manager GUI `[Opus]`
+## 7. Device Manager GUI
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -164,7 +164,7 @@ Build the Device Manager window: a tree view of PCI devices grouped by class, wi
 - [ ] Accessible via `Start Menu > System Tools > Device Manager` and system tray right-click
 - [ ] Commit: `"desktop: Device Manager -- class tree, health badges, live IRQ rate, 1s auto-refresh"`
 
-## 8. USB Device Tree Integration `[Sonnet]`
+## 8. USB Device Tree Integration
 
 Walk the `usb_device_t` list (populated by TODO-10 xHCI/EHCI drivers) and display the hub topology under a "Universal Serial Bus Controllers" tree node in Device Manager. Show class driver name for each USB device.
 
@@ -180,7 +180,7 @@ Walk the `usb_device_t` list (populated by TODO-10 xHCI/EHCI drivers) and displa
 - [ ] USB hot-plug: `xhci_handle_port_event()` (TODO-10 §8) posts `WM_DEVMGR_REFRESH` after attach/detach; Device Manager receives the message and calls `devmgr_rebuild_usb_subtree()`
 - [ ] Commit: `"desktop: Device Manager USB tree -- hub topology, class driver name, hot-plug refresh"`
 
-## 9. `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API `[Sonnet]`
+## 9. `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API
 
 Implement the Win32 `SetupDi` device enumeration API surface so applications can query installed devices by class GUID, enumerate `SP_DEVINFO_DATA` records, and retrieve device properties (driver name, hardware ID).
 
@@ -199,7 +199,7 @@ Implement the Win32 `SetupDi` device enumeration API surface so applications can
 - [ ] Register syscall: `NtSetupDi*` dispatch in native API table; `kernel32.dll` stub wrapper (or direct syscall for now)
 - [ ] Commit: `"win32: SetupDiGetClassDevs/EnumDeviceInfo -- PCI registry wrapper, DEVPKEY properties"`
 
-## 10. Driver Unload / Reload `[Sonnet]`
+## 10. Driver Unload / Reload
 
 Expose "Unload Driver" and "Reload Driver" actions in the Device Manager context menu. Calls `module_unload(name)` → driver `remove()` → frees module memory. Reload calls `driver_probe_all()` to re-bind any unbound device.
 

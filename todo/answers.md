@@ -63,18 +63,9 @@ circular dependency: §3 (jump) is blocked on user frames not aliasing the kerne
 image, but user-frame relocation lives in §6/§7 which build ON the high kernel.
 
 - **(a) Relocate user frames first:** pull §6's "user low private" (unique physical
-  pages per process, user VMA no longer identity-mapped to 0x800000) AHEAD of §3,
-  so the launcher/user pages never touch phys 0x200000-0x8fe000. Breaks the cycle
-  cleanly and is on the roadmap anyway, but re-sequences §6 before §3 and is a
-  substantial change to the exec/user-mapping model (today all user pages share
-  identity frames -- CLAUDE.md, `vmm_create_user_pml4`, `USER_PT_WINDOW`).
+  pages per process, user VMA no longer identity-mapped to 0x800000) AHEAD of §3, so the launcher/user pages never touch phys 0x200000-0x8fe000. Breaks the cycle cleanly and is on the roadmap anyway, but re-sequences §6 before §3 and is a substantial change to the exec/user-mapping model (today all user pages share identity frames -- CLAUDE.md, `vmm_create_user_pml4`, `USER_PT_WINDOW`).
 - **(b) Re-base the kernel physically above the user window:** set
-  `MM_KERNEL_PHYS_BASE` (memmap.h SSOT) to >= `USER_PT_WINDOW_END` (0xa00000) so the
-  image never overlaps. Minimal §3-local change and endorsed by the design review
-  ("select a kernel physical range wholly outside USER_PT_WINDOW"), but edits a
-  pinned SSOT constant with a documented rationale (lowest 2 MiB base above the AP
-  envelope, max low RAM) and derives `MM_KERNEL_IMAGE_BASE` off it; §7 could move it
-  back once the ceiling/user base is retired.
+  `MM_KERNEL_PHYS_BASE` (memmap.h SSOT) to >= `USER_PT_WINDOW_END` (0xa00000) so the image never overlaps. Minimal §3-local change and endorsed by the design review ("select a kernel physical range wholly outside USER_PT_WINDOW"), but edits a pinned SSOT constant with a documented rationale (lowest 2 MiB base above the AP envelope, max low RAM) and derives `MM_KERNEL_IMAGE_BASE` off it; §7 could move it back once the ceiling/user base is retired.
 - **(c) Shrink the image below 6 MiB** so it fits [0x200000, 0x800000): not viable --
   the kernel is 6.99 MiB and growing; this is the exact pressure the relocation
   exists to relieve.

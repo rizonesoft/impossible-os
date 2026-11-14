@@ -69,7 +69,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 1. Version Manifest API `[Sonnet]`
+## 1. Version Manifest API
 
 **Hosting:** GitHub Pages (`gh-pages` branch of `rizonesoft/impossible-os-updates`)
 **URL:** `GET https://impossible-os.dev/api/version?channel=<channel>`
@@ -102,7 +102,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 2. CDN & Hosting `[Sonnet]`
+## 2. CDN & Hosting
 
 **Sources:** GitHub Releases (disk images, ISO ≤ 2 GB), Cloudflare R2 free tier (IPKG packages)
 
@@ -117,7 +117,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 3. Release Promotion Pipeline `[Sonnet]`
+## 3. Release Promotion Pipeline
 
 > Every CI green build auto-lands on `dev`; humans promote to `beta` then `stable`.
 
@@ -142,7 +142,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 4. IPKG Package Repository `[Sonnet]`
+## 4. IPKG Package Repository
 
 **URL:** `GET https://pkg.impossible-os.dev/index.json`
 
@@ -175,7 +175,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 5. Package Submission `[Sonnet]`
+## 5. Package Submission
 
 **Mechanism:** GitHub PR to `rizonesoft/impossible-os-packages` repository
 
@@ -196,7 +196,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 6. Update Delta Packages `[Sonnet]`
+## 6. Update Delta Packages
 
 > File-level delta: find changed files between two versions, package them into a small
 > `.zip` with a `delta.ini` manifest. 10–50× smaller than a full image update for minor
@@ -230,7 +230,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 7. Telemetry Pipeline `[Sonnet]`
+## 7. Telemetry Pipeline
 
 > Server-side receiver only. On-OS sender (`telemetry_record_event`, privacy.cpl,
 > `Telemetry=0` default) is specced in `10-platform-services/TODO-12 §10`.
@@ -250,7 +250,7 @@ and Cloudflare R2 -- no live server to maintain.
 
 ---
 
-## 8. Status Page `[Sonnet]`
+## 8. Status Page
 
 **URL:** `https://status.impossible-os.dev/` -- static site, GitHub Pages
 
@@ -284,13 +284,7 @@ and Cloudflare R2 -- no live server to maintain.
 | ⭐  | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` -- minimal   | ✅ Varies (Canonical status.ubuntu.com, etc.)     | ⬜ §8 -- GitHub Actions every 5 min                                      |
 | 💎  | Release promotion pipeline                         | ✅ Windows Insider rings; WUfB rings           | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 -- `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
 
-Impossible OS's `⭐` advantage: the entire update delivery chain -- manifest, CDN, package
-repo, delta generation, telemetry, and status page -- runs on free-tier GitHub Pages,
-GitHub Releases, and Cloudflare (R2 + Workers + D1) with zero server bills. The public
-Grafana telemetry dashboard (`stats.impossible-os.dev`) gives the community real OS
-adoption numbers from day one, something Windows 11 has never offered publicly. Delta
-updates using the same BLAKE2b-160 hash already in the kernel keep minor updates under
-15 MB in typical cases.
+Impossible OS's `⭐` advantage: the entire update delivery chain -- manifest, CDN, package repo, delta generation, telemetry, and status page -- runs on free-tier GitHub Pages, GitHub Releases, and Cloudflare (R2 + Workers + D1) with zero server bills. The public Grafana telemetry dashboard (`stats.impossible-os.dev`) gives the community real OS adoption numbers from day one, something Windows 11 has never offered publicly. Delta updates using the same BLAKE2b-160 hash already in the kernel keep minor updates under 15 MB in typical cases.
 
 ---
 

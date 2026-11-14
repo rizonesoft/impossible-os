@@ -53,7 +53,7 @@ title: "TODO-03 -- Volume Management & Auto-mount"
 
 ---
 
-## 1. Filesystem Probe Chain + Drive-Letter Assignment `[Opus]`
+## 1. Filesystem Probe Chain + Drive-Letter Assignment
 
 Implement `vfs_probe(blkdev)` as a priority-ordered filesystem probe that auto-assigns drive letters and populates Registry entries. Replace the hardcoded type-field checks in `partition_mount_filesystems()`.
 
@@ -72,7 +72,7 @@ Implement `vfs_probe(blkdev)` as a priority-ordered filesystem probe that auto-a
 - [ ] Log: `[VFS] Mounted %c: (%s, "%s", %llu GB)` for each successful mount
 - [ ] Commit: `"fs: vfs_probe() -- priority probe chain, drive-letter assignment, Registry population"`
 
-## 2. Boot Mount Sequence Rewrite `[Sonnet]`
+## 2. Boot Mount Sequence Rewrite
 
 Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` with `vfs_auto_assign_letters()`. Preserve existing X: (BlackBox) and debug-flag detection behaviour.
 
@@ -90,7 +90,7 @@ Replace the hardcoded `partition_mount_filesystems()` call in `boot_storage.c` w
     - Fix: allocate `max(512, sector_size)` (or skip devices whose sector size exceeds the buffer until the optical probe owns them), in both functions; add a unit test with a fake 2048-byte blkdev.
 - [ ] Commit: `"boot: rewire partition mount to vfs_auto_assign_letters()"`
 
-## 3. USB Hot-Plug Volume Arrival `[Opus]`
+## 3. USB Hot-Plug Volume Arrival
 
 On USB MSC hot-plug event from the xHCI driver, probe the new block device, auto-assign a drive letter, mount the filesystem, update the File Manager sidebar, and show a desktop toast.
 
@@ -106,7 +106,7 @@ On USB MSC hot-plug event from the xHCI driver, probe the new block device, auto
 - [ ] File Manager sidebar: `desktop_sidebar_add_drive(letter)` posts a message to the File Manager's drive-list window; `desktop_sidebar_remove_drive(letter)` removes it
 - [ ] Commit: `"fs: USB hot-plug mount -- vfs_hotplug_attach/detach, toast, sidebar, deferred probe"`
 
-## 4. USB Safe Removal `[Sonnet]`
+## 4. USB Safe Removal
 
 Implement safe-remove: tray icon right-click menu → flush + journal + unmount → USB stack port power-down → toast confirmation.
 
@@ -121,7 +121,7 @@ Implement safe-remove: tray icon right-click menu → flush + journal + unmount 
 - [ ] Force-unmount: close all VFS nodes with `vfs_node_t.ref_count > 0` for the drive; log `[VFS] Force-unmount %c: after timeout -- %u handles closed`
 - [ ] Commit: `"fs: USB safe removal -- cache/journal flush, handle drain, force-unmount, port power-off"`
 
-## 5. Manual `mount` / `umount` Shell Commands `[Sonnet]`
+## 5. Manual `mount` / `umount` Shell Commands
 
 Add `mount` and `umount` as built-in shell commands. `mount` with no args prints a drive table. `umount` flushes and unmounts gracefully.
 
@@ -136,7 +136,7 @@ Add `mount` and `umount` as built-in shell commands. `mount` with no args prints
 - [ ] Register in `src/shell/shell.c` dispatch table
 - [ ] Commit: `"shell: mount/umount commands -- drive table, probe-mount, safe unmount"`
 
-## 6. Win32 Volume Query APIs `[Sonnet]`
+## 6. Win32 Volume Query APIs
 
 Implement `GetLogicalDrives()`, `GetDriveTypeW()`, `GetVolumeInformationW()`, `SetVolumeLabelW()`, and `QueryDosDeviceW()` backed by the Registry entries written in §1.
 
@@ -152,7 +152,7 @@ Implement `GetLogicalDrives()`, `GetDriveTypeW()`, `GetVolumeInformationW()`, `S
 - [ ] `QueryDosDeviceW(lpDeviceName, lpTargetPath, ucchMax)`: if `lpDeviceName` is `"C:"` etc., return Registry `Device` path; if NULL, enumerate all drive letters
 - [ ] Commit: `"win32: volume APIs -- GetLogicalDrives, GetVolumeInformation, SetVolumeLabel, QueryDosDevice"`
 
-## 7. Optical Drive Handling `[Sonnet]`
+## 7. Optical Drive Handling
 
 Auto-detect ATAPI/SCSI CD-ROM drives, assign next drive letter, mount as ISO 9660 (read-only). Implement tray-open command. Add autorun stub (disabled by default).
 
@@ -169,7 +169,7 @@ Auto-detect ATAPI/SCSI CD-ROM drives, assign next drive letter, mount as ISO 966
 - [ ] Log: `[VFS] Mounted %c: (ISO9660/Joliet, "%s", read-only)` or `[VFS] Disc inserted in %c: -- autorun disabled`
 - [ ] Commit: `"fs: ISO9660/Joliet mount, ATAPI eject, autorun stub (disabled by default)"`
 
-## 8. Volume Control Ioctls `[Sonnet]`
+## 8. Volume Control Ioctls
 
 Implement `NtFsControlFile` FSCTL codes needed by backup software and system tools: `FSCTL_IS_VOLUME_DIRTY`, `FSCTL_LOCK_VOLUME`, `FSCTL_UNLOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`. Add `ixfs_snapshot_create()` as a VSS shadow copy stub.
 

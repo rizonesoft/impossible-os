@@ -45,11 +45,11 @@ It cannot be used yet. Ctrl+C is taken by the keyboard driver for SIGINT, and si
 
 Everything:
 
-- [Kernel Clipboard Buffer](../../todo/09-desktop-shell/TODO-01-clipboard.md#1-kernel-clipboard-buffer-sonnet)
-- [Keyboard Shortcut Wiring](../../todo/09-desktop-shell/TODO-01-clipboard.md#2-keyboard-shortcut-wiring-opus), including the change to the keyboard driver's Ctrl+C path
-- [Win32 Clipboard API Stubs](../../todo/09-desktop-shell/TODO-01-clipboard.md#3-win32-clipboard-api-stubs-sonnet)
-- [Clipboard History](../../todo/09-desktop-shell/TODO-01-clipboard.md#4-clipboard-history-sonnet)
-- [Multi-Format Clipboard](../../todo/09-desktop-shell/TODO-01-clipboard.md#5-multi-format-clipboard-sonnet)
+- [Kernel Clipboard Buffer](../../todo/09-desktop-shell/TODO-01-clipboard.md#1-kernel-clipboard-buffer)
+- [Keyboard Shortcut Wiring](../../todo/09-desktop-shell/TODO-01-clipboard.md#2-keyboard-shortcut-wiring), including the change to the keyboard driver's Ctrl+C path
+- [Win32 Clipboard API Stubs](../../todo/09-desktop-shell/TODO-01-clipboard.md#3-win32-clipboard-api-stubs)
+- [Clipboard History](../../todo/09-desktop-shell/TODO-01-clipboard.md#4-clipboard-history)
+- [Multi-Format Clipboard](../../todo/09-desktop-shell/TODO-01-clipboard.md#5-multi-format-clipboard)
 
 Text selection in controls is a prerequisite owned by the widget work in [Extended Widget Library: Core Controls](../graphics/widget-library.md).
 

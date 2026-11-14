@@ -54,11 +54,11 @@ Photos cannot be launched yet. The image pipeline it will use runs at every boot
 
 Nothing in this roadmap has started:
 
-- [Image Loading and Display](../../todo/11-apps/TODO-11-photos-image-viewer.md#1-image-loading--display-sonnet)
-- [Zoom and Pan](../../todo/11-apps/TODO-11-photos-image-viewer.md#2-zoom--pan-sonnet) and [Folder Navigation and Thumbnail Strip](../../todo/11-apps/TODO-11-photos-image-viewer.md#3-folder-navigation--thumbnail-strip-sonnet)
-- [Toolbar and Menus](../../todo/11-apps/TODO-11-photos-image-viewer.md#4-toolbar--menus-sonnet), whose Set as Wallpaper step needs `wallpaper_set()` from the [Desktop Shell Features](../graphics/desktop-shell-features.md) roadmap, which also moves the setting to `HKCU\Control Panel\Desktop`
-- [Slideshow](../../todo/11-apps/TODO-11-photos-image-viewer.md#5-slideshow-sonnet), [EXIF Metadata Panel](../../todo/11-apps/TODO-11-photos-image-viewer.md#6-exif-metadata-panel-opus) and [Basic Editing](../../todo/11-apps/TODO-11-photos-image-viewer.md#7-basic-editing-opus)
-- [File Associations and App Registration](../../todo/11-apps/TODO-11-photos-image-viewer.md#8-file-associations--app-registration-sonnet)
+- [Image Loading and Display](../../todo/11-apps/TODO-11-photos-image-viewer.md#1-image-loading--display)
+- [Zoom and Pan](../../todo/11-apps/TODO-11-photos-image-viewer.md#2-zoom--pan) and [Folder Navigation and Thumbnail Strip](../../todo/11-apps/TODO-11-photos-image-viewer.md#3-folder-navigation--thumbnail-strip)
+- [Toolbar and Menus](../../todo/11-apps/TODO-11-photos-image-viewer.md#4-toolbar--menus), whose Set as Wallpaper step needs `wallpaper_set()` from the [Desktop Shell Features](../graphics/desktop-shell-features.md) roadmap, which also moves the setting to `HKCU\Control Panel\Desktop`
+- [Slideshow](../../todo/11-apps/TODO-11-photos-image-viewer.md#5-slideshow), [EXIF Metadata Panel](../../todo/11-apps/TODO-11-photos-image-viewer.md#6-exif-metadata-panel) and [Basic Editing](../../todo/11-apps/TODO-11-photos-image-viewer.md#7-basic-editing)
+- [File Associations and App Registration](../../todo/11-apps/TODO-11-photos-image-viewer.md#8-file-associations--app-registration)
 
 WebP and TIFF are not decodable: stb_image has no decoder for either, so those formats need a new decoder before Photos can open them; that choice is filed in section 1. The desktop shell's utilities roadmap also plans a basic image viewer in its section 3; this roadmap is the full app.
 

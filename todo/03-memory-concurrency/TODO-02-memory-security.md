@@ -56,7 +56,7 @@ title: "TODO-02 -- Memory Security Hardening"
 
 ---
 
-## 1. User-Space ASLR `[Opus]`
+## 1. User-Space ASLR
 
 Randomize stack, heap, and mmap base addresses for every user process at launch -- always on, no per-binary opt-in. Seed from `RDRAND ^ PIT ticks` so the entropy is hardware-backed and unpredictable across reboots.
 
@@ -74,7 +74,7 @@ Randomize stack, heap, and mmap base addresses for every user process at launch 
 - [ ] All offsets must be page-aligned; log chosen bases to serial at process spawn (debug builds only)
 - [ ] Commit: `"mm: user-space ASLR -- mandatory for all processes, RDRAND seed"`
 
-## 2. KASLR -- Kernel Address Space Randomization `[Opus]`
+## 2. KASLR -- Kernel Address Space Randomization
 
 > **Superseded by TODO-10 §14** (KASLR: RDRAND Kernel Load Address). Kernel-security-hardening is the live owner of the SMEP/SMAP/KASLR/KPTI capability set (it holds the shipped code and review stamps; forked-ownership resolved 2026-07-16). This section is retained as the memory-subsystem view only; do not implement it here -- track KASLR under TODO-10 §14.
 
@@ -94,7 +94,7 @@ Randomize the kernel's virtual load base at each boot so a kernel pointer leak c
 - [ ] Write `HKLM\SYSTEM\Security\KASLR` = 1 after Registry is ready
 - [ ] Commit: `"mm: KASLR -- kernel address randomization via RDRAND bootloader offset"`
 
-## 3. SMEP `[Opus]`
+## 3. SMEP
 
 > **Superseded by TODO-10 §2** (SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers). Kernel-security-hardening owns SMEP/SMAP enablement (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §2.
 
@@ -112,7 +112,7 @@ Supervisor Mode Execution Prevention: the CPU faults if the kernel attempts to e
 - [ ] Apply same SMEP enable in `ap_cpu_harden()` for every AP (→ XREF `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5`)
 - [ ] Commit: `"mm: SMEP -- set CR4.SMEP, boot log, AP parity"`
 
-## 4. SMAP + `copy_from_user` / `copy_to_user` `[Opus]`
+## 4. SMAP + `copy_from_user` / `copy_to_user`
 
 > **Superseded by TODO-10 §2** (SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers). Kernel-security-hardening owns SMAP enablement and the `copy_from_user`/`copy_to_user` wrappers (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §2.
 
@@ -134,7 +134,7 @@ Supervisor Mode Access Prevention: the CPU faults on any kernel access to a user
 - [ ] **Bulk-copy path in `copy_from_user`/`copy_to_user`** (`cpu_security.c`): replace the byte-at-a-time loop with a word/qword bulk copy inside the `stac`/`clac` window (per-byte fault-injection entry preserved). (TODO-13 §1 perf)
 - [ ] Commit: `"mm: SMAP -- CR4.SMAP + copy_from_user / copy_to_user wrappers, syscall audit"`
 
-## 5. NX / DEP Mapping Audit `[Opus]`
+## 5. NX / DEP Mapping Audit
 
 Confirm `EFER.NXE` is set and audit every kernel and user data mapping to ensure the NX (No-Execute) bit is applied -- no data page should ever be executable.
 
@@ -151,7 +151,7 @@ Confirm `EFER.NXE` is set and audit every kernel and user data mapping to ensure
 - [ ] Boot log: `[NX] EFER.NXE confirmed; all data mappings carry NX`
 - [ ] Commit: `"mm: NX/DEP audit -- confirm EFER.NXE, NX on all data pages"`
 
-## 6. KPTI Basic `[Opus]`
+## 6. KPTI Basic
 
 > **Superseded by TODO-10 §3-§6** (KPTI trampoline page, SYSCALL CR3 swap, IDT CR3 swap, user CR3 allocation). Kernel-security-hardening is the live owner of KPTI and holds `src/kernel/kpti_trampoline.asm` (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §3-§6.
 
@@ -170,7 +170,7 @@ Maintain a minimal user-visible page table that maps only the syscall entry tram
 - [ ] Boot log: `[KPTI] active -- user PML4 contains trampoline only`
 - [ ] Commit: `"mm: KPTI basic -- per-mode PML4 + trampoline CR3 swap at syscall boundary"`
 
-## 7. CET Shadow Stack Stub `[Opus]`
+## 7. CET Shadow Stack Stub
 
 Probe for Intel CET (Control-flow Enforcement Technology) shadow stacks; if the hardware supports it, enable the feature and stub in the `NtSetInformationThread` hook so user-mode code can opt in.
 
@@ -183,7 +183,7 @@ Probe for Intel CET (Control-flow Enforcement Technology) shadow stacks; if the 
 - [ ] Boot log: `[CPU] CET shadow stack: enabled` or `[CPU] CET shadow stack: not supported`
 - [ ] Commit: `"mm: CET shadow stack -- probe, enable if present, NtSetInformationThread stub"`
 
-## 8. Security Layout Report `[Sonnet]`
+## 8. Security Layout Report
 
 Surface the active security configuration to diagnostics, the registry, and user-mode queries so tools, the task manager, and future security policy code can inspect the state.
 

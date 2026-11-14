@@ -42,8 +42,8 @@ It cannot be used yet.
 
 ## What is not implemented yet?
 
-- **FTP**: [FTP Protocol](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#1-ftp-protocol-sonnet), [FTP Shell + GUI Integration](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#2-ftp-shell--gui-integration-sonnet) and [FTPS / FTPES](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#3-ftps--ftpes-sonnet).
-- **SSH**: [SSH2 Transport Layer](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#4-ssh2-transport-layer-opus), [SSH Authentication](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#5-ssh-authentication-opus), [SSH Channel + PTY](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#6-ssh-channel--pty-sonnet), [SSH Shell Integration](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#7-ssh-shell-integration-sonnet), [SSH Agent Stub](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#8-ssh-agent-stub-sonnet) and [SFTP Subsystem](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#9-sftp-subsystem-opus).
+- **FTP**: [FTP Protocol](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#1-ftp-protocol), [FTP Shell + GUI Integration](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#2-ftp-shell--gui-integration) and [FTPS / FTPES](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#3-ftps--ftpes).
+- **SSH**: [SSH2 Transport Layer](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#4-ssh2-transport-layer), [SSH Authentication](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#5-ssh-authentication), [SSH Channel + PTY](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#6-ssh-channel--pty), [SSH Shell Integration](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#7-ssh-shell-integration), [SSH Agent Stub](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#8-ssh-agent-stub) and [SFTP Subsystem](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#9-sftp-subsystem).
 - **Windows shares**: [Network Browsing and SMB Client](../../todo/07-networking/TODO-08-ssh-ftp-clients.md#10-network-browsing-and-smb-client).
 - **Not planned**: RSA and ECDSA keys, other SSH ciphers, and an SSH server.
 

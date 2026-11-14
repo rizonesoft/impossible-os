@@ -49,9 +49,9 @@ Boot normally to see the splash (`bash scripts/build.sh run`), or hold F8 in the
 
 ## What is not implemented yet?
 
-- [Boot Splash Renderer](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#1-boot-splash-renderer-sonnet) (the progress bar) and [Loading Spinner](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#2-loading-spinner-sonnet) (the design size).
-- [Build Pipeline](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#3-build-pipeline-sonnet) (the design layout) and [Boot Progress Milestones](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#4-boot-progress-milestones-sonnet).
-- [F8 Boot Menu](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#5-f8-boot-menu-opus), which now also owns making safe mode actually skip the desktop and the network.
+- [Boot Splash Renderer](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#1-boot-splash-renderer) (the progress bar) and [Loading Spinner](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#2-loading-spinner) (the design size).
+- [Build Pipeline](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#3-build-pipeline) (the design layout) and [Boot Progress Milestones](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#4-boot-progress-milestones).
+- [F8 Boot Menu](../../todo/08-graphics-ui/TODO-13-boot-splash-recovery.md#5-f8-boot-menu), which now also owns making safe mode actually skip the desktop and the network.
 - Crash-loop protection and the crash-screen restart: [Crash Statistics and Loop Protection](../../todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md#7-crash-statistics--loop-protection).
 
 ## How does it compare with Windows 11 and Linux?

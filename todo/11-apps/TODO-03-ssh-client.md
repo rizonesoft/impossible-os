@@ -57,7 +57,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 1. SSH2 Transport Layer `[Opus]`
+## 1. SSH2 Transport Layer
 
 > → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §4` -- base implementation spec.
 > This section specifies the RFC 4253 key derivation, ChaCha20-Poly1305 packet framing, and
@@ -84,7 +84,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 2. SSH Authentication `[Opus]`
+## 2. SSH Authentication
 
 > → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §5`
 
@@ -105,7 +105,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 3. Interactive Channel + PTY Relay `[Sonnet]`
+## 3. Interactive Channel + PTY Relay
 
 > → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §6`
 
@@ -124,7 +124,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 4. Shell Integration + TOFU + Known Hosts `[Sonnet]`
+## 4. Shell Integration + TOFU + Known Hosts
 
 > → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §7`
 
@@ -144,7 +144,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 5. SCP File Transfer `[Sonnet]`
+## 5. SCP File Transfer
 
 **Source file:** `src/apps/ssh/scp.c`; shell command `src/shell/cmd_scp.c`
 
@@ -167,7 +167,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 6. SSH Config File `[Sonnet]`
+## 6. SSH Config File
 
 > → XREF: `10-platform-services/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
 
@@ -195,7 +195,7 @@ title: "TODO-03 -- SSH Client"
 
 ---
 
-## 7. sftp Command (Stretch) `[Sonnet]`
+## 7. sftp Command (Stretch)
 
 > → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §9` -- SFTP subsystem protocol spec
 
@@ -230,9 +230,7 @@ title: "TODO-03 -- SSH Client"
 | ⭐  | Windows-style SSH config                           | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create                   |
 | 💎  | Interactive SFTP subsystem                         | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol                   |
 
-Impossible OS stores known hosts natively in the Registry (no hidden dotfiles), auto-generates
-Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API -- no POSIX
-pty layer, no ConPTY shim.
+Impossible OS stores known hosts natively in the Registry (no hidden dotfiles), auto-generates Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API -- no POSIX pty layer, no ConPTY shim.
 
 ---
 

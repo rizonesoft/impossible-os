@@ -52,7 +52,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 
 ---
 
-## 1. Minimize / Maximize / Restore `[Sonnet]`
+## 1. Minimize / Maximize / Restore
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
@@ -80,7 +80,7 @@ Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` 
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"wm: minimize/maximize/restore -- WM_FLAG_MINIMIZED/MAXIMIZED, saved_rect, Registry persist"`
 
-## 2. Window Decorations `[Sonnet]`
+## 2. Window Decorations
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
@@ -109,7 +109,7 @@ Per `docs/design/shell.md#window-chrome`: corner radius `THEME_RADIUS_WINDOW` (8
   - Grab zone per `docs/design/shell.md#window-chrome`; add an overflow check on `width * height * 4` in `wm_resize_window()` and `wm_create_window()`
 - [ ] Commit: `"wm: decorations -- Mica titlebar, Fluent chrome buttons, hover states, drop shadow"`
 
-## 3. Snap Layouts `[Sonnet]`
+## 3. Snap Layouts
 
 **Design:** [`shell.md#snap-layouts`](../../docs/design/shell.md#snap-layouts)
 
@@ -132,7 +132,7 @@ Per `docs/design/shell.md#snap-layouts`: hovering the maximize button for `THEME
 - [ ] Keyboard snap: Win+← → left half; Win+→ → right half; Win+↑ → `wm_maximize`; Win+↓ → `wm_restore` (registered in §5 hotkey table)
 - [ ] Commit: `"wm: snap layouts -- six-layout flyout, Win+Z and Win+arrow keyboard snap, edge-drag preview"`
 
-## 4. Desktop Icons `[Sonnet]`
+## 4. Desktop Icons
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
@@ -154,7 +154,7 @@ Per `docs/design/shell.md#snap-layouts`: hovering the maximize button for `THEME
 - [ ] Initial layout: column-major from the top-left, `x = 8 + col*76`, `y = 8 + row*86`, filling each column down to the taskbar before starting the next
 - [ ] Commit: `"desktop: icons -- load from Desktop/, 76x86 column-major grid, select/launch, drag cell snap, Registry"`
 
-## 5. Keyboard Shortcuts & Task Switching `[Sonnet]`
+## 5. Keyboard Shortcuts & Task Switching
 
 **Design:** [`shell.md#alttab`](../../docs/design/shell.md#alttab)
 
@@ -177,7 +177,7 @@ Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all),
 - [ ] `int hotkeys_handle(uint8_t modifiers, uint8_t scancode)` → 1 if consumed, 0 if pass-through; called from desktop keyboard loop before focused window
 - [ ] Commit: `"desktop: hotkeys -- Win+D/M/Shift+M/L, Alt+F4, Win+arrows, Win+number, dispatch table"`
 
-## 6. Alt+Tab Task Switcher `[Opus]`
+## 6. Alt+Tab Task Switcher
 
 **Design:** [`shell.md#alttab`](../../docs/design/shell.md#alttab)
 
@@ -204,7 +204,7 @@ Per `docs/design/shell.md#alttab`: a row of window thumbnails centred on screen 
   - centred
 - [ ] Commit: `"desktop: Alt+Tab switcher -- compositor thumbnails, overlay panel, fade, focus on release"`
 
-## 7. Drag and Drop `[Opus]`
+## 7. Drag and Drop
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
@@ -224,7 +224,7 @@ Intra-desktop: drag desktop icon to reposition (§4 extends). File drag from Fil
 - [ ] Verify window title-bar drag and edge-resize use `wm_get_drag_dirty_rect()` optimization path; add if missing
 - [ ] Commit: `"desktop: drag+drop -- ghost window, file drag to desktop, drag_start/end/tick protocol"`
 
-## 8. Compositor Performance `[Opus]`
+## 8. Compositor Performance
 
 **Design:** [`shell.md#materials`](../../docs/design/shell.md#materials)
 

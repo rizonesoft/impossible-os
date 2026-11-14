@@ -17,9 +17,9 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 > `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` are migrated here.
 > **Do not delete that file** -- remaining sections are covered in TODO-13.
 >
-> **Scope overlap:** `09-desktop-shell/TODO-12-utilities.md §4` specifies the Win+Shift+S
-> region capture flow and `§5` specifies Archive Manager; `08-graphics-ui/TODO-09` §5 owns basic
-> PrtSc capture. Ownership is being settled by the items at the top of §1 and §4 below.
+> **Scope overlap:** §6 of this file (moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md`) specifies the Win+Shift+S
+> region capture flow and §7 specifies Archive Manager; `08-graphics-ui/TODO-09` §5 owns basic
+> PrtSc capture. This file owns both since 2026-11-14; the items at the top of §1, §4, §6 and §7 settle the remaining differences inside it.
 >
 > **Global hotkeys** use `struct hotkey_entry` + `hotkey_table[32]` from
 > `08-graphics-ui/TODO-08-window-manager.md §5`.
@@ -66,15 +66,17 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 | 3    | Snipping Tool UI                | 💎    | §1 + §2 capture complete, `CTRL_*` widgets                           |
 | 4    | Archive Manager                 | 💎    | `zip_open/create/add_file/extract/list` APIs (D12T01 §4)             |
 | 5    | ZIP Shell Integration           | 💎    | §4 stable, `file_assoc_set`, context menu verbs                      |
+| 6    | Screenshot Enhancements         | 💎    | --                                                                   |
+| 7    | Archive Manager                 | 💎    | --                                                                   |
 
 ---
 
-## 1. Full + Window Capture + Hotkeys `[Sonnet]`
+## 1. Full + Window Capture + Hotkeys
 
 **Source file:** `src/apps/snip/screenshot.c`; header `include/apps/snip/screenshot.h`
 
 - [ ] Settle screenshot ownership (item: "Settle screenshot ownership") before coding: `08-graphics-ui/TODO-09` §5 owns PrtSc and Alt+PrtSc (`src/desktop/screenshot.c`)
-  - `09-desktop-shell/TODO-12-utilities.md` §4 owns Win+Shift+S; this file restates both under `src/apps/snip/`. Keep capture in one place and only the snipping window and annotation here.
+  - §6 of this file owns Win+Shift+S; §1 and §2 restate both under `src/apps/snip/`. Keep capture in one place and only the snipping window and annotation here.
 - [ ] **`screenshot_full()`**:
   - [ ] `uint32_t *fb = fb_get_backbuffer()` → copy `fb_w * fb_h * 4` bytes into `image_t g_capture` (allocated via `pmm_alloc_contiguous`)
   - [ ] Build path: `"C:\\Users\\{name}\\Pictures\\Screenshots\\Screenshot_{YYYY-MM-DD_HH-MM-SS}.png"` using `time_now()` fields
@@ -95,7 +97,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ---
 
-## 2. Region Select Overlay `[Opus]`
+## 2. Region Select Overlay
 
 **Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
@@ -124,7 +126,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ---
 
-## 3. Snipping Tool UI `[Sonnet]`
+## 3. Snipping Tool UI
 
 **Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -148,13 +150,13 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ---
 
-## 4. Archive Manager `[Sonnet]`
+## 4. Archive Manager
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
 **Source file:** `src/apps/archiver/archiver.c`; binary: `archiver.exe`
 
-- [ ] Settle archive manager ownership with `09-desktop-shell/TODO-12-utilities.md` §5 (item: "Settle archive manager ownership"): both plan `src/apps/archiver/archiver.c`; keep one spec
+- [ ] Settle the archive manager spec with the base section §7 of this file: both plan `src/apps/archiver/archiver.c`; keep one spec
 - [ ] **Main window** `wm_create_window("Archive Manager -- {filename}", 700, 500, WM_RESIZABLE)`:
   - [ ] Toolbar: `[Extract All]` `[Add Files]` `[New Archive]` `[Delete Selected]` + path bar showing current virtual path inside archive
   - [ ] `CTRL_LISTVIEW` file list -- columns: Name (250 px), Type (80 px), Size (80 px), Compressed (90 px), Modified (130 px); icon from `icon_get_for_ext(entry_name_ext)`
@@ -173,7 +175,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ---
 
-## 5. ZIP Shell Integration `[Sonnet]`
+## 5. ZIP Shell Integration
 
 **Source file:** `src/apps/archiver/zip_shell.c`
 
@@ -194,6 +196,56 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
   - [ ] Parse tar header blocks (512-byte blocks; fields: name[100], size (octal), typeflag); list + extract files only (no symlink creation); read-only (no write support)
   - [ ] `file_assoc_set(".tar.gz", ...)` + `file_assoc_set(".tgz", ...)` → `archiver.exe`
 
+## 6. Screenshot Enhancements
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §4** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
+
+Win+Shift+S region select mode: full-screen dim overlay in the `smoke` token (`THEME_DARK_SMOKE`, the scrim `docs/design/shell.md` uses for Task View and dialogs), click+drag rubber-band selection, release → capture region. 3-second countdown overlay before capture. Escape cancels. Extends the PrintScreen module of `08-graphics-ui/TODO-09` §5.
+
+**Files:** `src/desktop/screenshot.c` (extend), `include/desktop/screenshot.h` (extend)
+
+> [!NOTE]
+> → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- the existing full-screen PrintScreen capture lives there; §6 here adds Win+Shift+S region mode as an extension. **Region select state machine**: `SCREENSHOT_IDLE → SCREENSHOT_DIM → SCREENSHOT_SELECTING → SCREENSHOT_CAPTURED`. Win+Shift+S → `screenshot_region_start()`: create full-screen overlay window (`z_order=30000`, `WM_FLAG_FULLSCREEN`); fill with the `smoke` scrim via `gfx_fill_rect(s, 0, 0, sw, sh, THEME_DARK_SMOKE)`; the snipping toolbar follows `docs/design/shell.md#snipping-toolbar` (48 px flyout-acrylic bar centred 12 px from the top; Rectangle, Window, Full screen, Freeform toggle buttons; close). **Rubber-band**: `WM_MOUSE_DOWN` → `sel_start_x/y`; `WM_MOUSE_MOVE` → `sel_end_x/y`; render clear rect (XOR-clear or outline) within dim. Release → `screenshot_capture_region(x1, y1, w, h)`: copy compositor back-buffer pixels for that rect → `image_save_bmp()` to `C:\Users\Default\Pictures\Screenshot_{timestamp}.bmp` + `clipboard_set(CLIP_BITMAP, ...)` (TODO-01 multi-format). **3-second countdown**: optional pre-delay for full-screen PrintScreen: overlay countdown "3…2…1" in large centered text; each second via PIT. **Escape** → `screenshot_region_cancel()`: close overlay; restore state to IDLE. Show toast notification after capture: "Screenshot saved to Pictures".
+
+- [ ] Settle screenshot ownership with the earlier sections of this file: §2 restates this region capture
+- [ ] `screenshot_region_start()` -- create dim overlay window; transition to SELECTING state
+- [ ] `WM_MOUSE_DOWN/MOVE/UP` in overlay → rubber-band rect (outline on dim background)
+- [ ] `screenshot_capture_region(x, y, w, h)` -- copy compositor backbuf rect; `image_save_bmp()`; `clipboard_set()`
+- [ ] Countdown overlay for full-screen: `sched_task_add()` 1 s ticks; draw "3/2/1" centred; then capture
+- [ ] Escape handler → `screenshot_region_cancel()` -- destroy overlay
+- [ ] Toast after capture per `docs/design/shell.md#toast-notifications`: `notify_send("Screenshot", "Saved to Pictures", ICON_SCREENSHOT, ...)` (`08-graphics-ui/TODO-11` §5)
+- [ ] Win+Shift+S global hotkey registration
+- [ ] Commit: `"screenshot: region select -- Win+Shift+S, dim overlay, rubber-band, countdown, clipboard+file save"`
+
+## 7. Archive Manager
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §5** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+`src/apps/archiver/archiver.c`; open `.zip` via file association; `CTRL_LISTVIEW` (Name/Size/Compressed/Modified); `icon_for_extension()` per entry; Extract All, Add Files, New archive; status bar.
+
+**Files:** `src/apps/archiver/archiver.c` (new), `include/apps/archiver.h` (new)
+
+> [!NOTE]
+> Window: 700×500 px. Open archive: `zip_open(path)` → `zip_list(archive, entries, 512)` → populate `CTRL_LISTVIEW` with 4 columns (Name 240/Size 70/Compressed 90/Modified 120). Icon per entry: `icon_for_extension(ext)`. Double-click entry: extract single file to temp dir + `file_assoc_open()`. **Command bar** (48 px, subtle buttons): "Extract All" → `dialog_file_open(dir_mode)` → `zip_extract(archive, dst_dir)` → `filemgr_navigate(dst_dir)`; "Add Files" → `dialog_file_open(multi)` → for each: `zip_add_file(archive, path, basename(path))`; "New" → `dialog_file_save("New Archive", "*.zip")` → `zip_create(path)`. Keyboard: Delete on selected entry → `zip_remove_entry()` stub (note: miniz doesn't support single-entry removal -- must re-pack entire archive). **Status bar**: "{N} items -- {total_size} bytes -- {compressed_size} bytes ({ratio}% compression)". **File association**: `.zip` → archiver registered in TODO-02 `file_assoc` defaults.
+
+- [ ] Settle archive manager ownership with the earlier sections of this file: §4 plans the same `archiver.c`
+- [ ] `void archiver_open(const char *path)` -- `zip_open()`; `zip_list()`; build `CTRL_LISTVIEW`
+- [ ] `void archiver_refresh(void)` -- re-`zip_list()`; update listview + status bar
+- [ ] Toolbar: Extract All → `dialog_file_open(dir)` → `zip_extract()`; Add Files → multi-select → `zip_add_file()` each; New → `dialog_file_save()` → `zip_create()`
+- [ ] Double-click entry: `zip_extract_file()` to `C:\Temp\` → `file_assoc_open()`
+- [ ] Status bar: entry count + total size + compressed size + ratio
+- [ ] Entry delete: re-pack archive: extract all to temp → remove file → re-create archive from remaining files
+- [ ] Register `.zip` in file associations (TODO-02 §1 default assocs)
+- [ ] Commit: `"archiver: archive manager -- CTRL_LISTVIEW, Extract All/Add Files/New, status bar, zip API"`
+
 ---
 
 ## OS Comparison
@@ -212,11 +264,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 | 💎  | "Extract Here" / "Send to Compressed" context verbs            | ✅ Explorer shell extension built-in       | ✅ Nautilus / Dolphin                  | ⬜ §5 -- `context_menu_register_verb` for `.zip` and `*`          |
 | 💎  | `.tar.gz` read support                                         | ✅ Explorer (via third-party or WSL)       | ✅ tar built-in                        | ⬜ §5 -- (Stretch) -- ; gzip header                               |
 
-Impossible OS bundles the post-capture annotation toolbar as an intrinsic part of the
-screenshot flow -- capturing, copying to clipboard, toasting, and offering instant annotation
-launch in one gesture -- with no separate "Snipping Tool" app required to open. The clear-region
-dim overlay is composited using the existing WM z-order layer rather than a system-mode
-overlay hack, keeping the implementation fully app-level.
+Impossible OS bundles the post-capture annotation toolbar as an intrinsic part of the screenshot flow -- capturing, copying to clipboard, toasting, and offering instant annotation launch in one gesture -- with no separate "Snipping Tool" app required to open. The clear-region dim overlay is composited using the existing WM z-order layer rather than a system-mode overlay hack, keeping the implementation fully app-level.
 
 ---
 

@@ -53,7 +53,7 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 
 ---
 
-## 1. Recycle Bin Core `[Sonnet]`
+## 1. Recycle Bin Core
 
 `trash_delete(path)`: move to `C:\Recycle\trash_{counter}\`, write `C:\Recycle\_meta\trash_{counter}.meta` INI (`OriginalPath`, `OriginalName`, `DeletedAt`, `Size`). `trash_restore(trash_name)`: read meta → `vfs_rename` back → delete meta. `trash_restore_all()`, `trash_empty()`, `trash_count()`, `trash_size()`. Auto-purge oldest when `MaxSize` exceeded.
 
@@ -74,7 +74,7 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 - [ ] `trash_init()` called from `kernel_main()` after VFS and Registry are live
 - [ ] Commit: `"trash: recycle bin core -- counter-keyed slots, INI meta, restore/empty/count/size, auto-purge"`
 
-## 2. Recycle Bin Window App `[Sonnet]`
+## 2. Recycle Bin Window App
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`shell.md#file-explorer`](../../docs/design/shell.md#file-explorer)
 
@@ -97,7 +97,7 @@ As on Windows 11, the Recycle Bin opens as a File Explorer location, not a separ
 - [ ] `Ctrl+A` key handler: `ctrl_listview_select_all(listview_handle)`
 - [ ] Commit: `"recycle_bin: File Explorer location -- details view, command bar restore/empty, right-click, date+size format"`
 
-## 3. miniz ZIP Library Integration `[Sonnet]`
+## 3. miniz ZIP Library Integration
 
 miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build. Its freestanding port is owned by 02-kernel-core/TODO-03 §4, which rejects a `kmalloc` redirect: the inflate (~43 KiB) and deflate (~150 KiB) states exceed the 4 KiB `kmalloc` ceiling, so the port takes a caller-owned workspace. This section consumes that port: it owns the ZIP workspace for the §4 API and the round-trip test.
 
@@ -112,7 +112,7 @@ miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build
 - [ ] `miniz_test()` in `src/libs/miniz/miniz_test.c`: round-trip test; `klog(LOG_INFO, "miniz", "round-trip: %s", ok ? "PASS" : "FAIL")`
 - [ ] Commit: `"zip: miniz integration -- ZIP workspace owner over the kernel miniz port, round-trip test"`
 
-## 4. ZIP Kernel API `[Sonnet]`
+## 4. ZIP Kernel API
 
 `zip_create(path)`, `zip_add_file(archive, filepath, entry_name)`, `zip_extract(archive, dest_dir)`, `zip_extract_file(archive, entry_name, dest)`, `zip_list(archive, entries[], max)` → count + names + sizes.
 
@@ -134,7 +134,7 @@ miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build
 - [ ] `#define ZIP_ERR_ENCRYPTED -2` in `zip.h`
 - [ ] Commit: `"zip: kernel API -- zip_create/add_file/close/open/extract/list over miniz in-memory mode"`
 
-## 5. ZIP Shell Commands `[Sonnet]`
+## 5. ZIP Shell Commands
 
 `zip <archive.zip> <files…>` creates archive. `unzip <archive.zip> [dest]` extracts to current dir or `dest`. `unzip -l <archive.zip>` lists contents. Error on password-protected archives.
 
@@ -149,7 +149,7 @@ miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build
 - [ ] Register `zip` + `unzip` in command table with usage strings
 - [ ] Commit: `"shell: zip/unzip commands -- create from files, extract with progress, list, encrypted error"`
 
-## 6. Task Scheduler Core `[Sonnet]`
+## 6. Task Scheduler Core
 
 `struct sched_task` (name[32], callback fn ptr, interval_seconds, next_run Unix ts, enabled, last_result). Static 16-entry table. `sched_task_add/remove/enable/tick`. `sched_task_tick()` hooked into PIT once per second.
 
@@ -168,7 +168,7 @@ miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build
 - [ ] `void sched_task_list(sched_task_t *out, int *count)` -- copy all enabled+registered tasks
 - [ ] Commit: `"sched: task scheduler -- 16-slot table, sched_task_tick() PIT-hooked, one-shot support, Registry persist"`
 
-## 7. Built-In Scheduled Tasks `[Sonnet]`
+## 7. Built-In Scheduled Tasks
 
 NTP sync every 3600 s → `ntp_sync()`. Registry flush every 2 s → `registry_flush()`. Search index rebuild every 1800 s → `search_index_rebuild()`. Log rotate every 86400 s → trim `klog.txt` to last 5000 lines. Task configs in `HKLM\SYSTEM\Scheduler\Tasks\{name}\{Interval,Enabled}`.
 
@@ -187,7 +187,7 @@ NTP sync every 3600 s → `ntp_sync()`. Registry flush every 2 s → `registry_f
 - [ ] `int search_index_rebuild(void)` -- stub; `klog(LOG_INFO, "indexd", "search index rebuild")`; return 0
 - [ ] Commit: `"sched: built-in tasks -- ntp_sync/reg_flush/index_rebuild/log_rotate registered, klog_rotate()"`
 
-## 8. `at` Shell Command `[Sonnet]`
+## 8. `at` Shell Command
 
 `at <HH:MM> <command>` schedules one-shot task (interval=0, auto-remove). `at list` shows pending. `at cancel <id>` removes.
 

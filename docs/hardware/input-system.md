@@ -44,14 +44,14 @@ bash scripts/test.sh SUITE=storage
 
 ## What is not implemented yet?
 
-- **Keyboard layouts** ([Keyboard Layout System](../../todo/04-drivers-hardware/TODO-11-input-system.md#1-keyboard-layout-system-sonnet)) and the **built-in set** ([Built-in Layouts](../../todo/04-drivers-hardware/TODO-11-input-system.md#2-built-in-layouts----en-us-en-gb-de-de-fr-fr-es-es-dvorak-sonnet)).
-- **Unicode output** ([UTF-8 / Unicode Codepoint Output](../../todo/04-drivers-hardware/TODO-11-input-system.md#3-utf-8--unicode-codepoint-output-sonnet)) and **dead keys** ([Dead Key Compose](../../todo/04-drivers-hardware/TODO-11-input-system.md#4-dead-key-compose-sonnet)).
-- **Counted packet resynchronisation** ([PS/2 Packet Resync](../../todo/04-drivers-hardware/TODO-11-input-system.md#5-ps2-packet-resync-sonnet)).
-- **Scroll wheel** ([PS/2 Intellimouse Scroll Wheel (ID 3)](../../todo/04-drivers-hardware/TODO-11-input-system.md#6-ps2-intellimouse-scroll-wheel-id-3-sonnet)) and **five buttons** ([Explorer 5-Button Extension (ID 4)](../../todo/04-drivers-hardware/TODO-11-input-system.md#7-explorer-5-button-extension-id-4-sonnet)).
-- **Acceleration and sensitivity** ([Mouse Acceleration + Sensitivity](../../todo/04-drivers-hardware/TODO-11-input-system.md#8-mouse-acceleration--sensitivity-sonnet)).
-- **Raw input grab** for games and remote desktops ([Raw Input Grab API](../../todo/04-drivers-hardware/TODO-11-input-system.md#9-raw-input-grab-api-sonnet)).
-- **Layout switching** with Win+Space ([Layout Switching](../../todo/04-drivers-hardware/TODO-11-input-system.md#10-layout-switching----winspace-tray-indicator-sonnet)).
-- **Sticky Keys and typematic rate** ([Sticky Keys + Typematic Rate](../../todo/04-drivers-hardware/TODO-11-input-system.md#11-sticky-keys--typematic-rate-sonnet)).
+- **Keyboard layouts** ([Keyboard Layout System](../../todo/04-drivers-hardware/TODO-11-input-system.md#1-keyboard-layout-system)) and the **built-in set** ([Built-in Layouts](../../todo/04-drivers-hardware/TODO-11-input-system.md#2-built-in-layouts----en-us-en-gb-de-de-fr-fr-es-es-dvorak)).
+- **Unicode output** ([UTF-8 / Unicode Codepoint Output](../../todo/04-drivers-hardware/TODO-11-input-system.md#3-utf-8--unicode-codepoint-output)) and **dead keys** ([Dead Key Compose](../../todo/04-drivers-hardware/TODO-11-input-system.md#4-dead-key-compose)).
+- **Counted packet resynchronisation** ([PS/2 Packet Resync](../../todo/04-drivers-hardware/TODO-11-input-system.md#5-ps2-packet-resync)).
+- **Scroll wheel** ([PS/2 Intellimouse Scroll Wheel (ID 3)](../../todo/04-drivers-hardware/TODO-11-input-system.md#6-ps2-intellimouse-scroll-wheel-id-3)) and **five buttons** ([Explorer 5-Button Extension (ID 4)](../../todo/04-drivers-hardware/TODO-11-input-system.md#7-explorer-5-button-extension-id-4)).
+- **Acceleration and sensitivity** ([Mouse Acceleration + Sensitivity](../../todo/04-drivers-hardware/TODO-11-input-system.md#8-mouse-acceleration--sensitivity)).
+- **Raw input grab** for games and remote desktops ([Raw Input Grab API](../../todo/04-drivers-hardware/TODO-11-input-system.md#9-raw-input-grab-api)).
+- **Layout switching** with Win+Space ([Layout Switching](../../todo/04-drivers-hardware/TODO-11-input-system.md#10-layout-switching----winspace-tray-indicator)).
+- **Sticky Keys and typematic rate** ([Sticky Keys + Typematic Rate](../../todo/04-drivers-hardware/TODO-11-input-system.md#11-sticky-keys--typematic-rate)).
 
 ## How does it compare with Windows 11 and Linux?
 

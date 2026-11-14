@@ -49,7 +49,7 @@ title: "TODO-01 -- Clipboard System"
 
 ---
 
-## 1. Kernel Clipboard Buffer `[Sonnet]`
+## 1. Kernel Clipboard Buffer
 
 `clip_format_t` enum (`CLIP_TEXT`, `CLIP_IMAGE`, `CLIP_FILES`, `CLIP_HTML`). `struct clipboard_t` (format, `uint8_t *data`, size, source_pid, timestamp). `clipboard_set(fmt, data, size)` deep-copies into PMM/kmalloc-backed buffer. `clipboard_get/has/clear`. `SYS_CLIPBOARD_SET=56` / `SYS_CLIPBOARD_GET=57`.
 
@@ -69,7 +69,7 @@ title: "TODO-01 -- Clipboard System"
 - [ ] `spinlock_t g_clipboard_lock` -- protect `g_clipboard` in `clipboard_set/get/clear`
 - [ ] Commit: `"clipboard: kernel buffer -- clip_format_t, set/get/has/clear, PMM/kmalloc alloc, SYS_CLIPBOARD_SET/GET=56/57"`
 
-## 2. Keyboard Shortcut Wiring `[Opus]`
+## 2. Keyboard Shortcut Wiring
 
 Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused control. `CTRL_TEXTBOX` handles: Ctrl+C reads selection → `clipboard_set(CLIP_TEXT,...)`; Ctrl+X = copy + delete selection; Ctrl+V = `clipboard_get` + insert at cursor. Ctrl+C in terminal with no text selection → SIGINT passthrough (do not intercept).
 
@@ -89,7 +89,7 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 - [ ] Log on each clipboard op: `[clipboard] set TEXT %u bytes from pid %u`, `[clipboard] paste %u bytes → ctrl %p`
 - [ ] Commit: `"clipboard: Ctrl+C/X/V wiring -- textbox selection copy/cut/paste, terminal SIGINT passthrough gate"`
 
-## 3. Win32 Clipboard API Stubs `[Sonnet]`
+## 3. Win32 Clipboard API Stubs
 
 `OpenClipboard(hWnd)` / `CloseClipboard()` no-ops. `SetClipboardData(CF_TEXT, hMem)` → `clipboard_set(CLIP_TEXT,...)`. `GetClipboardData(CF_TEXT)` → `clipboard_get`. `EmptyClipboard()` → `clipboard_clear`. `IsClipboardFormatAvailable(CF)` → `clipboard_has`. `CF_TEXT=1`, `CF_BITMAP=2`, `CF_HDROP=15`.
 
@@ -110,7 +110,7 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 - [ ] CF_UNICODETEXT stub: if `SetClipboardData(CF_UNICODETEXT, ...)`: interpret as UTF-8 passthrough (log warning); forward to `CLIP_TEXT`
 - [ ] Commit: `"win32: clipboard stubs -- OpenClipboard/SetClipboardData/GetClipboardData/IsClipboardFormatAvailable wired to CLIP_*"`
 
-## 4. Clipboard History `[Sonnet]`
+## 4. Clipboard History
 
 **Design:** [`shell.md#clipboard-history`](../../docs/design/shell.md#clipboard-history), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -134,7 +134,7 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 - [ ] `clip_history_format_timestamp(entry->timestamp, buf, 16)` -- "X min ago" / "HH:MM" using `time_to_datetime()` (TODO-10 §1)
 - [ ] Commit: `"clipboard: history -- 25-entry ring, Win+V Acrylic popup, restore+paste, clear all"`
 
-## 5. Multi-Format Clipboard `[Sonnet]`
+## 5. Multi-Format Clipboard
 
 `clipboard_set_multi(entries[], count)` stores up to 4 simultaneous format slots. On single `clipboard_set()`, also derive and store a plain-text rendering. Rich text stub for future use. `clipboard_get_best(preferred[], n_preferred)` returns highest-priority available format.
 

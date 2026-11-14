@@ -62,13 +62,7 @@ title: "TODO-06 -- Android App Compatibility (Research Spike)"
 
 ## Outcome
 
-A `docs/architecture/android-app-compatibility-plan.md` that records: (1) rejected
-options with rationale, (2) recommended phased architecture (likely VM-first), (3)
-host kernel and userland prerequisites table, (4) ABI matrix (ARM64 vs x86_64 vs
-translation), (5) display/input/Wayland bridging sketch, (6) GMS vs pure-AOSP stance,
-(7) effort bands (person-years) and hard dependencies on `TODO-01` / `TODO-02` /
-`TODO-03`. Optional: one-page QEMU command line proving an **off-the-shelf** AOSP x86_64
-or ARM64 emulator image boots with VirtIO console (manual step, not CI).
+A `docs/architecture/android-app-compatibility-plan.md` that records: (1) rejected options with rationale, (2) recommended phased architecture (likely VM-first), (3) host kernel and userland prerequisites table, (4) ABI matrix (ARM64 vs x86_64 vs translation), (5) display/input/Wayland bridging sketch, (6) GMS vs pure-AOSP stance, (7) effort bands (person-years) and hard dependencies on `TODO-01` / `TODO-02` / `TODO-03`. Optional: one-page QEMU command line proving an **off-the-shelf** AOSP x86_64 or ARM64 emulator image boots with VirtIO console (manual step, not CI).
 
 ---
 
@@ -87,7 +81,7 @@ or ARM64 emulator image boots with VirtIO console (manual step, not CI).
 
 ---
 
-## 1. Research Charter and Success Criteria `[Sonnet]`
+## 1. Research Charter and Success Criteria
 
 - [ ] Define **north star**: e.g. "F-Droid AOSP-only apps tier-1" vs "Play Store parity"
   (the latter is likely out of scope for years).
@@ -106,7 +100,7 @@ or ARM64 emulator image boots with VirtIO console (manual step, not CI).
 
 ---
 
-## 2. Architecture Options Record `[Sonnet]`
+## 2. Architecture Options Record
 
 - [ ] **Option A -- Full Android guest VM** (recommended first): Impossible OS as host
   VMM boots minimal AOSP generic target; VirtIO console / GPU / net / disk; lifecycle
@@ -128,7 +122,7 @@ rationale.
 
 ---
 
-## 3. Host Kernel Prerequisites `[Sonnet]`
+## 3. Host Kernel Prerequisites
 
 - [ ] **Memory**: contiguous guest RAM budget; ballooning (stretch); host OOM policy.
 - [ ] **VirtIO**: align with `TODO-02` §5 host-side queue emulation; virtio-gpu,
@@ -145,7 +139,7 @@ issue ID placeholder.
 
 ---
 
-## 4. Guest Android Runtime Plan `[Sonnet]`
+## 4. Guest Android Runtime Plan
 
 - [ ] Target **AOSP branch / tag** (e.g. quarterly release train) and **generic x86_64
   vs arm64** product choice tied to §6.
@@ -159,13 +153,11 @@ issue ID placeholder.
 
 **Commit:** Runtime subsection in plan doc.
 
-**Test checkpoint:** Manual: boot chosen AOSP image once in upstream QEMU with same
-VirtIO set planned for Impossible HV -- capture serial transcript in `docs/` appendix
-optional.
+**Test checkpoint:** Manual: boot chosen AOSP image once in upstream QEMU with same VirtIO set planned for Impossible HV -- capture serial transcript in `docs/` appendix optional.
 
 ---
 
-## 5. Display and Input Bridging `[Sonnet]`
+## 5. Display and Input Bridging
 
 - [ ] **Frame delivery**: guest VirtIO-GPU scanout to host texture vs shared memory
   blit; color space (sRGB) and DPI scaling.
@@ -181,7 +173,7 @@ optional.
 
 ---
 
-## 6. ABI and ISA Strategy `[Sonnet]`
+## 6. ABI and ISA Strategy
 
 - [ ] **ARM64 guest on x86_64 host** (Apple-silicon-class pattern): native ARM JNI and
   NDK `.so` without Houdini; requires `TODO-01` AArch64 maturity or a big-endian /
@@ -198,7 +190,7 @@ choice.
 
 ---
 
-## 7. Distribution and Ecosystem Stance `[Sonnet]`
+## 7. Distribution and Ecosystem Stance
 
 - [ ] **Pure AOSP + sideload** (F-Droid, `adb install`) as default research stance.
 - [ ] **GMS / Play Protect / SafetyNet / Play Integrity**: document certification wall;
@@ -215,7 +207,7 @@ deferred).
 
 ---
 
-## 8. Milestones, Exit Gates, and Deliverables `[Sonnet]`
+## 8. Milestones, Exit Gates, and Deliverables
 
 - [ ] **Phase 0** (this TODO): plan doc only; no kernel merge.
 - [ ] **Phase 1** (future epic, not authorized here): QEMU or ImpossibleHV boots AOSP
@@ -245,10 +237,7 @@ deferred).
 | ⭐  | ARM APK on x86_64 silicon         | ✅ ARM64 WSA guest; emulator translation | ✅ Waydroid arm64 profile; binfmt misc patterns | ⬜ §6 AArch64 guest per `TODO-01` or x86_64 AOSP trade-off |
 | ⭐  | GPU composited Android UI         | ✅ Host compositor + guest GPU paravirt  | ✅ Mesa + Wayland pipewire stacks               | ⬜ §5 `TODO-03` VirtIO-GPU path                            |
 
-Impossible OS should treat Android as **a guest environment** with a crisp security
-boundary, integrate its framebuffer through the same GPU research thread as `TODO-03`,
-and avoid ecosystem commitments (GMS) until the hypervisor and compositor foundations
-exist.
+Impossible OS should treat Android as **a guest environment** with a crisp security boundary, integrate its framebuffer through the same GPU research thread as `TODO-03`, and avoid ecosystem commitments (GMS) until the hypervisor and compositor foundations exist.
 
 ---
 
@@ -258,13 +247,9 @@ exist.
 > presence** and **non-regression** of the build until code lands under a future epic.
 
 - [ ] Add `scripts/verify-android-compat-plan.sh` (or extend existing doc verifier) that
-  fails if `docs/architecture/android-app-compatibility-plan.md` is missing required
-  headings (`## Architecture options`, `## Host prerequisites`, `## ABI strategy`,
-  `## Roadmap`).
+  fails if `docs/architecture/android-app-compatibility-plan.md` is missing required headings (`## Architecture options`, `## Host prerequisites`, `## ABI strategy`, `## Roadmap`).
 - [ ] When host-side launcher code exists: register `test_register_android_compat_stub`
-  in `src/kernel/test/test_runner.c` with `TEST_CAT_EXEC`, single `TEST_SKIP` until
-  guest boot path is implemented -- do not add `TEST-SIDE-EFFECT-ALLOWED` hooks for
-  live binder or hypervisor without a dedicated implementation TODO.
+  in `src/kernel/test/test_runner.c` with `TEST_CAT_EXEC`, single `TEST_SKIP` until guest boot path is implemented -- do not add `TEST-SIDE-EFFECT-ALLOWED` hooks for live binder or hypervisor without a dedicated implementation TODO.
 
 **Commit:** Script + optional stub test file wired with skip.
 

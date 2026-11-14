@@ -63,7 +63,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 
 ---
 
-## 1. Event Log `[Sonnet]`
+## 1. Event Log
 
 `struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add a security level to `klog.h` (value 4 is already `LOG_FATAL`, so take the next free value). `kevent_log()` appends to rolling `X:\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
 
@@ -83,7 +83,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
   - `kevent_log()` appends to `events.jsonl` with a `"type"` field (INFO/WARN/ERROR/SECURITY) instead of creating a second pipe-delimited `events.log`; the Event Viewer (`13-tools-accessories/TODO-02`) reads that one file
 - [ ] Commit: `"kernel: event log -- kevent_log, LOG_SECURITY, rolling file, rotate"`
 
-## 2. Restore Point Creation `[Sonnet]`
+## 2. Restore Point Creation
 
 `restore_create(description)`: ZIP system files + registry backup → `C:\Impossible\System\Restore\{unix_ts}\`. `restore_list()`, `restore_delete(ts)`. Auto-evict oldest when > `HKLM\SYSTEM\Restore\MaxPoints` (default 10).
 
@@ -101,7 +101,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - [ ] `kevent_log(LOG_INFO, "restore", ...)` on create + delete
 - [ ] Commit: `"kernel: restore_create/list/delete -- ZIP system files, registry backup, max-points eviction"`
 
-## 3. System Rollback `[Sonnet]`
+## 3. System Rollback
 
 `restore_rollback(ts)`: SHA-256 manifest integrity check, confirmation dialog, ZIP extract back to `C:\Impossible\System\`, registry hive restore from `registry_backup\`, bump "LastRestore" in Registry, restart.
 
@@ -118,7 +118,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - [ ] 3-s restart overlay → `EFI_ResetSystem(RESET_WARM)`
 - [ ] Commit: `"kernel: restore_rollback -- SHA-256 verify, zip extract, registry restore, restart"`
 
-## 4. `rstrui.cpl` -- System Restore UI `[Sonnet]`
+## 4. `rstrui.cpl` -- System Restore UI
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -138,7 +138,7 @@ Control Panel System Restore applet: calendar timeline of restore points (descri
 - [ ] [Configure] → `dialog_input()` max points → `registry_set()`
 - [ ] Commit: `"rstrui.cpl: system restore UI -- CTRL_LISTVIEW timeline, create/restore/delete buttons"`
 
-## 5. First-Boot Setup Wizard `[Sonnet]`
+## 5. First-Boot Setup Wizard
 
 **Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
@@ -159,7 +159,7 @@ Runs when `HKLM\SYSTEM\FirstBoot=1`. 6 pages: Welcome, Timezone/Region, Keyboard
 - [ ] Finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log()`; close OOBE; show desktop
 - [ ] Commit: `"oobe: first-boot setup wizard -- timezone, keyboard, user create, wallpaper, update check"`
 
-## 6. Crash Dump Viewer `[Sonnet]`
+## 6. Crash Dump Viewer
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -184,7 +184,7 @@ On next boot after crash (dump file present in `X:\Crash\`): `notify_send()` pro
 - [ ] [Dismiss] → `vfs_rename(dmp, "Archived\\{dmp}")` + update seen flag in Registry
 - [ ] Commit: `"crashview: on-boot crash prompt + report viewer -- CTRL_TABSTRIP, registers, stack, drivers, export"`
 
-## 7. F8 Recovery Environment `[Opus]`
+## 7. F8 Recovery Environment
 
 Text-mode boot menu (intercept F8 before scheduler): Normal / Safe / Recovery Shell / System Restore / Factory Reset / Startup Repair. Recovery Shell: 15 commands (ls/cd/cat/cp/mv/rm/pwd/fsck/fdisk/reg-reset/reg-query/reg-set/backup/restore/reboot).
 
@@ -205,7 +205,7 @@ Text-mode boot menu (intercept F8 before scheduler): Normal / Safe / Recovery Sh
 - [ ] **Startup Repair**: route to §9
 - [ ] Commit: `"kernel: recovery environment -- F8 text-mode menu, recovery shell 15 cmds, safe mode boot"`
 
-## 8. Factory Reset `[Sonnet]`
+## 8. Factory Reset
 
 Wipe all user data + app installs, restore system files from recovery partition or embedded fallback, recreate default directory tree + set `HKLM\SYSTEM\FirstBoot=1`. Typed "YES" confirmation required.
 
@@ -223,7 +223,7 @@ Wipe all user data + app installs, restore system files from recovery partition 
 - [ ] `registry_set("HKLM\\SYSTEM\\FirstBoot", "1")` + `kevent_log()` + reboot
 - [ ] Commit: `"kernel: factory_reset -- typed-YES guard, user data wipe, hive restore, dir tree rebuild"`
 
-## 9. Startup Repair `[Sonnet]`
+## 9. Startup Repair
 
 Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs manifest, repair `HKLM.default` hive if corrupt. Called from recovery menu §7.
 
@@ -241,7 +241,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 - [ ] Wait for keypress → `EFI_ResetSystem(RESET_WARM)`
 - [ ] Commit: `"kernel: startup_repair -- UEFI boot entry, GPT CRC, kernel SHA-256, registry hive repair"`
 
-## 10. Disk Cleanup Utility `[Sonnet]`
+## 10. Disk Cleanup Utility
 
 `src/apps/cleanup/cleanup.c`: scan `C:\Temp\`, Recycle Bin, old restore points (keep last 3), cached update packages, app crash dumps. Display space savings per category. [Clean up system files] deletes selected. Weekly scheduled task.
 

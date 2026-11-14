@@ -75,7 +75,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 1. API Coverage Tracker `[Sonnet]`
+## 1. API Coverage Tracker
 
 **Output:** `sdk/docs/win32-compat.md` (hand-maintained + `tools/compat-scan.sh` regeneration)
 
@@ -112,7 +112,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 2. Bring-Up Ladder Framework `[Sonnet]`
+## 2. Bring-Up Ladder Framework
 
 **Directory:** `sdk/compat/` -- one subdirectory per tier
 
@@ -140,7 +140,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 3. Tier 1 -- Process Exit Only `[Sonnet]`
+## 3. Tier 1 -- Process Exit Only
 
 > Gate: `10-platform-services/TODO-07 §1` (ring-3 fix + `SYS_EXITPROCESS`)
 
@@ -155,7 +155,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 4. Tier 2 -- Console I/O `[Sonnet]`
+## 4. Tier 2 -- Console I/O
 
 > Gate: `10-platform-services/TODO-08 §5 §8`
 
@@ -173,7 +173,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 5. Tier 3 -- File I/O `[Sonnet]`
+## 5. Tier 3 -- File I/O
 
 > Gate: `10-platform-services/TODO-07 §7`, `D10T08 §1` partial
 
@@ -192,7 +192,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 6. Tier 4 -- Process & Registry `[Sonnet]`
+## 6. Tier 4 -- Process & Registry
 
 > Gate: `10-platform-services/TODO-08 §4`, `02-kernel-core/TODO-14-registry-completion.md`
 
@@ -211,7 +211,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 7. Tier 5 -- Memory & Sync `[Sonnet]`
+## 7. Tier 5 -- Memory & Sync
 
 > Gate: `10-platform-services/TODO-08 §3 §6`, `12-user-platform-sdk/TODO-04 §4`
 
@@ -230,7 +230,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 8. Tier 6 -- MessageBox & Basic GUI `[Sonnet]`
+## 8. Tier 6 -- MessageBox & Basic GUI
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
@@ -249,7 +249,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 9. Tier 7 -- Full Win32 Window + Controls `[Sonnet]`
+## 9. Tier 7 -- Full Win32 Window + Controls
 
 > Gate: `12-user-platform-sdk/TODO-05 §4–4`, `10-platform-services/TODO-08 §7 §10 §11`
 
@@ -266,7 +266,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 10. Tier 8 -- Extended Win32 Surface `[Sonnet]`
+## 10. Tier 8 -- Extended Win32 Surface
 
 > Gate: all Tiers 1–7; `advapi32.dll` security functions; `shell32.dll`; GDI+ subset
 
@@ -286,7 +286,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 11. Stub Call Log Analysis `[Sonnet]`
+## 11. Stub Call Log Analysis
 
 **Source:** extends `src/tools/win32compat.c` (§1)
 
@@ -313,7 +313,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 12. CI Compatibility Gate `[Sonnet]`
+## 12. CI Compatibility Gate
 
 **Source:** `scripts/compat-check.sh`
 
@@ -346,7 +346,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ---
 
-## 13. Tier 9 -- WinRT + DirectX + WinUI 3 / Windows App SDK Apps `[Opus]`
+## 13. Tier 9 -- WinRT + DirectX + WinUI 3 / Windows App SDK Apps
 
 > **Spawned-by:** root
 
@@ -385,11 +385,7 @@ Modern Windows 11 apps (WinUI 3, Windows App SDK, and the .NET / C++ apps built 
 | ⭐  | CI compat gate with % score in sysinfo         | ❌ Not applicable                                   | ✅ ReactOS TestBot; Wine CI                  | ⬜ §12 -- `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`         |
 | 💎  | Runs WinUI 3 / Windows App SDK apps            | ✅ Native                                           | ❌ Wine: no WinRT / DComp                    | ⬜ §13 -- Tier 9; four platform prerequisites inventoried with owner candidates |
 
-Impossible OS's `⭐` advantage over Wine/ReactOS: the compat tracking is **kernel-native**
-(stub counters in shmem, score in Registry, visible in System Information), the bring-up
-ladder is **prescriptive** (explicit gate conditions tied to TODO numbers), and the stub
-log analysis **automatically updates the compat matrix** -- closing the loop between
-running a binary and knowing exactly what to implement next.
+Impossible OS's `⭐` advantage over Wine/ReactOS: the compat tracking is **kernel-native** (stub counters in shmem, score in Registry, visible in System Information), the bring-up ladder is **prescriptive** (explicit gate conditions tied to TODO numbers), and the stub log analysis **automatically updates the compat matrix** -- closing the loop between running a binary and knowing exactly what to implement next.
 
 ---
 

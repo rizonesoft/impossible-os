@@ -48,7 +48,7 @@ title: "TODO-17 -- GPU & Display Drivers"
 
 ---
 
-## 1. `display_device_t` Vtable + Compositor Hook `[Opus]`
+## 1. `display_device_t` Vtable + Compositor Hook
 
 Define the `display_device_t` abstraction. All GPU modules register against it; the compositor calls through it. Eliminates raw framebuffer pointer access from `src/desktop/` and `src/kernel/gfx/`.
 
@@ -76,7 +76,7 @@ Define the `display_device_t` abstraction. All GPU modules register against it; 
 - [ ] Update compositor dirty-region tracker to call `display_flush_rect(dirty.x, dirty.y, dirty.w, dirty.h)` on each frame
 - [ ] Commit: `"kernel: display_device_t vtable -- register/get_active, priority system, gfx_core hook"`
 
-## 2. VBE/GOP Fallback Display Device `[Sonnet]`
+## 2. VBE/GOP Fallback Display Device
 
 Wrap the existing VBE/GOP linear framebuffer in a `display_device_t` at lowest priority. Ensures bare-metal systems and hypervisors without a supported GPU module still reach the desktop unchanged.
 
@@ -91,7 +91,7 @@ Wrap the existing VBE/GOP linear framebuffer in a `display_device_t` at lowest p
 - [ ] Boot log: `[DISPLAY] VBE/GOP fallback registered (%ux%u)`
 - [ ] Commit: `"drivers: VBE/GOP display_device_t fallback -- lowest-priority registration, bare-metal safe"`
 
-## 3. Bochs/BGA Display Module `[Sonnet]`
+## 3. Bochs/BGA Display Module
 
 Extract the existing VBE DISPI register code from `framebuffer.c` into a standalone loadable module. Add Y_OFFSET double-buffering page flip. Register as a `display_device_t` backend.
 
@@ -108,7 +108,7 @@ Extract the existing VBE DISPI register code from `framebuffer.c` into a standal
 - [ ] Register `display_device_t bochs_display`; priority = `DISPLAY_PRIORITY_STANDARD`
 - [ ] Commit: `"modules: Bochs/BGA display -- VBE DISPI extract, Y_OFFSET page-flip, display_device_t"`
 
-## 4. VirtIO-GPU Display Module `[Opus]`
+## 4. VirtIO-GPU Display Module
 
 Restore and re-land the VirtIO-GPU driver as a proper loadable `.kmod`. Control queue for resource lifecycle and scanout; cursor queue for hardware cursor updates. Replace the current `fb_swap()` call with a scanout resource flush.
 
@@ -128,7 +128,7 @@ Restore and re-land the VirtIO-GPU driver as a proper loadable `.kmod`. Control 
 - [ ] Boot log: `[virtio-gpu] Scanout %ux%u, resource_id=1`
 - [ ] Commit: `"modules: VirtIO-GPU -- scanout resource pipeline, cursorq, display event resize, flush"`
 
-## 5. VMSVGA 2D Display Module `[Opus]`
+## 5. VMSVGA 2D Display Module
 
 Port the VMware SVGA II driver (SerenityOS BSD-2 reference) as a loadable `.kmod`. Negotiate SVGA protocol version, set display mode, issue FIFO 2D acceleration commands (`RECT_FILL`, `RECT_COPY`, `UPDATE`), and enable hardware cursor via SVGA register writes.
 
@@ -151,7 +151,7 @@ Port the VMware SVGA II driver (SerenityOS BSD-2 reference) as a loadable `.kmod
 - [ ] Boot log: `[VMSVGA] SVGA II %ux%u FIFO %u KiB`
 - [ ] Commit: `"modules: VMSVGA -- FIFO RECT_FILL/COPY/UPDATE, hardware cursor, VirtualBox display"`
 
-## 6. Multi-Head Support `[Opus]`
+## 6. Multi-Head Support
 
 Extend `display_device_t` registration to a per-head array. Compositor spans or mirrors across multiple monitors. Add `NtQueryDisplayConfig`/`NtSetDisplayConfig` syscall stubs for Win32 compatibility.
 
@@ -173,7 +173,7 @@ Extend `display_device_t` registration to a per-head array. Compositor spans or 
 
 ---
 
-## 7. Intel HD/UHD iGPU Modesetting Stub (P3) `[Opus]`
+## 7. Intel HD/UHD iGPU Modesetting Stub (P3)
 
 Detect Intel Gen9–12 integrated GPUs by PCI device ID. Map MMIO. Read EDID via DDC. Set a display mode through the Display Engine (pipe, plane, transcoder, DPLL). Use Intel PRM open documentation exclusively -- no GPL driver code.
 
@@ -190,7 +190,7 @@ Detect Intel Gen9–12 integrated GPUs by PCI device ID. Map MMIO. Read EDID via
 - [ ] Boot log: `[intel-display] Gen%d iGPU PCI %04x, EDID preferred mode %ux%u`
 - [ ] Commit: `"modules: Intel iGPU display stub -- PRM-based modesetting, GMBUS EDID, Gen9-12 (P3)"`
 
-## 8. AMD APU Vega/RDNA Display Stub (P4) `[Opus]`
+## 8. AMD APU Vega/RDNA Display Stub (P4)
 
 Detect AMD APU (Vega iGPU on Ryzen 2000–5000, RDNA on Ryzen 6000+) by PCI display device ID. Map MMIO. Set display mode via DCE/DCN display engine using AMD open register guide (GPUOpen). No 3D.
 

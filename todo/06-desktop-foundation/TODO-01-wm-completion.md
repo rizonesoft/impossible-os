@@ -39,6 +39,8 @@ Minimize, maximize and restore are owned by the canonical window manager roadmap
 
 **Files:** `src/desktop/wm.c`, `include/desktop/wm.h`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §1 (item: "#define WM_FLAG_MINIMIZED 0x40" at line 68)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §1`, which follows `docs/design/shell.md#window-chrome`; do not build a second minimize/maximize/restore path here
 
 **Test checkpoint:** Click minimize -- window disappears. Click taskbar entry -- window restores. Click maximize -- fills screen. Click maximize again -- restores to original size.
@@ -49,6 +51,8 @@ Minimize, maximize and restore are owned by the canonical window manager roadmap
 Edge and corner resize is owned by `08-graphics-ui/TODO-08` §2: an invisible grab zone of `THEME_SIZE_RESIZE_MARGIN` (5 px) outside the visible edge, all 8 directions, with resize cursors.
 
 **Files:** `src/desktop/wm.c`
+
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §2 (item: "Mica titlebar" at line 96)
 
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §2`, which follows `docs/design/shell.md#window-chrome`; do not build a second edge-resize path here
 
@@ -61,6 +65,8 @@ Snapping is owned by `08-graphics-ui/TODO-08` §3: the six-layout snap flyout (m
 
 **Files:** `src/desktop/wm.c`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §3 (item: "void wm_snap" at line 125)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §3`, which follows `docs/design/shell.md#snap-layouts`; do not build a second snap implementation here
 
 **Test checkpoint:** Drag window to left edge -- snaps to left half. Drag to right -- right half. Drag to top -- maximizes. Drag title bar away -- restores.
@@ -71,6 +77,8 @@ Snapping is owned by `08-graphics-ui/TODO-08` §3: the six-layout snap flyout (m
 The global hotkey table (Alt+F4, Win+D, Win+L, Win+arrows) is owned by `08-graphics-ui/TODO-08` §5 and the Alt+Tab switcher by §6.
 
 **Files:** `src/desktop/wm.c`, `src/desktop/desktop.c`
+
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §5 (item: "struct hotkey_entry + hotkey_table[32" at line 170)
 
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §5 and §6`, which follows `docs/design/shell.md#alttab`; do not build a second hotkey table or Alt+Tab switcher here
 

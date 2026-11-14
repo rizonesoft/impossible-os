@@ -55,9 +55,9 @@ Run `ifconfig` to see the address DHCP assigned. Run `ping 10.0.2.2` under QEMU 
 
 ## What is not implemented yet?
 
-- **Address and time**: [DHCP Renewal Daemon](../../todo/07-networking/TODO-06-ntp-status-winsock.md#1-dhcp-renewal-daemon-sonnet) and [NTP Client](../../todo/07-networking/TODO-06-ntp-status-winsock.md#2-ntp-client-opus).
-- **Status and tools**: [Network Statistics API](../../todo/07-networking/TODO-06-ntp-status-winsock.md#3-network-statistics-api-sonnet), [`ifconfig` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#4-ifconfig-command-sonnet), [Extended `ping` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#5-extended-ping-command-sonnet), [`traceroute` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#6-traceroute-command-opus), [`netstat` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#7-netstat-command-sonnet) and [`/sys/net` VFS Aggregation File](../../todo/07-networking/TODO-06-ntp-status-winsock.md#8-sysnet-vfs-aggregation-file-sonnet).
-- **Win32**: [`ws2_32.dll` Winsock Stubs](../../todo/07-networking/TODO-06-ntp-status-winsock.md#9-ws2_32dll-winsock-stubs-sonnet).
+- **Address and time**: [DHCP Renewal Daemon](../../todo/07-networking/TODO-06-ntp-status-winsock.md#1-dhcp-renewal-daemon) and [NTP Client](../../todo/07-networking/TODO-06-ntp-status-winsock.md#2-ntp-client).
+- **Status and tools**: [Network Statistics API](../../todo/07-networking/TODO-06-ntp-status-winsock.md#3-network-statistics-api), [`ifconfig` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#4-ifconfig-command), [Extended `ping` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#5-extended-ping-command), [`traceroute` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#6-traceroute-command), [`netstat` Command](../../todo/07-networking/TODO-06-ntp-status-winsock.md#7-netstat-command) and [`/sys/net` VFS Aggregation File](../../todo/07-networking/TODO-06-ntp-status-winsock.md#8-sysnet-vfs-aggregation-file).
+- **Win32**: [`ws2_32.dll` Winsock Stubs](../../todo/07-networking/TODO-06-ntp-status-winsock.md#9-ws2_32dll-winsock-stubs).
 - **DHCP safety**: the client uses the fixed transaction ID `0x12345678`, so another host on the network can answer in place of the real server. Randomising it is filed with the renewal work.
 
 ## How does it compare with Windows 11 and Linux?

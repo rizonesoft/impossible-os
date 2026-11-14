@@ -38,11 +38,11 @@ It cannot be used yet beyond seeing the three icons on the desktop.
 
 ## What is not implemented yet?
 
-- [Icon Data Model and Grid Layout](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#1-icon-data-model-and-grid-layout), shared with [Desktop Icons](../../todo/08-graphics-ui/TODO-08-window-manager.md#4-desktop-icons-sonnet) in the window manager roadmap.
+- [Icon Data Model and Grid Layout](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#1-icon-data-model-and-grid-layout), shared with [Desktop Icons](../../todo/08-graphics-ui/TODO-08-window-manager.md#4-desktop-icons) in the window manager roadmap.
 - [Special Folder Icons](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#2-special-folder-icons-always-present) and [Dynamic Icons from Desktop Directory](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#3-dynamic-icons-from-desktop-directory).
 - [Icon Interaction](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#4-icon-interaction-select-drag-rename) and [Shortcut (.lnk) File Support](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#5-shortcut-lnk-file-support).
 - [File Type Icon Association](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#6-file-type-icon-association), which also owns the missing leading-dot and case handling.
-- [Icon Right-Click Context Menu](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#7-icon-right-click-context-menu), on the engine in [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine-opus).
+- [Icon Right-Click Context Menu](../../todo/06-desktop-foundation/TODO-06-desktop-icons.md#7-icon-right-click-context-menu), on the engine in [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine).
 
 ## How does it compare with Windows 11 and Linux?
 

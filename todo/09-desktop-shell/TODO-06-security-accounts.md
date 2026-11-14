@@ -64,7 +64,7 @@ title: "TODO-06 -- Security & User Accounts"
 
 ---
 
-## 1. CSPRNG `[Opus]`
+## 1. CSPRNG
 
 The kernel CSPRNG SHIPPED 2026-06-12 in `02-kernel-core/TODO-03` §5: `src/kernel/csprng.c` (ChaCha20 fast-key-erasure, Blake2b conditioner, seeded at boot Phase 1, `NtGetRandom` syscall). This section is now a thin consumer: auth code calls `csprng_fill()`/`csprng_u64()` directly for §2 password salts and nonces.
 
@@ -76,7 +76,7 @@ The kernel CSPRNG SHIPPED 2026-06-12 in `02-kernel-core/TODO-03` §5: `src/kerne
 - [x] OWNERSHIP RESOLVED: kernel CSPRNG is `02-kernel-core/TODO-03` §5 `csprng_fill()` (shipped; first-seed hardening continues in `01-boot-platform/TODO-12` §8); the ad-hoc pool design is retired
 - [ ] §2 password hashing and any nonce generation in this TODO call `csprng_fill()` directly (verify when §2 is implemented; no `csprng_read` shim)
 
-## 2. Password Hashing `[Opus]`
+## 2. Password Hashing
 
 Monocypher 4.0.2 is already vendored and built at `src/libs/monocypher/` (BSD-2-Clause OR CC0-1.0, `src/libs/PROVENANCE.md`). Password hashing uses `crypto_argon2()` (memory-hard, GPU-resistant; the config selects Argon2i or Argon2id). 16-byte random salt via `csprng_fill()`. Constant-time compare.
 
@@ -92,7 +92,7 @@ Monocypher 4.0.2 is already vendored and built at `src/libs/monocypher/` (BSD-2-
 - [ ] Boot log: `klog(LOG_OK, "auth", "monocypher argon2i ready (m=%u passes=%u)", 4096, 3)`
 - [ ] Commit: `"security: password hashing -- monocypher argon2i, 16-byte salt, constant-time verify"`
 
-## 3. User Account System `[Sonnet]`
+## 3. User Account System
 
 `user_account_t` (uid, username, display_name, password_hash, privilege_level, avatar_path, home_dir, auto_login). Registry at `HKU\{name}\`. `auth_create/delete/change_password`. Admin + optional Guest on first boot.
 
@@ -111,7 +111,7 @@ Monocypher 4.0.2 is already vendored and built at `src/libs/monocypher/` (BSD-2-
 - [ ] `auth_first_boot_setup()` called from `kernel_main()` after Registry is live; after `csprng_init()`
 - [ ] Commit: `"auth: user account system -- user_account_t, Registry CRUD, Admin+Guest first boot"`
 
-## 4. Authentication API `[Sonnet]`
+## 4. Authentication API
 
 `auth_login(username, password)` verifies hash, sets current user, loads `HKU\{username}\` hive. `auth_logout()` clears user, returns to login screen. `auth_get_current_user()`.
 
@@ -128,7 +128,7 @@ Monocypher 4.0.2 is already vendored and built at `src/libs/monocypher/` (BSD-2-
 - [ ] `AUTH_ERR_INVALID = -1`, `AUTH_ERR_LOCKED = -2`, `AUTH_OK = 0` in `auth.h`
 - [ ] Commit: `"auth: auth_login/logout/get_current_user, HKU hive load/unload, lockout logic"`
 
-## 5. User Home Directories `[Sonnet]`
+## 5. User Home Directories
 
 On `auth_create_user()`: create `C:\Users\{name}\{Desktop,Documents,Downloads,Pictures,AppData}`. Set inode `i_uid`. `%USERPROFILE%` env var. Shell CWD starts at home.
 
@@ -143,7 +143,7 @@ On `auth_create_user()`: create `C:\Users\{name}\{Desktop,Documents,Downloads,Pi
 - [ ] Shell: update `cmd.c` to default CWD to `g_userprofile_path` at startup if logged in
 - [ ] Commit: `"auth: user home dirs -- vfs_mkdir Desktop/Documents/Downloads/Pictures/AppData, i_uid owner"`
 
-## 6. Login Screen UI `[Sonnet]`
+## 6. Login Screen UI
 
 **Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -165,7 +165,7 @@ Full-screen sign-in before the desktop loads, per `docs/design/shell.md#lock-and
 - [ ] Network button: opens the network part of quick settings (`08-graphics-ui/TODO-09` §8) as a flyout above the button
 - [ ] Commit: `"login: sign-in screen -- acrylic wallpaper, 192 px avatar, 296 px password box, bottom-right system buttons"`
 
-## 7. Login Flow `[Sonnet]`
+## 7. Login Flow
 
 **Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -184,7 +184,7 @@ Other users as 48 px avatars in a bottom-left list (`docs/design/shell.md#lock-a
 - [ ] On success: `login_screen_hide()` → `desktop_start()` → `wallpaper_set()` → `desktop_load_pinned_apps()`
 - [ ] Commit: `"login: login flow -- multi-user avatars, shake animation, lockout countdown, auto-login, profile load"`
 
-## 8. Lock Screen `[Sonnet]`
+## 8. Lock Screen
 
 **Design:** [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -204,7 +204,7 @@ Win+L shows the lock screen of `docs/design/shell.md#lock-and-sign-in-screens`: 
 - [ ] Incorrect password: shake animation + "Incorrect password" label
 - [ ] Commit: `"security: lock screen -- Win+L, wallpaper clock, slide to sign-in, resume session, auto-lock"`
 
-## 9. User Switching `[Sonnet]`
+## 9. User Switching
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu), [`shell.md#lock-and-sign-in-screens`](../../docs/design/shell.md#lock-and-sign-in-screens)
 
@@ -221,7 +221,7 @@ The Start footer's user button and its menu are drawn by `08-graphics-ui/TODO-11
 - [ ] `fast_user_switch_suspend(uint16_t uid)` + `fast_user_switch_resume(uint16_t uid)` stubs in `auth.h` (not yet implemented)
 - [ ] Commit: `"desktop: user switching -- Start Menu avatar, sign out, switch user, lock entry points"`
 
-## 10. File Permissions `[Opus]`
+## 10. File Permissions
 
 Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths. FAT32 fallback: all files owned by current user, full permissions. `security_check_access(path, uid, access_type)` enforced.
 
@@ -240,7 +240,7 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 - [ ] `#define ACCESS_READ/WRITE/EXEC` in `security.h`; use `VFS_ERR_PERMISSION = -13` (errno 13 = EACCES)
 - [ ] Commit: `"security: file permissions -- vfs_open/write/exec enforcement, ixfs_check_perm, FAT32 bypass, admin skip"`
 
-## 11. UAC-Equivalent Elevation `[Opus]`
+## 11. UAC-Equivalent Elevation
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 

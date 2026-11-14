@@ -44,7 +44,7 @@ Boot the desktop and use the Control Gallery window: click the buttons and drag 
 
 - **New controls**: check box and radio button ([section 1](../../todo/06-desktop-foundation/TODO-04-control-library.md#1-checkbox-and-radio-button)), progress bar ([section 2](../../todo/06-desktop-foundation/TODO-04-control-library.md#2-progress-bar)), list box ([section 3](../../todo/06-desktop-foundation/TODO-04-control-library.md#3-listbox-with-scrollbar)), combo box ([section 4](../../todo/06-desktop-foundation/TODO-04-control-library.md#4-combobox-dropdown)) and context menu ([section 5](../../todo/06-desktop-foundation/TODO-04-control-library.md#5-context-menu-popup)). Each section names its owner.
 - **Keyboard**: no Tab, Enter, Escape or arrow keys; see [Keyboard and Mouse Input](input-system.md).
-- **Known defects**, filed under [Checkbox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#1-checkbox-sonnet) in the core widget roadmap: a destroyed control's slot is never reused, so a window can create only 32 controls in its lifetime; a button fires on press and its pressed look never shows; `ctrl_set_text()` does not accept a null string.
+- **Known defects**, filed under [Checkbox](../../todo/08-graphics-ui/TODO-05-widget-library-core.md#1-checkbox) in the core widget roadmap: a destroyed control's slot is never reused, so a window can create only 32 controls in its lifetime; a button fires on press and its pressed look never shows; `ctrl_set_text()` does not accept a null string.
 - **Theme colours**: controls use fixed colours until the [Theme System](../graphics/theme-system.md) lands.
 
 ## How does it compare with Windows 11 and Linux?

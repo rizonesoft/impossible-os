@@ -22,13 +22,13 @@ title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
 >
 > **Scope overlaps -- cross-reference, do not re-specify:**
 > - Calendar base (Zeller grid, events pane, add-event dialog, taskbar flyout) →
->   `09-desktop-shell/TODO-12-utilities.md §6`; this TODO adds **recurring events** and
+>   `§8`; this TODO adds **recurring events** and
 >   **`.ics` export** only.
 > - Font Manager app (preview, install/remove, `ttf_mgr_reload`) →
->   `09-desktop-shell/TODO-02-file-associations-resources.md §8`; this TODO adds **OS/2
+>   `§10`; this TODO adds **OS/2
 >   table Unicode coverage** display only.
 > - System Info as `msinfo32.cpl` (3-tab tabbed CPL) →
->   `09-desktop-shell/TODO-12-utilities.md §9`; this TODO specifies the standalone
+>   `§9`; this TODO specifies the standalone
 >   **`sysinfo.exe`** app that shares the data-aggregation layer with `sysdm.cpl`.
 
 ---
@@ -53,8 +53,8 @@ title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
 - `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send()` -- §7 install toast
 - `09-desktop-shell/TODO-03-service-manager.md §8` (→ XREF) -- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart -- §9 sticky notes startup
 - `08-graphics-ui/TODO-08-window-manager.md §5` (→ XREF) -- `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` -- §4 OSK hotkey, §5 color picker hotkey
-- `09-desktop-shell/TODO-12-utilities.md §6` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
-- `09-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
+- `§8` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
+- `§10` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
 
 ---
 
@@ -68,22 +68,25 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 | Step | Section                                      | 💎/⭐ | Dependency                                                      |
 | ---- | -------------------------------------------- | ----- | --------------------------------------------------------------- |
-| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | `09-desktop-shell/TODO-12 §6` base calendar complete            |
+| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | `§8` base calendar complete                                     |
 | 2    | Sticky Notes                                 | 💎    | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist     |
 | 3    | System Information (`sysinfo.exe`)           | 💎    | `cpuid_get`, `smbios_get_info`, `pmm_*`, `blkdev_count`         |
 | 4    | On-Screen Keyboard                           | 💎    | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table`  |
 | 5    | Color Picker                                 | ⭐    | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
-| 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎    | `09-desktop-shell/TODO-02 §8` base fontmgr complete             |
+| 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎    | `§10` base fontmgr complete                                     |
 | 7    | Shared Help / About Dialog                   | 💎    | `wm_create_window`, icon rendering                              |
+| 8    | Calendar App                                 | 💎    | --                                                              |
+| 9    | System Info                                  | 💎    | --                                                              |
+| 10   | Font Manager App                             | 💎    | --                                                              |
 
 ---
 
-## 1. Calendar App (Recurring Events + ICS Export) `[Sonnet]`
+## 1. Calendar App (Recurring Events + ICS Export)
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 > Base calendar grid, add-event dialog, and taskbar flyout are specified in
-> `09-desktop-shell/TODO-12-utilities.md §6` -- implement those first.
+> `§8` -- implement those first.
 > This section adds **recurring events** and **`.ics` export** only.
 
 **Source file:** `src/apps/calendar/calendar_recur.c` (extension of `calendar.c`)
@@ -109,7 +112,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 2. Sticky Notes `[Sonnet]`
+## 2. Sticky Notes
 
 **Source file:** `src/apps/sticky/sticky.c`; binary: `sticky.exe`
 
@@ -129,9 +132,9 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 3. System Information (`sysinfo.exe`) `[Sonnet]`
+## 3. System Information (`sysinfo.exe`)
 
-> → XREF: `09-desktop-shell/TODO-12-utilities.md §9` -- `msinfo32.cpl` tabbed CPL; share the
+> → XREF: `§9` -- `msinfo32.cpl` tabbed CPL; share the
 > data-aggregation layer (`sysinfo_gather()`) between `sysinfo.exe` and `sysdm.cpl`.
 
 **Source file:** `src/apps/sysinfo/sysinfo.c`; header `include/apps/sysinfo/sysinfo.h`
@@ -156,7 +159,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 4. On-Screen Keyboard `[Sonnet]`
+## 4. On-Screen Keyboard
 
 **Design:** [`controls.md#button`](../../docs/design/controls.md#button), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -183,7 +186,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 5. Color Picker `[Sonnet]`
+## 5. Color Picker
 
 **Source file:** `src/apps/colorpick/colorpick.c`; binary: `colorpick.exe`
 
@@ -207,10 +210,10 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 6. Font Manager (OS/2 + Unicode Coverage) `[Sonnet]`
+## 6. Font Manager (OS/2 + Unicode Coverage)
 
 > Base font manager UI (list, 4-size preview, install/remove, `ttf_mgr_reload()`) is specified
-> in `09-desktop-shell/TODO-02-file-associations-resources.md §8` -- implement that first.
+> in `§10` -- implement that first.
 > This section adds **OS/2 table parsing** for Unicode coverage and detailed font metadata.
 
 **Source file:** `src/apps/fontmgr/fontmgr_os2.c` (extension of `fontmgr.c`)
@@ -228,7 +231,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ---
 
-## 7. Shared Help / About Dialog `[Sonnet]`
+## 7. Shared Help / About Dialog
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog)
 
@@ -242,6 +245,77 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 - [ ] **`include/desktop/ui_dialogs.h`** also declares:
   - [ ] `void ui_dialog_progress(const char *title, const char *message, int percent)` -- reusable modal progress dialog (used by Archive Manager §4, installer, etc.)
   - [ ] `int ui_dialog_confirm(const char *message)` → returns 1 (OK) / 0 (Cancel) -- thin wrapper around `MessageBox(MB_OKCANCEL)`
+
+## 8. Calendar App
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §6** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+Month grid (7 cols Mon–Sun × 5–6 week rows). Accent today highlight. Prev/Next month. Click day → events pane. "+ Add Event" dialog (time, title, color). Registry events. Taskbar clock flyout integration.
+
+**Files:** `src/apps/calendar/calendar.c` (new), `include/apps/calendar.h` (new)
+
+> [!NOTE]
+> Window: 700×500 px. Left panel (500 px): month grid; right panel (200 px): events for selected day. **Month grid**: `g_view_year/month`; compute `first_weekday_of_month` (Zeller's formula); draw 7-column headers Mon–Sun; fill grid cells with day number; current day → `gfx_fill_rect(accent_bg)`; selected day → accent outline. Prev/Next buttons: `g_view_month--/++` with year rollover. **Events pane**: "Wednesday, 15 March" header; list events for `g_selected_date`; each event: colored dot (event color) + time + title. **Add Event dialog** (modal, 380×260): `CTRL_TEXTBOX` title; `dialog_input` time picker (HH:MM); color preset swatches (8 colors); OK → write to Registry `HKCU\Software\Impossible\Calendar\Events\YYYY-MM-DD\{uid}\{Title,Time,Color}`. **Load events**: scan `HKCU\...\Events\{date}\*` subkeys. **Taskbar clock**: TODO-10 §3 calendar flyout (`WM_CLOCK_CLICKED`) opens this window. `calendar_open_at_date(year, month, day)` public API for taskbar integration.
+
+- [ ] `void calendar_open(void)` -- `wm_create_window(100, 60, 700, 500, "Calendar", ...)`
+- [ ] `void calendar_render_month(s, x, y, w, h)` -- Zeller first-weekday; fill grid; accent today/selected
+- [ ] `void calendar_render_events(s, x, y, w, h, date)` -- scan `HKU\...\Events\YYYY-MM-DD\*`; list events
+- [ ] Click handler: map pixel to grid cell → `g_selected_date`; refresh events pane
+- [ ] Prev/Next month buttons: `g_view_month--/++`; year rollover; re-render
+- [ ] "+ Add Event" dialog: title textbox + time + color picker swatches; OK → `RegSetValueEx()`
+- [ ] `void calendar_open_at_date(int y, int m, int d)` -- public API for taskbar clock
+- [ ] Delete event: right-click event → `context_menu_show()` → Delete → `RegDeleteKey()`
+- [ ] Commit: `"calendar: month grid, events pane, Registry events, Add dialog, taskbar clock integration"`
+
+## 9. System Info
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §9** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+`msinfo32.cpl` -- `CTRL_TABSTRIP` tabs: System Summary (OS/CPU/RAM/disk), Components (PCI devices), Software Environment (drivers/processes/startup). Export to text file. From Control Panel.
+
+**Files:** `src/apps/control/applets/msinfo32.c` (new)
+
+> [!NOTE]
+> Three tabs via `CTRL_TABSTRIP`. **System Summary**: OS Name "Impossible OS 1.0", Version "1.0", Build date, CPU (`cpuid_get()->brand`), Cores (`acpi_get_cpu_count()`), MHz (stub from `cpuid_get()->max_freq` if available), Total RAM (`pmm_get_total_frames() * 4 / 1024` MiB), Available RAM (`pmm_get_free_frames() * 4 / 1024`), BIOS (UEFI firmware info from `uefi_get_variable()`), Uptime (`uptime()` seconds). **Components**: reuse `pci_get_all_devices()` from `09-desktop-shell/TODO-12-utilities.md` §8; display as flat list: PCI addr, vendor/device IDs, class code, driver name. **Software Env**: loaded drivers = scan `HKLM\SYSTEM\Drivers\*`; Running processes = `sched_get_task_list()` count + names; Startup programs = scan `HKLM\SYSTEM\Boot\Run\*` + Startup folder `.lnk` count. **Export**: "Export…" button → `dialog_file_save("System Info*.txt")` → write all three tabs as plain text sections.
+
+- [ ] `src/apps/control/applets/msinfo32.c` -- `CPlApplet_t` registered in control panel
+- [ ] `CTRL_TABSTRIP` 3 tabs; tab switch renders appropriate content
+- [ ] System Summary: info key-value rows (label + value); `ttf_draw_string()` two-column layout
+- [ ] Components: `pci_get_all_devices()` → flat list with class code + driver name
+- [ ] Software Env: driver count from Registry + `sched_get_task_list()` count + startup scan
+- [ ] "Export…" → format all data as text → `vfs_write()`
+- [ ] Register in `g_cpl_entries[]` as "System Information"; accessible from `sysdm.cpl` "More info" link
+- [ ] Commit: `"msinfo32: system info -- CTRL_TABSTRIP tabs, CPU/RAM/PCI/drivers/processes, export to text"`
+
+## 10. Font Manager App
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-02-file-associations-resources.md` §8** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+`src/apps/fontmgr/fontmgr.c`: list `.ttf` from `C:\Impossible\Fonts\` via VFS. Preview at 12/16/24/36 px with "The quick brown fox…". Install button: copy file + `ttf_mgr_reload()`. Remove button (block system fonts Selawik/Cascadia). Set Default: write `HKCU\Software\Impossible\Theme\Font`.
+
+**Files:** `src/apps/fontmgr/fontmgr.c` (new), `include/apps/fontmgr.h` (new)
+
+> [!NOTE]
+> Launch as a desktop window app (not kernel-mode -- but still runs in kernel mode for now, like `gallery.c`). Window: 640×480 px. Left panel: `CTRL_LISTVIEW` of `.ttf` files in `C:\Impossible\Fonts\`; on selection-change: update right preview panel. Right panel: fixed preview strings at 4 sizes using `ttf_get(FONT_UI, px)` where the font slot is temporarily overridden with the selected TTF. **Install**: `dialog_file_open("*.ttf", "C:\\", src_path, MAX_PATH)` → `vfs_copy(src, "C:\\Impossible\\Fonts\\basename")` → `ttf_mgr_reload()` (re-scans `C:\Impossible\Fonts\` and rebuilds the font slot table) → `notify_send("Font installed", basename, ICON_INFO, 3000)`. **Remove guard**: check if font is Selawik or Cascadia (system fonts); if yes: `notify_send("Cannot remove", "System font", ICON_WARNING, 3000)`. **Set Default**: `RegSetValueEx(HKCU, "Software\\Impossible\\Theme\\Font", font_path)` + `wm_post_message_all(WM_THEME_CHANGED, ...)` (TODO-01 §7).
+
+- [ ] `void fontmgr_open(void)` -- create 640×480 px window; scan `C:\Impossible\Fonts\`; populate `CTRL_LISTVIEW`
+- [ ] `void fontmgr_draw_preview(gfx_surface_t *s, const char *ttf_path, int32_t x, int32_t y, int32_t w, int32_t h)` -- render preview string at 4 sizes using `ttf_get()` with the font loaded temporarily
+- [ ] `int ttf_mgr_reload(void)` -- re-scan `C:\Impossible\Fonts\`; rebuild font cache; return 0 or -1 (add to `font_mgr.h`)
+- [ ] Install button callback: `dialog_file_open()` → `vfs_copy()` → `ttf_mgr_reload()` → `notify_send()`; refresh list
+- [ ] Remove button callback: guard system fonts ("Selawik", "Cascadia"); `vfs_delete(font_path)`; `ttf_mgr_reload()`; refresh list
+- [ ] "Set Default" button: `RegSetValueEx(HKCU, "...\\Theme\\Font", REG_SZ, ttf_path)`; `wm_post_message_all(WM_THEME_CHANGED, 0, 0)`
+- [ ] `.ttf` file association (`09-desktop-shell/TODO-02-file-associations-resources.md` §1/`09-desktop-shell/TODO-02-file-associations-resources.md` §2) → launches `fontmgr.exe` with the TTF path as arg → preview the passed font
+- [ ] Commit: `"fontmgr: font manager app -- list/preview/install/remove TTF, set default, ttf_mgr_reload()"`
 
 ---
 
@@ -258,12 +332,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 | ⭐  | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)                  | ✅ Font Manager / GNOME Fonts       | ⬜ §6 -- OS/2 table `ulUnicodeRange1–4` block-name display,       |
 | 💎  | Shared Help→About dialog across all apps          | ✅ Each app has own About                      | ✅ gtk_about_dialog() shared widget | ⬜ §7 -- `ui_dialog_about()` single impl called by                |
 
-Impossible OS ships the Color Picker as an **inbox OS feature** (Win+Shift+C hotkey baked into
-the global hotkey table) -- unlike Windows where it requires PowerToys installation. The loupe
-reads directly from the compositor's back-buffer rather than going through a screen-capture
-round-trip. The Font Manager's Unicode coverage display (OS/2 `ulUnicodeRange` bits decoded
-into named block pills) gives users richer font introspection than either platform provides by
-default.
+Impossible OS ships the Color Picker as an **inbox OS feature** (Win+Shift+C hotkey baked into the global hotkey table) -- unlike Windows where it requires PowerToys installation. The loupe reads directly from the compositor's back-buffer rather than going through a screen-capture round-trip. The Font Manager's Unicode coverage display (OS/2 `ulUnicodeRange` bits decoded into named block pills) gives users richer font introspection than either platform provides by default.
 
 ---
 

@@ -41,17 +41,17 @@ Three other roadmaps specify overlapping work, and the overlap has not been sett
 - **`wget` and `curl`** are also specified by the [HTTP and TLS](../networking/http-tls.md) roadmap, which writes the output flag as `-o` where this file writes `-O`, and names a different progress helper.
 - **Wi-Fi** has its own driver roadmap, [Wi-Fi Drivers](../hardware/wifi-drivers.md), which owns the device interface, the 802.11 frames, the WPA2 supplicant and the settings tab. This file's section 6 predates it.
 
-These are filed in [section 1](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#1-ftp-protocol-core-sonnet) and [section 6](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#6-wifi-framework-stretch-opus) so that each piece ends up with one owner. The unique content here is the flag set, the shared progress helper and the dual-pane GUI.
+These are filed in [section 1](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#1-ftp-protocol-core) and [section 6](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#6-wifi-framework-stretch) so that each piece ends up with one owner. The unique content here is the flag set, the shared progress helper and the dual-pane GUI.
 
 ## What is not implemented yet?
 
 Nothing in this roadmap has started:
 
-- [FTP Protocol Core](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#1-ftp-protocol-core-sonnet), which needs TCP sockets
-- [FTP Shell Commands and `wget ftp://`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#2-ftp-shell-commands--wget-ftp-sonnet)
-- [`wget`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#3-wget-command-httphttps--progress-sonnet) and [`curl`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#4-curl-command-full-flag-set-sonnet), which need the HTTP and TLS client
-- [FTP GUI Client](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#5-ftp-gui-client-dual-pane-stretch-sonnet), which needs the list view and progress bar controls
-- [Wi-Fi Framework](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#6-wifi-framework-stretch-opus), which belongs with the Wi-Fi driver roadmap
+- [FTP Protocol Core](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#1-ftp-protocol-core), which needs TCP sockets
+- [FTP Shell Commands and `wget ftp://`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#2-ftp-shell-commands--wget-ftp)
+- [`wget`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#3-wget-command-httphttps--progress) and [`curl`](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#4-curl-command-full-flag-set), which need the HTTP and TLS client
+- [FTP GUI Client](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#5-ftp-gui-client-dual-pane-stretch), which needs the list view and progress bar controls
+- [Wi-Fi Framework](../../todo/11-apps/TODO-02-ftp-wget-wifi.md#6-wifi-framework-stretch), which belongs with the Wi-Fi driver roadmap
 
 ## How does it compare with Windows 11 and Linux?
 

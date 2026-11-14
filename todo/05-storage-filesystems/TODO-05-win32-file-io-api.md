@@ -66,7 +66,7 @@ title: "TODO-05 -- Win32 File I/O API & IRP Layer"
 
 ---
 
-## 1. IRP Engine `[Opus]`
+## 1. IRP Engine
 
 Define `struct IRP` and implement the core dispatch lifecycle: `IoAllocateIrp`, `IoCompleteRequest`, synchronous dispatch, and the seven `IRP_MJ_*` major function codes used by filesystem drivers.
 
@@ -84,7 +84,7 @@ Define `struct IRP` and implement the core dispatch lifecycle: `IoAllocateIrp`, 
 - [ ] Log: `[IRP] %s MajorFn=0x%02x → NTSTATUS 0x%x` (debug only, gated by `klog_level >= LOG_DEBUG`)
 - [ ] Commit: `"io: IRP engine -- struct IRP, IoAllocateIrp/Complete/CallDriver, vfs_irp_dispatch"`
 
-## 2. MDL -- Memory Descriptor List `[Opus]`
+## 2. MDL -- Memory Descriptor List
 
 Implement MDL to safely copy user buffers into kernel space for IRP READ/WRITE operations. Required before any user-mode read/write path can pass buffers through the IRP.
 
@@ -101,7 +101,7 @@ Implement MDL to safely copy user buffers into kernel space for IRP READ/WRITE o
 - [ ] `MmFreeMdl(mdl)`: if `MDL_MAPPED_TO_SYSTEM_VA`: unmap kernel VA; `kfree(mdl)`
 - [ ] Commit: `"io: MDL -- MmCreateMdl/ProbeAndLock/GetSystemAddress/Unlock/Free"`
 
-## 3. File Handle Table `[Opus]`
+## 3. File Handle Table
 
 Add a per-process `HANDLE`→`FILE_OBJECT*` table to the process struct. Implement `NtCreateFile` (path → `FILE_OBJECT`, allocate handle), `NtClose`, and `ObReferenceObjectByHandle`.
 
@@ -122,7 +122,7 @@ Add a per-process `HANDLE`→`FILE_OBJECT*` table to the process struct. Impleme
 - [ ] Register `NtCreateFile`/`NtClose` in `syscall.c` dispatch table
 - [ ] Commit: `"io: file handle table -- FILE_OBJECT, per-process HANDLE table, NtCreateFile, NtClose, ObRefByHandle"`
 
-## 4. `CreateFile` / `CloseHandle` `[Sonnet]`
+## 4. `CreateFile` / `CloseHandle`
 
 Implement Win32 `CreateFile`/`CreateFileW` as wrappers over `NtCreateFile`. Handle all five creation dispositions, common flags, and access masks. Implement `CloseHandle` over `NtClose`.
 
@@ -137,7 +137,7 @@ Implement Win32 `CreateFile`/`CreateFileW` as wrappers over `NtCreateFile`. Hand
 - [ ] Verify path prefix: strip `\\?\` and `\\.\` prefixes if present; map drive letter to VFS root
 - [ ] Commit: `"win32: CreateFile/CloseHandle -- all dispositions, FILE_FLAG_*, share mode, NtCreateFile wrapper"`
 
-## 5. `ReadFile` / `WriteFile` / `SetFilePointerEx` `[Opus]`
+## 5. `ReadFile` / `WriteFile` / `SetFilePointerEx`
 
 Implement `NtReadFile`/`NtWriteFile` via synchronous IRP dispatch. Add `SetFilePointerEx` to update `FILE_OBJECT.CurrentByteOffset`. Wire overlapped I/O IOCP completion packet path.
 
@@ -157,7 +157,7 @@ Implement `NtReadFile`/`NtWriteFile` via synchronous IRP dispatch. Add `SetFileP
 - [ ] Publish each completion's (ops, bytes) pair coherently so a job membership snapshot cannot split one request. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7` (item: "I/O split by read/write/control")
 - [ ] Commit: `"win32: ReadFile/WriteFile/SetFilePointerEx -- IRP dispatch, MDL, offset tracking, sync path"`
 
-## 6. Directory APIs + Per-Process CWD `[Sonnet]`
+## 6. Directory APIs + Per-Process CWD
 
 Implement `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`/`RemoveDirectoryW`, and per-process `GetCurrentDirectoryW`/`SetCurrentDirectoryW`.
 
@@ -181,7 +181,7 @@ Implement `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`/`Remo
 - [ ] **`NtQueryDirectoryFile` IOSB on early exits** (`nt_syscall.c`): probe the `IO_STATUS_BLOCK` first and set it on the null/zero-buffer and probe-failure returns too, so a reused IOSB never shows a stale completion.
 - [ ] Commit: `"win32: FindFirstFile/FindNextFile/FindClose, CreateDirectory/RemoveDirectory, per-process CWD"`
 
-## 7. File Management -- Delete, Move, Copy `[Sonnet]`
+## 7. File Management -- Delete, Move, Copy
 
 Implement `DeleteFileW`, `MoveFileExW` (within-volume rename and cross-volume copy+delete), and `CopyFileW` (chunked read/write + timestamp preserve).
 
@@ -196,7 +196,7 @@ Implement `DeleteFileW`, `MoveFileExW` (within-volume rename and cross-volume co
 - [ ] `MoveFileW(lpExisting, lpNew)` → `MoveFileExW(lpExisting, lpNew, 0)`
 - [ ] Commit: `"win32: DeleteFileW, MoveFileExW (rename + cross-volume copy+delete), CopyFileW"`
 
-## 8. File Metadata APIs `[Sonnet]`
+## 8. File Metadata APIs
 
 Implement `GetFileAttributesW`/`SetFileAttributesW`, `GetFileSizeEx`, `GetFileTime`/`SetFileTime`. Encode/decode `FILETIME` (100 ns ticks since 1601-01-01 UTC).
 
@@ -214,7 +214,7 @@ Implement `GetFileAttributesW`/`SetFileAttributesW`, `GetFileSizeEx`, `GetFileTi
 - [ ] `GetFileInformationByHandle(hFile, lpFileInfo)` → assemble `BY_HANDLE_FILE_INFORMATION` from `vfs_stat()` + volume serial from Registry
 - [ ] Commit: `"win32: file metadata -- GetFileAttributes, GetFileSizeEx, GetFileTime/SetFileTime, FILETIME encode"`
 
-## 9. Async I/O + APC `[Opus]`
+## 9. Async I/O + APC
 
 Implement `OVERLAPPED` struct, `GetOverlappedResult`, and user-mode APC queued to the calling thread on IRP completion for overlapped file handles.
 
@@ -230,7 +230,7 @@ Implement `OVERLAPPED` struct, `GetOverlappedResult`, and user-mode APC queued t
 - [ ] `GetOverlappedResultEx(hFile, lpOverlapped, lpBytes, dwMs, bAlertable)`: waits up to `dwMs` ms; if `bAlertable` drains APC queue
 - [ ] Commit: `"win32: OVERLAPPED async I/O -- IRP overlapped completion, hEvent signal, user-mode APC queue"`
 
-## 10. Filter Manager Stub `[Sonnet]`
+## 10. Filter Manager Stub
 
 Register and unregister mini-filters via `FltRegisterFilter`/`FltUnregisterFilter`. Wire pre/post operation callbacks at IRP dispatch. Pass-through by default.
 
@@ -247,7 +247,7 @@ Register and unregister mini-filters via `FltRegisterFilter`/`FltUnregisterFilte
 - [ ] Post-op dispatch: after FS driver returns, iterate list descending; call `PostOperation`
 - [ ] Commit: `"io: FltMgr stub -- FltRegisterFilter/Unregister/StartFiltering, pre/post op dispatch hooks"`
 
-## 11. Internal Migration -- `vfs_open` → `CreateFile` `[Sonnet]`
+## 11. Internal Migration -- `vfs_open` → `CreateFile`
 
 Migrate all ~15 kernel and desktop source files that currently call `vfs_open`/`vfs_read`/`vfs_write`/`vfs_close` directly to use `CreateFile`/`ReadFile`/`WriteFile`/`CloseHandle`.
 
@@ -262,7 +262,7 @@ Migrate all ~15 kernel and desktop source files that currently call `vfs_open`/`
 - [ ] Files that run pre-handle-table (`klog_disk.c`, `registry.c`, `symtab.c`): annotate as kernel-internal; keep `vfs_*`; document in header
 - [ ] Commit: `"kernel: migrate vfs_open→CreateFile in gfx, panic, image, mm, desktop, syscalls"`
 
-## 12. File Change Notifications `[Sonnet]`
+## 12. File Change Notifications
 
 Implement `FindFirstChangeNotificationW`/`FindNextChangeNotification`/`FindCloseChangeNotification` and `ReadDirectoryChangesW`. Post change events from VFS inode mutation paths.
 
@@ -280,7 +280,7 @@ Implement `FindFirstChangeNotificationW`/`FindNextChangeNotification`/`FindClose
 - [ ] Hook `vfs_notify_change()` into `vfs_create`, `vfs_delete`, `vfs_rename`, `vfs_write_complete`
 - [ ] Commit: `"win32: file change notifications -- FindFirstChangeNotification, ReadDirectoryChangesW, vfs hooks"`
 
-## 13. `GetDiskFreeSpaceEx` / `GetVolumeInformation` `[Sonnet]`
+## 13. `GetDiskFreeSpaceEx` / `GetVolumeInformation`
 
 Implement `GetDiskFreeSpaceExW`/`GetDiskFreeSpaceW` and the remaining `GetVolumeInformationW` fields not covered in TODO-03 §4 (free bytes, cluster geometry).
 

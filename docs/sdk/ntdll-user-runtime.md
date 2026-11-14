@@ -55,16 +55,16 @@ The TEB and PEB layouts belong to the [PEB, TEB and the User-Mode ABI](../kernel
 
 ## What is not implemented yet?
 
-- [ntdll.dll Structure and TEB and PEB Extensions](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#1-ntdlldll-structure--teb--peb-extensions-sonnet)
-- [RtlHeap Process Heap Allocator](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#2-rtlheap-process-heap-allocator-opus)
-- [LdrLoadDll (PE DLL Loader)](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#3-ldrloaddll-pe-dll-loader-opus)
-- [Thread-Local Storage](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#4-thread-local-storage-tls-sonnet): kernel slots exist; PE TLS callbacks do not
-- [Vectored Exception Handling](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#5-vectored-exception-handling-veh-opus)
-- [Process Startup (CRT0)](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#6-process-startup-crt0-sonnet)
-- [User-Mode libc Shims](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#7-user-mode-libc-shims-sonnet)
-- [Fiber API](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#8-fiber-api-opus)
-- [Local Atom Tables](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#9-local-atom-tables-rtlatomtable-sonnet)
-- [WNF User Runtime](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#10-wnf-user-runtime-rtlpublish--rtlsubscribe-sonnet)
+- [ntdll.dll Structure and TEB and PEB Extensions](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#1-ntdlldll-structure--teb--peb-extensions)
+- [RtlHeap Process Heap Allocator](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#2-rtlheap-process-heap-allocator)
+- [LdrLoadDll (PE DLL Loader)](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#3-ldrloaddll-pe-dll-loader)
+- [Thread-Local Storage](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#4-thread-local-storage-tls): kernel slots exist; PE TLS callbacks do not
+- [Vectored Exception Handling](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#5-vectored-exception-handling-veh)
+- [Process Startup (CRT0)](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#6-process-startup-crt0)
+- [User-Mode libc Shims](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#7-user-mode-libc-shims)
+- [Fiber API](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#8-fiber-api)
+- [Local Atom Tables](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#9-local-atom-tables-rtlatomtable)
+- [WNF User Runtime](../../todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md#10-wnf-user-runtime-rtlpublish--rtlsubscribe)
 
 ## How does it compare with Windows 11 and Linux?
 

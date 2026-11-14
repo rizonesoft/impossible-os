@@ -52,10 +52,10 @@ The wallpaper and its fit mode cannot be changed persistently yet: every boot re
 
 ## What is not implemented yet?
 
-- [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine-opus) and [Desktop Right-Click Menu](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#2-desktop-right-click-menu-sonnet).
-- [Wallpaper Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#3-wallpaper-engine-sonnet) and [DPI Scaling](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#4-dpi-scaling-sonnet).
-- [Screenshot](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#5-screenshot-sonnet), [Night Light](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#6-night-light-sonnet) and [Focus / Do Not Disturb](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#7-focus--do-not-disturb-sonnet).
-- [Quick Settings Panel](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#8-quick-settings-panel-sonnet) and [Virtual Desktops](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#9-virtual-desktops-opus).
+- [Context Menu Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#1-context-menu-engine) and [Desktop Right-Click Menu](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#2-desktop-right-click-menu).
+- [Wallpaper Engine](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#3-wallpaper-engine) and [DPI Scaling](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#4-dpi-scaling).
+- [Screenshot](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#5-screenshot), [Night Light](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#6-night-light) and [Focus / Do Not Disturb](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#7-focus--do-not-disturb).
+- [Quick Settings Panel](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#8-quick-settings-panel) and [Virtual Desktops](../../todo/08-graphics-ui/TODO-09-desktop-shell-features.md#9-virtual-desktops).
 - Menu and flyout motion comes from the [Animation Engine](animation-engine.md), colours from the [Theme System](theme-system.md), and the taskbar and Start menu that host these surfaces are the [Taskbar](taskbar.md) and [Start Menu, Tray and Notifications](start-menu-tray-notifications.md).
 
 ## How does it compare with Windows 11 and Linux?

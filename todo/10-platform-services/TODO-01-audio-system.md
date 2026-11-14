@@ -56,7 +56,7 @@ title: "TODO-01 -- Audio System & Media Player"
 
 ---
 
-## 1. Audio Abstraction Layer `[Sonnet]`
+## 1. Audio Abstraction Layer
 
 `struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn/stop_fn/volume_fn). `audio_init()` detects and registers sound hardware. `audio_play/stop/set_volume/get_volume/is_playing()`. Volume persisted in Registry. `SYS_AUDIO_PLAY`, `SYS_AUDIO_VOLUME`.
 
@@ -75,7 +75,7 @@ title: "TODO-01 -- Audio System & Media Player"
 - [ ] `SYS_AUDIO_VOLUME`: set or query; update Registry
 - [ ] Commit: `"kernel: audio abstraction layer -- audio_device, play/stop/volume, SYS_AUDIO_PLAY"`
 
-## 2. Audio Mixer `[Opus]`
+## 2. Audio Mixer
 
 8 simultaneous streams. `struct audio_stream` (PMM PCM buffer, sample count, position, per-stream volume, loop flag). Mixer thread sums active streams into INT32 accumulator, normalizes, clamps to INT16, applies master volume, feeds DMA ring buffer. `audio_mixer_stream_add()/stream_stop()`. Mute outputs silence without stopping mixer.
 
@@ -96,7 +96,7 @@ title: "TODO-01 -- Audio System & Media Player"
 - [ ] `audio_mixer_stream_stop(handle)` → mark `STREAM_FREE`
 - [ ] Commit: `"kernel: audio mixer -- 8-stream INT32 mix, DMA ring, mute, per-stream volume"`
 
-## 3. WAV Decoder `[Sonnet]`
+## 3. WAV Decoder
 
 Vendor `dr_wav.h` (public domain, ~1500 lines) at `include/libs/dr_wav.h`. Redirect `DRWAV_MALLOC/FREE` → `kmalloc/kfree`. `audio_load_wav(path)` → `audio_clip`. Support 8/16-bit, mono/stereo, 22050/44100/48000 Hz.
 
@@ -113,7 +113,7 @@ Vendor `dr_wav.h` (public domain, ~1500 lines) at `include/libs/dr_wav.h`. Redir
 - [ ] Test: load `C:\Impossible\Media\startup.wav` → play via `audio_play()` → audible chime
 - [ ] Commit: `"libs: dr_wav -- WAV decoder, freestanding kmalloc/kfree redirect, audio_load_wav"`
 
-## 4. MP3 Decoder `[Sonnet]`
+## 4. MP3 Decoder
 
 Vendor `dr_mp3.h` (public domain, ~3000 lines) at `include/libs/dr_mp3.h`. Same redirect pattern. `audio_load_mp3(path)` → `audio_clip`. Linear interpolation resampler if driver rate differs.
 
@@ -131,7 +131,7 @@ Vendor `dr_mp3.h` (public domain, ~3000 lines) at `include/libs/dr_mp3.h`. Same 
 - [ ] Test: load `.mp3` track → play → audible music output
 - [ ] Commit: `"libs: dr_mp3 -- MP3 decoder, freestanding redirects, audio_load_mp3, linear resampler"`
 
-## 5. OGG Vorbis Decoder `[Sonnet]`
+## 5. OGG Vorbis Decoder
 
 Vendor `stb_vorbis.c` as `src/libs/stb_vorbis_impl.c` (same pattern as `stb_truetype`). Redirect `malloc/realloc/free` → `kmalloc/kfree`. `audio_load_ogg(path)` → `audio_clip`.
 
@@ -148,7 +148,7 @@ Vendor `stb_vorbis.c` as `src/libs/stb_vorbis_impl.c` (same pattern as `stb_true
 - [ ] Test: play `.ogg` audio file
 - [ ] Commit: `"libs: stb_vorbis -- OGG decoder, PMM arena alloc, audio_load_ogg"`
 
-## 6. FLAC Decoder (Stretch) `[Sonnet]`
+## 6. FLAC Decoder (Stretch)
 
 Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_load_flac(path)` → `audio_clip`. Lossless decode; may be large buffers -- PMM mandatory for output.
 
@@ -166,7 +166,7 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 - [ ] Test: play lossless `.flac` file
 - [ ] Commit: `"libs: dr_flac -- FLAC decoder, freestanding redirects, audio_load_flac"`
 
-## 7. Unified Audio Loader `[Sonnet]`
+## 7. Unified Audio Loader
 
 `audio_load(path)` detects format by extension (`.wav`/`.mp3`/`.ogg`/`.flac`) → dispatches to decoder → returns `audio_clip *`. Single entry point for all callers: media player, system sounds, any app via `SYS_AUDIO_PLAY`.
 
@@ -183,7 +183,7 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 - [ ] Test: `audio_load("test.ogg")` → non-NULL; `audio_load("test.xyz")` → NULL + klog
 - [ ] Commit: `"kernel: audio_load -- unified format dispatch, audio_play_file, audio_clip_free"`
 
-## 8. Media Player App `[Sonnet]`
+## 8. Media Player App
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -205,7 +205,7 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 - [ ] Register `.mp3/.wav/.ogg/.flac` file associations (TODO-02 §1)
 - [ ] Commit: `"apps: media player -- transport, seek, ID3v2 tags, playlist, shuffle/repeat, file assoc"`
 
-## 9. Volume Control Popup `[Sonnet]`
+## 9. Volume Control Popup
 
 **Design:** [`shell.md#volume-and-brightness-overlay`](../../docs/design/shell.md#volume-and-brightness-overlay)
 
@@ -223,7 +223,7 @@ Volume has no popup of its own: the volume slider and mute live in the quick set
 - [ ] `systray_update_volume_glyph()` on every level or mute change (muted / low / mid / high)
 - [ ] Commit: `"desktop: volume -- quick settings binding, volume key overlay, system cluster glyph"`
 
-## 10. `mmsys.cpl` -- Sound Settings Applet `[Sonnet]`
+## 10. `mmsys.cpl` -- Sound Settings Applet
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 

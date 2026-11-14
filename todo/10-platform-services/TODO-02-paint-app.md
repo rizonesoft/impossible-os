@@ -51,7 +51,7 @@ title: "TODO-02 -- Paint App & Image Tools"
 
 ---
 
-## 1. Canvas & Viewport `[Sonnet]`
+## 1. Canvas & Viewport
 
 `struct paint` (PMM canvas `gfx_surface_t`, undo stack, tool ID, fg/bg color, brush_size, zoom_pct, scroll_x/y). Default canvas 800×600 white, `pmm_alloc_contiguous`. Window chrome, scroll bars and status text follow `docs/design/shell.md#window-chrome` and `docs/design/controls.md#scroll-bar`. Layout per `docs/design/shell.md#app-window-layout`: a 48 px command bar with the tool groups (select, draw tools, shapes, brush size, colours as swatches), the canvas centred on `layer_bg` with 24 px of room, and a 24 px status bar with zoom and canvas size. Scroll bars when canvas > viewport.
 
@@ -69,7 +69,7 @@ title: "TODO-02 -- Paint App & Image Tools"
 - [ ] Status bar: `"Zoom: {N}% | {W}×{H} | X:{cx} Y:{cy}"` via `ttf_draw_string(FONT_UI, 12px)`
 - [ ] Commit: `"paint: canvas window -- PMM gfx_surface_t, tool panel, palette bar, viewport scroll"`
 
-## 2. Drawing Tools `[Sonnet]`
+## 2. Drawing Tools
 
 Pencil (Bresenham), Brush (circle stamps), Eraser (bg color), Line (rubber-band), Rectangle (filled/outline, Shift=square), Ellipse (Shift=circle), Fill Bucket (BFS 4-connectivity), Text (click place + TTF render).
 
@@ -90,7 +90,7 @@ Pencil (Bresenham), Brush (circle stamps), Eraser (bg color), Line (rubber-band)
 - [ ] Brush size picker in tool panel: 5 radio dots (1/2/4/8/16 px radius)
 - [ ] Commit: `"paint: drawing tools -- pencil, brush, eraser, line, rect, ellipse, BFS fill, text"`
 
-## 3. Color System `[Sonnet]`
+## 3. Color System
 
 20 preset color swatches in bottom bar (40×24 px each). Overlapping fg/bg squares (top-left). Left-click swatch → fg; right-click → bg. Swap button (↔). Stretch: `dialog_color()` double-click for custom color.
 
@@ -108,7 +108,7 @@ Pencil (Bresenham), Brush (circle stamps), Eraser (bg color), Line (rubber-band)
 - [ ] Status bar color preview: small 12×12 swatch + `"#RRGGBB"` label
 - [ ] Commit: `"paint: color system -- 20 swatches, fg/bg squares, swap, dialog_color stretch"`
 
-## 4. Undo/Redo `[Sonnet]`
+## 4. Undo/Redo
 
 Before each stroke begin: `pmm_alloc_contiguous()` snapshot of canvas → push to 32-slot ring undo stack; evict oldest. Ctrl+Z → pop + blit restore. Ctrl+Y → redo stack. Undo cleared on New.
 
@@ -128,7 +128,7 @@ Before each stroke begin: `pmm_alloc_contiguous()` snapshot of canvas → push t
 - [ ] Call `paint_undo_push()` at the start of: `tool_begin` (Pencil/Brush/Eraser/Line/Rect/Ellipse), flood fill, text commit
 - [ ] Commit: `"paint: undo/redo -- 32-level PMM snapshot ring, dirty region opt, Ctrl+Z/Y"`
 
-## 5. File Operations `[Sonnet]`
+## 5. File Operations
 
 File→New (blank + `dialog_input` dimensions). File→Open (`dialog_file_open` → `image_load()` → copy to canvas). File→Save (`image_save_bmp` or `image_save_png`). File→Save As (format dropdown). `modified` flag + save-before-close guard.
 
@@ -148,7 +148,7 @@ File→New (blank + `dialog_input` dimensions). File→Open (`dialog_file_open` 
 - [ ] Register `.bmp` → Paint as default editor (forward dep: TODO-02 §1 file assoc)
 - [ ] Commit: `"paint: file operations -- New/Open/Save/Save As, image_load/save_bmp/png, modified guard"`
 
-## 6. Selection Tool (Stretch) `[Sonnet]`
+## 6. Selection Tool (Stretch)
 
 Rectangle selection: click+drag dotted rect. Ctrl+C → `clipboard_set(CLIP_IMAGE, region)`. Ctrl+V → paste at cursor position. Drag selection → move (replaces with bg). Delete → clear to bg.
 
@@ -166,7 +166,7 @@ Rectangle selection: click+drag dotted rect. Ctrl+C → `clipboard_set(CLIP_IMAG
 - [ ] Escape / click outside sel → deactivate selection (`g_sel_active = 0`)
 - [ ] Commit: `"paint: selection tool -- dotted rect, Ctrl+C/V/X/Delete, move, CLIP_IMAGE"`
 
-## 7. Zoom & Resize (Stretch) `[Sonnet]`
+## 7. Zoom & Resize (Stretch)
 
 Mouse-wheel zoom (25%–800%), zoom buttons in status bar. Image→Resize (new W×H, aspect ratio toggle). Image→Crop to selection. Zoom affects viewport blit scale only (canvas pixels unchanged).
 

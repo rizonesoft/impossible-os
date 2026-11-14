@@ -42,12 +42,12 @@ It needs `swtpm` installed on the host. The research sections have nothing to ru
 
 ## What is not implemented yet?
 
-- [TPM 2.0 CSPRNG Integration + swtpm Dev Setup](../../todo/18-future-research/TODO-04-secureboot-tpm.md#1-tpm-20-csprng-integration--swtpm-dev-setup-opus): the boot-time feed and swtpm testing ship; the periodic reseed and a separate `start-swtpm.sh` do not.
-- [Measured Boot Chain (PCR 8 to 10 Extensions)](../../todo/18-future-research/TODO-04-secureboot-tpm.md#2-measured-boot-chain-pcr-810-extensions-opus): quotes ship under [section 13 of the TPM roadmap](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#13-attestation-key-provisioning-and-tpm2-quote), but the image measurements are open. The loader's hash of the kernel image stays owned by this section, as the TPM roadmap's section 16 records; the kernel's own runtime measurement belongs to [Boot-Time Kernel Integrity Check in the security hardware roadmap](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#7-boot-time-kernel-integrity-check-opus).
-- [UEFI Secure Boot PK/KEK/db Key Hierarchy](../../todo/18-future-research/TODO-04-secureboot-tpm.md#3-uefi-secure-boot-pkkekdb-key-hierarchy-opus): not started; the shim path is [Secure Boot Shim Chain-Loading](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#6-secure-boot-shim-chain-loading).
-- [AES-256-XTS Full Disk Encryption (FDE)](../../todo/18-future-research/TODO-04-secureboot-tpm.md#4-aes-256-xts-full-disk-encryption-fde-opus): not started beyond the sealing hook; per-file encryption is a separate plan in the IXFS roadmap.
-- [vTPM for ImpossibleHV Guests](../../todo/18-future-research/TODO-04-secureboot-tpm.md#5-vtpm-for-impossiblehv-guests-sonnet): not started; it waits on [the hypervisor](hypervisor.md).
-- [Research Deliverables](../../todo/18-future-research/TODO-04-secureboot-tpm.md#6-research-deliverables-sonnet): not started.
+- [TPM 2.0 CSPRNG Integration + swtpm Dev Setup](../../todo/18-future-research/TODO-04-secureboot-tpm.md#1-tpm-20-csprng-integration--swtpm-dev-setup): the boot-time feed and swtpm testing ship; the periodic reseed and a separate `start-swtpm.sh` do not.
+- [Measured Boot Chain (PCR 8 to 10 Extensions)](../../todo/18-future-research/TODO-04-secureboot-tpm.md#2-measured-boot-chain-pcr-810-extensions): quotes ship under [section 13 of the TPM roadmap](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#13-attestation-key-provisioning-and-tpm2-quote), but the image measurements are open. The loader's hash of the kernel image stays owned by this section, as the TPM roadmap's section 16 records; the kernel's own runtime measurement belongs to [Boot-Time Kernel Integrity Check in the security hardware roadmap](../../todo/04-drivers-hardware/TODO-04-security-hardware.md#7-boot-time-kernel-integrity-check).
+- [UEFI Secure Boot PK/KEK/db Key Hierarchy](../../todo/18-future-research/TODO-04-secureboot-tpm.md#3-uefi-secure-boot-pkkekdb-key-hierarchy): not started; the shim path is [Secure Boot Shim Chain-Loading](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#6-secure-boot-shim-chain-loading).
+- [AES-256-XTS Full Disk Encryption (FDE)](../../todo/18-future-research/TODO-04-secureboot-tpm.md#4-aes-256-xts-full-disk-encryption-fde): not started beyond the sealing hook; per-file encryption is a separate plan in the IXFS roadmap.
+- [vTPM for ImpossibleHV Guests](../../todo/18-future-research/TODO-04-secureboot-tpm.md#5-vtpm-for-impossiblehv-guests): not started; it waits on [the hypervisor](hypervisor.md).
+- [Research Deliverables](../../todo/18-future-research/TODO-04-secureboot-tpm.md#6-research-deliverables): not started.
 
 ## How does it compare with Windows 11 and Linux?
 

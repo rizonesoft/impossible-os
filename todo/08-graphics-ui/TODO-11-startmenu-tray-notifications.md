@@ -30,7 +30,7 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §3` -- `CTRL_SLIDER` used in §6 volume flyout slider
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §7` -- Focus/DND mode must exist before §5 toast suppression
 - → XREF: `08-graphics-ui/TODO-10-taskbar.md §1` -- system tray icons (§4) are drawn at the right of the taskbar window list; taskbar draw loop must be stable first
-- -> XREF: `TODO-17-win11-parity-inventory.md §11,§12,§14,§50` -- the Start, search and notification records this file's sections are assigned as owners of
+- -> XREF: `TODO-17-win11-parity-inventory.md §8,§15` -- the Start, search and notification records this file's sections are assigned as owners of
 
 ## Outcome
 
@@ -57,7 +57,7 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 
 ---
 
-## 1. Start Menu Data Loading `[Sonnet]`
+## 1. Start Menu Data Loading
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
@@ -82,7 +82,7 @@ Replace the current two-column Start menu in `src/desktop/desktop.c` with the Wi
   - Search box on top (36 px pill, accent underline when focused), "Pinned" heading + All pill, 6 x 3 grid of 96 x 84 tiles, "Recommended" heading + More pill, two-column recent list (32 px icon, name, relative time), 64 px footer band with avatar + user name left and power button right
 - [ ] Commit: `"startmenu: Windows 11 layout -- pinned grid, recommended list, footer; Registry pins, app scan, recent items"`
 
-## 2. Start Menu Interaction `[Sonnet]`
+## 2. Start Menu Interaction
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
@@ -104,7 +104,7 @@ Win key / Start button → toggle open/close. Click a pinned tile → `task_exec
 - [ ] Footer: user button → context menu (Change account settings, Lock, Sign out, Switch user; account actions owned by `09-desktop-shell/TODO-06 §9`); power button → context menu (Sleep, Shut down, Restart)
 - [ ] Commit: `"startmenu: interaction -- toggle, launch, All apps view, recommended, power and user menus"`
 
-## 3. Start Menu Search `[Sonnet]`
+## 3. Start Menu Search
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
@@ -123,7 +123,7 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
 - [ ] Draw results below the search box: best-match card left, grouped list right; accent highlight on the matched substring; empty state text
 - [ ] Commit: `"startmenu: search -- live filter across apps, settings and files, best match, keyboard navigation"`
 
-## 4. System Tray Icons `[Sonnet]`
+## 4. System Tray Icons
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
@@ -154,7 +154,7 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
   - The composite is the ONLY source: never read a per-battery ACPI object directly, or a dual-battery machine shows one cell's percentage as the system's.
 - [ ] Commit: `"systray: overflow chevron, system cluster opening quick settings, glyph states, layout button"`
 
-## 5. Toast Notifications `[Opus]`
+## 5. Toast Notifications
 
 **Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
@@ -178,7 +178,7 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
 - [ ] System notifications: `net_on_connect()` → `notify_send("Network", "Connected to network", ICON_NETWORK, 4000)`; `usb_on_attach()` → toast; `disk_on_low_space()` → toast
 - [ ] Commit: `"notify: toast queue -- slide-in/out stacking, ring buffer, SYS_NOTIFY_SEND=54, DND-aware"`
 
-## 6. Notification Center `[Sonnet]`
+## 6. Notification Center
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
@@ -202,7 +202,7 @@ The bell beside the clock (and a clock click) opens the shared notifications-and
   - Flyout: 360 px wide, 12 px from the right edge and above the taskbar, `THEME_MAT_*_FLYOUT_*`, `THEME_ELEV_FLYOUT_*`
 - [ ] Commit: `"notify_center: notification list in the shared calendar flyout -- 100-entry log, group-by-app, dismiss/clear"`
 
-## 7. Notification Settings `[Sonnet]`
+## 7. Notification Settings
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 

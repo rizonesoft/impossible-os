@@ -55,7 +55,7 @@ title: "TODO-09 -- Desktop Shell Features"
 
 ---
 
-## 1. Context Menu Engine `[Opus]`
+## 1. Context Menu Engine
 
 **Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
@@ -86,7 +86,7 @@ title: "TODO-09 -- Desktop Shell Features"
   - Menu acrylic `THEME_MAT_*_MENU_*` (blur 20, grain 4%), radius 8, `THEME_ELEV_FLYOUT_*`; hover `subtle_fill_hover` with radius 4
 - [ ] Commit: `"desktop: context_menu engine -- Acrylic popup, submenus, keyboard nav, outside-click auto-close"`
 
-## 2. Desktop Right-Click Menu `[Sonnet]`
+## 2. Desktop Right-Click Menu
 
 **Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
@@ -110,7 +110,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 - [ ] Desktop menu order per `docs/design/shell.md#context-menus`: View, Sort by, Refresh | New | Display settings, Personalize | Open in Terminal, Show more options (Shift+F10)
 - [ ] Commit: `"desktop: right-click menu -- view/sort/new/refresh/settings using context_menu engine"`
 
-## 3. Wallpaper Engine `[Sonnet]`
+## 3. Wallpaper Engine
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop)
 
@@ -131,7 +131,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
   - Ship both to the sysroot (today only `background.jpg`, the dark silk, is copied); the theme switch in `08-graphics-ui/TODO-03 §9` picks between them
 - [ ] Commit: `"desktop: wallpaper_set() -- image_load+scale, cache, Registry watch, background_color fallback"`
 
-## 4. DPI Scaling `[Sonnet]`
+## 4. DPI Scaling
 
 **Design:** [`shell.md#display-scaling`](../../docs/design/shell.md#display-scaling)
 
@@ -152,7 +152,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 - [ ] Every `THEME_SIZE_*`, `THEME_RADIUS_*` and `THEME_SPACE_*` value in `include/desktop/theme_tokens.h` is a 100% value: shell code wraps each use in `DPI_SCALE()`, and blur radii scale too
 - [ ] Commit: `"desktop: DPI scaling -- g_dpi_pct, DPI_SCALE macro, auto-detect, WM_DPI_CHANGED broadcast"`
 
-## 5. Screenshot `[Sonnet]`
+## 5. Screenshot
 
 **Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
@@ -172,7 +172,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 - [ ] Log: `[screenshot] saved: %s (%u bytes)` on success; `[screenshot] failed: %d` on error
 - [ ] Commit: `"desktop: screenshot -- PrintScreen full/window capture, image_save_png, clipboard+toast stub"`
 
-## 6. Night Light `[Sonnet]`
+## 6. Night Light
 
 **Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
@@ -191,7 +191,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 - [ ] `int night_light_enabled(void)` + `int night_light_strength(void)` -- read-only accessors for quick settings
 - [ ] Commit: `"desktop: night light -- integer LUT warm shift, Registry schedule, compositor apply pass"`
 
-## 7. Focus / Do Not Disturb `[Sonnet]`
+## 7. Focus / Do Not Disturb
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
@@ -211,7 +211,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 - [ ] Fullscreen detect: in compositor, if `DetectFullscreen && topmost_covers_screen`: `focus_mode_set(FOCUS_PRIORITY)` silently
 - [ ] Commit: `"desktop: focus/DND mode -- FOCUS_OFF/PRIORITY/ALARMS enum, toast filter, fullscreen auto-enable"`
 
-## 8. Quick Settings Panel `[Sonnet]`
+## 8. Quick Settings Panel
 
 **Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
@@ -239,7 +239,7 @@ Per `docs/design/shell.md#quick-settings`: Win+A or a click on the tray's system
   - Opened by the tray cluster button (network, volume, battery glyphs) owned by `08-graphics-ui/TODO-11 §4`
 - [ ] Commit: `"desktop: quick settings flyout -- anchored 360 px, six toggles, sliders, footer"`
 
-## 9. Virtual Desktops `[Opus]`
+## 9. Virtual Desktops
 
 **Design:** [`shell.md#task-view`](../../docs/design/shell.md#task-view)
 

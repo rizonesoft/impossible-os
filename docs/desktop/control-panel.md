@@ -37,11 +37,11 @@ It cannot be used yet. Settings that exist today are changed in the Registry or 
 
 ## What is not implemented yet?
 
-- [CPL Framework](../../todo/09-desktop-shell/TODO-11-control-panel.md#1-cpl-framework-sonnet)
-- [Control Panel Host App](../../todo/09-desktop-shell/TODO-11-control-panel.md#2-control-panel-host-app-sonnet)
-- [Core Applets](../../todo/09-desktop-shell/TODO-11-control-panel.md#3-core-applets-sonnet), whose wallpaper, scaling and date and time pages depend on [Desktop Shell Features](../graphics/desktop-shell-features.md) and [Kernel Time and Taskbar Clock](../graphics/clock-time.md)
-- [Additional Applets](../../todo/09-desktop-shell/TODO-11-control-panel.md#4-additional-applets-sonnet), with accounts from [Security and User Accounts](security-accounts.md)
-- [Settings Search](../../todo/09-desktop-shell/TODO-11-control-panel.md#5-settings-search-sonnet)
+- [CPL Framework](../../todo/09-desktop-shell/TODO-11-control-panel.md#1-cpl-framework)
+- [Control Panel Host App](../../todo/09-desktop-shell/TODO-11-control-panel.md#2-control-panel-host-app)
+- [Core Applets](../../todo/09-desktop-shell/TODO-11-control-panel.md#3-core-applets), whose wallpaper, scaling and date and time pages depend on [Desktop Shell Features](../graphics/desktop-shell-features.md) and [Kernel Time and Taskbar Clock](../graphics/clock-time.md)
+- [Additional Applets](../../todo/09-desktop-shell/TODO-11-control-panel.md#4-additional-applets), with accounts from [Security and User Accounts](security-accounts.md)
+- [Settings Search](../../todo/09-desktop-shell/TODO-11-control-panel.md#5-settings-search)
 
 The toggles, sliders and drop-downs the applets need are owned by [Extended Widget Library: Core Controls](../graphics/widget-library.md).
 

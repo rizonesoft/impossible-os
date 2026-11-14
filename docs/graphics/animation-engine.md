@@ -47,11 +47,11 @@ It cannot be used yet.
 
 ## What is not implemented yet?
 
-- [Core Tween Engine](../../todo/08-graphics-ui/TODO-04-animation-engine.md#1-core-tween-engine-sonnet) and [Easing Functions](../../todo/08-graphics-ui/TODO-04-animation-engine.md#2-easing-functions-sonnet).
-- [Global Animation Manager](../../todo/08-graphics-ui/TODO-04-animation-engine.md#3-global-animation-manager-sonnet), which also has to take frame time from a clock that does not assume the 100 Hz PIT rate.
-- [Registry Controls](../../todo/08-graphics-ui/TODO-04-animation-engine.md#4-registry-controls-sonnet) and [Window Transition Animations](../../todo/08-graphics-ui/TODO-04-animation-engine.md#5-window-transition-animations-opus).
-- [Spring Physics](../../todo/08-graphics-ui/TODO-04-animation-engine.md#6-spring-physics-opus). Its constants and overflow bounds need rechecking before implementation; the item is filed in that section.
-- [Compositor Integration](../../todo/08-graphics-ui/TODO-04-animation-engine.md#7-compositor-integration-sonnet).
+- [Core Tween Engine](../../todo/08-graphics-ui/TODO-04-animation-engine.md#1-core-tween-engine) and [Easing Functions](../../todo/08-graphics-ui/TODO-04-animation-engine.md#2-easing-functions).
+- [Global Animation Manager](../../todo/08-graphics-ui/TODO-04-animation-engine.md#3-global-animation-manager), which also has to take frame time from a clock that does not assume the 100 Hz PIT rate.
+- [Registry Controls](../../todo/08-graphics-ui/TODO-04-animation-engine.md#4-registry-controls) and [Window Transition Animations](../../todo/08-graphics-ui/TODO-04-animation-engine.md#5-window-transition-animations).
+- [Spring Physics](../../todo/08-graphics-ui/TODO-04-animation-engine.md#6-spring-physics). Its constants and overflow bounds need rechecking before implementation; the item is filed in that section.
+- [Compositor Integration](../../todo/08-graphics-ui/TODO-04-animation-engine.md#7-compositor-integration).
 - Window animations also need the minimize and maximize states that [Window Manager Enhancements](window-manager.md) adds.
 
 ## How does it compare with Windows 11 and Linux?

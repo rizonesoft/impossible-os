@@ -37,11 +37,11 @@ To change a design value, edit [`tokens.json`](../design/tokens.json), run `pyth
 
 ## What is not implemented yet?
 
-- **Engine**: [`theme_t` Struct](../../todo/08-graphics-ui/TODO-03-theme-system.md#1-theme_t-struct-sonnet), [`theme_get()` Singleton](../../todo/08-graphics-ui/TODO-03-theme-system.md#2-theme_get-singleton-sonnet) and [Built-in Presets](../../todo/08-graphics-ui/TODO-03-theme-system.md#3-built-in-presets-sonnet).
-- **Settings**: [Registry Load](../../todo/08-graphics-ui/TODO-03-theme-system.md#4-registry-load-sonnet) and [Custom Accent Color](../../todo/08-graphics-ui/TODO-03-theme-system.md#5-custom-accent-color-sonnet).
-- **Adoption**: [Migration Pass](../../todo/08-graphics-ui/TODO-03-theme-system.md#6-migration-pass-sonnet) and [Theme-Aware Shadow Rendering](../../todo/08-graphics-ui/TODO-03-theme-system.md#7-theme-aware-shadow-rendering-sonnet).
-- **Live change**: [Hot-Reload](../../todo/08-graphics-ui/TODO-03-theme-system.md#8-hot-reload-sonnet). The window manager has no message system yet, so the broadcast this section describes needs one first.
-- **Windows compatibility**: [Fluent Token Corpus and Win11 Personalization Contract](../../todo/08-graphics-ui/TODO-03-theme-system.md#9-fluent-token-corpus-and-win11-personalization-contract-opus), which adds Microsoft's personalisation Registry keys.
+- **Engine**: [`theme_t` Struct](../../todo/08-graphics-ui/TODO-03-theme-system.md#1-theme_t-struct), [`theme_get()` Singleton](../../todo/08-graphics-ui/TODO-03-theme-system.md#2-theme_get-singleton) and [Built-in Presets](../../todo/08-graphics-ui/TODO-03-theme-system.md#3-built-in-presets).
+- **Settings**: [Registry Load](../../todo/08-graphics-ui/TODO-03-theme-system.md#4-registry-load) and [Custom Accent Color](../../todo/08-graphics-ui/TODO-03-theme-system.md#5-custom-accent-color).
+- **Adoption**: [Migration Pass](../../todo/08-graphics-ui/TODO-03-theme-system.md#6-migration-pass) and [Theme-Aware Shadow Rendering](../../todo/08-graphics-ui/TODO-03-theme-system.md#7-theme-aware-shadow-rendering).
+- **Live change**: [Hot-Reload](../../todo/08-graphics-ui/TODO-03-theme-system.md#8-hot-reload). The window manager has no message system yet, so the broadcast this section describes needs one first.
+- **Windows compatibility**: [Fluent Token Corpus and Win11 Personalization Contract](../../todo/08-graphics-ui/TODO-03-theme-system.md#9-fluent-token-corpus-and-win11-personalization-contract), which adds Microsoft's personalisation Registry keys.
 
 ## How does it compare with Windows 11 and Linux?
 

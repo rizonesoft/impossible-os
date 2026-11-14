@@ -43,6 +43,8 @@ Add a dirty rect list that accumulates regions needing redraw each frame.
 
 **Files:** `src/desktop/wm.c`, `include/desktop/wm.h`
 
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §8 (item: "static int32_t g_dirty_x" at line 240)
+
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §8`, which follows `docs/design/shell.md#materials`; do not build a second dirty-rect tracker here
 
 **Test checkpoint:** Add logging: `compositor: N dirty rects this frame`. Idle desktop should show 0-1 rects (clock only). Dragging a window should show 2 rects.

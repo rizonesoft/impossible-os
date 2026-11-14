@@ -51,7 +51,7 @@ title: "TODO-11 -- Input System Enhancement"
 
 ---
 
-## 1. Keyboard Layout System `[Sonnet]`
+## 1. Keyboard Layout System
 
 Define `kbd_layout_t` -- a fixed structure of 128-entry arrays for normal, shift, and AltGr planes, plus up to 32 dead-key entries. `kbd_set_layout(code)` hot-swaps the active layout and persists to Registry.
 
@@ -65,7 +65,7 @@ Define `kbd_layout_t` -- a fixed structure of 128-entry arrays for normal, shift
 - [ ] `kbd_translate(scancode, modifiers)` -- look up in `g_active_layout->normal/shift/altgr` based on current modifier state; return Unicode codepoint
 - [ ] Commit: `"drivers: keyboard layout system -- kbd_layout_t, kbd_set_layout, codepoint translation"`
 
-## 2. Built-in Layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak `[Sonnet]`
+## 2. Built-in Layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak
 
 Populate six `kbd_layout_t` instances with correct normal/shift/AltGr codepoints and dead-key entries. All registered at kernel init via `kbd_register_layout()`.
 
@@ -80,7 +80,7 @@ Populate six `kbd_layout_t` instances with correct normal/shift/AltGr codepoints
 - [ ] All six registered via `kbd_register_layout()` calls in `keyboard_init()`
 - [ ] Commit: `"drivers: built-in keyboard layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak"`
 
-## 3. UTF-8 / Unicode Codepoint Output `[Sonnet]`
+## 3. UTF-8 / Unicode Codepoint Output
 
 Add `utf8_encode(cp, buf)` / `utf8_decode(buf, &cp)` helper functions. All keyboard output flows through `utf8_encode`; font rendering (`stb_truetype`) already takes codepoints -- wire the translation chain together.
 
@@ -94,7 +94,7 @@ Add `utf8_encode(cp, buf)` / `utf8_decode(buf, &cp)` helper functions. All keybo
 - [ ] `stb_truetype` codepoint pass-through: `gfx_draw_text_utf8(surface, x, y, str, len, color)` iterates codepoints via `utf8_next`, renders each glyph
 - [ ] Commit: `"kernel: UTF-8/Unicode -- utf8_encode/decode, keyboard codepoint events, stb_truetype wire-up"`
 
-## 4. Dead Key Compose `[Sonnet]`
+## 4. Dead Key Compose
 
 Track a `pending_dead_cp` codepoint in keyboard state. When a dead key is struck, store its codepoint. On the next non-modifier key, look up `(dead_cp, base_cp)` in the active layout's `deadkeys[]` table; emit the composed codepoint or -- on miss -- emit the dead character followed by the base character.
 
@@ -107,7 +107,7 @@ Track a `pending_dead_cp` codepoint in keyboard state. When a dead key is struck
 - [ ] Pressing a dead key twice emits the spacing version of the dead character (e.g., `^^` → `^` literal)
 - [ ] Commit: `"drivers: dead key compose -- pending_dead_cp, (dead, base, composed) triple lookup, double-emit fallback"`
 
-## 5. PS/2 Packet Resync `[Sonnet]`
+## 5. PS/2 Packet Resync
 
 Every PS/2 mouse packet byte 0 has bit 3 always set. Validate this on each packet boundary. On failure, discard bytes one-by-one (re-scan mode) until sync is re-established. Track sync loss count as a diagnostic counter.
 
@@ -123,7 +123,7 @@ Every PS/2 mouse packet byte 0 has bit 3 always set. Validate this on each packe
 - [ ] Boot log only on first loss per boot: `[MOUSE] Packet sync lost (total: %u)` at `LOG_DEBUG`
 - [ ] Commit: `"drivers: PS/2 packet resync -- sync-bit validation, re-scan on loss, sync_loss_count"`
 
-## 6. PS/2 Intellimouse Scroll Wheel (ID 3) `[Sonnet]`
+## 6. PS/2 Intellimouse Scroll Wheel (ID 3)
 
 Send the magic rate sequence (200→100→80 Hz) to the PS/2 mouse to unlock Intellimouse extension (ID 3). Switch to 4-byte packet parsing. Deliver the scroll delta as `WM_SCROLL` to the focused window.
 
@@ -136,7 +136,7 @@ Send the magic rate sequence (200→100→80 Hz) to the PS/2 mouse to unlock Int
 - [ ] Boot log: `[MOUSE] Intellimouse scroll wheel detected (ID=3)`
 - [ ] Commit: `"drivers: PS/2 Intellimouse scroll wheel -- magic init, 4-byte packet, WM_SCROLL"`
 
-## 7. Explorer 5-Button Extension (ID 4) `[Sonnet]`
+## 7. Explorer 5-Button Extension (ID 4)
 
 **Design:** n/a -- a hardware button event path; it draws nothing
 
@@ -151,7 +151,7 @@ A second magic sequence (200→200→80 Hz) after the ID-3 sequence upgrades to 
 - [ ] Boot log: `[MOUSE] Explorer 5-button mouse detected (ID=4)`
 - [ ] Commit: `"drivers: PS/2 Explorer 5-button -- second magic sequence, side/extra buttons"`
 
-## 8. Mouse Acceleration + Sensitivity `[Sonnet]`
+## 8. Mouse Acceleration + Sensitivity
 
 Apply a configurable 16.16 fixed-point polynomial acceleration curve to relative delta inputs. Skip for absolute sources (VirtIO tablet, VBox absolute). Expose `MouseSensitivity` (0–200, default 100) in Registry; 100 = 1× multiplier, 200 = 2×.
 
@@ -164,7 +164,7 @@ Apply a configurable 16.16 fixed-point polynomial acceleration curve to relative
 - [ ] `SYS_SET_MOUSE_SENSITIVITY(val)` syscall writes the Registry key and hot-reloads `mouse_accel`
 - [ ] Commit: `"drivers: mouse acceleration -- 16.16 fixed-point curve, sensitivity Registry, absolute bypass"`
 
-## 9. Raw Input Grab API `[Sonnet]`
+## 9. Raw Input Grab API
 
 `mouse_raw_grab(task)` hides the system cursor and routes all mouse deltas directly to the grabbing task as `WM_INPUT` messages. Required for first-person games and 3D viewport control. Release is triggered by the task or by ESC/Alt+F4 policy.
 
@@ -181,7 +181,7 @@ Apply a configurable 16.16 fixed-point polynomial acceleration curve to relative
 - [ ] `task_exit()` hook: if exiting task == `raw_grab_owner`, call `mouse_raw_release()`
 - [ ] Commit: `"drivers: raw input grab -- WM_INPUT, cursor hide, task ownership, SYS_MOUSE_GRAB"`
 
-## 10. Layout Switching -- Win+Space, Tray Indicator `[Sonnet]`
+## 10. Layout Switching -- Win+Space, Tray Indicator
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
@@ -200,7 +200,7 @@ Win+Space cycles through installed layouts. The taskbar layout button (three-let
 - [ ] Boot log: `[KBD] Active layout: %s (%s)`
 - [ ] Commit: `"drivers: keyboard layout switching -- Win+Space cycle, WM_INPUT_LAYOUT_CHANGED, tray indicator"`
 
-## 11. Sticky Keys + Typematic Rate `[Sonnet]`
+## 11. Sticky Keys + Typematic Rate
 
 Sticky Keys activates after 5 rapid consecutive Shift presses (< 500 ms each); modifier keys are latched until the next non-modifier key. PS/2 typematic delay and rate are programmed via command `0xF3` and configurable via Registry.
 

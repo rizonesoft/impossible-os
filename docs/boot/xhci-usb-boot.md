@@ -60,9 +60,9 @@ With a USB drive attached, serial shows `Found xHCI at PCI ...` with the vendor 
 
 ## What is not implemented yet?
 
-- Hot-plug is interim: the port-change handler shares the event ring the foreground command and transfer loops use, enumerates a new device from interrupt context, and a disconnect is logged but never removed from the block layer: [Hot-Plug Interrupt Handling](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#8-hot-plug-interrupt-handling-opus).
-- Devices behind a USB hub do not enumerate, because there is no hub class driver yet: [USB Hub Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#9-usb-hub-class-driver-opus).
-- A machine without xHCI has no USB at all: EHCI, UHCI and OHCI controllers are detected and named for the boot report but not driven: [EHCI Fallback (USB 2.0)](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#10-ehci-fallback-usb-20-opus).
+- Hot-plug is interim: the port-change handler shares the event ring the foreground command and transfer loops use, enumerates a new device from interrupt context, and a disconnect is logged but never removed from the block layer: [Hot-Plug Interrupt Handling](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#8-hot-plug-interrupt-handling).
+- Devices behind a USB hub do not enumerate, because there is no hub class driver yet: [USB Hub Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#9-usb-hub-class-driver).
+- A machine without xHCI has no USB at all: EHCI, UHCI and OHCI controllers are detected and named for the boot report but not driven: [EHCI Fallback (USB 2.0)](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#10-ehci-fallback-usb-20).
 - Non-Intel xHCI controllers (AMD, ASMedia, Renesas, VIA) have run only through the generic path in emulation; the physical hardware matrix waits on operator access: [Hardware Compatibility, Non-Intel xHCI Vendors](../../todo/01-boot-platform/TODO-17-xhci-usb-boot.md#6-hardware-compatibility----non-intel-xhci-vendors).
 - Bare-metal USB boot (`C:\` on the USB drive with the kernel log written to it) is a manual verification step not yet checked off: [Verification](../../todo/01-boot-platform/TODO-17-xhci-usb-boot.md#verification).
 

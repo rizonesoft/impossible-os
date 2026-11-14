@@ -22,7 +22,7 @@ title: "TODO-18 -- UI Framework Engines"
 - [`src/desktop/wm.c`](../../src/desktop/wm.c), [`include/desktop/wm.h`](../../include/desktop/wm.h) -- the window manager whose windows host element trees
 - [`src/desktop/desktop.c`](../../src/desktop/desktop.c) -- the hand-painted shell surfaces these engines replace
 - [`include/desktop/theme_tokens.h`](../../include/desktop/theme_tokens.h) -- generated tokens every style resolves to
-- -> XREF: `TODO-17-win11-parity-inventory.md §50` -- assigns inventory records to the engines and controls that build them
+- -> XREF: `TODO-17-win11-parity-inventory.md §15` -- assigns inventory records to the engines and controls that build them
 - -> XREF: `TODO-19-fluent-component-library.md §1` -- the controls built on these engines
 - -> XREF: `TODO-01-graphics-asset-foundation.md §1,§2` -- render targets and the clip and transform stack the composition tree draws with
 - -> XREF: `TODO-02-text-font-internationalization.md §3,§4` -- shaping, paragraph layout, caret and hit-test services text elements call
@@ -33,6 +33,7 @@ title: "TODO-18 -- UI Framework Engines"
 - -> XREF: `D09 T05 §1,§2` -- the search index that §16 and §17 feed
 - -> XREF: `D09 T13 §1,§3` -- the explorer shell host process that §22 generalises
 - -> XREF: `D09 T02 §1,§4` -- extension-to-app mapping and shortcut files that §20 builds on
+- -> XREF: `D11 T05 §14,§18` -- Recto, the bundled PDF app, draws through §6, §7, §12 and §24 and registers through §19 and §20
 
 ## Outcome
 
@@ -40,7 +41,7 @@ title: "TODO-18 -- UI Framework Engines"
 - One command definition feeds its menu item, toolbar button, context menu entry, shortcut and access key.
 - One setting definition feeds its Settings page, its Control Panel entry, its search result, its deep link and its policy lock.
 - The shell namespace, property system and extension points give File Explorer, the common dialogs, the desktop and search one model of "an item".
-- Every element reports itself to the accessibility tree and carries the inventory id it implements, so the layout check of `TODO-17 §51` can compare the built OS with the reference.
+- Every element reports itself to the accessibility tree and carries the inventory id it implements, so the layout check of `TODO-17 §16` can compare the built OS with the reference.
 
 ## Engine Quick Reference
 
@@ -518,7 +519,7 @@ Every element describes itself, so assistive tools work everywhere and the built
 - [ ] The `inventory` attribute of §11 is stored on the element and exposed on its peer as `inventoryId`
 - [ ] Events: focus changed, property changed, structure changed, invoked, selection changed, raised once per change and coalesced per frame
 - [ ] Keyboard completeness check in test builds: every element with an invoke, toggle or expand action must be reachable by Tab or arrow navigation
-- [ ] Dump: `ui_automation_dump(window)` writes the peer tree as JSON through the transport of `TODO-07 §6`, the input of `TODO-17 §51`
+- [ ] Dump: `ui_automation_dump(window)` writes the peer tree as JSON through the transport of `TODO-07 §6`, the input of `TODO-17 §16`
 - [ ] Commit: `"ui: automation peers and inventory ids on every element"`
 
 **Test checkpoint:** `test_ui_automation` passes: a button's peer reports role button, its label as name and the invoke action; an unnamed button in `tests/noname.iui` fails `uic.py`; the dump of the test page lists every element with an `inventoryId`. Test on: QEMU TCG and KVM.

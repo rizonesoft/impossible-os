@@ -55,7 +55,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 
 ---
 
-## 1. Kernel Time API `[Sonnet]`
+## 1. Kernel Time API
 
 `time_init()`: read CMOS RTC, convert to Unix timestamp, record `g_boot_unix` + `g_boot_ticks`. `time_now()`: `g_boot_unix + (system_get_ticks() - g_boot_ticks) / PIT_TARGET_FREQ + g_ntp_offset_secs`. `time_now_local()`: `time_now() + g_tz_offset_sec`. `time_to_datetime()` and `datetime_to_time()` with full leap-year arithmetic. `time_set()` for NTP. `SYS_TIME=55`.
 
@@ -78,7 +78,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 - [ ] `time_init()` called after `wall_clock_init()` and `timezone_init()` in `src/kernel/main/boot_storage.c`
 - [ ] Commit: `"time: kernel time API -- time_init/now/local/to_datetime/set/set_tz, SYS_TIME=55"`
 
-## 2. Time Formatting `[Sonnet]`
+## 2. Time Formatting
 
 `time_format(dt, buf, size, fmt)` with strftime-style specifiers: `%H` (00–23), `%I` (01–12), `%M`, `%S`, `%p` (AM/PM), `%Y`, `%m`, `%d`, `%A` (full weekday), `%a` (abbr), `%B` (full month), `%b` (abbr). Registry `HKLM\SYSTEM\DateTime\Use24Hour` + `DateFormat` ("MM/DD/YYYY" etc.).
 
@@ -94,7 +94,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 - [ ] `void time_format_date(const struct datetime *dt, char *buf, uint32_t size)`: read `HKLM\SYSTEM\DateTime\DateFormat` ("MM/DD/YYYY" | "DD/MM/YYYY" | "YYYY-MM-DD"); map to `time_format()` call
 - [ ] Commit: `"time: time_format() -- 13 strftime specifiers, Registry 24h/date-format, no libc dependency"`
 
-## 3. Taskbar Clock `[Sonnet]`
+## 3. Taskbar Clock
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar)
 
@@ -116,7 +116,7 @@ Render the time over the date in the caption style (12/16), right-aligned in a `
   - Calendar: month title with previous/next buttons, 7-column grid of 40 px day cells, today as an accent circle, other-month days in `text_tertiary`, below the notification list of `08-graphics-ui/TODO-11 §6`
 - [ ] Commit: `"clock: taskbar clock -- time over date, 1 s update, calendar in the shared notifications flyout"`
 
-## 4. Date/Time Control Panel `[Sonnet]`
+## 4. Date/Time Control Panel
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -133,7 +133,7 @@ The Date & time page of the Settings / Control Panel host (`09-desktop-shell/TOD
 - [ ] "Sync now" row: button + caption "Last successful sync: HH:MM" (`text_secondary`); `ntp_sync()` (`07-networking/TODO-06`); shows a progress ring while syncing
 - [ ] Commit: `"datetime: Date & time settings page -- automatic time, time zone, DST, 24-hour, manual change dialog, sync now"`
 
-## 5. Timezone Database `[Sonnet]`
+## 5. Timezone Database
 
 Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (US/Eastern, US/Central, US/Pacific, Europe/London, Europe/Paris, Asia/Tokyo, Australia/Sydney, etc.). `struct tz_entry { name, offset_min, dst_offset_min, dst_start_rule, dst_end_rule }`. DST adjustment computed from rules on `time_now_local()`.
 
@@ -151,7 +151,7 @@ Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (U
 - [ ] Update `time_now_local()` to check `tz_is_dst()` when `g_tz_entry->dst_offset_min != 0`
 - [ ] Commit: `"tz_table: embedded 30-entry timezone database with DST rules (Nth-weekday-of-month)"`
 
-## 6. Monotonic Uptime Extension `[Sonnet]`
+## 6. Monotonic Uptime Extension
 
 `uptime_ms()` returns uint64 milliseconds since boot (wraps at ~584M years, not 49 days). `SYS_UPTIME=12` already dispatches to seconds; extend `sys_uptime()` to return ms. `uptime` shell command: "Xd Xh Xm Xs". Used by: ping RTT, disk latency histogram.
 

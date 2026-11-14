@@ -51,11 +51,7 @@ title: "TODO-02 -- Environment Variables & Process ABI"
 
 ## Outcome
 
-Every user-mode program launched via `task_exec` receives correct `argc`, `argv[]`, and a
-populated environment block. `%VAR%` references in shell command lines and file-association
-command templates expand correctly. `GetEnvironmentVariableA` and `ExpandEnvironmentStrings`
-work for third-party app code. The shell commands `set`, `echo`, `env`, and `where` are
-available. `.profile` is sourced on startup and persists env changes across reboots.
+Every user-mode program launched via `task_exec` receives correct `argc`, `argv[]`, and a populated environment block. `%VAR%` references in shell command lines and file-association command templates expand correctly. `GetEnvironmentVariableA` and `ExpandEnvironmentStrings` work for third-party app code. The shell commands `set`, `echo`, `env`, and `where` are available. `.profile` is sourced on startup and persists env changes across reboots.
 
 ---
 
@@ -74,7 +70,7 @@ available. `.profile` is sourced on startup and persists env changes across rebo
 
 ---
 
-## 1. Per-Process Environ Storage (SDK Contract) `[Sonnet]`
+## 1. Per-Process Environ Storage (SDK Contract)
 
 > Implementation: `02-kernel-core/TODO-22 §1`. This section defines the **SDK contract** --
 > the stable API surface that apps and SDK headers depend on.
@@ -104,7 +100,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 2. System Default Variables `[Sonnet]`
+## 2. System Default Variables
 
 > Implementation: `02-kernel-core/TODO-22 §2`. This section documents the **developer-visible
 > defaults** every app can rely on.
@@ -130,7 +126,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 3. `%VAR%` Expansion + `env_expand_path` `[Sonnet]`
+## 3. `%VAR%` Expansion + `env_expand_path`
 
 > `env_expand` (single-pass `%VAR%` substitution with a work budget) is implemented in `02-kernel-core/TODO-22 §3`.
 > `env_expand_path` is **new** -- not in TODO-14 -- and is specified here.
@@ -154,7 +150,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 4. SYS_GETENV / SYS_SETENV / SYS_UNSETENV `[Sonnet]`
+## 4. SYS_GETENV / SYS_SETENV / SYS_UNSETENV
 
 > Syscall implementation: `02-kernel-core/TODO-22 §5` (`NtQuery/SetEnvironmentVariable`).
 > This section documents the **user-mode syscall numbers** and the user32/kernel32 wrappers.
@@ -174,7 +170,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 5. PATH-Based Command Lookup + Session Cache `[Sonnet]`
+## 5. PATH-Based Command Lookup + Session Cache
 
 > Core PATH iteration: `02-kernel-core/TODO-22 §7`. This section adds the **session cache**.
 
@@ -186,7 +182,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 6. argv / argc Process ABI + `cmd_tokenize` `[Sonnet]`
+## 6. argv / argc Process ABI + `cmd_tokenize`
 
 > Initial user stack layout (argc / argv / envp pushed before `iretq`): `02-kernel-core/TODO-11 §7`.
 > This section specifies **`cmd_tokenize`** -- the command-line tokenizer that produces the
@@ -209,7 +205,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 7. Shell `.profile` Startup Script `[Sonnet]`
+## 7. Shell `.profile` Startup Script
 
 > Implementation: `02-kernel-core/TODO-22 §8`. This section adds the **default `.profile`**
 > content shipped in the ISO.
@@ -233,7 +229,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ---
 
-## 8. `set` / `echo` / `env` / `where` Shell Commands `[Sonnet]`
+## 8. `set` / `echo` / `env` / `where` Shell Commands
 
 > Core dispatch: `02-kernel-core/TODO-22 §7`. This section consolidates the exact
 > **command contract** for each shell built-in.
@@ -266,10 +262,7 @@ int         env_expand_path(struct task *t, const char *templ,
 | 💎  | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 -- `D02T22 ` + §8; default                 |
 | 💎  | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 -- `echo.` blank-line idiom + `set         |
 
-Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand`
-into a single `env_expand_path` pass -- so a command template like `"player.exe %1 /fullscreen"`
-both substitutes the filepath **and** resolves any `%VAR%` references in the path, in one
-function call, without the shell or file manager needing separate expansion steps.
+Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand` into a single `env_expand_path` pass -- so a command template like `"player.exe %1 /fullscreen"` both substitutes the filepath **and** resolves any `%VAR%` references in the path, in one function call, without the shell or file manager needing separate expansion steps.
 
 ---
 

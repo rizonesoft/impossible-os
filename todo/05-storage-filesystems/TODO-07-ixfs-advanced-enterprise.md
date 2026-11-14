@@ -68,7 +68,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 
 ---
 
-## 1. Sparse File Support `[Opus]`
+## 1. Sparse File Support
 
 Implement hole extents (a special extent type marking unallocated data ranges), `FSCTL_SET_SPARSE`, `FSCTL_SET_ZERO_DATA`, and `FSCTL_QUERY_ALLOCATED_RANGES`.
 
@@ -86,7 +86,7 @@ Implement hole extents (a special extent type marking unallocated data ranges), 
 - [ ] Add to `ixfs_test.c`: write 10 MB; punch 5 MB hole in middle; read back (zeros in hole, data outside); `QUERY_ALLOCATED_RANGES` shows two ranges; sparse + CoW: share block between file and snapshot; punch hole in file → snapshot block intact
 - [ ] Commit: `"ixfs: sparse files -- hole extents, FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES, CoW-safe punch"`
 
-## 2. Real-Time TRIM `[Sonnet]`
+## 2. Real-Time TRIM
 
 Batch freed blocks within journal transactions. Coalesce adjacent ranges. Issue `blkdev_discard()` at `ixfs_txn_commit`. Auto-detect SSD via ATA IDENTIFY. Add `IXFS_MOUNT_DISCARD` option.
 
@@ -102,7 +102,7 @@ Batch freed blocks within journal transactions. Coalesce adjacent ranges. Issue 
 - [ ] Registry override: `HKLM\SYSTEM\Storage\IXFS\DisableDiscard (REG_DWORD)` = 1 forces off
 - [ ] Commit: `"ixfs: real-time TRIM -- journal-batched discard, SSD auto-detect, 64-range coalesce"`
 
-## 3. Transparent LZ4/Zstd Compression `[Opus]`
+## 3. Transparent LZ4/Zstd Compression
 
 Per-4KiB compression unit on the write path. Skip compression if ratio < 10%. Decompress transparently on read. Wire `FSCTL_SET_COMPRESSION`/`FSCTL_GET_COMPRESSION`. Set `FILE_ATTRIBUTE_COMPRESSED`.
 
@@ -121,7 +121,7 @@ Per-4KiB compression unit on the write path. Skip compression if ratio < 10%. De
 - [ ] Log on unmount: `[IXFS] Compression: %llu blocks compressed, avg ratio %.1f%%`
 - [ ] Commit: `"ixfs: LZ4/Zstd transparent compression -- 4KiB units, 10% gate, FSCTL_SET_COMPRESSION"`
 
-## 4. Inline Block Deduplication `[Opus]`
+## 4. Inline Block Deduplication
 
 xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. Collision confirmed with byte-compare. Deduplicated blocks reuse CoW refcounts.
 
@@ -139,7 +139,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] Enabled gate: check `vol->sb.s_total_blocks * IXFS_BLOCK_SIZE >= 1 GiB`; else skip dedup silently
 - [ ] Commit: `"ixfs: inline block dedup -- xxHash64, byte-compare confirm, CoW refcount reuse, dedup_ht"`
 
-## 5. Reflink Instant Copy `[Opus]`
+## 5. Reflink Instant Copy
 
 `ixfs_reflink()` creates a new inode sharing the source's extent list. Increment refcount of every shared block. Wire into `CopyFileW` for same-volume IXFS. CoW fires automatically on first write.
 
@@ -155,7 +155,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] Test: reflink 1 GiB file → instant (< 10 ms); write 1 byte to clone → only that block CoW'd; original unchanged; delete clone → refcounts decremented; delete original → last-refcount blocks freed
 - [ ] Commit: `"ixfs: reflink instant copy -- O(1) extent clone, CoW on write, CopyFileW same-volume hook"`
 
-## 6. Online Defragmentation `[Opus]`
+## 6. Online Defragmentation
 
 `ixfs_defrag_file()`: skip if ≤2 extents, allocate contiguous range, copy data, update extent list, free old blocks. Background SCHED_IDLE thread. `FSCTL_DEFRAGMENT_FILE`. `defrag` CLI.
 
@@ -172,7 +172,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] Disk Manager "Defragment" button → same as `defrag C:` + show progress in panel
 - [ ] Commit: `"ixfs: online defrag -- ixfs_defrag_file, contiguous alloc, background IDLE thread, FSCTL_DEFRAGMENT_FILE"`
 
-## 7. Online Volume Resize `[Opus]`
+## 7. Online Volume Resize
 
 `ixfs_grow(vol, new_total_blocks)`: extend block bitmap, update superblock fields, recalculate block groups. Flush via journal. Wire to Disk Manager "Extend Volume".
 
@@ -188,7 +188,7 @@ xxHash64 per-4KiB block at write time. In-memory `dedupe_ht` rebuilt on mount. C
 - [ ] Test: format 100 MiB volume; grow to 200 MiB; verify `s_total_blocks` correct; write file to new region; read back; `bash scripts/build.sh clean run` passes
 - [ ] Commit: `"ixfs: online volume resize -- ixfs_grow(), bitmap extension, superblock update, group recalculation"`
 
-## 8. Self-Healing Metadata `[Sonnet]`
+## 8. Self-Healing Metadata
 
 Write backup superblock at last volume block on every flush. On mount, if primary superblock CRC32C fails: read backup, restore if valid. Wire to Disk Manager volume health panel.
 
@@ -204,7 +204,7 @@ Write backup superblock at last volume block on every flush. On mount, if primar
 - [ ] Disk Manager: health panel shows `Self-heals: %u (last: %s)` from event log
 - [ ] Commit: `"ixfs: self-healing metadata -- backup superblock, CRC32C restore on mount, heal event counter"`
 
-## 9. Automatic Scheduled Snapshots `[Sonnet]`
+## 9. Automatic Scheduled Snapshots
 
 Configurable interval + retention policy. Prune oldest automatically. Wire to Explorer "Previous Versions" tab via shell protocol.
 
@@ -220,7 +220,7 @@ Configurable interval + retention policy. Prune oldest automatically. Wire to Ex
 - [ ] Log: `[IXFS] Auto-snapshot created: %s`; `[IXFS] Snapshot pruned: %s (retention policy)`
 - [ ] Commit: `"ixfs: auto snapshots -- scheduled create, retention 24h/7d/4w, prune, Explorer Previous Versions"`
 
-## 10. Per-File AES-256-XTS Encryption `[Opus]`
+## 10. Per-File AES-256-XTS Encryption
 
 Key table in reserved blocks. Master key via PBKDF2 (100 K iterations). Per-file random key wrapped by master key stored in `i_encrypt_key_id`. AES-256-XTS with block-number tweak. `FILE_ATTRIBUTE_ENCRYPTED`.
 
@@ -239,7 +239,7 @@ Key table in reserved blocks. Master key via PBKDF2 (100 K iterations). Per-file
 - [ ] Lock enforcement: if `vol->master_key` not set (wrong/no password): return `STATUS_ACCESS_DENIED` for any encrypted file open
 - [ ] Commit: `"ixfs: per-file AES-256-XTS encryption -- PBKDF2 master key, key table, block-number tweak, FSCTL_SET_ENCRYPTION"`
 
-## 11. USN Change Journal `[Sonnet]`
+## 11. USN Change Journal
 
 Circular 32-byte USN record buffer in the reserved journal region. 5 reason codes. `FSCTL_QUERY_USN_JOURNAL`/`FSCTL_READ_USN_JOURNAL`. Persists across reboots.
 
@@ -255,7 +255,7 @@ Circular 32-byte USN record buffer in the reserved journal region. 5 reason code
 - [ ] `FSCTL_DELETE_USN_JOURNAL` → zero the region; reset `s_usn_current = 0`
 - [ ] Commit: `"ixfs: USN change journal -- circular 32B records, 5 reason codes, FSCTL_QUERY/READ_USN_JOURNAL, persists on reboot"`
 
-## 12. Volume Quotas `[Sonnet]`
+## 12. Volume Quotas
 
 Quota table in reserved blocks. `ixfs_alloc_block` checks limit. `STATUS_DISK_FULL` on quota exceeded. `FSCTL_GET/SET_VOLUME_QUOTA`. Disk Manager quota panel.
 
@@ -272,7 +272,7 @@ Quota table in reserved blocks. `ixfs_alloc_block` checks limit. `STATUS_DISK_FU
 - [ ] Disk Manager quota panel: list all users with quotas; "Add/Edit" button; "Remove" button; shows used vs. limit bar chart per user
 - [ ] Commit: `"ixfs: volume quotas -- quota table, ixfs_alloc check, STATUS_DISK_FULL, FSCTL_GET/SET_VOLUME_QUOTA"`
 
-## 13. Filesystem-Native Storage Tiering `[Opus]`
+## 13. Filesystem-Native Storage Tiering
 
 Multi-device IXFS volume with SSD fast tier + HDD capacity tier. Background promote/demote thread. `i_access_count` + `i_tier_id` in v3 inode. Disk Manager tier config and migration progress.
 
@@ -290,7 +290,7 @@ Multi-device IXFS volume with SSD fast tier + HDD capacity tier. Background prom
 - [ ] Disk Manager tier config: list tiers (SSD/HDD, size, used, hot/cold file counts); "Add Tier" (attach new blkdev); migration progress bar during background migration
 - [ ] Commit: `"ixfs: storage tiering -- SSD/HDD multi-device, promote/demote background thread, Disk Manager panel"`
 
-## 14. Volume Health Dashboard `[Sonnet]`
+## 14. Volume Health Dashboard
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -307,7 +307,7 @@ Disk Manager panel with superblock health, journal state, checksum failures, fra
 - [ ] AHCI SMART integration: if `blkdev_smart_query(dev)` available (TODO-01 §5): show temperature + reallocated sector count in the panel
 - [ ] Commit: `"desktop: IXFS volume health dashboard -- stats, health score, one-click scrub/defrag/snapshot/repair"`
 
-## 15. Comprehensive Test Suite `[Sonnet]`
+## 15. Comprehensive Test Suite
 
 Extend `ixfs_test.c` to cover every feature from TODO-06 and TODO-07. Journal recovery simulation. Full `bash scripts/build.sh clean run` green.
 

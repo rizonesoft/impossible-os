@@ -42,13 +42,13 @@ It cannot be used yet. Read a text file with `type <file>` in the terminal.
 
 ## What is not implemented yet?
 
-- [Gap Buffer](../../todo/09-desktop-shell/TODO-10-notepad.md#1-gap-buffer-opus)
-- [Text Rendering and Cursor](../../todo/09-desktop-shell/TODO-10-notepad.md#2-text-rendering--cursor-sonnet)
-- [Undo/Redo](../../todo/09-desktop-shell/TODO-10-notepad.md#3-undoredo-sonnet)
-- [File Menu](../../todo/09-desktop-shell/TODO-10-notepad.md#4-file-menu-sonnet), which needs the menu bar and file dialogs
-- [Editing Features](../../todo/09-desktop-shell/TODO-10-notepad.md#5-editing-features-sonnet), which needs the [Clipboard](clipboard.md)
-- [Find and Replace](../../todo/09-desktop-shell/TODO-10-notepad.md#6-find--replace-sonnet)
-- [Stretch Features](../../todo/09-desktop-shell/TODO-10-notepad.md#7-stretch-features-sonnet)
+- [Gap Buffer](../../todo/09-desktop-shell/TODO-10-notepad.md#1-gap-buffer)
+- [Text Rendering and Cursor](../../todo/09-desktop-shell/TODO-10-notepad.md#2-text-rendering--cursor)
+- [Undo/Redo](../../todo/09-desktop-shell/TODO-10-notepad.md#3-undoredo)
+- [File Menu](../../todo/09-desktop-shell/TODO-10-notepad.md#4-file-menu), which needs the menu bar and file dialogs
+- [Editing Features](../../todo/09-desktop-shell/TODO-10-notepad.md#5-editing-features), which needs the [Clipboard](clipboard.md)
+- [Find and Replace](../../todo/09-desktop-shell/TODO-10-notepad.md#6-find--replace)
+- [Stretch Features](../../todo/09-desktop-shell/TODO-10-notepad.md#7-stretch-features)
 
 A second roadmap, [Notepad in the applications domain](../../todo/11-apps/TODO-08-notepad.md), covers the same program and refers back to this one for the editor core.
 

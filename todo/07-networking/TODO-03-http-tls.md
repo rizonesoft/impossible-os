@@ -51,7 +51,7 @@ title: "TODO-03 -- HTTP/HTTPS Client & TLS"
 
 ---
 
-## 1. URL Parser `[Sonnet]`
+## 1. URL Parser
 
 Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://` URLs in-place (no heap allocation). Set default ports 80/443. Support IPv6 literal hostnames `[::1]`.
 
@@ -67,7 +67,7 @@ Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://`
 - [ ] Test cases in serial log: `http://example.com/path?q=1` → host=`example.com`, port=80, path=`/path`, query=`q=1`; `https://[::1]:8443/` → host=`::1`, port=8443, https=1
 - [ ] Commit: `"net/http: URL parser -- scheme/host/port/path/query, IPv6 literal, no-heap in-place split"`
 
-## 2. HTTP GET `[Sonnet]`
+## 2. HTTP GET
 
 `http_get(url_str, response_buf, max_len)`: parse URL → `dns_resolve` → `kern_connect` → send `GET` request → receive and parse status line + headers → read body → `kern_close`. Follow up to 5 redirects (301/302 Location header). Return status code.
 
@@ -85,7 +85,7 @@ Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://`
 - [ ] Log: `[HTTP] GET %s → %d (%zu bytes)` or `[HTTP] Redirect %d → %s`
 - [ ] Commit: `"net/http: HTTP GET -- status parse, header parse, Content-Length body, 5-hop redirect follow"`
 
-## 3. HTTP POST + Chunked Transfer Encoding `[Sonnet]`
+## 3. HTTP POST + Chunked Transfer Encoding
 
 `http_post(url_str, content_type, body, body_len, response_buf, max)`: send `POST` with `Content-Length` + `Content-Type` headers. Implement the chunked transfer decoder (`hex-size\r\ndata\r\n…0\r\n\r\n`).
 
@@ -102,7 +102,7 @@ Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://`
 - [ ] Log: `[HTTP] POST %s → %d (%zu bytes); chunked=%d`
 - [ ] Commit: `"net/http: POST + chunked TE decoder -- hex chunk size state machine, chunked body assembly"`
 
-## 4. `wget` / `curl` Shell Commands `[Sonnet]`
+## 4. `wget` / `curl` Shell Commands
 
 `wget <url> [-o file]` downloads to file or stdout. `curl <url>` always prints to stdout. Progress bar (bytes / Content-Length + KB/s). Auto-detect `ftp://` for FTP passthrough stub.
 
@@ -120,7 +120,7 @@ Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://`
 - [ ] Register `wget` and `curl` in shell command table
 - [ ] Commit: `"shell: wget + curl commands -- progress bar, -o file, Content-Length + chunked, FTP stub"`
 
-## 5. Mbed TLS Kernel Port `[Opus]`
+## 5. Mbed TLS Kernel Port
 
 Integrate Mbed TLS (Apache-2.0, ~60 K lines) as a static kernel library (`lib/libmbedtls.a`). Redirect `malloc`/`free` → `kmalloc`/`kfree`. Provide `time_now()` from kernel uptime. Provide entropy via `RDRAND`. Compile under `-ffreestanding -nostdlib -nostdinc`.
 
@@ -138,7 +138,7 @@ Integrate Mbed TLS (Apache-2.0, ~60 K lines) as a static kernel library (`lib/li
 - [ ] Log: `[TLS] Mbed TLS 3.x initialized -- entropy OK, sha256 OK`
 - [ ] Commit: `"net/tls: Mbed TLS 3.x kernel port -- kmalloc, RDRAND entropy, time shim, ffreestanding build"`
 
-## 6. CA Certificate Store `[Sonnet]`
+## 6. CA Certificate Store
 
 Embed Mozilla CA bundle at `resources/certs/ca-bundle.crt` (MPL-2.0, ~130 root CAs). Install to `C:\Impossible\System\Certs\ca-bundle.crt` on the disk image. `tls_load_ca_bundle(path)` PEM parser. `tls_verify_cert()` validates chain against trust store.
 
@@ -156,7 +156,7 @@ Embed Mozilla CA bundle at `resources/certs/ca-bundle.crt` (MPL-2.0, ~130 root C
 - [ ] Log: `[TLS] CA bundle loaded -- N root CAs` and `[TLS] Cert OK: CN=hostname`
 - [ ] Commit: `"net/tls: CA bundle PEM parser, tls_load_ca_bundle(), tls_verify_cert(), base64 decoder"`
 
-## 7. HTTPS GET / POST `[Opus]`
+## 7. HTTPS GET / POST
 
 TLS handshake after `tcp_connect` using Mbed TLS (ClientHello → ServerHello → certificate verify → key exchange). `https_get()`/`https_post()` identical to HTTP variants but over the encrypted channel. `wget`/`curl` auto-detect `https://`. Reject self-signed unless explicitly trusted.
 
@@ -177,7 +177,7 @@ TLS handshake after `tcp_connect` using Mbed TLS (ClientHello → ServerHello �
 - [ ] -> XREF: `01-boot-platform/TODO-27 §8` (item: "Live metadata refresh") -- the firmware advisor's LVFS refresh consumes `https_get()` once it ships
 - [ ] Commit: `"net/tls: HTTPS client -- Mbed TLS handshake, SNI, cert verify, BIO wrappers, https_get/post"`
 
-## 8. HTTP/1.1 Keep-Alive Connection Pool `[Opus]`
+## 8. HTTP/1.1 Keep-Alive Connection Pool
 
 Pool of 8 connections per host (`host:port` key). Reuse existing TCP (or TLS) connection for subsequent requests. LRU eviction. `Connection: keep-alive` header. Spinlock-guarded shared state.
 

@@ -50,9 +50,9 @@ It cannot be used yet.
 
 ## What is not implemented yet?
 
-- **Engine and hooks**: [Packet Filter Engine](../../todo/07-networking/TODO-05-firewall.md#1-packet-filter-engine-opus), [IP Layer Hooks](../../todo/07-networking/TODO-05-firewall.md#2-ip-layer-hooks-sonnet) and [Stateful Connection Tracking Integration](../../todo/07-networking/TODO-05-firewall.md#3-stateful-connection-tracking-integration-opus).
-- **Policy**: [Default Ruleset](../../todo/07-networking/TODO-05-firewall.md#4-default-ruleset-sonnet) and [IPv6 Firewall](../../todo/07-networking/TODO-05-firewall.md#5-ipv6-firewall-sonnet).
-- **Management**: [Firewall CLI](../../todo/07-networking/TODO-05-firewall.md#6-firewall-cli-sonnet), [Registry Persistence](../../todo/07-networking/TODO-05-firewall.md#7-registry-persistence-sonnet), [`firewall.cpl` Control Panel Applet](../../todo/07-networking/TODO-05-firewall.md#8-firewallcpl-control-panel-applet-sonnet) and [Per-Rule Hit Counters](../../todo/07-networking/TODO-05-firewall.md#9-per-rule-hit-counters-sonnet).
+- **Engine and hooks**: [Packet Filter Engine](../../todo/07-networking/TODO-05-firewall.md#1-packet-filter-engine), [IP Layer Hooks](../../todo/07-networking/TODO-05-firewall.md#2-ip-layer-hooks) and [Stateful Connection Tracking Integration](../../todo/07-networking/TODO-05-firewall.md#3-stateful-connection-tracking-integration).
+- **Policy**: [Default Ruleset](../../todo/07-networking/TODO-05-firewall.md#4-default-ruleset) and [IPv6 Firewall](../../todo/07-networking/TODO-05-firewall.md#5-ipv6-firewall).
+- **Management**: [Firewall CLI](../../todo/07-networking/TODO-05-firewall.md#6-firewall-cli), [Registry Persistence](../../todo/07-networking/TODO-05-firewall.md#7-registry-persistence), [`firewall.cpl` Control Panel Applet](../../todo/07-networking/TODO-05-firewall.md#8-firewallcpl-control-panel-applet) and [Per-Rule Hit Counters](../../todo/07-networking/TODO-05-firewall.md#9-per-rule-hit-counters).
 - **Not planned**: per-application rules, network profiles (domain, private and public) and NAT.
 
 ## How does it compare with Windows 11 and Linux?

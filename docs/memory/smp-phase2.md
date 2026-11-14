@@ -53,14 +53,14 @@ bash scripts/test-smoke-matrix.sh
 
 ## What is not implemented yet?
 
-- **An atomics audit** of every shared counter and flag against the barrier set above ([SMP-Safe Atomics Audit](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#1-smp-safe-atomics-audit--smp_mb-barriers-opus)).
-- **TLB shootdown.** Vector `0xFE` is reserved with no handler and no sender ([TLB Shootdown IPI](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#2-tlb-shootdown-ipi-opus)).
-- **Per-CPU run queues and work stealing.** The scheduler is one global round-robin that only the boot CPU runs ([Per-CPU Run Queues](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#3-per-cpu-run-queues-opus), [Work-Stealing Load Balancer](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#4-work-stealing-load-balancer-opus)).
-- **Adaptive mutex spinning** ([Adaptive Mutex Spin-on-Owner](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#5-adaptive-mutex-spin-on-owner-opus)).
-- **Per-CPU RCU with `call_rcu()`** ([Per-CPU RCU Upgrade](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#6-per-cpu-rcu-upgrade-opus)).
-- **CPU hotplug.** Only a test-only park helper exists ([CPU Hotplug Stub](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#7-cpu-hotplug-stub-sonnet)).
-- **`READ_ONCE` and `WRITE_ONCE`** ([`READ_ONCE` / `WRITE_ONCE` Macros](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#8-read_once--write_once-macros-sonnet)).
-- **The roadmap's feature intersection design.** A global reduction ships; the per-CPU CPUID record and offlining of a CPU that lacks a required feature are open ([CPU Feature Intersection at AP Bringup](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#9-cpu-feature-intersection-at-ap-bringup-opus)).
+- **An atomics audit** of every shared counter and flag against the barrier set above ([SMP-Safe Atomics Audit](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#1-smp-safe-atomics-audit--smp_mb-barriers)).
+- **TLB shootdown.** Vector `0xFE` is reserved with no handler and no sender ([TLB Shootdown IPI](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#2-tlb-shootdown-ipi)).
+- **Per-CPU run queues and work stealing.** The scheduler is one global round-robin that only the boot CPU runs ([Per-CPU Run Queues](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#3-per-cpu-run-queues), [Work-Stealing Load Balancer](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#4-work-stealing-load-balancer)).
+- **Adaptive mutex spinning** ([Adaptive Mutex Spin-on-Owner](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#5-adaptive-mutex-spin-on-owner)).
+- **Per-CPU RCU with `call_rcu()`** ([Per-CPU RCU Upgrade](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#6-per-cpu-rcu-upgrade)).
+- **CPU hotplug.** Only a test-only park helper exists ([CPU Hotplug Stub](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#7-cpu-hotplug-stub)).
+- **`READ_ONCE` and `WRITE_ONCE`** ([`READ_ONCE` / `WRITE_ONCE` Macros](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#8-read_once--write_once-macros)).
+- **The roadmap's feature intersection design.** A global reduction ships; the per-CPU CPUID record and offlining of a CPU that lacks a required feature are open ([CPU Feature Intersection at AP Bringup](../../todo/03-memory-concurrency/TODO-07-smp-phase2.md#9-cpu-feature-intersection-at-ap-bringup)).
 
 ## How does it compare with Windows 11 and Linux?
 

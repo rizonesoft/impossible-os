@@ -48,12 +48,12 @@ On a laptop with an I2C touchpad, use a USB mouse for now. The serial log's PS/2
 
 All ten sections are open:
 
-- **The host controller** ([I2C/SMBus Host Controller Driver](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#1-i2csmbus-host-controller-driver-opus)) and a **PS/2 fallback** for older pads ([Synaptics PS/2 Touchpad Fallback](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#2-synaptics-ps2-touchpad-fallback-sonnet)).
-- **Finding devices** through ACPI ([ACPI I2C Device Enumeration](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#3-acpi-i2c-device-enumeration-sonnet)).
-- **The transport and parser** ([HID-over-I2C (HoI2C) Transport](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#4-hid-over-i2c-hoi2c-transport-opus), [HID Report Descriptor Parser](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#5-hid-report-descriptor-parser-opus)).
-- **Multi-touch** ([Microsoft Precision Touchpad (PTP) Multi-Touch](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#6-microsoft-precision-touchpad-ptp-multi-touch-sonnet)) and **vendor quirks** ([ELAN and Goodix I2C Touchpad Quirks](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#7-elan-and-goodix-i2c-touchpad-quirks-sonnet)).
-- **Gestures** ([PTP Gesture Engine](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#8-ptp-gesture-engine-opus)).
-- **Settings and diagnostics** ([Touchpad Control Panel](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#9-touchpad-control-panel-mousecpl-touchpad-tab-sonnet), [Shell Commands](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#10-xinput-list--touchpad-info-shell-commands-sonnet)).
+- **The host controller** ([I2C/SMBus Host Controller Driver](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#1-i2csmbus-host-controller-driver)) and a **PS/2 fallback** for older pads ([Synaptics PS/2 Touchpad Fallback](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#2-synaptics-ps2-touchpad-fallback)).
+- **Finding devices** through ACPI ([ACPI I2C Device Enumeration](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#3-acpi-i2c-device-enumeration)).
+- **The transport and parser** ([HID-over-I2C (HoI2C) Transport](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#4-hid-over-i2c-hoi2c-transport), [HID Report Descriptor Parser](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#5-hid-report-descriptor-parser)).
+- **Multi-touch** ([Microsoft Precision Touchpad (PTP) Multi-Touch](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#6-microsoft-precision-touchpad-ptp-multi-touch)) and **vendor quirks** ([ELAN and Goodix I2C Touchpad Quirks](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#7-elan-and-goodix-i2c-touchpad-quirks)).
+- **Gestures** ([PTP Gesture Engine](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#8-ptp-gesture-engine)).
+- **Settings and diagnostics** ([Touchpad Control Panel](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#9-touchpad-control-panel-mousecpl-touchpad-tab), [Shell Commands](../../todo/04-drivers-hardware/TODO-12-i2c-touchpad.md#10-xinput-list--touchpad-info-shell-commands)).
 
 ## How does it compare with Windows 11 and Linux?
 

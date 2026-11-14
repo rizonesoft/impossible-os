@@ -50,7 +50,7 @@ title: "TODO-11 -- Optical Media: ISO 9660, Joliet & UDF"
 
 ---
 
-## 1. SCSI MMC Layer -- READ TOC, DISC INFO, TRACK INFO `[Sonnet]`
+## 1. SCSI MMC Layer -- READ TOC, DISC INFO, TRACK INFO
 
 Extend `ahci_atapi.c` with READ TOC (CDB `0x43`), DISC INFORMATION (`0x51`), and READ TRACK INFO (`0x52`). Expose results in `atapi_disc_info_t`. Replace the bare `atapi_do_read()` call sites in the filesystem layers with the higher-level `atapi_read_cd()` cooked-sector helper.
 
@@ -67,7 +67,7 @@ Extend `ahci_atapi.c` with READ TOC (CDB `0x43`), DISC INFORMATION (`0x51`), and
 - [ ] `atapi_read_cd(atapi_idx, lba, count, buf)`: wrapper around existing `ahci_atapi_read()`; explicit cooked 2 KiB sector path; used by §2–§5
 - [ ] Commit: `"drivers/atapi: READ TOC, DISC INFO, TRACK INFO, atapi_disc_info_t, atapi_read_cd wrapper"`
 
-## 2. ISO 9660 Base `[Sonnet]`
+## 2. ISO 9660 Base
 
 Scan sectors 16–31 for the Primary Volume Descriptor. Parse the root directory record. Walk directory extents. Read files via 2 KiB sector reads. Register VFS read-only.
 
@@ -88,7 +88,7 @@ Scan sectors 16–31 for the Primary Volume Descriptor. Parse the root directory
 - [ ] All write VFS callbacks: return `STATUS_MEDIA_WRITE_PROTECTED`
 - [ ] Commit: `"fs/iso9660: PVD parse, directory record walk, file read, VFS probe + read-only mount"`
 
-## 3. Rock Ridge Extensions `[Sonnet]`
+## 3. Rock Ridge Extensions
 
 Walk the System Use Sharing Protocol (SUSP) area appended to each directory record. Decode PX, SL, NM, TF, CL, RE entries. Use Rock Ridge names when present.
 
@@ -106,7 +106,7 @@ Walk the System Use Sharing Protocol (SUSP) area appended to each directory reco
 - [ ] VFS `readlink` callback: `iso9660_vfs_readlink(vfs_node, buf, len)` → stored `sl_target` from RRIP
 - [ ] Commit: `"fs/iso9660: Rock Ridge SUSP -- PX/NM/SL/TF/CL/RE decode, long filenames, symlinks, POSIX attrs"`
 
-## 4. Joliet `[Sonnet]`
+## 4. Joliet
 
 Detect a Supplementary Volume Descriptor with `%/E` escape sequence (Joliet Level 3). Decode UCS-2BE filenames to UTF-8. Prefer Joliet SVD over PVD when present. Silently skip El Torito boot records.
 
@@ -123,7 +123,7 @@ Detect a Supplementary Volume Descriptor with `%/E` escape sequence (Joliet Leve
 - [ ] `joliet_probe(atapi_idx)`: call `joliet_scan_vds()`; return 1 if `joliet_vol.root_extent_lba != 0`, 0 otherwise
 - [ ] Commit: `"fs/optical/joliet: SVD %/E detection, UCS-2BE→UTF-8 decode, readdir, El Torito skip"`
 
-## 5. UDF `[Opus]`
+## 5. UDF
 
 Read the AVDP at sector 256. Parse the Volume Descriptor Sequence (Partition + Logical Volume + File Set). Walk ICB-based inodes for directory listing and file reads. Check volume integrity state.
 
@@ -145,7 +145,7 @@ Read the AVDP at sector 256. Parse the Volume Descriptor Sequence (Partition + L
 - [ ] VFS callbacks: `udf_vfs_finddir`, `udf_vfs_readdir`, `udf_vfs_read`, `udf_vfs_stat`, `udf_vfs_readlink` (symlink ICB: inline Short AD with text target)
 - [ ] Commit: `"fs/udf: AVDP, VDS parse, Partition+LV+FileSet, ICB read, directory + file walk, CS0→UTF-8"`
 
-## 6. Auto-Probe Priority `[Sonnet]`
+## 6. Auto-Probe Priority
 
 In `vfs_probe()`, for optical drives call the three probes in order: UDF > Joliet > ISO 9660. Mount the richest available format. Fall back gracefully.
 
@@ -159,7 +159,7 @@ In `vfs_probe()`, for optical drives call the three probes in order: UDF > Jolie
 - [ ] Add `optical_probe_and_mount()` call in `vfs_probe()` at step 7 for ATAPI devices (detect via `ahci_atapi_count()` and `ahci_atapi_capacity()`)
 - [ ] Commit: `"fs/optical: auto-probe chain UDF > Joliet > ISO9660, vfs_probe integration, audio-disc fallback"`
 
-## 7. Disc Label + Metadata `[Sonnet]`
+## 7. Disc Label + Metadata
 
 Implement `GetVolumeInformationW` for optical drives. Return the disc volume identifier, filesystem name string, and a serial number derived from the PVD/LVD volume set identifier CRC. Support `GetDriveTypeW` returning `DRIVE_CDROM`.
 
@@ -176,7 +176,7 @@ Implement `GetVolumeInformationW` for optical drives. Return the disc volume ide
 - [ ] `GetDriveTypeW` for any optical letter returns `DRIVE_CDROM` unconditionally (set in volume mount metadata at §6)
 - [ ] Commit: `"fs/optical: GetVolumeInformationW -- disc label, filesystem name, serial CRC32, GetDriveTypeW=CDROM"`
 
-## 8. Audio CD Raw Reads `[Sonnet]`
+## 8. Audio CD Raw Reads
 
 Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte CD-DA sectors. Expose via `ahci_atapi_read_audio()`. Document the hook point for a future CD ripping feature.
 

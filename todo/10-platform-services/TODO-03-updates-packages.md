@@ -58,7 +58,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 
 ---
 
-## 1. Update Check API `[Sonnet]`
+## 1. Update Check API
 
 `struct update_info` (version[32], url[256], sha256_hash[65], size, type HOTFIX/MINOR/MAJOR, description[256]). `update_check(info)` HTTP GET to `https://impossible-os.dev/api/version`, parse INI/JSON response, compare with `HKLM\SYSTEM\Version`. Returns `UPDATE_AVAILABLE / UPDATE_CURRENT / UPDATE_ERROR`.
 
@@ -76,7 +76,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - [ ] `update_check()` returns `UPDATE_ERROR` on timeout (10 s), network failure, or parse error; `klog_warn()`
 - [ ] Commit: `"kernel: update_check -- http_get version endpoint, INI parse, registry version compare"`
 
-## 2. Update Download & Verification `[Sonnet]`
+## 2. Update Download & Verification
 
 `update_download(info, dst_path)`: HTTP GET to `info->url` → `C:\Temp\update.ipkg`; progress callback `(bytes, total)`. `update_verify(path, expected_sha256)`: compute `cng_sha256()` over full file; compare; return `0` on match, `-1` on mismatch.
 
@@ -92,7 +92,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - [ ] PMM alloc/free for large files in verify; `kmalloc` for < 4 KiB (unlikely for update packages)
 - [ ] Commit: `"kernel: update_download/verify -- http_get_to_file, cng_sha256, hash compare, corrupt delete"`
 
-## 3. Update Application `[Sonnet]`
+## 3. Update Application
 
 `update_apply(path)`: create restore point (`restore_create()`), extract `.ipkg` via `zip_extract()` to staging dir, replace files in `C:\Impossible\System\`, update `HKLM\SYSTEM\Version` + `LastUpdate`. Prompt restart for MAJOR/kernel updates.
 
@@ -112,7 +112,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - [ ] **A/B-aware (TODO-21):** once A/B slots exist, a MAJOR/kernel update installs to the INACTIVE slot via the §1 metadata API, never in-place -> XREF: [`01-boot-platform/TODO-21`](../01-boot-platform/TODO-21-ab-boot-rollback.md)
 - [ ] Commit: `"kernel: update_apply -- restore point, ipkg extract, file replace, version bump, restart prompt"`
 
-## 4. `wuapp.cpl` -- Windows Update Applet `[Sonnet]`
+## 4. `wuapp.cpl` -- Windows Update Applet
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -134,7 +134,7 @@ Control Panel Windows Update applet: "Check for updates" button, auto-check togg
 - [ ] Write history entry to `HKLM\SYSTEM\Update\History\{timestamp}\{Version,Type,Status}` on each check/apply
 - [ ] Commit: `"wuapp.cpl: update UI -- check, download/apply progress, auto-check, history list, boot toast"`
 
-## 5. IPKG Package Format `[Sonnet]`
+## 5. IPKG Package Format
 
 `.ipkg` = ZIP archive containing `manifest.ini` (app metadata), `install.ini` (file destinations, registry, shortcuts, associations), `files/` tree. `ipkg_parse(path, manifest, install)` extracts and parses both INI files.
 
@@ -180,7 +180,7 @@ Control Panel Windows Update applet: "Check for updates" button, auto-check togg
 - [ ] File association entry format: `ext=progid=app_path` parsed into 3 components
 - [ ] Commit: `"ipkg: package format -- manifest.ini + install.ini parser, ipkg_parse(), field validation"`
 
-## 6. App Installer Wizard `[Sonnet]`
+## 6. App Installer Wizard
 
 **Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
@@ -202,7 +202,7 @@ Control Panel Windows Update applet: "Check for updates" button, auto-check togg
 - [ ] Register `.ipkg` → `installer.exe` in file assoc (add to TODO-02 §1 default assoc list)
 - [ ] Commit: `"installer: IPKG app installer wizard -- welcome/path/progress/finish, registry, shortcuts, UAC"`
 
-## 7. App Uninstaller `[Sonnet]`
+## 7. App Uninstaller
 
 Read `HKLM\SOFTWARE\{name}\InstallPath`, reverse install: delete files, remove registry entries, delete shortcuts, clean empty dirs. Confirmation dialog "Uninstall {Name}? This will remove the application."
 
@@ -221,7 +221,7 @@ Read `HKLM\SOFTWARE\{name}\InstallPath`, reverse install: delete files, remove r
 - [ ] `notify_send("{name} has been uninstalled.", ...)` on success
 - [ ] Commit: `"installer: app uninstaller -- file delete, registry cleanup, shortcut remove, empty dir prune"`
 
-## 8. `appwiz.cpl` -- Programs & Features Applet `[Sonnet]`
+## 8. `appwiz.cpl` -- Programs & Features Applet
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
@@ -241,7 +241,7 @@ List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Dat
 - [ ] 16×16 icon per row from `Icon` Registry value or default
 - [ ] Commit: `"appwiz.cpl: programs & features -- installed app list, search, uninstall button"`
 
-## 9. IPKG Build Tool (Host) `[Sonnet]`
+## 9. IPKG Build Tool (Host)
 
 `tools/ipkg_create.c`: host-side `gcc`-compiled tool. Packs a directory + manifest into `.ipkg` (ZIP). Validates required fields. `--name --version --dir --output` args. Runs on build host (Linux/Windows).
 

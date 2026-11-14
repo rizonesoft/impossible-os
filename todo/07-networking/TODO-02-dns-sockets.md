@@ -48,7 +48,7 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 
 ---
 
-## 1. DNS Query Builder `[Sonnet]`
+## 1. DNS Query Builder
 
 Define `struct dns_header`. Encode a hostname as a DNS label sequence. Build a standard A-record (QTYPE=1) query with a random transaction ID. Send via `udp_send()` to the DHCP-provided DNS server.
 
@@ -65,7 +65,7 @@ Define `struct dns_header`. Encode a hostname as a DNS label sequence. Build a s
 - [ ] Log: `[DNS] Query id=%04x type=A %s → server %u.%u.%u.%u`
 - [ ] Commit: `"net/dns: query builder -- dns_header, hostname label encode, A-record query, udp_send to port 53"`
 
-## 2. DNS Response Parser `[Sonnet]`
+## 2. DNS Response Parser
 
 Verify transaction ID, RCODE == 0, and `ancount > 0`. Skip the question section. Handle DNS name compression pointers (`0xC0xx`). Extract the first `A` record (type 1) IPv4 address.
 
@@ -82,7 +82,7 @@ Verify transaction ID, RCODE == 0, and `ancount > 0`. Skip the question section.
 - [ ] Log: `[DNS] Response id=%04x ip=%u.%u.%u.%u ttl=%u` or `[DNS] NXDOMAIN for id=%04x`
 - [ ] Commit: `"net/dns: response parser -- RCODE check, compression pointer, A-record extract, TTL"`
 
-## 3. DNS Cache `[Sonnet]`
+## 3. DNS Cache
 
 64-entry LRU table mapping hostname → (IPv4, TTL, timestamp). Check cache before querying the network. Expire entries when TTL elapses. Implement `dns_resolve()` blocking API and `nslookup` shell command.
 
@@ -99,7 +99,7 @@ Verify transaction ID, RCODE == 0, and `ancount > 0`. Skip the question section.
 - [ ] `nslookup <hostname>` shell command: call `dns_resolve()`; print `hostname → W.X.Y.Z (TTL=Ns, cached=yes/no)`
 - [ ] Commit: `"net/dns: 64-entry LRU cache, TTL expiry, dns_resolve() blocking 3s timeout, nslookup command"`
 
-## 4. AAAA Query Stub `[Sonnet]`
+## 4. AAAA Query Stub
 
 Build and send AAAA (type=28) queries in parallel with A queries. Prefer AAAA results for IPv6 dual-stack readiness. Fall back to A on AAAA timeout or NXDOMAIN.
 
@@ -115,7 +115,7 @@ Build and send AAAA (type=28) queries in parallel with A queries. Prefer AAAA re
 - [ ] Log: `[DNS] AAAA response for %s: stored (IPv6 not yet active)`
 - [ ] Commit: `"net/dns: AAAA query + dual resolve stub, ip6 in cache entry, ENOTSUP until IPv6 active"`
 
-## 5. Kernel Socket Layer `[Opus]`
+## 5. Kernel Socket Layer
 
 Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRAM, 0)`. `connect(fd, ip, port)`. `send(fd, buf, len)` / `recv(fd, buf, len)`. `close(fd)`.
 
@@ -134,7 +134,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `AF_INET`, `SOCK_STREAM`, `SOCK_DGRAM`, `IPPROTO_TCP`, `IPPROTO_UDP` constants in `socket.h`
 - [ ] Commit: `"net/socket: kernel socket layer -- AF_INET STREAM/DGRAM, connect/send/recv/close, 64-fd table"`
 
-## 6. Server Sockets `[Sonnet]`
+## 6. Server Sockets
 
 `bind(fd, port)` assigns a local port. `listen(fd, backlog)` enters TCP LISTEN. `accept(fd, &remote_ip, &remote_port)` blocks until a client SYN completes the handshake and returns a new connected fd.
 
@@ -150,7 +150,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `SOMAXCONN = 16` constant; `backlog` parameter clamped to `SOMAXCONN`
 - [ ] Commit: `"net/socket: server sockets -- bind/listen/accept, backlog queue, SO_REUSEADDR, accept fd lifecycle"`
 
-## 7. Socket Options + Syscalls `[Sonnet]`
+## 7. Socket Options + Syscalls
 
 `setsockopt`/`getsockopt` for `SO_REUSEADDR`, `SO_RCVTIMEO`, `SO_SNDBUF`. Add the 12 socket syscalls to `syscall.h` at the next free numbers. Dispatch in `syscall.c`. User-mode wrappers in `user/lib/socket.c`.
 
@@ -167,7 +167,7 @@ Per-process socket fd table (64 entries). `socket(AF_INET, SOCK_STREAM/SOCK_DGRA
 - [ ] `user/include/socket.h`: `AF_INET`, `SOCK_STREAM`, `SOCK_DGRAM`, `SOL_SOCKET`, `SO_*`, `struct sockaddr_in { sin_family, sin_port, sin_addr }`, `struct addrinfo { ai_family, ai_socktype, ai_addr, ai_addrlen, *ai_next }`
 - [ ] Commit: `"net/socket: setsockopt/getsockopt, socket syscalls, user/lib/socket.c wrappers, getaddrinfo"`
 
-## 8. `select()` `[Opus]`
+## 8. `select()`
 
 Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready (RECV), writable (SEND), and error. Millisecond timeout. Wake as soon as any fd becomes ready.
 

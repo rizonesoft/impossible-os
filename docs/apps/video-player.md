@@ -54,12 +54,12 @@ The player cannot be launched yet, and there is no audio driver for it to play t
 
 Nothing in this roadmap has started:
 
-- [pl_mpeg Integration](../../todo/11-apps/TODO-06-video-player.md#1-pl_mpeg-integration-sonnet), including vendoring and the provenance and credits rows
-- [YCbCr to RGB Conversion](../../todo/11-apps/TODO-06-video-player.md#2-ycbcr--rgb-conversion-opus)
-- [A/V Sync Engine](../../todo/11-apps/TODO-06-video-player.md#3-av-sync-engine-opus), which needs the audio mixer
-- [Player UI](../../todo/11-apps/TODO-06-video-player.md#4-player-ui-sonnet), [File Operations](../../todo/11-apps/TODO-06-video-player.md#5-file-operations-sonnet) and the [Playlist](../../todo/11-apps/TODO-06-video-player.md#6-playlist-sonnet)
-- [Subtitle Support](../../todo/11-apps/TODO-06-video-player.md#7-subtitle-support-stretch-sonnet), a stretch goal
-- [Format Support Roadmap](../../todo/11-apps/TODO-06-video-player.md#8-format-support-roadmap-sonnet), planning only
+- [pl_mpeg Integration](../../todo/11-apps/TODO-06-video-player.md#1-pl_mpeg-integration), including vendoring and the provenance and credits rows
+- [YCbCr to RGB Conversion](../../todo/11-apps/TODO-06-video-player.md#2-ycbcr--rgb-conversion)
+- [A/V Sync Engine](../../todo/11-apps/TODO-06-video-player.md#3-av-sync-engine), which needs the audio mixer
+- [Player UI](../../todo/11-apps/TODO-06-video-player.md#4-player-ui), [File Operations](../../todo/11-apps/TODO-06-video-player.md#5-file-operations) and the [Playlist](../../todo/11-apps/TODO-06-video-player.md#6-playlist)
+- [Subtitle Support](../../todo/11-apps/TODO-06-video-player.md#7-subtitle-support-stretch), a stretch goal
+- [Format Support Roadmap](../../todo/11-apps/TODO-06-video-player.md#8-format-support-roadmap), planning only
 
 The audio-only media player (transport controls, ID3 tags, a music playlist) is a separate app in the [Audio System and Media Player](../services/audio-system.md) roadmap.
 

@@ -57,7 +57,7 @@ title: "TODO-09 -- Win32 IPC Extensions & Async I/O"
 
 ---
 
-## 1. Named Pipes (NPFS) -- Server Endpoint `[Opus]`
+## 1. Named Pipes (NPFS) -- Server Endpoint
 
 Create the Named Pipe File System (`NPFS`) driver. `NtCreateNamedPipeFile` registers a server endpoint under `\Device\NamedPipe\<name>` in the Ob namespace. `FSCTL_PIPE_LISTEN` blocks the server thread until a client calls `NtOpenFile` on the same path. Supports byte-stream and message read modes; duplex, inbound-only, and outbound-only pipe directions.
 
@@ -75,7 +75,7 @@ Create the Named Pipe File System (`NPFS`) driver. `NtCreateNamedPipeFile` regis
 - [ ] Boot log: `[NPFS] named pipe driver registered under \Device\NamedPipe\`
 - [ ] Commit: `"ipc: NPFS named pipe driver -- NtCreateNamedPipeFile, FSCTL_PIPE_LISTEN, byte/message mode"`
 
-## 2. Named Pipe Instances + Overlapped I/O `[Opus]`
+## 2. Named Pipe Instances + Overlapped I/O
 
 Multiple server instances of the same named pipe name allow N simultaneous clients. `FILE_FLAG_OVERLAPPED` issues non-blocking I/O via an IRP (I/O Request Packet) struct; the caller polls or waits on an associated event object. `GetOverlappedResult` queries the IRP state.
 
@@ -92,7 +92,7 @@ Multiple server instances of the same named pipe name allow N simultaneous clien
 - [ ] `STATUS_PIPE_BUSY` when `instance_count >= max_instances` on new `NtCreateNamedPipeFile`
 - [ ] Commit: `"ipc: named pipe instances -- dwMaxInstances, IRP overlapped I/O, GetOverlappedResult"`
 
-## 3. Mailslots (MSFS) `[Sonnet]`
+## 3. Mailslots (MSFS)
 
 One-way broadcast IPC: a server creates `\\.\Mailslot\<name>` (read-only); any number of clients open it for write-only access and post messages. `GetMailslotInfo` queries pending messages and slot size; `SetMailslotInfo` adjusts the read timeout.
 
@@ -110,7 +110,7 @@ One-way broadcast IPC: a server creates `\\.\Mailslot\<name>` (read-only); any n
 - [ ] `SetMailslotInfo(hMailslot, read_timeout_ms)` -- update `next_read_timeout_ms`
 - [ ] Commit: `"ipc: MSFS mailslot driver -- NtCreateMailslotFile, broadcast write, GetMailslotInfo"`
 
-## 4. I/O Completion Ports (IOCP) `[Opus]`
+## 4. I/O Completion Ports (IOCP)
 
 `NtCreateIoCompletion` creates a completion port object. `NtSetIoCompletion` enqueues an `IO_COMPLETION_PACKET` onto the port's spinlock-protected FIFO. `NtRemoveIoCompletion` dequeues one packet, blocking if the queue is empty. File handles are associated at open time or via `NtSetInformationFile(FileCompletionInformation)`.
 
@@ -129,7 +129,7 @@ One-way broadcast IPC: a server creates `\\.\Mailslot\<name>` (read-only); any n
 - [ ] **Retrofit existing in-tree consumers to the new Ob-backed IOCP.** The current `src/kernel/nt/nt_file.c` IOCP is a 16-slot static array (`s_iocp_pool`) with a numeric `idx + 0x10000` "handle" that has no ownership check -- any task can guess another task's IOCP index and drain / forge completion packets. After this section's Ob-backed redesign ships: (a) replace `iocp_index_from_handle` with an Ob handle-table lookup that enforces per-port access rights; (b) update `io_completion_post` (kernel-internal helper added by TODO-12 §6 for ALPC async notification) to take the validated `io_completion_port_t *` rather than a numeric handle; (c) update `AlpcAssociateCompletionPort` in `src/kernel/ipc/alpc_port.c` to pin the Ob-backed IOCP object instead of storing the raw handle value on the ALPC port. Test: cross-task attempt to `NtSetIoCompletion` / `NtRemoveIoCompletion` a peer's IOCP must fail `STATUS_ACCESS_DENIED`.
 - [ ] Commit: `"ipc: IOCP -- NtCreateIoCompletion, IO_COMPLETION_PACKET FIFO, NtRemoveIoCompletion"`
 
-## 5. IOCP Worker Thread Pool + DMA Completion Hook `[Opus]`
+## 5. IOCP Worker Thread Pool + DMA Completion Hook
 
 AHCI and VirtIO DMA-done ISRs post completion packets to the associated IOCP port. A configurable-size worker thread pool calls `NtRemoveIoCompletion` in a loop, invoking user callbacks. The pool sizes to the IOCP `concurrency` value and expands/shrinks based on active worker count.
 
@@ -148,7 +148,7 @@ AHCI and VirtIO DMA-done ISRs post completion packets to the associated IOCP por
 - [ ] Boot log: `[IOCP] thread pool: %u workers, DMA completion hook active`
 - [ ] Commit: `"ipc: IOCP worker pool -- DMA ISR post, pool scaling, AHCI/VirtIO hook"`
 
-## 6. Win32 Ob-Backed Named Sync Objects `[Sonnet]`
+## 6. Win32 Ob-Backed Named Sync Objects
 
 `NtCreateEvent`, `NtCreateMutant`, and `NtCreateSemaphore` create kernel sync objects registered in the Object Manager namespace. They can be opened by name across processes, referenced by handle, and waited on via `NtWaitForSingleObject` / `NtWaitForMultipleObjects`. All integrate with the `waitable_t` vtable from `TODO-08 §8`.
 
@@ -167,7 +167,7 @@ AHCI and VirtIO DMA-done ISRs post completion packets to the associated IOCP por
 - [ ] Win32 `CreateEvent` / `CreateMutex` / `CreateSemaphore` / `OpenEvent` / `OpenMutex` → `Nt*` wrappers
 - [ ] Commit: `"ipc: Win32 Ob-backed sync objects -- NtCreateEvent/Mutant/Semaphore, named cross-process access"`
 
-## 7. LPC Basic -- Local Procedure Call `[Opus]`
+## 7. LPC Basic -- Local Procedure Call
 
 LPC is the synchronous request/reply IPC used by Windows subsystems (CSRSS, Win32k). A server creates a port under `\RPC Control\`; clients connect; each call blocks until the server replies with a 256-byte `PORT_MESSAGE`. The kernel copies the message -- no shared memory needed for small messages.
 
@@ -187,7 +187,7 @@ LPC is the synchronous request/reply IPC used by Windows subsystems (CSRSS, Win3
 - [ ] Boot log: `[LPC] port subsystem active; \RPC Control\ registered`
 - [ ] Commit: `"ipc: LPC -- NtCreatePort, NtConnectPort, NtRequestWaitReplyPort, PORT_MESSAGE rendezvous"`
 
-## 8. ALPC Extensions `[Opus]`
+## 8. ALPC Extensions
 
 ALPC handle-attribute marshalling and direct/indirect mode selection -- the incremental extensions on top of the core ALPC subsystem implemented in `02-kernel-core/TODO-24-alpc-message-ports.md`. TODO-12 provides `ALPC_PORT`, the three-way connection handshake, `NtAlpcSendWaitReceivePort`, and port sections. This section adds only what is deferred from TODO-12 or specific to the Win32 IPC integration layer.
 
@@ -203,7 +203,7 @@ ALPC handle-attribute marshalling and direct/indirect mode selection -- the incr
 - [ ] Indirect mode: messages > 256 bytes auto-select view attribute; kernel sets `DataLength = 0`, populates `ALPC_DATA_VIEW_ATTR` from the registered port section
 - [ ] Commit: `"ipc/alpc: ALPC extensions -- handle-attribute marshalling, direct/indirect mode selection"`
 
-## 9. `ImpossibleRing` -- Async Submission Rings `[Opus]`
+## 9. `ImpossibleRing` -- Async Submission Rings
 
 Two memory-mapped rings (submission queue SQ + completion queue CQ) shared between user and kernel via `NtMapViewOfSection`. User writes SQEs (submission queue entries) directly into the SQ ring without a syscall; calls `NtSubmitRing(count)` to notify the kernel; kernel drains SQEs in a workqueue and posts CQEs (completion queue entries) to the CQ ring. Provides io_uring–style zero-per-operation-syscall async I/O.
 

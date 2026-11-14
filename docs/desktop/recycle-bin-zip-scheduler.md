@@ -48,10 +48,10 @@ It cannot be used yet. A deleted file cannot be recovered, and archives cannot b
 
 ## What is not implemented yet?
 
-- [Recycle Bin Core](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#1-recycle-bin-core-sonnet) and [Recycle Bin Window App](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#2-recycle-bin-window-app-sonnet), which is hosted by the [File Manager](file-manager.md)
-- [miniz ZIP Library Integration](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#3-miniz-zip-library-integration-sonnet), which depends on the kernel libraries port above
-- [ZIP Kernel API](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#4-zip-kernel-api-sonnet) and [ZIP Shell Commands](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#5-zip-shell-commands-sonnet)
-- [Task Scheduler Core](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#6-task-scheduler-core-sonnet), [Built-In Scheduled Tasks](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#7-built-in-scheduled-tasks-sonnet) and the [`at` Shell Command](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#8-at-shell-command-sonnet)
+- [Recycle Bin Core](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#1-recycle-bin-core) and [Recycle Bin Window App](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#2-recycle-bin-window-app), which is hosted by the [File Manager](file-manager.md)
+- [miniz ZIP Library Integration](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#3-miniz-zip-library-integration), which depends on the kernel libraries port above
+- [ZIP Kernel API](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#4-zip-kernel-api) and [ZIP Shell Commands](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#5-zip-shell-commands)
+- [Task Scheduler Core](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#6-task-scheduler-core), [Built-In Scheduled Tasks](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#7-built-in-scheduled-tasks) and the [`at` Shell Command](../../todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md#8-at-shell-command)
 
 Two built-in jobs overlap work that already runs elsewhere: the Registry is already flushed from the compositor loop, and the kernel log already rotates. Moving them onto the scheduler replaces those callers rather than adding a second one.
 

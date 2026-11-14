@@ -41,12 +41,12 @@ To build a program today, add it to the `userland` target in the `Makefile` besi
 
 ## What is not implemented yet?
 
-- [SDK C Headers](../../todo/10-platform-services/TODO-09-compiler-sdk.md#1-sdk-c-headers-sonnet) and [SDK GUI Headers](../../todo/10-platform-services/TODO-09-compiler-sdk.md#2-sdk-gui-headers-sonnet)
-- [SDK Import Libraries](../../todo/10-platform-services/TODO-09-compiler-sdk.md#3-sdk-import-libraries-sonnet)
-- [Cross-Compile TCC](../../todo/10-platform-services/TODO-09-compiler-sdk.md#4-cross-compile-tcc-for-impossible-os-opus), [Install TCC](../../todo/10-platform-services/TODO-09-compiler-sdk.md#5-install-tcc-on-os-disk-image-sonnet), [TCC Self-Hosting Tests](../../todo/10-platform-services/TODO-09-compiler-sdk.md#6-tcc-self-hosting-tests-sonnet) and [TCC IxUI Integration](../../todo/10-platform-services/TODO-09-compiler-sdk.md#7-tcc-ixui-integration-sonnet); all need programs that can call Win32, from [Win32 PE Loader](win32-pe-loader.md) and [Win32 API Surface](win32-api-surface.md)
-- [Shell Compiler Integration](../../todo/10-platform-services/TODO-09-compiler-sdk.md#8-shell-compiler-integration-sonnet)
-- [SDK Installer](../../todo/10-platform-services/TODO-09-compiler-sdk.md#9-sdk-installer--on-os-pre-install-sonnet) and [SDK Documentation](../../todo/10-platform-services/TODO-09-compiler-sdk.md#10-sdk-documentation-sonnet)
-- [GCC and Clang](../../todo/10-platform-services/TODO-09-compiler-sdk.md#11-gccclang-long-term-c-support-opus)
+- [SDK C Headers](../../todo/10-platform-services/TODO-09-compiler-sdk.md#1-sdk-c-headers) and [SDK GUI Headers](../../todo/10-platform-services/TODO-09-compiler-sdk.md#2-sdk-gui-headers)
+- [SDK Import Libraries](../../todo/10-platform-services/TODO-09-compiler-sdk.md#3-sdk-import-libraries)
+- [Cross-Compile TCC](../../todo/10-platform-services/TODO-09-compiler-sdk.md#4-cross-compile-tcc-for-impossible-os), [Install TCC](../../todo/10-platform-services/TODO-09-compiler-sdk.md#5-install-tcc-on-os-disk-image), [TCC Self-Hosting Tests](../../todo/10-platform-services/TODO-09-compiler-sdk.md#6-tcc-self-hosting-tests) and [TCC IxUI Integration](../../todo/10-platform-services/TODO-09-compiler-sdk.md#7-tcc-ixui-integration); all need programs that can call Win32, from [Win32 PE Loader](win32-pe-loader.md) and [Win32 API Surface](win32-api-surface.md)
+- [Shell Compiler Integration](../../todo/10-platform-services/TODO-09-compiler-sdk.md#8-shell-compiler-integration)
+- [SDK Installer](../../todo/10-platform-services/TODO-09-compiler-sdk.md#9-sdk-installer--on-os-pre-install) and [SDK Documentation](../../todo/10-platform-services/TODO-09-compiler-sdk.md#10-sdk-documentation)
+- [GCC and Clang](../../todo/10-platform-services/TODO-09-compiler-sdk.md#11-gccclang-long-term-c-support)
 
 The host-side SDK packaging (the cross-compile wrapper and release bundle) is planned separately in the [SDK distribution roadmap](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md).
 

@@ -55,7 +55,7 @@ title: "TODO-04 -- IPv6 Dual-Stack"
 
 ---
 
-## 1. IPv6 Header + Ethertype Routing `[Sonnet]`
+## 1. IPv6 Header + Ethertype Routing
 
 Define `struct ipv6_header`. Add IPv6 constants. Route `ethertype 0x86DD` frames to `ipv6_receive()` in `net_rx()`.
 
@@ -72,7 +72,7 @@ Define `struct ipv6_header`. Add IPv6 constants. Route `ethertype 0x86DD` frames
 - [ ] Log: `[IPv6] Received ethertype 0x86DD len=%u next_hdr=%u`
 - [ ] Commit: `"net/ipv6: ipv6_header struct, ETHERTYPE_IPV6, IPPROTO_ICMPV6, ethertype dispatch"`
 
-## 2. IPv6 Send / Receive `[Sonnet]`
+## 2. IPv6 Send / Receive
 
 `ipv6_send(dst[16], next_header, payload, len)` builds the 40-byte IPv6 header and calls `eth_send()`. `ipv6_receive(packet, len)` dispatches to TCP/UDP/ICMPv6 by `next_header`.
 
@@ -89,7 +89,7 @@ Define `struct ipv6_header`. Add IPv6 constants. Route `ethertype 0x86DD` frames
 - [ ] Log: `[IPv6] Send dst=%x..%x next=%u len=%u` and `[IPv6] Receive src=%x..%x next=%u`
 - [ ] Commit: `"net/ipv6: ipv6_send + ipv6_receive, multicast MAC derive, tcp/udp/icmp6 dispatch"`
 
-## 3. ICMPv6 -- Neighbor Discovery (NS / NA / RS / RA) `[Opus]`
+## 3. ICMPv6 -- Neighbor Discovery (NS / NA / RS / RA)
 
 Implement ICMPv6 type 135 (Neighbor Solicitation) and type 136 (Neighbor Advertisement) to replace ARP for IPv6. Implement RS (type 133) and RA (type 134) for gateway discovery. `ndp_resolve(ipv6)` sends NS and waits for NA.
 
@@ -109,7 +109,7 @@ Implement ICMPv6 type 135 (Neighbor Solicitation) and type 136 (Neighbor Adverti
 - [ ] Log: `[NDP] NS → %x..%x`, `[NDP] NA from %x..%x mac=%02x:%02x:...`, `[NDP] RA from %x..%x prefix=%x..%x/N`
 - [ ] Commit: `"net/icmp6: ICMPv6 NS/NA/RS/RA, ndp_resolve(), solicited-node multicast, icmp6 checksum"`
 
-## 4. Link-Local EUI-64 Autoconfiguration `[Sonnet]`
+## 4. Link-Local EUI-64 Autoconfiguration
 
 Derive a `fe80::/10` link-local address from the interface MAC using EUI-64. Register with `netif` at boot time. Use as the source address for NDP and DHCPv6.
 
@@ -126,7 +126,7 @@ Derive a `fe80::/10` link-local address from the interface MAC using EUI-64. Reg
 - [ ] Log: `[IPv6] Link-local: fe80::%016llx (DAD OK)` or `[IPv6] DAD conflict -- no link-local address`
 - [ ] Commit: `"net/ipv6: EUI-64 link-local from MAC, DAD via NS with src=::, netif_assign_linklocal()"`
 
-## 5. NDP Neighbor Cache `[Opus]`
+## 5. NDP Neighbor Cache
 
 128-entry neighbor cache table keyed on IPv6 address → MAC. Entries follow the REACHABLE → STALE → PROBE → FAILED state machine per RFC 4861. Expire after 30 s of inactivity. Re-resolve before expiry via unicast NS.
 
@@ -145,7 +145,7 @@ Derive a `fe80::/10` link-local address from the interface MAC using EUI-64. Reg
 - [ ] Integrate into `ipv6_send()`: before `eth_send()`, call `ndp_cache_lookup()`; if INCOMPLETE/FAILED: send NS + drop; if STALE/PROBE: use stale MAC (best effort)
 - [ ] Commit: `"net/ndp: 128-entry neighbor cache, REACHABLE/STALE/PROBE/FAILED states, spinlock, aging"`
 
-## 6. SLAAC -- Stateless Address Autoconfiguration `[Sonnet]`
+## 6. SLAAC -- Stateless Address Autoconfiguration
 
 On receiving an RA with M=0, combine the 64-bit RA prefix with the EUI-64 interface identifier to form a global IPv6 address. Set default gateway from RA source. Set DNS from RA RDNSS option.
 
@@ -162,7 +162,7 @@ On receiving an RA with M=0, combine the 64-bit RA prefix with the EUI-64 interf
 - [ ] Log: `[SLAAC] Global: %x..%x/%u (DAD OK)`, `[SLAAC] Gateway: %x..%x`, `[SLAAC] DNS: %x..%x`
 - [ ] Commit: `"net/ipv6: SLAAC -- RA prefix + EUI-64, global address, default gateway, RDNSS DNS option"`
 
-## 7. DHCPv6 Client `[Sonnet]`
+## 7. DHCPv6 Client
 
 Solicit → Advertise → Request → Reply exchange on UDP ports 546 (client) / 547 (server). Obtain IA_NA address and DNS server. Use as fallback when SLAAC is unavailable (no RA, M=1 in RA).
 
@@ -182,7 +182,7 @@ Solicit → Advertise → Request → Reply exchange on UDP ports 546 (client) /
 - [ ] Log: `[DHCPv6] Solicit sent`, `[DHCPv6] Advertise: addr=%x..%x`, `[DHCPv6] Reply: assigned %x..%x DNS %x..%x`
 - [ ] Commit: `"net/dhcp6: DHCPv6 Solicit/Request/Reply, IA_NA addr, OPTION_DNS_SERVERS, UDP 546/547"`
 
-## 8. DNS AAAA Activation `[Sonnet]`
+## 8. DNS AAAA Activation
 
 Activate the `dns_resolve6()` stub from TODO-02 §4. Wire `dns_resolve_dual()` to prefer AAAA when `netif->ip6_global` is non-zero. Update `getaddrinfo()` to return both A and AAAA results with AAAA first.
 
@@ -199,7 +199,7 @@ Activate the `dns_resolve6()` stub from TODO-02 §4. Wire `dns_resolve_dual()` t
 - [ ] Log: `[DNS] AAAA activated: %s → %x..%x (via %s DNS server)`
 - [ ] Commit: `"net/dns: AAAA activation -- remove ENOTSUP, resolve_dual prefers AAAA when IPv6 active, getaddrinfo dual"`
 
-## 9. Dual-Stack Socket API `[Opus]`
+## 9. Dual-Stack Socket API
 
 Extend the socket layer (TODO-02 §5) with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` socket option, `connect(fd, ::1, port)` IPv6 loopback, and `bind(fd, ::, port)` dual-stack listen.
 
@@ -219,7 +219,7 @@ Extend the socket layer (TODO-02 §5) with `AF_INET6`, `struct sockaddr_in6`, `I
 - [ ] IPv6 loopback `::1`: in `ipv6_send()`, check if `dst == ::1`; if so call `ipv6_receive()` directly (no NDP, no Ethernet)
 - [ ] Commit: `"net/socket: AF_INET6 dual-stack -- sockaddr_in6, IPV6_V6ONLY, connect6/bind6/accept6, ::1 loopback"`
 
-## 10. `ifconfig` IPv6 Display `[Sonnet]`
+## 10. `ifconfig` IPv6 Display
 
 Show link-local and global IPv6 addresses in `ifconfig` output. `ndp -an` shell command prints the NDP neighbor cache. Route table entry for `::/0` (default IPv6 gateway).
 

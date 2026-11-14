@@ -51,14 +51,14 @@ bash scripts/test.sh SUITE=x86
 
 ## What is not implemented yet?
 
-- **Running ACPICA.** The interpreter is linked but not initialised, and there is no namespace evaluation ([ACPICA AML Interpreter Integration](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#1-acpica-aml-interpreter-integration-opus)).
-- **A shutdown orchestrator** that stops writers, flushes every volume, handles flush failures and records a reason ([Clean Shutdown Sequence](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#2-clean-shutdown-sequence-sonnet)).
-- **Control-method buttons and the roadmap's button design.** A fixed-event button path ships under the kernel power roadmap ([ACPI Power Button SCI](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#3-acpi-power-button-sci-sonnet)).
-- **Thermal monitoring** ([Thermal Monitoring](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#4-thermal-monitoring-sonnet)) and **battery status** ([Battery Status](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#5-battery-status-_bst--_bif-sonnet)).
-- **CPU frequency scaling** ([CPU Frequency Scaling](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#6-cpu-frequency-scaling----dvfs-opus)).
-- **Power profiles**, parked here and owned by the kernel power roadmap ([Power Profiles](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#7-power-profiles-sonnet)).
-- **Deeper C-states** from `_CST` ([ACPI C-States Idle](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#8-acpi-c-states-idle-opus)).
-- **Sleep and hibernate** ([ACPI S3 Suspend / Resume](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#9-acpi-s3-suspend--resume-opus), [Hibernate (S4)](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#10-hibernate-s4-opus)).
+- **Running ACPICA.** The interpreter is linked but not initialised, and there is no namespace evaluation ([ACPICA AML Interpreter Integration](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#1-acpica-aml-interpreter-integration)).
+- **A shutdown orchestrator** that stops writers, flushes every volume, handles flush failures and records a reason ([Clean Shutdown Sequence](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#2-clean-shutdown-sequence)).
+- **Control-method buttons and the roadmap's button design.** A fixed-event button path ships under the kernel power roadmap ([ACPI Power Button SCI](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#3-acpi-power-button-sci)).
+- **Thermal monitoring** ([Thermal Monitoring](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#4-thermal-monitoring)) and **battery status** ([Battery Status](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#5-battery-status-_bst--_bif)).
+- **CPU frequency scaling** ([CPU Frequency Scaling](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#6-cpu-frequency-scaling----dvfs)).
+- **Power profiles**, parked here and owned by the kernel power roadmap ([Power Profiles](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#7-power-profiles)).
+- **Deeper C-states** from `_CST` ([ACPI C-States Idle](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#8-acpi-c-states-idle)).
+- **Sleep and hibernate** ([ACPI S3 Suspend / Resume](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#9-acpi-s3-suspend--resume), [Hibernate (S4)](../../todo/04-drivers-hardware/TODO-03-acpi-power-management.md#10-hibernate-s4)).
 
 ## How does it compare with Windows 11 and Linux?
 

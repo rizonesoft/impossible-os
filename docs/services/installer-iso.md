@@ -53,11 +53,11 @@ The disk image carries the whole system in its populated IXFS partition. The ISO
 
 ## What is not implemented yet?
 
-- [ISO Build Script](../../todo/10-platform-services/TODO-11-installer-iso.md#1-iso-build-script-sonnet); Joliet, Rock Ridge and versioned file names are owned by the [release artifacts roadmap](../../todo/15-installer-release/TODO-01-release-artifacts.md)
-- [Installer Init Process](../../todo/10-platform-services/TODO-11-installer-iso.md#2-installer-init-process-sonnet) and the [GUI Wizard](../../todo/10-platform-services/TODO-11-installer-iso.md#3-installer-gui-wizard-sonnet)
-- [GPT Partition Write](../../todo/10-platform-services/TODO-11-installer-iso.md#4-gpt-partition-write-opus), [Partition Format](../../todo/10-platform-services/TODO-11-installer-iso.md#5-partition-format-esp-fat32--ixfs-system-sonnet) and the [File Copy Engine](../../todo/10-platform-services/TODO-11-installer-iso.md#6-file-copy-engine-sonnet)
-- [UEFI Bootloader Install](../../todo/10-platform-services/TODO-11-installer-iso.md#7-uefi-bootloader-install--nvram-boot-entry-opus) and the [first-boot trigger](../../todo/10-platform-services/TODO-11-installer-iso.md#8-post-install-first-boot--oobe-trigger-sonnet)
-- [Validation](../../todo/10-platform-services/TODO-11-installer-iso.md#9-validation-qemu--hyper-v-gen2--virtualbox-sonnet) and the [Stability and Performance Pass](../../todo/10-platform-services/TODO-11-installer-iso.md#10-stability--performance-pass-sonnet)
+- [ISO Build Script](../../todo/10-platform-services/TODO-11-installer-iso.md#1-iso-build-script); Joliet, Rock Ridge and versioned file names are owned by the [release artifacts roadmap](../../todo/15-installer-release/TODO-01-release-artifacts.md)
+- [Installer Init Process](../../todo/10-platform-services/TODO-11-installer-iso.md#2-installer-init-process) and the [GUI Wizard](../../todo/10-platform-services/TODO-11-installer-iso.md#3-installer-gui-wizard)
+- [GPT Partition Write](../../todo/10-platform-services/TODO-11-installer-iso.md#4-gpt-partition-write), [Partition Format](../../todo/10-platform-services/TODO-11-installer-iso.md#5-partition-format-esp-fat32--ixfs-system) and the [File Copy Engine](../../todo/10-platform-services/TODO-11-installer-iso.md#6-file-copy-engine)
+- [UEFI Bootloader Install](../../todo/10-platform-services/TODO-11-installer-iso.md#7-uefi-bootloader-install--nvram-boot-entry) and the [first-boot trigger](../../todo/10-platform-services/TODO-11-installer-iso.md#8-post-install-first-boot--oobe-trigger)
+- [Validation](../../todo/10-platform-services/TODO-11-installer-iso.md#9-validation-qemu--hyper-v-gen2--virtualbox) and the [Stability and Performance Pass](../../todo/10-platform-services/TODO-11-installer-iso.md#10-stability--performance-pass)
 
 Unattended installs are planned in the [unattended install roadmap](../../todo/15-installer-release/TODO-02-unattended-install.md).
 

@@ -37,11 +37,11 @@ bash scripts/test.sh SUITE=ipc
 
 ## What is not implemented yet?
 
-- **Ticket locks** for FIFO-fair spinning ([Ticket Locks](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#1-ticket-locks----fifo-fair-spinlocks-opus)).
-- **A preemption count API.** The per-CPU field exists; `preempt_disable()` and `preempt_enable()` do not ([Preemption Count](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#2-preemption-count-opus)).
-- **Thread-local storage and futexes** ([Thread-Local Storage](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#3-thread-local-storage-tls-opus), [Futexes](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#4-futexes-opus)).
-- **Once-initialisation, barriers and cancellation** ([`pthread_once`](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#5-pthread_once--call_once-sonnet), [`pthread_barrier_t`](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#6-pthread_barrier_t----kernel-level-barrier-sonnet), [Thread Cancellation](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#7-thread-cancellation-sonnet)).
-- **One wait vtable across every primitive, and timeouts everywhere** ([`WaitForMultipleObjects` (`waitable_t` vtable)](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#8-waitformultipleobjects-waitable_t-vtable-opus), [Unified `_timeout(ms)` API](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#9-unified-_timeoutms-api-sonnet)).
+- **Ticket locks** for FIFO-fair spinning ([Ticket Locks](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#1-ticket-locks----fifo-fair-spinlocks)).
+- **A preemption count API.** The per-CPU field exists; `preempt_disable()` and `preempt_enable()` do not ([Preemption Count](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#2-preemption-count)).
+- **Thread-local storage and futexes** ([Thread-Local Storage](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#3-thread-local-storage-tls), [Futexes](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#4-futexes)).
+- **Once-initialisation, barriers and cancellation** ([`pthread_once`](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#5-pthread_once--call_once), [`pthread_barrier_t`](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#6-pthread_barrier_t----kernel-level-barrier), [Thread Cancellation](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#7-thread-cancellation)).
+- **One wait vtable across every primitive, and timeouts everywhere** ([`WaitForMultipleObjects` (`waitable_t` vtable)](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#8-waitformultipleobjects-waitable_t-vtable), [Unified `_timeout(ms)` API](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#9-unified-_timeoutms-api)).
 - **Keyed events and thread alerts** ([Sync Syscalls Wired to SSDT](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#10-sync-syscalls-wired-to-ssdt-keyed-events-alerts)).
 - **A locked, unbounded mutex wait queue** ([Mutex Wait-Queue SMP-Safety Backfill](../../todo/03-memory-concurrency/TODO-08-advanced-sync.md#11-mutex-wait-queue-smp-safety-backfill)).
 

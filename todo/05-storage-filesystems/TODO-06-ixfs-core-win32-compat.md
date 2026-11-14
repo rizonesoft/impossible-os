@@ -57,7 +57,7 @@ title: "TODO-06 -- IXFS Core Foundation & Win32 Compatibility"
 
 ---
 
-## 1. Subsystem Verification `[Sonnet]`
+## 1. Subsystem Verification
 
 Eight independent verification passes -- one per subsystem. Fix known header doc bugs first. Each pass ends with a dedicated commit.
 
@@ -87,7 +87,7 @@ Eight independent verification passes -- one per subsystem. Fix known header doc
 - [ ] **`ixfs_rename` honours `VFS_RENAME_REPLACE_EXISTING`**: it refuses the flag outright (`ixfs_ops.c`), so nothing on `C:` can publish atomically through a temporary file.
   - `test_vfs_rename_replace_ixfs_rejects` pins today's refusal and must change with this. Do not fall back to unlink-then-rename, which loses the old file on a crash between the two. Waiting on it: `01-boot-platform/TODO-29` §20 (item: "C:\ fallback for `boot-trend.json`").
 
-## 2. Extended Inode v3 `[Opus]`
+## 2. Extended Inode v3
 
 Grow inode from 128 → 256 bytes. Add 10 new Win32-compatibility fields. Bump `IXFS_VERSION → 3`. Mount v2 volumes read-only with a clear error log.
 
@@ -105,7 +105,7 @@ Grow inode from 128 → 256 bytes. Add 10 new Win32-compatibility fields. Bump `
 - [ ] Update `vfs_init()` to return `boot_result_t` instead of `void` -- moved from TODO-01 §8
 - [ ] Commit: `"ixfs: v3 inode -- 256B, 10 Win32 fields, IXFS_VERSION=3, v2 read-only mount"`
 
-## 3. Case-Insensitive Paths `[Sonnet]`
+## 3. Case-Insensitive Paths
 
 Replace `ixfs_strcmp()` with `ixfs_name_cmp()` in all directory lookups. Fold lowercase before FNV1a hash. Add `IXFS_MOUNT_CASE_SENSITIVE` per-mount override.
 
@@ -121,7 +121,7 @@ Replace `ixfs_strcmp()` with `ixfs_name_cmp()` in all directory lookups. Fold lo
 - [ ] `ixfs_name_cmp` is also used by `vfs_probe()` (TODO-03 §1) IXFS identification -- verify probe still works after change
 - [ ] Add to `ixfs_test.c`: create file `"Hello.txt"`, open `"hello.txt"` → same inode; open `"HELLO.TXT"` → same inode; commit `"ixfs: case-insensitive dir lookup -- ixfs_name_cmp, FNV1a fold, per-mount override"`
 
-## 4. Alternate Data Streams (ADS) `[Opus]`
+## 4. Alternate Data Streams (ADS)
 
 Implement ADS via the `i_ads_first` inode chain. Support `filename:streamname` path syntax in `vfs_open()`. Implement `FindFirstStreamW`/`FindNextStreamW` enumeration.
 
@@ -140,7 +140,7 @@ Implement ADS via the `i_ads_first` inode chain. Support `filename:streamname` p
 - [ ] Add to `ixfs_test.c`: write `"foo.txt:Zone.Identifier"`, read back; `FindFirstStreamW` enumerates both; delete primary → streams gone
 - [ ] Commit: `"ixfs: ADS -- i_ads_first chain, filename:stream path, cascade-delete, FindFirstStreamW"`
 
-## 5. Security Descriptors `[Opus]`
+## 5. Security Descriptors
 
 Implement a hash-deduped security descriptor table in IXFS reserved inodes. Map each file to a table entry via `i_security_id`. Implement `GetFileSecurity`/`SetFileSecurity`. Inherit parent DACL on create.
 
@@ -158,7 +158,7 @@ Implement a hash-deduped security descriptor table in IXFS reserved inodes. Map 
 - [ ] `SetFileSecurity(path/handle, SECURITY_INFORMATION, sd_buf)` → `ixfs_sd_write(vol, sd_buf, len, &new_id)` → update `i_security_id` in inode on disk
 - [ ] Commit: `"ixfs: security descriptors -- hash-deduped SD table, i_security_id, GetFileSecurity, DACL inherit"`
 
-## 6. Hard Links `[Sonnet]`
+## 6. Hard Links
 
 Implement `CreateHardLink`: add a directory entry to the same inode, increment `i_links`. On last unlink, cascade-free ADS chain and security descriptor reference.
 
@@ -174,7 +174,7 @@ Implement `CreateHardLink`: add a directory entry to the same inode, increment `
 - [ ] Add to `ixfs_test.c`: create file; hard-link; verify `i_links == 2`; delete one → `i_links == 1`, data intact; delete other → inode freed, ADS chains gone
 - [ ] Commit: `"ixfs: hard links -- CreateHardLink, i_links refcount, cascade-free on last unlink"`
 
-## 7. Symbolic Links + Reparse Points `[Opus]`
+## 7. Symbolic Links + Reparse Points
 
 Implement `IXFS_S_SYMLINK` inode type. Store target path in inline data (≤48 B) or extents. Resolve symlinks in VFS path traversal with max-8-hop guard. Implement `CreateSymbolicLink`.
 
@@ -192,7 +192,7 @@ Implement `IXFS_S_SYMLINK` inode type. Store target path in inline data (≤48 B
 - [ ] `ReadLink(path)` → `ixfs_symlink_read()`; exposed as `FSCTL_GET_REPARSE_POINT` ioctl (returns REPARSE_DATA_BUFFER with `SYMLINK_REPARSE_TAG`)
 - [ ] Commit: `"ixfs: symbolic links -- IXFS_S_SYMLINK, inline/extent target, 8-hop guard, CreateSymbolicLink"`
 
-## 8. Extended Attributes `[Sonnet]`
+## 8. Extended Attributes
 
 Implement EA block referenced by `i_ea_block`. Pack EA entries (name+value). Implement `NtQueryEaFile`/`NtSetEaFile`. Support WSL interop EAs (`LXATTRB`, `LXUID`, `LXGID`).
 
@@ -209,7 +209,7 @@ Implement EA block referenced by `i_ea_block`. Pack EA entries (name+value). Imp
 - [ ] WSL interop: `"LXATTRB"` read → translate to Unix `stat` mode bits; write → update `i_mode` permission bits to match
 - [ ] Commit: `"ixfs: extended attributes -- EA block, NtQueryEaFile/NtSetEaFile, LXATTRB/LXUID/LXGID"`
 
-## 9. Object IDs `[Sonnet]`
+## 9. Object IDs
 
 Assign a 16-byte UUID to each file in `i_file_id`. Maintain an in-memory `objid → inode` hash table rebuilt on mount. Implement `FSCTL_CREATE_OR_GET_OBJECT_ID`, `FSCTL_DELETE_OBJECT_ID`, and `OpenFileById`.
 
@@ -227,7 +227,7 @@ Assign a 16-byte UUID to each file in `i_file_id`. Maintain an in-memory `objid 
 - [ ] `OpenFileById(hVol, FILE_ID_DESCRIPTOR, access, share, ...)`: extract 16-byte ID; `ixfs_objid_lookup()`; open inode directly; return file handle
 - [ ] Commit: `"ixfs: object IDs -- i_file_id UUID, objid hash table, FSCTL_CREATE_OR_GET_OBJECT_ID, OpenFileById"`
 
-## 10. Format Tool v3 `[Opus]`
+## 10. Format Tool v3
 
 Upgrade `ixfs_format()` to emit a v3 superblock: 256-byte inodes, security descriptor table region, encryption key table region, backup superblock, USN journal region, quota table region.
 
@@ -243,7 +243,7 @@ Upgrade `ixfs_format()` to emit a v3 superblock: 256-byte inodes, security descr
 - [ ] `ixfs_format()` (old v2 entry point): call `ixfs_format_v3()` with defaults; maintain backward-compatible signature
 - [ ] Commit: `"ixfs: format v3 -- 256B inodes, SD/key/USN/quota regions, backup superblock, feature flags"`
 
-## 11. Parity Gate `[Sonnet]`
+## 11. Parity Gate
 
 Verify that after §1–10, IXFS matches NTFS on all Win32 compatibility features. Run the full `ixfs_test.c` suite and `bash scripts/build.sh clean run`.
 

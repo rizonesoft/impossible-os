@@ -41,14 +41,14 @@ Nothing here can be used yet. For kernel debugging today, read the serial log an
 
 ## What is not implemented yet?
 
-- [Kernel Debugger (GDB RSP Stub)](../../todo/10-platform-services/TODO-12-long-term-features.md#1-kernel-debugger-gdb-rsp-stub-opus) and [User-Mode Debugger](../../todo/10-platform-services/TODO-12-long-term-features.md#2-user-mode-debugger-debuggerexe-opus); settle the overlap with the [KD protocol roadmap](../../todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md) first
-- [Developer Tools](../../todo/10-platform-services/TODO-12-long-term-features.md#3-developer-tools-sonnet)
-- [Touch Input and Gestures](../../todo/10-platform-services/TODO-12-long-term-features.md#4-touch-input--gesture-recognizer-opus) and [Gamepad and XInput](../../todo/10-platform-services/TODO-12-long-term-features.md#5-gamepad--controller-input--xinput-stubs-sonnet), whose drivers belong to [Game Controllers and Haptics](../hardware/game-controllers.md) and [I2C and Precision Touchpad](../hardware/i2c-touchpad.md)
-- [Print Support](../../todo/10-platform-services/TODO-12-long-term-features.md#6-print-support-sonnet), with printer drivers in [Printing and Scanning Device Path](../hardware/printing-scanning.md)
-- [Text to Speech](../../todo/10-platform-services/TODO-12-long-term-features.md#7-text-to-speech-sam--espeak-ng-sonnet); the roadmap records eSpeak NG as LGPL, and its licence file must be checked before it is vendored
-- [Software OpenGL](../../todo/10-platform-services/TODO-12-long-term-features.md#8-software-opengl-tinygl-port-opus)
-- [Multi-User Sessions](../../todo/10-platform-services/TODO-12-long-term-features.md#9-multi-user-session-management--fast-switching-opus), which need user accounts from [Security and User Accounts](../desktop/security-accounts.md)
-- [Telemetry](../../todo/10-platform-services/TODO-12-long-term-features.md#10-telemetry-opt-in-anonymous-sonnet) and [Parental Controls](../../todo/10-platform-services/TODO-12-long-term-features.md#11-parental-controls-parconcpl-sonnet)
+- [Kernel Debugger (GDB RSP Stub)](../../todo/10-platform-services/TODO-12-long-term-features.md#1-kernel-debugger-gdb-rsp-stub) and [User-Mode Debugger](../../todo/10-platform-services/TODO-12-long-term-features.md#2-user-mode-debugger-debuggerexe); settle the overlap with the [KD protocol roadmap](../../todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md) first
+- [Developer Tools](../../todo/10-platform-services/TODO-12-long-term-features.md#3-developer-tools)
+- [Touch Input and Gestures](../../todo/10-platform-services/TODO-12-long-term-features.md#4-touch-input--gesture-recognizer) and [Gamepad and XInput](../../todo/10-platform-services/TODO-12-long-term-features.md#5-gamepad--controller-input--xinput-stubs), whose drivers belong to [Game Controllers and Haptics](../hardware/game-controllers.md) and [I2C and Precision Touchpad](../hardware/i2c-touchpad.md)
+- [Print Support](../../todo/10-platform-services/TODO-12-long-term-features.md#6-print-support), with printer drivers in [Printing and Scanning Device Path](../hardware/printing-scanning.md)
+- [Text to Speech](../../todo/10-platform-services/TODO-12-long-term-features.md#7-text-to-speech-sam--espeak-ng); the roadmap records eSpeak NG as LGPL, and its licence file must be checked before it is vendored
+- [Software OpenGL](../../todo/10-platform-services/TODO-12-long-term-features.md#8-software-opengl-tinygl-port)
+- [Multi-User Sessions](../../todo/10-platform-services/TODO-12-long-term-features.md#9-multi-user-session-management--fast-switching), which need user accounts from [Security and User Accounts](../desktop/security-accounts.md)
+- [Telemetry](../../todo/10-platform-services/TODO-12-long-term-features.md#10-telemetry-opt-in-anonymous) and [Parental Controls](../../todo/10-platform-services/TODO-12-long-term-features.md#11-parental-controls-parconcpl)
 
 ## How does it compare with Windows 11 and Linux?
 

@@ -49,18 +49,18 @@ bash scripts/test.sh SUITE=exec
 
 ## Who owns what?
 
-The [Kernel Module System](../hardware/kernel-modules.md) roadmap (`04-drivers-hardware/TODO-05`) plans a kernel symbol table and `EXPORT_SYMBOL` in its section 1 and an ELF relocatable module loader in its section 4, using `module_load()`, `include/kernel/ksymtab.h` and a `.ksymtab` section. This file plans the same pieces as `kmod_load()`, `ksym_lookup()` and `src/kernel/kmod.c`. Only one design can ship, so a reconcile item is filed in [section 1](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#1-elf-relocation-engine-opus) here and in section 1 of that file; neither side has been chosen. The user-space half (sections 5 and 6) has no competing owner and belongs with the [Linux ELF Compatibility](../services/linux-compat.md) layer.
+The [Kernel Module System](../hardware/kernel-modules.md) roadmap (`04-drivers-hardware/TODO-05`) plans a kernel symbol table and `EXPORT_SYMBOL` in its section 1 and an ELF relocatable module loader in its section 4, using `module_load()`, `include/kernel/ksymtab.h` and a `.ksymtab` section. This file plans the same pieces as `kmod_load()`, `ksym_lookup()` and `src/kernel/kmod.c`. Only one design can ship, so a reconcile item is filed in [section 1](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#1-elf-relocation-engine) here and in section 1 of that file; neither side has been chosen. The user-space half (sections 5 and 6) has no competing owner and belongs with the [Linux ELF Compatibility](../services/linux-compat.md) layer.
 
 ## What is not implemented yet?
 
-- [ELF Relocation Engine](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#1-elf-relocation-engine-opus)
-- [Kernel Module Format `.kmod`](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#2-kernel-module-format-kmod-sonnet)
-- [Kernel Module Loader](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#3-kernel-module-loader-opus)
-- [Kernel Symbol Export](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#4-kernel-symbol-export-export_symbol-opus)
-- [`dlopen` and `dlsym` for Linux Compat](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#5-dlopen--dlsym-for-linux-compat-sonnet)
-- [GOT and PLT Lazy Binding](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#6-got--plt-lazy-binding-opus)
-- [Module Hot-Swap](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#7-module-hot-swap-stretch-sonnet)
-- [Module Shell Commands](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#8-lsmod--insmod--rmmod--modprobe-shell-commands-sonnet)
+- [ELF Relocation Engine](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#1-elf-relocation-engine)
+- [Kernel Module Format `.kmod`](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#2-kernel-module-format-kmod)
+- [Kernel Module Loader](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#3-kernel-module-loader)
+- [Kernel Symbol Export](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#4-kernel-symbol-export-export_symbol)
+- [`dlopen` and `dlsym` for Linux Compat](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#5-dlopen--dlsym-for-linux-compat)
+- [GOT and PLT Lazy Binding](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#6-got--plt-lazy-binding)
+- [Module Hot-Swap](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#7-module-hot-swap-stretch)
+- [Module Shell Commands](../../todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md#8-lsmod--insmod--rmmod--modprobe-shell-commands)
 
 ## How does it compare with Windows 11 and Linux?
 

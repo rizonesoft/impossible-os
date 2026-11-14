@@ -50,15 +50,15 @@ The boot log's `[INPUT] Sources:` line shows which of PS/2, USB keyboard, USB mo
 
 ## What is not implemented yet?
 
-- **A USB core layer** independent of the host controller, with suspend and resume ([USB Core Abstraction Layer](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#1-usb-core-abstraction-layer-opus)).
-- **String descriptors** for product and vendor names ([USB String Descriptor Retrieval](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#2-usb-string-descriptor-retrieval-sonnet)).
-- **Isochronous endpoints** for audio and video ([Isochronous Endpoint Support](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support-opus)).
-- **Generic interrupt endpoints and a full HID class driver** beyond the boot-protocol path above ([Interrupt Endpoint Setup for HID](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#4-interrupt-endpoint-setup-for-hid-opus), [USB HID Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#5-usb-hid-class-driver-sonnet)).
-- **PS/2 yielding to USB input** ([PS/2 ↔ USB Input Fallback](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#6-ps2--usb-input-fallback-sonnet)).
-- **Multi-LUN mass storage** ([USB MSC BOT Completion](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#7-usb-msc-bot-completion-opus)).
-- **Complete hot-plug** with block-device registration and mounting on attach, and teardown on disconnect ([Hot-Plug Interrupt Handling](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#8-hot-plug-interrupt-handling-opus)).
-- **Hubs** ([USB Hub Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#9-usb-hub-class-driver-opus)) and **EHCI** ([EHCI Fallback (USB 2.0)](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#10-ehci-fallback-usb-20-opus)).
-- **Class drivers** for Ethernet ([USB CDC-ECM Ethernet](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#11-usb-cdc-ecm-ethernet-sonnet)), serial ([USB CDC-ACM Serial](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#12-usb-cdc-acm-serial-sonnet)) and Bluetooth ([Bluetooth HCI via USB](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#13-bluetooth-hci-via-usb-opus)).
+- **A USB core layer** independent of the host controller, with suspend and resume ([USB Core Abstraction Layer](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#1-usb-core-abstraction-layer)).
+- **String descriptors** for product and vendor names ([USB String Descriptor Retrieval](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#2-usb-string-descriptor-retrieval)).
+- **Isochronous endpoints** for audio and video ([Isochronous Endpoint Support](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#3-isochronous-endpoint-support)).
+- **Generic interrupt endpoints and a full HID class driver** beyond the boot-protocol path above ([Interrupt Endpoint Setup for HID](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#4-interrupt-endpoint-setup-for-hid), [USB HID Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#5-usb-hid-class-driver)).
+- **PS/2 yielding to USB input** ([PS/2 ↔ USB Input Fallback](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#6-ps2--usb-input-fallback)).
+- **Multi-LUN mass storage** ([USB MSC BOT Completion](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#7-usb-msc-bot-completion)).
+- **Complete hot-plug** with block-device registration and mounting on attach, and teardown on disconnect ([Hot-Plug Interrupt Handling](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#8-hot-plug-interrupt-handling)).
+- **Hubs** ([USB Hub Class Driver](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#9-usb-hub-class-driver)) and **EHCI** ([EHCI Fallback (USB 2.0)](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#10-ehci-fallback-usb-20)).
+- **Class drivers** for Ethernet ([USB CDC-ECM Ethernet](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#11-usb-cdc-ecm-ethernet)), serial ([USB CDC-ACM Serial](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#12-usb-cdc-acm-serial)) and Bluetooth ([Bluetooth HCI via USB](../../todo/04-drivers-hardware/TODO-10-usb-stack.md#13-bluetooth-hci-via-usb)).
 
 ## How does it compare with Windows 11 and Linux?
 

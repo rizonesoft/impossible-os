@@ -57,11 +57,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ## Outcome
 
-`src/libs/` contains six vendored, freestanding-safe library trees: `libc/` (string + math),
-`miniz/` (deflate + ZIP read/write), `monocypher/` (all primitives + CSPRNG), `cjson/`
-(JSON parse/print), `mbedtls/` (TLS 1.2 client subset), `stb/` (image + truetype shims).
-`scripts/test-libs.sh` runs all integration tests and exits non-zero on failure.
-`src/libs/README.md` documents license, version, and source URL for every library.
+`src/libs/` contains six vendored, freestanding-safe library trees: `libc/` (string + math), `miniz/` (deflate + ZIP read/write), `monocypher/` (all primitives + CSPRNG), `cjson/` (JSON parse/print), `mbedtls/` (TLS 1.2 client subset), `stb/` (image + truetype shims). `scripts/test-libs.sh` runs all integration tests and exits non-zero on failure. `src/libs/README.md` documents license, version, and source URL for every library.
 
 ---
 
@@ -80,7 +76,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 1. String Library Consolidation `[Sonnet]`
+## 1. String Library Consolidation
 
 **Output files:** `src/libs/libc/string.c`, `include/libc/string.h`
 
@@ -105,7 +101,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 2. Math Library Extension `[Sonnet]`
+## 2. Math Library Extension
 
 > Existing `kmath.h` has: `fabs`, `floor`, `ceil`, `fmod`, `sqrt`, `pow`, `cos`, `acos`.
 > Add the following without removing existing implementations.
@@ -132,7 +128,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 3. miniz (ZIP Writer + Stream Extension) `[Sonnet]`
+## 3. miniz (ZIP Writer + Stream Extension)
 
 > → XREF: `02-kernel-core/TODO-03-kernel-libraries.md §4` -- miniz port to `src/libs/miniz/`
 > and ZIP reader (`zip_open/entry_count/find/read/close`) must be complete first.
@@ -155,7 +151,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 4. monocypher + CSPRNG + SYS_GETRANDOM `[Opus]`
+## 4. monocypher + CSPRNG + SYS_GETRANDOM
 
 > Security-critical: RDRAND-seeded entropy, ChaCha20 stream CSPRNG, and Ed25519 sign/verify
 > have no prior Impossible OS precedent and are used by SSH (§4), WiFi WPA2, and the
@@ -187,7 +183,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 5. cJSON `[Sonnet]`
+## 5. cJSON
 
 **Output files:** `src/libs/cjson/cjson.c`, `include/libs/cjson.h`
 
@@ -211,7 +207,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 6. Mbed TLS Subset `[Opus]`
+## 6. Mbed TLS Subset
 
 > Security-critical TLS 1.2 client: certificate chain validation, RSA key exchange, AES-GCM
 > record encryption. No prior Impossible OS TLS implementation exists.
@@ -241,7 +237,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 7. STB Consolidation + `stb_image_write` `[Sonnet]`
+## 7. STB Consolidation + `stb_image_write`
 
 > `stb_truetype.h` and `stb_image_write.h` are already present in `include/`. This section
 > audits, consolidates, and verifies memory redirects.
@@ -265,7 +261,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ---
 
-## 8. Library Integration Tests + README `[Sonnet]`
+## 8. Library Integration Tests + README
 
 **Output files:** `scripts/test-libs.sh`, `src/libs/README.md`
 
@@ -306,11 +302,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 | 💎  | STB image decode/encode                            | ✅ WIC (COM, Ring 3)             | ✅ GdkPixbuf / libpng           | ✅ §7 -- Done -- stb_truetype + stb_image                 |
 | ⭐  | Host-side integration test suite for embedded libs | ✅ Partial (vendor unit tests)   | ✅ Partial (lib/crypto/testmgr) | ⬜ §8 -- `scripts/test-libs.sh` with known test vectors   |
 
-Impossible OS carries the CSPRNG as an **inbox kernel service** backed by hardware RDRAND
-entropy -- the same CSPRNG that seeds SSH key generation, WiFi WPA2, and the credential store
--- exposed to user-mode via a single `SYS_GETRANDOM` syscall. No COM stacks, no dynamic
-linking, no trust boundary crossings: pure in-kernel primitives directly callable from any
-driver or subsystem.
+Impossible OS carries the CSPRNG as an **inbox kernel service** backed by hardware RDRAND entropy -- the same CSPRNG that seeds SSH key generation, WiFi WPA2, and the credential store -- exposed to user-mode via a single `SYS_GETRANDOM` syscall. No COM stacks, no dynamic linking, no trust boundary crossings: pure in-kernel primitives directly callable from any driver or subsystem.
 
 ---
 

@@ -49,11 +49,7 @@ title: "TODO-11 -- Photos (Image Viewer)"
 
 ## Outcome
 
-`photos.exe` opens any supported image format, fits it to the window, and allows zoom, pan,
-and folder navigation with keyboard shortcuts. A thumbnail strip shows all images in the
-folder. Slideshow with crossfade auto-advances. An EXIF side panel shows camera metadata.
-Basic non-destructive editing (rotate, crop, auto-enhance) saves to original or copy.
-All major image formats are registered to `photos.exe`.
+`photos.exe` opens any supported image format, fits it to the window, and allows zoom, pan, and folder navigation with keyboard shortcuts. A thumbnail strip shows all images in the folder. Slideshow with crossfade auto-advances. An EXIF side panel shows camera metadata. Basic non-destructive editing (rotate, crop, auto-enhance) saves to original or copy. All major image formats are registered to `photos.exe`.
 
 ---
 
@@ -69,10 +65,11 @@ All major image formats are registered to `photos.exe`.
 | 6    | EXIF Metadata Panel                      | ⭐    | §1 JPEG load, inline TIFF/IFD reader                   |
 | 7    | Basic Editing (Rotate/Crop/Auto-enhance) | 💎    | §1 `image_save_png`, pixel-level ops                   |
 | 8    | File Associations + App Registration     | 💎    | `file_assoc_set`, §1 CLI arg                           |
+| 9    | Image Viewer                             | 💎    | --                                                     |
 
 ---
 
-## 1. Image Loading + Display `[Sonnet]`
+## 1. Image Loading + Display
 
 **Source file:** `src/apps/photos/photos.c`; header `include/apps/photos/photos.h`
 
@@ -90,7 +87,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 2. Zoom + Pan `[Sonnet]`
+## 2. Zoom + Pan
 
 - [ ] **Zoom state**: `float g_zoom` (1.0 = 100 %); `bool g_fit_mode` (default true); range clamp 0.05–32.0
 - [ ] **Mouse wheel zoom**: each notch × 1.1 (in) or ÷ 1.1 (out); pivot around cursor position (adjust pan offset so cursor pixel stays fixed); exit fit-mode on first zoom
@@ -103,7 +100,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 3. Folder Navigation + Thumbnail Strip `[Sonnet]`
+## 3. Folder Navigation + Thumbnail Strip
 
 - [ ] **Folder scan** on open: extract directory from `filepath`; `vfs_readdir()` all entries; filter to `{.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff}`; sort alphabetically (case-insensitive `strcmp`); store paths in `g_folder_files[512]`, `g_folder_count`, `g_folder_idx` = index of current file
 - [ ] **Left/Right arrow keys**: decrement/increment `g_folder_idx` (wrap); load new image via `image_load`; reset zoom to fit-mode; update title + status bar
@@ -116,7 +113,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 4. Toolbar + Menus `[Sonnet]`
+## 4. Toolbar + Menus
 
 **Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
@@ -140,7 +137,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 5. Slideshow `[Sonnet]`
+## 5. Slideshow
 
 - [ ] **Start slideshow**: View→Slideshow → `wm_set_fullscreen(true)`; hide toolbar; show translucent OSD overlay (current filename + `[⏯]`/`[⏹]`/`[⏮]`/`[⏭]`); auto-hide OSD after 3 s
 - [ ] **Advance timer**: `system_get_ticks()` delta; configurable interval N seconds (default 5, stored in `HKCU\Software\Impossible\Photos\SlideshowInterval`); advance `g_folder_idx` on tick
@@ -153,7 +150,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 6. EXIF Metadata Panel `[Opus]`
+## 6. EXIF Metadata Panel
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
@@ -177,7 +174,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 7. Basic Editing `[Opus]`
+## 7. Basic Editing
 
 > Pixel-level rotate, crop rubber-band, and histogram stretch are novel image-processing
 > routines with no prior Impossible OS precedent.
@@ -208,7 +205,7 @@ All major image formats are registered to `photos.exe`.
 
 ---
 
-## 8. File Associations + App Registration `[Sonnet]`
+## 8. File Associations + App Registration
 
 - [ ] Register file associations via `file_assoc_set()`:
   - `".jpg"`, `".jpeg"` → `photos.exe`
@@ -220,6 +217,33 @@ All major image formats are registered to `photos.exe`.
 - [ ] **"Open with Photos" context menu verb** registered for all above types
 - [ ] **Recent files**: `HKCU\Software\Impossible\Photos\RecentFiles\{0..9}` (10 MRU); shown in `File→Recent`
 - [ ] **Properties dialog** (`File→Properties`): reuse the EXIF panel content (§6) in a `MessageBox`-style modal: dimensions, file size, format, EXIF table
+
+## 9. Image Viewer
+
+> **Spawned-by:** root
+
+> **Moved here 2026-11-14 from `09-desktop-shell/TODO-12-utilities.md` §3** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
+
+**Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
+
+`image_load()` + fit to window preserving aspect ratio. Mouse wheel / Ctrl+/- zoom. Click+drag pan when zoomed. Prev/Next in same folder. Toolbar. Status bar. Slideshow. Set as wallpaper.
+
+**Files:** `src/apps/imgview/imgview.c` (new), `include/apps/imgview.h` (new)
+
+> [!NOTE]
+> Window: initial 800×600 px (resizable). Load: `image_load(&g_img, path)` → `image_scale(&g_scaled, &g_img, win_w, win_h, FIT_ASPECT)` → `gfx_blit(surface, scaled_pixels, 0, 0)`. **Zoom**: `g_zoom` float (1.0 = fit); mouse wheel → `g_zoom *= 1.1` or `/ 1.1`; `Ctrl++/−`; `100%` button → `g_zoom=1.0`; `Fit` button → `g_zoom = fit_factor`. At zoom > fit: show pan offsets; click+drag → update `g_pan_x/y`. **Prev/Next folder**: on open: `vfs_readdir(parent_dir)` → filter for `.jpg/.jpeg/.png/.bmp/.gif` extensions → build `g_folder_images[]` array; `g_folder_idx` = current file index; ← → buttons + Left/Right arrow keys cycle through. **Command bar** (48 px, subtle buttons, `docs/design/shell.md#app-window-layout`): ← Prev, → Next, Zoom In, Zoom Out, 100%, Fit, Slideshow, Set as Wallpaper, × Close. **Status bar** (24 px, caption style): `"{filename} -- {W}×{H} -- {size KB} -- {idx} of {total}"`. **Slideshow**: timer via `sched_task_add("imgview_slide", imgview_advance, slide_interval_s, 1)` (TODO-04); slide_interval configurable 3–5 s. **Set as Wallpaper**: `wallpaper_set(g_current_path, WALLPAPER_FIT)` (08-graphics-ui/TODO-09 §3 forward dep). **File association**: `.jpg/.jpeg/.png/.bmp` → `imgview.exe` registered in `file_assoc` defaults (TODO-02).
+
+- [ ] `void imgview_open(const char *path)` -- `image_load()`; `wm_create_window()`; build folder list; render
+- [ ] `void imgview_render(gfx_surface_t *s, int w, int h)` -- scale to fit/zoom; blit; pan offsets
+- [ ] Fit calculation: `scale = min((float)win_w/img_w, (float)win_h/img_h)`
+- [ ] Zoom: mouse wheel → `g_zoom *= 1.1`; clamp to [0.1, 20.0]; recalc scale + render
+- [ ] Pan: `WM_MOUSE_MOVE` with button → `g_pan_x/y += delta`; clamp to image bounds
+- [ ] Folder scan: `vfs_readdir(parent)` → extension filter → sorted name array
+- [ ] Prev/Next: `g_folder_idx = (g_folder_idx ± 1) % g_folder_count`; `image_load()` new path
+- [ ] Command bar (subtle buttons per `controls.md#button`: previous, next, zoom, rotate, set as wallpaper) + 24 px status bar; mica window background
+- [ ] Slideshow: `sched_task_add()` 1-shot with `slide_interval_s`; each tick → Next
+- [ ] "Set as Wallpaper" → `wallpaper_set(path, WALLPAPER_FIT)`
+- [ ] Commit: `"imgview: image viewer -- image_load/scale, fit/zoom/pan, prev/next folder, slideshow, wallpaper"`
 
 ---
 

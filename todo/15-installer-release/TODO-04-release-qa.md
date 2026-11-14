@@ -52,10 +52,7 @@ title: "TODO-04 -- Release QA & Platform Certification"
 
 ## Outcome
 
-Every stable release is gated on: automated regression tests all pass in QEMU headless,
-Hyper-V and VirtualBox cert runs succeed, performance benchmarks show no regression
-from the previous release, and the 30-minute crash-free soak test completes. A human
-must tick the release readiness checklist before `promote-release.sh stable` is run.
+Every stable release is gated on: automated regression tests all pass in QEMU headless, Hyper-V and VirtualBox cert runs succeed, performance benchmarks show no regression from the previous release, and the 30-minute crash-free soak test completes. A human must tick the release readiness checklist before `promote-release.sh stable` is run.
 
 ---
 
@@ -74,7 +71,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 1. Automated Regression Test Suite `[Sonnet]`
+## 1. Automated Regression Test Suite
 
 **Source:** `scripts/run-tests.sh`; test programs in `sdk/compat/tests/regression/`
 
@@ -104,7 +101,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 2. QEMU Validation `[Sonnet]`
+## 2. QEMU Validation
 
 **Source:** `scripts/qemu-test.sh`
 
@@ -125,7 +122,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 3. Hyper-V Certification `[Sonnet]`
+## 3. Hyper-V Certification
 
 **Source:** `scripts/hyperv-test.ps1` (Windows host only)
 
@@ -153,7 +150,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 4. VirtualBox Certification `[Sonnet]`
+## 4. VirtualBox Certification
 
 **Source:** `scripts/vbox-test.sh`
 
@@ -182,7 +179,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 5. Real Hardware Test Checklist `[Sonnet]`
+## 5. Real Hardware Test Checklist
 
 **Source:** `docs/guides/hardware-test-checklist.md`
 
@@ -216,7 +213,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 6. Performance Benchmarks `[Sonnet]`
+## 6. Performance Benchmarks
 
 **Source:** `scripts/benchmark.sh`; output `build/benchmark-{version}.json`
 
@@ -257,7 +254,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 7. Release Readiness Checklist `[Sonnet]`
+## 7. Release Readiness Checklist
 
 **Source:** `docs/guides/release-checklist.md`; also used as PR template for release branch
 
@@ -292,7 +289,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ---
 
-## 8. Crash Analytics Review `[Sonnet]`
+## 8. Crash Analytics Review
 
 > Before every release: triage all crash dumps from testing, enable QA-build sanitisers,
 > run the 30-minute soak, and add kernel assertions that prevent recurrence.
@@ -334,12 +331,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 | ⭐  | Public release readiness checklist              | ✅ Internal release process; not public      | ✅ Distro RC process (kernel.org rc1–rc8);            | ⬜ §7 -- `release-checklist.md`; PR template; merge blocked        |
 | 💎  | Pre-release crash analytics + KASAN QA soak     | ✅ WER crash analysis; internal crash        | ✅ `kdump` + crash triage; KASAN                      | ⬜ §8 -- KASAN=1 + sentinel pages QA                               |
 
-Impossible OS's `⭐` advantage: the benchmark JSON (`build/benchmark-{version}.json`) is
-committed to the repo and published with every release, giving the community verifiable,
-reproducible performance data -- something neither Windows nor Linux provides publicly
-in a machine-readable per-release format. The release checklist is enforced as a PR
-template so no stable release can be tagged without every item signed off, combining
-automated CI gates with human sign-off in a single auditable record.
+Impossible OS's `⭐` advantage: the benchmark JSON (`build/benchmark-{version}.json`) is committed to the repo and published with every release, giving the community verifiable, reproducible performance data -- something neither Windows nor Linux provides publicly in a machine-readable per-release format. The release checklist is enforced as a PR template so no stable release can be tagged without every item signed off, combining automated CI gates with human sign-off in a single auditable record.
 
 ---
 

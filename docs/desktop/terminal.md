@@ -42,11 +42,11 @@ The terminal opens at boot with the `C:\>` prompt. Type shell commands such as `
 
 ## What is not implemented yet?
 
-- [Terminal Cell Grid](../../todo/09-desktop-shell/TODO-08-terminal.md#1-terminal-cell-grid-opus), which also owns starting one shell per terminal instead of a new `cmd.exe` on every Start > Terminal click
-- [Character Rendering](../../todo/09-desktop-shell/TODO-08-terminal.md#2-character-rendering-sonnet) and [ANSI Escape Parser](../../todo/09-desktop-shell/TODO-08-terminal.md#3-ansi-escape-parser-sonnet)
-- [Scrollback and Text Selection](../../todo/09-desktop-shell/TODO-08-terminal.md#4-scrollback--text-selection-sonnet), on the [Clipboard](clipboard.md)
-- [Resize Handling](../../todo/09-desktop-shell/TODO-08-terminal.md#5-resize-handling-sonnet) and [Registry Settings](../../todo/09-desktop-shell/TODO-08-terminal.md#6-registry-settings-sonnet)
-- [Advanced Features](../../todo/09-desktop-shell/TODO-08-terminal.md#7-advanced-features-sonnet) and [Pseudo-Console (ConPTY)](../../todo/09-desktop-shell/TODO-08-terminal.md#8-pseudo-console-conpty)
+- [Terminal Cell Grid](../../todo/09-desktop-shell/TODO-08-terminal.md#1-terminal-cell-grid), which also owns starting one shell per terminal instead of a new `cmd.exe` on every Start > Terminal click
+- [Character Rendering](../../todo/09-desktop-shell/TODO-08-terminal.md#2-character-rendering) and [ANSI Escape Parser](../../todo/09-desktop-shell/TODO-08-terminal.md#3-ansi-escape-parser)
+- [Scrollback and Text Selection](../../todo/09-desktop-shell/TODO-08-terminal.md#4-scrollback--text-selection), on the [Clipboard](clipboard.md)
+- [Resize Handling](../../todo/09-desktop-shell/TODO-08-terminal.md#5-resize-handling) and [Registry Settings](../../todo/09-desktop-shell/TODO-08-terminal.md#6-registry-settings)
+- [Advanced Features](../../todo/09-desktop-shell/TODO-08-terminal.md#7-advanced-features) and [Pseudo-Console (ConPTY)](../../todo/09-desktop-shell/TODO-08-terminal.md#8-pseudo-console-conpty)
 
 Keeping the terminal handle valid after its window is closed, and routing keys only to the focused window, are owned by the [input system roadmap](../../todo/06-desktop-foundation/TODO-03-input-system.md); see [Keyboard and Mouse Input](input-system.md).
 

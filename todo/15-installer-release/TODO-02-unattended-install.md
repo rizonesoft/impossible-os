@@ -47,11 +47,7 @@ title: "TODO-02 -- Unattended Installation & Deployment"
 
 ## Outcome
 
-A machine booted from the release ISO with an `answer.ini` on the same media installs
-Impossible OS fully unattended -- partitions, formats, copies files, creates user, sets
-hostname, reboots -- without a single keypress. `sysprep /generalize` creates a clean
-deployment image. OEM partners place `$OEM$\` content on the media and it flows into
-the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
+A machine booted from the release ISO with an `answer.ini` on the same media installs Impossible OS fully unattended -- partitions, formats, copies files, creates user, sets hostname, reboots -- without a single keypress. `sysprep /generalize` creates a clean deployment image. OEM partners place `$OEM$\` content on the media and it flows into the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
@@ -70,7 +66,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 1. Answer File Format + INI Parser `[Sonnet]`
+## 1. Answer File Format + INI Parser
 
 **Source:** `src/installer/answer.c`; header `include/installer/answer.h`
 
@@ -120,7 +116,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 2. Unattended Install Mode `[Sonnet]`
+## 2. Unattended Install Mode
 
 > Extends `10-platform-services/TODO-11` installer pipeline; auto-proceeds through
 > every step that would otherwise show a UI dialog.
@@ -145,7 +141,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 3. `sysprep.exe` (Generalize + OOBE Seal) `[Opus]`
+## 3. `sysprep.exe` (Generalize + OOBE Seal)
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog); the OOBE it seals the image for is [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
@@ -173,7 +169,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 4. OEM Customization `[Sonnet]`
+## 4. OEM Customization
 
 **Source:** `src/installer/oem.c`; media layout convention `\$OEM$\`
 
@@ -198,7 +194,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 5. WIM / Image Capture (`imagex.exe`) `[Opus]`
+## 5. WIM / Image Capture (`imagex.exe`)
 
 > Novel: WIM single-instancing (SHA-1 hash deduplication). No prior Impossible OS file
 > archive with per-file identity-based deduplication. Custom `.iim` format if full WIM
@@ -229,7 +225,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 6. Network Boot (PXE + TFTP Server) `[Opus]`
+## 6. Network Boot (PXE + TFTP Server)
 
 > Novel: DHCP proxy + TFTP server. No prior Impossible OS network boot infrastructure.
 > Requires UDP raw sockets and correct DHCP option parsing.
@@ -263,7 +259,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 7. VM Provisioning Templates `[Sonnet]`
+## 7. VM Provisioning Templates
 
 **Source:** `scripts/provision-qemu.sh`; `scripts/provision-hyperv.ps1`
 
@@ -287,7 +283,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 
 ---
 
-## 8. Enterprise Deployment Guide `[Sonnet]`
+## 8. Enterprise Deployment Guide
 
 **Source:** `docs/guides/enterprise-deployment.md`
 
@@ -318,12 +314,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 | ⭐  | VM provisioning scripts                  | ✅ Hyper-V PowerShell; Azure ARM templates          | ✅ `virt-install`; Vagrant; Packer                | ⬜ §7 `provision-qemu.sh` + `provision-hyperv.ps1`; CI-ready `ci-provision.sh` |
 | 💎  | Enterprise deployment documentation      | ✅ MSDN WDS/MDT/SCCM docs                           | ✅ Anaconda/Kickstart/AutoYaST docs               | ⬜ §8 -- `docs/guides/enterprise-deployment.md`; full answer file reference    |
 
-Impossible OS's `⭐` advantage: the entire deployment pipeline -- answer file, sysprep,
-OEM customization, PXE, and VM provisioning -- is built into the OS itself with no
-external tools (no MDT, no WDS, no Packer). The `$OEM$` layout directly mirrors
-Windows OEM conventions so hardware partners need zero re-training, and BLAKE2b-160
-single-instancing in `.iim` is faster than SHA-1 WIM while using the same monocypher
-library already in the kernel.
+Impossible OS's `⭐` advantage: the entire deployment pipeline -- answer file, sysprep, OEM customization, PXE, and VM provisioning -- is built into the OS itself with no external tools (no MDT, no WDS, no Packer). The `$OEM$` layout directly mirrors Windows OEM conventions so hardware partners need zero re-training, and BLAKE2b-160 single-instancing in `.iim` is faster than SHA-1 WIM while using the same monocypher library already in the kernel.
 
 ---
 

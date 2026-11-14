@@ -43,13 +43,13 @@ There is nothing to run. The boot log's `cpu` lines report which vector extensio
 
 ## What is not implemented yet?
 
-- [Inference Runtime Options Survey](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#1-inference-runtime-options-survey-sonnet)
-- [SIMD Enablement for User Mode](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#2-simd-enablement-for-user-mode-opus): XCR0 and per-process XSAVE with XSAVEOPT ship; per-thread save areas, the TEB field and the benchmark do not.
-- [ggml C99 Kernel Port](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#3-ggml-c99-kernel-port-opus)
-- [GGUF Model Format and Loading](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#4-gguf-model-format--loading-sonnet)
-- [OS Integration Points](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#5-os-integration-points-sys_ai_infer--apps-sonnet)
-- [GPU Inference Research (Stretch)](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#6-gpu-inference-research-stretch-sonnet)
-- [Research Deliverables](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#7-research-deliverables-sonnet)
+- [Inference Runtime Options Survey](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#1-inference-runtime-options-survey)
+- [SIMD Enablement for User Mode](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#2-simd-enablement-for-user-mode): XCR0 and per-process XSAVE with XSAVEOPT ship; per-thread save areas, the TEB field and the benchmark do not.
+- [ggml C99 Kernel Port](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#3-ggml-c99-kernel-port)
+- [GGUF Model Format and Loading](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#4-gguf-model-format--loading)
+- [OS Integration Points](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#5-os-integration-points-sys_ai_infer--apps)
+- [GPU Inference Research (Stretch)](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#6-gpu-inference-research-stretch)
+- [Research Deliverables](../../todo/18-future-research/TODO-05-ai-ml-runtime.md#7-research-deliverables)
 
 Building inference apps also needs a C compiler in the SDK, which the [compiler SDK roadmap](../../todo/10-platform-services/TODO-09-compiler-sdk.md) owns.
 

@@ -55,12 +55,12 @@ It prints the firmware advisor's table and ends with the line that Impossible OS
 
 Nothing in this roadmap has started:
 
-- [Calendar App: Recurring Events and ICS Export](../../todo/11-apps/TODO-13-calendar-utilities.md#1-calendar-app-recurring-events--ics-export-sonnet), which needs the base calendar
-- [Sticky Notes](../../todo/11-apps/TODO-13-calendar-utilities.md#2-sticky-notes-sonnet)
-- [System Information](../../todo/11-apps/TODO-13-calendar-utilities.md#3-system-information-sysinfoexe-sonnet), which must extend the existing `sysinfo.exe` rather than replace it
-- [On-Screen Keyboard](../../todo/11-apps/TODO-13-calendar-utilities.md#4-on-screen-keyboard-sonnet) and the [Color Picker](../../todo/11-apps/TODO-13-calendar-utilities.md#5-color-picker-sonnet)
-- [Font Manager: OS/2 and Unicode Coverage](../../todo/11-apps/TODO-13-calendar-utilities.md#6-font-manager-os2--unicode-coverage-sonnet)
-- [Shared Help and About Dialog](../../todo/11-apps/TODO-13-calendar-utilities.md#7-shared-help--about-dialog-sonnet)
+- [Calendar App: Recurring Events and ICS Export](../../todo/11-apps/TODO-13-calendar-utilities.md#1-calendar-app-recurring-events--ics-export), which needs the base calendar
+- [Sticky Notes](../../todo/11-apps/TODO-13-calendar-utilities.md#2-sticky-notes)
+- [System Information](../../todo/11-apps/TODO-13-calendar-utilities.md#3-system-information-sysinfoexe), which must extend the existing `sysinfo.exe` rather than replace it
+- [On-Screen Keyboard](../../todo/11-apps/TODO-13-calendar-utilities.md#4-on-screen-keyboard) and the [Color Picker](../../todo/11-apps/TODO-13-calendar-utilities.md#5-color-picker)
+- [Font Manager: OS/2 and Unicode Coverage](../../todo/11-apps/TODO-13-calendar-utilities.md#6-font-manager-os2--unicode-coverage)
+- [Shared Help and About Dialog](../../todo/11-apps/TODO-13-calendar-utilities.md#7-shared-help--about-dialog)
 
 ## How does it compare with Windows 11 and Linux?
 

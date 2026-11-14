@@ -75,7 +75,7 @@ title: "TODO-11 -- OS Installer & ISO Build"
 
 ---
 
-## 1. ISO Build Script `[Sonnet]`
+## 1. ISO Build Script
 
 Create `scripts/make-iso.sh` to produce a hybrid El Torito + EFI-bootable ISO from the existing build output. Does not require GRUB -- uses `BOOTX64.EFI` directly.
 
@@ -100,7 +100,7 @@ Create `scripts/make-iso.sh` to produce a hybrid El Torito + EFI-bootable ISO fr
 
 ---
 
-## 2. Installer Init Process `[Sonnet]`
+## 2. Installer Init Process
 
 The installer runs as a user-mode PE process rather than a special kernel mode. The kernel detects installer mode via a registry flag baked into the ISO disk image. Network-boot entry into installer mode (fetch assets over TFTP/HTTP, verify, then set `InstallerMode`) is owned by `01-boot-platform/TODO-25 §8` -- the same-kernel installer, no separate WinPE/initramfs.
 
@@ -113,7 +113,7 @@ The installer runs as a user-mode PE process rather than a special kernel mode. 
 
 ---
 
-## 3. Installer GUI Wizard `[Sonnet]`
+## 3. Installer GUI Wizard
 
 **Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
@@ -161,7 +161,7 @@ Seven IxUI wizard screens laid out per `docs/design/shell.md#first-run-setup`: f
 
 ---
 
-## 4. GPT Partition Write `[Opus]`
+## 4. GPT Partition Write
 
 Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `include/kernel/fs/gpt.h`). This is a security-critical disk write path -- incorrect GPT CRC or LBA placement corrupts the target disk.
 
@@ -186,7 +186,7 @@ Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `i
 
 ---
 
-## 5. Partition Format (ESP FAT32 + IXFS System) `[Sonnet]`
+## 5. Partition Format (ESP FAT32 + IXFS System)
 
 - [ ] After `gpt_commit()`, open each partition as a sub-device (offset `blkdev`): `blkdev_subdev(parent_dev, lba_start, lba_count)` → new `struct blkdev` scoped to the partition
 - [ ] Format ESP: `fat32_format(esp_dev, "EFI")` → returns 0 on success; log result to serial + update Screen F status
@@ -198,7 +198,7 @@ Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `i
 
 ---
 
-## 6. File Copy Engine `[Sonnet]`
+## 6. File Copy Engine
 
 Copy all OS files from the ISO's read-only VFS to the installed IXFS partition. A build-time generated copy manifest drives the copy loop.
 
@@ -220,7 +220,7 @@ Copy all OS files from the ISO's read-only VFS to the installed IXFS partition. 
 
 ---
 
-## 7. UEFI Bootloader Install + NVRAM Boot Entry `[Opus]`
+## 7. UEFI Bootloader Install + NVRAM Boot Entry
 
 Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware boots Impossible OS first.
 
@@ -237,7 +237,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 
 ---
 
-## 8. Post-Install First Boot + OOBE Trigger `[Sonnet]`
+## 8. Post-Install First Boot + OOBE Trigger
 
 **Design:** [`shell.md#first-run-setup`](../../docs/design/shell.md#first-run-setup)
 
@@ -250,7 +250,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 
 ---
 
-## 9. Validation: QEMU + Hyper-V Gen2 + VirtualBox `[Sonnet]`
+## 9. Validation: QEMU + Hyper-V Gen2 + VirtualBox
 
 **QEMU (primary):**
 - [ ] T1: `qemu-system-x86_64 -cdrom build/os-build.iso -boot d` → installer Welcome screen appears
@@ -274,7 +274,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 
 ---
 
-## 10. Stability + Performance Pass `[Sonnet]`
+## 10. Stability + Performance Pass
 
 - [ ] Boot installed OS and run for 30+ minutes without crash; serial log must show no panics or assertion failures
 - [ ] Memory stress: allocate/free 1 MiB blocks in a loop for 5 minutes via test PE; verify PMM free list remains consistent
