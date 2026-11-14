@@ -1384,6 +1384,7 @@ if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" != "1" ] && _tt_would_run "$_TT_TRIG_LSP_
     _tt_nested_x "$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh" lsp_boundary
 fi
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
+_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inventory_check
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
@@ -1446,6 +1447,21 @@ if [ -f "$FMT_TABLE_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_format_md_tables.py not found"
+fi
+
+# Windows 11 inventory checker (scripts/inventory/tests/test_check_inventory.py):
+# one failing fixture tree per rule and passing trees, through the real script.
+INV_CHECK_TEST="$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py"
+if [ -f "$INV_CHECK_TEST" ]; then
+    INV_CHECK_OUT=$(_tt_nested_collect inventory_check python3 "$INV_CHECK_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/inventory/tests/test_check_inventory.py PASS ($(printf '%s\n' "$INV_CHECK_OUT" | tail -3 | tr '\n' ' '))"
+    else
+        t_fail "scripts/inventory/tests/test_check_inventory.py FAIL ($(printf '%s\n' "$INV_CHECK_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_check_inventory" "$INV_CHECK_OUT"
+    fi
+else
+    t_fail "scripts/inventory/tests/test_check_inventory.py not found"
 fi
 
 # Release image binding gate (scripts/tests/test_release_image_binding.py): real

@@ -66,7 +66,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 | ⭐  | Order | Deliverable                                                                                 | Depends On   | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------- | ------------ | :----: |
-| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [ ]   |
+| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [x]   |
 | 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [ ]   |
 | 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [ ]   |
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [ ]   |
@@ -99,21 +99,31 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 The record format and the checker every later section writes against. One JSON object per line, so a diff shows one record.
 
-- [ ] Write `docs/design/inventory/schema.json` (JSON Schema 2020-12) for one record
+- [x] Write `docs/design/inventory/schema.json` (JSON Schema 2020-12) for one record
   - Required: `id` (dotted, lower case, `win11.<surface>.<path>`), `surface`, `kind` (the kinds in Record Quick Reference), `label`, `order`, `source`, `capturedFrom`
   - Optional: `parent`, `controlType`, `uiaId`, `className`, `bounds` (`x`, `y`, `width`, `height` in pixels), `captureProfile`, `shortcut`, `itemCount`, `enabled`, `behaviour`, `openedBy`, `disposition`, `inconsistency`, `baselineId`, `baselineMissing`
   - `bounds` requires `captureProfile`; a `menuItem`, `setting`, `dialogTab` or `group` requires `parent`
-- [ ] Write `scripts/inventory/check-inventory.py` on the `jsonschema` package: validates every `docs/design/inventory/*/*.json` line, exits 1 naming file, line and rule on the first 50 failures
-- [ ] Refuse a duplicate `id`, a `parent` that names no record, a `parent` cycle, and an `order` used twice under one parent
-- [ ] Hold every `itemCount` against the number of child records present, so a file that lost a page, a control or a choice fails
-- [ ] Refuse a `source` outside the closed list
+  - Typed measurements: `measure` (value, unit, readBy) required on a `metric`, `motion` (duration, property, distance, curve) on a `motion`, plus `textMetrics` and `colours` (per theme)
+  - `$defs/observation`: one element under another profile, in `<file>.<profile>.json`, keyed by id and profile and kept out of the canonical id, order and count rules (plan review)
+- [x] Write `scripts/inventory/check-inventory.py` on the `jsonschema` package: validates every `docs/design/inventory/*/*.json` line, exits 1 naming file, line and rule on the first 50 failures
+- [x] Refuse a duplicate `id`, a `parent` that names no record, a `parent` cycle, and an `order` used twice under one parent
+- [x] Hold every `itemCount` against the number of child records present, so a file that lost a page, a control or a choice fails
+- [x] Refuse a `source` outside the closed list
   - `uia:<build>`, `registry:<build>`, `file:<build>`, `hand:<build>` (a hand-recorded fact, for surfaces UIA cannot reach) and `baseline:<name>`
-- [ ] Add `--surface <name>` to check one folder, and `--json` for a tool
-- [ ] Write `scripts/inventory/tests/test_check_inventory.py` (stdlib `unittest`): one failing fixture per rule and one passing file, wired into `scripts/test-tooling.sh` as a nested suite
-- [ ] Add the docs directive and an overview to `docs/design/inventory/index.md` so the folder builds on the site
-- [ ] Commit: `"inventory: record schema and checker"`
+- [x] Add `--surface <name>` to check one folder (parents still resolve across the tree), and `--json` for a tool
+- [x] Write `scripts/inventory/tests/test_check_inventory.py` (stdlib `unittest`): one failing fixture per rule and one passing file, wired into `scripts/test-tooling.sh` as a nested suite
+- [x] Add the docs directive and an overview to `docs/design/inventory/index.md` so the folder builds on the site
+- [x] Commit: `"inventory: record schema and checker"`
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py` prints `inventory: 0 records, 0 errors` and exits 0 on the empty tree. Each failing fixture exits 1 and names its rule. `python3 scripts/site/build.py --check` passes.
+
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (22 cases), nested suite `inventory_check` of `scripts/test-tooling.sh`
+
+> **Notes:**
+> - Shipped `docs/design/inventory/schema.json` and `scripts/inventory/check-inventory.py`: schema validation per JSON line, then whole-tree rules (duplicate id, orphan parent, cycle, repeated order, itemCount, observation id and profile).
+> - Measurements are typed (`measure`, `motion`, `textMetrics`, `colours`), and per-profile captures live in `<file>.<profile>.json` observation files, both from the plan review, so §14 and §17 have a machine contract.
+> - `baseline*.json` files are left to the baseline checks of §5; `disposition` (§6) and the label rules (§4) extend this same schema.
+> - Overview page: `docs/design/inventory/index.md`.
 
 ---
 

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://impossibleos.co/design/inventory/schema.json",
+  "title": "Windows 11 inventory record",
+  "description": "One line of a docs/design/inventory/<surface>/<file>.json file. Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "surface", "kind", "label", "order", "source", "capturedFrom"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^win11\\.[a-z0-9-]+(\\.[a-z0-9-]+)+$", "maxLength": 200},
+    "surface": {"$ref": "#/$defs/slug"},
+    "kind": {"enum": ["surface", "region", "page", "group", "setting", "control", "menu", "menuItem", "dialog", "dialogTab", "contextMenu", "shortcut", "gesture", "metric", "motion", "sound", "cursor", "state"]},
+    "label": {"type": "string", "minLength": 1},
+    "order": {"type": "integer", "minimum": 0},
+    "source": {"$ref": "#/$defs/source"},
+    "capturedFrom": {"$ref": "#/$defs/build"},
+    "parent": {"type": "string", "pattern": "^win11\\.[a-z0-9-]+(\\.[a-z0-9-]+)+$"},
+    "controlType": {"type": "string", "minLength": 1},
+    "uiaId": {"type": "string"},
+    "className": {"type": "string"},
+    "bounds": {"$ref": "#/$defs/bounds"},
+    "captureProfile": {"$ref": "#/$defs/slug"},
+    "shortcut": {"type": "string", "minLength": 1},
+    "itemCount": {"type": "integer", "minimum": 0},
+    "enabled": {"type": "boolean"},
+    "behaviour": {"type": "string", "minLength": 1},
+    "openedBy": {"type": "string", "minLength": 1},
+    "disposition": {"enum": ["build", "equivalent", "excluded"]},
+    "inconsistency": {"$ref": "#/$defs/slug"},
+    "baselineId": {"type": "string", "minLength": 1},
+    "baselineMissing": {"type": "boolean"},
+    "measure": {
+      "description": "A measured number: required on a metric record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"enum": ["px", "ms", "count", "percent", "dpi", "lines", "chars"]},
+        "readBy": {"type": "string", "minLength": 1, "description": "The system metric or parameter name the value was read by"}
+      }
+    },
+    "motion": {
+      "description": "A measured animation: required on a motion record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "property", "curve"],
+      "properties": {
+        "durationMs": {"type": "number", "exclusiveMinimum": 0},
+        "delayMs": {"type": "number", "minimum": 0},
+        "property": {"enum": ["position", "opacity", "scale", "size", "colour"]},
+        "distancePx": {"type": "number"},
+        "curve": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}
+      }
+    },
+    "textMetrics": {
+      "description": "Font metrics of one type ramp style, in pixels at the capture profile.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sizePx", "ascent", "descent", "lineGap", "advances"],
+      "properties": {
+        "sizePx": {"type": "number", "exclusiveMinimum": 0},
+        "weight": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "lineHeightPx": {"type": "number", "exclusiveMinimum": 0},
+        "ascent": {"type": "number"},
+        "descent": {"type": "number"},
+        "lineGap": {"type": "number"},
+        "advances": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "number", "minimum": 0}}
+      }
+    },
+    "colours": {
+      "description": "Measured colour roles: role name to a value per theme.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "propertyNames": {"enum": ["light", "dark", "contrast-aquatic", "contrast-desert", "contrast-dusk", "contrast-night-sky"]},
+        "additionalProperties": {"type": "string", "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"}
+      }
+    }
+  },
+  "dependentRequired": {"bounds": ["captureProfile"]},
+  "allOf": [
+    {"if": {"properties": {"kind": {"enum": ["menuItem", "setting", "dialogTab", "group"]}}, "required": ["kind"]}, "then": {"required": ["parent"]}},
+    {"if": {"properties": {"kind": {"const": "metric"}}, "required": ["kind"]}, "then": {"required": ["measure"]}},
+    {"if": {"properties": {"kind": {"const": "motion"}}, "required": ["kind"]}, "then": {"required": ["motion"]}}
+  ],
+  "$defs": {
+    "slug": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+    "build": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "source": {"type": "string", "pattern": "^((uia|registry|file|hand):[0-9]+\\.[0-9]+|baseline:[a-z0-9]+(-[a-z0-9]+)*)$"},
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "integer"},
+        "y": {"type": "integer"},
+        "width": {"type": "integer", "minimum": 0},
+        "height": {"type": "integer", "minimum": 0}
+      }
+    },
+    "observation": {
+      "description": "One line of a profile observation file <surface>/<file>.<profile>.json: the same element measured under another capture profile.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "captureProfile", "bounds", "capturedFrom"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^win11\\.[a-z0-9-]+(\\.[a-z0-9-]+)+$"},
+        "captureProfile": {"$ref": "#/$defs/slug"},
+        "bounds": {"$ref": "#/$defs/bounds"},
+        "capturedFrom": {"$ref": "#/$defs/build"},
+        "measure": {"$ref": "#/properties/measure"}
+      }
+    }
+  }
+}
