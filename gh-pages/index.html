@@ -130,17 +130,6 @@
         }
 
         /* ── Animated Background ──────────────────────────────────────── */
-        .bg-grid {
-            position: fixed;
-            inset: 0;
-            background-image:
-                linear-gradient(rgba(148, 163, 184, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
-            background-size: 64px 64px;
-            z-index: 0;
-            pointer-events: none;
-        }
-
         .bg-glow {
             position: fixed;
             width: 600px;
@@ -150,11 +139,19 @@
             opacity: 0.12;
             z-index: 0;
             pointer-events: none;
+            will-change: transform;
         }
 
-        .bg-glow-1 { top: -200px; left: -100px; background: var(--accent-blue); }
-        .bg-glow-2 { top: 40%; right: -200px; background: var(--accent-teal); }
-        .bg-glow-3 { bottom: -200px; left: 30%; background: var(--accent-cyan); }
+        /* Each glow drifts slowly on its own path and period, so the three never
+           repeat together. Only transform moves, so the blur is not redrawn; the
+           reduced-motion rule below stops it. */
+        .bg-glow-1 { top: -200px; left: -100px; background: var(--accent-blue); animation: drift-1 46s ease-in-out infinite alternate; }
+        .bg-glow-2 { top: 40%; right: -200px; background: var(--accent-teal); animation: drift-2 58s ease-in-out infinite alternate; }
+        .bg-glow-3 { bottom: -200px; left: 30%; background: var(--accent-cyan); animation: drift-3 52s ease-in-out infinite alternate; }
+
+        @keyframes drift-1 { from { transform: translate(0, 0) scale(1); } to { transform: translate(140px, 90px) scale(1.12); } }
+        @keyframes drift-2 { from { transform: translate(0, 0) scale(1.08); } to { transform: translate(-160px, -110px) scale(0.96); } }
+        @keyframes drift-3 { from { transform: translate(0, 0) scale(1); } to { transform: translate(110px, -120px) scale(1.15); } }
 
         /* ── Layout ───────────────────────────────────────────────────── */
         .container {
@@ -855,7 +852,6 @@
 <body>
 
 <!-- Background effects -->
-<div class="bg-grid"></div>
 <div class="bg-glow bg-glow-1"></div>
 <div class="bg-glow bg-glow-2"></div>
 <div class="bg-glow bg-glow-3"></div>
@@ -874,6 +870,7 @@
             <li><a href="#compatibility">Compatibility</a></li>
             <li><a href="#specs">Specs</a></li>
             <li><a href="docs/">Docs</a></li>
+            <li><a href="design/">Design</a></li>
             <li data-github><a href="{{repo_url}}" target="_blank" rel="noopener">GitHub</a></li>
             <li><a href="{{donate_url}}" class="nav-cta" target="_blank" rel="noopener"><span class="heartbeat">❤</span> Donate</a></li>
         </ul>
@@ -1079,6 +1076,7 @@
         <div class="footer-links">
             <a href="{{repo_url}}" target="_blank" rel="noopener" data-github>GitHub</a>
             <a href="{{repo_url}}/releases" target="_blank" rel="noopener" data-github>Releases</a>
+            <a href="design/">Design mockup</a>
             <a href="https://rizonetech.com" target="_blank" rel="noopener">Rizonetech</a>
             <a href="{{donate_url}}" target="_blank" rel="noopener">Donate</a>
         </div>
