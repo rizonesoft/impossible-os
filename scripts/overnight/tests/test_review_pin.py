@@ -684,3 +684,89 @@ def test_a_pass_earns_a_step_only_through_a_dispatcher_that_checks_it():
     older = "node /x/codex-companion.mjs adversarial-review '[review-kind: adversarial] todo/x.md'"
     assert m.match_step("review-todo-section", "Bash", older) == [5], "the older kinds are bound as before"
     assert set(rp.SECTION_KINDS) <= set(m.bound_review_kinds("implement-todo-section"))
+
+
+# ---- the second reviewer ([second]) ----
+
+def _without_second(text=GOOD):
+    keep, skipping = [], False
+    for line in text.splitlines(keepends=True):
+        if line.startswith("["):
+            skipping = line.strip() in ("[reviewers.carbon]", "[second]")
+        if not skipping:
+            keep.append(line)
+    return "".join(keep)
+
+
+def test_the_repository_pin_names_a_second_reviewer_for_the_expensive_paths():
+    second = _pin()["second"]
+    assert (second["reviewer"], second["cli"], second["model"]) == ("carbon", "agy", "gemini-4-carbon-medium")
+    assert (second["round_cap"], second["retries"], second["small_fix_lines"]) == (3, 3, 50)
+    assert {"src/kernel/", "include/kernel/", "src/boot/"} <= set(second["paths"])
+    pin = _pin()
+    assert rp.second_applies(pin, ["docs/x.md", "src/kernel/mm/pmm.c"])
+    assert rp.second_applies(pin, ["user/include/syscall.h"])
+    assert not rp.second_applies(pin, ["scripts/x.py", "docs/kernel/x.md", "todo/x.md"])
+    assert not rp.second_applies(pin, [])
+    # Its pass is no part of the schedule: no kind, no lens, nothing toward pass_cap.
+    assert "second" not in rp.kinds(pin)
+
+
+def test_a_pin_without_a_second_reviewer_is_the_pin_as_it_was():
+    pin = _pin(_without_second())
+    assert pin["second"] is None and not rp.second_applies(pin, ["src/kernel/a.c"])
+    assert {k: v for k, v in pin.items() if k != "second"} == {k: v for k, v in _pin().items() if k != "second"}
+
+
+@pytest.mark.parametrize("old, new", [
+    ('reviewer = "carbon"', 'reviewer = "astra"'),                 # a second opinion from the same reviewer
+    ('reviewer = "carbon"', 'reviewer = "nobody"'),
+    ('cli = "agy"', 'cli = "codex"'),
+    ('model = "gemini-4-carbon-medium"', 'model = ""'),
+    ('model = "gemini-4-carbon-medium"', 'model = "gemini-4-carbon-medium"\neffort = "high"'),
+    ("round_cap = 3", "round_cap = 0"),
+    ("round_cap = 3", 'round_cap = "3"'),
+    ("retries = 3", "retries = 0"),
+    ("small_fix_lines = 50", "small_fix_lines = -1"),
+    ("small_fix_lines = 50", "small_fix_lines = true"),
+    ("small_fix_lines = 50\n", ""),
+    ("small_fix_lines = 50", "small_fix_lines = 50\nlenses = []"),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', "paths = []"),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', 'paths = ["/etc/"]'),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', 'paths = ["../x/"]'),
+    ("[second]", "[third]"),
+    ('[reviewers.carbon]\ncli = "agy"\nmodel = "gemini-4-carbon-medium"\n', ""),   # [second] names no reviewer entry
+])
+def test_refusal_one_wrong_key_refuses_the_second_reviewer(old, new):
+    assert old in GOOD
+    with pytest.raises(rp.Refused):
+        _pin(GOOD.replace(old, new, 1))
+
+
+def test_refusal_a_reviewer_entry_nothing_routes_to_is_refused():
+    text = _without_second() .replace('[routes]', '[reviewers.carbon]\ncli = "agy"\nmodel = "m"\n\n[routes]')
+    with pytest.raises(rp.Refused):
+        _pin(text)
+
+
+def test_the_command_line_says_whether_a_section_is_the_second_reviewers(tmp_path):
+    pin = tmp_path / "reviewers.toml"
+    pin.write_text(GOOD)
+    paths = tmp_path / "paths"
+    paths.write_text("src/boot/uefi/bootx64.c\n")
+    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 0
+    paths.write_text("scripts/x.py\n")
+    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 1
+    assert rp.main(["--second", "--pin", str(pin)]) == 0
+    pin.write_text(_without_second())
+    assert rp.main(["--second", "--pin", str(pin)]) == 1
+    paths.write_text("src/boot/uefi/bootx64.c\n")
+    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 1
+
+
+def test_a_raw_transcript_is_read_whole_for_its_worst_level(tmp_path, capsys):
+    review = tmp_path / "review.out"
+    review.write_text("P2 a.c:1 wrong.\nHIGHEST: P2\n")
+    assert rp.main(["--highest", "--raw", "--transcript", str(review)]) == 0
+    assert capsys.readouterr().out.strip() == "P2"
+    assert rp.main(["--highest", "--transcript", str(review)]) == 1     # no Codex heading: no response to read

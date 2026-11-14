@@ -7,14 +7,15 @@
 
 > **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
-| Layer                             | Role                                             | Authority over                                                                                                                     |
-| --------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Claude Code (tool)**            | Primary interactive orchestrator                 | Interactive code edits, commits, skill invocations, reviewer dispatches                                                            |
-| `CLAUDE.md`                       | Doctrine source-of-truth (file)                  | Product north star, workflow rules, safety constraints, policy                                                                     |
-| `.claude/skills/`                 | Workflow source-of-truth (directory)             | How Claude executes a specific task (implement, review, verify, diagnose)                                                          |
-| `.claude/settings.json`           | Harness policy source-of-truth (file)            | Permissions, hook reminders, pre/post-tool-use gates                                                                               |
-| Codex review mode                 | External reviewer                                | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action |
-| `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push, opt-in shared AI-workflow gate                                              |
+| Layer                        | Role                                                                                                                                                                                         | Authority over                                                                                                                        |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Claude Code (tool)**       | Primary interactive orchestrator                                                                                                                                                             | Interactive code edits, commits, skill invocations, reviewer dispatches                                                               |
+| `CLAUDE.md`                  | Doctrine source-of-truth (file)                                                                                                                                                              | Product north star, workflow rules, safety constraints, policy                                                                        |
+| `.claude/skills/`            | Workflow source-of-truth (directory)                                                                                                                                                         | How Claude executes a specific task (implement, review, verify, diagnose)                                                             |
+| `.claude/settings.json`      | Harness policy source-of-truth (file)                                                                                                                                                        | Permissions, hook reminders, pre/post-tool-use gates                                                                                  |
+| Codex review mode            | External reviewer                                                                                                                                                                            | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action             |
+| Gemini second review (`agy`) | Subordinate reviewer                                                                                                                                                                         | Findings only, on kernel, boot, security and ABI sections after Codex is clean; reads a throwaway copy; never blocks when unavailable |
+| `.githooks/`                 | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push, opt-in shared AI-workflow gate                                                   |
 
 ### Hierarchy invariants
 
@@ -217,36 +218,36 @@ Codex is invoked from inside Claude skills via the OpenAI Codex plugin binary at
 
 **Angle-owner skills (9):**
 
-| Skill                                                                        | Adversarial angle                                                       |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [`codex-design-review`](../../.claude/skills/codex-design-review/)           | Pre-impl plan review: feasibility, edge cases, SMP hazards, arch.       |
-| [`codex-adversarial-review-section`](../../.claude/skills/codex-adversarial-review-section/) | Single-section adversarial loop (<=3 rounds) until no unresolved H/C. |
-| [`codex-review-todo`](../../.claude/skills/codex-review-todo/)               | Adversarial review across all implemented sections of a TODO.           |
-| [`codex-fix-review`](../../.claude/skills/codex-fix-review/)                 | Fix findings and re-run until clean (<=3 iterations).                   |
-| [`codex-test-coverage`](../../.claude/skills/codex-test-coverage/)           | Untested error paths, missing boundaries, uncovered branches.           |
-| [`codex-impact-analysis`](../../.claude/skills/codex-impact-analysis/)       | What breaks if you change function X / struct Y / constant Z?           |
-| [`codex-consistency-audit`](../../.claude/skills/codex-consistency-audit/)   | Struct offsets, constants, API contracts, registration tables.          |
-| [`codex-perf-review`](../../.claude/skills/codex-perf-review/)               | ISR paths, spinlock hold times, alloc-in-loop, O(n^2) algorithms.       |
-| [`codex-gap-audit`](../../.claude/skills/codex-gap-audit/)                   | Gap-analysis red-team: missing inventory, stale XREFs, false completeness. |
+| Skill                                                                                        | Adversarial angle                                                          |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`codex-design-review`](../../.claude/skills/codex-design-review/)                           | Pre-impl plan review: feasibility, edge cases, SMP hazards, arch.          |
+| [`codex-adversarial-review-section`](../../.claude/skills/codex-adversarial-review-section/) | Single-section adversarial loop (<=3 rounds) until no unresolved H/C.      |
+| [`codex-review-todo`](../../.claude/skills/codex-review-todo/)                               | Adversarial review across all implemented sections of a TODO.              |
+| [`codex-fix-review`](../../.claude/skills/codex-fix-review/)                                 | Fix findings and re-run until clean (<=3 iterations).                      |
+| [`codex-test-coverage`](../../.claude/skills/codex-test-coverage/)                           | Untested error paths, missing boundaries, uncovered branches.              |
+| [`codex-impact-analysis`](../../.claude/skills/codex-impact-analysis/)                       | What breaks if you change function X / struct Y / constant Z?              |
+| [`codex-consistency-audit`](../../.claude/skills/codex-consistency-audit/)                   | Struct offsets, constants, API contracts, registration tables.             |
+| [`codex-perf-review`](../../.claude/skills/codex-perf-review/)                               | ISR paths, spinlock hold times, alloc-in-loop, O(n^2) algorithms.          |
+| [`codex-gap-audit`](../../.claude/skills/codex-gap-audit/)                                   | Gap-analysis red-team: missing inventory, stale XREFs, false completeness. |
 
 **Workflow-consumer skills that dispatch Codex directly (9) + inheritor (1) + indirect workflow consumers (4):**
 
-| Skill                                                                                        | Why it dispatches Codex                                                              |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [`implement-todo-section`](../../.claude/skills/implement-todo-section/)                    | Step 13 adversarial review, step 20 quality dispatch (consistency + perf). |
-| [`implement-todo-item`](../../.claude/skills/implement-todo-item/)                          | Default mandatory item adversarial review; section-close path inherits review-todo-section obligations. |
-| [`gap-audit-todo`](../../.claude/skills/gap-audit-todo/)                                    | Phase 3.5 mandatory gap-audit red-team before TODO edits are accepted.      |
-| [`review-todo-section`](../../.claude/skills/review-todo-section/)                          | Phase 2 mandatory adversarial, Phase 3 mandatory quality.                            |
-| [`quality-review-section`](../../.claude/skills/quality-review-section/)                    | Deep quality review dispatch (standards / optimization angles).                      |
-| [`verify-todo-section`](../../.claude/skills/verify-todo-section/)                          | Inherits review-todo-section's pipeline under audit-mode overrides.                  |
-| [`implement-unit-tests`](../../.claude/skills/implement-unit-tests/)                        | Step 7 test coverage gap analysis.                                                   |
-| [`implement-ssdt-range`](../../.claude/skills/implement-ssdt-range/)                        | Per-entry adversarial review during SSDT range implementation.                       |
-| [`debug-session`](../../.claude/skills/debug-session/)                                      | Hypothesis validation dispatch before fixing.                                        |
-| [`diagnose-serial-log`](../../.claude/skills/diagnose-serial-log/)                          | Codex adversarial review on every fix per step 21.                                   |
-| [`complete-todo-file`](../../.claude/skills/complete-todo-file/)                            | Indirect full-close-out path invokes implement-unit-tests, which owns the test-coverage dispatch. |
-| [`todo-pipeline`](../../.claude/skills/todo-pipeline/)                                      | Indirect Stage 2 path invokes gap-audit-todo, which owns the mandatory gap-audit dispatch. |
-| [`overnight-sequencer`](../../.claude/skills/overnight-sequencer/)                          | Indirect unattended phase machine invokes gap-audit, section/item implementation, review, and file close-out child skills. |
-| [`overnight-todo-runner`](../../.claude/skills/overnight-todo-runner/)                      | Indirect legacy overnight runner invokes section implementation/review and file close-out child skills. |
+| Skill                                                                    | Why it dispatches Codex                                                                                                    |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| [`implement-todo-section`](../../.claude/skills/implement-todo-section/) | Step 13 adversarial review, step 20 quality dispatch (consistency + perf).                                                 |
+| [`implement-todo-item`](../../.claude/skills/implement-todo-item/)       | Default mandatory item adversarial review; section-close path inherits review-todo-section obligations.                    |
+| [`gap-audit-todo`](../../.claude/skills/gap-audit-todo/)                 | Phase 3.5 mandatory gap-audit red-team before TODO edits are accepted.                                                     |
+| [`review-todo-section`](../../.claude/skills/review-todo-section/)       | Phase 2 mandatory adversarial, Phase 3 mandatory quality.                                                                  |
+| [`quality-review-section`](../../.claude/skills/quality-review-section/) | Deep quality review dispatch (standards / optimization angles).                                                            |
+| [`verify-todo-section`](../../.claude/skills/verify-todo-section/)       | Inherits review-todo-section's pipeline under audit-mode overrides.                                                        |
+| [`implement-unit-tests`](../../.claude/skills/implement-unit-tests/)     | Step 7 test coverage gap analysis.                                                                                         |
+| [`implement-ssdt-range`](../../.claude/skills/implement-ssdt-range/)     | Per-entry adversarial review during SSDT range implementation.                                                             |
+| [`debug-session`](../../.claude/skills/debug-session/)                   | Hypothesis validation dispatch before fixing.                                                                              |
+| [`diagnose-serial-log`](../../.claude/skills/diagnose-serial-log/)       | Codex adversarial review on every fix per step 21.                                                                         |
+| [`complete-todo-file`](../../.claude/skills/complete-todo-file/)         | Indirect full-close-out path invokes implement-unit-tests, which owns the test-coverage dispatch.                          |
+| [`todo-pipeline`](../../.claude/skills/todo-pipeline/)                   | Indirect Stage 2 path invokes gap-audit-todo, which owns the mandatory gap-audit dispatch.                                 |
+| [`overnight-sequencer`](../../.claude/skills/overnight-sequencer/)       | Indirect unattended phase machine invokes gap-audit, section/item implementation, review, and file close-out child skills. |
+| [`overnight-todo-runner`](../../.claude/skills/overnight-todo-runner/)   | Indirect legacy overnight runner invokes section implementation/review and file close-out child skills.                    |
 
 Every skill in both tables carries the `> **External-Reviewer Contract:**` pointer blockquote at the top of its SKILL.md, so a maintainer can one-link-trace to this section from any reviewer entry point.
 
@@ -259,6 +260,8 @@ If a future AI tool (Aider, Continue, Gemini-CLI, etc.) joins the reviewer set, 
 3. **Output through `receiving-code-review`.** Every finding is verified at file:line by Claude before any edit. Same Fix / Reject / Accept classification.
 4. **Subordinate-reviewer row added to the Authority Hierarchy table.** `docs/infrastructure/ai-system.md` table grows a row; the tool's role is pinned as "Subordinate reviewer", not "authority".
 5. **Roadmap ownership.** The adoption ships as a new section in [TODO-02](../../todo/00-infrastructure/TODO-02-ai-development-system.md) with the same review pipeline.
+
+The first tool added this way is the second reviewer, Gemini 4 Carbon through the `agy` CLI (2026-11-14). It has no instruction tree of its own, is dispatched by `scripts/second_review_dispatch.py`, returns findings only (it runs in a throwaway clone that must be unchanged afterwards), and its findings go through `receiving-code-review`. Its mechanism is owned by [the automation roadmap](../../todo/00-infrastructure/TODO-08-automation-hardening.md) (the second reviewer section), beside the review gate it extends; how to run it is in [`three-pass-review.md`](../../.claude/skills/three-pass-review.md#the-second-reviewer).
 
 If a proposal does NOT fit this contract (e.g. a tool that wants to commit directly), reject it at the roadmap stage. The [Autonomous-Agent Boundary Policy](../../todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) owns that refusal explicitly.
 
@@ -291,11 +294,11 @@ Permissions and extensions are part of the AI surface. They need explicit bounda
 
 Claude Code distinguishes three rule lists from one separate fallback mode:
 
-| Concept       | Kind           | Meaning                                                                          |
-| ------------- | -------------- | -------------------------------------------------------------------------------- |
-| `allow`       | Rule list      | Matching tool call proceeds without prompting.                                   |
-| `ask`         | Rule list      | Matching tool call prompts for approval each time.                               |
-| `deny`        | Rule list      | Matching tool call is always blocked.                                            |
+| Concept       | Kind           | Meaning                                                                                                         |
+| ------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `allow`       | Rule list      | Matching tool call proceeds without prompting.                                                                  |
+| `ask`         | Rule list      | Matching tool call prompts for approval each time.                                                              |
+| `deny`        | Rule list      | Matching tool call is always blocked.                                                                           |
 | `defaultMode` | Single setting | Fallback posture when no rule matches. Documented modes: `default`, `acceptEdits`, `plan`, `bypassPermissions`. |
 
 A specific rule in `allow`/`ask`/`deny` always beats `defaultMode`. The three rule lists AND `defaultMode` can each appear in either `.claude/settings.json` (shared) or `.claude/settings.local.json` (user-local); `defaultMode` is only set per-user so posture does not silently change for other contributors.
@@ -306,10 +309,10 @@ A specific rule in `allow`/`ask`/`deny` always beats `defaultMode`. The three ru
 
 Two settings files live under `.claude/`. They must never mix.
 
-| File                                                            | Tracked?        | Purpose                                                                                  |
-| --------------------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------- |
-| [`.claude/settings.json`](../../.claude/settings.json)          | ✅ committed    | Shared repo policy: hooks, narrow allow-rules, env vars every contributor needs.          |
-| `.claude/settings.local.json`                                   | ❌ gitignored   | User-local: personal allow-rules, `defaultMode`, machine-specific paths. Never shared.    |
+| File                                                   | Tracked?      | Purpose                                                                                |
+| ------------------------------------------------------ | ------------- | -------------------------------------------------------------------------------------- |
+| [`.claude/settings.json`](../../.claude/settings.json) | ✅ committed  | Shared repo policy: hooks, narrow allow-rules, env vars every contributor needs.       |
+| `.claude/settings.local.json`                          | ❌ gitignored | User-local: personal allow-rules, `defaultMode`, machine-specific paths. Never shared. |
 
 The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (future work, see [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite)) will assert the file stays untracked.
 
@@ -360,13 +363,13 @@ The two existing entries each have a corresponding TODO -- [todo-graph MCP trans
 
 Claude Code ships a handful of built-in subagents (`claude-code-guide`, `Explore`, `general-purpose`, `Plan`, `statusline-setup`). These are harness-provided and do NOT count as repo-tracked AI surface.
 
-| Subagent            | Role                                                                                                      | Repo stance                                                      |
-| ------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `claude-code-guide` | Read-only guide for "how do I use Claude Code / the Claude API / the SDK?" questions                      | Not used for repo work. Never edits code.                        |
-| `Explore`           | Fast exploration agent (Glob / Grep / Read / WebFetch / WebSearch) for codebase questions                 | Useful for open-ended "how does X work?" queries. Read-only.     |
-| `general-purpose`   | Full-tool-access agent for multi-step research or lookups that would otherwise burn parent context        | Used when a task legitimately needs >3 search-rounds in isolation. |
-| `Plan`              | Software-architect agent for designing implementation strategies                                          | Overlaps with `codex-design-review`; prefer Codex on kernel code. |
-| `statusline-setup`  | One-shot status line configuration helper                                                                 | Cosmetic only.                                                   |
+| Subagent            | Role                                                                                               | Repo stance                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `claude-code-guide` | Read-only guide for "how do I use Claude Code / the Claude API / the SDK?" questions               | Not used for repo work. Never edits code.                          |
+| `Explore`           | Fast exploration agent (Glob / Grep / Read / WebFetch / WebSearch) for codebase questions          | Useful for open-ended "how does X work?" queries. Read-only.       |
+| `general-purpose`   | Full-tool-access agent for multi-step research or lookups that would otherwise burn parent context | Used when a task legitimately needs >3 search-rounds in isolation. |
+| `Plan`              | Software-architect agent for designing implementation strategies                                   | Overlaps with `codex-design-review`; prefer Codex on kernel code.  |
+| `statusline-setup`  | One-shot status line configuration helper                                                          | Cosmetic only.                                                     |
 
 The repo's own specialist agents in `.claude/agents/` carry two cost settings, both enforced or measured (2026-09-29). Every agent pins its model with an alias (`sonnet`, `opus`, `haiku`, `inherit`), never a dated ID, so it follows the newest release of its tier: lint Check 14 refuses anything else, and roster-gates `opus` to `kernel-quality-auditor`, which stays on Opus by operator decision. The 14 evidence-gathering agents also set `omitClaudeMd: true`, which cut a fresh dispatch's starting context from ~44K tokens to ~4.5K; the seven whose verdicts rest on `CLAUDE.md` doctrine keep it. A `fork` is different: it inherits the whole parent context and model, so `fork_context_guard.py` refuses one from a context above 150K tokens unless its prompt says `[fork-ok: <reason>]`.
 
@@ -374,12 +377,12 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ### Edit-here-not-there mapping for this section
 
-| Concept                              | Canonical edit location                                   | Downstream consumers (do NOT edit here)                                            |
-| ------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Shared allow-rules / hooks           | [`.claude/settings.json`](../../.claude/settings.json)    | [Hook Routing Matrix](#hook-routing-matrix) (update row; JSON stays canonical).    |
-| Personal allow-rules / `defaultMode` | `.claude/settings.local.json` (user-local; gitignored)    | Never propagate to shared config.                                                  |
-| MCP server config                    | User harness config (outside the repo)                    | Never commit to `.claude/settings.json`.                                           |
-| Subagent behavior                    | Claude Code harness (built-in)                            | Do not override in repo; use skills for repo-specific workflows.                   |
+| Concept                              | Canonical edit location                                | Downstream consumers (do NOT edit here)                                         |
+| ------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Shared allow-rules / hooks           | [`.claude/settings.json`](../../.claude/settings.json) | [Hook Routing Matrix](#hook-routing-matrix) (update row; JSON stays canonical). |
+| Personal allow-rules / `defaultMode` | `.claude/settings.local.json` (user-local; gitignored) | Never propagate to shared config.                                               |
+| MCP server config                    | User harness config (outside the repo)                 | Never commit to `.claude/settings.json`.                                        |
+| Subagent behavior                    | Claude Code harness (built-in)                         | Do not override in repo; use skills for repo-specific workflows.                |
 
 ---
 
@@ -397,13 +400,13 @@ Autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent too
 
 The following files would enable autonomous-agent workflows; their **absence is policy, not omission**. A future edit that adds any of these paths will fail the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite).
 
-| Forbidden path                                | What it enables in other repos                                                                 |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `.github/workflows/copilot-setup-steps.yml`   | Copilot cloud-agent environment setup (dependency install, build, test, network allowlist).   |
-| `.github/agents/*.agent.md`                   | Agent-mode profiles (personas, tool allowlists, domain scopes) for Copilot cloud-agent.       |
-| `.github/chatmodes/*.md`                      | Copilot Chat custom modes shared across the repo.                                              |
-| `.github/instructions/*.instructions.md`      | Per-topic repo instructions consumed by Copilot cloud-agent + IDE-side Copilot.               |
-| Copilot cloud-agent firewall allowlist        | Outbound network policy for the autonomous agent's sandbox.                                    |
+| Forbidden path                              | What it enables in other repos                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `.github/workflows/copilot-setup-steps.yml` | Copilot cloud-agent environment setup (dependency install, build, test, network allowlist). |
+| `.github/agents/*.agent.md`                 | Agent-mode profiles (personas, tool allowlists, domain scopes) for Copilot cloud-agent.     |
+| `.github/chatmodes/*.md`                    | Copilot Chat custom modes shared across the repo.                                           |
+| `.github/instructions/*.instructions.md`    | Per-topic repo instructions consumed by Copilot cloud-agent + IDE-side Copilot.             |
+| Copilot cloud-agent firewall allowlist      | Outbound network policy for the autonomous agent's sandbox.                                 |
 
 ### Files Copilot cloud-agent MAY read but are NOT autonomous-agent enablement
 

@@ -15,6 +15,9 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --section TODO N                     # passes | older | new: the rules a section is on
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
+    python3 scripts/review_pin.py --second         # the second reviewer's settings as JSON (exit 1: none pinned)
+    python3 scripts/review_pin.py --second-applies --paths-file FILE   # 0 a changed file is in its paths, 1 none is
+    --raw                                          # with --highest: the transcript is the review itself
 """
 import argparse
 import pathlib
@@ -55,6 +58,12 @@ LENSES = {
     "bare-metal": "What works under an emulator and fails on real hardware or real firmware?",
 }
 SEVERITIES = ("P1", "P2", "P3")
+# The second reviewer (the optional [second] table): another model that reads a section after the routed
+# reviewer's passes are clean, where a miss costs most. Its pass is not one of SECTION_KINDS: it is not
+# scheduled by the pin's policy and never counts toward pass_cap.
+SECOND_KIND = "second"
+SECOND_CLI = "agy"
+SECOND_KEYS = {"reviewer", "paths", "round_cap", "retries", "small_fix_lines"}
 
 
 class Refused(Exception):
@@ -91,9 +100,11 @@ def load_pin(path=PIN, data=None):
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise Refused(f"the reviewer pin {path} is not valid TOML: {exc}") from exc
 
+    second_raw = pin.pop("second", None) if isinstance(pin, dict) else None
     _need(set(pin) == {"schema_version", "reviewers", "routes", "schedule"}
           and type(pin["schema_version"]) is int and pin["schema_version"] == 1,
-          "the reviewer pin needs exactly schema_version = 1, [reviewers.*], [routes] and [schedule]")
+          "the reviewer pin needs exactly schema_version = 1, [reviewers.*], [routes] and [schedule], "
+          "and at most one [second]")
 
     routes = pin["routes"]
     _need(isinstance(routes, dict) and set(routes) == {"claude"}
@@ -102,8 +113,33 @@ def load_pin(path=PIN, data=None):
           "[routes] needs exactly claude = [\"<one reviewer>\"]: Claude is the only writer here")
     name = routes["claude"][0]
     reviewers = pin["reviewers"]
-    _need(isinstance(reviewers, dict) and set(reviewers) == {name},
-          f"[reviewers] needs exactly the routed reviewer {name!r}")
+    second = None
+    if second_raw is not None:
+        _need(isinstance(second_raw, dict) and set(second_raw) == SECOND_KEYS,
+              f"[second] needs exactly {', '.join(sorted(SECOND_KEYS))}")
+        other = second_raw["reviewer"]
+        _need(isinstance(other, str) and other and other != name,
+              "[second] reviewer names a reviewer other than the routed one: a second opinion from the same "
+              "reviewer is not one")
+        _need(isinstance(reviewers, dict) and set(reviewers) == {name, other},
+              f"[reviewers] needs exactly the routed reviewer {name!r} and the second reviewer {other!r}")
+        entry = reviewers[other]
+        _need(isinstance(entry, dict) and set(entry) == {"cli", "model"} and entry["cli"] == SECOND_CLI
+              and isinstance(entry["model"], str) and entry["model"],
+              f"reviewer {other!r} needs exactly cli = \"{SECOND_CLI}\" and model")
+        paths = second_raw["paths"]
+        _need(isinstance(paths, list) and paths and all(
+              isinstance(p, str) and p and not p.startswith(("/", ".")) and ".." not in p.split("/") for p in paths),
+              "[second] needs paths = repository-relative prefixes")
+        numbers = {}
+        for key, low in (("round_cap", 1), ("retries", 1), ("small_fix_lines", 0)):
+            value = second_raw[key]
+            _need(type(value) is int and value >= low, f"[second] {key} must be a whole number of at least {low}")
+            numbers[key] = value
+        second = {"reviewer": other, "cli": entry["cli"], "model": entry["model"], "paths": tuple(paths), **numbers}
+    else:
+        _need(isinstance(reviewers, dict) and set(reviewers) == {name},
+              f"[reviewers] needs exactly the routed reviewer {name!r}")
     reviewer = reviewers[name]
     _need(isinstance(reviewer, dict) and set(reviewer) == {"cli", "model"}
           and reviewer["cli"] == "codex" and isinstance(reviewer["model"], str) and reviewer["model"],
@@ -152,7 +188,13 @@ def load_pin(path=PIN, data=None):
     _need(no_progress <= pass_cap, "[schedule] no_progress_cap cannot exceed pass_cap")
     return {"reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
             "pass_cap": pass_cap, "no_progress_cap": no_progress, "blocking": tuple(blocking),
-            "lenses": lenses, "conditional": tuple(extra)}
+            "lenses": lenses, "conditional": tuple(extra), "second": second}
+
+
+def second_applies(pin, changed_paths):
+    """Whether the second reviewer reads a section that changed these files: one of them is under its paths."""
+    second = pin.get("second")
+    return bool(second) and any(p.startswith(prefix) for p in changed_paths for prefix in second["paths"])
 
 
 def lenses_for(pin, kind, changed_paths=()):
@@ -332,6 +374,9 @@ def main(argv=None):
     group.add_argument("--verdicts", metavar="KIND", choices=SECTION_KINDS)
     group.add_argument("--highest", action="store_true")
     group.add_argument("--section", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--second", action="store_true")
+    group.add_argument("--second-applies", action="store_true")
+    parser.add_argument("--raw", action="store_true")
     parser.add_argument("--root", default=str(REPO))
     parser.add_argument("--transcript")
     parser.add_argument("--paths-file")
@@ -356,9 +401,18 @@ def main(argv=None):
                 text = pathlib.Path(args.transcript).read_text(errors="replace")
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
-            level = highest(final_response(text))
+            level = highest(text if args.raw else final_response(text))
             print(level)
             return 0 if level else 1
+        if args.second:
+            if pin["second"] is None:
+                return 1
+            import json
+            print(json.dumps(dict(pin["second"], paths=list(pin["second"]["paths"]), blocking=list(pin["blocking"]))))
+            return 0
+        if args.second_applies:
+            _need(args.paths_file, "--second-applies needs --paths-file FILE")
+            return 0 if second_applies(pin, paths) else 1
         if args.verdicts:
             _need(args.transcript, "--verdicts needs --transcript FILE")
             try:

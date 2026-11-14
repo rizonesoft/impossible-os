@@ -109,7 +109,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [x]   |
 | 💎  |  42   |   §42   | The graph jobs run in a small pinned image                                                       | §41                        |  [ ]   |
 | 💎  |  43   |   §43   | The control-plane commit gate tests the staged commit                                            | none                       |  [ ]   |
-| ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [ ]   |
+| ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [x]   |
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
@@ -1464,22 +1464,34 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 
 Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wave is clean; it is wired now and measured on real sections; it applies to sections that change `src/kernel/`, `include/kernel/`, `src/boot/`, or a security or ABI surface; at most three rounds (find, confirm the repair, one more if the repair is wrong); Gemini confirms repairs and Astra reads a repair again only when it is large; an unavailable Gemini is retried, marked and never blocks.
 
-- [ ] Add `[second]` to `.conclave/reviewers.toml`, validated by `scripts/review_pin.py`: the reviewer (`cli = "agy"`, its model), `paths`, `round_cap = 3`, `retries = 3`, `small_fix_lines = 50`.
-  - Done when `review_pin.py --second-applies --paths-file F` exits 0 for a kernel path and 1 for a `scripts/` path, and a pin with a second reviewer equal to the first is refused.
-- [ ] Write `scripts/second-review-dispatch.sh` for a `[review-kind: second]` pass: the reviewer reads a throwaway clone of HEAD (it has no read-only mode), with a nine-minute limit and `retries` attempts.
-  - Done when the receipt in `manifest.jsonl` carries `route`, `head`, `rc`, `highest` and `unavailable`, a review with no `HIGHEST:` line is incomplete, and the working tree is byte-identical after a pass.
-- [ ] Teach the stamp gate (`.claude/hooks/section_commit_gate.py`) the second pass.
-  - Done when all of these hold on fixtures:
-  - A section whose changed files fall under `[second] paths` is refused its stamp without a `second` receipt that covers the candidate and ended below a blocking level
-  - An `unavailable` receipt is accepted only when the stamp line carries `second: unavailable`
-  - Astra's round, performance and last pass may predate HEAD when a clean `second` receipt covers HEAD and at most `small_fix_lines` lines a pass reads changed since; a larger change still needs them at HEAD
-  - A section outside the paths is judged exactly as before
-- [ ] Record what the second reviewer is worth: `scripts/overnight/second-review-log.py record|stats|unavailable` keeps each finding's verdict (fixed, rejected with evidence, filed) and lists stamps marked unavailable for a later pass.
-  - Done when `stats` prints, per section, findings raised and findings that were real, and its total after ten sections is the evidence for keeping, narrowing or dropping the reviewer.
-- [ ] Say how to run it in `.claude/skills/three-pass-review.md`, `CLAUDE.md` (Model Roles) and `docs/infrastructure/ai-system.md`; add the new files to `scripts/overnight/control-plane-manifest.txt`
-- [ ] Commit: `"review: a second reviewer reads kernel, boot, security and ABI sections"`
+- [x] `[second]` in `.conclave/reviewers.toml`, validated by `scripts/review_pin.py`: the reviewer (`cli = "agy"`, its model), `paths`, `round_cap = 3`, `retries = 3`, `small_fix_lines = 50`
+  - `review_pin.py --second-applies --paths-file F` exits 0 for a kernel path and 1 for a `scripts/` path; a second reviewer equal to the routed one is refused; a pin without `[second]` loads as before
+- [x] `scripts/second_review_dispatch.py` runs a `[review-kind: second]` pass in a throwaway clone of HEAD, with a nine-minute limit, its process group killed at the limit, and `retries` attempts
+  - The clone must still be the candidate afterwards (a reviewer that repaired its copy has reviewed something else); a review needs one `HIGHEST:` line; the receipt carries `route`, `head`, `base`, `rc`, `highest` and `unavailable`
+  - It reads the whole section: the base is the plan pass's commit, read from the manifest, and a `REVIEW_BASE` naming another commit is refused
+  - One pass a section at a time (a lock from the cap check to the receipt); a stopped dispatcher kills the reviewer and removes its copy
+  - Exit 0 checked, 2 refused, 3 incomplete, 4 unavailable on every attempt; a section outside the paths dispatches nothing
+- [x] The stamp gate (`.claude/hooks/section_commit_gate.py`, `_second_issues`) holds a section under `[second] paths` to the second pass
+  - Its newest `second` receipt must cover the candidate and end below a blocking level; an `unavailable` one is accepted only when the section's own `> **Quality reviewed:**` line says `second: unavailable`
+  - A `second` receipt whose base is not the plan pass's commit was shown less than the section and is refused
+  - Astra's round, performance and last pass may predate HEAD when a newer clean `second` receipt covers HEAD and at most `small_fix_lines` lines a pass reads changed since
+  - After `round_cap` passes the level is waived (what is open is filed); a repair after the last one is read by Astra's passes on the repaired candidate
+  - A section outside the paths is judged exactly as before, and `second` receipts never count toward `pass_cap`
+- [x] `scripts/overnight/second-review-log.py record|stats|unavailable` keeps each section's findings raised, real and rejected, says when ten sections are in, and lists stamps marked unavailable
+- [x] How to run it: `.claude/skills/three-pass-review.md` ("The second reviewer"), `CLAUDE.md` (Model Roles), `docs/infrastructure/ai-system.md`; the dispatcher and `review_pin.py` are in `scripts/overnight/control-plane-manifest.txt`
+- [x] Commit: `"review: a second reviewer reads kernel, boot, security and ABI sections"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures; a live `second` pass on one shipped kernel section returns a checked receipt; `python3 scripts/review_pin.py --check` passes.
+
+> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_second_dispatch.py scripts/overnight/tests/test_three_pass_gate.py scripts/overnight/tests/test_review_pin.py scripts/overnight/tests/test_second_review_log.py` (130 cases), `bash scripts/overnight/tests/run-all.sh`
+
+> **Notes:**
+> - What shipped: Gemini 4 Carbon, through the `agy` CLI already signed in on the host, reads a section after Astra's wave is clean when it changed `src/kernel/`, `include/kernel/`, `src/boot/`, `include/boot/` or `user/include/`.
+> - How it integrates: the dispatcher writes a `second` receipt to the reviews manifest the stamp gate already reads; the gate asks for it only inside the paths, and a clean one lets a small repair stand without Astra's wave again.
+> - Plan review changed the design: the reviewer's copy is checked unchanged after each attempt, and a repair after the third pass is finished by Astra's passes instead of deadlocking.
+> - Downstream effects: a kernel or boot section costs about five minutes more per second pass; an outage of the second reviewer costs a mark on the stamp, never a stop.
+> - Canonical doc: [`three-pass-review.md`](../../.claude/skills/three-pass-review.md#the-second-reviewer).
+> - Scope boundary: an Astra outage is section 45; whether the second reviewer stays is decided from `second-review-log.py stats` after ten sections.
 
 ## 45. A reviewer outage leaves a review owed and the run continues
 
