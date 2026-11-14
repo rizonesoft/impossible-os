@@ -87,6 +87,15 @@ Vendored under `tools/vendor/` and used only on the build host to generate the w
 | markdown-it-py 3.0.0 | Copyright (c) 2020 ExecutableBookProject; port of markdown-it, Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin | MIT | https://github.com/executablebooks/markdown-it-py |
 | mdurl 0.1.2 | Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin; Copyright (c) 2021 Taneli Hukkinen | MIT | https://github.com/executablebooks/mdurl |
 
+### Reference VM capture runtime
+
+Downloaded on the build host, checked against the SHA-256 pinned in `scripts/inventory/runtime.json`, and installed only into the Windows 11 reference VM that the parity inventory is captured from (`scripts/inventory/ref-vm.ps1`). Neither is in the repository or shipped with an Impossible OS image.
+
+| Library | Copyright | License | Upstream |
+| --- | --- | --- | --- |
+| Python 3.14.10, Windows embeddable package | Copyright (c) 2001 Python Software Foundation | PSF-2.0 | https://www.python.org |
+| comtypes 1.5.0 | Copyright (c) 2006-2013 Thomas Heller; Copyright (c) 2014 Comtypes Developers | MIT | https://github.com/enthought/comtypes |
+
 ## Sources that cannot be used
 
 Recorded so the constraint is not rediscovered the hard way. Because this project is GPL-3.0-**only**, code under **GPL-2.0-only** is license-incompatible and must not be vendored, adapted, or translated into this tree. In practice that rules out:

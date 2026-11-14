@@ -1,0 +1,15 @@
+{
+  "fhd-100": {
+    "width": 1920,
+    "height": 1080,
+    "dpi": 96,
+    "monitors": 1,
+    "uiLanguage": "en-US",
+    "format": "en-US",
+    "appsLight": 1,
+    "systemLight": 1,
+    "accent": "FFD47800",
+    "accentOnSurfaces": 0,
+    "taskbarCentred": true
+  }
+}

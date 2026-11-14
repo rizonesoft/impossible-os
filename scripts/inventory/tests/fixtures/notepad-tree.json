@@ -1,0 +1,1319 @@
+{
+ "name": "Untitled - Notepad",
+ "automationId": "",
+ "className": "Notepad",
+ "controlType": "Window",
+ "bounds": [
+  104,
+  104,
+  1440,
+  753
+ ],
+ "children": [
+  {
+   "name": "",
+   "automationId": "",
+   "className": "NotepadTextBox",
+   "controlType": "Pane",
+   "bounds": [
+    110,
+    179,
+    1428,
+    640
+   ],
+   "children": [
+    {
+     "name": "Text editor",
+     "automationId": "",
+     "className": "RichEditD2DPT",
+     "controlType": "Document",
+     "bounds": [
+      110,
+      179,
+      1428,
+      640
+     ]
+    }
+   ]
+  },
+  {
+   "name": "",
+   "automationId": "",
+   "className": "Microsoft.UI.Content.DesktopChildSiteBridge",
+   "controlType": "Pane",
+   "bounds": [
+    150,
+    114,
+    287,
+    32
+   ],
+   "children": [
+    {
+     "name": "",
+     "automationId": "",
+     "className": "InputSiteWindowClass",
+     "controlType": "Pane",
+     "bounds": [
+      150,
+      114,
+      287,
+      32
+     ],
+     "children": [
+      {
+       "name": "",
+       "automationId": "Tabs",
+       "className": "Microsoft.UI.Xaml.Controls.TabView",
+       "controlType": "Tab",
+       "bounds": [
+        150,
+        114,
+        287,
+        32
+       ],
+       "children": [
+        {
+         "name": "",
+         "automationId": "TabListView",
+         "className": "ListView",
+         "controlType": "List",
+         "bounds": [
+          152,
+          114,
+          248,
+          32
+         ],
+         "children": [
+          {
+           "name": "Untitled. Unmodified.",
+           "automationId": "",
+           "className": "ListViewItem",
+           "controlType": "TabItem",
+           "bounds": [
+            154,
+            114,
+            246,
+            32
+           ],
+           "children": [
+            {
+             "name": "Untitled",
+             "automationId": "",
+             "className": "TextBlock",
+             "controlType": "Text",
+             "bounds": [
+              167,
+              122,
+              44,
+              15
+             ]
+            },
+            {
+             "name": "Close Tab",
+             "automationId": "CloseButton",
+             "className": "Button",
+             "controlType": "Button",
+             "bounds": [
+              359,
+              118,
+              32,
+              24
+             ]
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "name": "Add New Tab",
+         "automationId": "AddButton",
+         "className": "Button",
+         "controlType": "Button",
+         "bounds": [
+          403,
+          120,
+          32,
+          24
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "",
+   "automationId": "",
+   "className": "Microsoft.UI.Content.DesktopChildSiteBridge",
+   "controlType": "Pane",
+   "bounds": [
+    110,
+    146,
+    1428,
+    33
+   ],
+   "children": [
+    {
+     "name": "",
+     "automationId": "",
+     "className": "InputSiteWindowClass",
+     "controlType": "Pane",
+     "bounds": [
+      110,
+      146,
+      1428,
+      33
+     ],
+     "children": [
+      {
+       "name": "",
+       "automationId": "MenuBar",
+       "className": "",
+       "controlType": "MenuBar",
+       "bounds": [
+        110,
+        146,
+        159,
+        32
+       ],
+       "children": [
+        {
+         "name": "File",
+         "automationId": "File",
+         "className": "Microsoft.UI.Xaml.Controls.MenuBarItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          114,
+          146,
+          41,
+          32
+         ],
+         "expands": [
+          {
+           "name": "New tab",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            183,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+N"
+          },
+          {
+           "name": "New window",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            216,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+Shift+N"
+          },
+          {
+           "name": "New Markdown tab",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            249,
+            240,
+            29
+           ]
+          },
+          {
+           "name": "Open",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            282,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+O"
+          },
+          {
+           "name": "Recent",
+           "automationId": "",
+           "className": "MenuFlyoutSubItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            315,
+            240,
+            28
+           ]
+          },
+          {
+           "name": "Save",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            347,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+S"
+          },
+          {
+           "name": "Save as",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            380,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+Shift+S"
+          },
+          {
+           "name": "Save all",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            413,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+Alt+S"
+          },
+          {
+           "name": "Page setup",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            449,
+            240,
+            29
+           ]
+          },
+          {
+           "name": "Print",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            482,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+P"
+          },
+          {
+           "name": "Close tab",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            518,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+W"
+          },
+          {
+           "name": "Close window",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            551,
+            240,
+            29
+           ],
+           "accelerator": "Ctrl+Shift+W"
+          },
+          {
+           "name": "Exit",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            119,
+            584,
+            240,
+            29
+           ]
+          }
+         ]
+        },
+        {
+         "name": "Edit",
+         "automationId": "Edit",
+         "className": "Microsoft.UI.Xaml.Controls.MenuBarItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          163,
+          146,
+          44,
+          32
+         ],
+         "expands": [
+          {
+           "name": "Undo",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            183,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+Z"
+          },
+          {
+           "name": "Cut",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            219,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+X"
+          },
+          {
+           "name": "Copy",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            252,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+C"
+          },
+          {
+           "name": "Paste",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            285,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+V"
+          },
+          {
+           "name": "Delete",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            318,
+            222,
+            29
+           ],
+           "accelerator": "Del"
+          },
+          {
+           "name": "Clear formatting",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            354,
+            222,
+            29
+           ]
+          },
+          {
+           "name": "Search with Bing",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            387,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+E"
+          },
+          {
+           "name": "Find",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            423,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+F"
+          },
+          {
+           "name": "Find next",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            456,
+            222,
+            29
+           ],
+           "accelerator": "F3"
+          },
+          {
+           "name": "Find previous",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            489,
+            222,
+            29
+           ],
+           "accelerator": "Shift+F3"
+          },
+          {
+           "name": "Replace",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            522,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+H"
+          },
+          {
+           "name": "Go to",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            555,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+G"
+          },
+          {
+           "name": "Select all",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            591,
+            222,
+            29
+           ],
+           "accelerator": "Ctrl+A"
+          },
+          {
+           "name": "Time/Date",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            624,
+            222,
+            29
+           ],
+           "accelerator": "F5"
+          },
+          {
+           "name": "Font",
+           "automationId": "",
+           "className": "MenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            168,
+            660,
+            222,
+            29
+           ]
+          }
+         ]
+        },
+        {
+         "name": "View",
+         "automationId": "View",
+         "className": "Microsoft.UI.Xaml.Controls.MenuBarItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          215,
+          146,
+          50,
+          32
+         ],
+         "expands": [
+          {
+           "name": "Zoom",
+           "automationId": "",
+           "className": "MenuFlyoutSubItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            220,
+            183,
+            222,
+            28
+           ]
+          },
+          {
+           "name": "Status bar",
+           "automationId": "",
+           "className": "ToggleMenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            220,
+            215,
+            222,
+            28
+           ]
+          },
+          {
+           "name": "Word wrap",
+           "automationId": "",
+           "className": "ToggleMenuFlyoutItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            220,
+            247,
+            222,
+            28
+           ]
+          },
+          {
+           "name": "Markdown",
+           "automationId": "",
+           "className": "MenuFlyoutSubItem",
+           "controlType": "MenuItem",
+           "bounds": [
+            220,
+            279,
+            222,
+            28
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Headings",
+       "automationId": "",
+       "className": "Microsoft.UI.Xaml.Controls.DropDownButton",
+       "controlType": "Button",
+       "bounds": [
+        660,
+        146,
+        56,
+        32
+       ],
+       "expands": [
+        {
+         "name": "Title",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          183,
+          180,
+          56
+         ]
+        },
+        {
+         "name": "Subtitle",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          239,
+          180,
+          56
+         ]
+        },
+        {
+         "name": "Heading",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          295,
+          180,
+          56
+         ]
+        },
+        {
+         "name": "Subheading",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          351,
+          180,
+          55
+         ]
+        },
+        {
+         "name": "Section",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          406,
+          180,
+          56
+         ]
+        },
+        {
+         "name": "Subsection",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          462,
+          180,
+          57
+         ]
+        },
+        {
+         "name": "Body",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          598,
+          519,
+          180,
+          40
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Lists",
+       "automationId": "",
+       "className": "Microsoft.UI.Xaml.Controls.DropDownButton",
+       "controlType": "Button",
+       "bounds": [
+        716,
+        146,
+        56,
+        32
+       ],
+       "expands": [
+        {
+         "name": "Bulleted list",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          654,
+          183,
+          180,
+          40
+         ]
+        },
+        {
+         "name": "Numbered list",
+         "automationId": "",
+         "className": "ListViewItem",
+         "controlType": "ListItem",
+         "bounds": [
+          654,
+          223,
+          180,
+          40
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Bold (Ctrl+B)",
+       "automationId": "",
+       "className": "ToggleButton",
+       "controlType": "Button",
+       "bounds": [
+        772,
+        146,
+        32,
+        32
+       ]
+      },
+      {
+       "name": "Italic (Ctrl+I)",
+       "automationId": "",
+       "className": "ToggleButton",
+       "controlType": "Button",
+       "bounds": [
+        804,
+        146,
+        32,
+        32
+       ]
+      },
+      {
+       "name": "Strikethrough (Ctrl+Shift+X)",
+       "automationId": "",
+       "className": "ToggleButton",
+       "controlType": "Button",
+       "bounds": [
+        836,
+        146,
+        32,
+        32
+       ]
+      },
+      {
+       "name": "Link (Ctrl+K)",
+       "automationId": "",
+       "className": "ToggleButton",
+       "controlType": "Button",
+       "bounds": [
+        868,
+        146,
+        32,
+        32
+       ]
+      },
+      {
+       "name": "Table",
+       "automationId": "",
+       "className": "Microsoft.UI.Xaml.Controls.DropDownButton",
+       "controlType": "Button",
+       "bounds": [
+        900,
+        146,
+        56,
+        32
+       ],
+       "expands": [
+        {
+         "name": "Insert table",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          839,
+          193,
+          178,
+          190
+         ]
+        },
+        {
+         "name": "Insert table",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          832,
+          397,
+          192,
+          28
+         ]
+        },
+        {
+         "name": "Edit table",
+         "automationId": "",
+         "className": "MenuFlyoutSubItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          832,
+          429,
+          192,
+          28
+         ],
+         "enabled": false
+        }
+       ]
+      },
+      {
+       "name": "Clear formatting (Ctrl+Space)",
+       "automationId": "",
+       "className": "ToggleButton",
+       "controlType": "Button",
+       "bounds": [
+        956,
+        146,
+        32,
+        32
+       ]
+      },
+      {
+       "name": "Writing tools",
+       "automationId": "RewriteDropDownButton",
+       "className": "Microsoft.UI.Xaml.Controls.DropDownButton",
+       "controlType": "Button",
+       "bounds": [
+        1372,
+        146,
+        56,
+        32
+       ],
+       "expands": [
+        {
+         "name": "Write",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          187,
+          222,
+          29
+         ],
+         "accelerator": "Ctrl+Q"
+        },
+        {
+         "name": "Rewrite",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          220,
+          222,
+          29
+         ],
+         "accelerator": "Ctrl+D",
+         "enabled": false
+        },
+        {
+         "name": "Summarize",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          253,
+          222,
+          29
+         ],
+         "accelerator": "Ctrl+M",
+         "enabled": false
+        },
+        {
+         "name": "Make shorter",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          286,
+          222,
+          29
+         ],
+         "enabled": false
+        },
+        {
+         "name": "Make longer",
+         "automationId": "",
+         "className": "MenuFlyoutItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          319,
+          222,
+          29
+         ],
+         "enabled": false
+        },
+        {
+         "name": "Change tone",
+         "automationId": "",
+         "className": "MenuFlyoutSubItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          352,
+          222,
+          28
+         ],
+         "enabled": false
+        },
+        {
+         "name": "Change format",
+         "automationId": "",
+         "className": "MenuFlyoutSubItem",
+         "controlType": "MenuItem",
+         "bounds": [
+          1289,
+          384,
+          222,
+          28
+         ],
+         "enabled": false
+        }
+       ]
+      },
+      {
+       "name": "What's new",
+       "automationId": "FREButton",
+       "className": "Button",
+       "controlType": "Button",
+       "bounds": [
+        1432,
+        147,
+        30,
+        30
+       ]
+      },
+      {
+       "name": "User avatar",
+       "automationId": "AvatarButton",
+       "className": "Button",
+       "controlType": "Button",
+       "bounds": [
+        1466,
+        146,
+        30,
+        32
+       ]
+      },
+      {
+       "name": "Settings",
+       "automationId": "SettingsButton",
+       "className": "Button",
+       "controlType": "Button",
+       "bounds": [
+        1500,
+        146,
+        30,
+        32
+       ]
+      },
+      {
+       "name": "",
+       "automationId": "PrivacyTeachingTip",
+       "className": "Microsoft.UI.Xaml.Controls.TeachingTip",
+       "controlType": "Window",
+       "bounds": [
+        0,
+        0,
+        0,
+        0
+       ],
+       "offscreen": true
+      },
+      {
+       "name": "",
+       "automationId": "PsDownloadDetailTeachingTip",
+       "className": "Microsoft.UI.Xaml.Controls.TeachingTip",
+       "controlType": "Pane",
+       "bounds": [
+        0,
+        0,
+        0,
+        0
+       ],
+       "offscreen": true
+      },
+      {
+       "name": "A teaching tip of our own words, standing in for help text.",
+       "automationId": "PsDownloadLightTeachingTip",
+       "className": "Microsoft.UI.Xaml.Controls.TeachingTip",
+       "controlType": "Pane",
+       "bounds": [
+        0,
+        0,
+        0,
+        0
+       ],
+       "offscreen": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "",
+   "automationId": "",
+   "className": "Microsoft.UI.Content.DesktopChildSiteBridge",
+   "controlType": "Pane",
+   "bounds": [
+    110,
+    819,
+    1428,
+    32
+   ],
+   "enabled": false,
+   "children": [
+    {
+     "name": "",
+     "automationId": "",
+     "className": "InputSiteWindowClass",
+     "controlType": "Pane",
+     "bounds": [
+      110,
+      819,
+      1428,
+      32
+     ],
+     "enabled": false,
+     "children": [
+      {
+       "name": "Line 1,\nColumn 1",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        126,
+        827,
+        59,
+        16
+       ]
+      },
+      {
+       "name": "0 characters",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        215,
+        827,
+        66,
+        16
+       ]
+      },
+      {
+       "name": "Plain text",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        417,
+        819,
+        62,
+        32
+       ]
+      },
+      {
+       "name": "Zoom",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        1167,
+        827,
+        32,
+        16
+       ]
+      },
+      {
+       "name": " Windows (CRLF)",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        1235,
+        827,
+        91,
+        16
+       ]
+      },
+      {
+       "name": " UTF-8",
+       "automationId": "ContentTextBlock",
+       "className": "TextBlock",
+       "controlType": "Text",
+       "bounds": [
+        1403,
+        827,
+        36,
+        16
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "",
+   "automationId": "",
+   "className": "",
+   "controlType": "TitleBar",
+   "bounds": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "offscreen": true,
+   "children": [
+    {
+     "name": "System",
+     "automationId": "MenuBar",
+     "className": "",
+     "controlType": "MenuBar",
+     "bounds": [
+      112,
+      112,
+      22,
+      22
+     ],
+     "children": [
+      {
+       "name": "System",
+       "automationId": "",
+       "className": "",
+       "controlType": "MenuItem",
+       "bounds": [
+        112,
+        112,
+        22,
+        22
+       ],
+       "expands": [
+        {
+         "name": "Restore",
+         "automationId": "61728",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          137,
+          179,
+          22
+         ],
+         "enabled": false
+        },
+        {
+         "name": "Move",
+         "automationId": "61456",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          159,
+          179,
+          22
+         ]
+        },
+        {
+         "name": "Size",
+         "automationId": "61440",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          181,
+          179,
+          22
+         ]
+        },
+        {
+         "name": "Minimize",
+         "automationId": "61472",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          203,
+          179,
+          22
+         ]
+        },
+        {
+         "name": "Maximize",
+         "automationId": "61488",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          225,
+          179,
+          22
+         ]
+        },
+        {
+         "name": "Close",
+         "automationId": "61536",
+         "className": "",
+         "controlType": "MenuItem",
+         "bounds": [
+          115,
+          256,
+          179,
+          22
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Minimize",
+     "automationId": "",
+     "className": "",
+     "controlType": "Button",
+     "bounds": [
+      1399,
+      105,
+      47,
+      30
+     ]
+    },
+    {
+     "name": "Maximize",
+     "automationId": "",
+     "className": "",
+     "controlType": "Button",
+     "bounds": [
+      1446,
+      105,
+      46,
+      30
+     ]
+    },
+    {
+     "name": "Close",
+     "automationId": "",
+     "className": "",
+     "controlType": "Button",
+     "bounds": [
+      1492,
+      105,
+      47,
+      30
+     ]
+    }
+   ]
+  }
+ ]
+}

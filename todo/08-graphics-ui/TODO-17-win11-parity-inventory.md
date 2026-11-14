@@ -68,7 +68,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | --- | :---: | ------------------------------------------------------------------------------------------- | ------------ | :----: |
 | 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [x]   |
 | 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [x]   |
-| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [ ]   |
+| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [x]   |
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [ ]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [ ]   |
@@ -191,27 +191,33 @@ Positions only mean something against one fixed machine. This section builds tha
 
 One tool walks a surface's UI Automation tree and writes records. It reads structure and never reads what a person typed or chose.
 
-- [ ] Provision the capture runtime offline, so `clean` holds Python and `comtypes` (filed by the §2 completion review)
-  - The VM has no network: the host fetches the Windows embeddable Python (PSF) and the `comtypes` wheel (MIT) and records both in `src/libs/PROVENANCE.md` and `CREDITS.md`
-  - `ref-vm.ps1 -Reclean` installs them into `clean`; done when `ref-run.ps1 -Command 'python -c "import comtypes"'` exits 0
-- [ ] Write `scripts/inventory/capture-ui.py` for Windows Python on `comtypes`: `--surface <name> --out <file>`; it refuses to run when any value of the capture profile does not hold, naming the value
-- [ ] Walk from the root element the surface module names and emit one record per element
-  - Fields: `kind`, `label`, `parent`, `order`, `controlType`, `uiaId`, `className`, `source: uia:<build>`
-  - `bounds` is relative to the surface's own top left corner
-- [ ] Give each surface a module under `scripts/inventory/surfaces/<name>.py` with three functions
-  - `open()` brings the surface up by its own command or key, `root()` finds the element, `close()` dismisses it the way a user would
-- [ ] Expand one level: open each menu, flyout, combo box and split button, record its entries as `menuItem` records with `itemCount` on the opener, and close it again with nothing chosen
-- [ ] Never record data: no text of an edit box, no state of a check box, no entry of a list that holds the machine's own data
-  - Such lists hold files, apps, devices, networks or accounts; each is one record with `controlType: list` and no children, named in the module's `ENVIRONMENT_LISTS`; the synthetic fixtures of §19 supply the row template, captured separately
-- [ ] Add `--merge`: carries the hand-written fields (`behaviour`, `disposition`, `inconsistency`) across a re-capture by `id`, refreshes every captured fact, and keeps no record the capture did not see
-- [ ] Run `check-inventory.py` on the result before writing it; a file that fails is not published
-- [ ] Save a screenshot with every capture: each surface in each state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`
-  - Commit only the manifest `docs/design/inventory/shots.json` (surface, state, profile, size, SHA-256); `--verify-shots` re-hashes the store and names every missing or changed file
-- [ ] Record an element UIA exposes no name for under its `uiaId` or class, and list it in `build/inventory/<surface>-unnamed.json` for a hand-written label
-- [ ] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree fixture (a JSON dump, no live window) and wire it into `scripts/test-tooling.sh`
-- [ ] Commit: `"inventory: UI Automation capture tool"`
+- [x] Provision the capture runtime offline, so `clean` holds Python and `comtypes` (filed by the §2 completion review)
+  - `runtime.json` pins both by SHA-256; `ref-vm.ps1` fetches them once to `R:\11\runtime` and installs them into `C:\ios\python`; recorded in `src/libs/PROVENANCE.md` and `CREDITS.md`
+- [x] Write the guest tool `scripts/inventory/capture-ui.py` on `comtypes`: it refuses with exit 2, naming the value, when any value of the capture profile does not hold
+  - The profile lives once, in `docs/design/inventory/profiles.json`, which `ref-vm.ps1` reads too
+- [x] Walk from the root element the surface module names and emit one record per element
+  - Fields: `kind`, `label`, `parent`, `order`, `controlType`, `uiaId`, `className`, `shortcut`, `enabled`, `source: uia:<build>`; `bounds` relative to the surface's top left corner
+- [x] Give each surface a module under `scripts/inventory/surfaces/<name>.py` with `open()`, `root()` and `close()`
+- [x] Expand one level: each menu, flyout, combo box and split button, as `menuItem` records with `itemCount` on the opener, closed again with nothing chosen
+- [x] Never record data: no edit text, no check box state, no row of an `ENVIRONMENT_LISTS` list, no live value named in `VALUES`
+- [x] Walk until two passes agree, and publish nothing from a capture that did not (filed by the §3 plan review)
+- [x] Add `--merge` to the host driver `scripts/inventory/capture.py`: hand-written fields carried by `id`, captured facts refreshed, unseen records dropped
+  - A note that would land on an ambiguous id stops the merge (filed by the §3 plan review)
+- [x] Run `check-inventory.py` on the result before writing it; a file that fails is not published
+- [x] Save a screenshot per state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`, with `docs/design/inventory/shots.json` and `--verify-shots`
+- [x] List elements UIA names no label for in `build/inventory/<surface>-unnamed.json` for a hand-written label
+- [x] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree and wire it into `scripts/test-tooling.sh`
+- [x] Commit: `"inventory: UI Automation capture tool"`
 
-**Test checkpoint:** inside the reference VM, `python capture-ui.py --surface notepad-smoke --out notepad.json` writes at least 40 records and `check-inventory.py` passes on them; with the display at 125 percent the same command exits 2 with `profile fhd-100: scaling is 125, expected 100`. The fixture tests pass on Linux with no Windows present.
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (39 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
+> **Notes:**
+> - `capture-ui.py` (guest) reads every element through one UIA CacheRequest, splices unnamed hosting panes (XAML island bridges) so ids follow what a user sees, and records shortcuts from `AcceleratorKey`; tooltips, teaching tips, offscreen elements and prose are skipped.
+> - The first open of a menu after launch differs from later opens (Notepad's File menu 18 px narrower, an extra Edit entry), so the tool walks until two passes agree (`settle`, at most 4) and a `--dump` is kept only when walking it gives the same records.
+> - `capture.py` (host) stages the tool, runs it through `ref-run.ps1`, refuses an incomplete capture (exit 3) before touching anything, merges by id, checks a scratch copy of the inventory and only then publishes records, screenshots and `shots.json`.
+> - Notepad: 76 records in 3 walks, 8 screenshots, byte-identical across three VM sessions; that run's tree and records are the test fixtures, so the walk over the fixture must equal the live capture.
+> - Page: `docs/design/inventory/index.md#how-is-a-surface-captured`.
+
+**Test checkpoint:** `python3 scripts/inventory/capture.py --surface notepad-smoke --file window --dry-run` captures at least 40 records in the reference VM and `check-inventory.py` passes on them; the fixture tests pass on Linux and refuse a 125 percent profile with `profile fhd-100: scaling is 125, expected 100`. The same refusal on a live 125 percent session is §19's, which owns switching the profile.
 
 ---
 
@@ -1082,6 +1088,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
 - [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
+  - At 125 percent, prove live that `capture-ui.py` exits 2 with `profile fhd-100: scaling is 125, expected 100` (handed over by §3, whose fixture test covers the message)
   - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
 - [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
   - Evidence for all three taskbar button modes on the second display is required before §8 closes

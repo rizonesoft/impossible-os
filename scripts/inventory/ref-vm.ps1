@@ -7,11 +7,14 @@ Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 2.
 
 Build (no switch): creates the Generation 2 VM from the ISO, installs Windows
 unattended to the first setup page, takes the checkpoint pre-oobe there,
-completes setup with the local account ref, sets the fhd-100 profile and takes
-the checkpoint clean. Refuses when the VM exists unless -Rebuild is given.
+completes setup with the local account ref, sets the fhd-100 profile, installs
+the capture runtime of runtime.json (Python and comtypes, fetched once into
+-RuntimeCache and checked by SHA-256, since the VM has no network) and takes the
+checkpoint clean. Refuses when the VM exists unless -Rebuild is given.
 
 -Verify: restores clean, reads the profile inside ref's interactive session and
-exits 0 only when every value holds and the bare desktop has focus. Prints
+exits 0 only when every value holds, the bare desktop has focus and the capture
+runtime imports at the pinned versions. Prints
 "ref-vm: ios-win11-ref ok, profile fhd-100".
 
 -Reclean: restores pre-oobe, completes setup again and replaces clean, without
@@ -30,6 +33,7 @@ deleted before clean is taken.
 param(
     [string]$IsoPath = 'R:\11\win11.iso',
     [string]$VmPath = 'R:\11\ios-win11-ref',
+    [string]$RuntimeCache = 'R:\11\runtime',
     [string]$Name = 'ios-win11-ref',
     [int]$ImageIndex = 6,
     [switch]$Verify,
@@ -39,8 +43,10 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
 
-# fhd-100: the profile every canonical record is captured under.
-$FhdProfile = [ordered]@{ width = 1920; height = 1080; dpi = 96; monitors = 1; uiLanguage = 'en-US'; format = 'en-US'; appsLight = 1; systemLight = 1; accent = 'FFD47800'; accentOnSurfaces = 0; taskbarCentred = $true }
+# fhd-100: the profile every canonical record is captured under. Its values live
+# once, in docs/design/inventory/profiles.json, which the capture tool reads too.
+$FhdProfile = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\..\docs\design\inventory\profiles.json') | ConvertFrom-Json).'fhd-100'
+if (-not $FhdProfile) { throw 'docs/design/inventory/profiles.json has no fhd-100 profile' }
 $GenericProKey = 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'  # Microsoft's published generic install key: installs Pro, activates nothing
 
 function New-AnswerIso([string]$Dir, [string]$IsoOut, [string]$Label) {
@@ -298,6 +304,55 @@ function Complete-Oobe([string]$pw) {
 
 # From ref's signed-in desktop: set the profile, clear the cached answer files,
 # copy the probes in and take clean. Also the resume point after a failure here.
+# One file of runtime.json, from the cache or fetched into it, refused unless its
+# SHA-256 matches the pin.
+function Get-RefRuntimeFile($Entry) {
+    New-Item -ItemType Directory -Path $RuntimeCache -Force | Out-Null
+    $path = Join-Path $RuntimeCache ($Entry.url -split '/')[-1]
+    if (-not (Test-Path -LiteralPath $path)) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Write-Ref "fetching $($Entry.url)"
+        Invoke-WebRequest -UseBasicParsing -Uri $Entry.url -OutFile "$path.part"
+        Move-Item -LiteralPath "$path.part" -Destination $path
+    }
+    $got = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($got -ne $Entry.sha256) {
+        Remove-Item -LiteralPath $path
+        throw "$path has SHA-256 $got, runtime.json pins $($Entry.sha256); the copy was removed"
+    }
+    return $path
+}
+
+# The capture runtime: embeddable Python with comtypes in C:\ios\python, on the
+# machine PATH, with the UI Automation wrapper generated, so a capture needs no
+# network and no first-run step.
+function Install-RefRuntime($Session) {
+    $rt = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'runtime.json') | ConvertFrom-Json
+    $py = Get-RefRuntimeFile $rt.python
+    $ct = Get-RefRuntimeFile $rt.comtypes
+    Send-RefFile $Session $py 'C:\ios\stage\python.zip'
+    Send-RefFile $Session $ct 'C:\ios\stage\comtypes.zip'
+    $out = Invoke-Command -Session $Session -ScriptBlock {
+        $ErrorActionPreference = 'Stop'
+        $root = 'C:\ios\python'
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+        Expand-Archive -LiteralPath 'C:\ios\stage\python.zip' -DestinationPath $root
+        Expand-Archive -LiteralPath 'C:\ios\stage\comtypes.zip' -DestinationPath "$root\Lib\site-packages"
+        Remove-Item -LiteralPath 'C:\ios\stage' -Recurse -Force
+        $pth = @(Get-ChildItem -LiteralPath $root -Filter '*._pth')
+        if ($pth.Count -ne 1) { throw "expected one ._pth file in $root, found $($pth.Count)" }
+        $stdlib = (Get-ChildItem -LiteralPath $root -Filter 'python3*.zip' | Select-Object -First 1).Name
+        [IO.File]::WriteAllText($pth[0].FullName, "$stdlib`r`n.`r`nLib\site-packages`r`nimport site`r`n")
+        $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+        if (($machine -split ';') -notcontains $root) { [Environment]::SetEnvironmentVariable('Path', "$root;$machine", 'Machine') }
+        $o = & "$root\python.exe" -c "import comtypes.client as c; c.GetModule('UIAutomationCore.dll'); import comtypes.gen.UIAutomationClient, sys, comtypes; print(sys.version.split()[0], comtypes.__version__)" 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "the capture runtime does not import: $o" }
+        "$o"
+    }
+    if ("$out".Trim() -ne "$($rt.python.version) $($rt.comtypes.version)") { throw "the capture runtime reports '$out', runtime.json pins $($rt.python.version) $($rt.comtypes.version)" }
+    Write-Ref "capture runtime installed: Python and comtypes $out"
+}
+
 function Complete-Clean() {
     $s = New-RefSession $Name $VmPath
     try {
@@ -316,6 +371,7 @@ function Complete-Clean() {
         foreach ($f in 'probe-profile.ps1', 'probe-notepad.ps1') {
             Send-RefFile $s (Join-Path $PSScriptRoot "guest\$f") "C:\ios\probe\$f"
         }
+        Install-RefRuntime $s
         # First sign-in opens Start on this build (seen 2026-11-14). Every capture
         # starts from clean, so clean must show the bare desktop with focus, and
         # the whole profile is checked here, before the old clean is touched.
@@ -354,6 +410,7 @@ function Invoke-Verify() {
         try {
             $s = Start-RefFrom $Name $VmPath 'clean'
             $problems += @(Get-ProfileProblems $s)
+            $problems += @(Get-RuntimeProblems $s)
         } finally { if ($s) { Remove-PSSession $s } }
     }
     if ($problems.Count) {
@@ -377,6 +434,14 @@ function Repair-CleanPromotion() {
 
 # Everything that must hold in clean: the reference identity, the fhd-100 values
 # read inside ref's session, and the bare desktop with focus.
+function Get-RuntimeProblems($Session) {
+    $rt = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'runtime.json') | ConvertFrom-Json
+    $want = "$($rt.python.version) $($rt.comtypes.version)"
+    $r = Invoke-RefInteractive $Session 'python -c "import comtypes.gen.UIAutomationClient, sys, comtypes; print(sys.version.split()[0], comtypes.__version__)"' 120
+    if ($r.ExitCode -ne 0 -or $r.Output.Trim() -ne $want) { return @("capture runtime reports '$($r.Output.Trim())' (exit $($r.ExitCode)), want $want") }
+    return @()
+}
+
 function Get-ProfileProblems($Session) {
     $r = Invoke-RefInteractive $Session $script:ProfileProbe 300
     $script:SeenJson = $r.Output.Trim()
@@ -387,8 +452,8 @@ function Get-ProfileProblems($Session) {
     foreach ($k in 'edition', 'displayVersion', 'build') {
         if ("$($seen.$k)" -ne "$($want.$k)") { $problems += "$k is $($seen.$k), docs/design/inventory/reference.json says $($want.$k)" }
     }
-    foreach ($k in $FhdProfile.Keys) {
-        if ("$($seen.$k)" -ne "$($FhdProfile[$k])") { $problems += "$k is $($seen.$k), want $($FhdProfile[$k])" }
+    foreach ($p in $FhdProfile.PSObject.Properties) {
+        if ("$($seen.($p.Name))" -ne "$($p.Value)") { $problems += "$($p.Name) is $($seen.($p.Name)), want $($p.Value)" }
     }
     if ($script:QuietForeground -notcontains $seen.foreground) { $problems += "the foreground is $($seen.foreground), not the desktop" }
     if ($seen.session -eq 0) { $problems += 'the probe ran in session 0, not the desktop' }

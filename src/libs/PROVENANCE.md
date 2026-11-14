@@ -17,6 +17,8 @@ Reviewed and approved as load-bearing on 2026-07-16 (CLAUDE.md dependency gate).
 | Monocypher | 4.0.2 (source header banner; no version macro) | https://monocypher.org | BSD-2-Clause OR CC0-1.0 | `99910014` (2026-06-12) |
 | markdown-it-py | 3.0.0 (`markdown_it.__version__`) | https://github.com/executablebooks/markdown-it-py (PyPI wheel) | MIT | 2026-09-27, vendored at `tools/vendor/markdown_it/` (host tool, not in the image) |
 | mdurl | 0.1.2 (`mdurl.__version__`) | https://github.com/executablebooks/mdurl (PyPI wheel) | MIT | 2026-09-27, vendored at `tools/vendor/mdurl/` (host tool, not in the image) |
+| Python (Windows embeddable, amd64) | 3.14.10 (`sys.version`) | https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip | PSF-2.0 | not vendored: pinned by SHA-256 in `scripts/inventory/runtime.json` (2026-11-14) and installed only into the Windows 11 reference VM by `ref-vm.ps1`; never in the repository or an image |
+| comtypes | 1.5.0 (`comtypes.__version__`) | https://github.com/enthought/comtypes (PyPI wheel) | MIT | not vendored: pinned by SHA-256 in `scripts/inventory/runtime.json` (2026-11-14) and installed only into the Windows 11 reference VM by `ref-vm.ps1`; never in the repository or an image |
 
 ## License notes
 

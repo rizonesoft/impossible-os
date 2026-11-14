@@ -1,0 +1,16 @@
+{
+  "owner": "todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 3",
+  "note": "The capture runtime installed into the reference VM's clean checkpoint by ref-vm.ps1. The VM has no network, so the host fetches each file once into its cache and checks the SHA-256 before it is used.",
+  "python": {
+    "version": "3.14.10",
+    "url": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip",
+    "sha256": "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159",
+    "license": "PSF-2.0"
+  },
+  "comtypes": {
+    "version": "1.5.0",
+    "url": "https://files.pythonhosted.org/packages/89/dc/818b43a6766800973e1611aeaff55e20cb38e36f3c499db1795838675f44/comtypes-1.5.0-py3-none-any.whl",
+    "sha256": "c648ed3b243b1eb3b7cb893a873d1b35104ca1c8922061f4b1efafeb255bacb5",
+    "license": "MIT"
+  }
+}

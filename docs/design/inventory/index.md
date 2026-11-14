@@ -1,4 +1,4 @@
-<!-- docs: sources=docs/design/inventory/schema.json,docs/design/inventory/names.json,scripts/inventory/check-inventory.py,scripts/inventory/check-no-ms-assets.py,scripts/inventory/asset-types.txt,scripts/inventory/make-ms-hashes.ps1,scripts/inventory/guest/hash-assets.ps1 reviewed=2026-11-14 -->
+<!-- docs: sources=docs/design/inventory/schema.json,docs/design/inventory/names.json,scripts/inventory/check-inventory.py,scripts/inventory/check-no-ms-assets.py,scripts/inventory/asset-types.txt,scripts/inventory/make-ms-hashes.ps1,scripts/inventory/guest/hash-assets.ps1,scripts/inventory/capture.py,scripts/inventory/capture-ui.py,scripts/inventory/capture_core.py,scripts/inventory/runtime.json,docs/design/inventory/profiles.json reviewed=2026-11-14 -->
 # Windows 11 Inventory
 
 The inventory is the Windows 11 interface written down as data: every surface, page, control, menu entry, shortcut, gesture, measurement and animation of the reference build, one JSON object per line. It is what makes "the same thing, in the same place" a number a check can test. The plan that fills it is the [Windows 11 parity inventory roadmap](../../graphics/win11-parity-inventory.md).
@@ -25,6 +25,24 @@ python3 scripts/inventory/check-inventory.py --index      # the staged inventory
 ```
 
 The checker validates every line against the schema, then checks the tree as a whole. It refuses a duplicate `id`, a `parent` that names no record, a parent cycle, an `order` used twice under one parent, an `itemCount` that differs from the number of child records present, and a profile observation that names no record or a profile other than its file's. A conflict is reported at every line involved in it, so `--surface` finds a clash with another surface whichever side sorts first; observation files of other surfaces are not read at all. It prints the first 50 errors as `file:line: rule: message` and exits 1. It also holds every record to the rule below: a `label` over 80 characters is refused as a sentence (`label is a sentence`), any `http://` or `https://` text anywhere in a record or observation is refused (`link in record`), and a `behaviour` that repeats its `label` is refused. `names.json` must list each reference name once, with our name and a reason. A clean run prints `inventory: N records, 0 errors`. `scripts/lint.sh` (Check 40) runs it on every lint, against the staged contents under the commit gate.
+
+## How is a surface captured?
+
+```bash
+python3 scripts/inventory/capture.py --surface notepad-smoke --file window --dry-run   # capture and check, publish nothing
+python3 scripts/inventory/capture.py --surface taskbar --file bar --merge               # refresh a published file
+python3 scripts/inventory/capture.py --verify-shots                                    # re-hash the screenshot store
+```
+
+`capture.py` runs on the host. It copies the guest tool `capture-ui.py`, the shared `capture_core.py`, the surface module `surfaces/<name>.py` and `profiles.json` into the reference VM, and runs the tool there on a fresh restore of `clean` through `ref-run.ps1`. The VM's Python and `comtypes` come from `runtime.json`, which pins each download by SHA-256; `ref-vm.ps1` installs them when it takes `clean`.
+
+- **The profile is checked first.** The tool reads the session's profile through the same probe `ref-vm.ps1 -Verify` uses and exits 2 on any value that differs, naming it: `profile fhd-100: scaling is 125, expected 100`. `profiles.json` is the one place a profile's values are written.
+- **A surface module says how to reach it.** `open()` brings it up by its own command or key, `root()` finds its element and `close()` dismisses it the way a user would. Three optional lists cover what structure cannot tell: `ENVIRONMENT_LISTS` (lists whose rows are the machine's own files, apps or devices: recorded once, never entered), `VALUES` (elements whose name is a live value, such as a caret position: recorded with the name withheld) and `IDENTITY` (a name for an element whose siblings look the same).
+- **The walk reads structure only:** name, automation id, class, control type, rectangle, shortcut and whether the element is enabled. It never reads a value, a text range, a toggle or a selection. Unnamed hosting panes are spliced out, so an id follows what a user sees (`win11.notepad-smoke.window.menubar.file.save-as`). Each menu, flyout, combo box and split button is opened one level, its entries recorded as `menuItem` records with `itemCount` on the opener, and closed again with nothing chosen.
+- **One walk is not evidence.** The first open of a menu after launch can differ from every later one, so the tool walks until two passes agree, at most four times; a surface that never repeats itself, or a flyout that never settles, makes the capture incomplete (exit 3), and an incomplete capture publishes nothing and removes nothing.
+- **Hand-written fields survive a re-capture.** `--merge` carries `behaviour`, `disposition` and `inconsistency` across by `id`, refreshes every captured fact and drops a record the capture no longer sees, naming it. A note that would land on an ambiguous id (siblings told apart only by position) stops the merge until the surface module's `IDENTITY` names the element.
+- **Nothing unchecked is published.** The new file is written into a scratch copy of the inventory and `check-inventory.py` runs over it; only a clean result is written to `docs/design/inventory/<surface>/<file>.json`.
+- **Screenshots stay on the operator's machine.** Each state is saved as `R:\11\ref-shots\<surface>\<state>.<profile>.png`; `shots.json` records its surface, state, profile, size and SHA-256, and `--verify-shots` names every missing or changed file. Elements with no usable name are listed in `build/inventory/<surface>-unnamed.json` for a hand-written label.
 
 ## What does it never hold?
 
