@@ -171,6 +171,7 @@ function Invoke-Build() {
         if ($names -contains 'pre-oobe' -and $names -notcontains 'clean' -and $existing[0].State -eq 'Running' -and (Get-GuestKvp $Name)['ios-desktop'] -eq 'ready') {
             $script:LogPath = Join-Path $VmPath 'ref-vm.log'
             Write-Ref 'resuming at the signed-in desktop'
+            $script:RefTouched = $true
             Complete-Clean
             return
         }
@@ -179,6 +180,7 @@ function Invoke-Build() {
         if (-not $Rebuild) { Write-Host "ref-vm: $Name exists; -Rebuild removes it and its checkpoints"; $script:Refused = 3; return }
         # Checked before anything is deleted: a mistyped ISO path must not cost the reference.
         if (-not (Test-Path -LiteralPath $IsoPath -PathType Leaf)) { Write-Host "ref-vm: no ISO at $IsoPath; $Name is left as it was"; $script:Refused = 2; return }
+        $script:RefTouched = $true
         Write-Ref "removing the existing $Name"
         if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
         Remove-VM -Name $Name -Force
@@ -213,6 +215,7 @@ function Invoke-Build() {
     Remove-Item -LiteralPath $stage -Recurse -Force
 
     $vhd = Join-Path $VmPath 'disk.vhdx'
+    $script:RefTouched = $true
     New-VM -Name $Name -Generation 2 -MemoryStartupBytes 4GB -NewVHDPath $vhd -NewVHDSizeBytes 80GB -Path $VmPath | Out-Null
     Set-VM -Name $Name -ProcessorCount 4 -StaticMemory -CheckpointType Standard -AutomaticCheckpointsEnabled $false -SnapshotFileLocation $VmPath
     Get-VMNetworkAdapter -VMName $Name | Remove-VMNetworkAdapter
@@ -408,10 +411,11 @@ function Invoke-Reclean() {
 Enter-RefLock $Name
 $script:ProfileProbe = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-profile.ps1'
 $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
-# Every path ends with the VM off, a failed one included: a running reference VM
-# holds 4 GiB of the host. The exit comes after the finally, because cmdlets in a
-# finally entered by exit are skipped (seen 2026-11-14).
-# A refusal sets $script:Refused and returns, for the same reason.
+# Every path that changed the VM ends with it off, a failed one included: a
+# running reference VM holds 4 GiB of the host. A refusal changes nothing and
+# leaves the VM as it was. The exit comes after the finally, because cmdlets in
+# a finally entered by exit are skipped (seen 2026-11-14); a refusal sets
+# $script:Refused and returns for the same reason.
 $rc = 1
 $script:Refused = 0
 try {
@@ -419,6 +423,6 @@ try {
     if ($script:Refused) { $rc = $script:Refused } else { $rc = Invoke-Verify | Select-Object -Last 1 }
 } finally {
     $vm = Get-VM | Where-Object { $_.Name -eq $Name }
-    if ($vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    if ($script:RefTouched -and $vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
 }
 exit $rc

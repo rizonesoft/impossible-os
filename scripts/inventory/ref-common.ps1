@@ -280,6 +280,7 @@ function Receive-RefTree($Session, [string]$Source, [string]$Destination) {
 function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath) {
     # Inputs are checked before the VM is touched, so a bad argument leaves it as it was.
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
+    $script:RefTouched = $true   # from here the VM is this run's to turn off
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
     Restore-VMSnapshot -VMName $Name -Name $Checkpoint -Confirm:$false
     $id = (Get-VM -Name $Name).Id

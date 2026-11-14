@@ -70,6 +70,7 @@ try {
     }
 } finally {
     if ($s) { Remove-PSSession $s }
-    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    # Only a VM this run restored is turned off; a refusal leaves it as it was.
+    if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
 }
 exit $code
