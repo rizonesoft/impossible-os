@@ -8,7 +8,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 
 # TODO-08 -- Window Manager Enhancements
 
-> **Goal:** Elevate the basic WM (create/move/resize/close) to a Windows 11-quality experience: proper Mica titlebar decorations with Fluent chrome buttons, minimize/maximize/restore with state persistence, snap layouts (hover-popup + keyboard), desktop icons (load/draw/launch/drag), global hotkeys + Win+D/M/Alt+F4, Alt+Tab thumbnail switcher, file drag-and-drop, and compositor dirty-rect optimization for 60 fps frame gating.
+> **Goal:** Elevate the basic WM (create/move/resize/close) to a Windows 11-quality experience: proper frosted-glass title bar decorations with Fluent chrome buttons, minimize/maximize/restore with state persistence, snap layouts (hover-popup + keyboard), desktop icons (load/draw/launch/drag), global hotkeys + Win+D/M/Alt+F4, Alt+Tab thumbnail switcher, file drag-and-drop, and compositor dirty-rect optimization for 60 fps frame gating.
 
 > [!IMPORTANT]
 > **Existing WM**: `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`, `wm_handle_mouse`, `wm_window_at`, `wm_get_cursor_context`, `wm_get_drag_dirty_rect` all exist. **Missing from `struct wm_window`**: no `saved_rect`, no `WM_FLAG_MINIMIZED/MAXIMIZED` -- these are added in §1. `FONT_UI_BOLD` in `include/font_mgr.h` for title text. `gfx_mica(s, x, y, w, h, wallpaper, tint)` exists for Mica titlebar. `desktop_get_wallpaper_surface()` provides the wallpaper. `task_create_user()` in `include/kernel/sched/task.h` launches user processes. TODO-04 `wm_anim_state_t` is embedded in `struct wm_window` for all animation. Complete sections in order: decorations → minimize/maximize/restore → snap layouts → compositor performance → desktop icons → keyboard shortcuts → Alt+Tab → drag and drop.
@@ -16,10 +16,10 @@ title: "TODO-08 -- Window Manager Enhancements"
 ## Inputs
 
 - `include/desktop/wm.h` -- extend `struct wm_window` with `saved_x/y/w/h`, `WM_FLAG_MINIMIZED/MAXIMIZED`, `WM_FLAG_SNAPPED`; add `wm_minimize/maximize/restore/snap` declarations
-- `include/gfx.h` -- `gfx_mica()`, `gfx_drop_shadow()`, `gfx_fill_rounded_rect()` for decoration rendering
+- `include/gfx.h` -- `gfx_acrylic()`, `gfx_drop_shadow()`, `gfx_fill_rounded_rect()` for decoration rendering
 - `include/font_mgr.h` -- `FONT_UI_BOLD`, `FONT_UI` for title and status text
-- `include/desktop/desktop.h` -- `desktop_get_wallpaper_surface()` for Mica titlebar tint source
-- `include/desktop/theme.h` (TODO-03) -- `theme_get()->colors` (`window_bg_inactive`, `subtle_fill_*`, `caption_close_hover`, `stroke_surface`, `focus_outer`) + `mat.mica` for decoration colours
+- `include/desktop/desktop.h` -- `desktop_get_wallpaper_surface()` for the title bar glass backdrop
+- `include/desktop/theme.h` (TODO-03) -- `theme_get()->colors` (`window_bg_inactive`, `subtle_fill_*`, `caption_close_hover`, `stroke_surface`, `focus_outer`) + `mat.frame` for decoration colours
 - `include/kernel/gfx/wm_anim.h` (TODO-04) -- `wm_anim_minimize/restore/maximize/snap` for animated transitions
 - `include/kernel/sched/task.h` -- `task_create_user(entry, name)` for desktop icon double-click launch
 - `include/registry.h` -- Registry persistence for window state + desktop icon positions
@@ -31,7 +31,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 ## Outcome
 
 - `wm_minimize/maximize/restore/snap()` implemented with animated transitions.
-- Title bar per `docs/design/shell.md#window-chrome`: 32 px, mica, caption-style title, 46 px caption buttons with 10 px glyphs, `caption_close_hover` close; radius 8 windows with elevation shadows.
+- Title bar per `docs/design/shell.md#window-chrome`: 32 px, the `frame` glass, caption-style title, 46 px caption buttons with 10 px glyphs, `caption_close_hover` close; radius 8 windows with elevation shadows.
 - Snap layouts popup on maximize-button hover; Win+←/→ keyboard snap.
 - Desktop icons load from `C:\Users\Default\Desktop\`; double-click launches; drag repositions.
 - Global hotkeys: Win+D, Win+M, Win+L, Alt+F4 + Win+number taskbar launch.
@@ -42,7 +42,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 
 | ⭐  | Order | Deliverable                                                                                              | Depends On                                                                 | Status |
 | --- | :---: | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | :----: |
-| 💎  |   2   | §2 Window decorations -- Mica titlebar, Fluent chrome buttons, resize handles                           | `gfx_mica`, `FONT_UI_BOLD`, `theme_get()` (TODO-03) all must be live      |  [ ]   |
+| 💎  |   2   | §2 Window decorations -- glass title bar, Fluent chrome buttons, resize handles                           | `gfx_acrylic`, `FONT_UI_BOLD`, `theme_get()` (TODO-03) must be live       |  [ ]   |
 | 💎  |   1   | §1 Min/max/restore -- WM_FLAG_MINIMIZED/MAXIMIZED, saved_rect, `wm_minimize/maximize/restore`           | §2 (chrome buttons trigger these; animation from TODO-04)                  |  [ ]   |
 | 💎  |   3   | §3 Snap layouts -- hover-popup (4 zones), Win+←/→/↑/↓ keyboard snap, edge-drag preview                | §1, §2 (maximize button hover is the trigger; snap uses wm_maximize geometry)  |  [ ]   |
 | 💎  |   8   | §8 Compositor performance -- dirty-rect union, frame-skip when idle, frame-time warning                | §1 (min/max/restore are the biggest dirty-rect drivers; optimize after they work) |  [ ]   |
@@ -92,9 +92,9 @@ Per `docs/design/shell.md#window-chrome`: corner radius `THEME_RADIUS_WINDOW` (8
 **Files:** `src/desktop/wm.c` (extend titlebar drawing)
 
 > [!NOTE]
-> Titlebar Mica: `gfx_mica(win_surface, 0, 0, win_w, 32, desktop_get_wallpaper_surface(), theme_get()->mat.mica)` for the focused window; unfocused windows fill `theme_get()->colors.window_bg_inactive`. Title text: 16 px app icon at x=12, then `gfx_draw_string(ttf_get(FONT_UI, THEME_TYPE_CAPTION_SIZE), title, 36, 8, text_primary)`. Chrome button layout: `close_x = win_w - 46`, `max_x = win_w - 92`, `min_x = win_w - 138`. Glyphs: 10 x 10 line drawings at 1 px stroke, centred in each 46 x 32 button (minimize: horizontal line; maximize: square with 1.5 px corner radius; restore: two offset squares; close: X). Hover detection: in `wm_handle_mouse()`, check `(mx, my)` against each button rect. Close hover: `gfx_fill_rect(titlebar, close_x, 0, 46, 32, theme_get()->colors.caption_close_hover)` and draw the glyph white. Min/max hover: `subtle_fill_hover`.
+> Title bar glass: `gfx_acrylic()` over the title bar rectangle with `theme_get()->mat.frame` (`docs/design/shell.md#materials`) for the focused window; unfocused windows fill `theme_get()->colors.window_bg_inactive`. Title text: 16 px app icon at x=12, then `gfx_draw_string(ttf_get(FONT_UI, THEME_TYPE_CAPTION_SIZE), title, 36, 8, text_primary)`. Chrome button layout: `close_x = win_w - 46`, `max_x = win_w - 92`, `min_x = win_w - 138`. Glyphs: 10 x 10 line drawings at 1 px stroke, centred in each 46 x 32 button (minimize: horizontal line; maximize: square with 1.5 px corner radius; restore: two offset squares; close: X). Hover detection: in `wm_handle_mouse()`, check `(mx, my)` against each button rect. Close hover: `gfx_fill_rect(titlebar, close_x, 0, 46, 32, theme_get()->colors.caption_close_hover)` and draw the glyph white. Min/max hover: `subtle_fill_hover`.
 
-- [ ] Mica titlebar: `gfx_mica()` called in `wm_composite()` per visible decorated window; active/inactive variants
+- [ ] Glass title bar: `gfx_acrylic()` with `mat.frame` in `wm_composite()` for the active decorated window; inactive windows fill `window_bg_inactive`
 - [ ] Acrylic dialog body: `wm.c` allocates `acrylic_cache` PMM pages per dialog but never fills or draws it; render the blurred body from it or stop allocating
   - Found by the TODO-10 section 27 review, 2026-09-30 (`wm.c` window create path and free path are the only users). `09-desktop-shell/TODO-08` §7 plans to reuse this cache for the terminal background.
 - [ ] 16 px app icon at x=12 and title text in the caption style (`THEME_TYPE_CAPTION_SIZE`, 12) at x=36, vertically centred, `text_primary` (inactive `text_secondary`)
@@ -108,7 +108,7 @@ Per `docs/design/shell.md#window-chrome`: corner radius `THEME_RADIUS_WINDOW` (8
 - [ ] Implement the edge and corner resize drag: pressing in the `WM_RESIZE_MARGIN` zone resizes through `wm_resize_window()`; today only the cursor shape changes (`wm.c:1385-1403`) and nothing calls `wm_resize_window()`
   - Owner of the resize work superseded in `06-desktop-foundation/TODO-01` §2, which previously had no implementing item here
   - Grab zone per `docs/design/shell.md#window-chrome`; add an overflow check on `width * height * 4` in `wm_resize_window()` and `wm_create_window()`
-- [ ] Commit: `"wm: decorations -- Mica titlebar, Fluent chrome buttons, hover states, drop shadow"`
+- [ ] Commit: `"wm: decorations -- glass title bar, Fluent chrome buttons, hover states, drop shadow"`
 
 ## 3. Snap Layouts
 
@@ -257,7 +257,7 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 | ⭐  | Feature                     | 🪟 Win11                                                              | 🐧 Linux                                                           | 🚀 Impossible OS                                                               |
 | --- | --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | 💎  | Min/max/restore             | ✅ DWM animated; `WM_SYSCOMMAND SC_MINIMIZE/MAXIMIZE/RESTORE`; window | ✅ Mutter/KWin animated; window state via                          | ⬜ §1 `WM_FLAG_MINIMIZED/MAXIMIZED`, `saved_x/y/w/h`, Registry `{title}\State` |
-| 💎  | Mica titlebar               | ✅ DWM Mica material; `DWMWA_USE_IMMERSIVE_DARK_MODE`; Fluent         | ⚠️ KDE Breeze blur titlebar; GNOME                                 | ⬜ §2 -- `gfx_mica()` per window titlebar; 10 px glyph                         |
+| 💎  | Frosted title bar           | ✅ DWM Mica material; `DWMWA_USE_IMMERSIVE_DARK_MODE`; Fluent         | ⚠️ KDE Breeze blur titlebar; GNOME                                 | ⬜ §2 -- `frame` glass on the active title bar; 10 px glyph                    |
 | 💎  | Snap layouts                | ✅ Windows 11 Snap Layouts; PowerToys                                 | ✅ KWin tiling; GNOME extension snap;                              | ⬜ §3 -- six-layout flyout, Win+Z                                              |
 | 💎  | Desktop icons               | ✅ Windows desktop icons; drag reposition;                            | ✅ GNOME/KDE desktop icons; drag reposition;                       | ⬜ §4 -- `vfs_readdir("C:\\Users\\Default\\Desktop\\")`; 76 x 86 cell grid     |
 | 💎  | Global hotkeys              | ✅ All these hotkeys built into                                       | ✅ GNOME/KDE global hotkey service; `xbindkeys`/`ydotool`          | ⬜ §5 -- kernel-level `hotkey_table[]` dispatch before focused-window          |
@@ -273,7 +273,7 @@ Dirty-rect union: only re-composite screen regions touched by changed windows. F
 - [ ] Minimize: click minimize button → window animates to bottom of screen, disappears; `WM_FLAG_MINIMIZED` set; window not composited
 - [ ] Maximize: click maximize button → window fills screen minus 48 px taskbar area; saved rect stored; button changes to ❐ restore icon
 - [ ] Restore: click restore button → window returns to saved size/position with animation
-- [ ] Mica: titlebar shows wallpaper blur tint; focused window brighter than unfocused window
+- [ ] Glass: the active title bar shows the blurred backdrop through the `frame` tint with its edge highlight; an inactive one is solid
 - [ ] Snap layouts: hover maximize button 500 ms (or Win+Z) → six-layout flyout appears; click a left-half zone → window snaps to the left half; Win+→ snaps to right half
 - [ ] Desktop icons: `C:\Users\Default\Desktop\` with a `.txt` file → icon appears on desktop; double-click → launches process; drag icon one cell right → snaps to the next 76 x 86 cell; position saved in Registry
 - [ ] Win+D: all windows minimize; second Win+D → all restore; serial log shows `[hotkeys] Win+D: show-desktop toggle`

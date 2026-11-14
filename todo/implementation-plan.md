@@ -2057,9 +2057,9 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T03 §4`  | Registry Load                                                           | none  |     4 |
 | [ ]  | `D08 T03 §5`  | Custom Accent Color                                                     | none  |     3 |
 | [ ]  | `D08 T03 §6`  | Migration Pass                                                          | none  |     8 |
-| [ ]  | `D08 T03 §7`  | Theme-Aware Shadow Rendering                                            | none  |     5 |
+| [ ]  | `D08 T03 §7`  | Theme-Aware Shadow Rendering                                            | none  |     7 |
 | [ ]  | `D08 T03 §8`  | Hot-Reload                                                              | none  |     6 |
-| [ ]  | `D08 T03 §9`  | Fluent Token Corpus and Win11 Personalization Contract                  | none  |     9 |
+| [ ]  | `D08 T03 §9`  | Fluent Token Corpus and Win11 Personalization Contract                  | none  |    10 |
 | [ ]  | `D08 T04 §1`  | Core Tween Engine                                                       | none  |     7 |
 | [ ]  | `D08 T04 §2`  | Easing Functions                                                        | none  |     9 |
 | [ ]  | `D08 T04 §3`  | Global Animation Manager                                                | none  |    12 |
@@ -2092,7 +2092,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T07 §5`  | Win32 and Platform-Service Wiring                                       | none  |     6 |
 | [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
 | [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
-| [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |    10 |
+| [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |    11 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none  |     6 |

@@ -75,11 +75,11 @@ Collapsed: a `size.scrollbar_collapsed` (2) line in `control_strong_stroke`, dra
 
 ## Tooltip
 
-Appears after `motion.tooltip_delay` (400 ms) of hover, below the pointer. `layer_bg` over `window_bg`, 1 px `stroke_surface`, `radius.tooltip` (4), `elevation.tooltip`, text `type.caption` (12/16), max width `size.tooltip_max_width` (320), padding 8 x 5.
+Appears after `motion.tooltip_delay` (400 ms) of hover, below the pointer. The `frame` glass ([materials](shell.md#materials)), 1 px `stroke_surface`, `radius.tooltip` (4), `elevation.tooltip`, text `type.caption` (12/16), max width `size.tooltip_max_width` (320), padding 8 x 5.
 
 ## Dialog
 
-A centred card between `size.dialog_min_width` (320) and `size.dialog_max_width` (548) wide, `radius.dialog` (8), `window_bg`, `elevation.window_active`, over a `smoke` scrim that covers the owner window (or the screen for system dialogs). Content padding `size.dialog_padding` (24): title in `type.subtitle` (20/28), body in `type.body`. The footer is `size.dialog_footer_height` (80) with a `layer_bg` band and right-aligned buttons: the default action is an accent button, the rest are standard; equal widths, 8 px apart. Escape invokes Cancel; Enter the default button. Message boxes show a `size.message_icon` (32) status glyph left of the text (error, warning, information, question) in the matching status colour per [status colours](#status-colours); they are glyphs, not colour icons.
+A centred card between `size.dialog_min_width` (320) and `size.dialog_max_width` (548) wide, `radius.dialog` (8), the `frame` glass ([materials](shell.md#materials)) with a solid `window_bg` content area, `elevation.window_active`, over a `smoke` scrim that covers the owner window (or the screen for system dialogs). Content padding `size.dialog_padding` (24): title in `type.subtitle` (20/28), body in `type.body`. The footer is `size.dialog_footer_height` (80) with a `layer_bg` band and right-aligned buttons: the default action is an accent button, the rest are standard; equal widths, 8 px apart. Escape invokes Cancel; Enter the default button. Message boxes show a `size.message_icon` (32) status glyph left of the text (error, warning, information, question) in the matching status colour per [status colours](#status-colours); they are glyphs, not colour icons.
 
 ## Menu bar and menus
 

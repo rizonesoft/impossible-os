@@ -1068,6 +1068,7 @@ The spec was written before the reference was measured. This section makes it ag
 - [ ] Write `scripts/inventory/spec-diff.py`: lists every size, radius, spacing, type and motion token in `docs/design/tokens.json` that differs from its `metric` or `motion` record
   - The token to record map lives in `docs/design/inventory/token-map.json`
 - [ ] Correct `tokens.json` where it differs from the reference and no ledger rule says otherwise; regenerate `include/desktop/theme_tokens.h` with `scripts/site/gen_theme_header.py`
+  - The `material` tokens are not corrected toward the reference: the ledger entry `glass-material` makes the fill ours
 - [ ] Rewrite each section of `docs/design/shell.md` whose measurements changed, citing the inventory record ids beside each number
 - [ ] Add to `docs/design/controls.md` every control of the `controls` baseline it lacks, with its measurements and state matrix from §14
 - [ ] Add a "Consistency rules" section to `docs/design/index.md` generated from `consistency.json`, so each rule is published once
@@ -1087,13 +1088,15 @@ The spec was written before the reference was measured. This section makes it ag
 
 **Design:** n/a -- a comparison tool, it draws nothing
 
-The layout check proves every element is in the right place. This proves the pixels: the built surface is compared with a screenshot of the reference, and only the replaced copyrighted regions may differ.
+The layout check proves every element is in the right place. This proves the pixels: the built surface is compared with a screenshot of the reference, and only the replaced copyrighted regions and the fill of a glass surface may differ.
 
 - [ ] Read the reference screenshots §3 saved during the campaign, through `shots.json`; never start the VM
   - A surface or state with no shot is a capture gap filed in `REFERENCE.md`, not a reason to capture during a comparison
   - The screenshots are Microsoft's pixels: they stay outside the repository; `check-no-ms-assets.py` of §4 refuses them
 - [ ] Write `scripts/inventory/pixel-check.py --surface <name>`: renders the same surface and state in Impossible OS under the headless compositor at the same profile and compares it with the reference screenshot
 - [ ] Build the mask from the inventory: regions whose record is an icon, an image, a wallpaper area or a text run are masked; every other pixel is compared
+- [ ] Same shape, own fill: the interior of a glass surface (`docs/design/shell.md#materials`, ledger entry `glass-material`) is masked, and its rectangle, corner radius, border, text and icons are compared with the reference like any other
+  - The masked fill is compared with our own render of the same material over the same backdrop, at most 2 per channel, so the glass cannot drift from `tokens.json` either
 - [ ] Unmasked pixels must be equal: no geometry tolerance, exact colour for solid fills, and a difference of at most 2 per channel inside blurred backdrop and shadow areas
 - [ ] Masked text regions are compared by their ink box: same origin, same advance width and same line count as the reference, using the text metrics recorded in §14
 - [ ] Masked icon and image regions are compared by rectangle only: same position and size

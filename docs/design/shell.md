@@ -7,19 +7,37 @@ The [interactive mockup](https://impossibleos.co/design/) is the visual referenc
 
 ## Materials
 
-Shell surfaces are acrylic: the wallpaper and windows behind are blurred, tinted and given a faint grain. Windows use mica: the wallpaper alone, heavily blurred and desaturated, tinted toward the window background. Both are implemented by `gfx_acrylic()` and `gfx_mica()` in `src/kernel/gfx/`.
+**Frosted glass is the one deliberate visual difference from Windows 11** (operator decision 2026-11-14). Every name, place, size, radius, border and behaviour follows the reference; the fill of a shell surface or a window frame is ours: a slight frosted glass through which the wallpaper and the windows behind show as soft colour, never as shapes.
 
-| Surface | Material | Dark tint | Light tint | Blur radius | Grain |
+- **Glass:** the shell surfaces (taskbar, Start, flyouts, menus) and window frames: the title bar, the toolbar band under it (the address and command bars, which add `layer_bg` over the glass), the navigation pane, dialogs and tooltips.
+- **Solid:** everything read or worked in: lists, text, settings rows and the status bar. They draw `window_bg` at full opacity, so text contrast never depends on the wallpaper.
+- **Same shape, own fill.** A glass surface has exactly the rectangle, corner radius and border of the reference. The [pixel comparison](../graphics/win11-parity-inventory.md) holds its shape, text and icons to Windows 11 and its fill to this table.
+
+The values below are written by `python3 scripts/site/build.py --sync` from [`tokens.json`](tokens.json), which is the only place they are edited; lint Check 30 fails when this table, the generated `include/desktop/theme_tokens.h` or the mockup disagrees with it. A value changes only by a new operator decision. Glass is drawn by `gfx_acrylic()` in `src/kernel/gfx/`.
+
+| Surface | Token | Dark tint | Light tint | Blur radius | Saturation | Edge highlight | Grain |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Taskbar | `material.*.taskbar` | <!-- project:mat_taskbar_dark -->`#1C1C1C` at 169/255<!-- /project --> | <!-- project:mat_taskbar_light -->`#EEEEEE` at 161/255<!-- /project --> | <!-- project:mat_taskbar_blur -->30<!-- /project --> | <!-- project:mat_taskbar_saturate -->125%<!-- /project --> | <!-- project:mat_taskbar_edge -->15%<!-- /project --> | <!-- project:mat_taskbar_grain -->6%<!-- /project --> |
+| Start menu | `material.*.start` | <!-- project:mat_start_dark -->`#202020` at 181/255<!-- /project --> | <!-- project:mat_start_light -->`#F3F3F3` at 175/255<!-- /project --> | <!-- project:mat_start_blur -->36<!-- /project --> | <!-- project:mat_start_saturate -->125%<!-- /project --> | <!-- project:mat_start_edge -->10%<!-- /project --> | <!-- project:mat_start_grain -->6%<!-- /project --> |
+| Flyouts (quick settings, calendar, toasts) | `material.*.flyout` | <!-- project:mat_flyout_dark -->`#2C2C2C` at 189/255<!-- /project --> | <!-- project:mat_flyout_light -->`#FCFCFC` at 181/255<!-- /project --> | <!-- project:mat_flyout_blur -->36<!-- /project --> | <!-- project:mat_flyout_saturate -->125%<!-- /project --> | <!-- project:mat_flyout_edge -->10%<!-- /project --> | <!-- project:mat_flyout_grain -->6%<!-- /project --> |
+| Context menus | `material.*.menu` | <!-- project:mat_menu_dark -->`#2C2C2C` at 199/255<!-- /project --> | <!-- project:mat_menu_light -->`#FCFCFC` at 199/255<!-- /project --> | <!-- project:mat_menu_blur -->26<!-- /project --> | <!-- project:mat_menu_saturate -->125%<!-- /project --> | <!-- project:mat_menu_edge -->10%<!-- /project --> | <!-- project:mat_menu_grain -->4%<!-- /project --> |
+| Window frames (title bar, navigation pane, dialog, tooltip) | `material.*.frame` | <!-- project:mat_frame_dark -->`#202020` at 189/255<!-- /project --> | <!-- project:mat_frame_light -->`#F3F3F3` at 189/255<!-- /project --> | <!-- project:mat_frame_blur -->28<!-- /project --> | <!-- project:mat_frame_saturate -->125%<!-- /project --> | <!-- project:mat_frame_edge -->10%<!-- /project --> | <!-- project:mat_frame_grain -->4%<!-- /project --> |
+
+The edge highlight is a one-pixel white line along the top inside edge at the stated opacity; the other three inside edges take 45 percent of it. Saturation is applied to the blurred backdrop before the tint. An inactive window's frame draws `window_bg_inactive` at full opacity: only the active window is glass, which also bounds the blur work to one window.
+
+**Glass strength is a setting.** Personalization, on the colours page directly under "Transparency effects", has a "Glass strength" choice of Light, Balanced and Rich. Balanced is the default and is the table above; Light and Rich adjust it by the `glass` block of `tokens.json`. The choice is stored as `GlassStrength` (a DWORD) under `HKCU\Software\Impossible\Theme`, applies at once to every surface, and is greyed out while transparency is off. This setting has no Windows 11 counterpart; it is ours.
+
+| Strength | `GlassStrength` | Window frame | Taskbar | Saturation | Edge highlight |
 | --- | --- | --- | --- | --- | --- |
-| Taskbar | acrylic `material.*.taskbar` | `#1C1C1C` at 184/255 | `#EEEEEE` at 176/255 | 24 | 6% |
-| Start menu | acrylic `material.*.start` | `#202020` at 196/255 | `#F3F3F3` at 190/255 | 30 | 6% |
-| Flyouts (quick settings, calendar) | acrylic `material.*.flyout` | `#2C2C2C` at 204/255 | `#FCFCFC` at 196/255 | 30 | 6% |
-| Context menus | acrylic `material.*.menu` | `#2C2C2C` at 214/255 | `#FCFCFC` at 214/255 | 20 | 4% |
-| Window background | mica `material.*.mica` | `#202020` at 204/255 | `#F3F3F3` at 204/255 | wallpaper-only | none |
+| Light | <!-- project:glass_light_setting -->0<!-- /project --> | <!-- project:glass_light_frame -->blur 18, tint 219/255<!-- /project --> | <!-- project:glass_light_taskbar -->blur 24, tint 184/255<!-- /project --> | <!-- project:glass_light_saturate -->110%<!-- /project --> | <!-- project:glass_light_edge -->6%<!-- /project --> |
+| Balanced | <!-- project:glass_balanced_setting -->1 (default)<!-- /project --> | <!-- project:glass_balanced_frame -->blur 28, tint 189/255<!-- /project --> | <!-- project:glass_balanced_taskbar -->blur 30, tint 169/255<!-- /project --> | <!-- project:glass_balanced_saturate -->125%<!-- /project --> | <!-- project:glass_balanced_edge -->10%<!-- /project --> |
+| Rich | <!-- project:glass_rich_setting -->2<!-- /project --> | <!-- project:glass_rich_frame -->blur 40, tint 153/255<!-- /project --> | <!-- project:glass_rich_taskbar -->blur 36, tint 149/255<!-- /project --> | <!-- project:glass_rich_saturate -->145%<!-- /project --> | <!-- project:glass_rich_edge -->16%<!-- /project --> |
+
+The other shell surfaces move with the taskbar by the same adjustment, and the taskbar's edge highlight stays 5 points above the stated one.
 
 The blur radius is the box-blur radius passed to `gfx_acrylic()`. Three box passes approximate a Gaussian about 1.7 times as wide, which is how the web mockup converts it. Frosted surfaces are rendered into a per-surface cache and recomposited only when the region behind them changes, so a static desktop costs no blur work per frame.
 
-**Terminal.** The terminal window uses mica by default like every window; when the user lowers its background opacity below 100% it switches to acrylic with the `menu` material values at that opacity. This is the only window that may be acrylic.
+**Terminal.** The terminal window has a glass frame and a solid content area like every window; when the user lowers its background opacity below 100% its content area becomes glass with the `menu` material values at that opacity. This is the only window whose content area may be glass.
 
 **Flyout and menu motion.** Every flyout (quick settings, notifications and calendar, clipboard history, overflow, hover previews) and every menu opens by fading in while rising `size.flyout_rise` (12) px over `motion.normal` (167 ms, decelerate) and closes by fading out over `motion.fast` (83 ms). Start uses its own larger motion (see [Start menu](#start-menu)).
 
@@ -81,7 +99,7 @@ Same width, anchor and material as quick settings. A "Notifications" header with
 ## Window chrome
 
 - Corner radius `radius.window` (8), a 1 px `stroke_surface` outline, shadow `elevation.window_active` when focused and `elevation.window_inactive` otherwise. Maximized windows drop the radius and shadow.
-- The title bar is `size.caption_height` (32) for classic windows; File Explorer-style windows extend it to 40 to hold tabs. It draws mica when active and `window_bg_inactive` when not.
+- The title bar is `size.caption_height` (32) for classic windows; File Explorer-style windows extend it to 40 to hold tabs. It draws the `frame` glass when active and `window_bg_inactive` when not.
 - Caption buttons are `size.caption_button_width` (46) wide and fill the caption height, with 10 px glyphs (`size.caption_glyph`) at 1 px stroke. Hover: `subtle_fill_hover`. Close hover: `caption_close_hover` (`#C42B1C`) with a white glyph.
 - The resize grab zone is `size.resize_margin` (5) outside the visible edge.
 - **Window motion.** Open: scale from `size.window_open_scale_pct` (96%) to 100% while fading in over `motion.slow` (250 ms, decelerate). Close: the reverse over `motion.normal` (167 ms, accelerate). Minimize: shrink and move toward the window's taskbar button while fading over `motion.slow`; restore from the taskbar reverses it. Maximize and restore morph the window bounds over `motion.normal` with `motion.ease_standard`. Reduced animation makes every transition instant. Win32 `AnimateWindow` requests (`AW_BLEND`, `AW_SLIDE` with a direction, `AW_CENTER`) are honoured for compatibility with the requested effect over `motion.normal` and `motion.ease_standard`, regardless of the duration the app passes.

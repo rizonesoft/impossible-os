@@ -222,7 +222,66 @@ def load_project() -> dict[str, str]:
     facts["_historical_owners"] = raw.get("historical_owners", [])
     facts["_historical_owner_files"] = raw.get("historical_owner_files", [])
     facts.update(load_stats())
+    facts.update(load_materials())
     return facts
+
+
+MATERIAL_ROWS = ("taskbar", "start", "flyout", "menu", "frame")
+
+
+def load_materials() -> dict[str, str]:
+    """The cells of the Materials table in docs/design/shell.md (``mat_*``), from
+    docs/design/tokens.json, so the specification cannot state a glass value the
+    tokens do not hold. The tint differs by theme; every other value is one
+    number for both, and a token file where they differ is refused."""
+    tokens = DOCS / "design" / "tokens.json"
+    if not tokens.is_file():
+        return {}   # fail-direction: a tree without the design tokens has no mat_* keys, so a region that names one is an unknown-key error
+    mat = json.loads(tokens.read_text(encoding="utf-8"))["material"]
+    out: dict[str, str] = {}
+    for surface in MATERIAL_ROWS:
+        dark, light = mat["dark"][surface], mat["light"][surface]
+        for name in ("blur", "saturate", "edge", "noise"):
+            if dark[name] != light[name]:
+                raise SystemExit(f"docs/design/tokens.json: material {surface} {name} differs between dark and light "
+                                 f"({dark[name]} and {light[name]}); the specification states one value")
+        out[f"mat_{surface}_dark"] = f"`{dark['tint']}` at {dark['tint_opacity']}/255"
+        out[f"mat_{surface}_light"] = f"`{light['tint']}` at {light['tint_opacity']}/255"
+        out[f"mat_{surface}_blur"] = str(dark["blur"])
+        out[f"mat_{surface}_saturate"] = f"{dark['saturate']}%"
+        out[f"mat_{surface}_edge"] = f"{dark['edge']}%"
+        out[f"mat_{surface}_grain"] = f"{dark['noise']}%"
+    out.update(glass_cells(json.loads(tokens.read_text(encoding="utf-8"))))
+    return out
+
+
+SHELL_SURFACES = ("taskbar", "start", "flyout", "menu")
+
+
+def glass_material(t: dict, theme: str, surface: str, strength: str) -> dict:
+    """One surface's material at a glass strength: the balanced recipe of
+    ``material`` with the strength's adjustments applied (tokens.json ``glass``)."""
+    spec, adj = dict(t["material"][theme][surface]), t["glass"]["strengths"][strength]
+    part = "frame" if surface == "frame" else "shell"
+    spec["tint_opacity"] = max(0, min(255, spec["tint_opacity"] + adj[f"{part}_tint_opacity"]))
+    spec["blur"] = max(0, spec["blur"] + adj[f"{part}_blur"])
+    spec["saturate"] = adj["saturate"]
+    spec["edge"] = adj["edge"] + (5 if surface == "taskbar" else 0)
+    return spec
+
+
+def glass_cells(t: dict) -> dict[str, str]:
+    """The cells of the glass strength table in docs/design/shell.md (``glass_*``):
+    the frame and the taskbar at each strength, worked out from the tokens."""
+    out: dict[str, str] = {}
+    for name, adj in t["glass"]["strengths"].items():
+        frame, bar = glass_material(t, "dark", "frame", name), glass_material(t, "dark", "taskbar", name)
+        out[f"glass_{name}_setting"] = str(adj["setting"]) + (" (default)" if name == t["glass"]["default"] else "")
+        out[f"glass_{name}_frame"] = f"blur {frame['blur']}, tint {frame['tint_opacity']}/255"
+        out[f"glass_{name}_taskbar"] = f"blur {bar['blur']}, tint {bar['tint_opacity']}/255"
+        out[f"glass_{name}_saturate"] = f"{adj['saturate']}%"
+        out[f"glass_{name}_edge"] = f"{adj['edge']}%"
+    return out
 
 
 def load_stats() -> dict[str, str]:
@@ -1721,6 +1780,21 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
     return "\n".join(out)
 
 
+def material_decls(t: dict, theme: str, strength: str) -> list[str]:
+    decls: list[str] = []
+    for surface in sorted(t["material"][theme]):
+        spec = glass_material(t, theme, surface, strength)
+        tint = spec["tint"].lstrip("#")
+        r, g, b = (int(tint[i:i + 2], 16) for i in (0, 2, 4))
+        decls.append(f"--mat-{surface}-tint: rgba({r}, {g}, {b}, {spec['tint_opacity'] / 255:.3f});")
+        # gfx_acrylic runs a 3-pass box blur of this radius (about a 1.7x Gaussian).
+        decls.append(f"--mat-{surface}-blur: {round(spec['blur'] * 1.7)}px;")
+        decls.append(f"--mat-{surface}-noise: {spec['noise'] / 100:.2f};")
+        decls.append(f"--mat-{surface}-saturate: {spec['saturate']}%;")
+        decls.append(f"--mat-{surface}-edge: {spec['edge'] / 100:.2f};")
+    return decls
+
+
 def design_tokens_css() -> str:
     """CSS custom properties generated from docs/design/tokens.json, so the web
     mockup and the C header (gen_theme_header.py) share one source."""
@@ -1730,15 +1804,11 @@ def design_tokens_css() -> str:
     for theme in sorted(t["color"]["themes"], key=lambda n: n != default):
         sel = f':root, [data-theme="{theme}"]' if theme == default else f'[data-theme="{theme}"]'
         decls = [f"--{k.replace('_', '-')}: {hex_to_css(v)};" for k, v in sorted(t["color"]["themes"][theme].items())]
-        for surface, spec in sorted(t["material"][theme].items()):
-            tint = spec["tint"].lstrip("#")
-            r, g, b = (int(tint[i:i + 2], 16) for i in (0, 2, 4))
-            decls.append(f"--mat-{surface}-tint: rgba({r}, {g}, {b}, {spec['tint_opacity'] / 255:.3f});")
-            if "blur" in spec:
-                # gfx_acrylic runs a 3-pass box blur of this radius (about a 1.7x Gaussian).
-                decls.append(f"--mat-{surface}-blur: {round(spec['blur'] * 1.7)}px;")
-                decls.append(f"--mat-{surface}-noise: {spec['noise'] / 100:.2f};")
+        decls += material_decls(t, theme, t["glass"]["default"])
         out.append(f"{sel} {{ " + " ".join(decls) + " }")
+        # The other glass strengths (the Personalization setting), as overrides the mockup switches with data-glass.
+        for strength in sorted(s for s in t["glass"]["strengths"] if s != t["glass"]["default"]):
+            out.append(f'[data-glass="{strength}"][data-theme="{theme}"] {{ ' + " ".join(material_decls(t, theme, strength)) + " }")
     decls = []
     for group, prefix in (("size", "size"), ("radius", "radius"), ("spacing", "space")):
         for k, v in sorted(t[group].items()):

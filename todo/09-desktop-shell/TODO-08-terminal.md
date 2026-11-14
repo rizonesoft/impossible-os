@@ -176,7 +176,7 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
 
 - [ ] `void terminal_load_settings(terminal_t *t)` -- read Registry keys; apply font/cursor/opacity/scrollback; write defaults if absent
 - [ ] `#define CURSOR_BLOCK 0`, `CURSOR_UNDERLINE 1`, `CURSOR_BAR 2`
-- [ ] Default background is the window material (mica, `docs/design/shell.md#materials`)
+- [ ] Default: a glass frame and a solid content area, like every window (`docs/design/shell.md#materials`)
   - only a user-lowered `Opacity` < 100 switches to acrylic via `gfx_acrylic()` with the menu material (`THEME_MAT_*_MENU_*`) at the chosen opacity, per `docs/design/shell.md#materials` "Terminal", matching Windows Terminal's opt-in acrylic
 - [ ] `WM_THEME_CHANGED` handler → `terminal_load_settings()`; `ttf_get()` with new font size; recalc `cell_w/h`
 - [ ] `terminal_resize()` called after font size change (cell dimensions changed → visible cols/rows change)
@@ -188,7 +188,7 @@ On window resize: `terminal_resize(t, new_w, new_h)` recalculates `visible_cols/
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control), [`controls.md#tabs`](../../docs/design/controls.md#tabs)
 
-**Design deviation:** a user-lowered terminal `Opacity` (< 100) draws acrylic instead of the window mica, for Windows Terminal parity; this is the one sanctioned exception, recorded in `docs/design/shell.md#materials` ("Terminal": menu-material acrylic at the chosen opacity).
+**Design deviation:** a user-lowered terminal `Opacity` (< 100) draws glass in the content area instead of a solid fill, for Windows Terminal parity; this is the one sanctioned exception, recorded in `docs/design/shell.md#materials` ("Terminal": menu-material acrylic at the chosen opacity).
 
 Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic transparency background. Split panes (H/V independent sessions). Hyperlink detection (`https?://` → Ctrl+click opens browser).
 
@@ -204,7 +204,7 @@ Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic tran
 - [ ] Split pane: `terminal_split(term, SPLIT_H/SPLIT_V)` -- allocate second `terminal_t`; divide window rect; resize both on drag
 - [ ] Hyperlink scan in render: `url_scan_row(row_cells, col_start, col_end)` → returns start/end col of URL; set UNDERLINE + `TERM_ATTR_HYPERLINK` flag
 - [ ] Ctrl+click handler: detect `TERM_ATTR_HYPERLINK` cell → collect URL string → `file_assoc_open(url)` (TODO-02 forward ref)
-- [ ] Acrylic: if `t->opacity < 100` in render: `gfx_acrylic()` with `THEME_MAT_*_MENU_*` at `t->opacity`; otherwise mica
+- [ ] Acrylic: if `t->opacity < 100` in render: `gfx_acrylic()` with `THEME_MAT_*_MENU_*` at `t->opacity`; otherwise solid `window_bg`
 - [ ] Commit: `"terminal: advanced -- multi-tab, Acrylic bg, split panes H/V, hyperlink detect+Ctrl+click"`
 
 ---

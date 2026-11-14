@@ -62,6 +62,13 @@ def generate() -> str:
                 v = argb(val) if isinstance(val, str) else f"{int(val)}"
                 out.append(f"#define {ident('THEME_MAT', theme, surface, field):<44} {v}")
         out.append("")
+    out.append("/* ---- glass strength: adjustments to the balanced materials above ---- */")
+    glass = t["glass"]
+    out.append(f"#define {'THEME_GLASS_DEFAULT':<44} {int(glass['strengths'][glass['default']]['setting'])}")
+    for name, spec in sorted(glass["strengths"].items(), key=lambda kv: kv[1]["setting"]):
+        for field, val in sorted(spec.items()):
+            out.append(f"#define {ident('THEME_GLASS', name, field):<44} ({int(val)})")
+    out.append("")
     for group, prefix in (("size", "THEME_SIZE"), ("radius", "THEME_RADIUS"), ("spacing", "THEME_SPACE")):
         out.append(f"/* ---- {group} ---- */")
         for key, val in sorted(t[group].items()):

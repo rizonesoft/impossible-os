@@ -3,7 +3,7 @@
 
 ## What is it?
 
-This roadmap takes the basic window manager to a Windows 11 quality experience, and is the single owner of window-management work that older desktop roadmaps also listed. It plans Fluent window chrome with a Mica title bar, minimize, maximize and restore with remembered state, snap layouts, a real desktop icon grid, global keyboard shortcuts, an Alt+Tab switcher with live thumbnails, drag and drop, and a compositor that repaints only what changed. None of its eight sections has shipped, but three already have partial groundwork in the code.
+This roadmap takes the basic window manager to a Windows 11 quality experience, and is the single owner of window-management work that older desktop roadmaps also listed. It plans Fluent window chrome with a frosted-glass title bar, minimize, maximize and restore with remembered state, snap layouts, a real desktop icon grid, global keyboard shortcuts, an Alt+Tab switcher with live thumbnails, drag and drop, and a compositor that repaints only what changed. None of its eight sections has shipped, but three already have partial groundwork in the code.
 
 ## How does it work?
 
@@ -19,7 +19,7 @@ This roadmap takes the basic window manager to a Windows 11 quality experience, 
 **Planned design.**
 
 1. **Minimize, maximize, restore**: minimized and maximized flags, a saved restore rectangle, title bar double-click, and state remembered per window title in the Registry.
-2. **Decorations**: Mica through `gfx_mica()`, theme colours, radius 8, elevation shadows, a 16 pixel app icon, restore and pressed states, and the edge resize grab zone.
+2. **Decorations**: the frame glass through `gfx_acrylic()`, theme colours, radius 8, elevation shadows, a 16 pixel app icon, restore and pressed states, and the edge resize grab zone.
 3. **Snap layouts**: a six-layout flyout after 500 ms hovering over maximize or on Win+Z, Win+arrow keyboard snapping, and edge-drag snapping with a preview.
 4. **Desktop icons**: icons read from the Desktop folder on a 76 by 86 grid, with selection, launch and dragging.
 5. **Shortcuts**: a kernel hotkey table checked before the focused window, with Win+D, Win+M, Win+Shift+M, Win+L, Win+number and Alt+F4.

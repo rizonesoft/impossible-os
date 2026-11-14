@@ -314,7 +314,7 @@ The translucent and wallpaper-tinted backdrops, as a service a window asks for b
 - [ ] A window or popup requests a backdrop kind: none, the wallpaper-tinted material, its alternate (stronger) form, the blurred translucent material, or the thin form used by menus
 - [ ] Wallpaper-tinted material: sample a heavily blurred, downscaled copy of the wallpaper made once per wallpaper change, tinted by the theme, with no per-frame blur
 - [ ] Blurred translucent material: blur what is behind the popup; cache the blurred backdrop and re-blur only the damaged region behind it
-- [ ] Wire both to the existing `gfx_mica` and `gfx_acrylic` effects in `src/kernel/gfx/gfx_effects.c`, replacing direct calls from shell code
+- [ ] Wire both to the existing `gfx_acrylic` effect (the `frame` glass replaces mica, `docs/design/shell.md#materials`) in `src/kernel/gfx/gfx_effects.c`, replacing direct calls from shell code
 - [ ] Fallbacks, each resolving to an opaque theme colour: transparency turned off, a contrast theme, battery saver, an inactive window, and a frame budget overrun measured over 30 frames
 - [ ] Noise and luminosity layers from the material tokens, generated once and tiled
 - [ ] Record the cost: `ui_material_stats()` reports blur time and cache hits per frame to the frame statistics pseudo-file

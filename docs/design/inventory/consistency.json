@@ -72,5 +72,14 @@
   "rule": "One enrolment flow behind the four captured entry points.",
   "reason": "The reference enrols a PIN, a face, a fingerprint and a security key through four different wizards.",
   "design": "shell.md#sign-in-method-enrolment"
+ },
+ {
+  "id": "glass-material",
+  "kind": "look",
+  "question": "What fills a shell surface or a window frame?",
+  "variants": [],
+  "rule": "A slight frosted glass, the one deliberate visual difference from the reference: shell surfaces and the active window's frame (title bar, navigation pane, dialog, tooltip) are glass with the values of tokens.json; content areas are solid. The shape, radius, border, text and icons of a glass surface match the reference exactly; only its fill is ours.",
+  "reason": "The reference fills title bars with a wallpaper tint in new programs and a flat colour in old ones, and menus and flyouts with a different translucent material; the operator chose one glass for all of them on 2026-11-14.",
+  "design": "shell.md#materials"
  }
 ]

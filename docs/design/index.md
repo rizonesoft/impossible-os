@@ -9,7 +9,7 @@ The Impossible OS desktop follows Windows 11 as closely as a clean-room implemen
 
 | File | Role |
 | --- | --- |
-| [`tokens.json`](tokens.json) | The canonical tokens: colours for dark and light, acrylic and mica materials, sizes, radii, spacing, type ramp, elevation and motion. |
+| [`tokens.json`](tokens.json) | The canonical tokens: colours for dark and light, the frosted-glass materials, sizes, radii, spacing, type ramp, elevation and motion. |
 | [`include/desktop/theme_tokens.h`](../../include/desktop/theme_tokens.h) | Generated from `tokens.json` by `scripts/site/gen_theme_header.py`. Never edited by hand. |
 | [`shell.md`](shell.md) | The shell specification: desktop, taskbar, Start, flyouts, menus and window chrome, with every measurement. |
 | [`controls.md`](controls.md) | The controls: buttons, toggles, check boxes, sliders, text fields, lists, tabs, progress, scroll bars, tooltips, dialogs, menus and cards. |

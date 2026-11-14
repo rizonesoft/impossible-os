@@ -67,6 +67,62 @@ class Pure(unittest.TestCase):
         self.assertIn("August 8, 2028", out)
         self.assertEqual(len(errs), 1)
 
+    def test_material_cells_come_from_the_tokens(self):
+        mat = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))["material"]
+        cells = B.load_materials()
+        for surface in B.MATERIAL_ROWS:
+            d = mat["dark"][surface]
+            self.assertEqual(cells[f"mat_{surface}_dark"], f"`{d['tint']}` at {d['tint_opacity']}/255")
+            self.assertEqual(cells[f"mat_{surface}_blur"], str(d["blur"]))
+            self.assertEqual(cells[f"mat_{surface}_edge"], f"{d['edge']}%")
+        self.assertEqual(len(cells), 6 * len(B.MATERIAL_ROWS) + 5 * 3)
+
+    def test_a_hand_edited_material_cell_is_out_of_date(self):
+        cells = B.load_materials()
+        stale = "| <!-- project:mat_frame_blur -->99<!-- /project --> |"
+        errs: list[str] = []
+        self.assertEqual(B.sync_regions(stale, cells, "t", errs),
+                         f"| <!-- project:mat_frame_blur -->{cells['mat_frame_blur']}<!-- /project --> |")
+        self.assertEqual(errs, [])
+
+    def test_the_materials_table_of_the_shell_spec_is_generated(self):
+        text = (B.REPO_REAL / "docs/design/shell.md").read_text(encoding="utf-8")
+        cells = B.load_materials()
+        for key in cells:
+            self.assertIn(f"<!-- project:{key} -->{cells[key]}<!-- /project -->", text)
+
+    def test_the_mockup_reads_every_glass_value_from_the_tokens(self):
+        css = B.design_tokens_css()
+        page = (B.REPO_REAL / "gh-pages/design/index.html").read_text(encoding="utf-8")
+        for surface in B.MATERIAL_ROWS:
+            for field in ("tint", "blur", "noise", "saturate", "edge"):
+                self.assertIn(f"--mat-{surface}-{field}:", css)
+                self.assertIn(f"var(--mat-{surface}-{field})", page)
+        self.assertNotIn("saturate(150%)", page)
+
+    def test_glass_strengths_adjust_the_balanced_recipe(self):
+        t = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        self.assertEqual(t["glass"]["default"], "balanced")
+        base = t["material"]["dark"]
+        for surface in base:
+            self.assertEqual({k: v for k, v in B.glass_material(t, "dark", surface, "balanced").items() if k != "edge"},
+                             {k: v for k, v in base[surface].items() if k != "edge"})
+            self.assertEqual(B.glass_material(t, "dark", surface, "balanced")["edge"], base[surface]["edge"])
+        light, rich = (B.glass_material(t, "dark", "frame", s) for s in ("light", "rich"))
+        self.assertGreater(light["tint_opacity"], base["frame"]["tint_opacity"])   # nearer solid
+        self.assertLess(rich["tint_opacity"], base["frame"]["tint_opacity"])
+        self.assertLess(light["blur"], base["frame"]["blur"])
+        self.assertGreater(rich["blur"], base["frame"]["blur"])
+        self.assertEqual(sorted(s["setting"] for s in t["glass"]["strengths"].values()), [0, 1, 2])
+
+    def test_the_mockup_switches_between_the_three_strengths(self):
+        css = B.design_tokens_css()
+        for strength in ("light", "rich"):
+            for theme in ("dark", "light"):
+                self.assertIn(f'[data-glass="{strength}"][data-theme="{theme}"] {{ ', css)
+        self.assertNotIn('[data-glass="balanced"]', css)
+        self.assertIn('id="glass"', (B.REPO_REAL / "gh-pages/design/index.html").read_text(encoding="utf-8"))
+
     def test_region_in_inline_code_ignored(self):
         errs: list[str] = []
         text = "`<!-- project:key -->value<!-- /project -->`"

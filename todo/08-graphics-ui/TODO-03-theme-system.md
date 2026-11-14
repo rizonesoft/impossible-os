@@ -15,7 +15,7 @@ title: "TODO-03 -- Theme System"
 
 ## Inputs
 
-- `include/gfx.h` -- `gfx_drop_shadow(… color)`, `gfx_acrylic(… tint, opacity …)`, `gfx_mica(… tint)` -- callers to be updated in §8
+- `include/gfx.h` -- `gfx_drop_shadow(… color)`, `gfx_acrylic(… tint, opacity …)` -- callers to be updated in §8
 - `include/registry.h` -- `RegGetValue()`, `RegSetValueEx()`, `HKCU` handle -- used in §4 (Registry load)
 - `src/desktop/desktop.c`, `wm.c`, `controls.c`, `terminal.c`, `gallery.c` -- confirmed sources of hardcoded hex colors to be replaced in §6 (migration)
 - `include/desktop/wm.h` -- WM message constants and window list -- extended in §8 to add `WM_THEME_CHANGED` and `wm_post_message_all()`
@@ -29,7 +29,7 @@ title: "TODO-03 -- Theme System"
 - `include/desktop/theme.h` exports `theme_t` with every design colour token and material per theme (`docs/design/tokens.json`); `theme_get()` returns singleton.
 - `src/desktop/theme.c` provides Dark + Light presets, Registry load, `theme_reload()`, computed accent variants.
 - Zero hardcoded `0xRRGGBB` literals remain in `desktop.c`, `wm.c`, `controls.c`, `terminal.c`, `gallery.c`.
-- Shadows use the elevation tokens; acrylic and mica use the theme's materials.
+- Shadows use the elevation tokens; every glass surface uses the theme's materials.
 - Hot-reload: `theme_reload()` re-reads Registry and broadcasts `WM_THEME_CHANGED` → all windows redraw in the same compositor frame.
 
 ## Implementation Order
@@ -52,7 +52,7 @@ title: "TODO-03 -- Theme System"
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system)
 
-Define `theme_t` so it carries every theme-dependent token of the design (`docs/design/tokens.json`): one colour field per key of `color.themes.<theme>` with the SAME name, plus the acrylic/mica material parameters per surface. Theme-independent tokens (sizes, radii, spacing, type ramp, elevation, motion) stay compile-time `THEME_SIZE_*` / `THEME_RADIUS_*` / `THEME_SPACE_*` / `THEME_TYPE_*` / `THEME_ELEV_*` / `THEME_MOTION_*` constants from the generated `include/desktop/theme_tokens.h` and are NOT duplicated in the struct. Store in `include/desktop/theme.h`. Colours are `uint32_t` ARGB32 (`0xAARRGGBB`).
+Define `theme_t` so it carries every theme-dependent token of the design (`docs/design/tokens.json`): one colour field per key of `color.themes.<theme>` with the SAME name, plus the glass material parameters per surface. Theme-independent tokens (sizes, radii, spacing, type ramp, elevation, motion) stay compile-time `THEME_SIZE_*` / `THEME_RADIUS_*` / `THEME_SPACE_*` / `THEME_TYPE_*` / `THEME_ELEV_*` / `THEME_MOTION_*` constants from the generated `include/desktop/theme_tokens.h` and are NOT duplicated in the struct. Store in `include/desktop/theme.h`. Colours are `uint32_t` ARGB32 (`0xAARRGGBB`).
 
 **Files:** `include/desktop/theme.h` (new)
 
@@ -64,9 +64,9 @@ Define `theme_t` so it carries every theme-dependent token of the design (`docs/
   - Surfaces: `window_bg, window_bg_inactive, card_bg, layer_bg, smoke`; controls: `control_fill, control_fill_hover, control_fill_pressed, control_fill_disabled, control_fill_input_active, subtle_fill_hover, subtle_fill_pressed`
   - Strokes: `stroke_card, stroke_control, stroke_surface, stroke_divider, control_strong_stroke, control_underline`; focus: `focus_outer, focus_inner`
   - Shell: `caption_close_hover, caption_close_pressed, taskbar_indicator, taskbar_indicator_idle, desktop_label, desktop_label_shadow, selection_fill, selection_stroke, toggle_knob_off`
-- [ ] `typedef struct { uint32_t tint; uint8_t tint_opacity, luminosity_opacity, blur, noise; } theme_material_t;` and `typedef struct { uint32_t tint; uint8_t tint_opacity, desaturate; } theme_mica_t;`
+- [ ] `typedef struct { uint32_t tint; uint8_t tint_opacity, luminosity_opacity, blur, noise, saturate, edge; } theme_material_t;`
 - [ ] `theme_t` in `include/desktop/theme.h` (`#pragma once`): colours, per-surface materials, mode and transparency
-  - `typedef struct theme_t { theme_colors_t colors; struct { theme_material_t taskbar, start, flyout, menu; theme_mica_t mica; } mat; uint8_t mode; uint8_t transparency; } theme_t;`
+  - `typedef struct theme_t { theme_colors_t colors; struct { theme_material_t taskbar, start, flyout, menu, frame; } mat; uint8_t mode; uint8_t transparency; } theme_t;`
   - `mode` 0=dark 1=light; `transparency` mirrors `EnableTransparency`
 - [ ] `_Static_assert` that `theme_colors_t` has exactly as many fields as there are colour tokens (count emitted by `gen_theme_header.py` as `THEME_COLOR_TOKEN_COUNT`, add that define to the generator)
 - [ ] Commit: `"desktop/theme: theme_t struct -- colour tokens + materials per theme, named after docs/design/tokens.json"`
@@ -99,7 +99,7 @@ Two `const theme_t` constants: `THEME_DARK` and `THEME_LIGHT`, built entirely fr
 > [!NOTE]
 > No hex literal appears in `theme.c`: every field initializer is a `THEME_*` constant, so a change to `docs/design/tokens.json` reaches the presets by regenerating the header (drift-checked by lint Check 30). `accent_hover` / `accent_pressed` come from the tokens for the default accent; §5 recomputes them only when the user picks a custom accent.
 
-- [ ] `THEME_DARK`: every `colors.<token>` = `THEME_DARK_<TOKEN>` (e.g. `window_bg = THEME_DARK_WINDOW_BG` = `#202020`, `accent = THEME_DARK_ACCENT` = `#60CDFF`); `mat.taskbar/start/flyout/menu/mica` from `THEME_MAT_DARK_*`; `mode = 0`
+- [ ] `THEME_DARK`: every `colors.<token>` = `THEME_DARK_<TOKEN>` (e.g. `window_bg = THEME_DARK_WINDOW_BG` = `#202020`, `accent = THEME_DARK_ACCENT` = `#60CDFF`); `mat.taskbar/start/flyout/menu/frame` from `THEME_MAT_DARK_*`; `mode = 0`
 - [ ] `THEME_LIGHT`: same with `THEME_LIGHT_*` (`window_bg` `#F3F3F3`, `accent` `#005FB8`) and `THEME_MAT_LIGHT_*`; `mode = 1`
 - [ ] `extern const theme_t THEME_DARK;` and `extern const theme_t THEME_LIGHT;` in `include/desktop/theme.h`
 - [ ] Commit: `"desktop/theme: THEME_DARK + THEME_LIGHT presets built from the generated design tokens"`
@@ -155,7 +155,7 @@ Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `
 > Mapping guide (token names from `docs/design/tokens.json`; sizes and radii go to `THEME_SIZE_*` / `THEME_RADIUS_*` constants at the same time):
 > - Window/client background → `colors.window_bg` (inactive title bar → `colors.window_bg_inactive`)
 > - Button / control rest, hover, pressed, disabled → `colors.control_fill`, `control_fill_hover`, `control_fill_pressed`, `control_fill_disabled`; subtle (toolbar, caption, list) → `subtle_fill_hover` / `subtle_fill_pressed`
-> - Title bar background (focused) → mica (`mat.mica`, `gfx_mica()`); caption close hover → `colors.caption_close_hover`
+> - Title bar background (focused) → the frame glass (`mat.frame`, `gfx_acrylic()`); caption close hover → `colors.caption_close_hover`
 > - Text → `colors.text_primary`; secondary → `text_secondary`; tertiary → `text_tertiary`; disabled → `text_disabled`; on accent → `text_on_accent`
 > - Accent fills → `colors.accent`; selection → `selection_fill` + `selection_stroke`; keyboard focus → `focus_outer` + `focus_inner`
 > - Borders → `stroke_control` (controls), `stroke_surface` (windows, flyouts), `stroke_card` (cards), `stroke_divider` (separators)
@@ -165,7 +165,7 @@ Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `
 
 - [ ] `#include "desktop/theme.h"` added to all five files
 - [ ] `desktop.c`: replace background fills, desktop surface, selection highlight
-- [ ] `wm.c`: replace title bar fills (mica active, `window_bg_inactive` inactive), caption button states (`subtle_fill_hover`, `caption_close_hover`), window border (`stroke_surface`), resize handle
+- [ ] `wm.c`: replace title bar fills (frame glass active, `window_bg_inactive` inactive), caption button states (`subtle_fill_hover`, `caption_close_hover`), window border (`stroke_surface`), resize handle
 - [ ] `controls.c`: replace button_bg, button_hover, button_pressed, label foreground, textbox bg + border, scrollbar track + thumb, checkbox/radio fill, progress bar accent
 - [ ] `terminal.c`: replace terminal chrome (border, scrollbar, cursor color) -- keep ANSI VT100 palette literals untouched
 - [ ] `gallery.c`: replace background, toolbar bg, selection rect
@@ -176,18 +176,20 @@ Replace all hardcoded `0xRRGGBB` / `0xAARRGGBB` color literals in `desktop.c`, `
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
-Update every `gfx_drop_shadow()` call to use the elevation token for its surface (`THEME_ELEV_<NAME>_Y/_BLUR/_ALPHA`: control, card, tooltip, flyout, start, window_active, window_inactive) and every `gfx_acrylic()` / `gfx_mica()` call to pass the theme's material for that surface (`theme_get()->mat.taskbar/start/flyout/menu/mica`), per `docs/design/shell.md#materials`.
+Update every `gfx_drop_shadow()` call to use the elevation token for its surface (`THEME_ELEV_<NAME>_Y/_BLUR/_ALPHA`: control, card, tooltip, flyout, start, window_active, window_inactive) and every `gfx_acrylic()` call to pass the theme's material for that surface (`theme_get()->mat.taskbar/start/flyout/menu/frame`), per `docs/design/shell.md#materials`.
 
 **Files:** `src/desktop/wm.c`, `src/desktop/controls.c`, `src/desktop/desktop.c`
 
 > [!NOTE]
-> `gfx_drop_shadow(s, x, y, w, h, radius, corner_radius, offset_x, offset_y, color)` -- `offset_y` and `radius` from `THEME_ELEV_<NAME>_Y` / `_BLUR`, `color` black with alpha `THEME_ELEV_<NAME>_ALPHA`, `offset_x` 0 (one key light from above). `gfx_acrylic(s, x, y, w, h, tint, opacity, blur_radius)` -- `tint`, `opacity`, `blur_radius` from the surface's `theme_material_t`; when `theme_get()->transparency` is 0 draw the tint at full opacity instead (§9). `gfx_mica(s, x, y, w, h, wallpaper, tint)` -- `theme_get()->mat.mica`.
+> `gfx_drop_shadow(s, x, y, w, h, radius, corner_radius, offset_x, offset_y, color)` -- `offset_y` and `radius` from `THEME_ELEV_<NAME>_Y` / `_BLUR`, `color` black with alpha `THEME_ELEV_<NAME>_ALPHA`, `offset_x` 0 (one key light from above). `gfx_acrylic(s, x, y, w, h, tint, opacity, blur_radius)` -- `tint`, `opacity`, `blur_radius` from the surface's `theme_material_t`; when `theme_get()->transparency` is 0 draw the tint at full opacity instead (§9). Window frames use `theme_get()->mat.frame` the same way; `gfx_mica()` has no caller left and is removed.
 
-- [ ] `wm.c`: window shadow from `THEME_ELEV_WINDOW_ACTIVE_*` / `THEME_ELEV_WINDOW_INACTIVE_*`; dialog backdrop uses mica (`mat.mica`)
+- [ ] `wm.c`: window shadow from `THEME_ELEV_WINDOW_ACTIVE_*` / `THEME_ELEV_WINDOW_INACTIVE_*`; dialog and tooltip surfaces use the frame glass (`mat.frame`)
 - [ ] `controls.c`: tooltip shadow `THEME_ELEV_TOOLTIP_*`, drop-down and menu shadow `THEME_ELEV_FLYOUT_*`
 - [ ] `desktop.c`: taskbar `mat.taskbar`, Start `mat.start` + `THEME_ELEV_START_*`, flyouts `mat.flyout` + `THEME_ELEV_FLYOUT_*`
 - [ ] Shadows come from the elevation tokens (`THEME_ELEV_*`): control, card, tooltip, flyout, start, window_active, window_inactive, each `[offset_y, blur, alpha]` for `gfx_drop_shadow()`
-- [ ] Commit: `"desktop/theme: shadows from elevation tokens, acrylic and mica from theme materials"`
+- [ ] `gfx_acrylic()` applies the material's `saturate` to the blurred backdrop and draws its `edge` highlight (one pixel along the top inside edge, 45 percent of it on the other three), per `docs/design/shell.md#materials`
+- [ ] Glass is drawn only where the spec lists it: shell surfaces and the active window's frame (title bar, navigation pane, dialog, tooltip); content areas stay solid
+- [ ] Commit: `"desktop/theme: shadows from elevation tokens, glass from theme materials"`
 
 ## 8. Hot-Reload
 
@@ -241,6 +243,9 @@ Two things make the desktop read as Windows 11 rather than merely Fluent-shaped:
 - [ ] Theme switch swaps the default wallpaper: `silk-dark.jpg` in dark mode, `silk-light.jpg` in light mode, unless the user set `HKCU\Control Panel\Desktop\WallPaper`
   - Both ship under `resources/backgrounds/` (sources in `resources/backgrounds/src/`); only `background.jpg` (the dark silk) reaches the sysroot today
 - [ ] Transparency off (`EnableTransparency=0`) draws every material's tint at full opacity with no blur and no grain (`docs/design/shell.md#materials`)
+- [ ] Glass strength: `theme_t.glass` (0 light, 1 balanced, 2 rich) read from `GlassStrength` under `HKCU\Software\Impossible\Theme`, default `THEME_GLASS_DEFAULT`; an out-of-range value uses the default
+  - `theme_load()` applies the `THEME_GLASS_<STRENGTH>_*` adjustments to the five materials once, so drawing code reads finished values; a change is hot-reloaded like the mode (§8)
+  - The "Glass strength" choice sits under "Transparency effects" on the Personalization colours page and is disabled while transparency is off (`docs/design/shell.md#materials`)
 - [ ] High contrast and focus visuals: a 2 px `focus_outer` ring outside a 1 px `focus_inner` ring on keyboard focus only; the high-contrast preset replaces every design token (`docs/design/shell.md#accessibility`)
 - [ ] Commit: `"desktop/theme: Fluent token corpus generator, Win11 personalization Registry contract, Selawik + Fluent icon assets"`
 
