@@ -43,17 +43,18 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                 | Depends On | Status |
-| --- | :---: | --------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | §1 Render-target allocator, views, and cached layers                        | --         |  [ ]   |
-| 💎  |   2   | §2 Clip, transform, and state stack                                         | §1         |  [ ]   |
-| 💎  |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract                 | §2         |  [ ]   |
-| 💎  |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline                    | §1, §3     |  [ ]   |
-| 💎  |   5   | §5 Thumbnail, preview, and multi-size asset cache                           | §4         |  [ ]   |
-| ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k    | §2, §3, §5 |  [ ]   |
-| 💎  |   7   | §7 SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile | §3, §4     |  [ ]   |
-| 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation   | §4, §7     |  [ ]   |
-| ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                | §8         |  [ ]   |
+| ⭐  | Order | Deliverable                                                                              | Depends On | Status |
+| --- | :---: | ---------------------------------------------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | §1 Render-target allocator, views, and cached layers                                     | --         |  [ ]   |
+| 💎  |   2   | §2 Clip, transform, and state stack                                                      | §1         |  [ ]   |
+| 💎  |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract                              | §2         |  [ ]   |
+| 💎  |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline                                 | §1, §3     |  [ ]   |
+| 💎  |   5   | §5 Thumbnail, preview, and multi-size asset cache                                        | §4         |  [ ]   |
+| ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k                 | §2, §3, §5 |  [ ]   |
+| 💎  |   7   | §7 SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile              | §3, §4     |  [ ]   |
+| 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation                | §4, §7     |  [ ]   |
+| ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                             | §8         |  [ ]   |
+| ⭐  |  10   | §10 Automatic icon polish and promotion -- rubric, scoring, review sheet, no manual step | §9         |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.
 > ⭐ = exclusive work -- Impossible OS goes beyond both with a simpler and more deterministic foundation.
@@ -247,6 +248,30 @@ Decided 2026-09-28: when any section, the unattended run included, needs an icon
 - [ ] Commit: `"tools: missing-icon check and draft icons -- inventory, draft mode, promotion"`
 
 **Test checkpoint:** adding `icon_get_by_name("printer")` with no source fails the check naming `printer`; `icon-engine draft printer --metaphor document,badge` then produces a validated SVG, a spec row and a drafts row, and the check passes; a second run changes nothing; hand-editing the draft marks it hand-authored and removes the drafts row. Test on: WSL2 dev host.
+
+## 10. Automatic Icon Polish and Promotion
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#what-happens-when-an-icon-is-missing`](../../docs/design/icons.md#what-happens-when-an-icon-is-missing), [`icons.md#small-size-rules`](../../docs/design/icons.md#small-size-rules)
+
+Decided 2026-11-14 (owner direction: no manual icon work, and icons are finished to a premium standard): a draft is polished and promoted by the run itself, in the section that needed it. No person has to review, approve or edit an icon; a person may reject one.
+
+- [ ] Write the scoring rubric in `docs/design/icons.md` ("How is an icon judged?"), each point with a pass rule
+  - Grid and optical size, single top-left light, palette tokens only, stroke and corner consistency with the set
+  - Legible at 16, 20, 24, 32 and 48 pixels in light and dark, and distinct from every other icon at 16 pixels
+  - Reads as its object without its label, and matches the neighbours it is shown beside
+- [ ] `icon-engine score <name>`: runs the mechanical checks (grid, palette, profile, contrast against both themes, pixel distance from every sibling at 16 pixels) and writes `build/icons/<name>.score.json`
+- [ ] `icon-engine sheet <name>`: renders one review sheet (every size, light and dark, beside the finished icons of the surface it belongs to) to `build/icons/<name>.sheet.png`
+- [ ] Polish pass in the run: read the sheet and the mechanical score, judge the icon against the rubric, revise its definition or parts, and re-score, for at most 5 rounds
+- [ ] Promotion: an icon that passes every rubric point becomes `status: generated`, its drafts row is removed and the score is recorded beside its row in The set
+  - One that fails the last round stays a draft with the failing points written in its drafts row
+- [ ] A section that draws a surface is not done while an icon it added is a draft: `icon-engine drafts --needed-by <todo#section>` must print none before the section's commit, unless the drafts row records a failed final round
+- [ ] Rejection without editing: `icon-engine reject <name> "<reason>"` returns a promoted icon to draft with the reason as an extra rubric point, and the next polish pass must satisfy it; the design page shows each icon's score and state
+- [ ] Unit tests: an off-palette icon and an off-grid icon each fail scoring and name the point; a passing icon is promoted and its row removed; a rejected icon returns to draft and keeps the reason
+- [ ] Commit: `"icons: automatic polish, scoring and promotion of draft icons"`
+
+**Test checkpoint:** `icon-engine score` on the fixture off-palette icon exits 1 naming `palette`; on a passing fixture it exits 0 and `icon-engine drafts` no longer lists it. `python3 scripts/site/build.py --check` passes with the rubric section present.
 
 ## OS Comparison
 
