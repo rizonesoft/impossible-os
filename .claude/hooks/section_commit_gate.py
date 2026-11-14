@@ -2355,13 +2355,31 @@ def _unread_by_final_pass(root: Path, paths: list[str], old_spec: str, new_spec:
     return unread
 
 
-def _git_lines(root: Path, *args: str) -> list[str] | None:
+def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
     try:
-        out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=10,
+        out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=timeout,
                                       stderr=subprocess.DEVNULL)
     except Exception:
         return None
     return out.splitlines()
+
+
+# A comparison of two COMMITS never changes, and the stamp check asks for the same one several times: the
+# round, the performance pass and the last pass usually name one commit, and the second reviewer's checks
+# compare it with HEAD again. Each is run once an invocation and given a short wait, so the checks together
+# stay inside the hook's deadline and a slow one fails as "could not be listed", never as a hung hook.
+_COMMIT_DIFF_TIMEOUT = 3
+_commit_diffs: dict[tuple, list[str] | None] = {}
+
+
+def _commit_diff(root: Path, mode: str, old: str, new: str, *paths: str) -> list[str] | None:
+    """`git diff --no-renames <mode> old new [-- paths]` between two commits, once an invocation."""
+    key = (str(root), mode, old, new, paths)
+    if key not in _commit_diffs:
+        tail = ("--", *paths) if paths else ()
+        _commit_diffs[key] = _git_lines(root, "diff", "--no-renames", mode, old, new, *tail,
+                                        timeout=_COMMIT_DIFF_TIMEOUT)
+    return _commit_diffs[key]
 
 
 def _stamped_sections(root: Path, todo: str) -> set[str] | None:
@@ -2580,7 +2598,7 @@ def _covers_candidate(root: Path, head: str, current_head: str) -> bool:
         return True
     if not _git_is_ancestor(root, head, current_head):
         return False
-    changed = _git_lines(root, "diff", "--no-renames", "--name-only", head, current_head)
+    changed = _commit_diff(root, "--name-only", head, current_head)
     return changed is not None and not _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
 
 
@@ -2617,7 +2635,7 @@ def _second_issues(root: Path, todo: str, section: str, plan: dict | None, curre
         return ([why], None)
     if second is None or plan is None or not _receipt_complete(plan) or not current_head:
         return ([], None)      # no second reviewer pinned, or the plan is already reported
-    changed = _git_lines(root, "diff", "--no-renames", "--name-only", plan["head"], current_head)
+    changed = _commit_diff(root, "--name-only", plan["head"], current_head)
     if changed is None:
         return (["the files this section changed could not be listed, so whether a second review is owed is unknown"],
                 None)
@@ -2666,7 +2684,7 @@ def _second_issues(root: Path, todo: str, section: str, plan: dict | None, curre
 
 def _lines_changed(root: Path, old: str, new: str, paths: list[str]) -> int | None:
     """Lines added plus removed in `paths` between two commits; None when it cannot be counted (a binary file)."""
-    out = _git_lines(root, "diff", "--no-renames", "--numstat", old, new, "--", *paths)
+    out = _commit_diff(root, "--numstat", old, new, *paths)
     if out is None:
         return None
     total = 0
@@ -2699,7 +2717,7 @@ def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
         if not _git_is_ancestor(root, head, current_head):
             return (False, f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)")
         # --no-renames: a script moved into todo/ must show as removed from where it ran.
-        changed = _git_lines(root, "diff", "--no-renames", "--name-only", head, current_head)
+        changed = _commit_diff(root, "--name-only", head, current_head)
         if changed is None:
             return (False, f"{kind}: could not list what changed since {head[:10]}")
         unread = _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")

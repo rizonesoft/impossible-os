@@ -607,6 +607,31 @@ def test_after_its_last_pass_the_routed_reviewer_reads_any_further_repair(tmp_pa
     assert not ok and "second ended at P2" in why, why
 
 
+def test_one_comparison_of_two_commits_is_run_once_and_given_a_short_wait(tmp_path, monkeypatch):
+    root, h = _history(tmp_path, second=True)
+    early = _good(h, round=(h["build"], 2), performance=(h["build"], 3), completion=(h["build"], 4))
+    gate._commit_diffs.clear()
+    real, seen = subprocess.check_output, []
+
+    def counting(cmd, **kw):
+        if cmd[:2] == ["git", "diff"] and "--cached" not in cmd:
+            seen.append((tuple(cmd), kw.get("timeout")))
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(gate.subprocess, "check_output", counting)
+    assert _judge(root, seconds=[_second(h["final"], 6)], **early) == (True, "")
+    commands = [cmd for cmd, _ in seen]
+    assert len(commands) == len(set(commands)), "a comparison of the same two commits ran twice"
+    # Three routed passes at one commit: one list of changed files and one line count for all of them.
+    assert sum("--numstat" in cmd for cmd in commands) == 1
+    assert all(wait == gate._COMMIT_DIFF_TIMEOUT for _, wait in seen)
+    # A comparison that cannot be made is said so; it is not a pass.
+    gate._commit_diffs.clear()
+    monkeypatch.setattr(gate, "_commit_diff", lambda *a, **k: None)
+    ok, why = _judge(root, seconds=[_second(h["final"], 6)], **_good(h))
+    assert not ok and "could not be listed" in why, why
+
+
 def test_second_passes_never_count_toward_the_pass_cap(tmp_path):
     root, h = _history(tmp_path, second=True)
     manifest = root / gate._PASS_MANIFEST
