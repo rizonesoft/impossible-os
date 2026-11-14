@@ -115,6 +115,49 @@ class Pure(unittest.TestCase):
         self.assertGreater(rich["blur"], base["frame"]["blur"])
         self.assertEqual(sorted(s["setting"] for s in t["glass"]["strengths"].values()), [0, 1, 2])
 
+    def test_the_default_strength_may_adjust_nothing(self):
+        t = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        t["glass"]["strengths"]["balanced"]["saturate"] = 5
+        with self.assertRaises(SystemExit):
+            B.glass_material(t, "dark", "frame", "balanced")
+
+    def test_a_base_value_reaches_every_output(self):
+        t = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        for theme in ("dark", "light"):
+            t["material"][theme]["frame"]["saturate"] = 131
+        self.assertIn("--mat-frame-saturate: 131%;", " ".join(B.material_decls(t, "dark", "balanced")))
+        self.assertEqual(B.glass_cells(t)["glass_balanced_saturate"], "131%")
+
+    def test_tokens_from_before_the_glass_block_still_render(self):
+        t = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        del t["glass"]
+        for theme in ("dark", "light"):
+            t["material"][theme] = {"taskbar": {"tint": "#1C1C1C", "tint_opacity": 184, "blur": 24, "noise": 6},
+                                    "mica": {"tint": "#202020", "tint_opacity": 204, "desaturate": 40}}
+        decls = " ".join(B.material_decls(t, "dark", None))
+        self.assertIn("--mat-taskbar-blur: 41px;", decls)
+        self.assertIn("--mat-mica-tint:", decls)
+        self.assertNotIn("saturate", decls)
+
+    def test_a_literal_in_the_mockup_material_rule_is_refused(self):
+        errs: list[str] = []
+        B.check_mockup_materials(errs)
+        self.assertEqual(errs, [])
+        page = B.ROOT / B.MOCKUP
+        real = page.read_text(encoding="utf-8")
+        self.assertIn(B.MOCKUP_BACKDROP, real)
+        self.addCleanup(lambda: B.set_root(B.REPO_REAL))
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(tmp))
+        (tmp / "gh-pages/design").mkdir(parents=True)
+        (tmp / "docs/design").mkdir(parents=True)
+        (tmp / "docs/design/tokens.json").write_text((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        (tmp / B.MOCKUP).write_text(real.replace(B.MOCKUP_BACKDROP, "blur(var(--blur)) saturate(150%)")
+                                    .replace("--edge: var(--mat-frame-edge);", ""))
+        B.set_root(tmp)
+        B.check_mockup_materials(errs)
+        self.assertEqual(len(errs), 3, errs)
+
     def test_the_mockup_switches_between_the_three_strengths(self):
         css = B.design_tokens_css()
         for strength in ("light", "rich"):

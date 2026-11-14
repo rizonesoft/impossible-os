@@ -237,7 +237,10 @@ def load_materials() -> dict[str, str]:
     tokens = DOCS / "design" / "tokens.json"
     if not tokens.is_file():
         return {}   # fail-direction: a tree without the design tokens has no mat_* keys, so a region that names one is an unknown-key error
-    mat = json.loads(tokens.read_text(encoding="utf-8"))["material"]
+    t = json.loads(tokens.read_text(encoding="utf-8"))
+    mat = t["material"]
+    if "glass" not in t:
+        return {}   # a release from before the glass tokens has no mat_* regions in its pages to fill
     out: dict[str, str] = {}
     for surface in MATERIAL_ROWS:
         dark, light = mat["dark"][surface], mat["light"][surface]
@@ -251,22 +254,31 @@ def load_materials() -> dict[str, str]:
         out[f"mat_{surface}_saturate"] = f"{dark['saturate']}%"
         out[f"mat_{surface}_edge"] = f"{dark['edge']}%"
         out[f"mat_{surface}_grain"] = f"{dark['noise']}%"
-    out.update(glass_cells(json.loads(tokens.read_text(encoding="utf-8"))))
+    out.update(glass_cells(t))
     return out
 
 
 SHELL_SURFACES = ("taskbar", "start", "flyout", "menu")
 
 
-def glass_material(t: dict, theme: str, surface: str, strength: str) -> dict:
+def glass_material(t: dict, theme: str, surface: str, strength: str | None) -> dict:
     """One surface's material at a glass strength: the balanced recipe of
-    ``material`` with the strength's adjustments applied (tokens.json ``glass``)."""
-    spec, adj = dict(t["material"][theme][surface]), t["glass"]["strengths"][strength]
+    ``material`` with the strength's adjustments added (tokens.json ``glass``).
+    ``material`` is the only place the balanced values are written, so the
+    default strength must adjust nothing. ``strength`` None is a token file
+    from before the glass block: the material as written."""
+    spec = dict(t["material"][theme][surface])
+    if strength is None:
+        return spec
+    adj = t["glass"]["strengths"][strength]
+    if strength == t["glass"]["default"] and any(v for k, v in adj.items() if k != "setting"):
+        raise SystemExit(f"docs/design/tokens.json: glass strength {strength} is the default, so its adjustments are all 0; "
+                         "the balanced values are written in material")
     part = "frame" if surface == "frame" else "shell"
     spec["tint_opacity"] = max(0, min(255, spec["tint_opacity"] + adj[f"{part}_tint_opacity"]))
     spec["blur"] = max(0, spec["blur"] + adj[f"{part}_blur"])
-    spec["saturate"] = adj["saturate"]
-    spec["edge"] = adj["edge"] + (5 if surface == "taskbar" else 0)
+    spec["saturate"] = max(0, spec["saturate"] + adj["saturate"])
+    spec["edge"] = max(0, min(100, spec["edge"] + adj["edge"]))
     return spec
 
 
@@ -279,8 +291,8 @@ def glass_cells(t: dict) -> dict[str, str]:
         out[f"glass_{name}_setting"] = str(adj["setting"]) + (" (default)" if name == t["glass"]["default"] else "")
         out[f"glass_{name}_frame"] = f"blur {frame['blur']}, tint {frame['tint_opacity']}/255"
         out[f"glass_{name}_taskbar"] = f"blur {bar['blur']}, tint {bar['tint_opacity']}/255"
-        out[f"glass_{name}_saturate"] = f"{adj['saturate']}%"
-        out[f"glass_{name}_edge"] = f"{adj['edge']}%"
+        out[f"glass_{name}_saturate"] = f"{frame['saturate']}%"
+        out[f"glass_{name}_edge"] = f"{frame['edge']}%"
     return out
 
 
@@ -1787,12 +1799,40 @@ def material_decls(t: dict, theme: str, strength: str) -> list[str]:
         tint = spec["tint"].lstrip("#")
         r, g, b = (int(tint[i:i + 2], 16) for i in (0, 2, 4))
         decls.append(f"--mat-{surface}-tint: rgba({r}, {g}, {b}, {spec['tint_opacity'] / 255:.3f});")
-        # gfx_acrylic runs a 3-pass box blur of this radius (about a 1.7x Gaussian).
-        decls.append(f"--mat-{surface}-blur: {round(spec['blur'] * 1.7)}px;")
-        decls.append(f"--mat-{surface}-noise: {spec['noise'] / 100:.2f};")
-        decls.append(f"--mat-{surface}-saturate: {spec['saturate']}%;")
-        decls.append(f"--mat-{surface}-edge: {spec['edge'] / 100:.2f};")
+        if "blur" in spec:
+            # gfx_acrylic runs a 3-pass box blur of this radius (about a 1.7x Gaussian).
+            decls.append(f"--mat-{surface}-blur: {round(spec['blur'] * 1.7)}px;")
+            decls.append(f"--mat-{surface}-noise: {spec['noise'] / 100:.2f};")
+        if "saturate" in spec:
+            decls.append(f"--mat-{surface}-saturate: {spec['saturate']}%;")
+            decls.append(f"--mat-{surface}-edge: {spec['edge'] / 100:.2f};")
     return decls
+
+
+MOCKUP = "gh-pages/design/index.html"
+MOCKUP_BACKDROP = "blur(var(--blur)) saturate(var(--sat))"
+MOCKUP_EDGE = "rgba(255,255,255,var(--edge))"
+
+
+def check_mockup_materials(errors: list[str]) -> None:
+    """The design mockup draws glass only from the token values: its one backdrop
+    rule reads the bound variables, and every surface binds every field. A literal
+    in their place would render a glass the tokens do not hold."""
+    page = ROOT / MOCKUP
+    tokens = DOCS / "design" / "tokens.json"
+    if not page.is_file() or not tokens.is_file():
+        return   # fail-direction: a tree without the mockup or the tokens has no glass to drift
+    text = page.read_text(encoding="utf-8")
+    for need, what in ((MOCKUP_BACKDROP, "the backdrop blur and saturation"), (MOCKUP_EDGE, "the edge highlight")):
+        if need not in text:
+            errors.append(f"{MOCKUP}: {what} must come from the tokens: expected `{need}`")
+    for literal in ("saturate(1", "saturate(2", "blur(var(--blur)) saturate(0"):
+        if literal in text.split("/* ---- materials", 1)[-1].split(".win {", 1)[0]:
+            errors.append(f"{MOCKUP}: a material rule states a saturation of its own (`{literal}`); read `var(--sat)`")
+    for surface in MATERIAL_ROWS:
+        for name in ("tint", "blur", "noise", "saturate", "edge"):
+            if f"var(--mat-{surface}-{name})" not in text:
+                errors.append(f"{MOCKUP}: no rule reads --mat-{surface}-{name}; bind it in .mat-{surface}")
 
 
 def design_tokens_css() -> str:
@@ -1804,10 +1844,11 @@ def design_tokens_css() -> str:
     for theme in sorted(t["color"]["themes"], key=lambda n: n != default):
         sel = f':root, [data-theme="{theme}"]' if theme == default else f'[data-theme="{theme}"]'
         decls = [f"--{k.replace('_', '-')}: {hex_to_css(v)};" for k, v in sorted(t["color"]["themes"][theme].items())]
-        decls += material_decls(t, theme, t["glass"]["default"])
+        glass = t.get("glass")   # absent in a release from before the glass tokens
+        decls += material_decls(t, theme, glass["default"] if glass else None)
         out.append(f"{sel} {{ " + " ".join(decls) + " }")
         # The other glass strengths (the Personalization setting), as overrides the mockup switches with data-glass.
-        for strength in sorted(s for s in t["glass"]["strengths"] if s != t["glass"]["default"]):
+        for strength in sorted(s for s in glass["strengths"] if s != glass["default"]) if glass else ():
             out.append(f'[data-glass="{strength}"][data-theme="{theme}"] {{ ' + " ".join(material_decls(t, theme, strength)) + " }")
     decls = []
     for group, prefix in (("size", "size"), ("radius", "radius"), ("spacing", "space")):
@@ -2650,6 +2691,7 @@ def run(args: argparse.Namespace) -> int:
         check_donate_links(facts, errors)
         check_count_badge(errors)
         check_icon_renders(errors)
+        check_mockup_materials(errors)
         check_baseline(undocumented, errors)
         if args.check:
             # Source check only: a rebuild for verify_live must not judge against
