@@ -274,8 +274,17 @@ class Popups(unittest.TestCase):
             return (up, up) if up else None
         self.assertEqual(core.outermost(found, parent_of), ["devices", "menu"])
 
-    def test_a_deep_or_cyclic_parent_chain_ends(self):
-        self.assertEqual(core.outermost({"a": "a"}, lambda el: ("z", "z")), ["a"])
+    def test_an_unsettled_ancestry_fails_the_capture(self):
+        with self.assertRaises(core.Incomplete):                 # a loop
+            core.outermost({"a": "a"}, lambda el: ("z", "z"))
+        chain = iter(range(10 ** 6))
+        with self.assertRaises(core.Incomplete):                 # deeper than MAX_DEPTH
+            core.outermost({"a": "a"}, lambda el: (next(chain), "x"))
+
+        def broken(el):
+            raise core.Incomplete("parent unreadable")
+        with self.assertRaises(core.Incomplete):                 # a read that fails
+            core.outermost({"a": "a"}, broken)
 
 
 class Unnamed(unittest.TestCase):

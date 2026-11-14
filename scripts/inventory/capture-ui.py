@@ -231,11 +231,13 @@ class Live:
         return {k: out[k] for k in core.outermost(out, self._parent)}
 
     def _parent(self, el):
+        """(runtime id, element) of el's parent, None at the desktop root. A read
+        that fails is not a root: it fails the capture (core.outermost)."""
         try:
             up = self.walker.GetParentElement(el)
-        except self.COMError:
-            return None
-        return (tuple(up.GetRuntimeId()), up) if up else None
+            return (tuple(up.GetRuntimeId()), up) if up else None
+        except self.COMError as exc:
+            raise core.Incomplete(f"a popup's parent could not be read ({exc})") from None
 
     def gone(self, el):
         """True once a popup element is closed: hidden, empty or no longer there."""

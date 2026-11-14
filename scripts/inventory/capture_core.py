@@ -122,10 +122,13 @@ def outermost(found, parent_of):
     runtime id, or None at the top. A popup search finds nested containers too
     (a list inside a list); reading only the outermost keeps a nested list's rows
     out of the entries, and behind a marked environment list where it belongs.
+    An ancestry that cannot be settled (a chain past MAX_DEPTH, a cycle, or a
+    parent_of that raises) fails the capture rather than keeping the container:
+    keeping it could read a marked list's rows.
     """
     keep = []
     for key, el in found.items():
-        node, nested = el, False
+        node, nested, seen = el, False, {key}
         for _ in range(MAX_DEPTH):
             up = parent_of(node)
             if up is None:
@@ -133,7 +136,12 @@ def outermost(found, parent_of):
             if up[0] in found:
                 nested = True
                 break
+            if up[0] in seen:
+                raise Incomplete("a popup's parent chain loops; its nesting cannot be settled")
+            seen.add(up[0])
             node = up[1]
+        else:
+            raise Incomplete(f"a popup's parent chain is deeper than {MAX_DEPTH}; its nesting cannot be settled")
         if not nested:
             keep.append(key)
     return keep
