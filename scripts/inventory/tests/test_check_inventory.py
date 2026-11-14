@@ -266,6 +266,18 @@ class Baselines(unittest.TestCase):
         _, out = self.report({**base, "REFERENCE.md": head + ["| :--- | ---: | :---: |"] + rows})
         self.assertEqual(out["baselines"]["settings"]["absent"], 2)
 
+    def test_a_record_of_another_surface_may_match_and_the_owner_answers_for_the_rest(self):
+        # The settings index lists classic Control Panel entries, captured under control-panel.
+        cp = [rec("win11.control-panel.x", surface="control-panel", kind="surface", baselineId="settings:Classic_a")]
+        files = {"settings/baseline.json": bl("settings", ["Classic_a", "b"]), "control-panel/home.json": cp}
+        r, out = self.report(files)
+        self.assertNotIn("baseline-orphan", [e["rule"] for e in out["errors"]])
+        self.assertEqual(out["baselines"]["settings"],
+                         {"owner": "settings", "rows": 2, "matched": 1, "absent": 0, "pending": 1, "unmatched": 0})
+        files["settings/home.json"] = [rec("win11.settings.y", surface="settings", kind="surface")]
+        _, out = self.report(files)
+        self.assertEqual((out["baselines"]["settings"]["pending"], out["baselines"]["settings"]["unmatched"]), (0, 1))
+
     def test_baseline_missing_and_baseline_id_together_are_refused(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a", baselineMissing=True)]
         self.assertIn("baseline-both", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))

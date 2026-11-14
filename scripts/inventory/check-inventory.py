@@ -483,6 +483,9 @@ def check(root, surface=None):
                 err(path, n, "baseline-build", f"{rid}: captured from {obj['capturedFrom']} but matches the {name} "
                     f"baseline read from {read_from}: capture it again on the reference build")
             continue
+        # Any surface's record may match a row (the settings index lists the classic
+        # Control Panel entries, which are captured under control-panel); the owner
+        # is who answers for the rows still open, not who alone may match one.
         matched[name].add(row)
     absent = load_absent(root, baselines, err, surface)
     for (name, row), (n, _) in list(absent.items()):

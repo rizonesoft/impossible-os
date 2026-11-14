@@ -16,7 +16,8 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
 2. Refuses a capture that says it is incomplete (exit 3): nothing is published
    and nothing is deleted from what was published before.
 3. Builds the new file: without --merge an existing file is refused (exit 2); with
-   --merge the hand-written fields (behaviour, disposition, inconsistency) are
+   --merge the hand-written fields (behaviour, disposition, inconsistency and the
+   baseline match, baselineId or baselineMissing) are
    carried across by id, every captured fact is refreshed, and a record the
    capture did not see is dropped (named on stdout). A note that would land on an
    ambiguous id stops the merge.

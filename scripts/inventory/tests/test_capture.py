@@ -474,6 +474,17 @@ class Merge(unittest.TestCase):
                                 "disposition": "ship"}])
         self.assertEqual(dropped, ["a.gone"])
 
+    def test_the_baseline_match_survives_a_recapture(self):
+        old = [{"id": "a.b", "label": "B", "baselineId": "settings:S1"}, {"id": "a.c", "label": "C", "baselineMissing": True},
+               {"id": "a.gone", "label": "Gone", "baselineId": "settings:S2"}]
+        out, dropped = core.merge(old, [{"id": "a.b", "label": "B2"}, {"id": "a.c", "label": "C2"}], [])
+        self.assertEqual(out, [{"id": "a.b", "label": "B2", "baselineId": "settings:S1"},
+                               {"id": "a.c", "label": "C2", "baselineMissing": True}])
+        self.assertEqual(dropped, ["a.gone"])       # a lost match is named, never silent
+        with self.assertRaises(ValueError):
+            core.merge([{"id": "s.btn--2", "label": "Btn", "baselineId": "settings:S1"}],
+                       [{"id": "s.btn--2", "label": "Btn"}], ["s.btn--2"])
+
     def test_a_note_never_lands_on_an_ambiguous_id(self):
         # An inserted twin shifts the positional suffix: the old note on btn-2 would
         # move to a different control, so the merge refuses.
