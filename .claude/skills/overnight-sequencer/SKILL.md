@@ -179,9 +179,9 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
      refuses every push while a debt is open. Do not push, and do not revert the section.
   4. **When the reviewer answers** (`review_owed.py probe` exits 0), `--next` returns the
      oldest owed section first, whichever file the run moved on to. Review it in full: a
-     late `plan` pass, then the wave. The recorded base is used for you by
-     `review_pin.py --section` (it prints `REVIEW_BASE=<sha>`), the second reviewer's
-     dispatcher and the stamp gate. Stamp it, then
+     late `plan` pass, then the wave. Set no `REVIEW_BASE` for the wave: the dispatcher
+     takes the recorded base itself, tells the reviewer the range, and refuses another
+     base; the second reviewer's dispatcher and the stamp gate use the same one. Stamp it, then
      `python3 scripts/overnight/review_owed.py clear --todo <todo-path> --section <N>`.
   5. **Push once every debt is cleared.** The sections built meanwhile go out in that push.
   `review_owed.py list` shows what is open.

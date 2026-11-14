@@ -1516,16 +1516,19 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
   - `add --todo T --section N` is called before the section's first edit and is refused unless `probe` reports an outage; it records the commit the section starts from (its plan pass's when it has one, else HEAD), and asking again keeps the first base
   - `clear` is refused until the committed TODO (HEAD) carries both stamps, so a stamp whose commit was refused clears nothing; `gate` names what is open; `probe` is the existing outage check (exit 75 while the reviewer is down)
 - [x] An owed section's range is its recorded base, not its late plan pass's commit: `review_pin.section_base` is the one helper, read by `section_status`, the second reviewer's dispatcher and the stamp gate
+  - `scripts/codex-dispatch.sh` holds every pass after the plan to that base (taken when none is given, refused when another is), tells the reviewer the range and writes it on the receipt; the stamp gate refuses a pass that was shown less
 - [x] `sequencer_triage.py --next` does not return a built, owed section while `probe` reports an outage, passes over a file that owes only such reviews, and returns the oldest owed section first, across files, once the reviewer answers
   - The packet marks an owed section `review_owed` and a recovered one `review_first`; `scripts/overnight/advance-work.py` never names the first, even as its fallback, and names the second ahead of everything else
+  - The reviewer is probed by one process with a two-second wait, inside the Stop hook's five; no answer in time changes nothing
 - [x] The phase guard's rollover accepts unpushed commits while a review is owed, so an owed section is never counted as a failed rollover and reverted (`.claude/hooks/run_phase_guard.py`, a frozen file: edited attended)
+  - The outage commit's opt-out marks the last review used up; while a review is owed that mark is not an unread review
 - [x] `.githooks/pre-push` refuses a push while any section is owed, naming it, before every costly gate; a record that cannot be read refuses too
 - [x] The steps are in `.claude/skills/overnight-sequencer/SKILL.md` (the outage rule) and `.claude/skills/three-pass-review.md` ("When the reviewer is down")
 - [x] Commit: `"run: a reviewer outage leaves a review owed and the run continues"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures: with the reviewer down a section is recorded, built, not picked again, its unpushed commit is not a failed rollover and a push is refused; with it back the oldest owed section is returned first across files, and after its stamps and `clear` nothing is owed.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_review_owed.py` (15 cases), `scripts/overnight/tests/test_three_pass_gate.py` (the recorded base), `bash scripts/overnight/tests/run-all.sh`
+> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_review_owed.py` (17 cases), `scripts/overnight/tests/test_three_pass_gate.py` (the recorded base), `bash scripts/overnight/tests/run-all.sh`
 
 > **Notes:**
 > - What shipped: a debt record written before an unreviewed build, and four places that honour it: the next-section picker, the rollover check, the push gate and the review range.

@@ -219,7 +219,7 @@ def _state(root, *owed):
 
 
 def _triage(monkeypatch):
-    monkeypatch.setattr(st, "OWED_TOOL", str(SCRIPT))
+    monkeypatch.setattr(st, "OUTAGE_TOOL", str(REPO / "scripts/overnight/codex-outage-check.py"))
     st._OWED_MEMO.clear()
 
 
@@ -347,6 +347,84 @@ def test_the_reviewer_is_probed_once_an_invocation(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_probe_that_does_not_answer_in_time_changes_nothing_and_leaves_no_process(tmp_path, monkeypatch):
+    root = tmp_path
+    cache = _corpus(root)
+    _state(root, (TODO, 7))
+    slow = tmp_path / "slow-probe.py"
+    slow.write_text("import os, sys, time\nopen(sys.argv[2] + '.pid', 'w').write(str(os.getpid()))\ntime.sleep(30)\n")
+    monkeypatch.setattr(st, "OUTAGE_TOOL", str(slow))
+    monkeypatch.setattr(st, "OUTAGE_MANIFEST", "probe")
+    st._OWED_MEMO.clear()
+    start = time.monotonic()
+    assert st.owed_reviews(root) == (frozenset(), [])
+    assert time.monotonic() - start < 4, "the probe outlived the Stop hook's budget"
+    pid = int((root / "probe.pid").read_text())
+    for _ in range(40):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("the probe process was left running")
+    # An unknown is the ordinary order: the built, unstamped section is named as before.
+    e, _cls, _w = st.pick_next(cache, root, ready=[])
+    assert e["file_path"] == TODO
+
+
+# ---- the routed reviewer's own passes ----
+
+FAKE_COMPANION = """
+const fs = require('fs');
+const tail = process.argv.slice(3);
+fs.writeFileSync(process.env.FAKE_PROMPT_OUT, tail[0] === '--' ? tail.slice(1).join(' ') : tail.join(' '));
+process.stdout.write('# Codex Adversarial Review\\n\\n' + fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
+"""
+
+
+def _dispatch(root, tmp_path, kind, base=None):
+    pin = rp.load_pin()
+    (tmp_path / "companion.js").write_text(FAKE_COMPANION)
+    (tmp_path / "review.txt").write_text("\n".join(f"LENS {n}: clean" for n in rp.lenses_for(pin, kind, ()))
+                                         + "\nHIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(tmp_path / "companion.js"),
+           "CODEX_REVIEWS_DIR": str(root / ".claude/overnight/reviews"),
+           "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt")}
+    env.pop("REVIEW_BASE", None)
+    if base:
+        env["REVIEW_BASE"] = base
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), f"[review-kind: {kind}] {TODO} section 7\nx"],
+                          capture_output=True, text=True, timeout=120, cwd=str(root), env=env)
+    lines = (root / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()
+    receipts = [json.loads(line) for line in lines]
+    return done, [e for e in receipts if e.get("route") == "codex-dispatch.sh"]
+
+
+def test_every_pass_after_the_plan_is_shown_an_owed_section_from_its_recorded_base(tmp_path):
+    root = _repo(tmp_path)
+    start = _git(root, "rev-parse", "HEAD")
+    _reviewer(root, down=True)
+    assert _run(root, "add", "--todo", TODO, "--section", "7").returncode == 0
+    (root / "src.c").write_text("int a;\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "built while the reviewer was down")
+    late = _git(root, "rev-parse", "HEAD")
+    # The plan pass comes late and is not bound: it reads the plan, not a range.
+    done, receipts = _dispatch(root, tmp_path, "plan", base=late)
+    assert done.returncode == 0, done.stderr
+    # A pass given the late plan's commit, or HEAD, as its base would read nothing of the section.
+    for kind in ("round", "performance", "completion"):
+        done, _ = _dispatch(root, tmp_path, kind, base=late)
+        assert done.returncode == 2 and "starts at " + start[:10] in done.stderr, (kind, done.stderr)
+    # With no base given, or the recorded one, it is shown the section, told its range, and the receipt says so.
+    for kind, base in (("round", None), ("performance", start), ("completion", None)):
+        done, receipts = _dispatch(root, tmp_path, kind, base=base)
+        assert done.returncode == 0, (kind, done.stderr)
+        assert receipts[-1]["kind"] == kind and receipts[-1]["base"] == start
+        assert f"git diff {start} HEAD" in (tmp_path / "prompt.txt").read_text()
+
+
 # ---- the phase guard's rollover (a frozen file: this change was made attended) ----
 
 def _guard_fixture(tmp_path):
@@ -390,10 +468,20 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
         [{"todo": "todo/00-infrastructure/TODO-01-fixture.md", "section": 1, "base": "b", "since": 1}]))
     r = _rollover(fx)
     assert "not pushed" not in r.stderr, r.stderr
-    # An empty record, or one that cannot be read, is no debt: the ordinary refusal stands.
+    # The outage commit went through the gate's opt-out, which marks the last review used up. That is the
+    # recorded debt, not a review waiting to be read.
+    review = fx / ".claude/state/last-codex-review.json"
+    review.write_text(json.dumps({"received": False, "skipped_section_commit": True}))
+    assert "outstanding Codex review" not in _rollover(fx).stderr
+    # A review that really is unread still holds the rollover, debt or no debt.
+    review.write_text(json.dumps({"received": False}))
+    assert "outstanding Codex review not yet received" in _rollover(fx).stderr
+    # An empty record, or one that cannot be read, is no debt: the ordinary refusals stand.
+    review.write_text(json.dumps({"received": False, "skipped_section_commit": True}))
     for text in ("[]", "{"):
         (fx / ".claude/state/review-owed.json").write_text(text)
-        assert "1 commit(s) not pushed" in _rollover(fx).stderr
+        r = _rollover(fx)
+        assert "1 commit(s) not pushed" in r.stderr and "outstanding Codex review not yet received" in r.stderr
 
 
 # ---- the pre-push hook ----

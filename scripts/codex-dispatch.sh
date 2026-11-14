@@ -166,7 +166,23 @@ if [ "$PIN_KIND" = "1" ]; then
     trap 'rm -f "$PATHS_FILE"' EXIT
     # The changed files decide the conditional lenses, so a base that cannot
     # be read refuses the pass: an empty list would drop those lenses silently.
-    if [ -n "${REVIEW_BASE:-}" ]; then
+    # A section built while the reviewer was down starts at its recorded base, the commit before its code
+    # (scripts/overnight/review_owed.py). Its plan pass is dispatched late, so a base taken from that pass, or
+    # from HEAD, would show the reviewer little or nothing of the section. Every pass after the plan is held to
+    # the recorded base: taken when none is given, refused when another is.
+    OWED_BASE=""
+    if [ "$KIND" != "plan" ]; then
+        OWED_BASE="$(python3 "$PIN_TOOL" --owed-base "$TODO_PATH" "$SECTION" --root "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")" || {
+            echo "[$SELF_NAME] BLOCK -- whether this section's review is owed could not be read (reason above)" >&2; exit 2; }
+    fi
+    if [ -n "$OWED_BASE" ]; then
+        BASE_OID="$(git rev-parse --quiet --verify "${OWED_BASE}^{commit}" 2>/dev/null)" || {
+            echo "[$SELF_NAME] BLOCK -- the recorded base of this owed section is not a commit here: $OWED_BASE" >&2; exit 2; }
+        if [ -n "${REVIEW_BASE:-}" ] && [ "$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" != "$BASE_OID" ]; then
+            echo "[$SELF_NAME] BLOCK -- this section was built while the reviewer was down and starts at ${BASE_OID:0:10}; REVIEW_BASE names another commit. Leave it unset or give that one." >&2
+            exit 2
+        fi
+    elif [ -n "${REVIEW_BASE:-}" ]; then
         BASE_OID="$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" || {
             echo "[$SELF_NAME] BLOCK -- REVIEW_BASE is not a commit here: $REVIEW_BASE" >&2; exit 2; }
     else
@@ -179,6 +195,11 @@ if [ "$PIN_KIND" = "1" ]; then
     sort -u "$PATHS_FILE.all" > "$PATHS_FILE"; rm -f "$PATHS_FILE.all"
     PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file "$PATHS_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
+    if [ -n "$OWED_BASE" ]; then
+        PROMPT="$PROMPT
+
+This section was built while the reviewer was unavailable. Its whole change is: git diff $BASE_OID HEAD"
+    fi
     PROMPT="$PROMPT
 
 $PIN_LENSES"
@@ -245,7 +266,7 @@ if [ -n "$LOG_FILE" ]; then
         "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=direct:$STAMP-$$" \
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
-        "highest=$PASS_HIGHEST" \
+        "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" \
         || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     exit "$rc"
 fi

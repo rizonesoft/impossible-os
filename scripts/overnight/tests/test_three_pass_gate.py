@@ -666,16 +666,24 @@ def test_a_section_built_during_an_outage_is_judged_from_its_recorded_base(tmp_p
     assert _judge(root, **late) == (True, "")
     owed = root / ".claude/state/review-owed.json"
     owed.write_text(json.dumps([{"todo": TODO, "section": 7, "base": h["plan"], "since": 1}]))
+    shown = {k: {"base": h["plan"]} for k in ("round", "performance", "completion")}
     try:
-        ok, why = _judge(root, **late)
+        # The routed reviewer's own passes were based at the late plan pass: they read nothing of the section.
+        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])],
+                         receipt={k: {"base": h["final"]} for k in shown}, **late)
+        assert not ok and "round was shown this section from" in why and "performance was shown" in why, why
+        # And a receipt that names no base at all is not evidence either.
+        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], **late)
+        assert not ok and "completion was shown this section from" in why, why
+        ok, why = _judge(root, receipt=shown, **late)
         assert not ok and "missing: second" in why, why
         # A second pass shown only what follows the late plan pass was not shown the section.
-        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["final"])], **late)
+        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["final"])], receipt=shown, **late)
         assert not ok and "not from the section's start" in why, why
-        assert _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], **late) == (True, "")
+        assert _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], receipt=shown, **late) == (True, "")
         # A record that cannot be read is said so; it is not read as nothing owed.
         owed.write_text("{")
-        ok, why = _judge(root, **late)
+        ok, why = _judge(root, receipt=shown, **late)
         assert not ok and "where this section started could not be read" in why, why
     finally:
         owed.unlink()

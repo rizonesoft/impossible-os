@@ -927,7 +927,12 @@ def _rollover_failures(root: Path, state: dict) -> list:
     if review_state.exists():
         try:
             rs = json.loads(review_state.read_text())
-            if rs.get("received") is not True:
+            # A section built while the reviewer was down is committed through the
+            # gate's opt-out, which marks the last review used up (received false,
+            # skipped_section_commit true). That is the recorded debt, not a review
+            # waiting to be read; a review that really is unread has no such mark.
+            owed_skip = rs.get("skipped_section_commit") is True and _reviews_owed(root)
+            if rs.get("received") is not True and not owed_skip:
                 fails.append("outstanding Codex review not yet received")
         except (OSError, ValueError):
             fails.append("last-codex-review.json unreadable (fail-closed)")

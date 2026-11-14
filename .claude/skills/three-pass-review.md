@@ -128,7 +128,7 @@ python3 scripts/second_review_dispatch.py '[review-kind: second] <todo-path> sec
 
 - `python3 scripts/overnight/review_owed.py add --todo <todo-path> --section <N>` before the first edit. It records the commit the section starts from.
 - Build and commit. Nothing is pushed while a debt is open; the push gate refuses.
-- When `python3 scripts/overnight/review_owed.py probe` exits 0: dispatch the `plan` pass late, then the wave. `python3 scripts/review_pin.py --section <todo-path> <N>` prints the recorded base as `REVIEW_BASE=`; use it, not the late plan pass's commit.
+- When `python3 scripts/overnight/review_owed.py probe` exits 0: dispatch the `plan` pass late, then the wave with no `REVIEW_BASE`. `scripts/codex-dispatch.sh` takes the recorded base for every pass after the plan, tells the reviewer the range and writes it on the receipt; a base that names the late plan pass's commit, or HEAD, is refused, and the stamp gate refuses a pass that was shown less.
 - After the stamp commit: `python3 scripts/overnight/review_owed.py clear --todo <todo-path> --section <N>`, then push.
 
 The steps for an unattended run are in [`overnight-sequencer`](overnight-sequencer/SKILL.md).

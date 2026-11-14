@@ -15,6 +15,7 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --section TODO N                     # passes | older | new: the rules a section is on
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
+    python3 scripts/review_pin.py --owed-base TODO N                   # an owed section's recorded base, else empty
     python3 scripts/review_pin.py --second         # the second reviewer's settings as JSON (exit 1: none pinned)
     python3 scripts/review_pin.py --second-applies --paths-file FILE   # 0 a changed file is in its paths, 1 none is
     --raw                                          # with --highest: the transcript is the review itself
@@ -402,6 +403,7 @@ def main(argv=None):
     group.add_argument("--verdicts", metavar="KIND", choices=SECTION_KINDS)
     group.add_argument("--highest", action="store_true")
     group.add_argument("--section", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--owed-base", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--second", action="store_true")
     group.add_argument("--second-applies", action="store_true")
     parser.add_argument("--raw", action="store_true")
@@ -419,6 +421,10 @@ def main(argv=None):
                 paths = tuple(p for p in pathlib.Path(args.paths_file).read_text().splitlines() if p)
             except OSError as exc:
                 raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
+        if args.owed_base:
+            # The recorded base of a section built during an outage, or nothing when it is not owed.
+            print(section_base(args.root, args.owed_base[0], args.owed_base[1], ""))
+            return 0
         if args.section:
             status, base = section_status(args.root, args.section[0], args.section[1])
             print(status + (f" REVIEW_BASE={base}" if base else ""))

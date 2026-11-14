@@ -461,8 +461,13 @@ def _fresh_nodes(root):
         return None
 
 
-OWED_TOOL = os.path.join("scripts", "overnight", "review_owed.py")
+OUTAGE_TOOL = os.path.join("scripts", "overnight", "codex-outage-check.py")
+OUTAGE_MANIFEST = os.path.join(".claude", "overnight", "reviews", "manifest.jsonl")
 OWED_STATE = os.path.join(".claude", "state", "review-owed.json")
+# This oracle answers inside the Stop hook, which has five seconds in all. The probe is one process (the outage
+# check itself, the same answer `review_owed.py probe` gives) and is given less than that; one that does not
+# answer in time is an unknown, and an unknown changes nothing.
+OUTAGE_PROBE_TIMEOUT = 2.0
 
 
 _OWED_MEMO = {}
@@ -495,8 +500,9 @@ def _owed_reviews(root):
         return frozenset(), []
     import subprocess
     try:
-        done = subprocess.run([sys.executable, os.path.join(root, OWED_TOOL), "--root", str(root), "probe"],
-                              capture_output=True, text=True, timeout=60)
+        done = subprocess.run([sys.executable, os.path.join(root, OUTAGE_TOOL), "--manifest",
+                               os.path.join(root, OUTAGE_MANIFEST)],
+                              capture_output=True, text=True, timeout=OUTAGE_PROBE_TIMEOUT)
     except (OSError, subprocess.SubprocessError):  # fail-direction: unknown -> the ordinary order
         return frozenset(), []
     if done.returncode == 75:

@@ -2801,6 +2801,17 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     final_kind, final, final_age = ("reconciliation", reconciliation, r_age) if newer_reconciliation \
         else ("completion", completion, c_age)
     second_owed, allowance = _second_issues(root, todo, section, plan, current_head, blocking) if todo else ([], None)
+    # A section built while the reviewer was down starts at its recorded base, before its code; its plan pass
+    # came late. Each pass after the plan must have been shown the section from that base (the dispatcher
+    # records it): one based at the late plan pass or at HEAD read little or nothing of it.
+    owed_base = ""
+    if todo and plan is not None and _receipt_complete(plan):
+        try:
+            import review_pin
+            start = review_pin.section_base(root, todo, section, plan["head"])
+            owed_base = start if start != plan["head"] else ""
+        except Exception as exc:
+            parts.append(f"where this section started could not be read ({exc})")
     for kind, (receipt, age) in (("round", receipts.get("round", (None, 0))),
                                  ("performance", receipts.get("performance", (None, 0))),
                                  (final_kind, (final, final_age))):
@@ -2809,6 +2820,10 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
         ok, why = _pass_covers(root, kind, receipt, current_head, blocking, allowance, age)
         if not ok:
             parts.append(why)
+        elif owed_base and receipt.get("base") != owed_base:
+            parts.append(f"{kind} was shown this section from {str(receipt.get('base'))[:10]}, but it was built "
+                         f"while the reviewer was down and starts at {owed_base[:10]}: dispatch it again "
+                         f"(scripts/codex-dispatch.sh takes the recorded base when REVIEW_BASE is unset)")
     parts.extend(second_owed)
 
     staged = _git_lines(root, "diff", "--cached", "--no-renames", "--name-only")
