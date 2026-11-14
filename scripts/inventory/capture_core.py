@@ -115,6 +115,30 @@ def _segment(el, identity=(), values=()):
     return name or slug(el.class_name) or slug(el.control_type) or "element"
 
 
+def outermost(found, parent_of):
+    """The keys of `found` with no ancestor in `found`.
+
+    found maps a runtime id to an element; parent_of(element) gives its parent's
+    runtime id, or None at the top. A popup search finds nested containers too
+    (a list inside a list); reading only the outermost keeps a nested list's rows
+    out of the entries, and behind a marked environment list where it belongs.
+    """
+    keep = []
+    for key, el in found.items():
+        node, nested = el, False
+        for _ in range(MAX_DEPTH):
+            up = parent_of(node)
+            if up is None:
+                break
+            if up[0] in found:
+                nested = True
+                break
+            node = up[1]
+        if not nested:
+            keep.append(key)
+    return keep
+
+
 def excluded(el):
     """Why the walk leaves el out entirely, or None: the same rule for walk and dump."""
     if el.offscreen:

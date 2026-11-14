@@ -263,6 +263,21 @@ class NeverData(unittest.TestCase):
         self.assertFalse([n for n in names if n.startswith("Local AI")])
 
 
+class Popups(unittest.TestCase):
+    def test_only_the_outermost_containers_are_read(self):
+        # host > devices (marked list) > inner list; a separate menu beside it.
+        parents = {"inner": "devices", "devices": "host", "menu": "host", "host": None}
+        found = {"devices": "devices", "inner": "inner", "menu": "menu"}
+
+        def parent_of(el):
+            up = parents[el]
+            return (up, up) if up else None
+        self.assertEqual(core.outermost(found, parent_of), ["devices", "menu"])
+
+    def test_a_deep_or_cyclic_parent_chain_ends(self):
+        self.assertEqual(core.outermost({"a": "a"}, lambda el: ("z", "z")), ["a"])
+
+
 class Unnamed(unittest.TestCase):
     def test_unnamed_elements_fall_back_to_their_id_or_class_and_are_listed(self):
         cap = walk()

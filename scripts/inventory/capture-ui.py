@@ -174,6 +174,7 @@ class Live:
         for prop in CACHED:
             self.cache.AddProperty(prop)
         self.control_view = self.uia.ControlViewCondition
+        self.walker = self.uia.ControlViewWalker
         visible = self.uia.CreatePropertyCondition(PROP_IS_OFFSCREEN, False)
         popup = self.uia.CreateOrCondition(self.uia.CreatePropertyCondition(PROP_CONTROL_TYPE, 50009),
                                            self.uia.CreatePropertyCondition(PROP_CONTROL_TYPE, 50008))
@@ -215,7 +216,9 @@ class Live:
         return out
 
     def popups(self, pid):
-        """Menu and List containers now on screen in process `pid`, by runtime id."""
+        """The outermost Menu and List containers now on screen in process `pid`,
+        by runtime id: a container inside another is read as one of its entries,
+        never on its own (core.outermost)."""
         out = {}
         for host in self.hosts(pid):
             found = host.FindAll(TREE_ELEMENT | TREE_DESCENDANTS, self.visible_popup)
@@ -225,7 +228,14 @@ class Live:
             for j in range(n):
                 e = found.GetElement(j)
                 out[tuple(e.GetRuntimeId())] = e
-        return out
+        return {k: out[k] for k in core.outermost(out, self._parent)}
+
+    def _parent(self, el):
+        try:
+            up = self.walker.GetParentElement(el)
+        except self.COMError:
+            return None
+        return (tuple(up.GetRuntimeId()), up) if up else None
 
     def gone(self, el):
         """True once a popup element is closed: hidden, empty or no longer there."""
