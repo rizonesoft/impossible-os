@@ -337,6 +337,36 @@ class Publish(unittest.TestCase):
                     self.assertIn('"one"', (self.tmp / n / "baseline.json").read_text())
                 left = sorted(str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*") if p.is_file())
                 self.assertEqual(left, ["controls/baseline.json", "settings/baseline.json"])
+    def test_a_failure_at_the_commit_point_rolls_back(self):
+        baselines.publish(self.files("one"), self.tmp / "journal")
+        real = pathlib.Path.unlink
+
+        def flaky(p, *a, **kw):
+            if p.name == "journal" and not kw.get("missing_ok"):
+                raise OSError("read-only")
+            return real(p, *a, **kw)
+        with mock.patch.object(pathlib.Path, "unlink", flaky):
+            with self.assertRaises(OSError):
+                baselines.publish(self.files("two"), self.tmp / "journal")
+        for n in ("settings", "controls"):
+            self.assertIn('"one"', (self.tmp / n / "baseline.json").read_text())
+        left = sorted(str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*") if p.is_file())
+        self.assertEqual(left, ["controls/baseline.json", "settings/baseline.json"])
+
+    def test_litter_after_the_commit_is_not_a_failed_publication(self):
+        baselines.publish(self.files("one"), self.tmp / "journal")
+        real = pathlib.Path.unlink
+
+        def flaky(p, *a, **kw):
+            if p.name.endswith(".old"):
+                raise OSError("busy")
+            return real(p, *a, **kw)
+        with mock.patch.object(pathlib.Path, "unlink", flaky):
+            baselines.publish(self.files("two"), self.tmp / "journal")      # does not raise
+        for n in ("settings", "controls"):
+            self.assertIn('"two"', (self.tmp / n / "baseline.json").read_text())
+        self.assertFalse((self.tmp / "journal").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

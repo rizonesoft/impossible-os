@@ -321,14 +321,19 @@ def swap(staged, journal):
             if e["had"]:
                 os.replace(e["final"], e["old"])
             os.replace(e["tmp"], e["final"])
+        journal.unlink()                           # the commit point: a failure here still rolls back
     except BaseException:
         roll_back(entries)
         journal.unlink(missing_ok=True)
         jtmp.unlink(missing_ok=True)
         raise
-    journal.unlink()                               # the commit point
+    # Committed. A replaced copy that cannot be removed is litter, never a failed
+    # publication: reporting one would say "unchanged" about files that changed.
     for e in entries:
-        pathlib.Path(e["old"]).unlink(missing_ok=True)
+        try:
+            pathlib.Path(e["old"]).unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"capture: published; could not remove the replaced copy {e['old']} ({exc})")
 
 
 @contextlib.contextmanager

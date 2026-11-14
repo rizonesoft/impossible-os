@@ -219,6 +219,10 @@ def header_errors(h, name, build):
         yield "source is a non-empty string naming what was read"
     if ("build" in h) == ("upstream" in h):
         yield "a header has exactly one of build (read from the reference machine) and upstream (imported)"
+    elif name in baseline_core.VM_BASELINES and "build" not in h:
+        yield f"{name} is read from the reference machine, so its header names the build, not an upstream"
+    elif name in baseline_core.OWNERS and name not in baseline_core.VM_BASELINES and "upstream" not in h:
+        yield f"{name} is imported, so its header names the upstream, not a build"
     elif "build" in h:
         if build is None:
             yield "the header names a build but there is no reference.json to compare it with"

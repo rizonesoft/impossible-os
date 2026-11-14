@@ -208,6 +208,16 @@ class Baselines(unittest.TestCase):
         self.assertIn("baseline-header", self.rules({"controls/baseline.json": bl("controls", ["a"], **bad)}))
         self.assertIn("baseline-header", self.rules({"nosuch/baseline.json": bl("nosuch", ["a"], owner="x")}))
 
+    def test_a_machine_baseline_cannot_trade_its_build_for_an_upstream(self):
+        up = {"repo": "o/r", "commit": SHA, "license": "MIT"}
+        old = rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a",
+                  source="uia:26300.9000", capturedFrom="26300.9000")
+        r, out = self.report({"settings/baseline.json": bl("settings", ["a"], build=None, upstream=up),
+                              "settings/home.json": [old]})
+        self.assertIn("baseline-header", [e["rule"] for e in out["errors"]])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("baseline-header", self.rules({"controls/baseline.json": bl("controls", ["a"])}))
+
     def test_row_rules(self):
         lines = bl("settings", ["a", "a"]) + ['{"name": "no id"}', ""]
         rules = self.rules({"settings/baseline.json": lines})
@@ -294,10 +304,11 @@ class Baselines(unittest.TestCase):
         for name, owner in (("known-folders", "explorer"), ("shell-commands", "explorer"), ("start-apps", "start"),
                             ("controls", "system"), ("classic-controls", "system")):
             with self.subTest(name):
-                dup = bl(name, ["a", "a"], owner=owner)
+                src = {"build": None, "upstream": {"repo": "o/r", "commit": SHA, "license": "MIT"}} if name == "controls" else {}
+                dup = bl(name, ["a", "a"], owner=owner, **src)
                 self.assertEqual(self.rules({f"{name}/baseline.json": dup, f"{owner}/x.json": []}, "--surface", owner)
                                  [:1], ["baseline-duplicate"])
-                bad = bl(name, ["a"], owner=owner, extra=1) + ['{"no": "id"}']
+                bad = bl(name, ["a"], owner=owner, extra=1, **src) + ['{"no": "id"}']
                 rules = self.rules({f"{name}/baseline.json": bad, f"{owner}/x.json": []}, "--surface", owner)
                 self.assertIn("baseline-header", rules)
                 self.assertIn("baseline-row", rules)
