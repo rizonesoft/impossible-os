@@ -325,18 +325,19 @@ function Complete-Clean() {
         if ($problems.Count) { throw "clean not taken: $($problems -join '; ')" }
     } finally { Remove-PSSession $s }
     # The old clean is replaced only once its successor exists.
+    Repair-CleanPromotion
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean-next' }) { Remove-VMSnapshot -VMName $Name -Name 'clean-next' }
     Checkpoint-VM -Name $Name -SnapshotName 'clean-next'
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean' }) { Remove-VMSnapshot -VMName $Name -Name 'clean' }
     Rename-VMSnapshot -VMName $Name -Name 'clean-next' -NewName 'clean'
     Write-Ref 'checkpoint clean taken'
-    Stop-VM -Name $Name -TurnOff -Force
 }
 
 function Invoke-Verify() {
     $problems = @()
     $vm = Get-VM | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
-    if (-not $vm) { Write-Host "ref-vm: no VM named $Name"; exit 1 }
+    if (-not $vm) { Write-Host "ref-vm: no VM named $Name"; return 1 }
+    Repair-CleanPromotion
     $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
     foreach ($c in 'pre-oobe', 'clean') { if ($names -notcontains $c) { $problems += "missing checkpoint $c" } }
     if ($vm.ProcessorCount -ne 4) { $problems += "vCPU $($vm.ProcessorCount), want 4" }
@@ -344,17 +345,29 @@ function Invoke-Verify() {
     if (@(Get-VMNetworkAdapter -VMName $Name).Count -ne 0) { $problems += 'the VM has a network adapter' }
     if (-not (Get-VMSecurity -VMName $Name).TpmEnabled) { $problems += 'TPM is off' }
     if ($problems.Count -eq 0) {
-        $s = Start-RefFrom $Name $VmPath 'clean'
+        $s = $null
         try {
+            $s = Start-RefFrom $Name $VmPath 'clean'
             $problems += @(Get-ProfileProblems $s)
-        } finally { Remove-PSSession $s; Stop-VM -Name $Name -TurnOff -Force }
+        } finally { if ($s) { Remove-PSSession $s } }
     }
     if ($problems.Count) {
         foreach ($p in $problems) { Write-Host "ref-vm: $p" }
-        exit 1
+        return 1
     }
     Write-Host "ref-vm: $Name ok, profile fhd-100 (Windows 11 $($script:Seen.edition) $($script:Seen.displayVersion) build $($script:Seen.build))"
-    exit 0
+    return 0
+}
+
+# A run stopped between removing clean and renaming clean-next leaves clean-next
+# as the only desktop checkpoint: finish that promotion before anything else.
+# With clean present, a clean-next is a stale candidate and may go.
+function Repair-CleanPromotion() {
+    $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
+    if ($names -contains 'clean-next' -and $names -notcontains 'clean') {
+        Rename-VMSnapshot -VMName $Name -Name 'clean-next' -NewName 'clean'
+        Write-Ref 'finished an interrupted promotion of clean-next to clean'
+    }
 }
 
 # Everything that must hold in clean: the reference identity, the fhd-100 values
@@ -390,7 +403,18 @@ function Invoke-Reclean() {
     Complete-Clean
 }
 
-Enter-RefLock $VmPath $Name
+Enter-RefLock $Name
 $script:ProfileProbe = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-profile.ps1'
 $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
-if ($Verify) { Invoke-Verify } elseif ($Reclean) { Invoke-Reclean; Invoke-Verify } else { Invoke-Build; Invoke-Verify }
+# Every path ends with the VM off, a failed one included: a running reference VM
+# holds 4 GiB of the host. The exit comes after the finally, because cmdlets in a
+# finally entered by exit are skipped (seen 2026-11-14).
+$rc = 1
+try {
+    if ($Reclean) { Invoke-Reclean } elseif (-not $Verify) { Invoke-Build }
+    $rc = Invoke-Verify | Select-Object -Last 1
+} finally {
+    $vm = Get-VM | Where-Object { $_.Name -eq $Name }
+    if ($vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+}
+exit $rc

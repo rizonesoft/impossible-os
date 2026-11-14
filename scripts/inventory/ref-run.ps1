@@ -38,31 +38,38 @@ if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force)
     Write-Host "ref-run: $Out is not empty; give a new folder for each run"; exit 2
 }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
-Enter-RefLock $VmPath $Name
+Enter-RefLock $Name
 
-try { $s = Start-RefFrom $Name $VmPath $Checkpoint } catch { Write-Host "ref-run: $($_.Exception.Message)"; exit 3 }
+$s = $null
+$code = 3
 try {
-    Invoke-Command -Session $s -ScriptBlock {
-        foreach ($d in 'C:\ios\in', 'C:\ios\out') {
-            if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
-            New-Item -ItemType Directory -Path $d | Out-Null
+    # Inside the try, so a failure while starting still turns the VM off. No exit
+    # here: cmdlets in a finally entered by exit are skipped (Stop-VM left the VM
+    # Saved, seen 2026-11-14), so the code is set and the work skipped instead.
+    try { $s = Start-RefFrom $Name $VmPath $Checkpoint } catch { Write-Host "ref-run: $($_.Exception.Message)" }
+    if ($s) {
+        Invoke-Command -Session $s -ScriptBlock {
+            foreach ($d in 'C:\ios\in', 'C:\ios\out') {
+                if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+                New-Item -ItemType Directory -Path $d | Out-Null
+            }
+        }
+        $wrong = @(Test-RefIdentity $s)
+        if ($wrong.Count) {
+            foreach ($w in $wrong) { Write-Host "ref-run: $w" }
+            $code = 5
+        } else {
+            if ($In) { Send-RefTree $s $In 'C:\ios\in' }
+            $r = Invoke-RefInteractive $s $Command $TimeoutSec
+            $n = Receive-RefTree $s 'C:\ios\out' $Out
+            Set-Content -LiteralPath (Join-Path $Out 'stdout.txt') -Value $r.Output
+            Write-Host "ref-run: exit $($r.ExitCode); $n file(s) in $Out"
+            if ($r.Output) { Write-Host $r.Output.Trim() }
+            $code = $r.ExitCode
         }
     }
-    $wrong = @(Test-RefIdentity $s)
-    if ($wrong.Count) {
-        foreach ($w in $wrong) { Write-Host "ref-run: $w" }
-        $code = 5
-    } else {
-        if ($In) { Send-RefTree $s $In 'C:\ios\in' }
-        $r = Invoke-RefInteractive $s $Command $TimeoutSec
-        $n = Receive-RefTree $s 'C:\ios\out' $Out
-        Set-Content -LiteralPath (Join-Path $Out 'stdout.txt') -Value $r.Output
-        Write-Host "ref-run: exit $($r.ExitCode); $n file(s) in $Out"
-        if ($r.Output) { Write-Host $r.Output.Trim() }
-        $code = $r.ExitCode
-    }
 } finally {
-    Remove-PSSession $s
-    Stop-VM -Name $Name -TurnOff -Force
+    if ($s) { Remove-PSSession $s }
+    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
 }
 exit $code

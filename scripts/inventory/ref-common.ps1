@@ -124,21 +124,27 @@ function Save-Thumbnail([byte[]]$Bytes, [string]$Path) {
     $bmp.Dispose()
 }
 
-# The operator-only folder rule: inheritance off, full control for this user and
-# SYSTEM (Hyper-V adds the VM's own identity when it attaches a file).
+# The operator-only folder rule: the folder's whole access list is replaced by
+# full control for this user and SYSTEM, inherited by everything made in it, so
+# no grant left on a reused folder reaches the password media (Hyper-V adds the
+# VM's own identity to each file it attaches).
 function Protect-RefPath([string]$Path) {
-    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    & icacls.exe $Path /inheritance:r /grant:r "${me}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls failed on $Path" }
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($who in [Security.Principal.WindowsIdentity]::GetCurrent().User, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18')) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($who, 'FullControl', $inherit, 'None', 'Allow')))
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
 # One operation per VM at a time: two runs would restore each other's checkpoint
-# and share C:\ios\run. The handle is held until the process exits.
-function Enter-RefLock([string]$VmPath, [string]$Name) {
-    New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
-    try {
-        $script:RefLock = [IO.File]::Open((Join-Path $VmPath 'ref.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-    } catch [IO.IOException] {
+# and share C:\ios\run. Keyed to the VM name, not the folder, since two folders
+# can name the same VM; Windows releases the mutex when the process exits.
+function Enter-RefLock([string]$Name) {
+    $script:RefLock = New-Object Threading.Mutex($false, "Local\ios-ref-vm-$Name")
+    try { $held = $script:RefLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
+    if (-not $held) {
         Write-Host "ref: another ref-vm or ref-run is using $Name"
         exit 4
     }
@@ -270,10 +276,11 @@ function Receive-RefTree($Session, [string]$Source, [string]$Destination) {
 # without it (seen 2026-11-14). Media outside the folder, such as the operator's
 # ISO, is not ours to change and keeps the access Hyper-V gave it.
 function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath) {
+    # Inputs are checked before the VM is touched, so a bad argument leaves it as it was.
+    $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
     Restore-VMSnapshot -VMName $Name -Name $Checkpoint -Confirm:$false
     $id = (Get-VM -Name $Name).Id
-    $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
     foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })) {
         # Through cmd so a refusal is an exit code, not a PowerShell error record;
         # started from the Windows folder, since cmd refuses a WSL share as its
@@ -286,6 +293,7 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
 }
 
 function Start-RefFrom([string]$Name, [string]$VmPath, [string]$Checkpoint) {
+    Get-RefCredential $VmPath | Out-Null   # fails before the restore, not after
     Restore-RefCheckpoint $Name $Checkpoint $VmPath
     return New-RefSession $Name $VmPath
 }
