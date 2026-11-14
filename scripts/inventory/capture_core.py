@@ -204,7 +204,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
                 raise Incomplete(f"more than {MAX_VISITS} elements read; the surface module must name a smaller root")
             if not keep(k):
                 continue
-            if is_hosting(k):
+            if is_hosting(k) and not is_environment(k):   # a marked list is never flattened open
                 if depth > MAX_DEPTH:
                     raise Incomplete(f"hosting panes nest deeper than {MAX_DEPTH} levels")
                 cap.skipped["hosting"] += 1

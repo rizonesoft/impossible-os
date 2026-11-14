@@ -189,6 +189,26 @@ class NeverData(unittest.TestCase):
         plain = core.walk(core.FixtureElement(t), **args)            # not marked: its rows are entries
         self.assertIn("Jo's USB stick", [r.get("label") for r in plain.records])
 
+    def test_an_unnamed_environment_pane_is_never_opened(self):
+        rows = dict(node("", "Pane", cls="DeviceRows"), children=[node("Jo's USB stick", "ListItem")])
+        t = node("Root", "Window", children=[rows])
+        args = dict(surface="s", build="1.2", profile="p", root_slug="r", root_label="R",
+                    environment_lists=[{"className": "DeviceRows"}])
+        read = []
+        real = core.FixtureElement.children
+
+        def spy(self, **kw):
+            read.append(self.class_name)
+            return real(self, **kw)
+        core.FixtureElement.children = spy
+        try:
+            cap = core.walk(core.FixtureElement(t), **args)
+        finally:
+            core.FixtureElement.children = real
+        self.assertNotIn("DeviceRows", read)
+        self.assertNotIn("usb", json.dumps(cap.records).lower())
+        core.confirm_dump(core.dump(core.FixtureElement(t), environment_lists=args["environment_lists"]), cap, **args)
+
     def test_live_values_are_withheld(self):
         cap = walk()
         labels = {r["label"] for r in cap.records}
