@@ -1538,6 +1538,9 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
 > - Canonical doc: [`overnight-sequencer`](../../.claude/skills/overnight-sequencer/SKILL.md), the outage rule.
 > - Scope boundary: an expired login (Codex, Claude or `gh`) is not an outage by this check and still stalls; it stays in `todo/RUN-ISSUES.md`.
 
+> **Verified:** 2026-11-15 | commit `bcb092101` | 7/7 items | 158 tests OK (owed record, gate, pin, dispatchers) | `scripts/overnight/tests/run-all.sh` 94 passed, 0 failed | `review_pin.py --check` OK | lint 0 errors | `review_owed.py gate` exits 0 on the real tree
+> **Quality reviewed:** 2026-11-15 | Codex 17x (plan, round 6x, performance 5x, completion, reconciliation 4x) | 5H+6M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface)
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
