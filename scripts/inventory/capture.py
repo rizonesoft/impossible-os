@@ -66,6 +66,7 @@ WORK = pathlib.Path("/mnt/r/11/captures")
 # own finally (which turns the VM off) always gets to run before the host gives up.
 RUN_MARGIN = 1800
 LOCK = REPO / "build" / "inventory" / "capture.lock"
+JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap, rolled back by the next run
 
 
 def winpath(p):
@@ -132,6 +133,8 @@ def check_scratch(rel_file, records):
         tree = scratch / "inventory"
         shutil.copytree(INVENTORY, tree)
         target = tree / rel_file
+        if not target.resolve().is_relative_to(tree.resolve()):
+            raise ValueError(f"{rel_file} is outside the inventory")
         target.parent.mkdir(parents=True, exist_ok=True)
         core.write_records(target, records)
         r = subprocess.run([sys.executable, str(HERE / "check-inventory.py"), "--root", str(tree)],
@@ -192,16 +195,44 @@ def build_file(target, new, meta, do_merge):
     return records
 
 
-def publish(target, records, surface, out, states, manifest_path, store):
+def roll_back(entries):
+    """Put every file of an unfinished swap back as it was before it started.
+
+    An entry's .old copy exists exactly while its destination is moved aside, so
+    restoring every .old copy and removing every destination that did not exist
+    before undoes any prefix of the swap, however it was interrupted.
+    """
+    for e in reversed(entries):
+        final, old = pathlib.Path(e["final"]), pathlib.Path(e["old"])
+        if old.exists():
+            os.replace(old, final)
+        elif not e["had"]:
+            final.unlink(missing_ok=True)
+    for e in entries:
+        pathlib.Path(e["tmp"]).unlink(missing_ok=True)
+
+
+def recover(journal):
+    """Undo a publication that was killed part way. Call under the capture lock."""
+    if not journal.exists():
+        return False
+    roll_back(json.loads(journal.read_text(encoding="utf-8")))
+    journal.unlink()
+    return True
+
+
+def publish(target, records, surface, out, states, manifest_path, store, journal=None):
     """Publish records and screenshots together, or leave the old publication alone.
 
     Stage: copy every screenshot next to its destination under a temporary name,
     write the new manifest and the new records beside theirs. Then swap: each
     existing destination is first moved aside to <name>.old, then the staged file
-    takes its place. A failure part way through the swap puts every file back as
-    it was (new ones removed, the .old copies restored) and re-raises; only a
-    swap that completes deletes the .old copies.
+    takes its place. The swap is written to `journal` before it starts, and
+    removing the journal is its commit point; the .old copies go only after it.
+    A failure puts every file back (roll_back) and re-raises; a kill, which no
+    handler sees, leaves the journal, and the next run's recover() rolls back.
     """
+    journal = journal or JOURNAL
     names = [s["file"] for s in states]
     if len(set(names)) != len(names):
         raise OSError(f"two screenshots of {surface} share a file name; nothing staged")
@@ -232,27 +263,27 @@ def publish(target, records, surface, out, states, manifest_path, store):
         for tmp, _ in staged:
             tmp.unlink(missing_ok=True)
         raise
-    swapped = []
+    entries = [{"tmp": str(tmp), "final": str(final), "old": str(final.with_name(f"{final.name}.{os.getpid()}.old")),
+                "had": final.exists()} for tmp, final in staged]
     try:
-        for tmp, final in staged:
-            old = final.with_name(f"{final.name}.{os.getpid()}.old")
-            had = final.exists()
-            if had:
-                os.replace(final, old)
-            swapped.append((final, old, had))
-            os.replace(tmp, final)
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        jtmp = journal.with_name(journal.name + ".tmp")
+        with open(jtmp, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(jtmp, journal)
+        for e in entries:
+            if e["had"]:
+                os.replace(e["final"], e["old"])
+            os.replace(e["tmp"], e["final"])
     except BaseException:
-        for final, old, had in reversed(swapped):
-            if had:
-                os.replace(old, final)
-            else:
-                final.unlink(missing_ok=True)
-        for tmp, _ in staged:
-            tmp.unlink(missing_ok=True)
+        roll_back(entries)
+        journal.unlink(missing_ok=True)
         raise
-    for _, old, had in swapped:
-        if had:
-            old.unlink(missing_ok=True)
+    journal.unlink()                               # the commit point
+    for e in entries:
+        pathlib.Path(e["old"]).unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
@@ -288,6 +319,9 @@ def main(argv=None):
         return 1 if bad else 0
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")
+    for flag, value in (("--surface", args.surface), ("--file", args.file)):
+        if value != core.slug(value):
+            ap.error(f"{flag} {value!r} must be a slug (lower-case letters, digits, single hyphens), not a path")
     try:
         with exclusive(LOCK):
             return capture_and_publish(args)
@@ -297,6 +331,8 @@ def main(argv=None):
 
 
 def capture_and_publish(args):
+    if recover(JOURNAL):
+        print("capture: rolled back a publication that was interrupted; the previous one is restored")
     out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture)
     if rc == 2:
         return 2

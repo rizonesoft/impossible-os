@@ -21,6 +21,7 @@ import json
 import pathlib
 import shutil
 import struct
+import sys
 import tempfile
 import unittest
 import zlib
@@ -450,6 +451,7 @@ class Shots(unittest.TestCase):
         self.manifest.write_text(json.dumps([{"surface": "other", "state": "rest", "profile": "fhd-100",
                                               "width": 1, "height": 1, "size": 1, "sha256": "0" * 64}]))
         self.target = self.tmp / "inventory" / "notepad-smoke" / "window.json"   # its folder does not exist yet
+        self.journal = self.tmp / "publish.journal"
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
@@ -466,7 +468,8 @@ class Shots(unittest.TestCase):
     STATE = [{"state": "rest", "file": "rest.fhd-100.png", "width": 2, "height": 1}]
 
     def publish(self, records=({"id": "win11.notepad-smoke.window", "label": "Notepad"},)):
-        capture.publish(self.target, list(records), "notepad-smoke", self.out, self.STATE, self.manifest, self.store)
+        capture.publish(self.target, list(records), "notepad-smoke", self.out, self.STATE, self.manifest, self.store,
+                        journal=self.journal)
 
     def test_publish_then_verify(self):
         self.publish()
@@ -526,8 +529,38 @@ class Shots(unittest.TestCase):
         before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
         with self.assertRaises(OSError):
             capture.publish(self.target, [{"id": "x"}], "notepad-smoke", self.out, self.STATE * 2,
-                            self.manifest, self.store)
+                            self.manifest, self.store, journal=self.journal)
         self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+    def test_a_kill_part_way_is_rolled_back_by_the_next_run(self):
+        self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        # A child process publishes and dies (os._exit: no handler runs) as it
+        # swaps the records, after the screenshot and the manifest are swapped.
+        script = f"""
+import importlib.util, os, pathlib, sys
+spec = importlib.util.spec_from_file_location("capture_host", {str(INV / "capture.py")!r})
+capture = importlib.util.module_from_spec(spec); spec.loader.exec_module(capture)
+real = os.replace
+def dying(src, dst):
+    if str(dst).endswith(".old") and "window.json" in str(dst):
+        real(src, dst)
+        os._exit(9)
+    return real(src, dst)
+capture.os.replace = dying
+t = pathlib.Path({str(self.tmp)!r})
+capture.publish(t / "inventory" / "notepad-smoke" / "window.json", [{{"id": "win11.notepad-smoke.window", "label": "New"}}],
+                "notepad-smoke", t / "out", {self.STATE!r}, t / "shots.json", t / "store", journal=t / "publish.journal")
+"""
+        r = capture.subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 9, r.stderr)
+        self.assertFalse(self.target.exists())          # killed with the records moved aside
+        self.assertTrue(capture.recover(self.journal))
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(self.journal.exists())
+        leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged", ".old"))]
+        self.assertEqual(leftovers, [])
+        self.assertFalse(capture.recover(self.journal))   # nothing left to do
 
     def test_a_failed_record_write_leaves_the_file_whole(self):
         core.write_records(self.tmp / "r.json", [{"id": "a"}])
@@ -595,6 +628,19 @@ class Received(unittest.TestCase):
         self.write()
         with self.assertRaises(capture.core.Incomplete):
             capture.received(self.out, 0)
+
+
+class Arguments(unittest.TestCase):
+    def test_a_path_is_refused_before_anything_runs(self):
+        real = capture.run_guest
+        capture.run_guest = lambda *a: self.fail("the guest ran")
+        try:
+            for bad in ("../../etc/x", "/tmp/x", "a/b", "Window"):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ex:
+                    capture.main(["--surface", "notepad-smoke", "--file", bad, "--dry-run"])
+                self.assertEqual(ex.exception.code, 2)
+        finally:
+            capture.run_guest = real
 
 
 class Serial(unittest.TestCase):
