@@ -33,33 +33,12 @@ schema_version = 1
 cli = "codex"
 model = "gpt-6-astra"
 
-# The second reviewer (operator decisions 2026-11-14). A different model reads a section after Astra's passes
-# are clean, where a miss costs most: the costliest defects here had passed every review by one model.
-#   - It reads only sections whose changed files fall under `paths`: kernel, boot, and the security and ABI
-#     surfaces on both sides of the system call boundary (`user/include/`, `user/lib/`).
-#   - A pass may take `limit_seconds`. A one-file question took five minutes; the first live pass over a
-#     real section's range did not finish in nine (2026-11-14). A pass that runs out of time is not retried:
-#     the same work would run out again.
-#   - At most `round_cap` passes a section: find, confirm the repair, and one more if the repair is wrong.
-#     What is still open then is filed as a tracked item and the section ships.
-#   - It confirms its own repairs. Astra reads a repair again only when more than `small_fix_lines` lines
-#     changed since its passes.
-#   - Unavailable after `retries` attempts, it never blocks: the stamp says `second: unavailable` and the
-#     section is read later (scripts/overnight/second-review-log.py unavailable).
-#   - Wired on real sections rather than replayed first: second-review-log.py stats is the evidence, after ten
-#     sections, for keeping, narrowing or dropping it.
-# Dispatch: scripts/second-review-dispatch.sh. Its passes never count toward pass_cap.
-[reviewers.carbon]
-cli = "agy"
-model = "gemini-4-carbon-medium"
-
-[second]
-reviewer = "carbon"
-paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
-round_cap = 3
-retries = 3
-small_fix_lines = 50
-limit_seconds = 1500
+# No second reviewer is pinned (operator decision 2026-11-14, the same evening it was tried). Gemini 4 Carbon
+# through the `agy` CLI was wired as a second reviewer for kernel, boot and ABI sections, and removed: a pass
+# over a real section took about 14 minutes against the five expected, and it did not work as the operator
+# wanted. The mechanism is still here, switched off: a `[second]` table and its `[reviewers.<name>]` entry turn
+# it on again (scripts/review_pin.py documents the keys), and without them every section is reviewed by the
+# routed reviewer alone, exactly as before.
 
 [routes]
 claude = ["astra"]

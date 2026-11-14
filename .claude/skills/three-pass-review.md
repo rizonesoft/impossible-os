@@ -96,7 +96,7 @@ A fix made after a pass means that pass has not read the candidate: commit the f
 
 ## The second reviewer
 
-A different model (Gemini 4 Carbon, `[second]` in the pin) reads a section after Astra's wave is clean, when the section changed files under the pin's paths: `src/kernel/`, `include/kernel/`, `src/boot/`, `include/boot/`, `user/include/`, `user/lib/`. Every other section is reviewed exactly as above.
+**Switched off: the pin names no second reviewer (operator decision 2026-11-14), so skip this section; `python3 scripts/review_pin.py --second` exits 1 while that is so.** It applies only when a `[second]` table is in the pin. A different model then reads a section after Astra's wave is clean, when the section changed files under the pin's paths, for example `src/kernel/`, `include/kernel/`, `src/boot/`, `include/boot/`, `user/include/`, `user/lib/`. Every other section is reviewed exactly as above.
 
 ```bash
 python3 scripts/second_review_dispatch.py '[review-kind: second] <todo-path> section <N>

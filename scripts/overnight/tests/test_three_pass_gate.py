@@ -23,22 +23,32 @@ PASSES = ("plan", "round", "performance", "completion", "reconciliation")
 STAMP_UNAVAILABLE = STAMP + "> **Quality reviewed:** 2026-11-14 | Codex 4x | second: unavailable\n"
 
 
+SECOND = '''
+[reviewers.carbon]
+cli = "agy"
+model = "gemini-4-carbon-medium"
+
+[second]
+reviewer = "carbon"
+paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
+round_cap = 3
+retries = 3
+small_fix_lines = 50
+limit_seconds = 1500
+'''
+
+
 def _pin(second=False, small_fix_lines=None):
-    """The repository's own pin. Without `second`, its second reviewer is taken out: the sections of these
-    tests change kernel files, and most of them are about the routed reviewer's passes alone."""
+    """The repository's own pin, which names no second reviewer. With `second`, one is added: the mechanism
+    is switched off in the repository and is tested on a pin that switches it on."""
     text = (REPO / ".conclave/reviewers.toml").read_text()
-    if second:
-        if small_fix_lines is not None:
-            assert "small_fix_lines = 50" in text
-            text = text.replace("small_fix_lines = 50", f"small_fix_lines = {small_fix_lines}")
+    if not second:
         return text
-    keep, skipping = [], False
-    for line in text.splitlines(keepends=True):
-        if line.startswith("["):
-            skipping = line.strip() in ("[reviewers.carbon]", "[second]")
-        if not skipping:
-            keep.append(line)
-    return "".join(keep)
+    block = SECOND
+    if small_fix_lines is not None:
+        assert "small_fix_lines = 50" in block
+        block = block.replace("small_fix_lines = 50", f"small_fix_lines = {small_fix_lines}")
+    return text + block
 
 
 def _git(root, *args):

@@ -15,6 +15,19 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 SCRIPT = REPO / "scripts" / "second_review_dispatch.py"
 TODO = "todo/00-x/TODO-01-x.md"
 PROMPT = f"[review-kind: second] {TODO} section 7\nRead the change."
+SECOND = '''
+[reviewers.carbon]
+cli = "agy"
+model = "gemini-4-carbon-medium"
+
+[second]
+reviewer = "carbon"
+paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
+round_cap = 3
+retries = 3
+small_fix_lines = 50
+limit_seconds = 1500
+'''
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, pathlib, subprocess, sys, time
@@ -81,7 +94,8 @@ def _repo(tmp_path, source="src/kernel/a.c"):
     root.mkdir(parents=True)
     _git(root, "init", "-q", "-b", "main")
     (root / ".conclave").mkdir()
-    (root / ".conclave/reviewers.toml").write_text((REPO / ".conclave/reviewers.toml").read_text())
+    # The repository pins no second reviewer; the dispatcher is tested on a pin that does.
+    (root / ".conclave/reviewers.toml").write_text((REPO / ".conclave/reviewers.toml").read_text() + SECOND)
     (root / ".gitignore").write_text(".claude/\n")
     (root / TODO).parent.mkdir(parents=True)
     (root / TODO).write_text("# X\n\n## 7. Seven\n")
@@ -257,14 +271,7 @@ def test_refusals_before_dispatch(tmp_path):
     _git(root, "checkout", "--", "src/kernel/a.c")
     # No second reviewer pinned.
     pin = root / ".conclave/reviewers.toml"
-    text = pin.read_text()
-    keep, skipping = [], False
-    for line in text.splitlines(keepends=True):
-        if line.startswith("["):
-            skipping = line.strip() in ("[reviewers.carbon]", "[second]")
-        if not skipping:
-            keep.append(line)
-    pin.write_text("".join(keep))
+    pin.write_text((REPO / ".conclave/reviewers.toml").read_text())
     _git(root, "commit", "-qam", "no second reviewer")
     r = _run(root, base, fake)
     assert r.returncode == 2 and "names no second reviewer" in r.stderr

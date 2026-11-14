@@ -1498,7 +1498,7 @@ Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wav
 > - Plan review changed the design: the reviewer's copy is checked unchanged after each attempt, and a repair after the third pass is finished by Astra's passes instead of deadlocking.
 > - Downstream effects: a kernel or boot section costs up to 25 minutes more per second pass (the first live pass over a real section's range did not finish in nine); an outage or a pass out of time costs a mark on the stamp, never a stop.
 > - Canonical doc: [`three-pass-review.md`](../../.claude/skills/three-pass-review.md#the-second-reviewer).
-> - Scope boundary: an Astra outage is section 45; whether the second reviewer stays is decided from `second-review-log.py stats` after ten sections.
+> - Scope boundary: an Astra outage is section 45. Unpinned the same day (operator decision 2026-11-14: about 14 minutes a pass, and not working as wanted): the pin names no second reviewer, so the mechanism is switched off and every section is reviewed by Astra alone.
 
 > **Verified:** 2026-11-14 | commit `8a7d014ed` | 6/6 items | 139 tests OK (dispatcher, gate, pin, log) | `scripts/overnight/tests/run-all.sh` 93 passed, 0 failed | `review_pin.py --check` OK | lint 0 errors | live second pass returned a checked receipt in about 14 minutes
 > **Quality reviewed:** 2026-11-14 | Codex 17x (plan, round 6x, performance 5x, completion, reconciliation 4x) | 0H+15M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface; outside the second reviewer's paths)
@@ -1521,7 +1521,7 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
   - The packet marks an owed section `review_owed` and a recovered one `review_first`; `scripts/overnight/advance-work.py` never names the first, even as its fallback, and names the second ahead of everything else
   - The reviewer is probed by one process with a two-second wait, inside the Stop hook's five; no answer in time changes nothing
 - [x] The phase guard's rollover accepts unpushed commits while a review is owed, so an owed section is never counted as a failed rollover and reverted (`.claude/hooks/run_phase_guard.py`, a frozen file: edited attended)
-  - The outage commit's opt-out marks the last review used up; while a review is owed that mark is not an unread review
+  - The outage commit's opt-out writes its mark even when the failed dispatch had already left the review state unreceived (`_reset_review_state`); while a review is owed that mark is not an unread review
 - [x] `.githooks/pre-push` refuses a push while any section is owed, naming it, before every costly gate; a record that cannot be read refuses too
 - [x] The steps are in `.claude/skills/overnight-sequencer/SKILL.md` (the outage rule) and `.claude/skills/three-pass-review.md` ("When the reviewer is down")
 - [x] Commit: `"run: a reviewer outage leaves a review owed and the run continues"`
