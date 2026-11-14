@@ -25,12 +25,19 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
    SHA-256); writes build/inventory/<surface>-unnamed.json for hand labels.
 
 --verify-shots re-hashes the store against shots.json and names every missing or
-changed file. --dry-run does steps 1 to 4 and publishes nothing.
+changed file. --dry-run does steps 1 to 4 and publishes nothing. --fixture also
+keeps the walked tree (tree.json in the raw output) for a test fixture; it costs
+one more walk, so an ordinary capture does not take it.
+
+Publishing stages every file first (records, screenshots, manifest) and then
+replaces each atomically, records last: a failure before that point leaves the
+previous publication exactly as it was.
 """
 import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -79,7 +86,7 @@ def verify_shots(manifest, store):
     return out
 
 
-def run_guest(surface, profile, timeout):
+def run_guest(surface, profile, timeout, fixture=False):
     """Run capture-ui.py in the VM. Returns the output folder."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = WORK / f"{surface}-{stamp}-in"
@@ -90,7 +97,9 @@ def run_guest(surface, profile, timeout):
     shutil.copy(HERE / "surfaces" / f"{surface}.py", stage / "surfaces" / f"{surface}.py")
     shutil.copy(INVENTORY / "profiles.json", stage / "profiles.json")
     cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --profile {profile} --out C:\\ios\\out\\records.json "
-           f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json --dump C:\\ios\\out\\tree.json")
+           f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
+    if fixture:
+        cmd += " --dump C:\\ios\\out\\tree.json"
     r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1"),
                         "-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout), "-Command", cmd],
                        capture_output=True, text=True, timeout=RUN_TIMEOUT)
@@ -134,18 +143,42 @@ def build_file(target, new, meta, do_merge):
     return records
 
 
-def publish_shots(surface, out, states, manifest_path, store):
+def publish(target, records, surface, out, states, manifest_path, store):
+    """Publish records and screenshots together, or leave the old publication alone.
+
+    Stage: copy every screenshot next to its destination under a temporary name,
+    write the new manifest and the new records beside theirs. Only then replace:
+    screenshots, manifest, records, each with os.replace.
+    """
     manifest = [e for e in load_manifest(manifest_path) if e["surface"] != surface]
     dest = store / surface
-    dest.mkdir(parents=True, exist_ok=True)
-    for s in states:
-        src = out / "shots" / surface / s["file"]
-        state, profile = s["file"][: -len(".png")].rsplit(".", 1)
-        shutil.copy(src, dest / s["file"])
-        manifest.append({"surface": surface, "state": state, "profile": profile, "width": s["width"],
-                         "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
-    manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
-    manifest_path.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    staged = []
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        for s in states:
+            src = out / "shots" / surface / s["file"]
+            state, profile = s["file"][: -len(".png")].rsplit(".", 1)
+            tmp = dest / f".{s['file']}.tmp"
+            shutil.copyfile(src, tmp)
+            staged.append((tmp, dest / s["file"]))
+            if sha256(tmp) != sha256(src):
+                raise OSError(f"{tmp}: the copy differs from {src}")
+            manifest.append({"surface": surface, "state": state, "profile": profile, "width": s["width"],
+                             "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
+        manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
+        man_tmp = manifest_path.with_name(manifest_path.name + ".tmp")
+        man_tmp.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+        staged.append((man_tmp, manifest_path))
+        rec_tmp = target.with_name(target.name + ".staged")
+        core.write_records(rec_tmp, records)
+        staged.append((rec_tmp, target))
+    except BaseException:
+        for tmp, _ in staged:
+            tmp.unlink(missing_ok=True)
+        raise
+    for tmp, final in staged:
+        os.replace(tmp, final)
 
 
 def main(argv=None):
@@ -155,6 +188,7 @@ def main(argv=None):
     ap.add_argument("--profile", default="fhd-100")
     ap.add_argument("--merge", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--fixture", action="store_true", help="also keep the walked tree, for a test fixture")
     ap.add_argument("--verify-shots", action="store_true")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args(argv)
@@ -166,7 +200,7 @@ def main(argv=None):
         return 1 if bad else 0
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")
-    out, rc = run_guest(args.surface, args.profile, args.timeout)
+    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture)
     meta_path = out / "meta.json"
     if rc == 2:
         return 2
@@ -188,8 +222,11 @@ def main(argv=None):
     if args.dry_run:
         print(f"capture: dry run, {len(records)} records checked, nothing published (raw output in {out})")
         return 0
-    core.write_records(INVENTORY / rel, records)
-    publish_shots(args.surface, out, meta.get("states", []), SHOTS_MANIFEST, STORE)
+    try:
+        publish(INVENTORY / rel, records, args.surface, out, meta.get("states", []), SHOTS_MANIFEST, STORE)
+    except OSError as exc:
+        print(f"capture: publishing failed ({exc}); the previous publication is unchanged")
+        return 1
     unnamed = REPO / "build" / "inventory" / f"{args.surface}-unnamed.json"
     unnamed.parent.mkdir(parents=True, exist_ok=True)
     unnamed.write_text(json.dumps(meta.get("unnamed", []), indent=1) + "\n", encoding="utf-8")

@@ -26,6 +26,7 @@ bridge and input site), not interface: the walk records its children in its
 place, so ids follow what a user sees.
 """
 import json
+import os
 import re
 import struct
 import zlib
@@ -94,7 +95,7 @@ def matches(element, spec):
     return all(fields[k] == v for k, v in spec.items())
 
 
-def _segment(el, identity=()):
+def _segment(el, identity=(), values=()):
     for spec, seg in identity:
         if matches(el, spec):
             return seg
@@ -104,7 +105,20 @@ def _segment(el, identity=()):
         s = slug(aid)
         if s:
             return s
-    return slug(clean(el.name)) or slug(el.class_name) or slug(el.control_type) or "element"
+    # A live value never names an id: it would publish the value and move with it.
+    name = "" if any(matches(el, spec) for spec in values) else slug(clean(el.name))
+    return name or slug(el.class_name) or slug(el.control_type) or "element"
+
+
+def excluded(el):
+    """Why the walk leaves el out entirely, or None: the same rule for walk and dump."""
+    if el.offscreen:
+        return "offscreen"
+    if el.control_type in NEVER or el.class_name in NEVER_CLASSES:
+        return "tooltip"
+    if el.control_type == "Text" and len(clean(el.name)) > LABEL_MAX:
+        return "prose"                 # a description under a setting is not a label
+    return None
 
 
 def is_hosting(el):
@@ -178,7 +192,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
         return out
 
     def ids_for(parent_id, kids):
-        segs = [_segment(k, identity) for k in kids]
+        segs = [_segment(k, identity, values) for k in kids]
         seen = {}
         out = []
         for s in segs:
@@ -191,16 +205,10 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
         return [f"{parent_id}.{rid}" for rid in out]
 
     def keep(el):
-        if el.offscreen:
-            cap.skipped["offscreen"] += 1
-            return False
-        if el.control_type in NEVER or el.class_name in NEVER_CLASSES:
-            cap.skipped["tooltip"] += 1
-            return False
-        if el.control_type == "Text" and len((el.name or "").strip()) > LABEL_MAX:
-            cap.skipped["prose"] += 1      # a description under a setting is not a label
-            return False
-        return True
+        why = excluded(el)
+        if why:
+            cap.skipped[why] += 1
+        return why is None
 
     def visit(el, rid, parent, order, depth):
         if depth > MAX_DEPTH:
@@ -271,16 +279,23 @@ def merge(old, new, ambiguous):
     """Carry the hand-written fields of `old` onto `new` by id.
 
     Returns (records, dropped): dropped lists the annotated old ids the capture no
-    longer sees. Raises ValueError when an annotation would land on an ambiguous id,
-    because positional ids can move a note onto a different control.
+    longer sees. Raises ValueError when an annotation would land on an ambiguous id
+    or on any id beneath one, because positional ids can move a note onto a
+    different control: reorder two look-alike groups and each group's children
+    swap ids too.
     """
     amb = set(ambiguous)
+
+    def under_ambiguous(rid):
+        parts = rid.split(".")
+        return any(".".join(parts[:n]) in amb for n in range(1, len(parts) + 1))
+
     by_id = {r["id"]: r for r in old}
     out = []
     for r in new:
         prev = by_id.get(r["id"])
         hand = {k: prev[k] for k in HAND_FIELDS if prev and k in prev}
-        if hand and r["id"] in amb:
+        if hand and under_ambiguous(r["id"]):
             raise ValueError(f"{r['id']}: its hand-written fields cannot be carried, the id is ambiguous "
                              "(siblings share a name); give the element a name in the surface module's IDENTITY")
         out.append({**r, **hand})
@@ -318,12 +333,26 @@ class FixtureElement:
         self.open = False
 
 
-def dump(el, depth=0, entry=False):
+class _Budget:
+    def __init__(self, limit):
+        self.left = limit
+
+    def take(self):
+        self.left -= 1
+        if self.left < 0:
+            raise Incomplete(f"more than {MAX_RECORDS} elements to dump; the surface module must name a smaller root")
+
+
+def dump(el, depth=0, entry=False, environment_lists=(), budget=None):
     """The fixture form of a tree: structure only, the same fields the walk reads.
 
-    An expansion's entries are recorded flat, with no children and no expansion of
-    their own, as the walk records them: one level, nothing nested opened.
+    It visits exactly what the walk visits: an element the walk excludes (offscreen,
+    a tooltip, prose) is left out with its subtree, an environment list is kept
+    with no rows, and an expansion's entries are recorded flat, with no children
+    and no expansion of their own. It stops past MAX_RECORDS elements.
     """
+    budget = budget or _Budget(MAX_RECORDS)
+    budget.take()
     d = {"name": el.name or "", "automationId": el.automation_id or "", "className": el.class_name or "",
          "controlType": el.control_type, "bounds": list(el.bounds)}
     if el.offscreen:
@@ -336,13 +365,16 @@ def dump(el, depth=0, entry=False):
         return d
     if depth > MAX_DEPTH:
         raise Incomplete(f"{d['name'] or d['automationId']}: deeper than {MAX_DEPTH} levels")
+    if any(matches(el, spec) for spec in environment_lists):
+        return d                       # rows are the machine's own data
     if el.control_type not in CONTENT:
-        kids = [dump(k, depth + 1) for k in el.children()]
+        kids = [dump(k, depth + 1, environment_lists=environment_lists, budget=budget)
+                for k in el.children() if not excluded(k)]
         if kids:
             d["children"] = kids
     if el.can_expand and el.control_type in EXPANDABLE and not el.offscreen:
         try:
-            d["expands"] = [dump(k, depth + 1, entry=True) for k in el.expand()]
+            d["expands"] = [dump(k, depth + 1, entry=True, budget=budget) for k in el.expand() if not excluded(k)]
         finally:
             el.collapse()
     return d
@@ -364,9 +396,14 @@ def write_png(path, width, height, rgb):
 
 
 def write_records(path, records):
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    """Write one record per line, replacing the file only once the new one is whole."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         for r in records:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
 
 
 def read_records(path):

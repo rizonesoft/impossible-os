@@ -5,7 +5,9 @@ on Linux with no Windows present: the walk runs over a recorded UIA tree.
     python3 scripts/inventory/tests/test_capture.py
 
 fixtures/notepad-tree.json is Notepad on the reference VM, dumped by
-capture-ui.py --dump on 2026-11-14 (build 26300.9711, fhd-100), structure only;
+capture-ui.py --dump on 2026-11-14 (build 26300.9711, fhd-100), structure only,
+before the dump shared the walk's exclusions, so it still holds offscreen and
+tooltip subtrees the walk must skip;
 its one teaching tip's text was replaced with our own words (section 4).
 fixtures/notepad-records.json is what the live capture wrote in the same run,
 byte-identical across three VM sessions, so the walk over the fixture must give
@@ -223,6 +225,15 @@ class Identity(unittest.TestCase):
         cap = self.run_walk(self.twins("", ""))
         self.assertEqual(cap.ambiguous, ["win11.s.r.btn", "win11.s.r.btn-2"])
 
+    def test_a_live_value_never_names_an_id(self):
+        # A Text with no automation id is named by its name; when that name is a
+        # live value the id would publish it and move with it.
+        t = node("Root", "Window", children=[node("Private document.txt", "Text")])
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r",
+                        root_label="R", values=[{"controlType": "Text"}])
+        self.assertNotIn("private", json.dumps(cap.records).lower())
+        self.assertEqual(cap.records[1]["id"], "win11.s.r.text")
+
     def test_identity_names_an_element_its_tree_does_not(self):
         t = node("Root", "Window", children=[node("A", "Button", "Twin"), node("B", "Button", "Twin")])
         cap = self.run_walk(t, identity=[({"name": "A"}, "first"), ({"name": "B"}, "second")])
@@ -281,6 +292,17 @@ class Merge(unittest.TestCase):
         self.assertIn("s.btn-2", str(ex.exception))
         out, _ = core.merge([{"id": "s.btn", "label": "Btn"}], new, ["s.btn", "s.btn-2", "s.btn-3"])
         self.assertEqual(len(out), 3)            # unannotated twins merge freely
+
+    def test_a_note_never_lands_beneath_an_ambiguous_id(self):
+        # Two look-alike groups reorder: each group's apply button swaps ids with
+        # the other's, so a note on twin.apply would move to the other group.
+        t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
+                                             node("", "Group", "Twin", children=[node("Apply", "Button")])])
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin.apply" else r for r in cap.records]
+        with self.assertRaises(ValueError) as ex:
+            core.merge(old, cap.records, cap.ambiguous)
+        self.assertIn("win11.s.r.twin.apply", str(ex.exception))
 
     def test_an_existing_file_needs_merge(self):
         tmp = pathlib.Path(tempfile.mkdtemp())
@@ -350,6 +372,7 @@ class Shots(unittest.TestCase):
         self.manifest = self.tmp / "shots.json"
         self.manifest.write_text(json.dumps([{"surface": "other", "state": "rest", "profile": "fhd-100",
                                               "width": 1, "height": 1, "size": 1, "sha256": "0" * 64}]))
+        self.target = self.tmp / "inventory" / "notepad-smoke" / "window.json"   # its folder does not exist yet
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
@@ -363,9 +386,13 @@ class Shots(unittest.TestCase):
         length = struct.unpack(">I", data[idat - 4:idat])[0]
         self.assertEqual(zlib.decompress(data[idat + 4:idat + 4 + length]), b"\0\xff\x00\x00\x00\xff\x00")
 
+    STATE = [{"state": "rest", "file": "rest.fhd-100.png", "width": 2, "height": 1}]
+
+    def publish(self, records=({"id": "win11.notepad-smoke.window", "label": "Notepad"},)):
+        capture.publish(self.target, list(records), "notepad-smoke", self.out, self.STATE, self.manifest, self.store)
+
     def test_publish_then_verify(self):
-        capture.publish_shots("notepad-smoke", self.out, [{"state": "rest", "file": "rest.fhd-100.png",
-                                                          "width": 2, "height": 1}], self.manifest, self.store)
+        self.publish()
         manifest = json.loads(self.manifest.read_text())
         self.assertEqual([(e["surface"], e["state"], e["profile"]) for e in manifest],
                          [("notepad-smoke", "rest", "fhd-100"), ("other", "rest", "fhd-100")])
@@ -377,17 +404,74 @@ class Shots(unittest.TestCase):
         self.assertEqual(len(capture.verify_shots(manifest, self.store)), 2)
 
     def test_a_recapture_replaces_its_surface_entries_only(self):
-        state = [{"state": "rest", "file": "rest.fhd-100.png", "width": 2, "height": 1}]
-        capture.publish_shots("notepad-smoke", self.out, state, self.manifest, self.store)
-        capture.publish_shots("notepad-smoke", self.out, state, self.manifest, self.store)
+        self.publish()
+        self.publish()
         manifest = json.loads(self.manifest.read_text())
         self.assertEqual(len(manifest), 2)
 
+    def test_a_first_publication_creates_its_folder(self):
+        self.publish()
+        self.assertEqual(core.read_records(self.target), [{"id": "win11.notepad-smoke.window", "label": "Notepad"}])
+
+    def test_a_failed_publication_leaves_the_previous_one_whole(self):
+        self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        (self.out / "shots" / "notepad-smoke" / "rest.fhd-100.png").unlink()     # the second shot cannot be copied
+        with self.assertRaises(OSError):
+            self.publish([{"id": "win11.notepad-smoke.window", "label": "New"}])
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged"))]
+        self.assertEqual(leftovers, [])
+
+    def test_a_failed_record_write_leaves_the_file_whole(self):
+        core.write_records(self.tmp / "r.json", [{"id": "a"}])
+        real = json.dumps
+
+        def boom(obj, **kw):
+            if obj.get("id") == "b":
+                raise OSError("disk full")
+            return real(obj, **kw)
+        core.json.dumps = boom
+        try:
+            with self.assertRaises(OSError):
+                core.write_records(self.tmp / "r.json", [{"id": "c"}, {"id": "b"}])
+        finally:
+            core.json.dumps = real
+        self.assertEqual(core.read_records(self.tmp / "r.json"), [{"id": "a"}])
+
 
 class Dump(unittest.TestCase):
-    def test_dump_round_trips_the_fixture(self):
-        t = tree()
-        self.assertEqual(core.dump(core.FixtureElement(copy.deepcopy(t))), t)
+    def test_the_dump_walks_to_the_same_records(self):
+        cap = walk()
+        d = core.dump(core.FixtureElement(tree()), environment_lists=smoke.ENVIRONMENT_LISTS)
+        core.confirm_dump(d, cap, surface="notepad-smoke", build="26300.9711", profile="fhd-100",
+                          root_slug=smoke.ROOT_SLUG, root_label=smoke.ROOT_LABEL,
+                          environment_lists=smoke.ENVIRONMENT_LISTS, values=smoke.VALUES)
+        self.assertEqual(core.dump(core.FixtureElement(copy.deepcopy(d)), environment_lists=smoke.ENVIRONMENT_LISTS), d)
+
+    def test_the_dump_visits_only_what_the_walk_visits(self):
+        rows = [node(f"row {i}", "ListItem") for i in range(500)]
+        t = node("Root", "Window", children=[node("Files", "List", children=rows),
+                                             node("Tip", "Pane", offscreen=True, children=[node("Deep", "Text")])])
+        visited = []
+        real = core.FixtureElement.children
+
+        def spy(self):
+            visited.append(self.name)
+            return real(self)
+        core.FixtureElement.children = spy
+        try:
+            d = core.dump(core.FixtureElement(t), environment_lists=[{"controlType": "List"}])
+        finally:
+            core.FixtureElement.children = real
+        self.assertEqual(visited, ["Root"])
+        self.assertEqual([k["name"] for k in d["children"]], ["Files"])
+        self.assertNotIn("children", d["children"][0])
+
+    def test_the_dump_is_bounded(self):
+        wide = node("Root", "Window", children=[node(f"b{i}", "Button") for i in range(core.MAX_RECORDS + 1)])
+        with self.assertRaises(core.Incomplete):
+            core.dump(core.FixtureElement(wide))
 
     def test_entries_are_dumped_flat_and_never_opened(self):
         t = node("Root", "Window", children=[node("File", "MenuItem", expands=[

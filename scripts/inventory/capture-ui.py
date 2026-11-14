@@ -49,7 +49,11 @@ EXPAND_COLLAPSE = 10005
 PROP_EC_AVAILABLE = 30028
 PROP_EC_STATE = 30070
 EXPANDED, COLLAPSED = 1, 0
-TREE_CHILDREN, TREE_DESCENDANTS = 2, 4
+TREE_ELEMENT, TREE_CHILDREN, TREE_DESCENDANTS = 1, 2, 4
+# Top-level window classes that are popups themselves: a Win32 menu, a combo box
+# list, a windowed XAML popup. A popup hosted elsewhere fails the capture (exit 3)
+# rather than being missed, and is added here when it is met.
+POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup"}
 PROP_CONTROL_TYPE = 30003
 PROP_PROCESS_ID = 30002
 PROP_IS_OFFSCREEN = 30022
@@ -160,8 +164,10 @@ class Live:
     """
 
     def __init__(self):
+        from _ctypes import COMError       # what a call on a vanished element raises (not an OSError)
         import comtypes.client
         from comtypes.gen import UIAutomationClient as UIA
+        self.COMError = COMError
         self.UIA = UIA
         self.uia = comtypes.client.CreateObject(UIA.CUIAutomation, interface=UIA.IUIAutomation)
         self.cache = self.uia.CreateCacheRequest()
@@ -177,20 +183,44 @@ class Live:
         """A LiveElement for a raw element, its properties fetched in one call."""
         return LiveElement(self, el.BuildUpdatedCache(self.cache))
 
-    def children(self, el):
-        found = el.FindAllBuildCache(TREE_CHILDREN, self.control_view, self.cache)
+    def children(self, el, condition=None):
+        found = el.FindAllBuildCache(TREE_CHILDREN, condition or self.control_view, self.cache)
         return [LiveElement(self, found.GetElement(i)) for i in range(found.Length)] if found else []
+
+    def hosts(self, pid):
+        """Where process `pid` shows popups: its top-level popup windows (a Win32 menu,
+        a combo list, a windowed XAML popup) and the popup hosts its own windows
+        carry as direct children (a WinUI PopupHost bridge, seen 2026-11-14 on
+        Notepad). Only these are searched, never a whole window's content, so the
+        cost of a poll does not grow with the surface."""
+        out = []
+        tops = self.children(self.uia.GetRootElement(), self.uia.CreatePropertyCondition(PROP_PROCESS_ID, pid))
+        for top in tops:
+            if top.offscreen:
+                continue
+            if top.class_name in POPUP_WINDOWS or top.control_type in ("Menu", "List"):
+                out.append(top.el)
+            else:
+                out.extend(k.el for k in self.children(top.el) if "Popup" in k.class_name and not k.offscreen)
+        return out
 
     def popups(self, pid):
         """Menu and List containers now on screen in process `pid`, by runtime id."""
         out = {}
-        tops = self.uia.GetRootElement().FindAll(TREE_CHILDREN, self.uia.CreatePropertyCondition(PROP_PROCESS_ID, pid))
-        for i in range(tops.Length if tops else 0):
-            found = tops.GetElement(i).FindAll(TREE_DESCENDANTS, self.visible_popup)
+        for host in self.hosts(pid):
+            found = host.FindAll(TREE_ELEMENT | TREE_DESCENDANTS, self.visible_popup)
             for j in range(found.Length if found else 0):
                 e = found.GetElement(j)
                 out[tuple(e.GetRuntimeId())] = e
         return out
+
+    def gone(self, el):
+        """True once a popup element is closed: hidden, empty or no longer there."""
+        try:
+            r = el.CurrentBoundingRectangle
+            return bool(el.CurrentIsOffscreen) or r.right <= r.left or r.bottom <= r.top
+        except self.COMError:
+            return True
 
 
 class LiveElement:
@@ -207,7 +237,7 @@ class LiveElement:
         self.enabled = bool(el.CachedIsEnabled)
         self.can_expand = bool(el.GetCachedPropertyValue(PROP_EC_AVAILABLE))
         self.pid = el.CachedProcessId
-        self._opened = ()
+        self._opened = {}
 
     def children(self):
         return self.live.children(self.el)
@@ -222,49 +252,50 @@ class LiveElement:
         deadline = time.monotonic() + SETTLE_S
         while len(counts) < MIN_POLLS or time.monotonic() < deadline:
             time.sleep(POLL_S)
-            fresh, items = self._entries(before)
+            items = self._entries(before)
             counts.append(len(items))
             sig = tuple((i.control_type, i.name, i.automation_id, i.bounds) for i in items)
             if items and sig == last:
                 stable += 1
                 if stable >= 2:                # three equal polls: open and done animating
-                    self._opened = fresh
                     return items
             else:
                 stable = 0
             last = sig
-        self._opened = tuple(k for k in self.live.popups(self.pid) if k not in before)
         raise core.Incomplete(f"{self.name or self.automation_id}: its entries did not appear and settle within "
                               f"{SETTLE_S:.0f} s (entries per poll: {counts}; new popups: {len(self._opened)})")
 
     def _entries(self, before):
         # A Win32 menu or a WinUI flyout opens as a new Menu or List container in
         # the same process; a combo box may also show its list as its own children.
-        now = self.live.popups(self.pid)
-        fresh = tuple(k for k in now if k not in before)
-        if fresh:
-            return fresh, [c for k in fresh for c in self.live.children(now[k])]
-        return fresh, [c for c in self.children() if c.control_type in ("ListItem", "MenuItem") and not c.offscreen]
+        # Once the new container is found it is read directly, not searched for again.
+        if not self._opened:
+            self._opened = {k: e for k, e in self.live.popups(self.pid).items() if k not in before}
+        if self._opened:
+            return [c for e in self._opened.values() for c in self.live.children(e)]
+        return [c for c in self.children() if c.control_type in ("ListItem", "MenuItem") and not c.offscreen]
+
+    def _closed(self):
+        try:
+            expanded = self.el.GetCurrentPropertyValue(PROP_EC_STATE) == EXPANDED
+        except self.live.COMError:
+            expanded = False
+        return not expanded and all(self.live.gone(e) for e in self._opened.values())
 
     def collapse(self):
         """Close what expand() opened, the way a keyboard does, and wait until it is gone."""
         keys("esc")
         deadline = time.monotonic() + SETTLE_S
         while time.monotonic() < deadline:
-            still = [k for k in self._opened if k in self.live.popups(self.pid)]
-            try:
-                expanded = self.el.GetCurrentPropertyValue(PROP_EC_STATE) == EXPANDED
-            except OSError:
-                expanded = False
-            if not still and not expanded:
-                self._opened = ()
+            if self._closed():
+                self._opened = {}
                 return
             time.sleep(POLL_S)
         self._pattern().Collapse()
         time.sleep(POLL_S)
-        if [k for k in self._opened if k in self.live.popups(self.pid)]:
+        if not self._closed():
             raise core.Incomplete(f"{self.name or self.automation_id}: its popup would not close")
-        self._opened = ()
+        self._opened = {}
 
 
 class Context:
@@ -354,7 +385,7 @@ def main(argv=None):
     try:
         cap, passes = core.settle(walk_once)
         if args.dump:
-            tree = core.dump(mod.root(ctx))
+            tree = core.dump(mod.root(ctx), environment_lists=walk_args["environment_lists"])
             core.confirm_dump(tree, cap, **walk_args)
             pathlib.Path(args.dump).write_text(json.dumps(tree, indent=1), encoding="utf-8")
         core.write_records(args.out, cap.records)
