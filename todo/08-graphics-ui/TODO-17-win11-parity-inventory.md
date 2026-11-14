@@ -70,7 +70,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [x]   |
 | 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [x]   |
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
-| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [ ]   |
+| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [x]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [ ]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [ ]   |
 | 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19      |  [ ]   |
@@ -290,6 +290,8 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 > - A source is read whole or the read fails: an unknown settings element, a Gallery group without items, a directory listing or class lookup that fails, and a Gallery download past 60 s all publish nothing.
 > - Fixed on the way: `capture_core.write_records` and `capture.swap` left a `.tmp` file behind when a rename failed, and `swap` removed its journal outside the rollback; fixed, with a failure at the commit point rolling back.
 > - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-is-completeness-proved).
+> **Verified:** 2026-11-14 | commit `e32d90bc1` | 9/9 items | `check-inventory.py --baselines` prints all seven (2,028 rows, 0 errors), 38 + 94 + 81 tests OK, live `baselines.py` read byte-identical four times, `bash scripts/lint.sh` 0 errors
+> **Quality reviewed:** 2026-11-14 | Codex 37x (plan, round 17x, performance 17x, completion, reconciliation) | 0H+19M+2L fixed, 1M rejected with evidence (any surface may match a row), 0 open | scope: N/A (host tooling, no kernel surface)
 
 ---
 
