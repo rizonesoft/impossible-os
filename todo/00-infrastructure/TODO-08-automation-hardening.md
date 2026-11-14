@@ -108,6 +108,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [x]   |
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [x]   |
 | 💎  |  42   |   §42   | The graph jobs run in a small pinned image                                                       | §41                        |  [ ]   |
+| 💎  |  43   |   §43   | The control-plane commit gate tests the staged commit                                            | none                       |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1439,6 +1440,20 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 - [ ] Commit: `"ci: the graph jobs run in a small pinned image"`
 
 **Test checkpoint:** a `todo-graph.yml` run on `main` is green in the small image and its container start is faster than the build image's.
+
+---
+
+## 43. The control-plane commit gate tests the staged commit
+
+> **Spawned-by:** root
+> **User impact:** a commit that touches the control-plane manifest is judged by the working tree, not by what it records: an unstaged edit to a runner test refuses a correct commit, and an unstaged repair lets a broken one land.
+
+`.githooks/pre-commit` runs `scripts/overnight/tests/run-all.sh` in the primary tree whenever a staged path matches `control-plane-match.sh`. Lint and the other gates read the commit's own index through `GIT_INDEX_FILE`; the suite alone reads disk. Met on 2026-11-13, when unstaged tests for the next push refused a commit that was correct on its own.
+
+- [ ] Run the suite over the staged tree (a `git checkout-index` copy of the index, with the real repository for the git-oracle tests). Done when a fixture commit with a broken staged file and a fixed unstaged copy is refused, and the reverse passes.
+- [ ] Commit: `"hooks: the control-plane gate tests the staged commit"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes, and the two fixture commits above get the opposite verdicts they get today.
 
 ## Format Quick Reference
 
