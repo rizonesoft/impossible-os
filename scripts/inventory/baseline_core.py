@@ -82,6 +82,13 @@ def settings_rows(files):
             raise SourceError(f"settings: {name} is not XML ({exc})") from None
         if root.tag != "PCSettings":
             raise SourceError(f"settings: {name}: root is {root.tag}, expected PCSettings")
+        # Every file is read whole: a child that is not a setting, or a file with
+        # no settings, is a shape this reader does not know, never an empty list.
+        other = sorted({c.tag for c in root if c.tag != "SearchableContent"})
+        if other:
+            raise SourceError(f"settings: {name}: unexpected element(s) under PCSettings: {', '.join(other)}")
+        if root.find("SearchableContent") is None:
+            raise SourceError(f"settings: {name} holds no SearchableContent")
         for sc in root.findall("SearchableContent"):
             sid = (sc.findtext("Filename") or "").strip()
             if not sid:
@@ -203,9 +210,14 @@ def control_rows(gallery):
         raise SourceError("controls: the Gallery data has no Groups list")
     rows = []
     for g in groups:
+        if not isinstance(g, dict) or not g.get("UniqueId"):
+            raise SourceError("controls: a group has no UniqueId")
         if g.get("IsSpecialSection"):
             continue
-        for item in g.get("Items", []):
+        items = g.get("Items")
+        if not isinstance(items, list) or not items or not all(isinstance(i, dict) for i in items):
+            raise SourceError(f"controls: group {g['UniqueId']} has no Items list")
+        for item in items:
             if not item.get("UniqueId") or not item.get("Title"):
                 raise SourceError(f"controls: an item of {g.get('UniqueId')} lacks UniqueId or Title")
             rows.append({"id": item["UniqueId"], "name": item["Title"], "category": g["UniqueId"]})

@@ -254,6 +254,18 @@ class Baselines(unittest.TestCase):
         files = {"settings/baseline.json": bl("settings", ["a"]), "taskbar/bar.json": three(), "REFERENCE.md": table}
         self.assertIn("absent-table", self.rules(files, "--surface", "taskbar"))
 
+    def test_an_absent_table_without_its_delimiter_row_is_refused(self):
+        base = {"settings/baseline.json": bl("settings", ["a", "b"]), "taskbar/bar.json": three()}
+        head = ["## Which baseline rows are absent?", "", "| Baseline | Row | Reason |"]
+        rows = ["| `settings` | `a` | gone |", "| `settings` | `b` | gone |"]
+        for table in (head + rows, head + ["| --- | --- |"] + rows, head + ["| - | - | - |"] + rows, head):
+            for scope in ((), ("--surface", "taskbar")):
+                r, out = self.report({**base, "REFERENCE.md": table}, *scope)
+                self.assertIn("absent-table", [e["rule"] for e in out["errors"]], table)
+                self.assertEqual(out["baselines"]["settings"]["absent"], 0)
+        _, out = self.report({**base, "REFERENCE.md": head + ["| :--- | ---: | :---: |"] + rows})
+        self.assertEqual(out["baselines"]["settings"]["absent"], 2)
+
     def test_baseline_missing_and_baseline_id_together_are_refused(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a", baselineMissing=True)]
         self.assertIn("baseline-both", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))

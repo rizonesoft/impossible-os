@@ -71,6 +71,7 @@ ABSENT_HEADING = "## Which baseline rows are absent?"
 ABSENT_COLUMNS = ["Baseline", "Row", "Reason"]
 HEADER_FIELDS = {"baseline", "owner", "source", "build", "upstream", "files"}
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
+DELIMITER = re.compile(r"^:?-{3,}:?$")
 
 _spec = importlib.util.spec_from_file_location("baseline_core", pathlib.Path(__file__).resolve().parent / "baseline_core.py")
 baseline_core = importlib.util.module_from_spec(_spec)
@@ -310,8 +311,11 @@ def load_absent(root, baselines, err, surface):
             table.append((n + 1, [c.strip() for c in lines[n].strip().strip("|").split("|")]))
     if not table:
         return out
-    if table[0][1] != ABSENT_COLUMNS or len(table) < 2:
+    if table[0][1] != ABSENT_COLUMNS:
         err(path, table[0][0], "absent-table", f"the absent table's columns are {' | '.join(ABSENT_COLUMNS)}")
+        return out
+    if len(table) < 2 or len(table[1][1]) != 3 or not all(DELIMITER.match(c) for c in table[1][1]):
+        err(path, table[0][0], "absent-table", "the header row is followed by a delimiter row (| --- | --- | --- |)")
         return out
     first = {}
     for n, cells in table[2:]:

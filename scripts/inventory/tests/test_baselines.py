@@ -65,6 +65,14 @@ class Settings(unittest.TestCase):
             self.assertEqual([r["id"] for r in rows], ["S1", "S2"])
             self.assertEqual(rows[0]["pages"], ["new"])
 
+    def test_a_file_this_reader_cannot_read_whole_is_refused_beside_a_good_one(self):
+        good = ("a.xml", xml(setting("S1"), setting("S2")))
+        for bad in (b"<PCSettings><Contents>" + setting("S3").encode() + b"</Contents></PCSettings>",
+                    xml(setting("S3"), "<Other/>"), xml()):
+            for files in ([good, ("b.xml", bad)], [("b.xml", bad), good]):
+                with self.assertRaises(core.SourceError):
+                    core.settings_rows(files)
+
     def test_a_malformed_source_is_refused(self):
         for files in ([("a.xml", b"<PCSettings>")], [("a.xml", b"<Other/>")], [("a.xml", xml("<SearchableContent/>"))],
                       [("a.xml", xml())]):
@@ -140,6 +148,13 @@ class Controls(unittest.TestCase):
                                  {"UniqueId": "H", "Items": [{"UniqueId": "a", "Title": "a"}]}]}):
             with self.assertRaises(core.SourceError):
                 core.control_rows(data)
+
+    def test_a_group_without_its_items_is_refused_beside_a_good_one(self):
+        good = {"UniqueId": "BasicInput", "Items": [{"UniqueId": "Button", "Title": "Button"}]}
+        for bad in ({"UniqueId": "Text"}, {"UniqueId": "Text", "Items": []}, {"UniqueId": "Text", "Items": {"a": 1}},
+                    {"UniqueId": "Text", "Pages": [{"UniqueId": "x", "Title": "x"}]}, {"Items": [{"UniqueId": "x", "Title": "x"}]}):
+            with self.assertRaises(core.SourceError):
+                core.control_rows({"Groups": [good, bad]})
 
     def test_the_fetch_is_pinned_and_bounded(self):
         seen = []
