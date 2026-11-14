@@ -1385,6 +1385,7 @@ if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" != "1" ] && _tt_would_run "$_TT_TRIG_LSP_
 fi
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inventory_check
+_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py" inventory_assets
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
@@ -1462,6 +1463,22 @@ if [ -f "$INV_CHECK_TEST" ]; then
     fi
 else
     t_fail "scripts/inventory/tests/test_check_inventory.py not found"
+fi
+
+# Microsoft-free asset check (scripts/inventory/tests/test_check_no_ms_assets.py):
+# a throwaway repository and fixture hash list, staged and working-tree modes,
+# fail-closed on an unreadable list, and the real list against the real tree.
+INV_ASSET_TEST="$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py"
+if [ -f "$INV_ASSET_TEST" ]; then
+    INV_ASSET_OUT=$(_tt_nested_collect inventory_assets python3 "$INV_ASSET_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/inventory/tests/test_check_no_ms_assets.py PASS ($(printf '%s\n' "$INV_ASSET_OUT" | tail -3 | tr '\n' ' '))"
+    else
+        t_fail "scripts/inventory/tests/test_check_no_ms_assets.py FAIL ($(printf '%s\n' "$INV_ASSET_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_check_no_ms_assets" "$INV_ASSET_OUT"
+    fi
+else
+    t_fail "scripts/inventory/tests/test_check_no_ms_assets.py not found"
 fi
 
 # Release image binding gate (scripts/tests/test_release_image_binding.py): real

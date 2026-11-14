@@ -256,5 +256,120 @@ class Failing(unittest.TestCase):
         self.assertIn("... 10 more error(s)", r.stdout)
 
 
+
+NAMES = [{"reference": "OneDrive", "ours": "Cloud Files", "reason": "trade mark"}]
+
+
+class Facts(Failing):
+    """Section 4: the inventory holds facts, never Microsoft's text."""
+
+    def test_label_of_80_characters_passes(self):
+        t = three(); t[1]["label"] = "x" * 80
+        self.assertEqual(run({"taskbar/bar.json": t}).returncode, 0)
+
+    def test_label_of_120_characters_is_a_sentence(self):
+        t = three(); t[1]["label"] = "Choose how the taskbar shows apps and which icons appear in the corner of it " * 2
+        r = self.fails({"taskbar/bar.json": t[:1] + [dict(t[1], label=t[1]["label"][:120])] + t[2:]}, "label-sentence")
+        self.assertIn("label is a sentence (120 characters", r.stdout)
+
+    def test_link_anywhere_in_a_record(self):
+        for field, value in (("behaviour", "see https://support.microsoft.com/x"),
+                             ("uiaId", "HTTP://go.microsoft.com"), ("className", "a https://x b"),
+                             ("measure", {"value": 1, "unit": "px", "readBy": "from https://learn.microsoft.com"})):
+            with self.subTest(field=field):
+                t = three(); t[1][field] = value
+                r = run({"taskbar/bar.json": t})
+                self.assertIn(": link: ", r.stdout)
+                self.assertIn("link in record", r.stdout)
+
+    def test_link_in_an_observation(self):
+        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B,
+             "measure": {"value": 1, "unit": "px", "readBy": "per https://learn.microsoft.com"}}
+        r = self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [o]}, "link")
+        self.assertNotIn(": schema: ", r.stdout)
+
+    def test_behaviour_that_repeats_the_label(self):
+        t = three(); t[1]["behaviour"] = "  START "
+        self.fails({"taskbar/bar.json": t}, "behaviour-is-label")
+
+    def test_behaviour_in_our_words_passes(self):
+        t = three(); t[1]["behaviour"] = "Opens the Start menu; pressing it again closes it."
+        self.assertEqual(run({"taskbar/bar.json": t}).returncode, 0)
+
+    def test_names_json_passes(self):
+        self.assertEqual(run({"names.json": [json.dumps(NAMES)]}).returncode, 0)
+
+    def test_names_json_faults(self):
+        cases = {
+            "duplicate": NAMES + [{"reference": "onedrive", "ours": "Drive", "reason": "trade mark"}],
+            "missing field": [{"reference": "OneDrive", "ours": "Cloud Files"}],
+            "empty value": [{"reference": "OneDrive", "ours": " ", "reason": "trade mark"}],
+            "same name": [{"reference": "OneDrive", "ours": "onedrive", "reason": "trade mark"}],
+            "not an array": {"reference": "OneDrive"},
+            "empty": [],
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                self.fails({"names.json": [json.dumps(value)]}, "names")
+        self.fails({"names.json": ["[not json"]}, "names")
+
+    def test_real_names_json_is_valid(self):
+        r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+class Index(unittest.TestCase):
+    """--index judges the staged bytes, not a later unstaged fix."""
+
+    def setUp(self):
+        self.repo = pathlib.Path(tempfile.mkdtemp())
+        self.inv = self.repo / "docs" / "design" / "inventory"
+        (self.inv / "taskbar").mkdir(parents=True)
+        shutil.copy(SCHEMA, self.inv / "schema.json")
+        self.git("init", "-q")
+
+    def tearDown(self):
+        shutil.rmtree(self.repo)
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True, timeout=60)
+
+    def write(self, records):
+        (self.inv / "taskbar" / "bar.json").write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    def check(self, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.inv), *args],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_staged_fault_with_unstaged_fix(self):
+        bad = three(); bad[1]["label"] = "y" * 90
+        self.write(bad); self.git("add", "-A")
+        self.write(three())
+        self.assertEqual(self.check().returncode, 0)
+        r = self.check("--index")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("label is a sentence", r.stdout)
+
+    def test_staged_fix_with_unstaged_fault(self):
+        self.write(three()); self.git("add", "-A")
+        bad = three(); bad[1]["behaviour"] = "start"
+        self.write(bad)
+        self.assertEqual(self.check().returncode, 1)
+        self.assertEqual(self.check("--index").returncode, 0)
+
+    def test_staged_deletion_is_not_checked(self):
+        bad = three(); bad[1]["uiaId"] = "https://x"
+        self.write(bad); self.git("add", "-A")
+        self.git("rm", "-q", "--cached", "docs/design/inventory/taskbar/bar.json")
+        r = self.check("--index")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("inventory: 0 records", r.stdout)
+
+    def test_no_schema_staged(self):
+        self.write(three())
+        r = self.check("--index")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

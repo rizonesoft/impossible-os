@@ -14,13 +14,22 @@ line, no blank lines. Two kinds of file:
 A file whose name starts with "baseline" holds completeness-baseline rows, which
 section 5 checks; this checker leaves it alone.
 
+Facts only (section 4): a label longer than 80 characters is a sentence, not a
+name; no string anywhere in a record or observation holds an http link; a
+behaviour is our own description, so it never repeats the label. names.json,
+the trade mark names Impossible OS replaces, must list each reference name once
+with our name and the reason.
+
 Cross-record rules over the whole tree: a duplicate id, a parent that names no
 record, a parent cycle, an order used twice under one parent, an itemCount that
 differs from the number of child records, an observation whose id names no
 record or whose profile differs from its file name, and two observations of one
 id under one profile.
 
-    python3 scripts/inventory/check-inventory.py [--surface NAME] [--json] [--root DIR]
+    python3 scripts/inventory/check-inventory.py [--surface NAME] [--json] [--root DIR] [--index]
+
+--index checks the staged inventory instead of the working tree, so a commit is
+judged by the bytes it records (the pre-commit lint passes it).
 
 Exit 0 when clean, 1 on any error, 2 on a usage error.
 """
@@ -28,7 +37,10 @@ import argparse
 import json
 import math
 import pathlib
+import shutil
+import subprocess
 import sys
+import tempfile
 
 try:
     from jsonschema import Draft202012Validator
@@ -40,6 +52,65 @@ except ImportError:  # fail-direction: a missing validator is an error, never a 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_ROOT = REPO / "docs" / "design" / "inventory"
 PRINT_CAP = 50
+LABEL_MAX = 80
+LINK_MARKS = ("http://", "https://")
+GIT_TIMEOUT = 120  # deadline: the staged inventory is a few hundred small files
+NAME_FIELDS = ("reference", "ours", "reason")
+
+
+def strings(value, at=""):
+    """Yield (json path, string) for every string inside a parsed record."""
+    if isinstance(value, str):
+        yield at or "(record)", value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from strings(v, f"{at}/{k}" if at else k)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from strings(v, f"{at}/{i}" if at else str(i))
+
+
+def fact_errors(obj, kind):
+    """Yield (rule, message) for each section 4 rule a parsed object breaks."""
+    rid = obj.get("id", "(no id)")
+    for at, text in strings(obj):
+        if any(m in text.lower() for m in LINK_MARKS):
+            yield "link", f"{rid}: link in record at {at}; links to Microsoft are never recorded"
+    if kind != "record":
+        return
+    label = obj["label"]
+    if len(label) > LABEL_MAX:
+        yield "label-sentence", f"{rid}: label is a sentence ({len(label)} characters; a label is a name of {LABEL_MAX} or fewer)"
+    behaviour = obj.get("behaviour")
+    if behaviour is not None and behaviour.strip().casefold() == label.strip().casefold():
+        yield "behaviour-is-label", f"{rid}: behaviour repeats the label; describe what the control does, in our own words"
+
+
+def check_names(root, err):
+    path = root / "names.json"
+    if not path.exists():
+        return
+    try:
+        names = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        err(path, 1, "names", f"not JSON: {exc}")
+        return
+    if not isinstance(names, list) or not names:
+        err(path, 1, "names", "names.json is a non-empty array of {reference, ours, reason}")
+        return
+    seen = {}
+    for i, entry in enumerate(names):
+        where = f"entry {i}"
+        if not isinstance(entry, dict) or set(entry) != set(NAME_FIELDS) or not all(
+                isinstance(entry[f], str) and entry[f].strip() for f in NAME_FIELDS):
+            err(path, 1, "names", f"{where}: needs exactly reference, ours and reason, each a non-empty string")
+            continue
+        key = entry["reference"].strip().casefold()
+        if key in seen:
+            err(path, 1, "names", f"{where}: {entry['reference']} is also listed as entry {seen[key]}")
+        seen.setdefault(key, i)
+        if entry["ours"].strip().casefold() == key:
+            err(path, 1, "names", f"{where}: our name for {entry['reference']} is the same name")
 
 
 def classify(path):
@@ -132,6 +203,9 @@ def check(root, surface=None):
                     at = "/".join(str(x) for x in e.absolute_path) or "(record)"
                     err(path, n, "schema", f"{at}: {e.message}")
             continue
+        if mine:
+            for rule, message in fact_errors(obj, kind):
+                err(path, n, rule, message)
         if kind == "record":
             by_id.setdefault(obj["id"], []).append((path, n, obj, mine))
             count += mine
@@ -208,6 +282,9 @@ def check(root, surface=None):
                 path, n = member
                 err(path, n, "duplicate-observation", f"{oid} at {prof} is also observed at {peers(members, member, lambda m: where(*m))}")
 
+    if surface is None:
+        check_names(root, err)
+
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
     return count, len(observations), errors
 
@@ -216,8 +293,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--surface", help="check one folder; parents still resolve across the whole inventory")
     ap.add_argument("--json", action="store_true", help="print a JSON result for a tool")
+    ap.add_argument("--index", action="store_true", help="check the staged inventory, not the working tree")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+    if args.index:
+        return from_index(args)
     root = pathlib.Path(args.root)
     if not (root / "schema.json").is_file():
         print(f"check-inventory: {root}/schema.json not found", file=sys.stderr)
@@ -238,6 +318,35 @@ def main(argv=None):
             print(f"... {len(errors) - PRINT_CAP} more error(s)")
         print(f"inventory: {records} records, {len(errors)} errors")
     return 1 if errors else 0
+
+
+def from_index(args):
+    """Check the inventory as staged: written out of the index into a scratch tree."""
+    root = pathlib.Path(args.root).resolve()
+
+    def git(*cmd):
+        return subprocess.run(["git", *cmd], capture_output=True, text=True, check=True, timeout=GIT_TIMEOUT).stdout
+
+    try:
+        top = pathlib.Path(git("-C", str(root.parent), "rev-parse", "--show-toplevel").strip())
+        rel = root.relative_to(top).as_posix()
+        staged = git("-C", str(top), "ls-files", "-z", "--", rel).split("\0")[:-1]
+        scratch = pathlib.Path(tempfile.mkdtemp(prefix="inventory-index-"))
+        try:
+            if staged:
+                git("-C", str(top), "checkout-index", "-f", "--prefix", f"{scratch}/", "--", *staged)
+            argv = ["--root", str(scratch / rel)]
+            if args.surface:
+                argv += ["--surface", args.surface]
+            if args.json:
+                argv.append("--json")
+            return main(argv)
+        finally:
+            shutil.rmtree(scratch)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as exc:
+        detail = (getattr(exc, "stderr", "") or str(exc)).strip()
+        print(f"check-inventory: --index cannot read the staged inventory: {detail}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

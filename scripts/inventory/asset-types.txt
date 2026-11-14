@@ -1,0 +1,41 @@
+# File types that are someone's work rather than a fact: images, sounds, fonts
+# and cursors. One lower-case extension per line, no dot. Read by
+# check-no-ms-assets.py and by guest/hash-assets.ps1, so the hash list and the
+# check always cover the same files.
+# Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 4.
+png
+jpg
+jpeg
+gif
+bmp
+dib
+ico
+icns
+svg
+webp
+tif
+tiff
+avif
+heic
+jxl
+emf
+wmf
+wav
+mp3
+wma
+ogg
+flac
+m4a
+aac
+mid
+midi
+ttf
+otf
+ttc
+fon
+fnt
+woff
+woff2
+eot
+cur
+ani

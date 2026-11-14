@@ -1,0 +1,14 @@
+[
+  {"reference": "Microsoft Store", "ours": "Store", "reason": "Microsoft trade mark; our app store is named for what it is"},
+  {"reference": "OneDrive", "ours": "Cloud Files", "reason": "Microsoft trade mark; the cloud file sync service"},
+  {"reference": "Copilot", "ours": "Assistant", "reason": "Microsoft trade mark; the built-in assistant"},
+  {"reference": "Microsoft Edge", "ours": "Browser", "reason": "Microsoft trade mark; the web browser of 11-apps"},
+  {"reference": "Xbox", "ours": "Games", "reason": "Microsoft trade mark; the games hub and game bar"},
+  {"reference": "Microsoft account", "ours": "Online account", "reason": "Microsoft trade mark; an account signed in through an online identity provider"},
+  {"reference": "Windows Hello", "ours": "Face and fingerprint sign-in", "reason": "Microsoft trade mark; biometric and PIN sign-in"},
+  {"reference": "Windows Security", "ours": "Security", "reason": "Microsoft trade mark; the security centre"},
+  {"reference": "Windows Update", "ours": "Update", "reason": "Microsoft trade mark; system and driver updates"},
+  {"reference": "Windows Backup", "ours": "Backup", "reason": "Microsoft trade mark; backup of settings, apps and files"},
+  {"reference": "Microsoft 365", "ours": "Office apps", "reason": "Microsoft trade mark; the productivity suite entry points"},
+  {"reference": "Microsoft Teams", "ours": "Chat", "reason": "Microsoft trade mark; the chat and meeting app"}
+]

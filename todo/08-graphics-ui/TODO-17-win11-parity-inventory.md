@@ -69,7 +69,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [x]   |
 | 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [x]   |
 | 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [ ]   |
-| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [ ]   |
+| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [ ]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [ ]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [ ]   |
@@ -223,17 +223,26 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 
 The inventory holds facts. Names of controls, their order, their sizes and their shortcuts are facts; a sentence of explanation, an icon and a screenshot are someone's work.
 
-- [ ] Write the rule in `docs/design/inventory/REFERENCE.md`
+- [x] Write the rule in `docs/design/inventory/index.md` ("What does it never hold?", the format page), linked from `REFERENCE.md`
   - Recorded: labels, positions, types, ids, shortcuts and measured numbers
   - Never recorded: help text, tooltips longer than a label, descriptions under a setting, icons, images, sounds, fonts and links to Microsoft
-- [ ] Every `behaviour` is written in our own words from using the control; the capture tool never fills it
-- [ ] Add to `check-inventory.py`: refuse a `label` longer than 80 characters (a sentence, not a name), any `http` link, and any `behaviour` that equals a `label`
-- [ ] Add `scripts/inventory/check-no-ms-assets.py`: refuses a staged image, sound, font or cursor file whose bytes match a file of the reference VM
-  - The hash list `scripts/inventory/ms-hashes.txt` (SHA-256 and size only, no bytes) is made once by `ref-run.ps1` from the VM's `C:\Windows` during the campaign and committed, so the check runs in CI without the VM
-- [ ] Record replaced trade mark names in `docs/design/inventory/names.json`: the reference name, our name, and the reason
+- [x] Every `behaviour` is written in our own words from using the control; the capture tool never fills it
+- [x] Add to `check-inventory.py`: refuse a `label` longer than 80 characters (a sentence, not a name), any `http` link, and any `behaviour` that equals a `label`
+- [x] Add `scripts/inventory/check-no-ms-assets.py`: refuses a staged image, sound, font or cursor file whose bytes match a file of the reference VM
+  - The hash list `scripts/inventory/ms-hashes.txt` (SHA-256 and size only, no bytes) is made by `make-ms-hashes.ps1` through `ref-run.ps1` from the VM's `C:\Windows`, Program Files, ProgramData and inbox app packages, and committed, so the check runs in CI without the VM
+- [x] Record replaced trade mark names in `docs/design/inventory/names.json`: the reference name, our name, and the reason
   - Microsoft Store, OneDrive, Copilot, Edge, Xbox, Microsoft account, Windows Hello, Windows Security
-- [ ] Add lint coverage: `scripts/lint.sh` runs `check-inventory.py` when a file under `docs/design/inventory/` is staged
-- [ ] Commit: `"inventory: facts only, no Microsoft text or assets"`
+- [x] Add lint coverage: `scripts/lint.sh` Check 40 runs `check-inventory.py` and `check-no-ms-assets.py` on every lint
+- [x] Judge the commit by its staged bytes: `--index` on both checkers under the commit gate, the whole tree on every other lint, so CI checks everything (filed by the §4 plan review)
+- [x] Commit: `"inventory: facts only, no Microsoft text or assets"`
+
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (70 cases), `python3 scripts/inventory/tests/test_check_no_ms_assets.py` (10 cases), nested suites `inventory_check` and `inventory_assets` of `scripts/test-tooling.sh`, lint Check 40
+> **Notes:**
+> - `check-inventory.py` refuses a label over 80 characters (`label is a sentence`), any http or https text in a record or observation (`link in record`) and a `behaviour` that repeats its label, and validates `names.json`; `--index` checks the staged inventory.
+> - `check-no-ms-assets.py` hashes every image, sound, font and cursor type in `asset-types.txt` and refuses one on `ms-hashes.txt`; `--all` reads tracked files, `--index` the staged blobs, and an unreadable list exits 2.
+> - `ms-hashes.txt` came from `make-ms-hashes.ps1` on build 26300.9711: 20,339 files under `C:\Windows`, Program Files, `C:\ProgramData` and every inbox app package, 8,113 distinct; the 19 folders only SYSTEM may list hold no interface assets. All 295 tracked assets pass.
+> - `names.json` holds 12 replaced names (the eight above plus Windows Update, Windows Backup, Microsoft 365 and Microsoft Teams); lint Check 40 runs both checkers on every lint.
+> - Rule page: `docs/design/inventory/index.md#what-does-it-never-hold`.
 
 **Test checkpoint:** a fixture record with a 120-character label fails with `label is a sentence`; a fixture with a Microsoft link fails with `link in record`. `bash scripts/lint.sh` passes on the clean tree.
 

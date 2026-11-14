@@ -3123,6 +3123,41 @@ else
 fi
 
 # ============================================================================
+# Check 40: the Windows 11 inventory holds facts, never Microsoft's text or files
+# ============================================================================
+# scripts/inventory/check-inventory.py (schema, tree and the facts-only rules)
+# and scripts/inventory/check-no-ms-assets.py (no image, sound, font or cursor
+# file of the reference VM). Both run on every lint, so CI's clean checkout is
+# checked as a whole; under the commit gate both read the staged contents, so a
+# commit is judged by the bytes it records, not by a later working-tree fix.
+# Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 4.
+# Skip via SKIP_LINT_INVENTORY=1.
+if [ "${SKIP_LINT_INVENTORY:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 40 (inventory facts) skipped via SKIP_LINT_INVENTORY=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/inventory/check-inventory.py" ]; then
+    :   # throwaway fixture repos (scripts/test-tooling.sh) carry no inventory
+else
+    INV_SCOPE=()
+    [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && INV_SCOPE=(--index)
+    INV_RC=0
+    INV_OUT=$(python3 "$REPO_ROOT/scripts/inventory/check-inventory.py" "${INV_SCOPE[@]}" 2>&1) || INV_RC=$?
+    if [ "$INV_RC" -ne 0 ]; then
+        printf '%s\n' "$INV_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 40 (inventory facts) -- docs/design/inventory/ breaks a rule above (exit $INV_RC); see docs/design/inventory/index.md"
+        ERRORS=$((ERRORS + 1))
+    fi
+    [ "${#INV_SCOPE[@]}" -eq 0 ] && INV_SCOPE=(--all)
+    INV_RC=0
+    INV_OUT=$(python3 "$REPO_ROOT/scripts/inventory/check-no-ms-assets.py" "${INV_SCOPE[@]}" 2>&1) || INV_RC=$?
+    if [ "$INV_RC" -ne 0 ]; then
+        printf '%s\n' "$INV_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 40 (inventory facts) -- a committed asset is a file of the Windows 11 reference VM, or the check could not run (exit $INV_RC)"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
