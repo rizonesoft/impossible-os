@@ -108,6 +108,7 @@ The record format and the checker every later section writes against. One JSON o
   - Downstream fields: `measure.scaling`, `state`, `shortcutScope`, `overridable` for §14, `session` for §19, and `textMetrics` on an observation (completion review)
 - [x] Report a conflict at every in-scope line of it, so `--surface` finds a clash with another surface from either side, and skip other surfaces' observation files unread (round and performance review)
 - [x] Refuse `NaN`, `Infinity` and overflowing exponents as `non-finite` (round review)
+- [x] Refuse a `--surface` that is a path rather than a folder name, name one peer and a count in each conflict message, and accept an observation that carries only `measure` or `textMetrics` (round 2)
 - [x] Write `scripts/inventory/check-inventory.py` on the `jsonschema` package: validates every `docs/design/inventory/*/*.json` line, exits 1 naming file, line and rule on the first 50 failures
 - [x] Refuse a duplicate `id`, a `parent` that names no record, a `parent` cycle, and an `order` used twice under one parent
 - [x] Hold every `itemCount` against the number of child records present, so a file that lost a page, a control or a choice fails
@@ -120,7 +121,7 @@ The record format and the checker every later section writes against. One JSON o
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py` prints `inventory: 0 records, 0 errors` and exits 0 on the empty tree. Each failing fixture exits 1 and names its rule. `python3 scripts/site/build.py --check` passes.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (29 cases), nested suite `inventory_check` of `scripts/test-tooling.sh`
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (33 cases), nested suite `inventory_check` of `scripts/test-tooling.sh`
 
 > **Notes:**
 > - Shipped `docs/design/inventory/schema.json` and `scripts/inventory/check-inventory.py`: schema validation per JSON line, then whole-tree rules (duplicate id, orphan parent, cycle, repeated order, itemCount, observation id and profile).

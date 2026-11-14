@@ -403,13 +403,12 @@
       }
     },
     "observation": {
-      "description": "One line of a profile observation file <surface>/<file>.<profile>.json: the same element measured under another capture profile.",
+      "description": "One line of a profile observation file <surface>/<file>.<profile>.json: the same element measured under another capture profile. It carries at least one of bounds, measure or textMetrics.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "id",
         "captureProfile",
-        "bounds",
         "capturedFrom"
       ],
       "properties": {
@@ -435,7 +434,24 @@
         "session": {
           "$ref": "#/properties/session"
         }
-      }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "bounds"
+          ]
+        },
+        {
+          "required": [
+            "measure"
+          ]
+        },
+        {
+          "required": [
+            "textMetrics"
+          ]
+        }
+      ]
     }
   }
 }

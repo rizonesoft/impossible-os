@@ -105,6 +105,14 @@ class Passing(unittest.TestCase):
                  "start/menu.fhd-150.json": ["{not json"]}, "--surface", "taskbar")
         self.assertEqual(r.returncode, 0, r.stdout)
 
+    def test_scalar_and_font_observations_need_no_bounds(self):
+        obs = [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B,
+                "measure": {"value": 18, "unit": "px", "scaling": "snapped"}},
+               {"id": "win11.taskbar.bar.search", "captureProfile": "fhd-150", "capturedFrom": B,
+                "textMetrics": {"sizePx": 21, "ascent": 22, "descent": 6, "lineGap": 0, "advances": {"a": 10.6}}}]
+        r = run({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": obs})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
     def test_baseline_file_is_left_to_section_5(self):
         r = run({"settings/baseline.json": ['{"not": "a record"}']})
         self.assertEqual(r.returncode, 0, r.stdout)
@@ -221,6 +229,25 @@ class Failing(unittest.TestCase):
                     self.fails(files, rule, "--surface", side)
         r = run({**cases["duplicate-id"], "c/x.json": [rec("win11.c.ok", surface="c")]}, "--surface", "c")
         self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_observation_without_a_measurement(self):
+        self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [
+            {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B}]}, "schema")
+
+    def test_surface_must_be_a_folder_name(self):
+        for spelling in ("taskbar/", "./taskbar", "..", "taskbar/../start"):
+            with self.subTest(spelling=spelling):
+                r = run({"taskbar/bar.json": ["{not json"]}, "--surface", spelling)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+
+    def test_large_conflict_group_names_one_peer(self):
+        lines = [rec("win11.taskbar.same", order=i) for i in range(300)]
+        r = run({"taskbar/bar.json": lines}, "--json")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        errs = json.loads(r.stdout)["errors"]
+        self.assertTrue(all(e["rule"] == "duplicate-id" for e in errs))
+        self.assertEqual(len(errs), 300)
+        self.assertTrue(all(e["message"].endswith("and 298 more") for e in errs))
 
     def test_first_50_errors_are_printed(self):
         lines = [rec(f"win11.taskbar.x{i}", parent="win11.taskbar.none", order=i) for i in range(60)]

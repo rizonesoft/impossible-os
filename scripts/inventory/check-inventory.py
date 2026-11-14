@@ -110,6 +110,12 @@ def check(root, surface=None):
     def where(path, line):
         return f"{path.relative_to(root)}:{line}"
 
+    def peers(members, me, show):
+        # One named peer and a count: a group of n lines costs O(n), not O(n^2).
+        other = next(m for m in members if m != me)
+        more = len(members) - 2
+        return show(other) + (f" and {more} more" if more else "")
+
     by_id = {}       # id -> [(path, line, obj, in scope)], file order
     observations = []
     count = 0
@@ -136,10 +142,10 @@ def check(root, surface=None):
     # surface finds a clash with another surface whichever side sorts first.
     for rid, members in by_id.items():
         if len(members) > 1:
-            for path, n, _, mine in members:
+            for member in members:
+                path, n, _, mine = member
                 if mine:
-                    others = ", ".join(where(p, m) for p, m, _, _ in members if (p, m) != (path, n))
-                    err(path, n, "duplicate-id", f"{rid} is also defined at {others}")
+                    err(path, n, "duplicate-id", f"{rid} is also defined at {peers(members, member, lambda m: where(m[0], m[1]))}")
     records = {rid: members[0] for rid, members in by_id.items()}
 
     children = {}
@@ -180,8 +186,7 @@ def check(root, surface=None):
                 for rid in same:
                     path, n, _, mine = records[rid]
                     if mine:
-                        others = ", ".join(o for o in same if o != rid)
-                        err(path, n, "duplicate-order", f"{rid}: order {order} under {parent} is also used by {others}")
+                        err(path, n, "duplicate-order", f"{rid}: order {order} under {parent} is also used by {peers(same, rid, str)}")
 
     for rid, (path, n, obj, mine) in records.items():
         if "itemCount" in obj and mine:
@@ -199,9 +204,9 @@ def check(root, surface=None):
         seen.setdefault((obj["id"], obj["captureProfile"]), []).append((path, n))
     for (oid, prof), members in seen.items():
         if len(members) > 1:
-            for path, n in members:
-                others = ", ".join(where(p, m) for p, m in members if (p, m) != (path, n))
-                err(path, n, "duplicate-observation", f"{oid} at {prof} is also observed at {others}")
+            for member in members:
+                path, n = member
+                err(path, n, "duplicate-observation", f"{oid} at {prof} is also observed at {peers(members, member, lambda m: where(*m))}")
 
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
     return count, len(observations), errors
@@ -216,6 +221,9 @@ def main(argv=None):
     root = pathlib.Path(args.root)
     if not (root / "schema.json").is_file():
         print(f"check-inventory: {root}/schema.json not found", file=sys.stderr)
+        return 2
+    if args.surface is not None and (pathlib.PurePath(args.surface).name != args.surface or args.surface in ("", ".", "..")):
+        print(f"check-inventory: --surface takes a folder name such as taskbar, not a path: {args.surface!r}", file=sys.stderr)
         return 2
     if args.surface and not (root / args.surface).is_dir():
         print(f"check-inventory: no surface folder {args.surface}", file=sys.stderr)

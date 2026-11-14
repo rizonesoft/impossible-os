@@ -7,7 +7,7 @@ The inventory is the Windows 11 interface written down as data: every surface, p
 
 - `schema.json`: the record format, in JSON Schema 2020-12.
 - `<surface>/<file>.json`: the records of one surface, such as `taskbar/bar.json`. Each line is one record with an `id` (`win11.<surface>.<path>`), a `kind`, a `label`, its `order` under its `parent`, where the fact came from (`source`) and the build it was read from (`capturedFrom`).
-- `<surface>/<file>.<profile>.json`: the same elements measured under another capture profile, such as `taskbar/bar.fhd-150.json`. Each line names an existing record by `id` and gives its `bounds` (and, where measured, `measure` and `textMetrics`) at that profile, so a layout rule can be derived from several scale points without repeating the record.
+- `<surface>/<file>.<profile>.json`: the same elements measured under another capture profile, such as `taskbar/bar.fhd-150.json`. Each line names an existing record by `id` and gives at least one of its `bounds`, `measure` or `textMetrics` at that profile, so a layout rule can be derived from several scale points without repeating the record.
 - `<surface>/baseline.json`: an independent list of what should be there, read from the reference machine itself, against which the captured records are counted.
 
 ## What does a record measure?
