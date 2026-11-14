@@ -67,7 +67,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  | Order | Deliverable                                                                                 | Depends On   | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------- | ------------ | :----: |
 | 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [x]   |
-| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [ ]   |
+| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [x]   |
 | 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [ ]   |
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [ ]   |
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [ ]   |
@@ -144,22 +144,38 @@ Positions only mean something against one fixed machine. This section builds tha
 > [!NOTE]
 > **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `R:\11\ios-win11-ref\`, beside the image (operator choice, 2026-11-14).
 
-- [ ] Write `scripts/inventory/ref-vm.ps1`: creates the Generation 2 VM `ios-win11-ref` from the ISO with an unattended answer file
+- [x] Write `scripts/inventory/ref-vm.ps1`: creates the Generation 2 VM `ios-win11-ref` from the ISO with an unattended answer file
   - 4 vCPU, 4 GiB (operator decision 2026-11-14, so the host stays usable during captures), 80 GiB dynamic disk, TPM enabled, no network after setup
   - ISO: `R:\11\win11.iso`. VM path: `R:\11\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
   - The answer file makes one local account `ref` and declines every optional prompt
-- [ ] Set the VM's display to 1920 by 1080 at 100 percent scaling, display language en-US, regional format en-US, dark mode off (the default), and take the checkpoint `clean`
-- [ ] Write `scripts/inventory/ref-run.ps1`: restores the `clean` checkpoint, copies the capture tool in through PowerShell Direct, runs one capture command, and copies the result out
-- [ ] Record the reference in `docs/design/inventory/REFERENCE.md`
+  - Two answer media: the install media (`autounattend.xml`, no secret) and the OOBE media (`oobe.xml` holding the `ref` password), made fresh from the DPAPI-protected password file for each run, readable only by the operator, detached and deleted afterwards (plan review)
+  - The `ref` password is random, made on the host and kept as DPAPI `Export-Clixml` in the VM folder, never printed or committed; the guest's cached answer files are deleted before `clean` is taken
+- [x] Take the checkpoint `pre-oobe` at the first setup page, only after a guest-side watcher reports the setup window up and two thumbnails 30 s apart match; a restore of it shows the same page (plan review)
+- [x] Set the VM's display to 1920 by 1080 at 100 percent scaling, display language en-US, regional format en-US, dark mode off (the default), and take the checkpoint `clean`
+- [x] Write `scripts/inventory/ref-run.ps1`: restores the `clean` checkpoint, copies the capture tool in through PowerShell Direct, runs one capture command, and copies the result out
+  - The command runs as an interactive scheduled task in `ref`'s desktop session, never in the PowerShell Direct process, and the script waits for its exit code before copying out (plan review)
+  - Proof: a restored-checkpoint run starts Notepad, reads its window through UI Automation and saves a screenshot
+- [x] Record the reference in `docs/design/inventory/REFERENCE.md`
   - Edition, version, build and update revision read from the VM's Registry, and the date read
   - The capture profile `fhd-100`: 1920 by 1080, 100 percent, en-US, light theme, default accent, default taskbar alignment
-- [ ] Record the second and third profiles used by §14: `fhd-100-dark` (dark mode) and `fhd-150` (150 percent scaling)
-- [ ] State the rule in `REFERENCE.md`: every captured record carries the build in `capturedFrom`, and a capture from any other build is a new reference recorded there first
-- [ ] Add `ref-vm.ps1 --verify`: exits 0 only when the VM exists, the checkpoint exists and every profile value holds
-- [ ] Run `ref-vm.ps1` against `R:\11\win11.iso` and record the edition and build it installs in `REFERENCE.md`
-- [ ] Commit: `"inventory: reference machine and capture profile"`
+- [x] Name the further profiles §14 uses (`fhd-100-dark`, `fhd-150`) in `REFERENCE.md` as entries of §19's profile matrix, which owns their values
+- [x] State the rule in `REFERENCE.md`: every captured record carries the build in `capturedFrom`, and a capture from any other build is a new reference recorded there first
+- [x] Add `ref-vm.ps1 -Verify`: exits 0 only when the VM and both checkpoints exist and every profile value holds, read inside the interactive session (effective resolution, DPI, theme, language)
+- [x] `clean` shows the bare desktop with focus (first sign-in opens Start on 26300), and capture commands draw no window of their own; `-Verify` checks the foreground
+- [x] Add `ref-vm.ps1 -Reclean`: takes `clean` again from `pre-oobe` without reinstalling, so a profile or probe change costs minutes, not an install
+- [x] Run `ref-vm.ps1` against `R:\11\win11.iso` and record the edition and build it installs in `REFERENCE.md`
+- [x] Commit: `"inventory: reference machine and capture profile"`
 
-**Test checkpoint:** `powershell.exe -File scripts/inventory/ref-vm.ps1 --verify` prints `ref-vm: ios-win11-ref ok, profile fhd-100` and exits 0. `REFERENCE.md` names one build. Platform: the operator's Windows host with Hyper-V.
+**Test checkpoint:** `powershell.exe -File scripts/inventory/ref-vm.ps1 -Verify` prints `ref-vm: ios-win11-ref ok, profile fhd-100` and exits 0. `REFERENCE.md` names one build. Platform: the operator's Windows host with Hyper-V.
+
+> **Test runner:** N/A (Hyper-V host tooling, no kernel surface) | validation: `ref-vm.ps1 -Verify` exit 0 (`ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9711)`), `ref-run.ps1 -Proof` exit 0 (Notepad via UI Automation, 39 descendants, screenshot)
+
+> **Notes:**
+> - Built `ios-win11-ref` (Windows 11 Pro 26H2, build 26300.9711) unattended from `R:\11\win11.iso`, with checkpoints `pre-oobe` and `clean`; the profile `fhd-100` is read back inside `ref`'s session.
+> - Setup needs no keyboard: a SYSTEM watcher reports through Hyper-V key-value exchange, and the host's `ios-oobe-go` value tells it to run sysprep from the OOBE media. Typed keys landed in the setup page, and `msoobe`, `OOBEInProgress` and `ImageState` do not mark that page on 26300.
+> - `ref-run.ps1` runs each command under a headless console in an interactive task and moves files as bytes over PowerShell Direct (`Copy-Item -ToSession` fails from the WSL share).
+> - Restores grant the VM read access again to the media in its own folder; `-Reclean` replays setup from `pre-oobe` in about 3 minutes, which §19's first-run replay reuses.
+> - Canonical doc: [REFERENCE.md](../../docs/design/inventory/REFERENCE.md). The VM and tools are kept after capture for anything missed.
 
 ---
 
@@ -1046,8 +1062,8 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 
 - [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
-- [ ] Keep the setup flow replayable: take the checkpoint `pre-oobe` at the first setup page before the answer file runs, and run §9's First-Run Setup capture from it, for both the local-account and the network branches
-- [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 --verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
+- [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
+- [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
   - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
 - [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
   - Evidence for all three taskbar button modes on the second display is required before §8 closes
