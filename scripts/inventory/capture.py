@@ -125,6 +125,38 @@ def check_scratch(rel_file, records):
         shutil.rmtree(scratch)
 
 
+def received(out, rc):
+    """(meta, records) from the guest's output, or raise Incomplete.
+
+    A capture is taken only whole: the runner exited 0, meta.json says complete,
+    and records.json holds exactly the records meta.json counted. A transfer
+    that stopped part way can leave a complete meta.json beside a short or
+    missing records file, and the checker cannot tell a short file from a
+    small surface.
+    """
+    meta_path, rec_path = out / "meta.json", out / "records.json"
+    if not meta_path.is_file():
+        raise core.Incomplete(f"the guest wrote no meta.json (ref-run exit {rc})")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise core.Incomplete(f"meta.json is unreadable ({exc})") from None
+    if not meta.get("complete"):
+        raise core.Incomplete(f"incomplete ({meta.get('incomplete', 'no reason given')})")
+    if rc != 0:
+        raise core.Incomplete(f"ref-run exited {rc} after a complete capture; the transfer may be partial")
+    if not rec_path.is_file():
+        raise core.Incomplete("records.json was not received")
+    try:
+        new = core.read_records(rec_path)
+    except (OSError, ValueError) as exc:
+        raise core.Incomplete(f"records.json is unreadable ({exc})") from None
+    want = meta.get("records")
+    if not isinstance(want, int) or want < 1 or len(new) != want:
+        raise core.Incomplete(f"received {len(new)} records, meta.json counted {want}")
+    return meta, new
+
+
 def build_file(target, new, meta, do_merge):
     """The records to publish, or raise SystemExit with the reason and exit code."""
     if not meta.get("complete"):
@@ -154,6 +186,9 @@ def publish(target, records, surface, out, states, manifest_path, store):
     it was (new ones removed, the .old copies restored) and re-raises; only a
     swap that completes deletes the .old copies.
     """
+    names = [s["file"] for s in states]
+    if len(set(names)) != len(names):
+        raise OSError(f"two screenshots of {surface} share a file name; nothing staged")
     manifest = [e for e in load_manifest(manifest_path) if e["surface"] != surface]
     dest = store / surface
     staged = []
@@ -224,14 +259,13 @@ def main(argv=None):
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")
     out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture)
-    meta_path = out / "meta.json"
     if rc == 2:
         return 2
-    if not meta_path.is_file():
-        print(f"capture: the guest wrote no meta.json (ref-run exit {rc})")
+    try:
+        meta, new = received(out, rc)
+    except core.Incomplete as exc:
+        print(f"capture: {exc}; nothing published, nothing removed")
         return 3
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    new = core.read_records(out / "records.json") if (out / "records.json").is_file() else []
     rel = pathlib.PurePosixPath(core.slug(args.surface)) / f"{args.file}.json"
     try:
         records = build_file(INVENTORY / rel, new, meta, args.merge)

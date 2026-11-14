@@ -260,7 +260,8 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
         if el.can_expand and el.control_type in EXPANDABLE:
             try:                  # closed again even when the opening itself fails
                 items = [k for k in el.expand() if keep(k)]
-                state = f"{rid.split('.', 2)[2]}-open".replace(".", "-")
+                # The id below the surface, dots kept: ids are unique, so states are.
+                state = f"{rid.split('.', 2)[2]}-open"
                 if shot:
                     cap.states.append(shot(state, el, items))
                 base = len(kids)

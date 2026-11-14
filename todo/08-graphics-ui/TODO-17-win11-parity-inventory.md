@@ -209,11 +209,11 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 - [x] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree and wire it into `scripts/test-tooling.sh`
 - [x] Commit: `"inventory: UI Automation capture tool"`
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (55 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (63 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
 > **Notes:**
 > - `capture-ui.py` (guest) reads every element through one UIA CacheRequest, splices unnamed hosting panes (XAML island bridges) so ids follow what a user sees, and records shortcuts from `AcceleratorKey`; tooltips, teaching tips, offscreen elements and prose are skipped.
 > - The first open of a menu after launch differs from later opens (Notepad's File menu 18 px narrower, an extra Edit entry), so the tool walks until two passes agree (`settle`, at most 4) and a `--fixture` dump is kept only when walking it gives the same records; the dump visits exactly what the walk visits, bounded by `MAX_RECORDS`.
-> - `capture.py` (host) stages the tool, runs it through `ref-run.ps1`, refuses an incomplete capture (exit 3) before touching anything, merges by id, checks a scratch copy of the inventory and only then publishes records, screenshots and `shots.json`, all staged first and swapped in records last with each replaced file kept aside until the last swap, so a failed publication changes nothing.
+> - `capture.py` (host) stages the tool, runs it through `ref-run.ps1`, refuses an incomplete capture or a partial transfer (exit 3: runner exit, completeness and the record count all checked) before touching anything, merges by id, checks a scratch copy of the inventory and only then publishes records, screenshots and `shots.json`, all staged first and swapped in records last with each replaced file kept aside until the last swap, so a failed publication changes nothing.
 > - Notepad: 76 records in 3 walks, 8 screenshots, byte-identical across three VM sessions; that run's tree and records are the test fixtures, so the walk over the fixture must equal the live capture.
 > - Page: `docs/design/inventory/index.md#how-is-a-surface-captured`.
 

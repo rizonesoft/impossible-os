@@ -521,6 +521,14 @@ class Shots(unittest.TestCase):
         leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged", ".old"))]
         self.assertEqual(leftovers, [])
 
+    def test_two_shots_with_one_file_name_publish_nothing(self):
+        self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        with self.assertRaises(OSError):
+            capture.publish(self.target, [{"id": "x"}], "notepad-smoke", self.out, self.STATE * 2,
+                            self.manifest, self.store)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+
     def test_a_failed_record_write_leaves_the_file_whole(self):
         core.write_records(self.tmp / "r.json", [{"id": "a"}])
         real = json.dumps
@@ -536,6 +544,68 @@ class Shots(unittest.TestCase):
         finally:
             core.json.dumps = real
         self.assertEqual(core.read_records(self.tmp / "r.json"), [{"id": "a"}])
+
+
+class Received(unittest.TestCase):
+    """The host takes a capture only whole: exit 0, complete, every counted record."""
+
+    def setUp(self):
+        self.out = pathlib.Path(tempfile.mkdtemp())
+        self.meta = {"complete": True, "records": 2}
+        self.recs = [{"id": "win11.s.r"}, {"id": "win11.s.r.a"}]
+
+    def tearDown(self):
+        shutil.rmtree(self.out)
+
+    def write(self, meta=True, recs=True):
+        if meta:
+            (self.out / "meta.json").write_text(json.dumps(self.meta))
+        if recs:
+            core.write_records(self.out / "records.json", self.recs)
+
+    def test_a_whole_capture_is_taken(self):
+        self.write()
+        self.assertEqual(capture.received(self.out, 0), (self.meta, self.recs))
+
+    def test_a_failed_transfer_is_refused(self):
+        self.write()
+        with self.assertRaises(capture.core.Incomplete):
+            capture.received(self.out, 1)
+
+    def test_missing_records_are_refused(self):
+        self.write(recs=False)
+        with self.assertRaises(capture.core.Incomplete):
+            capture.received(self.out, 0)
+
+    def test_a_short_but_valid_file_is_refused(self):
+        self.recs = self.recs[:1]
+        self.write()
+        with self.assertRaises(capture.core.Incomplete):
+            capture.received(self.out, 0)
+
+    def test_a_cut_line_is_refused(self):
+        self.write()
+        data = (self.out / "records.json").read_bytes()
+        (self.out / "records.json").write_bytes(data[:-5])
+        with self.assertRaises(capture.core.Incomplete):
+            capture.received(self.out, 0)
+
+    def test_an_empty_capture_is_refused(self):
+        self.meta, self.recs = {"complete": True, "records": 0}, []
+        self.write()
+        with self.assertRaises(capture.core.Incomplete):
+            capture.received(self.out, 0)
+
+
+class States(unittest.TestCase):
+    def test_state_names_follow_ids_one_to_one(self):
+        t = node("Root", "Window", children=[node("", "MenuItem", "a-b", expands=[node("X", "MenuItem")]),
+                                             node("", "Group", "a", children=[
+                                                 node("", "MenuItem", "b", expands=[node("Y", "MenuItem")])])])
+        seen = []
+        core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R",
+                  shot=lambda state, el, items: seen.append(state) or {"file": f"{state}.p.png"})
+        self.assertEqual(sorted(seen), ["r.a-b-open", "r.a.b-open", "rest"])
 
 
 class Dump(unittest.TestCase):
