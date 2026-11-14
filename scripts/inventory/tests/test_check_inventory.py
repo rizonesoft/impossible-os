@@ -314,6 +314,11 @@ class Baselines(unittest.TestCase):
         _, out = self.report({**base, "REFERENCE.md": absent(("settings", "a", "gated off"))})
         self.assertEqual((out["baselines"]["settings"]["absent"], out["baselines"]["settings"]["unmatched"],
                           out["baselines"]["settings"]["stale"]), (1, 1, 0))
+        # A row the new build removed: the old entry is stale, not an orphan, so the new baselines publish.
+        r, out = self.report({**base, "REFERENCE.md": absent(("settings", "gone", "gated off"), build="26300.9000")})
+        self.assertEqual([e["rule"] for e in out["errors"] if e["rule"] != "baseline-missing"], [])
+        self.assertEqual((out["baselines"]["settings"]["absent"], out["baselines"]["settings"]["stale"]), (0, 0))
+        self.assertIn("absent-orphan", self.rules({**base, "REFERENCE.md": absent(("settings", "gone", "gated off"))}))
         for bad in ("", "26H2", "build 9711"):
             self.assertIn("absent-build", self.rules({**base, "REFERENCE.md": absent(("settings", "a", "why"), build=bad)}))
 

@@ -338,10 +338,16 @@ def load_absent(root, baselines, err, surface, build):
         problem = None
         if name not in baselines:
             problem = "absent-orphan", f"{name} is not a baseline"
-        elif row not in baselines[name]["rows"]:
-            problem = "absent-orphan", f"{name} has no row {row}"
         elif not ABSENT_BUILD.match(checked):
             problem = "absent-build", f"{name}:{row} names no build the absence was checked on (like 26300.9711)"
+        elif checked != build:
+            # Staleness is judged before the row, as for a match: a row the new
+            # build no longer has is not this old entry's error.
+            if row in baselines[name]["rows"]:
+                old.add((name, row))
+            continue
+        elif row not in baselines[name]["rows"]:
+            problem = "absent-orphan", f"{name} has no row {row}"
         elif not reason.strip():
             problem = "absent-reason", f"{name}:{row} is listed absent without a reason"
         elif (name, row) in first:
@@ -350,9 +356,6 @@ def load_absent(root, baselines, err, surface, build):
         if problem:
             if scoped(name):
                 err(path, n, *problem)
-            continue
-        if checked != build:
-            old.add((name, row))
             continue
         out[(name, row)] = (n, reason)
     return out, old
