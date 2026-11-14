@@ -559,6 +559,14 @@ def test_the_desktop_shortcuts_attach_with_the_keyboard_on():
     subprocess.run(["bash", "-n", str(REPO / "scripts/run-desktop.sh")], check=True)
 
 
+def test_the_desktop_shortcuts_target_the_terminal_alias_that_survives_updates():
+    # Get-Command resolves wt.exe to the versioned package folder, which a Windows Terminal
+    # update removes: on 2026-11-14 the shortcuts pointed at 1.25.2733.0 after the update to 1.25.3131.0.
+    text = (REPO / "scripts/run-desktop.sh").read_text()
+    assert "Get-Command wt.exe" not in text, "that path dies with the next Windows Terminal update"
+    assert r"Microsoft\WindowsApps\wt.exe" in text, "target the per-user app execution alias"
+
+
 def test_run_script_shape():
     text = (REPO / "scripts/run.sh").read_text()
     for verb in ("start)", "attach)", "watch)", "status)", "stop)", "autostart)"):

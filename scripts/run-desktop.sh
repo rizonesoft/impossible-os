@@ -43,7 +43,9 @@ install_icon() {
 install_shortcuts() {
   command -v powershell.exe >/dev/null 2>&1 || { echo "powershell.exe not found: run this from WSL on Windows" >&2; return 1; }
   local wt desktop icon distro="${WSL_DISTRO_NAME:-Ubuntu}"
-  wt="$(powershell.exe -NoProfile -Command '(Get-Command wt.exe -ErrorAction SilentlyContinue).Source' | tr -d '\r')"
+  # The per-user app execution alias, not the versioned package folder a command lookup resolves to:
+  # the package folder is replaced by every Windows Terminal update, and the shortcut dies with it.
+  wt="$(powershell.exe -NoProfile -Command '$a = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\wt.exe"; if (Test-Path $a) { $a }' | tr -d '\r')"
   desktop="$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("Desktop")' | tr -d '\r')"
   [ -n "$wt" ] || { echo "Windows Terminal (wt.exe) not found" >&2; return 1; }
   [ -n "$desktop" ] || { echo "could not find the Windows desktop folder" >&2; return 1; }
