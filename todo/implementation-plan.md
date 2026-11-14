@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **974 of 2705 sections complete (36%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **974 of 2706 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -623,6 +623,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T15 §11` | Phase Grouping and Diagnostic Layout                                                              | none       |     6 |
 | [x]  | `D01 T15 §12` | HV_BAR Removal and Migration                                                                      | none       |     5 |
 | [x]  | `D01 T15 §13` | Panic Integration and Failure Highlighting                                                        | none       |     6 |
+| [ ]  | `D01 T15 §14` | Display Scale That Follows Resolution                                                             | none       |     7 |
 | [x]  | `D01 T16 §1`  | NVMe Controller Discovery and BAR Mapping                                                         | none       |     9 |
 | [x]  | `D01 T16 §2`  | Admin Queue Setup and Identify Commands                                                           | none       |     8 |
 | [x]  | `D01 T16 §3`  | I/O Queue Creation and Sector Read/Write                                                          | none       |     9 |

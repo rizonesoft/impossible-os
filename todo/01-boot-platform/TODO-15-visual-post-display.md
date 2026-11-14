@@ -70,6 +70,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | ⭐  |  11   | Phase grouping and diagnostic layout                   | §7         |  [x]   |
 | 💎  |  12   | HV_BAR removal and migration                           | §4, §6     |  [x]   |
 | ⭐  |  13   | Panic integration and failure highlighting             | §8, §11    |  [/]   |
+| ⭐  |  14   | Display scale that follows resolution                  | §4, §11    |  [ ]   |
 
 > 💎 = parity -- Windows has boot progress display (logo + dots); Linux has `plymouth` splash and `systemd-analyze blame`.
 > ⭐ = exclusive -- embedded micro-font pre-splash diagnostics, NVRAM crash persistence display, and full timing waterfall are not available in Windows or Linux at the kernel level without external tools.
@@ -425,6 +426,28 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > **Notes:** Reopened 2026-11-11: Q19 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q19: Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
 > **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 304)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
+
+---
+
+## 14. Display Scale That Follows Resolution
+
+> **Spawned-by:** root
+
+The list is drawn at one font pixel per screen pixel (`vpd_puts_scaled` scales nothing), so on a 4K panel a row is 10 of 2,160 pixels and cannot be read (operator report 2026-11-14). Tier 1 has no heap and no font engine, so the fix is one whole-number scale worked out from the framebuffer alone and applied to every measurement.
+
+**Files:** `src/kernel/vpd.c`, `include/kernel/vpd.h`, `src/kernel/test/test_vpd.c`
+
+- [ ] `vpd_scale_for(width, height)`: a pure helper returning the whole-number scale, `height / 540` with a floor of 1, so a row keeps about the same share of the screen at every resolution (768 gives 1, 1080 and 1440 give 2, 2160 gives 4)
+  - Lower it until `VPD_MAX_ROWS` rows, the info header, the progress bar and the widest row all fit inside the framebuffer
+- [ ] Apply the scale to every measurement: glyph pixels, cell advance, row height, margins, the status square and checkmark, column positions, separators and the progress bar
+  - `vpd_puts_scaled` draws each font pixel as a scale-by-scale block; nothing keeps a fixed pixel size
+- [ ] Use the display's physical size where the loader can read it: carry the EDID width and height in millimetres in `boot_info`, and pick the scale that gives a row of about 2.5 mm; fall back to the height rule when EDID is absent or implausible
+- [ ] Apply the same scale to the crash banner (`vpd_crash_banner`) and the `postbars=diag` screen
+- [ ] `boot.conf` `postbars_scale=auto|1..8` overrides the choice; an out-of-range value warns and uses `auto`
+- [ ] Tests in `test_vpd.c` for `vpd_scale_for` over 1024x768, 1920x1080, 2560x1440, 3840x2160 and a framebuffer too small for scale 1, and a pixel count check that one glyph at scale 3 fills nine screen pixels per font pixel
+- [ ] Commit: `"boot: the visual POST display scales with the screen"`
+
+**Test checkpoint:** `make test-boot` passes the `vpd_scale_for` cases. Booted under QEMU with `-device VGA,xres=3840,yres=2160` and again at 1024x768, the list is readable in a screenshot and no row or column is clipped; the smoke matrix stays green.
 
 ---
 
