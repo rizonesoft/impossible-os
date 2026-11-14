@@ -13,6 +13,13 @@ description: The unattended OS-completion driver. Runs the fixpoint loop over ev
 > mid-queue, and never ship broken code. `run_phase_guard.py` hard-blocks any
 > deviation; this skill is the program it enforces.
 
+> **The operating mandate governs every choice you make here.** It is the operator's standing instruction, in their
+> words, in [`CLAUDE.md` "Operating Mandate"](../../../CLAUDE.md#operating-mandate-operator-2026-11-10): act
+> autonomously, self-heal, self-improve, decide instead of asking, and build better than the incumbents. Re-read
+> it with the doctrine file after every compaction. Where a step below could be read two ways, take the reading
+> the mandate asks for. Its two limits hold here too: the halt class stops the run, and autonomy never lowers
+> the proof.
+
 ## Source of truth
 
 [`todo/TODO-Claude-Overnight-Runner.md`](../../../todo/TODO-Claude-Overnight-Runner.md)

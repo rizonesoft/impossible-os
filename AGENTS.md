@@ -6,7 +6,8 @@ Impossible OS uses **Claude Code** as its primary orchestrator. Doctrine lives i
 
 1. **Read [`CLAUDE.md`](CLAUDE.md) first.** It is the single source of truth for product north star, workflow rules, safety constraints, and testing policy.
 2. **Read [`docs/infrastructure/ai-system.md`](docs/infrastructure/ai-system.md)** for the AI-system ownership map: Authority Hierarchy, Hook Routing Matrix, and the [External-Reviewer Contract](docs/infrastructure/ai-system.md#external-reviewer-contract-codex) that governs Codex review output.
-3. **Do not restate or redefine any rule you find in `CLAUDE.md`.** If your tool would otherwise emit a different version of a rule, the other layer is the bug.
+3. **Work under the [Operating Mandate](CLAUDE.md#operating-mandate-operator-2026-11-10).** It is the operator's standing instruction to every session, attended or not, and it is stated once, there.
+4. **Do not restate or redefine any rule you find in `CLAUDE.md`.** If your tool would otherwise emit a different version of a rule, the other layer is the bug.
 
 ## Authority (3-bullet summary of the 5 invariants)
 
