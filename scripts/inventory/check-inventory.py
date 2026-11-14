@@ -498,8 +498,9 @@ def check(root, surface=None):
             if mine:
                 err(path, n, "baseline-orphan", orphan)
             continue
-        read_from = b["header"].get("build")
-        if read_from is not None and obj["capturedFrom"] != read_from:
+        # Against the reference build, for every baseline: an imported one
+        # (controls) has no build of its own, and the capture is what must be current.
+        if build is not None and obj["capturedFrom"] != build:
             # Staleness is judged before the row: a row the new build no longer
             # has is not this old record's error, and the re-capture unbinds it.
             # A capture of another build is stale evidence: it never counts, and

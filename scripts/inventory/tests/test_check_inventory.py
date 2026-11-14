@@ -192,6 +192,21 @@ class Baselines(unittest.TestCase):
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]}, "--baselines")
         self.assertIn("1 of the open rows have a match or an absence from another build", r.stdout)
 
+    def test_an_old_capture_never_matches_the_imported_controls_baseline(self):
+        up = {"repo": "o/r", "commit": SHA, "license": "MIT"}
+        base = {"controls/baseline.json": bl("controls", ["Button"], build=None, upstream=up)}
+        at = lambda b: [rec("win11.system.x", surface="system", kind="surface", baselineId="controls:Button",
+                            source=f"uia:{b}", capturedFrom=b)]
+        _, out = self.report({**base, "system/home.json": at("26300.1")})
+        got = out["baselines"]["controls"]
+        self.assertEqual((got["matched"], got["unmatched"], got["stale"]), (0, 1, 1))
+        # ...so it cannot collide with an absence checked on the reference build.
+        _, out = self.report({**base, "system/home.json": at("26300.1"), "REFERENCE.md": absent(("controls", "Button", "not shown"))})
+        self.assertNotIn("absent-matched", [e["rule"] for e in out["errors"]])
+        self.assertEqual(out["baselines"]["controls"]["absent"], 1)
+        _, out = self.report({**base, "system/home.json": at(B)})
+        self.assertEqual(out["baselines"]["controls"]["matched"], 1)
+
     def test_a_new_reference_build_is_reached_by_baselines_then_captures(self):
         A, up = "26300.9000", {"repo": "o/r", "commit": SHA, "license": "MIT"}
         ref = lambda b: {"reference.json": [{"edition": "Professional", "displayVersion": "26H2", "build": b}]}
