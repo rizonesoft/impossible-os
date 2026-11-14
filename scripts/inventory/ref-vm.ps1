@@ -402,8 +402,9 @@ function Invoke-Reclean() {
     if ($names -notcontains 'pre-oobe') { Write-Host "ref-vm: $Name has no pre-oobe checkpoint; build it with -Rebuild"; $script:Refused = 1; return }
     $script:LogPath = Join-Path $VmPath 'ref-vm.log'
     Write-Ref 'taking clean again from pre-oobe'
-    Restore-RefCheckpoint $Name 'pre-oobe' $VmPath
+    # The credential is loaded first: a failure here leaves the VM as it was.
     $pw = (Get-RefCredential $VmPath).GetNetworkCredential().Password
+    Restore-RefCheckpoint $Name 'pre-oobe' $VmPath
     Complete-Oobe $pw
     Complete-Clean
 }
