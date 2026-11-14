@@ -1,0 +1,76 @@
+[
+ {
+  "id": "context-menus",
+  "kind": "look",
+  "question": "What does a right-click show?",
+  "variants": [],
+  "rule": "One menu holds every verb, grouped and ordered by one scheme; no second menu sits behind a more-options entry.",
+  "reason": "The reference shows a modern menu with a classic menu behind it, and a verb can be in either."
+ },
+ {
+  "id": "dialog-generations",
+  "kind": "look",
+  "question": "What frame does a dialog have?",
+  "variants": [],
+  "rule": "One dialog frame, one button order and one spacing scale, for every dialog.",
+  "reason": "The reference has property sheets, task dialogs and modern content dialogs, each with its own layout and button order."
+ },
+ {
+  "id": "title-bars",
+  "kind": "look",
+  "question": "How tall is a title bar and what do its caption buttons look like?",
+  "variants": [],
+  "rule": "One title bar height per density and one caption button style.",
+  "reason": "The reference has 32, 40 and 48 pixel bars and three caption button styles."
+ },
+ {
+  "id": "control-metrics",
+  "kind": "look",
+  "question": "What radius, focus rectangle, scroll bar, tooltip and menu font does a control use?",
+  "variants": [],
+  "rule": "The token in tokens.json, in every program.",
+  "reason": "These differ between the old and the new programs of the reference."
+ },
+ {
+  "id": "dark-mode",
+  "kind": "look",
+  "question": "Does a surface follow the dark theme?",
+  "variants": [],
+  "rule": "Every surface follows the theme.",
+  "reason": "Some dialogs and tools of the reference stay light in dark mode."
+ },
+ {
+  "id": "keyboard-access",
+  "kind": "look",
+  "question": "Can a command be reached by an access key?",
+  "variants": [],
+  "rule": "Every command has an access key and every page is reachable by keyboard alone.",
+  "reason": "Old dialogs of the reference have access keys and new pages do not."
+ },
+ {
+  "id": "tool-frame",
+  "kind": "look",
+  "question": "What frame does a management console have?",
+  "variants": [],
+  "rule": "Each console stays a separate tool under its own name, in one tool frame with the one dialog style.",
+  "reason": "Device Manager, Disk Management, Services, Event Viewer, Task Scheduler and Computer Management each keep an older frame of their own."
+ },
+ {
+  "id": "settings-home",
+  "kind": "home",
+  "question": "Where does a setting live?",
+  "variants": [],
+  "rule": "Settings is the one program and holds every setting. No Control Panel window is built; its name and entry points open the matching Settings page. A Control Panel-only setting joins the Settings page whose captured related-settings link opens it, in a group at the foot of that page.",
+  "reason": "The reference reaches the same setting in Settings and in Control Panel with two layouts, and keeps some settings only in Control Panel or an old property sheet.",
+  "design": "shell.md#settings-and-control-panel-frame"
+ },
+ {
+  "id": "hello-enrolment",
+  "kind": "flow",
+  "question": "How is a sign-in method enrolled?",
+  "variants": [],
+  "rule": "One enrolment flow behind the four captured entry points.",
+  "reason": "The reference enrols a PIN, a face, a fingerprint and a security key through four different wizards.",
+  "design": "shell.md#sign-in-method-enrolment"
+ }
+]

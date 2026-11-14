@@ -99,14 +99,30 @@
       "minLength": 1
     },
     "disposition": {
+      "description": "What Impossible OS does with the record (section 6): build it as captured, build our own equivalent, capture it and build one design of ours in its place, or leave it out.",
       "enum": [
         "build",
         "equivalent",
+        "replaced",
         "excluded"
       ]
     },
     "inconsistency": {
+      "description": "The consistency.json entry the record belongs to.",
       "$ref": "#/$defs/slug"
+    },
+    "reason": {
+      "description": "Why an excluded record is left out.",
+      "type": "string",
+      "minLength": 1
+    },
+    "mergedInto": {
+      "description": "On a replaced page, dialogTab or setting: the record of the same role that holds it in Impossible OS.",
+      "$ref": "#/$defs/recordId"
+    },
+    "placedUnder": {
+      "description": "On a built record whose captured home is replaced: the page or group it lives under in Impossible OS.",
+      "$ref": "#/$defs/recordId"
     },
     "baselineId": {
       "type": "string",
@@ -295,6 +311,12 @@
     }
   },
   "dependentRequired": {
+    "mergedInto": [
+      "disposition"
+    ],
+    "placedUnder": [
+      "disposition"
+    ],
     "bounds": [
       "captureProfile"
     ],
@@ -306,6 +328,103 @@
     ]
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "excluded"
+          }
+        },
+        "required": [
+          "disposition"
+        ]
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "replaced"
+          }
+        },
+        "required": [
+          "disposition"
+        ]
+      },
+      "then": {
+        "required": [
+          "inconsistency"
+        ],
+        "not": {
+          "required": [
+            "placedUnder"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "mergedInto"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "replaced"
+          },
+          "kind": {
+            "enum": [
+              "page",
+              "dialogTab",
+              "setting"
+            ]
+          }
+        },
+        "required": [
+          "disposition",
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "mergedInto"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "excluded"
+          }
+        },
+        "required": [
+          "disposition"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "placedUnder"
+          ]
+        }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -364,6 +483,78 @@
     }
   ],
   "$defs": {
+    "recordId": {
+      "type": "string",
+      "pattern": "^win11\\.[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+    },
+    "ledgerEntry": {
+      "description": "One entry of consistency.json: a place Windows 11 disagrees with itself and the one rule Impossible OS ships (section 6).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "question",
+        "variants",
+        "rule",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "kind": {
+          "enum": [
+            "look",
+            "flow",
+            "home"
+          ]
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "variants": {
+          "description": "The captured records that disagree. Empty until their surfaces are captured; a replaced record needs two.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/recordId"
+          }
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "design": {
+          "description": "The docs/design page and heading that describes ours, as file.md#anchor.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.md#[a-z0-9-]+$"
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "flow",
+              "home"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "design"
+        ]
+      }
+    },
     "slug": {
       "type": "string",
       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"

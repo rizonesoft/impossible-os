@@ -30,6 +30,18 @@ behaviour is our own description, so it never repeats the label. names.json,
 the trade mark names Impossible OS replaces, must list each reference name once
 with our name and the reason.
 
+Decisions (section 6): every record whose kind is not a catalogue kind carries
+a disposition, unless --allow-undecided (a fresh capture, before its hand
+fields are written). consistency.json, the consistency ledger, is an array of
+the schema's $defs/ledgerEntry: each variant names a record, and a flow or
+home entry's design names a heading of a docs/design page. A replaced record
+is evidence-bound: its inconsistency names an entry with two or more variants,
+and the record is one of them or sits under one. Nothing is lost by replacing:
+a replaced setting is mergedInto a setting, a replaced page or dialogTab into a
+page, the target neither replaced nor excluded; and a built record whose
+captured home is replaced names where it lives in placedUnder (a page or group
+that is itself built), or sits under a record that does.
+
 Cross-record rules over the whole tree: a duplicate id, a parent that names no
 record, a parent cycle, an order used twice under one parent, an itemCount that
 differs from the number of child records, an observation whose id names no
@@ -37,9 +49,14 @@ record or whose profile differs from its file name, and two observations of one
 id under one profile.
 
     python3 scripts/inventory/check-inventory.py [--surface NAME] [--baselines] [--json] [--root DIR] [--index]
+                                                 [--allow-undecided] [--design-root DIR]
+
+--design-root is the folder a ledger design is read from: the parent of the
+inventory unless given (a scratch copy of the inventory alone names the real one).
 
 --index checks the staged inventory instead of the working tree, so a commit is
-judged by the bytes it records (the pre-commit lint passes it).
+judged by the bytes it records (the pre-commit lint passes it); the design pages
+are read as staged too.
 
 Exit 0 when clean, 1 on any error, 2 on a usage error.
 """
@@ -75,6 +92,13 @@ ABSENT_BUILD = re.compile(r"^\d+\.\d+$")
 HEADER_FIELDS = {"baseline", "owner", "source", "build", "upstream", "files"}
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DELIMITER = re.compile(r"^:?-{3,}:?$")
+LEDGER_FILE = "consistency.json"
+# Kinds that record a measurement or a binding, not a thing to build or leave out.
+CATALOGUE_KINDS = frozenset({"shortcut", "gesture", "metric", "motion", "sound", "cursor", "state"})
+# A replaced record of the key kind is held by a record of the value kind.
+MERGE_KINDS = {"setting": "setting", "page": "page", "dialogTab": "page"}
+PLACE_KINDS = ("page", "group")
+GONE = ("replaced", "excluded")
 
 _spec = importlib.util.spec_from_file_location("baseline_core", pathlib.Path(__file__).resolve().parent / "baseline_core.py")
 baseline_core = importlib.util.module_from_spec(_spec)
@@ -137,6 +161,76 @@ def check_names(root, err):
         seen.setdefault(key, i)
         if entry["ours"].strip().casefold() == key:
             err(path, 1, "names", f"{where}: our name for {entry['reference']} is the same name")
+
+
+_site = None
+
+
+def design_anchors(path):
+    """The heading and anchor ids of a design page, by the site build's own rule
+    (scripts/site/build.py), so a ledger link resolves exactly as a docs link does."""
+    global _site
+    if _site is None:
+        here = pathlib.Path(__file__).resolve().parents[1] / "site"
+        sys.path.insert(0, str(here))
+        try:
+            spec = importlib.util.spec_from_file_location("site_build", here / "build.py")
+            _site = importlib.util.module_from_spec(spec)
+            sys.modules["site_build"] = _site   # its dataclasses look their module up by name
+            spec.loader.exec_module(_site)
+        finally:
+            sys.path.remove(str(here))
+    # No cache file: a ledger names a handful of small pages, parsed once each.
+    return _site.AnchorCache(pathlib.Path(tempfile.gettempdir()) / "inventory-no-anchor-cache").anchors(
+        path.read_text(encoding="utf-8"))
+
+
+def load_ledger(root, design_root, entry_v, err, report):
+    """{entry id: entry} from consistency.json; faults are reported when `report`."""
+    path = root / LEDGER_FILE
+    out = {}
+    if not path.is_file():
+        return out
+
+    def fault(message):
+        if report:
+            err(path, 1, "ledger", message)
+
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        fault(f"not JSON: {exc}")
+        return out
+    if not isinstance(entries, list):
+        fault(f"{LEDGER_FILE} is an array of ledger entries")
+        return out
+    pages = {}
+    for i, entry in enumerate(entries):
+        name = entry.get("id") if isinstance(entry, dict) else None
+        name = name if isinstance(name, str) else f"entry {i}"
+        bad = sorted(entry_v.iter_errors(entry), key=lambda e: list(e.absolute_path))
+        if bad:
+            for e in bad:
+                at = "/".join(str(x) for x in e.absolute_path) or "(entry)"
+                fault(f"{name}: {at}: {e.message}")
+            continue
+        if name in out:
+            fault(f"{name} is defined twice")
+            continue
+        out[name] = entry
+        if "design" in entry:
+            page, _, anchor = entry["design"].partition("#")
+            if page not in pages:
+                target = design_root / page
+                try:
+                    pages[page] = design_anchors(target) if target.is_file() else None
+                except (OSError, UnicodeDecodeError):
+                    pages[page] = None
+            if pages[page] is None:
+                fault(f"{name}: design names {page}, which is not a page under {design_root.name}/")
+            elif anchor not in pages[page]:
+                fault(f"{name}: design names #{anchor}, which {page} does not have")
+    return out
 
 
 def classify(path):
@@ -365,11 +459,12 @@ def load_absent(root, baselines, err, surface, build):
     return out, old
 
 
-def check(root, surface=None):
+def check(root, surface=None, allow_undecided=False, design_root=None):
     schema = json.loads((root / "schema.json").read_text(encoding="utf-8"))
     record_v = Draft202012Validator(schema)
     registry = Registry().with_resource(schema["$id"], Resource.from_contents(schema))
     obs_v = Draft202012Validator({"$ref": schema["$id"] + "#/$defs/observation"}, registry=registry)
+    entry_v = Draft202012Validator({"$ref": schema["$id"] + "#/$defs/ledgerEntry"}, registry=registry)
 
     errors = []
 
@@ -483,6 +578,99 @@ def check(root, surface=None):
     if surface is None:
         check_names(root, err)
 
+    # Decisions: the ledger, then what each record's disposition must prove.
+    ledger = load_ledger(root, design_root or root.parent, entry_v, err, surface is None)
+    variants = {}
+    for name, entry in ledger.items():
+        variants[name] = {v for v in entry["variants"] if v in records}
+        if surface is None:
+            for v in entry["variants"]:
+                if v not in records:
+                    err(root / LEDGER_FILE, 1, "ledger-variant", f"{name}: variant {v} names no record")
+
+    def disposition(rid):
+        return records[rid][2].get("disposition")
+
+    # Where a record ends up in Impossible OS: follow placedUnder where a record
+    # has one and its captured parent otherwise. "replaced" when that chain meets a
+    # replaced record (nothing built holds it), "cycle" when it never ends (a place
+    # under itself, or under what sits under it), else "ok". One walk per chain.
+    fate = {}
+
+    def fate_of(rid):
+        walk = []
+        node = rid
+        while node in records and node not in fate:
+            if node in walk:
+                for w in walk:
+                    fate[w] = "cycle"
+                break
+            obj = records[node][2]
+            if obj.get("disposition") == "replaced":
+                fate[node] = "replaced"
+                break
+            walk.append(node)
+            node = obj.get("placedUnder", obj.get("parent"))
+        found = fate.get(node, "ok")
+        for w in walk:
+            fate.setdefault(w, found)
+        return fate.get(rid, "ok")
+
+    under = {}   # (entry, record) -> the record is a variant of the entry or sits under one
+
+    def under_variant(name, rid):
+        walk = []
+        node = rid
+        while node in records and (name, node) not in under and node not in walk:
+            if node in variants[name]:
+                under[(name, node)] = True
+                break
+            walk.append(node)
+            node = records[node][2].get("parent")
+        found = under.get((name, node), False)
+        for w in walk:
+            under[(name, w)] = found
+        return under.get((name, rid), False)
+
+    for rid, (path, n, obj, mine) in records.items():
+        if not mine:
+            continue
+        state = obj.get("disposition")
+        if state is None and obj["kind"] not in CATALOGUE_KINDS and not allow_undecided:
+            err(path, n, "disposition-missing", f"{rid}: a {obj['kind']} record carries a disposition (build, equivalent, replaced or excluded)")
+        name = obj.get("inconsistency")
+        if name is not None and name not in ledger:
+            err(path, n, "inconsistency-undefined", f"{rid}: inconsistency {name} is not an entry of {LEDGER_FILE}")
+        elif state == "replaced":
+            if len(variants[name]) < 2:
+                err(path, n, "replaced-evidence", f"{rid}: replaced under {name}, which names {len(variants[name])} captured variant(s); "
+                    "a record is replaced only where two captured records disagree")
+            elif not under_variant(name, rid):
+                err(path, n, "replaced-evidence", f"{rid}: replaced under {name}, but it is not a variant of that entry and sits under none")
+        target = obj.get("mergedInto")
+        if target is not None:
+            want = MERGE_KINDS.get(obj["kind"])
+            if target not in records:
+                err(path, n, "merged-target", f"{rid}: mergedInto {target} names no record")
+            elif disposition(target) in GONE:
+                err(path, n, "merged-target", f"{rid}: mergedInto {target}, which is itself {disposition(target)}; nothing holds the option")
+            elif want is None:
+                err(path, n, "merged-target", f"{rid}: only a page, dialogTab or setting is mergedInto another record")
+            elif records[target][2]["kind"] != want:
+                err(path, n, "merged-target", f"{rid}: a replaced {obj['kind']} is held by a {want}, and {target} is a {records[target][2]['kind']}")
+        place = obj.get("placedUnder")
+        if place is not None:
+            if place not in records:
+                err(path, n, "placed-target", f"{rid}: placedUnder {place} names no record")
+            elif records[place][2]["kind"] not in PLACE_KINDS:
+                err(path, n, "placed-target", f"{rid}: placedUnder names a page or group, and {place} is a {records[place][2]['kind']}")
+            elif fate_of(place) == "cycle":
+                err(path, n, "placed-target", f"{rid}: placedUnder {place} leads back to itself; a place ends at a built surface")
+            elif disposition(place) in GONE or fate_of(place) == "replaced":
+                err(path, n, "placed-target", f"{rid}: placedUnder {place}, which is not built: it is replaced or excluded, or sits under a replaced record")
+        elif state in ("build", "equivalent") and obj["kind"] not in CATALOGUE_KINDS and fate_of(rid) == "replaced":
+            err(path, n, "unplaced", f"{rid}: built, but its captured home is replaced; name where it lives in placedUnder")
+
     # Baselines: every row is matched by a record, documented absent, or open.
     ref = root / "reference.json"
     build = json.loads(ref.read_text(encoding="utf-8")).get("build") if ref.is_file() else None
@@ -556,6 +744,9 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", help="print a JSON result for a tool")
     ap.add_argument("--baselines", action="store_true", help="print each baseline's rows: matched, absent, pending, unmatched")
     ap.add_argument("--index", action="store_true", help="check the staged inventory, not the working tree")
+    ap.add_argument("--allow-undecided", action="store_true",
+                    help="accept a record with no disposition yet (a fresh capture, before its hand fields)")
+    ap.add_argument("--design-root", help="the folder a ledger design is read from (default: the inventory's parent)")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if args.index:
@@ -570,7 +761,8 @@ def main(argv=None):
     if args.surface and not (root / args.surface).is_dir():
         print(f"check-inventory: no surface folder {args.surface}", file=sys.stderr)
         return 2
-    records, obs, errors, summary = check(root, args.surface)
+    design_root = pathlib.Path(args.design_root) if args.design_root else None
+    records, obs, errors, summary = check(root, args.surface, args.allow_undecided, design_root)
     if args.baselines:
         for name in sorted(set(baseline_core.OWNERS) - set(summary)):
             errors.append({"file": f"{name}/{BASELINE_FILE}", "line": 0, "rule": "baseline-missing",
@@ -607,7 +799,10 @@ def from_index(args):
     try:
         top = pathlib.Path(git("-C", str(root.parent), "rev-parse", "--show-toplevel").strip())
         rel = root.relative_to(top).as_posix()
-        staged = git("-C", str(top), "ls-files", "-z", "--", rel).split("\0")[:-1]
+        # The design pages beside the inventory are staged bytes too: a ledger
+        # design is judged against the page this commit records.
+        pages = f":(glob){root.parent.relative_to(top).as_posix()}/*.md"
+        staged = git("-C", str(top), "ls-files", "-z", "--", rel, pages).split("\0")[:-1]
         scratch = pathlib.Path(tempfile.mkdtemp(prefix="inventory-index-"))
         try:
             if staged:
@@ -619,6 +814,8 @@ def from_index(args):
                 argv.append("--json")
             if args.baselines:
                 argv.append("--baselines")
+            if args.allow_undecided:
+                argv.append("--allow-undecided")
             return main(argv)
         finally:
             shutil.rmtree(scratch)

@@ -3,7 +3,7 @@
 
 ## What is it?
 
-The parity inventory is a machine-readable list of every visible element of the Windows 11 interface: one record per taskbar button, menu entry, Settings control, dialog tab, shortcut and measured size. It exists so that "the same thing, in the same place" is a number that can be checked, not an impression. Nothing is implemented yet.
+The parity inventory is a machine-readable list of every visible element of the Windows 11 interface: one record per taskbar button, menu entry, Settings control, dialog tab, shortcut and measured size. It exists so that "the same thing, in the same place" is a number that can be checked, not an impression. The format, the checker, the reference machine, the capture tool, the completeness baselines and the consistency ledger exist; no surface is captured yet and nothing is built from it.
 
 ## How does it work?
 
@@ -24,22 +24,22 @@ Where Windows 11 disagrees with itself, a consistency ledger records the variant
 
 ## What are its interfaces?
 
-All planned, none shipped:
+Shipped: the schema, the checker, the capture tool and the ledger. Planned: the records, the report and the layout check.
 
 - `docs/design/inventory/schema.json`: the record format.
 - `docs/design/inventory/<surface>/*.json`: the records, one JSON object per line.
-- `docs/design/inventory/consistency.json`: the consistency ledger.
+- `docs/design/inventory/consistency.json`: the consistency ledger, seeded with nine entries; the [inventory format](../design/inventory/index.md#how-are-decisions-recorded) says how a record cites it.
 - `scripts/inventory/check-inventory.py`, `capture-ui.py`, `inventory-report.py`, `layout-check.py`: the checker, the capture tool, the coverage and ownership report, and the comparison of the built OS with the reference.
 
 The design inputs it corrects exist today: [`tokens.json`](../design/tokens.json), the [shell specification](../design/shell.md) and the [controls specification](../design/controls.md).
 
 ## How do I use it?
 
-There is nothing to run yet. When the first sections land, `python3 scripts/inventory/check-inventory.py` validates the inventory and `python3 scripts/inventory/inventory-report.py --owners --check` lists any record without an owner.
+`python3 scripts/inventory/check-inventory.py` validates the inventory, its baselines and the ledger. `python3 scripts/inventory/inventory-report.py --owners --check`, which lists any record without an owner, is not written yet.
 
 ## What is not implemented yet?
 
-Nothing is implemented yet. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns all of it: the schema and checker, the reference machine, the capture tool, the baselines, the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, the built-OS layout check, and the pixel comparison against reference screenshots that holds the build to a pixel-perfect standard (only replaced copyrighted regions may differ). The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `R:\11\ios-win11-ref\`.
+No surface is captured and nothing is built from the inventory yet. The schema and checker, the reference machine, the capture tool, the baselines, and the dispositions and ledger are done. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns the rest: the coverage report, the capture matrix and its fixtures, the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, the built-OS layout check, and the pixel comparison against reference screenshots that holds the build to a pixel-perfect standard (only replaced copyrighted regions may differ). The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `R:\11\ios-win11-ref\`.
 
 ## How does it compare with Windows 11 and Linux?
 

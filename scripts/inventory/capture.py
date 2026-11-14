@@ -163,7 +163,11 @@ def check_scratch(files):
                 raise ValueError(f"{rel_file} is outside the inventory")
             target.parent.mkdir(parents=True, exist_ok=True)
             core.write_records(target, records)
-        r = subprocess.run([sys.executable, str(HERE / "check-inventory.py"), "--root", str(tree)],
+        # A fresh capture is undecided: its dispositions are written by hand afterwards
+        # (section 6), and the commit check, which passes no such flag, requires them.
+        # The scratch tree holds the inventory alone, so the design pages are named.
+        r = subprocess.run([sys.executable, str(HERE / "check-inventory.py"), "--root", str(tree),
+                            "--allow-undecided", "--design-root", str(INVENTORY.parent)],
                            capture_output=True, text=True, timeout=600)
         return r.returncode, r.stdout + r.stderr
     finally:

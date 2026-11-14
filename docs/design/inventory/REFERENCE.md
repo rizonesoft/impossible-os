@@ -73,6 +73,15 @@ powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
 
 The machine and the tools are kept after the inventory is captured, so anything missed can be captured later from the same build.
 
+## Which records are not built as captured?
+
+The [inventory format](index.md#how-are-decisions-recorded) defines the four dispositions. These rules say which one a record gets.
+
+- **Cloud-tied records are `equivalent`.** Sign-in with a Microsoft account, the Store, cloud file sync, the assistant, the news feed, and the advertising and telemetry consent pages: Impossible OS builds its own version, or `excluded` with the reason where it has none.
+- **Absent hardware is `equivalent`.** A surface that no stand-in in the virtual machine and no host can show is written by hand from the nearest captured sibling, with the component library's controls. The sibling is named where the absence is documented.
+- **Names and places stay.** What opens a `replaced` flow keeps its captured name, place and order as a `build` record: the Control Panel name and its commands, and the four sign-in method entries.
+- **Nothing is replaced on judgment.** A record is `replaced` only under a ledger entry that names two captured records which disagree.
+
 ## Which baseline rows are absent?
 
 A row of a completeness baseline that the reference build lists but no surface shows (a setting gated off in this edition, a verb whose handler is not installed) is documented here, with the build the absence was checked on and the reason, instead of being matched by a captured record. `check-inventory.py` refuses a row listed here that a record also matches, a row that names nothing, and a row without a build or a reason. An absence checked on another build than the reference build counts nothing until it is checked again and its build updated.

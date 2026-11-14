@@ -10,6 +10,7 @@ The inventory is the Windows 11 interface written down as data: every surface, p
 - `<surface>/<file>.<profile>.json`: the same elements measured under another capture profile, such as `taskbar/bar.fhd-150.json`. Each line names an existing record by `id` and gives at least one of its `bounds`, `measure` or `textMetrics` at that profile, so a layout rule can be derived from several scale points without repeating the record.
 - `<baseline>/baseline.json`: an independent list of what should be there, read from the reference machine itself, against which the captured records are counted (see "How is completeness proved?").
 - `names.json`: the Microsoft trade mark names Impossible OS replaces, each with our name and the reason.
+- `consistency.json`: the consistency ledger, one entry for each place Windows 11 disagrees with itself and the single rule Impossible OS ships (see "How are decisions recorded?").
 
 ## What does a record measure?
 
@@ -25,6 +26,33 @@ python3 scripts/inventory/check-inventory.py --index      # the staged inventory
 ```
 
 The checker validates every line against the schema, then checks the tree as a whole. It refuses a duplicate `id`, a `parent` that names no record, a parent cycle, an `order` used twice under one parent, an `itemCount` that differs from the number of child records present, and a profile observation that names no record or a profile other than its file's. A conflict is reported at every line involved in it, so `--surface` finds a clash with another surface whichever side sorts first; observation files of other surfaces are not read at all. It prints the first 50 errors as `file:line: rule: message` and exits 1. It also holds every record to the rule below: a `label` over 80 characters is refused as a sentence (`label is a sentence`), any `http://` or `https://` text anywhere in a record or observation is refused (`link in record`), and a `behaviour` that repeats its `label` is refused. `names.json` must list each reference name once, with our name and a reason. A clean run prints `inventory: N records, 0 errors`. `scripts/lint.sh` (Check 40) runs it on every lint, against the staged contents under the commit gate.
+
+## How are decisions recorded?
+
+Two decisions are written on a record by hand, once. A record whose kind is not a catalogue kind (`shortcut`, `gesture`, `metric`, `motion`, `sound`, `cursor`, `state`) cannot be committed without the first.
+
+| `disposition` | Meaning | Also needs |
+| --- | --- | --- |
+| `build` | Built as captured. | nothing |
+| `equivalent` | Our own version of something we cannot take: a Microsoft cloud service, account, store or assistant, or a surface on hardware nothing we have can show. | nothing |
+| `replaced` | Captured in full and not built: one design of ours takes its place. | `inconsistency`; and `mergedInto` on a page, dialog tab or setting |
+| `excluded` | Left out. | `reason` |
+
+`inconsistency` names an entry of `consistency.json`. An entry has an `id`, a `kind` (`look`: how a thing is drawn; `flow`: the steps behind an entry point; `home`: where a thing lives), the `question`, the `variants` (the ids of the captured records that disagree), the `rule` Impossible OS follows and the `reason`. A `flow` or `home` entry also has `design`, the heading of a page under `docs/design/` that describes ours, written `shell.md#sign-in-method-enrolment`. The entries are seeded before capture with no variants; the capture of each surface fills them.
+
+Matching Windows 11 is the default, so replacing is bound to evidence and loses nothing:
+
+- **Two captured variants.** A `replaced` record's entry names at least two existing records, and the record is one of them or sits under one. An entry with fewer cannot be cited.
+- **A setting goes to a setting.** A replaced setting's `mergedInto` names a setting, and a replaced page's or dialog tab's names a page; the target is neither replaced nor excluded. Many settings cannot be merged into one page.
+- **A setting only the replaced home has is still built.** It keeps `build` and names the page or group it lives under in Impossible OS in `placedUnder`; what sits under it needs no place of its own. A built record under a replaced home with no place is refused.
+- **Entry points stay.** The name, place and order of what opens a replaced flow are `build` records.
+
+```bash
+python3 scripts/inventory/check-inventory.py --allow-undecided   # a fresh capture, before its hand fields
+python3 scripts/inventory/check-inventory.py --design-root docs/design --root <a copy of the inventory>
+```
+
+`capture.py` and `baselines.py` pass both when they check a scratch copy; the commit check passes neither, and with `--index` it reads the design pages as staged.
 
 ## How is a surface captured?
 

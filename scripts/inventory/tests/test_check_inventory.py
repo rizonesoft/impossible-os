@@ -21,9 +21,9 @@ B = "26300.9818"
 
 def rec(rid, **kw):
     r = {"id": rid, "surface": "taskbar", "kind": "control", "label": rid.rsplit(".", 1)[1],
-         "order": 0, "source": f"uia:{B}", "capturedFrom": B}
+         "order": 0, "source": f"uia:{B}", "capturedFrom": B, "disposition": "build"}
     r.update(kw)
-    return r
+    return {k: v for k, v in r.items() if v is not None}   # disposition=None: an undecided record
 
 
 def three():
@@ -597,6 +597,226 @@ class Facts(Failing):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
+SHELL = "# Shell\n\n## Settings frame\n\ntext\n\n## One flow\n\ntext\n"
+
+
+def entry(eid, *variants, kind="look", **kw):
+    e = {"id": eid, "kind": kind, "question": "q?", "variants": list(variants), "rule": "one rule", "reason": "two answers"}
+    e.update(kw)
+    return e
+
+
+def ledger(*entries):
+    return [json.dumps(list(entries))]
+
+
+def decide(files, *args):
+    """Run with a design folder inside the tree, so a ledger design can resolve."""
+    files = dict(files)
+    files.setdefault("design/shell.md", [SHELL.rstrip("\n")])
+    tree = Tree(files)
+    return tree.run("--design-root", str(pathlib.Path(tree.dir) / "design"), *args)
+
+
+def panel():
+    """Settings (built) and a Control Panel page (replaced), one setting on each."""
+    return {"settings/a.json": [
+                rec("win11.settings.frame", surface="settings", kind="surface", itemCount=1, inconsistency="home"),
+                rec("win11.settings.frame.sound", surface="settings", kind="page", parent="win11.settings.frame", itemCount=1),
+                rec("win11.settings.frame.sound.volume", surface="settings", kind="setting", parent="win11.settings.frame.sound")],
+            "control-panel/a.json": [
+                rec("win11.control-panel.frame", surface="control-panel", kind="surface", itemCount=1,
+                    disposition="replaced", inconsistency="home"),
+                rec("win11.control-panel.frame.sound", surface="control-panel", kind="page", parent="win11.control-panel.frame",
+                    itemCount=2, disposition="replaced", inconsistency="home", mergedInto="win11.settings.frame.sound"),
+                rec("win11.control-panel.frame.sound.volume", surface="control-panel", kind="setting",
+                    parent="win11.control-panel.frame.sound", order=0, disposition="replaced", inconsistency="home",
+                    mergedInto="win11.settings.frame.sound.volume"),
+                rec("win11.control-panel.frame.sound.scheme", surface="control-panel", kind="setting",
+                    parent="win11.control-panel.frame.sound", order=1, placedUnder="win11.settings.frame.sound")],
+            "consistency.json": ledger(entry("home", "win11.settings.frame", "win11.control-panel.frame",
+                                             kind="home", design="shell.md#settings-frame"))}
+
+
+class Decisions(unittest.TestCase):
+    """Section 6: dispositions and the consistency ledger."""
+
+    def fails(self, files, needle, *args):
+        r = decide(files, *args)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(needle, r.stdout)
+        return r
+
+    def test_a_record_without_a_disposition_fails(self):
+        lines = three(); lines[1] = rec("win11.taskbar.bar.start", parent="win11.taskbar.bar", disposition=None)
+        r = self.fails({"taskbar/bar.json": lines}, "disposition-missing: win11.taskbar.bar.start")
+        self.assertIn("inventory: 3 records, 1 errors", r.stdout)
+
+    def test_a_fresh_capture_may_be_undecided_and_a_commit_may_not(self):
+        lines = [rec(r["id"], **{**r, "disposition": None}) for r in three()]
+        self.assertEqual(decide({"taskbar/bar.json": lines}, "--allow-undecided").returncode, 0)
+        self.assertEqual(decide({"taskbar/bar.json": lines}).returncode, 1)
+
+    def test_a_catalogue_record_needs_no_disposition(self):
+        lines = three() + [rec("win11.taskbar.bar.height", kind="metric", parent="win11.taskbar.bar", order=2,
+                               measure={"value": 48, "unit": "px"}, disposition=None)]
+        lines[0]["itemCount"] = 3
+        r = decide({"taskbar/bar.json": lines})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_excluded_needs_a_reason_and_only_excluded_has_one(self):
+        lines = three(); lines[1]["disposition"] = "excluded"
+        self.fails({"taskbar/bar.json": lines}, "'reason' is a required property")
+        lines = three(); lines[1]["reason"] = "advertising"
+        self.fails({"taskbar/bar.json": lines}, "schema")
+        lines = three(); lines[1].update(disposition="excluded", reason="advertising")
+        self.assertEqual(decide({"taskbar/bar.json": lines}).returncode, 0)
+
+    def test_an_inconsistency_names_a_ledger_entry(self):
+        lines = three(); lines[1]["inconsistency"] = "no-such"
+        self.fails({"taskbar/bar.json": lines}, "inconsistency-undefined: win11.taskbar.bar.start: inconsistency no-such")
+        r = decide({"taskbar/bar.json": lines, "consistency.json": ledger(entry("no-such"))})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_ledger_variant_names_a_record(self):
+        self.fails({"taskbar/bar.json": three(), "consistency.json": ledger(entry("bars", "win11.taskbar.gone"))},
+                   "ledger-variant: bars: variant win11.taskbar.gone names no record")
+
+    def test_the_whole_replacement_passes(self):
+        r = decide(panel())
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("inventory: 7 records, 0 errors", r.stdout)
+
+    def test_replaced_needs_two_captured_variants(self):
+        files = panel()
+        files["consistency.json"] = ledger(entry("home", "win11.control-panel.frame", kind="home", design="shell.md#settings-frame"))
+        r = self.fails(files, "replaced-evidence: win11.control-panel.frame: replaced under home, which names 1 captured variant(s)")
+        # A variant that names no record is no evidence either.
+        files["consistency.json"] = ledger(entry("home", "win11.control-panel.frame", "win11.settings.gone",
+                                                 kind="home", design="shell.md#settings-frame"))
+        self.fails(files, "which names 1 captured variant(s)")
+
+    def test_replaced_must_be_a_variant_or_sit_under_one(self):
+        files = panel()
+        files["taskbar/bar.json"] = three()
+        files["taskbar/bar.json"][1].update(disposition="replaced", inconsistency="home")
+        self.fails(files, "replaced-evidence: win11.taskbar.bar.start: replaced under home, but it is not a variant")
+
+    def test_replaced_without_an_inconsistency_or_a_target_is_refused_by_the_schema(self):
+        files = panel(); del files["control-panel/a.json"][0]["inconsistency"]
+        self.fails(files, "'inconsistency' is a required property")
+        files = panel(); del files["control-panel/a.json"][2]["mergedInto"]
+        self.fails(files, "'mergedInto' is a required property")
+        files = panel(); files["settings/a.json"][2]["mergedInto"] = "win11.settings.frame.sound"
+        self.fails(files, "schema")   # only a replaced record is merged
+
+    def test_many_settings_cannot_merge_into_a_page(self):
+        files = panel()
+        files["control-panel/a.json"][2]["mergedInto"] = "win11.settings.frame.sound"
+        self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: a replaced setting is held by a setting, "
+                          "and win11.settings.frame.sound is a page")
+
+    def test_a_merge_target_exists_and_is_built(self):
+        files = panel(); files["control-panel/a.json"][2]["mergedInto"] = "win11.settings.frame.gone"
+        self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto win11.settings.frame.gone names no record")
+        files = panel(); files["settings/a.json"][2].update(disposition="excluded", reason="cloud")
+        self.fails(files, "which is itself excluded; nothing holds the option")
+        files = panel(); files["control-panel/a.json"][2]["mergedInto"] = "win11.control-panel.frame.sound.volume"
+        self.fails(files, "which is itself replaced")
+
+    def test_a_built_record_under_a_replaced_home_is_placed(self):
+        files = panel(); del files["control-panel/a.json"][3]["placedUnder"]
+        self.fails(files, "unplaced: win11.control-panel.frame.sound.scheme: built, but its captured home is replaced")
+
+    def test_what_sits_under_a_placed_record_needs_no_place_of_its_own(self):
+        files = panel()
+        files["control-panel/a.json"].append(rec("win11.control-panel.frame.sound.scheme.list", surface="control-panel",
+                                                 parent="win11.control-panel.frame.sound.scheme"))
+        r = decide(files)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_place_is_a_built_page_or_group(self):
+        files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.settings.frame.gone"
+        self.fails(files, "placed-target: win11.control-panel.frame.sound.scheme: placedUnder win11.settings.frame.gone names no record")
+        files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.settings.frame.sound.volume"
+        self.fails(files, "placedUnder names a page or group, and win11.settings.frame.sound.volume is a setting")
+        files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.control-panel.frame.sound"
+        self.fails(files, "which is not built")
+        files = panel(); files["control-panel/a.json"][2].update(placedUnder="win11.settings.frame.sound")
+        self.fails(files, "schema")   # a replaced record is merged, never placed
+
+    def test_a_place_never_leads_back_to_itself(self):
+        scheme = "win11.control-panel.frame.sound.scheme"
+        files = panel(); files["control-panel/a.json"][3].update(kind="group", placedUnder=scheme)
+        self.fails(files, f"placed-target: {scheme}: placedUnder {scheme} leads back to itself")
+        # Under its own captured child.
+        files = panel(); files["control-panel/a.json"][3].update(kind="group", placedUnder=scheme + ".more")
+        files["control-panel/a.json"].append(rec(scheme + ".more", surface="control-panel", kind="group", parent=scheme))
+        self.fails(files, "leads back to itself")
+        # Two records placed under each other.
+        files = panel(); files["control-panel/a.json"][3].update(kind="group", placedUnder=scheme + "2")
+        files["control-panel/a.json"][1]["itemCount"] = 3
+        files["control-panel/a.json"].append(rec(scheme + "2", surface="control-panel", kind="group", order=2,
+                                                 parent="win11.control-panel.frame.sound", placedUnder=scheme))
+        r = self.fails(files, f"placed-target: {scheme}: placedUnder {scheme}2 leads back to itself")
+        self.assertIn(f"placed-target: {scheme}2: placedUnder {scheme} leads back to itself", r.stdout)
+
+    def test_a_place_under_a_placed_record_is_followed_to_its_end(self):
+        scheme = "win11.control-panel.frame.sound.scheme"
+        files = panel(); files["control-panel/a.json"][3].update(kind="group")
+        files["control-panel/a.json"][1]["itemCount"] = 3
+        files["control-panel/a.json"].append(rec(scheme + "2", surface="control-panel", kind="setting", order=2,
+                                                 parent="win11.control-panel.frame.sound", placedUnder=scheme))
+        r = decide(files)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_ledger_faults(self):
+        base = {"taskbar/bar.json": three()}
+        for text, needle in (
+                ("{", "ledger: not JSON"),
+                ("{}", "consistency.json is an array"),
+                (json.dumps([entry("a"), entry("a")]), "ledger: a is defined twice"),
+                (json.dumps([entry("a", kind="flow")]), "'design' is a required property"),
+                (json.dumps([entry("a", kind="shape")]), "ledger: a: kind"),
+                (json.dumps([entry("a", extra=1)]), "ledger: a: (entry)"),
+                (json.dumps([entry("a", "win11.taskbar.bar", "win11.taskbar.bar")]), "ledger: a: variants"),
+                (json.dumps([entry("a", kind="flow", design="shell.md#no-such")]), "design names #no-such, which shell.md does not have"),
+                (json.dumps([entry("a", kind="home", design="gone.md#x")]), "design names gone.md, which is not a page"),
+                (json.dumps([entry("a", kind="home", design="../x.md#y")]), "ledger: a: design")):
+            with self.subTest(text=text):
+                self.fails({**base, "consistency.json": [text]}, needle)
+
+    def test_a_design_resolves_to_a_heading(self):
+        r = decide({"taskbar/bar.json": three(),
+                    "consistency.json": ledger(entry("a", kind="flow", design="shell.md#one-flow"))})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_scratch_copy_without_design_pages_names_the_design_root(self):
+        files = {"taskbar/bar.json": three(), "consistency.json": ledger(entry("a", kind="flow", design="shell.md#one-flow"))}
+        r = run(files)   # the design root defaults to the parent of the inventory, which holds no shell.md
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("which is not a page", r.stdout)
+
+    def test_a_surface_check_reports_its_records_and_not_the_ledger(self):
+        files = panel()
+        files["consistency.json"] = ledger(entry("home", "win11.control-panel.frame", "win11.settings.gone",
+                                                 kind="home", design="shell.md#settings-frame"))
+        r = decide(files, "--surface", "settings")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        r = decide(files, "--surface", "control-panel")
+        self.assertNotIn("ledger-variant", r.stdout)
+        self.assertIn("replaced-evidence", r.stdout)
+
+    def test_the_published_ledger_is_seeded_and_clean(self):
+        r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        entries = json.loads((REPO / "docs" / "design" / "inventory" / "consistency.json").read_text())
+        ids = {e["id"] for e in entries}
+        self.assertGreaterEqual(len(ids), 9)
+        self.assertLessEqual({"settings-home", "hello-enrolment", "tool-frame", "context-menus"}, ids)
+        self.assertEqual({e["kind"] for e in entries}, {"look", "flow", "home"})
+
+
 class Index(unittest.TestCase):
     """--index judges the staged bytes, not a later unstaged fix."""
 
@@ -643,6 +863,22 @@ class Index(unittest.TestCase):
         r = self.check("--index")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("inventory: 0 records", r.stdout)
+
+    def test_a_design_is_judged_by_the_staged_page(self):
+        design = self.repo / "docs" / "design" / "shell.md"
+        (self.inv / "consistency.json").write_text(json.dumps([entry("a", kind="flow", design="shell.md#one-flow")]))
+        self.write(three())
+        design.write_text("# Shell\n\n## Another flow\n")
+        self.git("add", "-A")
+        design.write_text(SHELL)   # the unstaged fix
+        self.assertEqual(self.check().returncode, 0)
+        r = self.check("--index")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("design names #one-flow", r.stdout)
+        self.git("add", "-A")
+        design.write_text("# Shell\n")   # the unstaged fault
+        self.assertEqual(self.check().returncode, 1)
+        self.assertEqual(self.check("--index").returncode, 0)
 
     def test_no_schema_staged(self):
         self.write(three())

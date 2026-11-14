@@ -150,6 +150,20 @@ The boot menu is drawn by the UEFI loader, before the kernel and its theme exist
 
 - A window with the standard chrome. Left: a `size.nav_pane_width` (280) navigation pane with the user card on top, a search box, and `size.nav_item_height` (36) items (16 px glyph, label, `radius.control` hover, 3 x 16 accent pill on the selected item).
 - Right: the page title in `type.title`, then settings rows per the [cards and settings rows](controls.md#cards-and-settings-rows) spec, grouped under `type.body_strong` headings, 4 px apart within a group and 24 px between groups.
+- **Settings is the one home.** One program, named Settings, holds every setting, including those Windows 11 keeps only in Control Panel or in an old property sheet. No Control Panel window exists. The Control Panel name, `control.exe`, each `.cpl` and canonical name, and the Start and search entries open the matching Settings page.
+- **Where a Control Panel-only setting goes.** On the Settings page whose captured "Related settings" link opens it in Windows 11, in a group at the foot of that page under a `type.body_strong` heading, as ordinary settings rows. The page above that group stays as captured. With no such link, the page is the one mapped from its Control Panel category, written in the `settings-home` entry of the [consistency ledger](inventory/index.md#how-are-decisions-recorded).
+- **Tools and other vendors' applets.** A management console (Device Manager, Disk Management, Services, Event Viewer, Task Scheduler, Computer Management) stays a separate tool under its own name, and the Settings page that changes the same thing links to it. An applet another vendor installs is listed in Settings under the category it registers for, or in a last "More settings" group, and opens in its own window.
+
+## Sign-in method enrolment
+
+Windows 11 enrols a PIN, a face, a fingerprint and a security key through four different wizards. Impossible OS has one flow behind the same four entry points on the sign-in options page, which keep their captured names, places and order.
+
+- **Frame.** One [dialog](controls.md#dialog) for every method: the title names the method, the content area holds the current step, and the button row is always Back, then the primary action, then Cancel. Cancel at any step leaves nothing enrolled.
+- **Step 1, confirm it is you.** The current password or PIN, in a password box. Skipped only when the account has neither.
+- **Step 2, the method.** The one step that differs: type the new PIN twice; look at the camera; touch the sensor until the progress ring fills; or insert and touch the key. Progress is a determinate [progress](controls.md#progress) ring with one line of instruction under it. A failed read says what to do differently and stays on this step.
+- **Step 3, a fallback PIN.** Shown when the account has no PIN and the method is not PIN, because every other method falls back to one.
+- **Step 4, done.** Names what was added and offers "Add another method", which returns to step 2 with a list of the methods not yet enrolled.
+- **Removing and changing** use the same dialog: step 1, then one confirmation step.
 
 ## Volume and brightness overlay
 

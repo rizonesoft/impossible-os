@@ -71,7 +71,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [x]   |
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [x]   |
-| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [ ]   |
+| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [x]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [ ]   |
 | 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19      |  [ ]   |
 | 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8           |  [ ]   |
@@ -306,42 +306,33 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 > [!TIP]
 > Windows 11 ships two context menus, two settings programs, three generations of dialogs, four title bar heights and four sign-in enrolment wizards. The ledger is where Impossible OS does better: one rule per question, written down before anything is built.
 
-- [ ] Add `disposition` to the checker as required on every non-catalogue record
-  - `build` (as captured), `equivalent` (our own version of something we cannot take), `replaced` (captured in full and not built: one design of ours takes its place) or `excluded` (with a `reason`)
+- [x] `disposition` is required on every non-catalogue record: `build`, `equivalent`, `replaced` or `excluded` (with a `reason`); a fresh capture is checked with `--allow-undecided`, a commit is not
   - `equivalent` covers a Microsoft cloud service, account, store or assistant, and a surface on hardware that no stand-in and no host can show (an absent row of §19)
-- [ ] Make `replaced` evidence-bound in the checker, so pixel-perfect stays the default
-  - The record names its ledger entry in `inconsistency`, and that entry lists at least two captured records that answer one question differently
-  - A fixture `replaced` record whose entry has one variant fails
-- [ ] Add `mergedInto` to the schema and to `HAND_FIELDS` of `capture_core.py`: the id of the record that now holds a `replaced` `page`, `dialogTab` or `setting`
-  - The checker refuses a missing target, an undefined one and one that is itself `replaced` or `excluded`: this is the proof that no option was lost
-- [ ] Write `docs/design/inventory/consistency.json`: one entry per inconsistency with `id`, `kind`, `question`, `variants` (the record ids that disagree), `rule` (what Impossible OS does) and `reason`
-  - `kind` is `look` (how a thing is drawn), `flow` (the steps behind an entry point) or `home` (where a thing lives)
-  - A `flow` or `home` entry carries `design`, an anchor under `docs/design/` that the checker resolves
-- [ ] Seed the `look` entries, each resolved to one rule
-  - Context menus: the modern menu with a "more options" classic menu behind it. Rule: one menu, every verb in it, grouped and ordered by one scheme
-  - Dialog generations: property sheets, task dialogs and modern content dialogs. Rule: one dialog frame, one button order, one spacing scale
-  - Title bars: 32, 40 and 48 pixel bars and three caption button styles. Rule: one height per density and one caption style
-  - Corner radii, focus rectangles, scroll bars, tooltips and menu fonts that differ between old and new programs. Rule: the token in `tokens.json`, everywhere
-  - Dark mode gaps: dialogs and tools that stay light. Rule: every surface follows the theme
-  - Keyboard: access keys present in old dialogs and missing in new pages. Rule: every command has an access key and every page is reachable by keyboard alone
-  - Management consoles (Device Manager, Disk Management, Services, Event Viewer, Task Scheduler, Computer Management): each its own old frame. Rule: they stay separate tools under their Windows names, in one tool frame with the one dialog style
-- [ ] Seed the `home` entry `settings-home`: the same setting reachable in Settings and in Control Panel, and settings that only Control Panel or an old property sheet holds
-  - Rule: Settings is the one program and holds every setting, the Control Panel-only ones included; no Control Panel window is built
-  - Every Control Panel and property-sheet record is captured, marked `replaced` and carries `mergedInto`
-  - Placement: a Control Panel-only setting joins the Settings page whose captured "Related settings" link opens it, in a group at the foot of that page; with no such link, the page mapped from its Control Panel category, the mapping written in the entry
-  - Entry points stay `build`: the Control Panel name, `control.exe`, each `.cpl` and canonical name, and the Start and search entries open the matching Settings page
-  - Where a management console and a Settings page change the same thing, both are views of one setting and the page links to the tool
-  - An applet another vendor installs is listed in Settings under the category it registers for, or in a last "More settings" group, and opens in its own window
-- [ ] Seed the `flow` entry `hello-enrolment`: PIN, face, fingerprint and security key are four wizards. Rule: one enrolment flow behind the four captured entry points
+- [x] `replaced` is evidence-bound: its `inconsistency` names an entry with two or more captured variants, and the record is one of them or sits under one
+- [x] Nothing is lost by replacing: `mergedInto` takes a replaced setting to a setting and a replaced page or dialog tab to a page, the target neither replaced nor excluded
+  - A setting only the replaced home has keeps `build` and names its page or group in `placedUnder`; a built record under a replaced home with no place is refused, and so is a place that leads back to itself
+  - `HAND_FIELDS` of `capture_core.py` carries `reason`, `mergedInto` and `placedUnder` across a re-capture
+- [x] `docs/design/inventory/consistency.json`: entries of the schema's `$defs/ledgerEntry` with `id`, `kind` (`look`, `flow`, `home`), `question`, `variants`, `rule`, `reason`, and `design` on a `flow` or `home` entry
+  - The checker resolves `design` to a heading under `docs/design/` by the site build's anchor rule; `--design-root` names the folder for a scratch copy, and `--index` reads the pages as staged
+  - Entries are seeded with no variants; §8 to §13 fill them as each surface is captured
+- [x] Seven `look` entries: `context-menus`, `dialog-generations`, `title-bars`, `control-metrics`, `dark-mode`, `keyboard-access`, `tool-frame` (management consoles stay separate tools in one frame)
+- [x] The `home` entry `settings-home`: Settings is the one program and holds every setting; no Control Panel window is built, and its name and entry points open the matching page
+  - Placement, tools and other vendors' applets: [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame)
+- [x] The `flow` entry `hello-enrolment`: one enrolment flow behind the four captured entry points, specified in [`shell.md#sign-in-method-enrolment`](../../docs/design/shell.md#sign-in-method-enrolment)
   - §8 to §13 add a `flow` entry wherever two captured flows answer one question; none is added on judgment alone
-- [ ] Add `inconsistency` on a record as the ledger id it belongs to; the checker refuses an id the ledger does not define and a ledger variant that names no record
-- [ ] Write the disposition rules in `REFERENCE.md`
-  - Cloud-tied records: sign-in with a Microsoft account, the Store, cloud file sync, the assistant, the news feed, advertising and telemetry consent pages
-  - Absent hardware: the record is hand-written from the nearest captured sibling named on the absent row, with the component library's controls
-  - Names and places: the entry points of a `replaced` flow keep their captured name, place and order
-- [ ] Commit: `"inventory: dispositions and the consistency ledger"`
+- [x] The checker refuses an `inconsistency` the ledger does not define and a ledger variant that names no record
+- [x] The disposition rules (cloud-tied, absent hardware, names and places) are in `REFERENCE.md` under "Which records are not built as captured?"
+- [x] Commit: `"inventory: dispositions and the consistency ledger"`
 
-**Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails; a fixture `replaced` record under a one-variant entry fails; a fixture `replaced` setting with no `mergedInto` fails. `consistency.json` holds at least the nine seeded entries and passes its own schema.
+**Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails; a fixture `replaced` record under a one-variant entry fails; a fixture `replaced` setting with no `mergedInto` fails, and several settings merged into one page fail. `consistency.json` holds at least the nine seeded entries and passes its own schema.
+
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (118 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass)
+> **Notes:**
+> - `check-inventory.py` reads `consistency.json`, validates each entry, and holds every record's disposition to the rules above; ledger faults are reported on a whole-tree check, record faults under the record's surface.
+> - `capture.py` and `baselines.py` check their scratch copy with `--allow-undecided --design-root`, so a fresh capture publishes and an undecided record still cannot be committed.
+> - Plan review changed the design: a merge target has the same role as what it replaces, and a setting with no Settings twin stays a built, owned record with `placedUnder`.
+> - Downstream: §7 counts `replaced` apart and owns each `flow` and `home` entry; §13 marks Control Panel records; §18 skips what has no reference pixels.
+> - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-are-decisions-recorded).
 
 ---
 
@@ -358,6 +349,7 @@ The report is the measure of progress, and the ownership check is the proof that
 - [ ] Define ownership: a roadmap section owns a record when its body carries `**Inventory:** <id or id prefix>`; a prefix owns every record under it that no longer prefix owns
 - [ ] Add `--owners --check`: exits 1 listing every `build` or `equivalent` record with no owner and every record with two owners of the same prefix length
   - A `replaced` record needs no owner: its `mergedInto` target does, and the report counts `replaced` records apart from built ones
+  - A `flow` or `home` ledger entry is owned like a record, by `**Inventory:** ledger:<id>`: the section that builds our design; an entry with no owner or two is listed
 - [ ] Define implemented: a record counts when its owning section is shipped with both stamps
   - Read from the classifier in `.claude/hooks/sequencer_triage.py`: reuse its function, do not restate its rule
 - [ ] Make the pre-commit lint refuse a stale `COVERAGE.md` when an inventory file or a TODO file is staged
@@ -840,7 +832,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the Control Panel window: the address bar, the search box, "View by" (category, large icons, small icons), and the category layout (eight categories with their task links)
   - Capture the all-items list in icon view: every applet by canonical name, in order, matched to the `control-panel` baseline
   - Capture each category's second-level page: its headings and task links
-  - Mark each applet `replaced` under the `settings-home` ledger entry of §6, with `mergedInto` naming the Settings page of §10 to §11 that holds it
+  - Mark each applet page `replaced` under the `settings-home` ledger entry of §6, with `mergedInto` naming the Settings page of §10 to §11 that holds it; a setting with no Settings twin stays `build` with `placedUnder`
     - Record the Settings page whose "Related settings" link opens the applet: it is where a Control Panel-only setting lands
   - Capture the Windows Tools folder: every entry by name, matched to the sections of §13 that inventory it
   - Capture the task pane links on the left of applet pages as a frame
@@ -1099,7 +1091,7 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] Unmasked pixels must be equal: no geometry tolerance, exact colour for solid fills, and a difference of at most 2 per channel inside blurred backdrop and shadow areas
 - [ ] Masked text regions are compared by their ink box: same origin, same advance width and same line count as the reference, using the text metrics recorded in §14
 - [ ] Masked icon and image regions are compared by rectangle only: same position and size
-- [ ] Skip every region whose record is `replaced` or `equivalent`: it has no reference pixels to match, and §16's layout check holds it to its design instead
+- [ ] Skip every region whose record is `replaced` or `equivalent`, or carries `placedUnder` (it is compared by size only, at its new place): it has no reference pixels to match, and §16's layout check holds it to its design instead
 - [ ] Output `build/inventory/pixel-report.json` and `pixel: N surfaces, M differ` with, per differing surface, the count of differing pixels and their bounding boxes; write a difference image to the scratch directory, never to the repository
 - [ ] Wire it beside the layout check: advisory until a surface is fully built, then blocking for the surfaces listed in `docs/design/inventory/enforced.json`
 - [ ] Commit: `"inventory: pixel comparison against reference screenshots"`
@@ -1150,7 +1142,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 | 💎  | Published design measurements           | ⚠️ Partial design docs     | ⚠️ GNOME HIG, prose  | ⬜ Planned in §17    |
 | ⭐  | Every element inventoried as data       | ❌ None                    | ❌ None              | ⬜ Planned in §8-§14 |
 | ⭐  | Every element owned by one work item    | ❌ None                    | ❌ None              | ⬜ Planned in §15    |
-| ⭐  | One rule where the original has several | ❌ Two menus, two settings | ⚠️ Varies by toolkit | ⬜ Planned in §6     |
+| ⭐  | One rule where the original has several | ❌ Two menus, two settings | ⚠️ Varies by toolkit | ✅ Nine-entry ledger |
 | ⭐  | Built shell checked against a reference | ❌ None                    | ❌ None              | ⬜ Planned in §16    |
 
 > **After §1-§7:** the method exists and can measure anything. **After §8-§14:** the whole Windows 11 interface is data. **After §15-§17:** every element has an owner, the spec is measured, and the built OS is checked against the reference on every boot matrix run.
@@ -1161,10 +1153,11 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 
 > Host-side tests, not kernel tests: `scripts/inventory/tests/` (stdlib `unittest`), wired into `scripts/test-tooling.sh` as a nested suite so CI runs them. No kernel test category is needed.
 
-- [ ] Create `scripts/inventory/tests/test_check_inventory.py` with:
+- [x] Create `scripts/inventory/tests/test_check_inventory.py` with:
   - A valid three-record file passes and prints `3 records, 0 errors`
   - A duplicate `id`, an orphan `parent`, a `parent` cycle, a repeated `order`, a wrong `itemCount`, a `bounds` without `captureProfile` and an unknown `source` each exit 1 naming the rule
   - A label of 81 characters, a link, a missing `disposition` and an undefined `inconsistency` id each exit 1
+  - Done across §1, §4, §5 and §6: 118 cases
 - [x] Create `scripts/inventory/tests/test_capture.py` (§3)
 - [x] Create `scripts/inventory/tests/test_baselines.py` (§5)
 - [ ] Create `scripts/inventory/tests/test_report.py` and `test_layout_check.py` with the fixtures named in §7 and §16

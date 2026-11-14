@@ -346,7 +346,7 @@ def confirm_dump(tree, cap, **walk_args):
 
 # What a person (or a later matching pass) adds to a captured record and the walk
 # never produces: a re-capture carries these and refreshes everything else.
-HAND_FIELDS = ("behaviour", "disposition", "inconsistency", "baselineId", "baselineMissing")
+HAND_FIELDS = ("behaviour", "disposition", "inconsistency", "reason", "mergedInto", "placedUnder", "baselineId", "baselineMissing")
 
 
 def merge(old, new, ambiguous):
