@@ -1,0 +1,156 @@
+{"baseline": "shell-commands", "owner": "explorer", "source": "shell: names of the known folders; HKCR\\*\\shell, HKCR\\Directory\\shell, HKCR\\Directory\\Background\\shell, HKCR\\Drive\\shell", "build": "26300.9711"}
+{"id": "folder:3D Objects", "kind": "folder", "name": "3D Objects"}
+{"id": "folder:AccountPictures", "kind": "folder", "name": "AccountPictures"}
+{"id": "folder:AddNewProgramsFolder", "kind": "folder", "name": "AddNewProgramsFolder"}
+{"id": "folder:Administrative Tools", "kind": "folder", "name": "Administrative Tools"}
+{"id": "folder:AppData", "kind": "folder", "name": "AppData"}
+{"id": "folder:AppDataDesktop", "kind": "folder", "name": "AppDataDesktop"}
+{"id": "folder:AppDataDocuments", "kind": "folder", "name": "AppDataDocuments"}
+{"id": "folder:AppDataFavorites", "kind": "folder", "name": "AppDataFavorites"}
+{"id": "folder:AppDataProgramData", "kind": "folder", "name": "AppDataProgramData"}
+{"id": "folder:AppMods", "kind": "folder", "name": "AppMods"}
+{"id": "folder:AppUpdatesFolder", "kind": "folder", "name": "AppUpdatesFolder"}
+{"id": "folder:Application Shortcuts", "kind": "folder", "name": "Application Shortcuts"}
+{"id": "folder:AppsFolder", "kind": "folder", "name": "AppsFolder"}
+{"id": "folder:CD Burning", "kind": "folder", "name": "CD Burning"}
+{"id": "folder:CSCFolder", "kind": "folder", "name": "CSCFolder"}
+{"id": "folder:Cache", "kind": "folder", "name": "Cache"}
+{"id": "folder:Camera Roll", "kind": "folder", "name": "Camera Roll"}
+{"id": "folder:CameraRollLibrary", "kind": "folder", "name": "CameraRollLibrary"}
+{"id": "folder:Captures", "kind": "folder", "name": "Captures"}
+{"id": "folder:ChangeRemoveProgramsFolder", "kind": "folder", "name": "ChangeRemoveProgramsFolder"}
+{"id": "folder:Common Administrative Tools", "kind": "folder", "name": "Common Administrative Tools"}
+{"id": "folder:Common AppData", "kind": "folder", "name": "Common AppData"}
+{"id": "folder:Common Desktop", "kind": "folder", "name": "Common Desktop"}
+{"id": "folder:Common Documents", "kind": "folder", "name": "Common Documents"}
+{"id": "folder:Common Programs", "kind": "folder", "name": "Common Programs"}
+{"id": "folder:Common Start Menu", "kind": "folder", "name": "Common Start Menu"}
+{"id": "folder:Common Start Menu Places", "kind": "folder", "name": "Common Start Menu Places"}
+{"id": "folder:Common Startup", "kind": "folder", "name": "Common Startup"}
+{"id": "folder:Common Templates", "kind": "folder", "name": "Common Templates"}
+{"id": "folder:CommonDownloads", "kind": "folder", "name": "CommonDownloads"}
+{"id": "folder:CommonMusic", "kind": "folder", "name": "CommonMusic"}
+{"id": "folder:CommonPictures", "kind": "folder", "name": "CommonPictures"}
+{"id": "folder:CommonRingtones", "kind": "folder", "name": "CommonRingtones"}
+{"id": "folder:CommonVideo", "kind": "folder", "name": "CommonVideo"}
+{"id": "folder:ConflictFolder", "kind": "folder", "name": "ConflictFolder"}
+{"id": "folder:ConnectionsFolder", "kind": "folder", "name": "ConnectionsFolder"}
+{"id": "folder:Contacts", "kind": "folder", "name": "Contacts"}
+{"id": "folder:ControlPanelFolder", "kind": "folder", "name": "ControlPanelFolder"}
+{"id": "folder:Cookies", "kind": "folder", "name": "Cookies"}
+{"id": "folder:CredentialManager", "kind": "folder", "name": "CredentialManager"}
+{"id": "folder:CryptoKeys", "kind": "folder", "name": "CryptoKeys"}
+{"id": "folder:Desktop", "kind": "folder", "name": "Desktop"}
+{"id": "folder:Development Files", "kind": "folder", "name": "Development Files"}
+{"id": "folder:Device Metadata Store", "kind": "folder", "name": "Device Metadata Store"}
+{"id": "folder:DocumentsLibrary", "kind": "folder", "name": "DocumentsLibrary"}
+{"id": "folder:Downloads", "kind": "folder", "name": "Downloads"}
+{"id": "folder:DpapiKeys", "kind": "folder", "name": "DpapiKeys"}
+{"id": "folder:Favorites", "kind": "folder", "name": "Favorites"}
+{"id": "folder:Fonts", "kind": "folder", "name": "Fonts"}
+{"id": "folder:GameTasks", "kind": "folder", "name": "GameTasks"}
+{"id": "folder:History", "kind": "folder", "name": "History"}
+{"id": "folder:ImplicitAppShortcuts", "kind": "folder", "name": "ImplicitAppShortcuts"}
+{"id": "folder:InternetFolder", "kind": "folder", "name": "InternetFolder"}
+{"id": "folder:Libraries", "kind": "folder", "name": "Libraries"}
+{"id": "folder:Links", "kind": "folder", "name": "Links"}
+{"id": "folder:Local AppData", "kind": "folder", "name": "Local AppData"}
+{"id": "folder:Local Documents", "kind": "folder", "name": "Local Documents"}
+{"id": "folder:Local Downloads", "kind": "folder", "name": "Local Downloads"}
+{"id": "folder:Local Music", "kind": "folder", "name": "Local Music"}
+{"id": "folder:Local Pictures", "kind": "folder", "name": "Local Pictures"}
+{"id": "folder:Local Videos", "kind": "folder", "name": "Local Videos"}
+{"id": "folder:LocalAppDataLow", "kind": "folder", "name": "LocalAppDataLow"}
+{"id": "folder:LocalizedResourcesDir", "kind": "folder", "name": "LocalizedResourcesDir"}
+{"id": "folder:MAPIFolder", "kind": "folder", "name": "MAPIFolder"}
+{"id": "folder:MusicLibrary", "kind": "folder", "name": "MusicLibrary"}
+{"id": "folder:My Music", "kind": "folder", "name": "My Music"}
+{"id": "folder:My Pictures", "kind": "folder", "name": "My Pictures"}
+{"id": "folder:My Video", "kind": "folder", "name": "My Video"}
+{"id": "folder:MyComputerFolder", "kind": "folder", "name": "MyComputerFolder"}
+{"id": "folder:NetHood", "kind": "folder", "name": "NetHood"}
+{"id": "folder:NetworkPlacesFolder", "kind": "folder", "name": "NetworkPlacesFolder"}
+{"id": "folder:OEM Links", "kind": "folder", "name": "OEM Links"}
+{"id": "folder:OneDrive", "kind": "folder", "name": "OneDrive"}
+{"id": "folder:OneDriveCameraRoll", "kind": "folder", "name": "OneDriveCameraRoll"}
+{"id": "folder:OneDriveDocuments", "kind": "folder", "name": "OneDriveDocuments"}
+{"id": "folder:OneDriveMusic", "kind": "folder", "name": "OneDriveMusic"}
+{"id": "folder:OneDrivePictures", "kind": "folder", "name": "OneDrivePictures"}
+{"id": "folder:Original Images", "kind": "folder", "name": "Original Images"}
+{"id": "folder:Personal", "kind": "folder", "name": "Personal"}
+{"id": "folder:PhotoAlbums", "kind": "folder", "name": "PhotoAlbums"}
+{"id": "folder:PicturesLibrary", "kind": "folder", "name": "PicturesLibrary"}
+{"id": "folder:Playlists", "kind": "folder", "name": "Playlists"}
+{"id": "folder:PrintHood", "kind": "folder", "name": "PrintHood"}
+{"id": "folder:PrintersFolder", "kind": "folder", "name": "PrintersFolder"}
+{"id": "folder:Profile", "kind": "folder", "name": "Profile"}
+{"id": "folder:ProgramFiles", "kind": "folder", "name": "ProgramFiles"}
+{"id": "folder:ProgramFilesCommon", "kind": "folder", "name": "ProgramFilesCommon"}
+{"id": "folder:ProgramFilesCommonX64", "kind": "folder", "name": "ProgramFilesCommonX64"}
+{"id": "folder:ProgramFilesCommonX86", "kind": "folder", "name": "ProgramFilesCommonX86"}
+{"id": "folder:ProgramFilesX64", "kind": "folder", "name": "ProgramFilesX64"}
+{"id": "folder:ProgramFilesX86", "kind": "folder", "name": "ProgramFilesX86"}
+{"id": "folder:Programs", "kind": "folder", "name": "Programs"}
+{"id": "folder:Public", "kind": "folder", "name": "Public"}
+{"id": "folder:PublicAccountPictures", "kind": "folder", "name": "PublicAccountPictures"}
+{"id": "folder:PublicGameTasks", "kind": "folder", "name": "PublicGameTasks"}
+{"id": "folder:PublicLibraries", "kind": "folder", "name": "PublicLibraries"}
+{"id": "folder:Quick Launch", "kind": "folder", "name": "Quick Launch"}
+{"id": "folder:Recent", "kind": "folder", "name": "Recent"}
+{"id": "folder:Recorded Calls", "kind": "folder", "name": "Recorded Calls"}
+{"id": "folder:RecordedTVLibrary", "kind": "folder", "name": "RecordedTVLibrary"}
+{"id": "folder:RecycleBinFolder", "kind": "folder", "name": "RecycleBinFolder"}
+{"id": "folder:ResourceDir", "kind": "folder", "name": "ResourceDir"}
+{"id": "folder:Retail Demo", "kind": "folder", "name": "Retail Demo"}
+{"id": "folder:Ringtones", "kind": "folder", "name": "Ringtones"}
+{"id": "folder:Roamed Tile Images", "kind": "folder", "name": "Roamed Tile Images"}
+{"id": "folder:Roaming Tiles", "kind": "folder", "name": "Roaming Tiles"}
+{"id": "folder:SavedGames", "kind": "folder", "name": "SavedGames"}
+{"id": "folder:SavedPictures", "kind": "folder", "name": "SavedPictures"}
+{"id": "folder:SavedPicturesLibrary", "kind": "folder", "name": "SavedPicturesLibrary"}
+{"id": "folder:Screenshots", "kind": "folder", "name": "Screenshots"}
+{"id": "folder:SearchHistoryFolder", "kind": "folder", "name": "SearchHistoryFolder"}
+{"id": "folder:SearchHomeFolder", "kind": "folder", "name": "SearchHomeFolder"}
+{"id": "folder:SearchTemplatesFolder", "kind": "folder", "name": "SearchTemplatesFolder"}
+{"id": "folder:Searches", "kind": "folder", "name": "Searches"}
+{"id": "folder:SendTo", "kind": "folder", "name": "SendTo"}
+{"id": "folder:Start Menu", "kind": "folder", "name": "Start Menu"}
+{"id": "folder:Startup", "kind": "folder", "name": "Startup"}
+{"id": "folder:SyncCenterFolder", "kind": "folder", "name": "SyncCenterFolder"}
+{"id": "folder:SyncResultsFolder", "kind": "folder", "name": "SyncResultsFolder"}
+{"id": "folder:SyncSetupFolder", "kind": "folder", "name": "SyncSetupFolder"}
+{"id": "folder:System", "kind": "folder", "name": "System"}
+{"id": "folder:SystemCertificates", "kind": "folder", "name": "SystemCertificates"}
+{"id": "folder:SystemX86", "kind": "folder", "name": "SystemX86"}
+{"id": "folder:Templates", "kind": "folder", "name": "Templates"}
+{"id": "folder:ThisDeviceFolder", "kind": "folder", "name": "ThisDeviceFolder"}
+{"id": "folder:ThisPCDesktopFolder", "kind": "folder", "name": "ThisPCDesktopFolder"}
+{"id": "folder:User Pinned", "kind": "folder", "name": "User Pinned"}
+{"id": "folder:UserProfiles", "kind": "folder", "name": "UserProfiles"}
+{"id": "folder:UserProgramFiles", "kind": "folder", "name": "UserProgramFiles"}
+{"id": "folder:UserProgramFilesCommon", "kind": "folder", "name": "UserProgramFilesCommon"}
+{"id": "folder:UsersFilesFolder", "kind": "folder", "name": "UsersFilesFolder"}
+{"id": "folder:UsersLibrariesFolder", "kind": "folder", "name": "UsersLibrariesFolder"}
+{"id": "folder:VideosLibrary", "kind": "folder", "name": "VideosLibrary"}
+{"id": "folder:Windows", "kind": "folder", "name": "Windows"}
+{"id": "verb:*/UpdateEncryptionSettingsWork", "kind": "verb", "class": "*", "verb": "UpdateEncryptionSettingsWork"}
+{"id": "verb:*/pintohomefile", "kind": "verb", "class": "*", "verb": "pintohomefile"}
+{"id": "verb:*/removeproperties", "kind": "verb", "class": "*", "verb": "removeproperties"}
+{"id": "verb:Directory/Powershell", "kind": "verb", "class": "Directory", "verb": "Powershell"}
+{"id": "verb:Directory/UpdateEncryptionSettings", "kind": "verb", "class": "Directory", "verb": "UpdateEncryptionSettings"}
+{"id": "verb:Directory/cmd", "kind": "verb", "class": "Directory", "verb": "cmd"}
+{"id": "verb:Directory/find", "kind": "verb", "class": "Directory", "verb": "find"}
+{"id": "verb:Directory\\Background/Powershell", "kind": "verb", "class": "Directory\\Background", "verb": "Powershell"}
+{"id": "verb:Directory\\Background/cmd", "kind": "verb", "class": "Directory\\Background", "verb": "cmd"}
+{"id": "verb:Drive/Powershell", "kind": "verb", "class": "Drive", "verb": "Powershell"}
+{"id": "verb:Drive/change-passphrase", "kind": "verb", "class": "Drive", "verb": "change-passphrase"}
+{"id": "verb:Drive/change-pin", "kind": "verb", "class": "Drive", "verb": "change-pin"}
+{"id": "verb:Drive/cmd", "kind": "verb", "class": "Drive", "verb": "cmd"}
+{"id": "verb:Drive/encrypt-bde", "kind": "verb", "class": "Drive", "verb": "encrypt-bde"}
+{"id": "verb:Drive/encrypt-bde-elev", "kind": "verb", "class": "Drive", "verb": "encrypt-bde-elev"}
+{"id": "verb:Drive/find", "kind": "verb", "class": "Drive", "verb": "find"}
+{"id": "verb:Drive/manage-bde", "kind": "verb", "class": "Drive", "verb": "manage-bde"}
+{"id": "verb:Drive/pintohome", "kind": "verb", "class": "Drive", "verb": "pintohome"}
+{"id": "verb:Drive/resume-bde", "kind": "verb", "class": "Drive", "verb": "resume-bde"}
+{"id": "verb:Drive/resume-bde-elev", "kind": "verb", "class": "Drive", "verb": "resume-bde-elev"}
+{"id": "verb:Drive/unlock-bde", "kind": "verb", "class": "Drive", "verb": "unlock-bde"}

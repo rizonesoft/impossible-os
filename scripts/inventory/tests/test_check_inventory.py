@@ -113,13 +113,140 @@ class Passing(unittest.TestCase):
         r = run({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": obs})
         self.assertEqual(r.returncode, 0, r.stdout)
 
-    def test_baseline_file_is_left_to_section_5(self):
-        r = run({"settings/baseline.json": ['{"not": "a record"}']})
-        self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_json_output(self):
         r = run({"taskbar/bar.json": three()}, "--json")
         self.assertEqual(json.loads(r.stdout), {"records": 3, "observations": 0, "errors": []})
+
+
+REF = {"reference.json": [{"edition": "Professional", "displayVersion": "26H2", "build": B}]}
+SHA = "6de91feccadfbb0a796b71caedead5a2284f730e"
+
+
+def bl(name, rows, **header):
+    h = {"baseline": name, "owner": {"start-apps": "start", "controls": "system"}.get(name, name),
+         "source": "test", "build": B}
+    h.update(header)
+    return [{k: v for k, v in h.items() if v is not None}] + [{"id": r} for r in rows]
+
+
+def absent(*rows):
+    body = "\n".join(f"| `{b}` | `{r}` | {why} |" for b, r, why in rows)
+    return ["# Reference", "", "## Which baseline rows are absent?", "",
+            "| Baseline | Row | Reason |", "| --- | --- | --- |", body, "", "## Next", ""]
+
+
+def taskbar_with(**kw):
+    r = three()
+    r[1].update(kw)
+    return r
+
+
+class Baselines(unittest.TestCase):
+    def report(self, files, *args):
+        r = run({**REF, **files}, "--baselines", "--json", *args)
+        return r, json.loads(r.stdout)
+
+    def rules(self, files, *args):
+        return [e["rule"] for e in self.report(files, *args)[1]["errors"]]
+
+    def test_rows_are_counted_pending_until_the_owner_is_captured(self):
+        r, out = self.report({"settings/baseline.json": bl("settings", ["a", "b"])})
+        self.assertEqual(out["baselines"]["settings"],
+                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 2, "unmatched": 0})
+
+    def test_a_captured_owner_turns_its_open_rows_unmatched(self):
+        rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a")]
+        _, out = self.report({"settings/baseline.json": bl("settings", ["a", "b", "c"]),
+                              "settings/home.json": rows, "REFERENCE.md": absent(("settings", "c", "not in this edition"))})
+        self.assertEqual(out["baselines"]["settings"],
+                         {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1})
+
+    def test_the_text_report_prints_one_line_per_baseline(self):
+        r = run({**REF, "settings/baseline.json": bl("settings", ["a"]),
+                 "controls/baseline.json": bl("controls", ["Button"], build=None,
+                                              upstream={"repo": "o/r", "commit": SHA, "license": "MIT"})}, "--baselines")
+        self.assertIn("baseline settings: 1 rows, 0 matched, 0 absent, 1 pending, 0 unmatched (owner settings)", r.stdout)
+        self.assertIn("baseline controls: 1 rows", r.stdout)
+
+    def test_every_known_baseline_must_exist_under_baselines(self):
+        r, out = self.report({"settings/baseline.json": bl("settings", ["a"])})
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(sorted(e["file"] for e in out["errors"] if e["rule"] == "baseline-missing"),
+                         ["classic-controls/baseline.json", "control-panel/baseline.json", "controls/baseline.json",
+                          "known-folders/baseline.json", "shell-commands/baseline.json", "start-apps/baseline.json"])
+
+    def test_a_dangling_baseline_id_is_refused(self):
+        rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:zz")]
+        self.assertIn("baseline-orphan", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))
+        rows[0]["baselineId"] = "nosuch:a"
+        self.assertIn("baseline-orphan", self.rules({"settings/home.json": rows}))
+
+    def test_an_old_capture_never_matches_a_newer_baseline(self):
+        # The row id survives a build change; the capture of the old build must not count.
+        old = rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a",
+                  source="uia:26300.9000", capturedFrom="26300.9000")
+        r, out = self.report({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]})
+        self.assertIn("baseline-build", [e["rule"] for e in out["errors"]])
+        self.assertEqual(out["baselines"]["settings"]["matched"], 0)
+
+    def test_a_baseline_from_another_build_is_refused(self):
+        self.assertIn("baseline-header", self.rules({"settings/baseline.json": bl("settings", ["a"], build="26300.1")}))
+
+    def test_a_build_baseline_needs_reference_json(self):
+        r = run({"settings/baseline.json": bl("settings", ["a"])}, "--json")
+        self.assertIn("baseline-header", [e["rule"] for e in json.loads(r.stdout)["errors"]])
+
+    def test_header_rules(self):
+        for header, why in (({"baseline": "other"}, "name"), ({"owner": "explorer"}, "owner"),
+                            ({"source": ""}, "source"), ({"upstream": {"repo": "o/r", "commit": SHA, "license": "MIT"}}, "both"),
+                            ({"build": None}, "neither"), ({"extra": 1}, "extra"),
+                            ({"files": [{"path": "x"}]}, "files")):
+            with self.subTest(why):
+                self.assertIn("baseline-header", self.rules({"settings/baseline.json": bl("settings", ["a"], **header)}))
+        bad = {"build": None, "upstream": {"repo": "o/r", "commit": "main", "license": "MIT"}}
+        self.assertIn("baseline-header", self.rules({"controls/baseline.json": bl("controls", ["a"], **bad)}))
+        self.assertIn("baseline-header", self.rules({"nosuch/baseline.json": bl("nosuch", ["a"], owner="x")}))
+
+    def test_row_rules(self):
+        lines = bl("settings", ["a", "a"]) + ['{"name": "no id"}', ""]
+        rules = self.rules({"settings/baseline.json": lines})
+        for rule in ("baseline-duplicate", "baseline-row", "blank-line"):
+            self.assertIn(rule, rules)
+        self.assertIn("baseline-empty", self.rules({"settings/baseline.json": bl("settings", [])}))
+        self.assertIn("link", self.rules({"settings/baseline.json": bl("settings", []) + [{"id": "a", "deepLink": "https://x"}]}))
+
+    def test_only_baseline_json_is_a_baseline_name(self):
+        self.assertIn("baseline-name", self.rules({"settings/baseline-old.json": bl("settings", ["a"])}))
+
+    def test_absent_table_rules(self):
+        base = {"settings/baseline.json": bl("settings", ["a", "b"])}
+        self.assertIn("absent-orphan", self.rules({**base, "REFERENCE.md": absent(("settings", "zz", "why"))}))
+        self.assertIn("absent-orphan", self.rules({**base, "REFERENCE.md": absent(("nosuch", "a", "why"))}))
+        self.assertIn("absent-reason", self.rules({**base, "REFERENCE.md": absent(("settings", "a", " "))}))
+        self.assertIn("absent-duplicate", self.rules({**base, "REFERENCE.md": absent(("settings", "a", "x"), ("settings", "a", "y"))}))
+        rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a")]
+        self.assertIn("absent-matched", self.rules({**base, "settings/home.json": rows,
+                                                    "REFERENCE.md": absent(("settings", "a", "gone"))}))
+
+    def test_baseline_missing_and_baseline_id_together_are_refused(self):
+        rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a", baselineMissing=True)]
+        self.assertIn("baseline-both", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))
+
+    def test_a_surface_check_reports_only_its_own_baseline(self):
+        files = {"settings/baseline.json": bl("settings", ["a", "a"]), "taskbar/bar.json": three()}
+        r = run({**REF, **files}, "--surface", "taskbar", "--json")
+        self.assertEqual(json.loads(r.stdout)["errors"], [])
+        r = run({**REF, **files}, "--surface", "settings", "--json")
+        self.assertEqual([e["rule"] for e in json.loads(r.stdout)["errors"]], ["baseline-duplicate"])
+
+    def test_the_published_baselines_are_clean(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--baselines"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = [l for l in r.stdout.splitlines() if l.startswith("baseline ")]
+        self.assertEqual(len(lines), 7, r.stdout)
+        for line in lines:
+            self.assertNotIn(": 0 rows", line)
 
 
 class Failing(unittest.TestCase):

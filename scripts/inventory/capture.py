@@ -99,30 +99,39 @@ def verify_shots(manifest, store):
 
 
 def run_guest(surface, profile, timeout, fixture=False):
-    """Run capture-ui.py in the VM. Returns the output folder."""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    stage = WORK / f"{surface}-{stamp}-in"
-    out = WORK / f"{surface}-{stamp}"
-    (stage / "surfaces").mkdir(parents=True)
-    for f in ("capture-ui.py", "capture_core.py"):
-        shutil.copy(HERE / f, stage / f)
-    shutil.copy(HERE / "surfaces" / f"{surface}.py", stage / "surfaces" / f"{surface}.py")
-    shutil.copy(INVENTORY / "profiles.json", stage / "profiles.json")
+    """Run capture-ui.py in the VM. Returns (output folder, exit code)."""
+    files = {"capture-ui.py": HERE / "capture-ui.py", "capture_core.py": HERE / "capture_core.py",
+             f"surfaces/{surface}.py": HERE / "surfaces" / f"{surface}.py",
+             "profiles.json": INVENTORY / "profiles.json"}
     cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --profile {profile} --out C:\\ios\\out\\records.json "
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:
         cmd += " --dump C:\\ios\\out\\tree.json"
+    return ref_run(surface, files, cmd, timeout)
+
+
+def ref_run(label, files, cmd, timeout, who="capture"):
+    """Stage `files` ({path under C:\\ios\\in: source}) and run `cmd` in the VM on a
+    fresh restore of clean. Returns (output folder, exit code); 3 when ref-run
+    outlived its margin (the VM is then turned off), and on an interrupt the VM is
+    turned off before the interrupt goes on. The staging folder is always removed."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stage = WORK / f"{label}-{stamp}-in"
+    out = WORK / f"{label}-{stamp}"
     runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1")]
     try:
+        for rel, src in files.items():
+            (stage / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, stage / rel)
         r = subprocess.run(runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
                                      "-Command", cmd], capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
     except subprocess.TimeoutExpired:
         # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
-        print(f"capture: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner))
+        print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner))
         return out, 3
     except KeyboardInterrupt:
         # subprocess.run has killed the runner, whose own finally may not run.
-        print("capture: interrupted; " + stop_vm(runner))
+        print(f"{who}: interrupted; " + stop_vm(runner))
         raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
@@ -139,17 +148,19 @@ def stop_vm(runner):
     return stop.stdout.replace("\r", "").strip() or f"ref-run -Stop exited {stop.returncode}"
 
 
-def check_scratch(rel_file, records):
-    """check-inventory.py over a copy of the inventory holding the new file."""
+def check_scratch(files):
+    """check-inventory.py over a copy of the inventory holding the new files
+    ({path under the inventory: lines})."""
     scratch = pathlib.Path(tempfile.mkdtemp(prefix="capture-"))
     try:
         tree = scratch / "inventory"
         shutil.copytree(INVENTORY, tree)
-        target = tree / rel_file
-        if not target.resolve().is_relative_to(tree.resolve()):
-            raise ValueError(f"{rel_file} is outside the inventory")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        core.write_records(target, records)
+        for rel_file, records in files.items():
+            target = tree / rel_file
+            if not target.resolve().is_relative_to(tree.resolve()):
+                raise ValueError(f"{rel_file} is outside the inventory")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            core.write_records(target, records)
         r = subprocess.run([sys.executable, str(HERE / "check-inventory.py"), "--root", str(tree)],
                            capture_output=True, text=True, timeout=600)
         return r.returncode, r.stdout + r.stderr
@@ -283,11 +294,23 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
         for tmp, _ in staged:
             tmp.unlink(missing_ok=True)
         raise
+    swap(staged, journal)
+
+
+def swap(staged, journal):
+    """Move each staged (tmp, final) pair into place, all or none.
+
+    Each existing destination is first moved aside to <name>.<pid>.old, then the
+    staged file takes its place, in order. The swap is written to `journal`
+    before it starts, and removing the journal is its commit point; the .old
+    copies go only after it. A failure puts every file back (roll_back) and
+    re-raises; a kill leaves the journal for the next run's recover().
+    """
     entries = [{"tmp": str(tmp), "final": str(final), "old": str(final.with_name(f"{final.name}.{os.getpid()}.old")),
                 "had": final.exists()} for tmp, final in staged]
+    jtmp = journal.with_name(journal.name + ".tmp")
     try:
         journal.parent.mkdir(parents=True, exist_ok=True)
-        jtmp = journal.with_name(journal.name + ".tmp")
         with open(jtmp, "w", encoding="utf-8") as fh:
             json.dump(entries, fh)
             fh.flush()
@@ -300,6 +323,7 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
     except BaseException:
         roll_back(entries)
         journal.unlink(missing_ok=True)
+        jtmp.unlink(missing_ok=True)
         raise
     journal.unlink()                               # the commit point
     for e in entries:
@@ -372,7 +396,7 @@ def capture_and_publish(args):
         records = build_file(INVENTORY / rel, new, meta, args.merge)
     except SystemExit as exc:
         return exc.code
-    code, report = check_scratch(rel, records)
+    code, report = check_scratch({rel: records})
     print(report.strip())
     if code != 0:
         print("capture: the result fails check-inventory.py; nothing published")

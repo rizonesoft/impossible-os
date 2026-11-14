@@ -1387,6 +1387,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inventory_check
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py" inventory_assets
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_capture.py" inventory_capture
+_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_baselines.py" inventory_baselines
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
@@ -1496,6 +1497,22 @@ if [ -f "$INV_CAPTURE_TEST" ]; then
     fi
 else
     t_fail "scripts/inventory/tests/test_capture.py not found"
+fi
+
+# Completeness baselines (scripts/inventory/tests/test_baselines.py): each row
+# builder over sources shaped like the reference machine's, the guest-read
+# acceptance rules, and an all-or-none publication at every rename.
+INV_BASELINES_TEST="$REPO_ROOT/scripts/inventory/tests/test_baselines.py"
+if [ -f "$INV_BASELINES_TEST" ]; then
+    INV_BASELINES_OUT=$(_tt_nested_collect inventory_baselines python3 "$INV_BASELINES_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/inventory/tests/test_baselines.py PASS ($(printf '%s\n' "$INV_BASELINES_OUT" | tail -3 | tr '\n' ' '))"
+    else
+        t_fail "scripts/inventory/tests/test_baselines.py FAIL ($(printf '%s\n' "$INV_BASELINES_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_baselines" "$INV_BASELINES_OUT"
+    fi
+else
+    t_fail "scripts/inventory/tests/test_baselines.py not found"
 fi
 
 # Release image binding gate (scripts/tests/test_release_image_binding.py): real

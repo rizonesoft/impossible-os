@@ -11,8 +11,16 @@ line, no blank lines. Two kinds of file:
                          another capture profile (the schema's
                          $defs/observation), keyed by (id, profile)
 
-A file whose name starts with "baseline" holds completeness-baseline rows, which
-section 5 checks; this checker leaves it alone.
+<baseline>/baseline.json is a completeness baseline (section 5): line 1 its
+header, every other line one row with a unique id. The header names a baseline
+baseline_core.OWNERS knows, its owner surface, its source, and either the build
+it was read from (which must be the build reference.json names) or the upstream
+it was imported from. A record's baselineId (<baseline>:<row id>) must name a
+row, and a record matching a build-read baseline must be captured from that
+build. The table under "Which baseline rows are absent?" in REFERENCE.md lists
+rows documented as absent, each with a reason. --baselines prints, per
+baseline, its rows and how many are matched, absent, pending (the owner surface
+has no records yet) or unmatched (the owner was captured and the row was not).
 
 Facts only (section 4): a label longer than 80 characters is a sentence, not a
 name; no string anywhere in a record or observation holds an http link; a
@@ -26,7 +34,7 @@ differs from the number of child records, an observation whose id names no
 record or whose profile differs from its file name, and two observations of one
 id under one profile.
 
-    python3 scripts/inventory/check-inventory.py [--surface NAME] [--json] [--root DIR] [--index]
+    python3 scripts/inventory/check-inventory.py [--surface NAME] [--baselines] [--json] [--root DIR] [--index]
 
 --index checks the staged inventory instead of the working tree, so a commit is
 judged by the bytes it records (the pre-commit lint passes it).
@@ -34,9 +42,11 @@ judged by the bytes it records (the pre-commit lint passes it).
 Exit 0 when clean, 1 on any error, 2 on a usage error.
 """
 import argparse
+import importlib.util
 import json
 import math
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +66,15 @@ LABEL_MAX = 80
 LINK_MARKS = ("http://", "https://")
 GIT_TIMEOUT = 120  # deadline: the staged inventory is a few hundred small files
 NAME_FIELDS = ("reference", "ours", "reason")
+BASELINE_FILE = "baseline.json"
+ABSENT_HEADING = "## Which baseline rows are absent?"
+ABSENT_COLUMNS = ["Baseline", "Row", "Reason"]
+HEADER_FIELDS = {"baseline", "owner", "source", "build", "upstream", "files"}
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+_spec = importlib.util.spec_from_file_location("baseline_core", pathlib.Path(__file__).resolve().parent / "baseline_core.py")
+baseline_core = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(baseline_core)
 
 
 def strings(value, at=""):
@@ -114,9 +133,10 @@ def check_names(root, err):
 
 
 def classify(path):
-    """Return ('record', None), ('observation', profile) or ('baseline', None)."""
+    """Return ('record', None), ('observation', profile), ('baseline', None) or
+    ('bad-baseline', None) for a baseline* name other than baseline.json."""
     if path.name.startswith("baseline"):
-        return "baseline", None
+        return ("baseline" if path.name == BASELINE_FILE else "bad-baseline"), None
     stem = path.name[: -len(".json")]
     if "." in stem:
         return "observation", stem.rsplit(".", 1)[1]
@@ -149,7 +169,7 @@ def load(root, surface):
         mine = surface is None or folder.name == surface
         for path in sorted(folder.glob("*.json")):
             kind, profile = classify(path)
-            if kind == "baseline" or (kind == "observation" and not mine):
+            if kind in ("baseline", "bad-baseline") or (kind == "observation" and not mine):
                 continue
             with path.open(encoding="utf-8") as fh:
                 for n, line in enumerate(fh, 1):
@@ -165,6 +185,141 @@ def load(root, surface):
                         yield path, n, kind, profile, mine, None, f"json: {exc.msg}"
                         continue
                     yield path, n, kind, profile, mine, obj, None
+
+
+def parse_line(line):
+    """(object, None) or (None, error) for one JSON Lines line."""
+    if not line.strip():
+        return None, "blank-line: a record file holds one object per line and no blank lines"
+    try:
+        return json.loads(line, parse_constant=_constant, parse_float=_float), None
+    except NonFinite as exc:
+        return None, f"non-finite: {exc} is not a finite JSON number"
+    except json.JSONDecodeError as exc:
+        return None, f"json: {exc.msg}"
+
+
+def header_errors(h, name, build):
+    """Messages for each rule a baseline header breaks."""
+    if not isinstance(h, dict):
+        yield "line 1 is the header object"
+        return
+    extra = set(h) - HEADER_FIELDS
+    if extra:
+        yield f"unknown header field(s): {', '.join(sorted(extra))}"
+    if h.get("baseline") != name:
+        yield f"header baseline is {h.get('baseline')!r}, but the file is {name}/{BASELINE_FILE}"
+    want = baseline_core.OWNERS.get(name)
+    if want is None:
+        yield f"{name} is not a baseline baseline_core.OWNERS knows"
+    elif h.get("owner") != want:
+        yield f"owner is {h.get('owner')!r}; the {name} baseline is accounted for by surface {want}"
+    if not isinstance(h.get("source"), str) or not h["source"].strip():
+        yield "source is a non-empty string naming what was read"
+    if ("build" in h) == ("upstream" in h):
+        yield "a header has exactly one of build (read from the reference machine) and upstream (imported)"
+    elif "build" in h:
+        if build is None:
+            yield "the header names a build but there is no reference.json to compare it with"
+        elif h["build"] != build:
+            yield f"read from build {h['build']}, but reference.json names {build}: read the baseline again"
+    else:
+        up = h["upstream"]
+        if not (isinstance(up, dict) and set(up) == {"repo", "commit", "license"}
+                and all(isinstance(up[k], str) and up[k] for k in up) and COMMIT.match(up["commit"])):
+            yield "upstream is {repo, commit (40 hex digits), license}"
+    files = h.get("files", [])
+    if not (isinstance(files, list) and all(isinstance(f, dict) and isinstance(f.get("path"), str)
+                                             and isinstance(f.get("sha256"), str) for f in files)):
+        yield "files is a list of {path, sha256}"
+
+
+def load_baselines(root, surface, build, err):
+    """{name: {"header", "rows": {id: line}, "path", "mine"}} for every baseline file."""
+    out = {}
+    for path in sorted(root.glob("*/baseline*.json")):
+        mine = surface is None or path.parent.name == surface
+        if path.name != BASELINE_FILE:
+            if mine:
+                err(path, 1, "baseline-name", f"a baseline file is named {BASELINE_FILE}, not {path.name}")
+            continue
+        name = path.parent.name
+        header, rows = None, {}
+        with path.open(encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                obj, error = parse_line(line)
+                if error:
+                    if mine:
+                        err(path, n, error.split(":", 1)[0], error)
+                    continue
+                if n == 1:
+                    header = obj
+                    if mine:
+                        for message in header_errors(obj, name, build):
+                            err(path, 1, "baseline-header", message)
+                    continue
+                rid = obj.get("id") if isinstance(obj, dict) else None
+                if not isinstance(rid, str) or not rid:
+                    if mine:
+                        err(path, n, "baseline-row", "a row is an object with a non-empty string id")
+                    continue
+                if rid in rows:
+                    if mine:
+                        err(path, n, "baseline-duplicate", f"row {rid} is also at line {rows[rid]}")
+                    continue
+                rows[rid] = n
+                if mine:
+                    for at, text in strings(obj):
+                        if any(m in text.lower() for m in LINK_MARKS):
+                            err(path, n, "link", f"{rid}: link in row at {at}; links to Microsoft are never recorded")
+        if mine and header is not None and not rows:
+            err(path, 1, "baseline-empty", f"{name} has a header and no rows")
+        if mine and header is None:
+            err(path, 1, "baseline-header", "the file is empty; line 1 is the header")
+        out[name] = {"header": header if isinstance(header, dict) else {}, "rows": rows, "path": path, "mine": mine}
+    return out
+
+
+def load_absent(root, baselines, err, report):
+    """{(baseline, row): (line, reason)} from the REFERENCE.md absent table."""
+    path = root / "REFERENCE.md"
+    out = {}
+    if not path.is_file():
+        return out
+    lines = path.read_text(encoding="utf-8").split("\n")
+    try:
+        start = lines.index(ABSENT_HEADING)
+    except ValueError:
+        return out
+    table = []
+    for n in range(start + 1, len(lines)):
+        if lines[n].startswith("## "):
+            break
+        if lines[n].startswith("|"):
+            table.append((n + 1, [c.strip() for c in lines[n].strip().strip("|").split("|")]))
+    if not table:
+        return out
+    if table[0][1] != ABSENT_COLUMNS:
+        if report:
+            err(path, table[0][0], "absent-table", f"the absent table's columns are {' | '.join(ABSENT_COLUMNS)}")
+        return out
+    for n, cells in table[2:]:
+        if len(cells) != 3:
+            if report:
+                err(path, n, "absent-table", "an absent row has three cells: baseline, row, reason")
+            continue
+        name, row, reason = (c.strip("`") for c in cells)
+        if report:
+            if name not in baselines:
+                err(path, n, "absent-orphan", f"{name} is not a baseline")
+            elif row not in baselines[name]["rows"]:
+                err(path, n, "absent-orphan", f"{name} has no row {row}")
+            if not reason.strip():
+                err(path, n, "absent-reason", f"{name}:{row} is listed absent without a reason")
+            if (name, row) in out:
+                err(path, n, "absent-duplicate", f"{name}:{row} is also listed at line {out[(name, row)][0]}")
+        out.setdefault((name, row), (n, reason))
+    return out
 
 
 def check(root, surface=None):
@@ -285,14 +440,56 @@ def check(root, surface=None):
     if surface is None:
         check_names(root, err)
 
+    # Baselines: every row is matched by a record, documented absent, or open.
+    ref = root / "reference.json"
+    build = json.loads(ref.read_text(encoding="utf-8")).get("build") if ref.is_file() else None
+    baselines = load_baselines(root, surface, build, err)
+    matched = {name: set() for name in baselines}
+    for rid, (path, n, obj, mine) in records.items():
+        if obj.get("baselineMissing") and "baselineId" in obj:
+            if mine:
+                err(path, n, "baseline-both", f"{rid}: baselineMissing says no row lists it, but it names {obj['baselineId']}")
+            continue
+        if "baselineId" not in obj:
+            continue
+        name, _, row = obj["baselineId"].partition(":")
+        b = baselines.get(name)
+        if b is None or row not in b["rows"]:
+            if mine:
+                err(path, n, "baseline-orphan", f"{rid}: baselineId {obj['baselineId']} names no baseline row")
+            continue
+        read_from = b["header"].get("build")
+        if read_from is not None and obj["capturedFrom"] != read_from:
+            if mine:
+                err(path, n, "baseline-build", f"{rid}: captured from {obj['capturedFrom']} but matches the {name} "
+                    f"baseline read from {read_from}: capture it again on the reference build")
+            continue
+        matched[name].add(row)
+    absent = load_absent(root, baselines, err, report=surface is None)
+    for (name, row), (n, _) in absent.items():
+        if row in matched.get(name, ()):
+            if surface is None:
+                err(root / "REFERENCE.md", n, "absent-matched", f"{name}:{row} is listed absent and a record matches it")
+    captured = {p.parent.name for p, _, obj, _ in records.values()}
+    summary = {}
+    for name, b in baselines.items():
+        rows = set(b["rows"])
+        gone = {r for (bn, r) in absent if bn == name} & rows
+        left = len(rows - matched[name] - gone)
+        owner = b["header"].get("owner")
+        open_ = left if owner in captured else 0
+        summary[name] = {"owner": owner, "rows": len(rows), "matched": len(matched[name]), "absent": len(gone),
+                         "pending": left - open_, "unmatched": open_}
+
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
-    return count, len(observations), errors
+    return count, len(observations), errors, summary
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--surface", help="check one folder; parents still resolve across the whole inventory")
     ap.add_argument("--json", action="store_true", help="print a JSON result for a tool")
+    ap.add_argument("--baselines", action="store_true", help="print each baseline's rows: matched, absent, pending, unmatched")
     ap.add_argument("--index", action="store_true", help="check the staged inventory, not the working tree")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
@@ -308,10 +505,21 @@ def main(argv=None):
     if args.surface and not (root / args.surface).is_dir():
         print(f"check-inventory: no surface folder {args.surface}", file=sys.stderr)
         return 2
-    records, obs, errors = check(root, args.surface)
+    records, obs, errors, summary = check(root, args.surface)
+    if args.baselines:
+        for name in sorted(set(baseline_core.OWNERS) - set(summary)):
+            errors.append({"file": f"{name}/{BASELINE_FILE}", "line": 0, "rule": "baseline-missing",
+                           "message": f"no {name} baseline: run scripts/inventory/baselines.py"})
     if args.json:
-        print(json.dumps({"records": records, "observations": obs, "errors": errors}, indent=1))
+        out = {"records": records, "observations": obs, "errors": errors}
+        if args.baselines:
+            out["baselines"] = summary
+        print(json.dumps(out, indent=1))
     else:
+        if args.baselines:
+            for name, c in sorted(summary.items()):
+                print(f"baseline {name}: {c['rows']} rows, {c['matched']} matched, {c['absent']} absent, "
+                      f"{c['pending']} pending, {c['unmatched']} unmatched (owner {c['owner']})")
         for e in errors[:PRINT_CAP]:
             print(f"{e['file']}:{e['line']}: {e['rule']}: {e['message']}")
         if len(errors) > PRINT_CAP:
@@ -340,6 +548,8 @@ def from_index(args):
                 argv += ["--surface", args.surface]
             if args.json:
                 argv.append("--json")
+            if args.baselines:
+                argv.append("--baselines")
             return main(argv)
         finally:
             shutil.rmtree(scratch)

@@ -27,6 +27,7 @@ place, so ids follow what a user sees.
 """
 import json
 import os
+import pathlib
 import re
 import struct
 import zlib
@@ -484,12 +485,16 @@ def write_png(path, width, height, rgb):
 def write_records(path, records):
     """Write one record per line, replacing the file only once the new one is whole."""
     tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-        for r in records:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            for r in records:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        pathlib.Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def read_records(path):

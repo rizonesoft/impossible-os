@@ -64,6 +64,16 @@ Device microcode and configuration blobs are redistributed **inside the OS image
 
 `04-drivers-hardware/TODO-06-firmware-loader-device-blobs.md` owns the loading subsystem and specifies a per-blob manifest carrying device ids, version, license, source URL, hash, and an explicit **redistribution flag**. That flag is the load-bearing field: some vendor firmware is freely redistributable and some is not, and the difference decides whether a blob may ship in a release image at all. Every blob that ships must gain a row here.
 
+## Imported data
+
+| Data | Copyright | License | Upstream | Where |
+| --- | --- | --- | --- | --- |
+| WinUI Gallery control list (control ids, names and groups only, from `WinUIGallery/SampleSupport/Data/ControlInfoData.json` at commit `6de91feccadfbb0a796b71caedead5a2284f730e`) | Copyright (c) Microsoft Corporation | MIT | https://github.com/microsoft/WinUI-Gallery | `docs/design/inventory/controls/baseline.json`, imported by `scripts/inventory/baselines.py` |
+
+The MIT notice: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+The other six completeness baselines are read from the reference machine and hold only identifiers, names, paths and categories (see `docs/design/inventory/index.md`); no Microsoft file is copied.
+
 ## Reference implementations used as oracles (not vendored)
 
 **EDK2 / TianoCore** (BSD-2-Clause-Patent, https://github.com/tianocore/edk2) is used as an external correctness oracle, not as a dependency. `src/boot/uefi/efi.h` is hand-written against the UEFI specification and deliberately carries no gnu-efi or EDK2 dependency, which keeps the bootloader freestanding but means every protocol GUID in it is a 128-bit constant transcribed by hand. `tools/uefi-guid-check/` fetches EDK2's MdePkg headers on demand and compares, because a wrong GUID fails no build, no unit test, and no QEMU boot -- it fails on real firmware as a protocol that is never located.

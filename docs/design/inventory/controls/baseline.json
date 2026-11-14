@@ -1,0 +1,112 @@
+{"baseline": "controls", "owner": "system", "source": "WinUIGallery/SampleSupport/Data/ControlInfoData.json", "upstream": {"repo": "microsoft/WinUI-Gallery", "commit": "6de91feccadfbb0a796b71caedead5a2284f730e", "license": "MIT"}}
+{"id": "Acrylic", "name": "AcrylicBrush", "category": "Styles"}
+{"id": "AnimatedIcon", "name": "AnimatedIcon", "category": "Styles"}
+{"id": "AnimatedVisualPlayer", "name": "AnimatedVisualPlayer", "category": "Media"}
+{"id": "AnnotatedScrollBar", "name": "AnnotatedScrollBar", "category": "Scrolling"}
+{"id": "AppBarButton", "name": "AppBarButton", "category": "MenusAndToolbars"}
+{"id": "AppBarSeparator", "name": "AppBarSeparator", "category": "MenusAndToolbars"}
+{"id": "AppBarToggleButton", "name": "AppBarToggleButton", "category": "MenusAndToolbars"}
+{"id": "AppNotification", "name": "App notifications", "category": "Shell"}
+{"id": "AppWindow", "name": "AppWindow", "category": "MultipleWindows"}
+{"id": "AppWindowTitleBar", "name": "AppWindowTitleBar", "category": "MultipleWindows"}
+{"id": "AutoSuggestBox", "name": "AutoSuggestBox", "category": "Text"}
+{"id": "BadgeNotificationManager", "name": "Badge notifications", "category": "Shell"}
+{"id": "Border", "name": "Border", "category": "Layout"}
+{"id": "BreadcrumbBar", "name": "BreadcrumbBar", "category": "Navigation"}
+{"id": "Button", "name": "Button", "category": "BasicInput"}
+{"id": "CalendarDatePicker", "name": "CalendarDatePicker", "category": "DateAndTime"}
+{"id": "CalendarView", "name": "CalendarView", "category": "DateAndTime"}
+{"id": "Canvas", "name": "Canvas", "category": "Layout"}
+{"id": "CaptureElementPreview", "name": "Capture Element / Camera Preview", "category": "Media"}
+{"id": "Chart", "name": "Chart", "category": "Media"}
+{"id": "CheckBox", "name": "CheckBox", "category": "BasicInput"}
+{"id": "Clipboard", "name": "Clipboard", "category": "System"}
+{"id": "ColorPicker", "name": "ColorPicker", "category": "BasicInput"}
+{"id": "ComboBox", "name": "ComboBox", "category": "BasicInput"}
+{"id": "CommandBar", "name": "CommandBar", "category": "MenusAndToolbars"}
+{"id": "CommandBarFlyout", "name": "CommandBarFlyout", "category": "MenusAndToolbars"}
+{"id": "CompactSizing", "name": "Compact Sizing", "category": "Styles"}
+{"id": "ConnectedAnimation", "name": "Connected Animation", "category": "Motion"}
+{"id": "ContentDialog", "name": "ContentDialog", "category": "DialogsAndFlyouts"}
+{"id": "ContentIsland", "name": "ContentIsland", "category": "System"}
+{"id": "DatePicker", "name": "DatePicker", "category": "DateAndTime"}
+{"id": "DropDownButton", "name": "DropDownButton", "category": "BasicInput"}
+{"id": "EasingFunction", "name": "Easing Functions", "category": "Motion"}
+{"id": "Expander", "name": "Expander", "category": "Layout"}
+{"id": "FlipView", "name": "FlipView", "category": "Collections"}
+{"id": "Flyout", "name": "Flyout", "category": "DialogsAndFlyouts"}
+{"id": "Grid", "name": "Grid", "category": "Layout"}
+{"id": "GridView", "name": "GridView", "category": "Collections"}
+{"id": "HyperlinkButton", "name": "HyperlinkButton", "category": "BasicInput"}
+{"id": "IconElement", "name": "IconElement", "category": "Styles"}
+{"id": "Image", "name": "Image", "category": "Media"}
+{"id": "ImplicitTransition", "name": "Implicit Transitions", "category": "Motion"}
+{"id": "InfoBadge", "name": "InfoBadge", "category": "StatusAndInfo"}
+{"id": "InfoBar", "name": "InfoBar", "category": "StatusAndInfo"}
+{"id": "InkCanvas", "name": "InkCanvas / InkToolbar", "category": "Media"}
+{"id": "ItemsRepeater", "name": "ItemsRepeater", "category": "Collections"}
+{"id": "ItemsView", "name": "ItemsView", "category": "Collections"}
+{"id": "JumpList", "name": "JumpList", "category": "Shell"}
+{"id": "LayoutPanel", "name": "LayoutPanel", "category": "Layout"}
+{"id": "Line", "name": "Line", "category": "Styles"}
+{"id": "ListView", "name": "ListView", "category": "Collections"}
+{"id": "MapControl", "name": "MapControl", "category": "Media"}
+{"id": "MediaPlayerElement", "name": "MediaPlayerElement", "category": "Media"}
+{"id": "MenuBar", "name": "MenuBar", "category": "MenusAndToolbars"}
+{"id": "MenuFlyout", "name": "MenuFlyout", "category": "MenusAndToolbars"}
+{"id": "NavigationView", "name": "NavigationView", "category": "Navigation"}
+{"id": "NumberBox", "name": "NumberBox", "category": "Text"}
+{"id": "PageTransition", "name": "Page Transitions", "category": "Motion"}
+{"id": "PagerControl", "name": "PagerControl", "category": "Scrolling"}
+{"id": "ParallaxView", "name": "ParallaxView", "category": "Motion"}
+{"id": "PasswordBox", "name": "PasswordBox", "category": "Text"}
+{"id": "PersonPicture", "name": "PersonPicture", "category": "Media"}
+{"id": "PipsPager", "name": "PipsPager", "category": "Scrolling"}
+{"id": "Pivot", "name": "Pivot", "category": "Navigation"}
+{"id": "Popup", "name": "Popup", "category": "DialogsAndFlyouts"}
+{"id": "ProgressBar", "name": "ProgressBar", "category": "StatusAndInfo"}
+{"id": "ProgressRing", "name": "ProgressRing", "category": "StatusAndInfo"}
+{"id": "PullToRefresh", "name": "PullToRefresh", "category": "Collections"}
+{"id": "RadialGradientBrush", "name": "RadialGradientBrush", "category": "Styles"}
+{"id": "RadioButton", "name": "RadioButton", "category": "BasicInput"}
+{"id": "RatingControl", "name": "RatingControl", "category": "BasicInput"}
+{"id": "RelativePanel", "name": "RelativePanel", "category": "Layout"}
+{"id": "RepeatButton", "name": "RepeatButton", "category": "BasicInput"}
+{"id": "RichEditBox", "name": "RichEditBox", "category": "Text"}
+{"id": "RichTextBlock", "name": "RichTextBlock", "category": "Text"}
+{"id": "ScrollView", "name": "ScrollView", "category": "Scrolling"}
+{"id": "ScrollViewer", "name": "ScrollViewer", "category": "Scrolling"}
+{"id": "SelectorBar", "name": "SelectorBar", "category": "Navigation"}
+{"id": "SemanticZoom", "name": "SemanticZoom", "category": "Scrolling"}
+{"id": "Shape", "name": "Shape", "category": "Styles"}
+{"id": "Slider", "name": "Slider", "category": "BasicInput"}
+{"id": "Sound", "name": "Sound", "category": "Media"}
+{"id": "SplitButton", "name": "SplitButton", "category": "BasicInput"}
+{"id": "SplitView", "name": "SplitView", "category": "Layout"}
+{"id": "StackPanel", "name": "StackPanel", "category": "Layout"}
+{"id": "StandardUICommand", "name": "StandardUICommand", "category": "MenusAndToolbars"}
+{"id": "StoragePickers", "name": "Storage pickers", "category": "System"}
+{"id": "SwipeControl", "name": "SwipeControl", "category": "MenusAndToolbars"}
+{"id": "SystemBackdropElement", "name": "SystemBackdropElement", "category": "Styles"}
+{"id": "SystemBackdrops", "name": "System Backdrops (Mica/Acrylic)", "category": "Styles"}
+{"id": "TabView", "name": "TabView", "category": "Navigation"}
+{"id": "TableView", "name": "TableView", "category": "Collections"}
+{"id": "TeachingTip", "name": "TeachingTip", "category": "DialogsAndFlyouts"}
+{"id": "TextBlock", "name": "TextBlock", "category": "Text"}
+{"id": "TextBox", "name": "TextBox", "category": "Text"}
+{"id": "ThemeShadow", "name": "ThemeShadow", "category": "Styles"}
+{"id": "ThemeTransition", "name": "Theme Transitions", "category": "Motion"}
+{"id": "TimePicker", "name": "TimePicker", "category": "DateAndTime"}
+{"id": "TitleBar", "name": "TitleBar", "category": "MultipleWindows"}
+{"id": "ToggleButton", "name": "ToggleButton", "category": "BasicInput"}
+{"id": "ToggleSplitButton", "name": "ToggleSplitButton", "category": "BasicInput"}
+{"id": "ToggleSwitch", "name": "ToggleSwitch", "category": "BasicInput"}
+{"id": "ToolTip", "name": "ToolTip", "category": "StatusAndInfo"}
+{"id": "TreeView", "name": "TreeView", "category": "Collections"}
+{"id": "VariableSizedWrapGrid", "name": "VariableSizedWrapGrid", "category": "Layout"}
+{"id": "Viewbox", "name": "Viewbox", "category": "Layout"}
+{"id": "WebView2", "name": "WebView2", "category": "Media"}
+{"id": "Windowing", "name": "Window", "category": "MultipleWindows"}
+{"id": "WrapPanel", "name": "WrapPanel", "category": "Layout"}
+{"id": "XamlCompInterop", "name": "Animation interop", "category": "Motion"}
+{"id": "XamlUICommand", "name": "XamlUICommand", "category": "MenusAndToolbars"}

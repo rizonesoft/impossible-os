@@ -1,4 +1,4 @@
-<!-- docs: sources=docs/design/inventory/schema.json,docs/design/inventory/names.json,scripts/inventory/check-inventory.py,scripts/inventory/check-no-ms-assets.py,scripts/inventory/asset-types.txt,scripts/inventory/make-ms-hashes.ps1,scripts/inventory/guest/hash-assets.ps1,scripts/inventory/capture.py,scripts/inventory/capture-ui.py,scripts/inventory/capture_core.py,scripts/inventory/runtime.json,docs/design/inventory/profiles.json reviewed=2026-11-14 -->
+<!-- docs: sources=docs/design/inventory/schema.json,docs/design/inventory/names.json,scripts/inventory/check-inventory.py,scripts/inventory/check-no-ms-assets.py,scripts/inventory/asset-types.txt,scripts/inventory/make-ms-hashes.ps1,scripts/inventory/guest/hash-assets.ps1,scripts/inventory/capture.py,scripts/inventory/capture-ui.py,scripts/inventory/capture_core.py,scripts/inventory/runtime.json,docs/design/inventory/profiles.json,scripts/inventory/baselines.py,scripts/inventory/baseline_core.py,scripts/inventory/guest/read-baselines.py reviewed=2026-11-14T12:00 -->
 # Windows 11 Inventory
 
 The inventory is the Windows 11 interface written down as data: every surface, page, control, menu entry, shortcut, gesture, measurement and animation of the reference build, one JSON object per line. It is what makes "the same thing, in the same place" a number a check can test. The plan that fills it is the [Windows 11 parity inventory roadmap](../../graphics/win11-parity-inventory.md).
@@ -8,7 +8,7 @@ The inventory is the Windows 11 interface written down as data: every surface, p
 - `schema.json`: the record format, in JSON Schema 2020-12.
 - `<surface>/<file>.json`: the records of one surface, such as `taskbar/bar.json`. Each line is one record with an `id` (`win11.<surface>.<path>`), a `kind`, a `label`, its `order` under its `parent`, where the fact came from (`source`) and the build it was read from (`capturedFrom`).
 - `<surface>/<file>.<profile>.json`: the same elements measured under another capture profile, such as `taskbar/bar.fhd-150.json`. Each line names an existing record by `id` and gives at least one of its `bounds`, `measure` or `textMetrics` at that profile, so a layout rule can be derived from several scale points without repeating the record.
-- `<surface>/baseline.json`: an independent list of what should be there, read from the reference machine itself, against which the captured records are counted.
+- `<baseline>/baseline.json`: an independent list of what should be there, read from the reference machine itself, against which the captured records are counted (see "How is completeness proved?").
 - `names.json`: the Microsoft trade mark names Impossible OS replaces, each with our name and the reason.
 
 ## What does a record measure?
@@ -45,6 +45,31 @@ python3 scripts/inventory/capture.py --verify-shots                             
 - **A capture is taken only whole.** The runner must exit 0, `meta.json` must say the capture is complete, and `records.json` must hold exactly the records it counted; a short or cut file from a broken transfer is refused like an incomplete capture (exit 3).
 - **Nothing unchecked is published.** The new file is written into a scratch copy of the inventory and `check-inventory.py` runs over it; only a clean result is published. Publishing stages the screenshots, `shots.json` and the records beside their destinations and then swaps each in, records last, keeping every replaced file aside until the last swap succeeds, so a failure at any point leaves the previous publication exactly as it was. The swap is journalled first (`build/inventory/publish.journal`), so even a killed run is rolled back by the next one before it reads anything. `--surface` and `--file` are slugs, never paths, and `--file` never starts with `baseline` (the checker reads such a file as completeness rows).
 - **Screenshots stay on the operator's machine.** Each state is saved as `R:\11\ref-shots\<surface>\<state>.<profile>.png`, the state named after the opener's id with its dots kept (`window.menubar.file-open`) and the resting surface after its root (`window`), so no two states share a file; `shots.json` records its surface, record file, state, profile, size and SHA-256, and a capture replaces only the entries of its own file and profile, and `--verify-shots` names every missing or changed file. Elements with no usable name are listed in `build/inventory/<surface>-unnamed.json` for a hand-written label. `--fixture` also keeps the walked tree for a test fixture; it costs one more walk, so an ordinary capture (Notepad: about 50 s) does not take it.
+
+## How is completeness proved?
+
+A capture proves what it saw; a baseline proves nothing was missed. Each baseline is a list of everything of one kind the reference build holds, read from the machine itself rather than from what a walk happened to reach:
+
+| Baseline | Read from | A row | Accounted for by |
+| --- | --- | --- | --- |
+| `settings` | the Settings search index, `C:\Windows\ImmersiveControlPanel\Settings\AllSystemSettings_*.xml` | setting id, its pages, deep link, condition and feature flag | `settings` |
+| `control-panel` | `HKLM\...\Explorer\ControlPanel\NameSpace` (by CLSID, with its canonical name) and `System32\*.cpl` | `clsid:{...}` or `cpl:<file>` | `control-panel` |
+| `known-folders` | `HKLM\...\Explorer\FolderDescriptions` | folder id, name, category, relative path, parent | `explorer` |
+| `start-apps` | `Get-StartApps` on the clean VM | app id, name, packaged or desktop | `start` |
+| `controls` | the WinUI Gallery control list at a pinned commit (MIT, credited in `CREDITS.md`) | control id, name, group | `system` |
+| `classic-controls` | the window classes comctl32 version 6 registers, found by asking, for every name in the session's atom table, whether it resolves under the comctl32 module | class name | `system` |
+| `shell-commands` | the known folders' `shell:` names and the verbs under `HKCR\*\shell`, `Directory\shell`, `Directory\Background\shell`, `Drive\shell` | `folder:<name>` or `verb:<class>/<verb>` | `explorer` |
+
+```bash
+python3 scripts/inventory/baselines.py [--dry-run]       # read all seven and publish them together
+python3 scripts/inventory/check-inventory.py --baselines # rows, matched, absent, pending, unmatched
+```
+
+- **The file.** JSON Lines: line 1 the header (`baseline`, `owner`, `source`, and `build` for a baseline read from the machine or `upstream` (repo, commit, licence) for the imported one, plus `files` with each source file's SHA-256 where one was read whole), then one row per entry with a unique `id`. A row holds identifiers, names, paths and categories, never a description, keyword or help string, and never a link.
+- **Reading.** `baselines.py` runs `guest/read-baselines.py` in the VM on a fresh restore of `clean` under the capture lock (one VM job at a time), takes the read only whole and only from the build `reference.json` names, fetches the Gallery list at the commit `baseline_core.GALLERY` pins, checks all seven in a scratch copy of the inventory, and swaps them in together through the capture's journalled swap. Microsoft's files stay in the VM; only the rows leave it. The rule that turns each source into rows is `baseline_core.py`, shared by the guest and the host tests.
+- **Matching.** A captured record names its row with `baselineId: "<baseline>:<row id>"`. The id must name a row, and a record matching a baseline read from the machine must be captured from that build: when the reference moves to a new build, the baselines are read again and an old capture no longer counts, even where the row id survived. A record the baseline does not list (an element the index omits) carries `baselineMissing: true` instead, never both.
+- **Absent rows.** A row the build lists but no surface shows goes in the table under "Which baseline rows are absent?" in `REFERENCE.md`, with the reason. A row listed there that a record also matches is refused.
+- **The report.** `--baselines` prints one line per baseline: its rows, how many are matched, documented absent, pending (its owner surface has no records yet) and unmatched (the owner was captured and the row was not). A missing baseline is an error; an unmatched row is reported here and fails the campaign check.
 
 ## What does it never hold?
 

@@ -93,7 +93,7 @@ class Walk(unittest.TestCase):
     def test_notepad_meets_the_checkpoint_and_the_checker(self):
         cap = walk()
         self.assertGreaterEqual(len(cap.records), 40)
-        code, report = capture.check_scratch("notepad-smoke/window.json", cap.records)
+        code, report = capture.check_scratch({"notepad-smoke/window.json": cap.records})
         self.assertEqual(code, 0, report)
 
     def test_ids_are_unique_and_follow_what_a_user_sees(self):

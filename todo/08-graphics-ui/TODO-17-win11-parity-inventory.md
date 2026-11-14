@@ -268,21 +268,26 @@ The inventory holds facts. Names of controls, their order, their sizes and their
 
 A capture proves what it saw. A baseline proves nothing was missed: an independent list of everything that should be there, read from the reference machine itself.
 
-- [ ] `settings` baseline: read the Settings search index the build ships and write `docs/design/inventory/settings/baseline.json`
-  - Source: the `AllSystemSettings_*.xml` file under `C:\Windows\ImmersiveControlPanel\Settings\`
-  - One row per setting with its id, page id and deep-link name, no description text
-- [ ] `control-panel` baseline: read the canonical names and CLSIDs under `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace` and the `.cpl` files under `C:\Windows\System32`
-- [ ] `known-folders` baseline: read every entry under `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions` (name, category, relative path, parent)
-- [ ] `start-apps` baseline: read the app list of the clean VM (`Get-StartApps`) as name and kind, so §8 and §13 can prove every inbox app has an owner
-- [ ] `controls` baseline: import the control page list of the WinUI Gallery at a pinned commit as control name and category only
-  - MIT: read the LICENSE file and add the notice to `CREDITS.md` in the same commit
-- [ ] `classic-controls` baseline: the window classes `comctl32.dll` registers, read by enumerating the classes of a test dialog in the VM
-- [ ] `shell-commands` baseline: the `shell:` folder names and the verbs registered under `HKCR\*\shell`, `HKCR\Directory\shell`, `HKCR\Directory\Background\shell` and `HKCR\Drive\shell`
-- [ ] Each baseline file records its source and the build, and `check-inventory.py` accounts for every baseline row
-  - A row is matched by a captured record (`baselineId`), listed as documented absent in `REFERENCE.md` with a reason, or counted as pending
-- [ ] Commit: `"inventory: completeness baselines from the reference build"`
+- [x] `settings` baseline from the Settings search index (1,468 rows)
+- [x] `control-panel` baseline from the NameSpace CLSIDs and `System32\*.cpl` (59 rows)
+- [x] `known-folders` baseline from FolderDescriptions (134 rows)
+- [x] `start-apps` baseline from `Get-StartApps` on the clean VM (73 rows)
+- [x] `controls` baseline from the WinUI Gallery at commit `6de91fec`, MIT notice in `CREDITS.md` (111 rows)
+- [x] `classic-controls` baseline from the classes comctl32 6 registers in the session (28 rows)
+- [x] `shell-commands` baseline from the `shell:` names and the four verb keys (155 rows)
+- [x] Each file records its source and build; `check-inventory.py` accounts for every row (matched, absent in `REFERENCE.md`, pending or unmatched)
+- [x] Commit: `"inventory: completeness baselines from the reference build"`
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py --baselines` prints one line per baseline with its row count, and every count is above zero: `settings`, `control-panel`, `known-folders`, `start-apps`, `controls`, `classic-controls`, `shell-commands`.
+
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_baselines.py` (24 cases), `python3 scripts/inventory/tests/test_check_inventory.py` (84 cases), live `python3 scripts/inventory/baselines.py` on the reference VM, then `check-inventory.py --baselines` prints all seven with rows above zero.
+> **Notes:**
+> - `scripts/inventory/baselines.py` runs `guest/read-baselines.py` in the VM (fresh `clean`, capture lock), refuses a partial read or one from a build other than `reference.json`'s, imports the pinned Gallery list, checks all seven in a scratch inventory and swaps them in together through `capture.swap`.
+> - `baseline_core.py` holds the row rule for each source, shared by the guest and the host tests; rows carry facts only, and the Microsoft source files never leave the VM.
+> - The classic controls are found without a name list: every atom-table name that resolves under the comctl32 6 module and carries its side-by-side version prefix.
+> - `check-inventory.py` validates each header and row, ties a `baselineId` match to the baseline's build (an old capture never counts against a newer baseline), parses the absent table in `REFERENCE.md`, and `--baselines` reports matched, absent, pending and unmatched per baseline; a missing baseline is an error.
+> - Fixed on the way: `capture_core.write_records` and `capture.swap` left a `.tmp` file behind when a rename failed; both now remove it.
+> - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-is-completeness-proved).
 
 ---
 
@@ -1133,6 +1138,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - A duplicate `id`, an orphan `parent`, a `parent` cycle, a repeated `order`, a wrong `itemCount`, a `bounds` without `captureProfile` and an unknown `source` each exit 1 naming the rule
   - A label of 81 characters, a link, a missing `disposition` and an undefined `inconsistency` id each exit 1
 - [x] Create `scripts/inventory/tests/test_capture.py` (§3)
+- [x] Create `scripts/inventory/tests/test_baselines.py` (§5)
 - [ ] Create `scripts/inventory/tests/test_report.py` and `test_layout_check.py` with the fixtures named in §7 and §16
 - [ ] Register the suite in `scripts/test-tooling.sh` and add its paths to the scoped-pack triggers
 - [ ] Commit: `"test: inventory tooling suite"`

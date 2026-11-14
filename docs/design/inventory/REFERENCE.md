@@ -72,3 +72,10 @@ powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
 `ref-run.ps1` takes a new, empty `-Out` folder for each run, holds the VM for itself, restores `clean`, checks the build, copies its inputs to `C:\ios\in` as one zip, runs one command in `ref`'s desktop (an interactive scheduled task under a headless console, so it draws no window of its own), waits for its exit code, copies `C:\ios\out` back and turns the VM off. Each capture therefore starts from the same desktop. `-Proof` runs the end-to-end check: it starts Notepad, finds its window through UI Automation and saves a screenshot. `pre-oobe` exists so first-run setup can be captured again at any time.
 
 The machine and the tools are kept after the inventory is captured, so anything missed can be captured later from the same build.
+
+## Which baseline rows are absent?
+
+A row of a completeness baseline that the reference build lists but no surface shows (a setting gated off in this edition, a verb whose handler is not installed) is documented here, with the reason, instead of being matched by a captured record. `check-inventory.py` refuses a row listed here that a record also matches, a row that names nothing, and a row without a reason.
+
+| Baseline | Row | Reason |
+| --- | --- | --- |
