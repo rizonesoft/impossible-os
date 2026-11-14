@@ -2541,7 +2541,8 @@ def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple
         return (None, 0, 0, True)
     except (OSError, UnicodeDecodeError):
         return (None, 0, 0, False)
-    newest, newest_age, spent, age, last_complete = None, 0, 0, 0, None
+    newest, newest_age, age, last_complete = None, 0, 0, None
+    spent = _second_spent(lines, todo, section)
     for line in reversed(lines):
         if not line.strip():
             continue
@@ -2550,7 +2551,13 @@ def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple
             e = json.loads(line)
         except ValueError:
             if '"todo": "' not in line or f'"todo": "{todo}"' in line:
-                return (newest, newest_age, _second_spent(lines, todo, section), False)
+                if cap and spent >= cap:
+                    # The cap is already spent by readable receipts, and no pass can be dispatched beyond it:
+                    # whatever this line was, it is not a second receipt that could replace one of them. Read on,
+                    # or a line cut short after the last pass would leave the section asking for a pass the
+                    # dispatcher must refuse.
+                    continue
+                return (newest, newest_age, spent, False)
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") != _SECOND_KIND \
                 or str(e.get("section", "")) != section:
@@ -2559,7 +2566,6 @@ def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple
             newest, newest_age = e, age
         if _second_complete(e) and last_complete is None:
             last_complete = (e, age)
-    spent = _second_spent(lines, todo, section)
     if cap and spent >= cap and newest is not None and not _second_complete(newest) and last_complete is not None:
         newest, newest_age = last_complete
     return (newest, newest_age, spent, True)

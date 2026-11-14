@@ -34,6 +34,12 @@ if mode == "hang":
     pathlib.Path(os.environ["FAKE_CHILD"]).write_text(str(child.pid))
     time.sleep(60)
     sys.exit(0)
+if mode == "selftimeout":
+    # Honours the limit it was given, as the real CLI does: ends itself there with no result.
+    limit = float(sys.argv[sys.argv.index("--print-timeout") + 1].rstrip("s"))
+    time.sleep(limit)
+    print(json.dumps({"event": "result", "result": {"status": "DEADLINE_EXCEEDED", "response": ""}}))
+    sys.exit(3)
 if mode == "noisy":
     # Bounded: about 40 MB at most, then it ends by itself.
     chunk = json.dumps({"event": "progress", "text": "x" * 4000})
@@ -192,6 +198,23 @@ def test_a_reviewer_that_floods_its_output_is_stopped_at_the_cap(tmp_path):
     assert _receipts(root)[-1]["unavailable"] is True
     for call in _calls(root):
         assert not pathlib.Path(call["cwd"]).exists()
+
+
+def test_a_reviewer_that_ends_itself_at_the_limit_ran_out_of_time_and_is_not_retried(tmp_path):
+    root, base, fake = _repo(tmp_path)
+    r = _run(root, base, fake, "selftimeout", SECOND_REVIEW_GRACE="20")
+    assert r.returncode == 4, r.stderr
+    assert "did not finish in 2 s" in r.stderr and len(_calls(root)) == 1
+    assert _receipts(root)[-1]["unavailable"] is True
+
+
+def test_a_receipt_is_never_glued_onto_a_line_that_was_cut_short(tmp_path):
+    root, base, fake = _repo(tmp_path)
+    manifest = root / ".claude/overnight/reviews/manifest.jsonl"
+    manifest.write_text(manifest.read_text() + '{"todo": "todo/other.md", "kind": "rou')
+    assert _run(root, base, fake).returncode == 0
+    lines = manifest.read_text().splitlines()
+    assert lines[-2] == '{"todo": "todo/other.md", "kind": "rou' and json.loads(lines[-1])["kind"] == "second"
 
 
 def test_a_hung_reviewer_is_killed_with_its_children(tmp_path):

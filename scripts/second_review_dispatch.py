@@ -128,8 +128,9 @@ def attempt(root, head, cli, model, prompt, limit, grace, max_output):
                                      "stream-json", "--print-timeout", f"{limit}s"], cwd=str(clone), stdout=out,
                                     stderr=subprocess.DEVNULL,
                                     start_new_session=True)  # LIFECYCLE-WAIVER: a REVIEW's own group, not the session
+            started = time.monotonic()
             try:
-                deadline = time.monotonic() + limit + grace
+                deadline = started + limit + grace
                 while proc.poll() is None:
                     if time.monotonic() >= deadline:
                         why = f"timeout: the reviewer did not finish in {limit} s"
@@ -161,6 +162,10 @@ def attempt(root, head, cli, model, prompt, limit, grace, max_output):
                         and isinstance(result.get("response"), str):
                     response = result["response"]
         if response is None or not response.strip():
+            # The CLI was given the same limit and ends itself at it. A run that used its time and has no
+            # review ran out of time, whoever stopped it: that is not an outage to retry.
+            if time.monotonic() - started >= limit * 0.9:
+                return None, f"timeout: the reviewer did not finish in {limit} s"
             return None, "unavailable: the reviewer returned no result"
         now = git(clone, "rev-parse", "HEAD")
         status = git(clone, "status", "--porcelain")
@@ -311,8 +316,14 @@ def run(root, reviews, manifest, pin, todo, section, base, head, prompt):
                "route": ROUTE,
                "rc": rc, "pass_checked": True, "highest": level, "unavailable": rc == 4, "attempts": len(notes) + (rc == 0)}
     try:
+        # An append cut short earlier leaves a line with no end; this receipt must not be glued onto it.
+        glue = manifest.exists() and manifest.stat().st_size > 0
+        if glue:
+            with manifest.open("rb") as fh:
+                fh.seek(-1, os.SEEK_END)
+                glue = fh.read(1) != b"\n"
         with manifest.open("a") as fh:
-            fh.write(json.dumps(receipt) + "\n")
+            fh.write(("\n" if glue else "") + json.dumps(receipt) + "\n")
     except OSError as exc:
         say(f"the receipt could not be written to {manifest}: {exc}; the pass will not be credited")
         return 3

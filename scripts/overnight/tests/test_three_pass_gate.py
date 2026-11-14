@@ -524,6 +524,19 @@ def test_a_damaged_manifest_line_does_not_make_the_gate_and_the_dispatcher_count
     manifest.write_text(damaged)
     assert dispatcher.spent(manifest, TODO, "7") == 3
     assert gate._second_receipts(root, TODO, "7", 3)[2] == 3
+    # Cut short after the last pass, with nothing left to say whose line it was: the same answer.
+    whole = "".join(json.dumps(r) + "\n" for r in spent)
+    for tail in ('{"ts": 1, "kind": "sec', '{"todo": "' + TODO + '", "kind": "second", "sect'):
+        # The routed reviewer's passes were dispatched again after the damage, as its own rule asks.
+        assert _judge(root, manifest_head=whole + tail + "\n",
+                      **{k: (v[0], v[1] + 10) for k, v in _good(h).items()}) == (True, ""), tail
+        manifest.write_text(whole + tail)
+        assert dispatcher.spent(manifest, TODO, "7") == 3
+        newest, _age, count, readable = gate._second_receipts(root, TODO, "7", 3)
+        assert (newest["head"], count, readable) == (h["final"], 3, True)
+    # Below the cap the same line still stops the scan: a pass can be dispatched again, and must be.
+    manifest.write_text("".join(json.dumps(r) + "\n" for r in spent[:2]) + '{"ts": 1, "kind": "sec')
+    assert gate._second_receipts(root, TODO, "7", 3) == (None, 0, 2, False)
 
 
 def test_a_section_outside_the_second_reviewers_paths_is_judged_as_before(tmp_path):
