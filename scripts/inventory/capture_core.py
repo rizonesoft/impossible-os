@@ -128,20 +128,20 @@ def outermost(found, parent_of):
     """
     keep = []
     for key, el in found.items():
-        node, nested, seen = el, False, {key}
+        # The whole chain to the root first, so a loop is found even through
+        # another found container; only then is the container judged nested.
+        node, chain = el, [key]
         for _ in range(MAX_DEPTH):
             up = parent_of(node)
             if up is None:
                 break
-            if up[0] in found:
-                nested = True
-                break
-            if up[0] in seen:
+            if up[0] in chain:
                 raise Incomplete("a popup's parent chain loops; its nesting cannot be settled")
-            seen.add(up[0])
+            chain.append(up[0])
             node = up[1]
         else:
             raise Incomplete(f"a popup's parent chain is deeper than {MAX_DEPTH}; its nesting cannot be settled")
+        nested = any(k in found for k in chain[1:])
         if not nested:
             keep.append(key)
     return keep

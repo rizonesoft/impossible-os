@@ -281,6 +281,11 @@ class Popups(unittest.TestCase):
         with self.assertRaises(core.Incomplete):                 # deeper than MAX_DEPTH
             core.outermost({"a": "a"}, lambda el: (next(chain), "x"))
 
+        for parents in ({"bad": "bad", "good": None}, {"bad": "other", "other": "bad", "good": None}):
+            found = {k: k for k in parents}
+            with self.assertRaises(core.Incomplete):         # a loop through found containers
+                core.outermost(found, lambda el, p=parents: (p[el], p[el]) if p[el] else None)
+
         def broken(el):
             raise core.Incomplete("parent unreadable")
         with self.assertRaises(core.Incomplete):                 # a read that fails
