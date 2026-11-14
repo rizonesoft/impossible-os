@@ -280,7 +280,7 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py --baselines` prints one line per baseline with its row count, and every count is above zero: `settings`, `control-panel`, `known-folders`, `start-apps`, `controls`, `classic-controls`, `shell-commands`.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass), `python3 scripts/inventory/tests/test_check_inventory.py` (94 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), live `python3 scripts/inventory/baselines.py` on the reference VM, then `check-inventory.py --baselines` prints all seven with rows above zero.
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass), `python3 scripts/inventory/tests/test_check_inventory.py` (95 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), live `python3 scripts/inventory/baselines.py` on the reference VM, then `check-inventory.py --baselines` prints all seven with rows above zero.
 > **Notes:**
 > - `scripts/inventory/baselines.py` runs `guest/read-baselines.py` in the VM (fresh `clean`, capture lock), refuses a partial read or one from a build other than `reference.json`'s, imports the pinned Gallery list, checks all seven in a scratch inventory and swaps them in together through `capture.swap`.
 > - `baseline_core.py` holds the row rule for each source, shared by the guest and the host tests; rows carry facts only, and the Microsoft source files never leave the VM.

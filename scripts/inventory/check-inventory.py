@@ -69,7 +69,7 @@ LINK_MARKS = ("http://", "https://")
 GIT_TIMEOUT = 120  # deadline: the staged inventory is a few hundred small files
 NAME_FIELDS = ("reference", "ours", "reason")
 BASELINE_FILE = "baseline.json"
-ABSENT_HEADING = "## Which baseline rows are absent?"
+ABSENT_TITLE = "Which baseline rows are absent?"
 ABSENT_COLUMNS = ["Baseline", "Row", "Build", "Reason"]
 ABSENT_BUILD = re.compile(r"^\d+\.\d+$")
 HEADER_FIELDS = {"baseline", "owner", "source", "build", "upstream", "files"}
@@ -78,6 +78,9 @@ DELIMITER = re.compile(r"^:?-{3,}:?$")
 
 _spec = importlib.util.spec_from_file_location("baseline_core", pathlib.Path(__file__).resolve().parent / "baseline_core.py")
 baseline_core = importlib.util.module_from_spec(_spec)
+_fence = importlib.util.spec_from_file_location("todo_fence", pathlib.Path(__file__).resolve().parents[1] / "todo_fence.py")
+todo_fence = importlib.util.module_from_spec(_fence)
+_fence.loader.exec_module(todo_fence)
 _spec.loader.exec_module(baseline_core)
 
 
@@ -311,13 +314,15 @@ def load_absent(root, baselines, err, surface, build):
     if not path.is_file():
         return out, old
     lines = path.read_text(encoding="utf-8").split("\n")
-    try:
-        start = lines.index(ABSENT_HEADING)
-    except ValueError:
+    # What a heading is, and where a section ends, is the repository's one
+    # shared rule (scripts/todo_fence.py): it allows CommonMark's indent, which
+    # a column-0 prefix test misses.
+    start = next((n for n, line in enumerate(lines) if todo_fence.h2_title(line) == ABSENT_TITLE), None)
+    if start is None:
         return out, old
     table = []
     for n in range(start + 1, len(lines)):
-        if lines[n].startswith("## "):
+        if todo_fence.is_h2(lines[n]):
             break
         if lines[n].startswith("|"):
             table.append((n + 1, [c.strip() for c in lines[n].strip().strip("|").split("|")]))

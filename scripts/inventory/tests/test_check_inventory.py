@@ -307,6 +307,15 @@ class Baselines(unittest.TestCase):
         files = {"settings/baseline.json": bl("settings", ["a"]), "taskbar/bar.json": three(), "REFERENCE.md": table}
         self.assertIn("absent-table", self.rules(files, "--surface", "taskbar"))
 
+    def test_the_absent_section_is_found_and_ended_by_the_shared_heading_rule(self):
+        # An indented heading is still a heading (CommonMark allows three spaces).
+        base = {"settings/baseline.json": bl("settings", ["a", "b"]), "taskbar/bar.json": three()}
+        table = ["  ## Which baseline rows are absent?", "", "| Baseline | Row | Build | Reason |", "| --- | --- | --- | --- |",
+                 f"| `settings` | `a` | {B} | gone |", "", "   ## Next", "", "| `settings` | `b` | x | not part of the table |"]
+        _, out = self.report({**base, "REFERENCE.md": table})
+        self.assertEqual([e["rule"] for e in out["errors"] if e["rule"] != "baseline-missing"], [])
+        self.assertEqual(out["baselines"]["settings"]["absent"], 1)
+
     def test_an_absent_table_without_its_delimiter_row_is_refused(self):
         base = {"settings/baseline.json": bl("settings", ["a", "b"]), "taskbar/bar.json": three()}
         head = ["## Which baseline rows are absent?", "", "| Baseline | Row | Build | Reason |"]
