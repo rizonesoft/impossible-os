@@ -203,13 +203,14 @@ def received(out, rc):
 
 
 def baseline_rows():
-    """Every "name:row" the published baselines hold, or None when one cannot
-    be read (then no match is touched and check-inventory.py reports the file)."""
-    live = set()
+    """{baseline: its row ids} for the published baselines, or None when one
+    cannot be read (then no match is touched and check-inventory.py reports the
+    file). A baseline with no file has no entry, so matches to it are kept."""
+    live = {}
     try:
         for path in sorted(INVENTORY.glob("*/baseline.json")):
             lines = path.read_text(encoding="utf-8").splitlines()[1:]
-            live.update(f"{path.parent.name}:{json.loads(line)['id']}" for line in lines if line.strip())
+            live[path.parent.name] = {json.loads(line)["id"] for line in lines if line.strip()}
     except (OSError, ValueError, KeyError, TypeError):
         return None  # fail-direction: None keeps every match; the checker then refuses the unreadable baseline
     return live

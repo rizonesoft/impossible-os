@@ -380,14 +380,18 @@ def merge(old, new, ambiguous):
 
 
 def unbind(records, live):
-    """Drop each baselineId that names no row in `live` (a set of "name:row").
+    """Drop each baselineId whose baseline is in `live` ({name: set of row ids})
+    and no longer holds the row.
 
     Returns (records, unbound ids). A re-capture on a new reference build
     carries the old matches; a row that build no longer has cannot be matched,
-    so the record goes back to unmatched for a person to bind again."""
+    so the record goes back to unmatched for a person to bind again. A match
+    to a baseline that is not there at all is kept: a missing file is not a
+    build that dropped its rows, and check-inventory.py refuses the orphan."""
     out, unbound = [], []
     for r in records:
-        if "baselineId" in r and r["baselineId"] not in live:
+        name, _, row = r.get("baselineId", "").partition(":")
+        if name in live and row not in live[name]:
             r = {k: v for k, v in r.items() if k != "baselineId"}
             unbound.append(r["id"])
         out.append(r)

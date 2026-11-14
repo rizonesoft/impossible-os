@@ -315,6 +315,13 @@ class Baselines(unittest.TestCase):
         _, out = self.report(files)
         self.assertEqual((out["baselines"]["settings"]["pending"], out["baselines"]["settings"]["unmatched"]), (0, 1))
 
+    def test_a_match_to_a_baseline_with_no_file_is_refused_without_the_flag(self):
+        # What capture.py's scratch check and lint run: a missing baseline cannot pass with matches naming it.
+        files = {"taskbar/bar.json": [rec("win11.taskbar.bar", kind="surface", baselineId="settings:a")]}
+        r = run({**REF, **files}, "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("baseline-orphan", [e["rule"] for e in json.loads(r.stdout)["errors"]])
+
     def test_baseline_missing_and_baseline_id_together_are_refused(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a", baselineMissing=True)]
         self.assertIn("baseline-both", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))

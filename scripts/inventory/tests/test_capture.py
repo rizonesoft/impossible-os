@@ -24,6 +24,7 @@ import struct
 import sys
 import tempfile
 import types
+from unittest import mock
 import unittest
 import zlib
 
@@ -488,10 +489,25 @@ class Merge(unittest.TestCase):
     def test_a_match_to_a_row_the_build_dropped_is_unbound(self):
         recs = [{"id": "a.b", "baselineId": "settings:S1"}, {"id": "a.c", "baselineId": "settings:Gone", "behaviour": "x"},
                 {"id": "a.d", "baselineMissing": True}, {"id": "a.e"}]
-        out, unbound = core.unbind(recs, {"settings:S1"})
+        out, unbound = core.unbind(recs, {"settings": {"S1"}})
         self.assertEqual(out, [{"id": "a.b", "baselineId": "settings:S1"}, {"id": "a.c", "behaviour": "x"},
                                {"id": "a.d", "baselineMissing": True}, {"id": "a.e"}])
         self.assertEqual(unbound, ["a.c"])
+        # A baseline that is missing is not a build that dropped its rows: the match stays for the checker to refuse.
+        out, unbound = core.unbind(recs, {"controls": {"Button"}})
+        self.assertEqual((out, unbound), (recs, []))
+
+    def test_a_missing_baseline_file_removes_no_match(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(capture, "INVENTORY", pathlib.Path(d)):
+            inv = pathlib.Path(d)
+            (inv / "controls").mkdir()
+            (inv / "controls" / "baseline.json").write_text('{"baseline": "controls"}\n{"id": "Button"}\n')
+            (inv / "taskbar").mkdir()
+            old = [{"id": "a.b", "label": "B", "baselineId": "settings:S1"}, {"id": "a.c", "label": "C", "baselineId": "controls:Gone"}]
+            core.write_records(inv / "taskbar" / "bar.json", old)
+            out = capture.build_file(inv / "taskbar" / "bar.json", [{"id": "a.b", "label": "B"}, {"id": "a.c", "label": "C"}],
+                                     {"complete": True}, True)
+        self.assertEqual(out, [{"id": "a.b", "label": "B", "baselineId": "settings:S1"}, {"id": "a.c", "label": "C"}])
 
     def test_a_note_never_lands_on_an_ambiguous_id(self):
         # An inserted twin shifts the positional suffix: the old note on btn-2 would
