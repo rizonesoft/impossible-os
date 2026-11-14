@@ -178,6 +178,8 @@ Positions only mean something against one fixed machine. This section builds tha
 > - `ref-run.ps1` runs each command under a headless console in an interactive task and moves each tree as one zip over PowerShell Direct (`Copy-Item -ToSession` fails from the WSL share); it refuses a used `-Out`, a held VM and a guest that is not the build in `reference.json`.
 > - Restores grant the VM read access again to the media in its own folder; `-Reclean` replays setup from `pre-oobe` in about 3 minutes, which §19's first-run replay reuses.
 > - Canonical doc: [REFERENCE.md](../../docs/design/inventory/REFERENCE.md). The VM and tools are kept after capture for anything missed.
+> **Verified:** 2026-11-14 | commit `a91202600` | 14/14 items | `ref-vm.ps1 -Verify` exit 0 (`ok, profile fhd-100`, build 26300.9711), `-Reclean` exit 0, `ref-run.ps1 -Proof` exit 0, negative paths (lock, missing ISO, bad checkpoint, missing credential, used `-Out`) checked live
+> **Quality reviewed:** 2026-11-14 | Codex 22x (plan, round 7x, performance 7x, completion 7x) | 0H+20M fixed (one filed to §3), 1 rejected (PowerShell Direct deadline: no stall seen), 0 open | scope: N/A (Hyper-V host tooling, no kernel surface)
 
 ---
 
