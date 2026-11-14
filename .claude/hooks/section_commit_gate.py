@@ -2369,16 +2369,25 @@ def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
 # compare it with HEAD again. Each is run once an invocation and given a short wait, so the checks together
 # stay inside the hook's deadline and a slow one fails as "could not be listed", never as a hung hook.
 _COMMIT_DIFF_TIMEOUT = 3
+# All of them together share one budget inside the hook's ten seconds. When it is spent no further comparison
+# is started: the caller gets None, and reports that it could not compare, while there is still time to say so.
+_COMMIT_DIFF_BUDGET = 6.0
 _commit_diffs: dict[tuple, list[str] | None] = {}
+_commit_diff_deadline: list[float] = []
 
 
 def _commit_diff(root: Path, mode: str, old: str, new: str, *paths: str) -> list[str] | None:
     """`git diff --no-renames <mode> old new [-- paths]` between two commits, once an invocation."""
     key = (str(root), mode, old, new, paths)
     if key not in _commit_diffs:
+        if not _commit_diff_deadline:
+            _commit_diff_deadline.append(time.monotonic() + _COMMIT_DIFF_BUDGET)
+        left = _commit_diff_deadline[0] - time.monotonic()
+        if left <= 0:
+            return None             # not remembered: the budget is this invocation's, not the comparison's
         tail = ("--", *paths) if paths else ()
         _commit_diffs[key] = _git_lines(root, "diff", "--no-renames", mode, old, new, *tail,
-                                        timeout=_COMMIT_DIFF_TIMEOUT)
+                                        timeout=min(_COMMIT_DIFF_TIMEOUT, left))
     return _commit_diffs[key]
 
 

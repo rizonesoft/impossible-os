@@ -132,6 +132,7 @@ def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, m
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(body)
     _git(root, "add", "-A", "--", ":!.claude")
+    gate._commit_diff_deadline.clear()      # each judgement is its own invocation of the hook
     try:
         return gate._four_dispatch_evidence(root, [TODO])
     finally:
@@ -630,6 +631,31 @@ def test_one_comparison_of_two_commits_is_run_once_and_given_a_short_wait(tmp_pa
     monkeypatch.setattr(gate, "_commit_diff", lambda *a, **k: None)
     ok, why = _judge(root, seconds=[_second(h["final"], 6)], **_good(h))
     assert not ok and "could not be listed" in why, why
+
+
+def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, monkeypatch):
+    root, h = _history(tmp_path, second=True)
+    # Every routed pass at a different commit, and every comparison timing out: four of them at three seconds
+    # each would outlast the hook.
+    apart = _good(h, round=(h["build"], 2), performance=(h["fix"], 3), completion=(h["final"], 4))
+    gate._commit_diffs.clear()
+    gate._commit_diff_deadline.clear()
+    clock, waits = [100.0], []
+
+    def slow(_root, *args, timeout=10):
+        waits.append(timeout)
+        clock[0] += timeout          # it used its whole wait and gave nothing
+        return None
+
+    monkeypatch.setattr(gate.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(gate, "_git_lines", lambda root, *args, timeout=10: (
+        slow(root, *args, timeout=timeout) if args[:1] == ("diff",) and "--cached" not in args else
+        gate.subprocess.check_output(["git", *args], cwd=str(root), text=True).splitlines()))
+    ok, why = _judge(root, seconds=[_second(h["docs"], 6)], **apart)
+    assert not ok and "could not" in why, why
+    assert sum(waits) <= gate._COMMIT_DIFF_BUDGET and waits == [3, 3], waits
+    gate._commit_diffs.clear()
+    gate._commit_diff_deadline.clear()
 
 
 def test_second_passes_never_count_toward_the_pass_cap(tmp_path):
