@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **968 of 2703 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **968 of 2704 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -36,311 +36,312 @@ implement todo section: | [ ] | `D01 T14 §2` | Boot Progress Named-Stage API | 
 
 Everything later is proven by these gates, so they come first: the build and analysis tooling, the kernel, user-mode and desktop test harnesses, the TODO graph this plan is derived from, the documentation site and the repository's own housekeeping. The Windows 11 parity inventory (`D08 T17`) runs first, ahead of everything else in this phase (operator decision 2026-11-14): it is host-side tooling with no kernel dependency, and every interface section authored after it is measured from its records. Its built-OS layout check stays in Phase 8, behind the automation transport it reads.
 
-| Done | Section       | Deliverable                                                                                                           | Needs    | Items |
-| :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | -------- | ----: |
-| [ ]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none     |     9 |
-| [ ]  | `D08 T17 §2`  | Reference Build and Capture Profile                                                                                   | none     |     9 |
-| [ ]  | `D08 T17 §4`  | Microsoft-Free Rule                                                                                                   | none     |     7 |
-| [ ]  | `D08 T17 §3`  | UIA Capture Tool                                                                                                      | none     |    11 |
-| [ ]  | `D08 T17 §5`  | Completeness Baselines                                                                                                | none     |     9 |
-| [ ]  | `D08 T17 §6`  | Record Dispositions and Consistency Ledger                                                                            | none     |     6 |
-| [ ]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none     |     9 |
-| [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | none     |     8 |
-| [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none     |     6 |
-| [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none     |     7 |
-| [ ]  | `D08 T17 §11` | Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update                               | none     |     8 |
-| [ ]  | `D08 T17 §12` | File Explorer and Common Dialogs Inventory                                                                            | none     |     6 |
-| [ ]  | `D08 T17 §13` | Control Panel, System Tools and Inbox Apps Inventory                                                                  | none     |     9 |
-| [ ]  | `D08 T17 §14` | Shortcut, Gesture, Metric, Motion and State Catalogues                                                                | none     |     5 |
-| [ ]  | `D08 T17 §15` | Inventory-to-Roadmap Authoring                                                                                        | none     |     9 |
-| [ ]  | `D08 T17 §17` | Design Spec Reconciliation                                                                                            | none     |     8 |
-| [x]  | `D00 T01 §1`  | Host Bootstrap and Dependency Contract                                                                                | none     |     5 |
-| [x]  | `D00 T01 §2`  | Supported Host Profiles and Reproducible Environments                                                                 | none     |     7 |
-| [x]  | `D00 T01 §3`  | Build, Test, Lint, and Run Wrapper Contract                                                                           | none     |     7 |
-| [x]  | `D00 T01 §4`  | Machine Launcher and Debug Profile Matrix                                                                             | none     |     7 |
-| [x]  | `D00 T01 §5`  | Git Hooks and Local Automation Lifecycle                                                                              | none     |     7 |
-| [x]  | `D00 T01 §6`  | GitHub Actions and Artifact Policy Alignment                                                                          | none     |     6 |
-| [x]  | `D00 T01 §7`  | Tooling Doctor and Regression Pack                                                                                    | none     |     8 |
-| [x]  | `D00 T01 §8`  | Unify Specialist-Launcher Argument Surface                                                                            | none     |     4 |
-| [x]  | `D00 T01 §9`  | Legacy-XREF Sweep                                                                                                     | none     |     5 |
-| [x]  | `D00 T01 §10` | Smoke-Test POST16 Assertions                                                                                          | none     |     5 |
-| [x]  | `D00 T01 §11` | Bare Section-Ref Sweep                                                                                                | none     |     5 |
-| [x]  | `D00 T01 §12` | Enforce Required-Tool Version Floors                                                                                  | none     |     8 |
-| [x]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none     |     5 |
-| [x]  | `D00 T01 §14` | Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache                                                  | none     |    11 |
-| [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          | none     |     5 |
-| [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                | none     |     8 |
-| [x]  | `D00 T01 §17` | Shard the todo-graph Build Suite                                                                                      | none     |     5 |
-| [x]  | `D00 T01 §18` | Implementation Plan: Clear the Dependency Cycles and Drive the Run From It                                            | none     |     4 |
-| [x]  | `D00 T02 §1`  | Canonical Ownership and Source-of-Truth Map                                                                           | none     |     8 |
-| [x]  | `D00 T02 §2`  | Skill Lifecycle, Templates, and Catalog Rules                                                                         | none     |     6 |
-| [x]  | `D00 T02 §3`  | Hook Routing and Policy Contract                                                                                      | none     |     7 |
-| [x]  | `D00 T02 §4`  | External-Reviewer Contract (Codex)                                                                                    | none     |     7 |
-| [x]  | `D00 T02 §5`  | MCP, Permissions, and Extension Boundary                                                                              | none     |     7 |
-| [x]  | `D00 T02 §6`  | `AGENTS.md` Cross-Tool Pointer File                                                                                   | none     |     7 |
-| [x]  | `D00 T02 §7`  | AI-Assist Commit Disclosure Policy                                                                                    | none     |     7 |
-| [x]  | `D00 T02 §8`  | Autonomous-Agent Boundary Policy                                                                                      | none     |     7 |
-| [x]  | `D00 T02 §9`  | AI Workflow Regression Suite                                                                                          | none     |     5 |
-| [x]  | `D00 T03 §1`  | kmalloc Fault Injection                                                                                               | none     |     6 |
-| [x]  | `D00 T03 §2`  | Deterministic Race Barrier                                                                                            | none     |     8 |
-| [x]  | `D00 T03 §3`  | Scratch-Buffer Helper                                                                                                 | none     |     6 |
-| [x]  | `D00 T03 §4`  | Retrofit Existing "Test Gaps" Stamps                                                                                  | none     |     4 |
-| [x]  | `D00 T03 §5`  | Test-Scoped klog Level Demotion (`TEST_KLOG_SUPPRESS`)                                                                | none     |     8 |
-| [x]  | `D00 T03 §6`  | Fault-Injection Hardening (task-filter, total-hits cap, multi-allocator)                                              | none     |     7 |
-| [x]  | `D00 T03 §7`  | Test Action/Cleanup Registry (`test_add_action`)                                                                      | none     |     7 |
-| [x]  | `D00 T03 §8`  | Per-Test Heap-Leak Detection                                                                                          | none     |     7 |
-| [x]  | `D00 T03 §9`  | Audit + Classify the 50+ [LEAK] Failures §8 Surfaced                                                                  | none     |     9 |
-| [x]  | `D00 T03 §10` | An Over-Long Failing Assertion Wedges the Boot Instead of Reporting                                                   | none     |     3 |
-| [x]  | `D00 T03 §11` | A Read One Byte Past a Buffer Is Invisible to Every Test We Can Write                                                 | none     |     4 |
-| [x]  | `D00 T03 §12` | Assert or Fix the 55 Test-Phase [FAIL] Lines                                                                          | none     |     5 |
-| [x]  | `D00 T03 §13` | Expect or Attribute Kernel Errors per User-Mode Binary                                                                | none     |     8 |
-| [x]  | `D00 T04 §1`  | User-Mode Test Assertion Macro                                                                                        | none     |     6 |
-| [x]  | `D00 T04 §2`  | Userland syscall.h Parity with Kernel INT 0x80 ABI                                                                    | none     |     6 |
-| [x]  | `D00 T04 §3`  | Kernel Test Launcher                                                                                                  | none     |     9 |
-| [x]  | `D00 T04 §4`  | Launcher Manifest, Timeouts, and CI-Friendly Output                                                                   | none     |     7 |
-| [x]  | `D00 T04 §5`  | User-Mode Fault-Injection Bridge                                                                                      | none     |     7 |
-| [x]  | `D00 T04 §6`  | Per-Test Isolation + Cleanup Hook                                                                                     | none     |     6 |
-| [x]  | `D00 T04 §7`  | JUnit XML + JSON Output Formats                                                                                       | none     |     6 |
-| [x]  | `D00 T04 §8`  | Test Type Taxonomy: smoke / correctness / stress / perf                                                               | none     |     6 |
-| [x]  | `D00 T04 §9`  | Syscall Test Binary                                                                                                   | none     |     3 |
-| [x]  | `D00 T04 §10` | Libc Test Binary                                                                                                      | none     |     2 |
-| [x]  | `D00 T04 §11` | IPC Test Binary                                                                                                       | none     |     3 |
-| [x]  | `D00 T04 §12` | Process Lifecycle Test                                                                                                | none     |     2 |
-| [x]  | `D00 T04 §13` | File I/O Test                                                                                                         | none     |     3 |
-| [x]  | `D00 T04 §14` | Win32 API Test Binary                                                                                                 | none     |     3 |
-| [x]  | `D00 T04 §15` | Binary Format Loader Coverage (ELF / PE32+ / EIF)                                                                     | none     |     7 |
-| [x]  | `D00 T04 §16` | Build Integration                                                                                                     | none     |     9 |
-| [x]  | `D00 T04 §17` | Fast-Path Transport Hardening (probes + ABI drift + silent-hang elimination)                                          | none     |     8 |
-| [x]  | `D00 T04 §18` | Fast-Path Observability + ABI Versioning (beyond Win11 + Linux)                                                       | none     |     5 |
-| [x]  | `D00 T04 §19` | Fast-Path Transition Ring Buffer + Cross-Transport Fuzz                                                               | none     |     7 |
-| [x]  | `D00 T04 §20` | Site-Targeted and PMM-Countdown Fault Selectors                                                                       | none     |     9 |
-| [x]  | `D00 T04 §21` | Naming Fork's Child-PML4 Allocation, and Failing That Fork Closed                                                     | none     |     5 |
-| [x]  | `D00 T04 §22` | Honest Machine Artifacts for Skipped Sub-Tests                                                                        | none     |     8 |
-| [x]  | `D00 T04 §23` | Generated Exit-Status ABI for Ring-3 Assertions                                                                       | none     |     3 |
-| [x]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none     |     6 |
-| [x]  | `D00 T04 §25` | Non-Forgeable Launcher Record Framing                                                                                 | none     |     8 |
-| [x]  | `D00 T04 §26` | Generator Hardening: Preprocessor-Faithful Constant Extraction                                                        | none     |    11 |
-| [x]  | `D00 T04 §27` | Artifact Consumer Completeness: Run Identity and the Record Name Bound                                                | none     |     5 |
-| [x]  | `D00 T04 §28` | Atomic Publication of the Generated Header Pair                                                                       | none     |     5 |
-| [x]  | `D00 T04 §29` | Serial-Transport Volume: Derived Burst Ceiling and Incremental Parse                                                  | none     |     5 |
-| [x]  | `D00 T04 §30` | Per-Run Artifact Records and Per-Leg Aliases                                                                          | none     |     6 |
-| [x]  | `D00 T04 §31` | The Record Name Bound and the Refusal That Must Be Counted                                                            | none     |     6 |
-| [x]  | `D00 T04 §32` | ABI Validation on Every Artifact Target, Not Just `all`                                                               | none     |     5 |
-| [x]  | `D00 T04 §33` | Per-Binary Output Capture at the Source                                                                               | none     |     3 |
-| [x]  | `D00 T04 §34` | Orphaned-QEMU Recovery                                                                                                | none     |     4 |
-| [x]  | `D00 T04 §35` | Immutable Enumeration Plan for the Two-Walk Launcher                                                                  | none     |     7 |
-| [x]  | `D00 T04 §36` | Per-Binary Output Artifacts and Fail-Closed Byte Reconciliation                                                       | none     |     4 |
-| [x]  | `D00 T04 §37` | Refusal-Name Correlator and JUnit Error/Failure Classification                                                        | none     |     4 |
-| [x]  | `D00 T04 §38` | Per-Leg Generation Pointer for Coherent Document Resolution                                                           | none     |     2 |
-| [x]  | `D00 T04 §39` | Executable Identity for a Planned Entry                                                                               | none     |     4 |
-| [x]  | `D00 T04 §40` | Producer-Side Capture Emission Budget                                                                                 | none     |     5 |
-| [x]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none     |     1 |
-| [x]  | `D00 T04 §42` | Structural Reap-Grace Assertions Instead of a Wall-Clock Margin                                                       | none     |     3 |
-| [x]  | `D00 T04 §43` | Distinguishable Identity Kind for Aggregate Refusals                                                                  | none     |     4 |
-| [x]  | `D00 T04 §44` | Close the Residual Completeness Gaps §37's Review Found                                                               | none     |     4 |
-| [x]  | `D00 T04 §45` | Reader Leases for a Resolved Generation                                                                               | none     |     5 |
-| [x]  | `D00 T04 §46` | Inode-Safe Classification in the Pointer Sweep                                                                        | none     |     4 |
-| [x]  | `D00 T04 §47` | End-to-End Proof of the Loader's Identity-Mismatch Branch                                                             | none     |     8 |
-| [x]  | `D00 T04 §48` | Wire-Published Facts the Host Enforces: Write Identity, Spawn Expectation, Chunk Bound                                | none     |     4 |
-| [x]  | `D00 T04 §49` | Run-Boundary Fence for Emitters That Outlive Their Binary                                                             | none     |     4 |
-| [x]  | `D00 T04 §50` | Per-Child Loader Evidence: Ring-3 Entry and Stage Flags in the Child, Not in Globals                                  | none     |     4 |
-| [x]  | `D00 T04 §51` | A Reproducible Kernel Assertion Total, and the Intermittent TEB Halt Behind It                                        | none     |     3 |
-| [x]  | `D00 T04 §52` | Bind a Leg Pointer to the Record's Own Identity                                                                       | none     |     7 |
-| [x]  | `D00 T04 §53` | A Directory Occupying a Pointer or Lease Name                                                                         | none     |     9 |
-| [x]  | `D00 T04 §54` | A Write Abandoned Before Its First Chunk Ever Reached the Wire                                                        | none     |     3 |
-| [x]  | `D00 T04 §55` | Klog-Ring Assertions That Depend on How Much the Boot Logged                                                          | none     |     4 |
-| [x]  | `D00 T04 §56` | Fork Publication Interlocked With the Capture-Tree Reap                                                               | none     |     8 |
-| [x]  | `D00 T04 §57` | A Klog Delivery Receipt, So a Record's Settlement Is Exact                                                            | none     |     4 |
-| [x]  | `D00 T04 §58` | Launcher Waits Bounded Independently of the Monotonic Clock                                                           | none     |     4 |
-| [x]  | `D00 T04 §59` | Capture Reconciliation Runs on the Default Test Path, Not Only for Artifacts                                          | none     |     6 |
-| [x]  | `D00 T04 §60` | An Aggregate Budget for Pointer Validation Under the Retention Mutex                                                  | none     |     8 |
-| [x]  | `D00 T04 §61` | Validate the Commit Marker as a Shape, and Read Each Record Document From One Snapshot                                | none     |     9 |
-| [x]  | `D00 T04 §62` | Detaching an Age Candidate Before Classifying It                                                                      | none     |    10 |
-| [x]  | `D00 T05 §1`  | Framebuffer Snapshot API                                                                                              | none     |     5 |
-| [x]  | `D00 T05 §2`  | QEMU Framebuffer Dump                                                                                                 | none     |     5 |
-| [x]  | `D00 T05 §3`  | Desktop Smoke Test                                                                                                    | none     |     7 |
-| [x]  | `D00 T05 §4`  | Input Event Injection                                                                                                 | none     |     5 |
-| [x]  | `D00 T05 §5`  | Terminal Output Verification                                                                                          | none     |     6 |
-| [x]  | `D00 T05 §6`  | Reference Screenshot Comparison                                                                                       | none     |     9 |
-| [x]  | `D00 T05 §7`  | Visual Regression CI Pipeline                                                                                         | none     |    11 |
-| [x]  | `D00 T05 §8`  | Window Manager State Verification                                                                                     | none     |     9 |
-| [x]  | `D00 T05 §9`  | Perceptual Diff and Structured Screenshot Needles                                                                     | none     |    11 |
-| [x]  | `D00 T05 §10` | Frame Timing and Drop Oracle                                                                                          | none     |     8 |
-| [x]  | `D00 T05 §11` | Input Record and Replay (Unicode and IME aware)                                                                       | none     |     8 |
-| [x]  | `D00 T05 §12` | Headless Compositor and Frame-Lock Stepping                                                                           | none     |     8 |
-| [x]  | `D00 T05 §13` | Multi-Monitor and DPI Scaling Test Matrix                                                                             | none     |     7 |
-| [x]  | `D00 T05 §14` | WCAG Sweep Over Automation Tree                                                                                       | none     |     7 |
-| [x]  | `D00 T05 §15` | Test Isolation and Crash Artifact Capture                                                                             | none     |     3 |
-| [x]  | `D00 T06 §1`  | Frontmatter Schema and Spec                                                                                           | none     |     7 |
-| [x]  | `D00 T06 §2`  | Generator and Cache Format                                                                                            | none     |     9 |
-| [x]  | `D00 T06 §3`  | Validator (stale XREF / dangling dep / orphan / cycle / bat / status / schema)                                        | none     |     6 |
-| [x]  | `D00 T06 §4`  | Query CLI (ready / blocked / blocking / by-domain / backlinks / deferred / orphans / stale / stats / code)            | none     |     9 |
-| [x]  | `D00 T06 §5`  | Migration: Back-Fill Frontmatter on Existing TODOs                                                                    | none     |     8 |
-| [x]  | `D00 T06 §6`  | CI Gate and Make Target                                                                                               | none     |     8 |
-| [x]  | `D00 T06 §7`  | Visualization Output (mermaid / graphviz / ascii / gantt / markdown)                                                  | none     |    10 |
-| [x]  | `D00 T06 §8`  | MCP Server (AI-Agent Transport over the Cache)                                                                        | none     |    10 |
-| [x]  | `D00 T06 §9`  | Per-Item `stamped_items` Cache Extension                                                                              | none     |     9 |
-| [x]  | `D00 T06 §10` | Multi-Line Function-Head Resolution in `resolve_symbol`                                                               | none     |     7 |
-| [x]  | `D00 T06 §11` | Count What Check 7 Cannot Resolve Instead of Skipping It                                                              | none     |    15 |
-| [x]  | `D00 T06 §12` | Resolver Coverage Past the Head Limit, and Lexer/Cache Robustness                                                     | none     |     7 |
-| [x]  | `D00 T06 §13` | Stored-Ref Repair: Unpaired Symbols and Bare Filenames                                                                | none     |     7 |
-| [x]  | `D00 T06 §14` | Identity Gate Over the Whole Symbol-Ref Population                                                                    | none     |     5 |
-| [x]  | `D00 T06 §15` | The Shared Rule's Cost: Structural-Walk Hot Path and Split Cache Lifecycles                                           | none     |     3 |
-| [x]  | `D00 T06 §16` | Wire the Identity Gate So Something Actually Runs It                                                                  | none     |     4 |
-| [x]  | `D00 T06 §17` | One Shared Cache-Schema Validator for Both Cache Readers                                                              | none     |    10 |
-| [x]  | `D00 T06 §18` | Identity-Gate Hardening: Producer Differential and Protocol-Constant Extraction                                       | none     |     7 |
-| [x]  | `D00 T06 §19` | Cache-Validation Reach: the Remaining Raw Cache Readers                                                               | none     |     5 |
-| [x]  | `D00 T06 §20` | A Machine-Checkable Bucket-Emission Contract                                                                          | none     |     4 |
-| [x]  | `D00 T06 §21` | The Producer-Side Generation Window in `build.py`                                                                     | none     |     5 |
-| [x]  | `D00 T06 §22` | `query.py` Fail-Closed Through Every Transport                                                                        | none     |     5 |
-| [x]  | `D00 T06 §23` | `validate.py` Rebuild Recovery and the Baseline Cache                                                                 | none     |     6 |
-| [x]  | `D00 T06 §24` | The History-Identity Cost Decision: `requires_history` for the Query Profile                                          | none     |     6 |
-| [x]  | `D00 T06 §25` | Fields the Readers Consume That the Producer Never Emits                                                              | none     |     4 |
-| [x]  | `D00 T06 §26` | Domain-Code Resolution Picks a Directory by Cache Order                                                               | none     |     4 |
-| [x]  | `D00 T06 §27` | Effective-History Identity: Replace Refs and Grafts                                                                   | none     |     6 |
-| [x]  | `D00 T06 §28` | Section-Level Readiness: Verbs That Consult the Dependency Evidence the Graph Actually Has                            | none     |     6 |
-| [x]  | `D00 T06 §29` | `--fix-line-numbers` Reports Success Over Targets It Could Not Resolve                                                | none     |     5 |
-| [x]  | `D00 T06 §30` | `--watch` Never Ticks on a History Change for the History-Consuming Verbs                                             | none     |     9 |
-| [x]  | `D00 T06 §31` | An Equal-Count Shallow Boundary Still Moves `created_at` Under an Unchanged Identity                                  | none     |     6 |
-| [x]  | `D00 T06 §32` | In-File Anchor Links Are Checked by Nothing                                                                           | none     |     4 |
-| [x]  | `D00 T06 §33` | Stamp-Target Capture Splits a Link Whose Label Contains a Space                                                       | none     |    10 |
-| [x]  | `D00 T06 §34` | The Performance Budget Times Itself on a Clock That Steps                                                             | none     |     5 |
-| [x]  | `D00 T06 §35` | A Same-File Stamp Matches Its Own Text, So Repair Answers With the Stamp's Line                                       | none     |     5 |
-| [x]  | `D00 T06 §36` | The Cache Producer Adopts the Shared Fence Tracker                                                                    | none     |     8 |
-| [x]  | `D00 T06 §37` | One Clause Parser Decides How Many Destinations a Clause Names                                                        | none     |     6 |
-| [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none     |    13 |
-| [x]  | `D00 T06 §39` | The Shared Fence Tracker Becomes Container-Aware                                                                      | none     |     6 |
-| [x]  | `D00 T06 §40` | An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges                                   | none     |     4 |
-| [x]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
-| [x]  | `D00 T06 §42` | HTML Blocks Join the Tracker, and the Terminal Contract Carries the Block Kind                                        | none     |     8 |
-| [x]  | `D00 T06 §43` | Finish the One-Contract Consolidation Across the Consumer Closure                                                     | none     |     3 |
-| [x]  | `D00 T06 §44` | The Inline Scanner Honours CommonMark Precedence, and the Table Cell Reaches It Unmodified                            | none     |    10 |
-| [x]  | `D00 T06 §45` | The Container Phase Stops Being Quadratic, Stops Erasing, and Becomes the Section Context the Four Walks Share        | none     |     3 |
-| [x]  | `D00 T06 §46` | CommonMark HTML Block Type 7 Needs a Non-Backtracking Matcher                                                         | none     |     2 |
-| [x]  | `D00 T06 §47` | The Gate Consumers Adopt the Section-Context Projections the Producer Already Uses                                    | none     |     5 |
-| [x]  | `D00 T06 §48` | The Mutating Repair Tool Stops Rewriting the Raw HTML It Is Shown                                                     | none     |     3 |
-| [x]  | `D00 T06 §49` | Decide Whether `alias-staleness` Is Producer-Assertable, Then Promote It or Record Why Not                            | none     |     5 |
-| [x]  | `D00 T06 §50` | A Base Older Than the Gate's Own Protocol Must Not Be Reported as a Broken Gate                                       | none     |     4 |
-| [x]  | `D00 T06 §51` | The Byte-Identical Closure Exit Must Not Outrank the Protocol Refusals                                                | none     |     3 |
-| [x]  | `D00 T06 §52` | Object-Replacement Metadata Can Misrepresent an Endpoint by Routes Other Than Its Commit                              | none     |     7 |
-| [x]  | `D00 T06 §53` | The Protocol Probe Executes the Tree It Is Judging, So No In-Process Channel Is Trusted                               | none     |     4 |
-| [x]  | `D00 T06 §54` | The Gate Adjudicates the WORKING TREE While the Push Carries the COMMIT                                               | none     |     4 |
-| [x]  | `D00 T06 §55` | The Byte-Identical Path Pays for a Full Base Checkout It Does Not Need                                                | none     |     6 |
-| [x]  | `D00 T06 §56` | The Resolver Walks Leak What the Tree Spawns on the Path Where They SUCCEED                                           | none     |     6 |
-| [/]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none     |     4 |
-| [x]  | `D00 T06 §58` | Head-Versus-Tree Checks Section 54 Made Unreachable Are Retired or Re-Fixtured                                        | none     |     5 |
-| [x]  | `D00 T06 §59` | The Identity-Gate Fixture Group Pays for a Whole Repository and Proves Less Than It Claims                            | none     |     6 |
-| [x]  | `D00 T06 §60` | Every Name-Resolved Use of TMP_DIR Is Still a Name                                                                    | none     |     5 |
-| [x]  | `D00 T07 §1`  | Bridge Skeleton + LSP JSON-RPC Client                                                                                 | none     |     6 |
-| [x]  | `D00 T07 §2`  | clangd Integration (C / H)                                                                                            | none     |     6 |
-| [x]  | `D00 T07 §3`  | asm-lsp Integration (NASM)                                                                                            | none     |     5 |
-| [x]  | `D00 T07 §4`  | bash-language-server Integration (.sh)                                                                                | none     |     6 |
-| [x]  | `D00 T07 §5`  | pyright Integration (Python)                                                                                          | none     |     6 |
-| [x]  | `D00 T07 §6`  | PowerShellEditorServices Integration (.ps1)                                                                           | none     |     6 |
-| [x]  | `D00 T07 §7`  | Six MCP Tools (Hover, Definition, References, Diagnostics, Workspace/Document Symbol)                                 | none     |     7 |
-| [x]  | `D00 T07 §8`  | Extension Routing, Per-LSP Lock, Concurrent-Call Safety                                                               | none     |     6 |
-| [x]  | `D00 T07 §9`  | Setup Deps, Manifest, Makefile Target, Docs, Boundary Compliance                                                      | none     |     8 |
-| [x]  | `D00 T07 §10` | Unit Tests, --self-test Harness, test-tooling Surface                                                                 | none     |     4 |
-| [x]  | `D00 T07 §11` | Extended LSP Tools (Completion, Signature Help, Type-Definition, Implementation, Declaration, Call Hierarchy, Code... | none     |     9 |
-| [x]  | `D00 T07 §12` | File-Change Lifecycle (`didOpen`, `didChange`, `didSave`, `didClose` Forwarding)                                      | none     |     6 |
-| [x]  | `D00 T07 §13` | LSP Subprocess Health Monitoring + Auto-Restart                                                                       | none     |     6 |
-| [x]  | `D00 T07 §14` | Structured JSON Logging + Request Correlation IDs                                                                     | none     |     5 |
-| [x]  | `D00 T07 §15` | Path Sandboxing + Workspace Boundary Enforcement                                                                      | none     |     6 |
-| [x]  | `D00 T07 §16` | Warm-Index Preloading + Cold-Start Budget                                                                             | none     |     6 |
-| [x]  | `D00 T07 §17` | Background Warm-Start Mode (MCP Launcher Compatibility)                                                               | none     |     9 |
-| [x]  | `D00 T07 §18` | Type Hierarchy Tools (Supertypes / Subtypes, Read-Only)                                                               | none     |     7 |
-| [x]  | `D00 T07 §19` | Scale Roadmap (Deferred)                                                                                              | none     |     1 |
-| [x]  | `D00 T07 §20` | Reap Determinism and Leak Attribution for the Bridge's Language Servers                                               | none     |     4 |
-| [x]  | `D00 T07 §21` | Thread-Group Edge Cases in the Language-Server Reap                                                                   | none     |     5 |
-| [x]  | `D00 T07 §22` | Reap Sweep Internals: pidfd Ownership, One-Snapshot Enumeration, Ledger Reader                                        | none     |     4 |
-| [x]  | `D00 T07 §23` | Injected-Clock Deadline Coverage and the Non-Dumpable-Child Reap Blind Spot                                           | none     |     7 |
-| [x]  | `D00 T07 §24` | Single-Pass Procfs Cleanup in the Teardown Sweep                                                                      | none     |     4 |
-| [x]  | `D00 T07 §25` | Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown                                                        | none     |     7 |
-| [/]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none     |     6 |
-| [x]  | `D00 T08 §1`  | Codex MCP Wiring + Cross-Config Drift Validator                                                                       | none     |    10 |
-| [x]  | `D00 T08 §2`  | Codex Invocation Policy: No `--model` / `--effort` From Claude                                                        | none     |     7 |
-| [x]  | `D00 T08 §3`  | `receiving-code-review` Hard Gate: State File + Post-Codex Hook Block                                                 | none     |    10 |
-| [x]  | `D00 T08 §4`  | Section-Commit Gate Hardens to BLOCK With Build + Codex + Receiving Evidence                                          | none     |     9 |
-| [x]  | `D00 T08 §5`  | `review-todo-section` Four-Dispatch Enforcement                                                                       | none     |     9 |
-| [x]  | `D00 T08 §6`  | MCP Usage Discipline -- Doc + CLAUDE.md Pointer                                                                       | none     |     7 |
-| [x]  | `D00 T08 §7`  | Hook System Audit + Dedupe                                                                                            | none     |    10 |
-| [x]  | `D00 T08 §8`  | Superpowers Skill Catalog Audit + Trigger Rows                                                                        | none     |     7 |
-| [x]  | `D00 T08 §9`  | Cross-Tool Drift Detection -- `scripts/audit-ai-system.sh`                                                            | none     |     6 |
-| [x]  | `D00 T08 §10` | Skill Step-State Telemetry + Non-Contiguous-Step Block                                                                | none     |     7 |
-| [x]  | `D00 T08 §11` | Hook Event Surface Expansion (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact)                     | none     |    10 |
-| [x]  | `D00 T08 §12` | AI-Slop Content Lints (Tautological-Test / Stub-Behind-Stamp)                                                         | none     |     8 |
-| [x]  | `D00 T08 §13` | Documentation Sync -- CLAUDE.md / ai-system.md / mcp-usage.md / Reciprocal XREFs                                      | none     |     9 |
-| [x]  | `D00 T08 §14` | Remove Copilot CLI Reviewer Wholesale (Subordinate-Reviewer Reduction)                                                | none     |     7 |
-| [x]  | `D00 T08 §15` | Design-Review Hook Scope Fix: Review-Kind Recognition + Commit-Clears-Gate                                            | none     |     4 |
-| [x]  | `D00 T08 §16` | Compaction-Resilient Skill-Step State -- PreCompact Orphan-Marking                                                    | none     |     8 |
-| [x]  | `D00 T08 §17` | Review-Pipeline Pre-Codex Enforcement (Phase-1 + Re-Adversarial)                                                      | none     |     8 |
-| [x]  | `D00 T08 §18` | Stamp-Region + OS Comparison Completeness Lints (Check 10 + Check 11)                                                 | none     |     4 |
-| [x]  | `D00 T08 §19` | Codex Prompt-Scope Helper -- Wrapper Plumbing for Re-Reviews                                                          | none     |     4 |
-| [x]  | `D00 T08 §20` | Implement-Pipeline Section-Commit Gates (Steps 5/8/13/16)                                                             | none     |     8 |
-| [x]  | `D00 T08 §21` | Implement-TODO-Section Partial-Enforcement Heuristics (WARN-First)                                                    | none     |    14 |
-| [x]  | `D00 T08 §22` | Review-Pipeline Right-Sizing Doctrine -- RISK_TIER + Bootstrap + Tier-Aware Triage + State Diagnosis + Spiral Check   | none     |     8 |
-| [x]  | `D00 T08 §23` | Unify SKIP_REVIEW_HOOK Opt-Out Scanner Across PreToolUse Gates                                                        | none     |     8 |
-| [x]  | `D00 T08 §24` | last-codex-review.json State-Write Reliability -- Close §22 #4 Properly                                               | none     |     7 |
-| [x]  | `D00 T08 §25` | Observer Step-13/13.5 Regex Coverage for All Codex Dispatch Shapes                                                    | none     |     7 |
-| [x]  | `D00 T08 §26` | `scripts/commit-with-skip.sh` Wrapper Retired (Closed by §23)                                                         | none     |     4 |
-| [x]  | `D00 T08 §27` | Phase 1 Evidence-Gate Threshold Tuning via Miss-Log Telemetry                                                         | none     |     5 |
-| [x]  | `D00 T08 §28` | Codex Prompt Argument Escaping Doctrine                                                                               | none     |     7 |
-| [x]  | `D00 T08 §29` | Standardize PreToolUse Prefix-Allowlist Across Gates                                                                  | none     |     7 |
-| [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none     |     9 |
-| [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none     |     5 |
-| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
-| [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     8 |
-| [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
-| [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |
-| [x]  | `D00 T08 §36` | Second-boot leg in the smoke matrix                                                                                   | none     |     4 |
-| [x]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none     |     5 |
-| [x]  | `D00 T08 §38` | Release-flavor build at the section boundary                                                                          | none     |     8 |
-| [x]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none     |     5 |
-| [x]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none     |     5 |
-| [x]  | `D00 T08 §41` | CI jobs run in the pinned image                                                                                       | none     |     7 |
-| [ ]  | `D00 T08 §42` | The graph jobs run in a small pinned image                                                                            | none     |     3 |
-| [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none     |    10 |
-| [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator |    11 |
-| [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none     |    11 |
-| [x]  | `D00 T09 §4`  | Repository Transfer Runbook and Rollback Window                                                                       | none     |    16 |
-| [/]  | `D00 T09 §5`  | Post-Transfer Settings, Workflows, Secrets, and Environments Audit                                                    | operator |    12 |
-| [x]  | `D00 T09 §6`  | URL, Badge, Docs, and Generated-Link Sweep                                                                            | none     |    11 |
-| [x]  | `D00 T09 §7`  | Validation Suite: Pages, Actions, Releases, Clone, Hooks, Graph                                                       | none     |     8 |
-| [x]  | `D00 T09 §8`  | Move-Back and Public-Visibility Runbook                                                                               | none     |    16 |
-| [x]  | `D00 T09 §9`  | Documentation Sync and Closure                                                                                        | none     |     8 |
-| [x]  | `D00 T10 §1`  | Site Generator, Project Facts, Coverage, and Drift Gate                                                               | none     |    14 |
-| [x]  | `D00 T10 §2`  | Map Existing Docs Pages to Their Roadmap Files                                                                        | none     |     5 |
-| [x]  | `D00 T10 §3`  | Documentation Page Contract, Template, and create-todo Step                                                           | none     |     8 |
-| [x]  | `D00 T10 §4`  | Document: Infrastructure                                                                                              | none     |     6 |
-| [x]  | `D00 T10 §5`  | Document: Boot platform, part 1                                                                                       | none     |     8 |
-| [x]  | `D00 T10 §6`  | Document: Boot platform, part 2                                                                                       | none     |     8 |
-| [x]  | `D00 T10 §7`  | Document: Boot platform, part 3                                                                                       | none     |     7 |
-| [x]  | `D00 T10 §8`  | Document: Kernel core, part 1                                                                                         | none     |     8 |
-| [x]  | `D00 T10 §9`  | Document: Kernel core, part 2                                                                                         | none     |     8 |
-| [x]  | `D00 T10 §10` | Document: Kernel core, part 3                                                                                         | none     |     8 |
-| [x]  | `D00 T10 §11` | Document: Memory and concurrency                                                                                      | none     |     8 |
-| [x]  | `D00 T10 §12` | Document: Drivers and hardware, part 1                                                                                | none     |     9 |
-| [x]  | `D00 T10 §13` | Document: Drivers and hardware, part 2                                                                                | none     |     8 |
-| [x]  | `D00 T10 §14` | Document: Storage and filesystems                                                                                     | none     |    10 |
-| [x]  | `D00 T10 §15` | Document: Networking                                                                                                  | none     |     8 |
-| [x]  | `D00 T10 §16` | Document: Desktop foundation and graphics, part 1                                                                     | none     |     9 |
-| [x]  | `D00 T10 §17` | Document: Graphics and UI, part 2                                                                                     | none     |     8 |
-| [x]  | `D00 T10 §18` | Document: Desktop shell                                                                                               | none     |    10 |
-| [x]  | `D00 T10 §19` | Document: Platform services                                                                                           | none     |    10 |
-| [x]  | `D00 T10 §20` | Document: Applications and accessories                                                                                | none     |    10 |
-| [x]  | `D00 T10 §21` | Document: SDK and release                                                                                             | none     |    10 |
-| [x]  | `D00 T10 §22` | Doc Freshness: `sources=` and a Stale-Page Warning                                                                    | none     |     7 |
-| [x]  | `D00 T10 §23` | Site Polish: Sitemap, Last-Updated, Link Health, OpenGraph                                                            | none     |     8 |
-| [x]  | `D00 T10 §24` | Versioned Release Docs: Pinned Refs and Version-Scoped Rendering                                                      | none     |     4 |
-| [x]  | `D00 T10 §25` | Docs Search Completeness and Accessibility                                                                            | none     |     7 |
-| [x]  | `D00 T10 §26` | Document: Host tools                                                                                                  | none     |     8 |
-| [x]  | `D00 T10 §27` | Document: Architecture ports and future research                                                                      | none     |     8 |
-| [x]  | `D00 T10 §28` | Review-Class Nets for Site Tooling: Real Parsers, Scheduler Stress                                                    | none     |     3 |
-| [x]  | `D00 T10 §29` | Retained Release Trees: Snapshots, Manifest, Live Verification                                                        | none     |     7 |
-| [x]  | `D00 T10 §30` | SDK Release Docs and API Reference                                                                                    | none     |     4 |
-| [x]  | `D00 T10 §31` | Docs Search Quality and Automated Accessibility Audit                                                                 | none     |     7 |
-| [x]  | `D00 T10 §32` | Review-Class Nets: Fail Direction and Bounded Waits in Site Tooling                                                   | none     |     4 |
-| [x]  | `D00 T10 §33` | Docs Search Typo Tolerance and Wider Accessibility Audit                                                              | none     |     9 |
+| Done | Section       | Deliverable                                                                                                           | Needs      | Items |
+| :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ---------- | ----: |
+| [ ]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none       |     9 |
+| [ ]  | `D08 T17 §2`  | Reference Build and Capture Profile                                                                                   | none       |     9 |
+| [ ]  | `D08 T17 §4`  | Microsoft-Free Rule                                                                                                   | none       |     7 |
+| [ ]  | `D08 T17 §3`  | UIA Capture Tool                                                                                                      | none       |    11 |
+| [ ]  | `D08 T17 §5`  | Completeness Baselines                                                                                                | none       |     9 |
+| [ ]  | `D08 T17 §6`  | Record Dispositions and Consistency Ledger                                                                            | none       |     6 |
+| [ ]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none       |     9 |
+| [ ]  | `D08 T17 §19` | Capture Matrix, Fixtures and Device Stand-ins                                                                         | bare-metal |    10 |
+| [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | none       |     8 |
+| [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none       |     7 |
+| [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none       |     7 |
+| [ ]  | `D08 T17 §11` | Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update                               | none       |     8 |
+| [ ]  | `D08 T17 §12` | File Explorer and Common Dialogs Inventory                                                                            | none       |     6 |
+| [ ]  | `D08 T17 §13` | Control Panel, System Tools and Inbox Apps Inventory                                                                  | none       |     9 |
+| [ ]  | `D08 T17 §14` | Shortcut, Gesture, Metric, Motion and State Catalogues                                                                | none       |     5 |
+| [ ]  | `D08 T17 §15` | Inventory-to-Roadmap Authoring                                                                                        | none       |     9 |
+| [ ]  | `D08 T17 §17` | Design Spec Reconciliation                                                                                            | none       |     8 |
+| [x]  | `D00 T01 §1`  | Host Bootstrap and Dependency Contract                                                                                | none       |     5 |
+| [x]  | `D00 T01 §2`  | Supported Host Profiles and Reproducible Environments                                                                 | none       |     7 |
+| [x]  | `D00 T01 §3`  | Build, Test, Lint, and Run Wrapper Contract                                                                           | none       |     7 |
+| [x]  | `D00 T01 §4`  | Machine Launcher and Debug Profile Matrix                                                                             | none       |     7 |
+| [x]  | `D00 T01 §5`  | Git Hooks and Local Automation Lifecycle                                                                              | none       |     7 |
+| [x]  | `D00 T01 §6`  | GitHub Actions and Artifact Policy Alignment                                                                          | none       |     6 |
+| [x]  | `D00 T01 §7`  | Tooling Doctor and Regression Pack                                                                                    | none       |     8 |
+| [x]  | `D00 T01 §8`  | Unify Specialist-Launcher Argument Surface                                                                            | none       |     4 |
+| [x]  | `D00 T01 §9`  | Legacy-XREF Sweep                                                                                                     | none       |     5 |
+| [x]  | `D00 T01 §10` | Smoke-Test POST16 Assertions                                                                                          | none       |     5 |
+| [x]  | `D00 T01 §11` | Bare Section-Ref Sweep                                                                                                | none       |     5 |
+| [x]  | `D00 T01 §12` | Enforce Required-Tool Version Floors                                                                                  | none       |     8 |
+| [x]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none       |     5 |
+| [x]  | `D00 T01 §14` | Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache                                                  | none       |    11 |
+| [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          | none       |     5 |
+| [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                | none       |     8 |
+| [x]  | `D00 T01 §17` | Shard the todo-graph Build Suite                                                                                      | none       |     5 |
+| [x]  | `D00 T01 §18` | Implementation Plan: Clear the Dependency Cycles and Drive the Run From It                                            | none       |     4 |
+| [x]  | `D00 T02 §1`  | Canonical Ownership and Source-of-Truth Map                                                                           | none       |     8 |
+| [x]  | `D00 T02 §2`  | Skill Lifecycle, Templates, and Catalog Rules                                                                         | none       |     6 |
+| [x]  | `D00 T02 §3`  | Hook Routing and Policy Contract                                                                                      | none       |     7 |
+| [x]  | `D00 T02 §4`  | External-Reviewer Contract (Codex)                                                                                    | none       |     7 |
+| [x]  | `D00 T02 §5`  | MCP, Permissions, and Extension Boundary                                                                              | none       |     7 |
+| [x]  | `D00 T02 §6`  | `AGENTS.md` Cross-Tool Pointer File                                                                                   | none       |     7 |
+| [x]  | `D00 T02 §7`  | AI-Assist Commit Disclosure Policy                                                                                    | none       |     7 |
+| [x]  | `D00 T02 §8`  | Autonomous-Agent Boundary Policy                                                                                      | none       |     7 |
+| [x]  | `D00 T02 §9`  | AI Workflow Regression Suite                                                                                          | none       |     5 |
+| [x]  | `D00 T03 §1`  | kmalloc Fault Injection                                                                                               | none       |     6 |
+| [x]  | `D00 T03 §2`  | Deterministic Race Barrier                                                                                            | none       |     8 |
+| [x]  | `D00 T03 §3`  | Scratch-Buffer Helper                                                                                                 | none       |     6 |
+| [x]  | `D00 T03 §4`  | Retrofit Existing "Test Gaps" Stamps                                                                                  | none       |     4 |
+| [x]  | `D00 T03 §5`  | Test-Scoped klog Level Demotion (`TEST_KLOG_SUPPRESS`)                                                                | none       |     8 |
+| [x]  | `D00 T03 §6`  | Fault-Injection Hardening (task-filter, total-hits cap, multi-allocator)                                              | none       |     7 |
+| [x]  | `D00 T03 §7`  | Test Action/Cleanup Registry (`test_add_action`)                                                                      | none       |     7 |
+| [x]  | `D00 T03 §8`  | Per-Test Heap-Leak Detection                                                                                          | none       |     7 |
+| [x]  | `D00 T03 §9`  | Audit + Classify the 50+ [LEAK] Failures §8 Surfaced                                                                  | none       |     9 |
+| [x]  | `D00 T03 §10` | An Over-Long Failing Assertion Wedges the Boot Instead of Reporting                                                   | none       |     3 |
+| [x]  | `D00 T03 §11` | A Read One Byte Past a Buffer Is Invisible to Every Test We Can Write                                                 | none       |     4 |
+| [x]  | `D00 T03 §12` | Assert or Fix the 55 Test-Phase [FAIL] Lines                                                                          | none       |     5 |
+| [x]  | `D00 T03 §13` | Expect or Attribute Kernel Errors per User-Mode Binary                                                                | none       |     8 |
+| [x]  | `D00 T04 §1`  | User-Mode Test Assertion Macro                                                                                        | none       |     6 |
+| [x]  | `D00 T04 §2`  | Userland syscall.h Parity with Kernel INT 0x80 ABI                                                                    | none       |     6 |
+| [x]  | `D00 T04 §3`  | Kernel Test Launcher                                                                                                  | none       |     9 |
+| [x]  | `D00 T04 §4`  | Launcher Manifest, Timeouts, and CI-Friendly Output                                                                   | none       |     7 |
+| [x]  | `D00 T04 §5`  | User-Mode Fault-Injection Bridge                                                                                      | none       |     7 |
+| [x]  | `D00 T04 §6`  | Per-Test Isolation + Cleanup Hook                                                                                     | none       |     6 |
+| [x]  | `D00 T04 §7`  | JUnit XML + JSON Output Formats                                                                                       | none       |     6 |
+| [x]  | `D00 T04 §8`  | Test Type Taxonomy: smoke / correctness / stress / perf                                                               | none       |     6 |
+| [x]  | `D00 T04 §9`  | Syscall Test Binary                                                                                                   | none       |     3 |
+| [x]  | `D00 T04 §10` | Libc Test Binary                                                                                                      | none       |     2 |
+| [x]  | `D00 T04 §11` | IPC Test Binary                                                                                                       | none       |     3 |
+| [x]  | `D00 T04 §12` | Process Lifecycle Test                                                                                                | none       |     2 |
+| [x]  | `D00 T04 §13` | File I/O Test                                                                                                         | none       |     3 |
+| [x]  | `D00 T04 §14` | Win32 API Test Binary                                                                                                 | none       |     3 |
+| [x]  | `D00 T04 §15` | Binary Format Loader Coverage (ELF / PE32+ / EIF)                                                                     | none       |     7 |
+| [x]  | `D00 T04 §16` | Build Integration                                                                                                     | none       |     9 |
+| [x]  | `D00 T04 §17` | Fast-Path Transport Hardening (probes + ABI drift + silent-hang elimination)                                          | none       |     8 |
+| [x]  | `D00 T04 §18` | Fast-Path Observability + ABI Versioning (beyond Win11 + Linux)                                                       | none       |     5 |
+| [x]  | `D00 T04 §19` | Fast-Path Transition Ring Buffer + Cross-Transport Fuzz                                                               | none       |     7 |
+| [x]  | `D00 T04 §20` | Site-Targeted and PMM-Countdown Fault Selectors                                                                       | none       |     9 |
+| [x]  | `D00 T04 §21` | Naming Fork's Child-PML4 Allocation, and Failing That Fork Closed                                                     | none       |     5 |
+| [x]  | `D00 T04 §22` | Honest Machine Artifacts for Skipped Sub-Tests                                                                        | none       |     8 |
+| [x]  | `D00 T04 §23` | Generated Exit-Status ABI for Ring-3 Assertions                                                                       | none       |     3 |
+| [x]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none       |     6 |
+| [x]  | `D00 T04 §25` | Non-Forgeable Launcher Record Framing                                                                                 | none       |     8 |
+| [x]  | `D00 T04 §26` | Generator Hardening: Preprocessor-Faithful Constant Extraction                                                        | none       |    11 |
+| [x]  | `D00 T04 §27` | Artifact Consumer Completeness: Run Identity and the Record Name Bound                                                | none       |     5 |
+| [x]  | `D00 T04 §28` | Atomic Publication of the Generated Header Pair                                                                       | none       |     5 |
+| [x]  | `D00 T04 §29` | Serial-Transport Volume: Derived Burst Ceiling and Incremental Parse                                                  | none       |     5 |
+| [x]  | `D00 T04 §30` | Per-Run Artifact Records and Per-Leg Aliases                                                                          | none       |     6 |
+| [x]  | `D00 T04 §31` | The Record Name Bound and the Refusal That Must Be Counted                                                            | none       |     6 |
+| [x]  | `D00 T04 §32` | ABI Validation on Every Artifact Target, Not Just `all`                                                               | none       |     5 |
+| [x]  | `D00 T04 §33` | Per-Binary Output Capture at the Source                                                                               | none       |     3 |
+| [x]  | `D00 T04 §34` | Orphaned-QEMU Recovery                                                                                                | none       |     4 |
+| [x]  | `D00 T04 §35` | Immutable Enumeration Plan for the Two-Walk Launcher                                                                  | none       |     7 |
+| [x]  | `D00 T04 §36` | Per-Binary Output Artifacts and Fail-Closed Byte Reconciliation                                                       | none       |     4 |
+| [x]  | `D00 T04 §37` | Refusal-Name Correlator and JUnit Error/Failure Classification                                                        | none       |     4 |
+| [x]  | `D00 T04 §38` | Per-Leg Generation Pointer for Coherent Document Resolution                                                           | none       |     2 |
+| [x]  | `D00 T04 §39` | Executable Identity for a Planned Entry                                                                               | none       |     4 |
+| [x]  | `D00 T04 §40` | Producer-Side Capture Emission Budget                                                                                 | none       |     5 |
+| [x]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none       |     1 |
+| [x]  | `D00 T04 §42` | Structural Reap-Grace Assertions Instead of a Wall-Clock Margin                                                       | none       |     3 |
+| [x]  | `D00 T04 §43` | Distinguishable Identity Kind for Aggregate Refusals                                                                  | none       |     4 |
+| [x]  | `D00 T04 §44` | Close the Residual Completeness Gaps §37's Review Found                                                               | none       |     4 |
+| [x]  | `D00 T04 §45` | Reader Leases for a Resolved Generation                                                                               | none       |     5 |
+| [x]  | `D00 T04 §46` | Inode-Safe Classification in the Pointer Sweep                                                                        | none       |     4 |
+| [x]  | `D00 T04 §47` | End-to-End Proof of the Loader's Identity-Mismatch Branch                                                             | none       |     8 |
+| [x]  | `D00 T04 §48` | Wire-Published Facts the Host Enforces: Write Identity, Spawn Expectation, Chunk Bound                                | none       |     4 |
+| [x]  | `D00 T04 §49` | Run-Boundary Fence for Emitters That Outlive Their Binary                                                             | none       |     4 |
+| [x]  | `D00 T04 §50` | Per-Child Loader Evidence: Ring-3 Entry and Stage Flags in the Child, Not in Globals                                  | none       |     4 |
+| [x]  | `D00 T04 §51` | A Reproducible Kernel Assertion Total, and the Intermittent TEB Halt Behind It                                        | none       |     3 |
+| [x]  | `D00 T04 §52` | Bind a Leg Pointer to the Record's Own Identity                                                                       | none       |     7 |
+| [x]  | `D00 T04 §53` | A Directory Occupying a Pointer or Lease Name                                                                         | none       |     9 |
+| [x]  | `D00 T04 §54` | A Write Abandoned Before Its First Chunk Ever Reached the Wire                                                        | none       |     3 |
+| [x]  | `D00 T04 §55` | Klog-Ring Assertions That Depend on How Much the Boot Logged                                                          | none       |     4 |
+| [x]  | `D00 T04 §56` | Fork Publication Interlocked With the Capture-Tree Reap                                                               | none       |     8 |
+| [x]  | `D00 T04 §57` | A Klog Delivery Receipt, So a Record's Settlement Is Exact                                                            | none       |     4 |
+| [x]  | `D00 T04 §58` | Launcher Waits Bounded Independently of the Monotonic Clock                                                           | none       |     4 |
+| [x]  | `D00 T04 §59` | Capture Reconciliation Runs on the Default Test Path, Not Only for Artifacts                                          | none       |     6 |
+| [x]  | `D00 T04 §60` | An Aggregate Budget for Pointer Validation Under the Retention Mutex                                                  | none       |     8 |
+| [x]  | `D00 T04 §61` | Validate the Commit Marker as a Shape, and Read Each Record Document From One Snapshot                                | none       |     9 |
+| [x]  | `D00 T04 §62` | Detaching an Age Candidate Before Classifying It                                                                      | none       |    10 |
+| [x]  | `D00 T05 §1`  | Framebuffer Snapshot API                                                                                              | none       |     5 |
+| [x]  | `D00 T05 §2`  | QEMU Framebuffer Dump                                                                                                 | none       |     5 |
+| [x]  | `D00 T05 §3`  | Desktop Smoke Test                                                                                                    | none       |     7 |
+| [x]  | `D00 T05 §4`  | Input Event Injection                                                                                                 | none       |     5 |
+| [x]  | `D00 T05 §5`  | Terminal Output Verification                                                                                          | none       |     6 |
+| [x]  | `D00 T05 §6`  | Reference Screenshot Comparison                                                                                       | none       |     9 |
+| [x]  | `D00 T05 §7`  | Visual Regression CI Pipeline                                                                                         | none       |    11 |
+| [x]  | `D00 T05 §8`  | Window Manager State Verification                                                                                     | none       |     9 |
+| [x]  | `D00 T05 §9`  | Perceptual Diff and Structured Screenshot Needles                                                                     | none       |    11 |
+| [x]  | `D00 T05 §10` | Frame Timing and Drop Oracle                                                                                          | none       |     8 |
+| [x]  | `D00 T05 §11` | Input Record and Replay (Unicode and IME aware)                                                                       | none       |     8 |
+| [x]  | `D00 T05 §12` | Headless Compositor and Frame-Lock Stepping                                                                           | none       |     8 |
+| [x]  | `D00 T05 §13` | Multi-Monitor and DPI Scaling Test Matrix                                                                             | none       |     7 |
+| [x]  | `D00 T05 §14` | WCAG Sweep Over Automation Tree                                                                                       | none       |     7 |
+| [x]  | `D00 T05 §15` | Test Isolation and Crash Artifact Capture                                                                             | none       |     3 |
+| [x]  | `D00 T06 §1`  | Frontmatter Schema and Spec                                                                                           | none       |     7 |
+| [x]  | `D00 T06 §2`  | Generator and Cache Format                                                                                            | none       |     9 |
+| [x]  | `D00 T06 §3`  | Validator (stale XREF / dangling dep / orphan / cycle / bat / status / schema)                                        | none       |     6 |
+| [x]  | `D00 T06 §4`  | Query CLI (ready / blocked / blocking / by-domain / backlinks / deferred / orphans / stale / stats / code)            | none       |     9 |
+| [x]  | `D00 T06 §5`  | Migration: Back-Fill Frontmatter on Existing TODOs                                                                    | none       |     8 |
+| [x]  | `D00 T06 §6`  | CI Gate and Make Target                                                                                               | none       |     8 |
+| [x]  | `D00 T06 §7`  | Visualization Output (mermaid / graphviz / ascii / gantt / markdown)                                                  | none       |    10 |
+| [x]  | `D00 T06 §8`  | MCP Server (AI-Agent Transport over the Cache)                                                                        | none       |    10 |
+| [x]  | `D00 T06 §9`  | Per-Item `stamped_items` Cache Extension                                                                              | none       |     9 |
+| [x]  | `D00 T06 §10` | Multi-Line Function-Head Resolution in `resolve_symbol`                                                               | none       |     7 |
+| [x]  | `D00 T06 §11` | Count What Check 7 Cannot Resolve Instead of Skipping It                                                              | none       |    15 |
+| [x]  | `D00 T06 §12` | Resolver Coverage Past the Head Limit, and Lexer/Cache Robustness                                                     | none       |     7 |
+| [x]  | `D00 T06 §13` | Stored-Ref Repair: Unpaired Symbols and Bare Filenames                                                                | none       |     7 |
+| [x]  | `D00 T06 §14` | Identity Gate Over the Whole Symbol-Ref Population                                                                    | none       |     5 |
+| [x]  | `D00 T06 §15` | The Shared Rule's Cost: Structural-Walk Hot Path and Split Cache Lifecycles                                           | none       |     3 |
+| [x]  | `D00 T06 §16` | Wire the Identity Gate So Something Actually Runs It                                                                  | none       |     4 |
+| [x]  | `D00 T06 §17` | One Shared Cache-Schema Validator for Both Cache Readers                                                              | none       |    10 |
+| [x]  | `D00 T06 §18` | Identity-Gate Hardening: Producer Differential and Protocol-Constant Extraction                                       | none       |     7 |
+| [x]  | `D00 T06 §19` | Cache-Validation Reach: the Remaining Raw Cache Readers                                                               | none       |     5 |
+| [x]  | `D00 T06 §20` | A Machine-Checkable Bucket-Emission Contract                                                                          | none       |     4 |
+| [x]  | `D00 T06 §21` | The Producer-Side Generation Window in `build.py`                                                                     | none       |     5 |
+| [x]  | `D00 T06 §22` | `query.py` Fail-Closed Through Every Transport                                                                        | none       |     5 |
+| [x]  | `D00 T06 §23` | `validate.py` Rebuild Recovery and the Baseline Cache                                                                 | none       |     6 |
+| [x]  | `D00 T06 §24` | The History-Identity Cost Decision: `requires_history` for the Query Profile                                          | none       |     6 |
+| [x]  | `D00 T06 §25` | Fields the Readers Consume That the Producer Never Emits                                                              | none       |     4 |
+| [x]  | `D00 T06 §26` | Domain-Code Resolution Picks a Directory by Cache Order                                                               | none       |     4 |
+| [x]  | `D00 T06 §27` | Effective-History Identity: Replace Refs and Grafts                                                                   | none       |     6 |
+| [x]  | `D00 T06 §28` | Section-Level Readiness: Verbs That Consult the Dependency Evidence the Graph Actually Has                            | none       |     6 |
+| [x]  | `D00 T06 §29` | `--fix-line-numbers` Reports Success Over Targets It Could Not Resolve                                                | none       |     5 |
+| [x]  | `D00 T06 §30` | `--watch` Never Ticks on a History Change for the History-Consuming Verbs                                             | none       |     9 |
+| [x]  | `D00 T06 §31` | An Equal-Count Shallow Boundary Still Moves `created_at` Under an Unchanged Identity                                  | none       |     6 |
+| [x]  | `D00 T06 §32` | In-File Anchor Links Are Checked by Nothing                                                                           | none       |     4 |
+| [x]  | `D00 T06 §33` | Stamp-Target Capture Splits a Link Whose Label Contains a Space                                                       | none       |    10 |
+| [x]  | `D00 T06 §34` | The Performance Budget Times Itself on a Clock That Steps                                                             | none       |     5 |
+| [x]  | `D00 T06 §35` | A Same-File Stamp Matches Its Own Text, So Repair Answers With the Stamp's Line                                       | none       |     5 |
+| [x]  | `D00 T06 §36` | The Cache Producer Adopts the Shared Fence Tracker                                                                    | none       |     8 |
+| [x]  | `D00 T06 §37` | One Clause Parser Decides How Many Destinations a Clause Names                                                        | none       |     6 |
+| [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none       |    13 |
+| [x]  | `D00 T06 §39` | The Shared Fence Tracker Becomes Container-Aware                                                                      | none       |     6 |
+| [x]  | `D00 T06 §40` | An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges                                   | none       |     4 |
+| [x]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none       |     6 |
+| [x]  | `D00 T06 §42` | HTML Blocks Join the Tracker, and the Terminal Contract Carries the Block Kind                                        | none       |     8 |
+| [x]  | `D00 T06 §43` | Finish the One-Contract Consolidation Across the Consumer Closure                                                     | none       |     3 |
+| [x]  | `D00 T06 §44` | The Inline Scanner Honours CommonMark Precedence, and the Table Cell Reaches It Unmodified                            | none       |    10 |
+| [x]  | `D00 T06 §45` | The Container Phase Stops Being Quadratic, Stops Erasing, and Becomes the Section Context the Four Walks Share        | none       |     3 |
+| [x]  | `D00 T06 §46` | CommonMark HTML Block Type 7 Needs a Non-Backtracking Matcher                                                         | none       |     2 |
+| [x]  | `D00 T06 §47` | The Gate Consumers Adopt the Section-Context Projections the Producer Already Uses                                    | none       |     5 |
+| [x]  | `D00 T06 §48` | The Mutating Repair Tool Stops Rewriting the Raw HTML It Is Shown                                                     | none       |     3 |
+| [x]  | `D00 T06 §49` | Decide Whether `alias-staleness` Is Producer-Assertable, Then Promote It or Record Why Not                            | none       |     5 |
+| [x]  | `D00 T06 §50` | A Base Older Than the Gate's Own Protocol Must Not Be Reported as a Broken Gate                                       | none       |     4 |
+| [x]  | `D00 T06 §51` | The Byte-Identical Closure Exit Must Not Outrank the Protocol Refusals                                                | none       |     3 |
+| [x]  | `D00 T06 §52` | Object-Replacement Metadata Can Misrepresent an Endpoint by Routes Other Than Its Commit                              | none       |     7 |
+| [x]  | `D00 T06 §53` | The Protocol Probe Executes the Tree It Is Judging, So No In-Process Channel Is Trusted                               | none       |     4 |
+| [x]  | `D00 T06 §54` | The Gate Adjudicates the WORKING TREE While the Push Carries the COMMIT                                               | none       |     4 |
+| [x]  | `D00 T06 §55` | The Byte-Identical Path Pays for a Full Base Checkout It Does Not Need                                                | none       |     6 |
+| [x]  | `D00 T06 §56` | The Resolver Walks Leak What the Tree Spawns on the Path Where They SUCCEED                                           | none       |     6 |
+| [/]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none       |     4 |
+| [x]  | `D00 T06 §58` | Head-Versus-Tree Checks Section 54 Made Unreachable Are Retired or Re-Fixtured                                        | none       |     5 |
+| [x]  | `D00 T06 §59` | The Identity-Gate Fixture Group Pays for a Whole Repository and Proves Less Than It Claims                            | none       |     6 |
+| [x]  | `D00 T06 §60` | Every Name-Resolved Use of TMP_DIR Is Still a Name                                                                    | none       |     5 |
+| [x]  | `D00 T07 §1`  | Bridge Skeleton + LSP JSON-RPC Client                                                                                 | none       |     6 |
+| [x]  | `D00 T07 §2`  | clangd Integration (C / H)                                                                                            | none       |     6 |
+| [x]  | `D00 T07 §3`  | asm-lsp Integration (NASM)                                                                                            | none       |     5 |
+| [x]  | `D00 T07 §4`  | bash-language-server Integration (.sh)                                                                                | none       |     6 |
+| [x]  | `D00 T07 §5`  | pyright Integration (Python)                                                                                          | none       |     6 |
+| [x]  | `D00 T07 §6`  | PowerShellEditorServices Integration (.ps1)                                                                           | none       |     6 |
+| [x]  | `D00 T07 §7`  | Six MCP Tools (Hover, Definition, References, Diagnostics, Workspace/Document Symbol)                                 | none       |     7 |
+| [x]  | `D00 T07 §8`  | Extension Routing, Per-LSP Lock, Concurrent-Call Safety                                                               | none       |     6 |
+| [x]  | `D00 T07 §9`  | Setup Deps, Manifest, Makefile Target, Docs, Boundary Compliance                                                      | none       |     8 |
+| [x]  | `D00 T07 §10` | Unit Tests, --self-test Harness, test-tooling Surface                                                                 | none       |     4 |
+| [x]  | `D00 T07 §11` | Extended LSP Tools (Completion, Signature Help, Type-Definition, Implementation, Declaration, Call Hierarchy, Code... | none       |     9 |
+| [x]  | `D00 T07 §12` | File-Change Lifecycle (`didOpen`, `didChange`, `didSave`, `didClose` Forwarding)                                      | none       |     6 |
+| [x]  | `D00 T07 §13` | LSP Subprocess Health Monitoring + Auto-Restart                                                                       | none       |     6 |
+| [x]  | `D00 T07 §14` | Structured JSON Logging + Request Correlation IDs                                                                     | none       |     5 |
+| [x]  | `D00 T07 §15` | Path Sandboxing + Workspace Boundary Enforcement                                                                      | none       |     6 |
+| [x]  | `D00 T07 §16` | Warm-Index Preloading + Cold-Start Budget                                                                             | none       |     6 |
+| [x]  | `D00 T07 §17` | Background Warm-Start Mode (MCP Launcher Compatibility)                                                               | none       |     9 |
+| [x]  | `D00 T07 §18` | Type Hierarchy Tools (Supertypes / Subtypes, Read-Only)                                                               | none       |     7 |
+| [x]  | `D00 T07 §19` | Scale Roadmap (Deferred)                                                                                              | none       |     1 |
+| [x]  | `D00 T07 §20` | Reap Determinism and Leak Attribution for the Bridge's Language Servers                                               | none       |     4 |
+| [x]  | `D00 T07 §21` | Thread-Group Edge Cases in the Language-Server Reap                                                                   | none       |     5 |
+| [x]  | `D00 T07 §22` | Reap Sweep Internals: pidfd Ownership, One-Snapshot Enumeration, Ledger Reader                                        | none       |     4 |
+| [x]  | `D00 T07 §23` | Injected-Clock Deadline Coverage and the Non-Dumpable-Child Reap Blind Spot                                           | none       |     7 |
+| [x]  | `D00 T07 §24` | Single-Pass Procfs Cleanup in the Teardown Sweep                                                                      | none       |     4 |
+| [x]  | `D00 T07 §25` | Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown                                                        | none       |     7 |
+| [/]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none       |     6 |
+| [x]  | `D00 T08 §1`  | Codex MCP Wiring + Cross-Config Drift Validator                                                                       | none       |    10 |
+| [x]  | `D00 T08 §2`  | Codex Invocation Policy: No `--model` / `--effort` From Claude                                                        | none       |     7 |
+| [x]  | `D00 T08 §3`  | `receiving-code-review` Hard Gate: State File + Post-Codex Hook Block                                                 | none       |    10 |
+| [x]  | `D00 T08 §4`  | Section-Commit Gate Hardens to BLOCK With Build + Codex + Receiving Evidence                                          | none       |     9 |
+| [x]  | `D00 T08 §5`  | `review-todo-section` Four-Dispatch Enforcement                                                                       | none       |     9 |
+| [x]  | `D00 T08 §6`  | MCP Usage Discipline -- Doc + CLAUDE.md Pointer                                                                       | none       |     7 |
+| [x]  | `D00 T08 §7`  | Hook System Audit + Dedupe                                                                                            | none       |    10 |
+| [x]  | `D00 T08 §8`  | Superpowers Skill Catalog Audit + Trigger Rows                                                                        | none       |     7 |
+| [x]  | `D00 T08 §9`  | Cross-Tool Drift Detection -- `scripts/audit-ai-system.sh`                                                            | none       |     6 |
+| [x]  | `D00 T08 §10` | Skill Step-State Telemetry + Non-Contiguous-Step Block                                                                | none       |     7 |
+| [x]  | `D00 T08 §11` | Hook Event Surface Expansion (SessionStart / UserPromptSubmit / Stop / SubagentStop / PreCompact)                     | none       |    10 |
+| [x]  | `D00 T08 §12` | AI-Slop Content Lints (Tautological-Test / Stub-Behind-Stamp)                                                         | none       |     8 |
+| [x]  | `D00 T08 §13` | Documentation Sync -- CLAUDE.md / ai-system.md / mcp-usage.md / Reciprocal XREFs                                      | none       |     9 |
+| [x]  | `D00 T08 §14` | Remove Copilot CLI Reviewer Wholesale (Subordinate-Reviewer Reduction)                                                | none       |     7 |
+| [x]  | `D00 T08 §15` | Design-Review Hook Scope Fix: Review-Kind Recognition + Commit-Clears-Gate                                            | none       |     4 |
+| [x]  | `D00 T08 §16` | Compaction-Resilient Skill-Step State -- PreCompact Orphan-Marking                                                    | none       |     8 |
+| [x]  | `D00 T08 §17` | Review-Pipeline Pre-Codex Enforcement (Phase-1 + Re-Adversarial)                                                      | none       |     8 |
+| [x]  | `D00 T08 §18` | Stamp-Region + OS Comparison Completeness Lints (Check 10 + Check 11)                                                 | none       |     4 |
+| [x]  | `D00 T08 §19` | Codex Prompt-Scope Helper -- Wrapper Plumbing for Re-Reviews                                                          | none       |     4 |
+| [x]  | `D00 T08 §20` | Implement-Pipeline Section-Commit Gates (Steps 5/8/13/16)                                                             | none       |     8 |
+| [x]  | `D00 T08 §21` | Implement-TODO-Section Partial-Enforcement Heuristics (WARN-First)                                                    | none       |    14 |
+| [x]  | `D00 T08 §22` | Review-Pipeline Right-Sizing Doctrine -- RISK_TIER + Bootstrap + Tier-Aware Triage + State Diagnosis + Spiral Check   | none       |     8 |
+| [x]  | `D00 T08 §23` | Unify SKIP_REVIEW_HOOK Opt-Out Scanner Across PreToolUse Gates                                                        | none       |     8 |
+| [x]  | `D00 T08 §24` | last-codex-review.json State-Write Reliability -- Close §22 #4 Properly                                               | none       |     7 |
+| [x]  | `D00 T08 §25` | Observer Step-13/13.5 Regex Coverage for All Codex Dispatch Shapes                                                    | none       |     7 |
+| [x]  | `D00 T08 §26` | `scripts/commit-with-skip.sh` Wrapper Retired (Closed by §23)                                                         | none       |     4 |
+| [x]  | `D00 T08 §27` | Phase 1 Evidence-Gate Threshold Tuning via Miss-Log Telemetry                                                         | none       |     5 |
+| [x]  | `D00 T08 §28` | Codex Prompt Argument Escaping Doctrine                                                                               | none       |     7 |
+| [x]  | `D00 T08 §29` | Standardize PreToolUse Prefix-Allowlist Across Gates                                                                  | none       |     7 |
+| [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none       |     9 |
+| [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none       |     5 |
+| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none       |     4 |
+| [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none       |     8 |
+| [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none       |     5 |
+| [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none       |     4 |
+| [x]  | `D00 T08 §36` | Second-boot leg in the smoke matrix                                                                                   | none       |     4 |
+| [x]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none       |     5 |
+| [x]  | `D00 T08 §38` | Release-flavor build at the section boundary                                                                          | none       |     8 |
+| [x]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none       |     5 |
+| [x]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none       |     5 |
+| [x]  | `D00 T08 §41` | CI jobs run in the pinned image                                                                                       | none       |     7 |
+| [ ]  | `D00 T08 §42` | The graph jobs run in a small pinned image                                                                            | none       |     3 |
+| [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none       |    10 |
+| [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator   |    11 |
+| [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none       |    11 |
+| [x]  | `D00 T09 §4`  | Repository Transfer Runbook and Rollback Window                                                                       | none       |    16 |
+| [/]  | `D00 T09 §5`  | Post-Transfer Settings, Workflows, Secrets, and Environments Audit                                                    | operator   |    12 |
+| [x]  | `D00 T09 §6`  | URL, Badge, Docs, and Generated-Link Sweep                                                                            | none       |    11 |
+| [x]  | `D00 T09 §7`  | Validation Suite: Pages, Actions, Releases, Clone, Hooks, Graph                                                       | none       |     8 |
+| [x]  | `D00 T09 §8`  | Move-Back and Public-Visibility Runbook                                                                               | none       |    16 |
+| [x]  | `D00 T09 §9`  | Documentation Sync and Closure                                                                                        | none       |     8 |
+| [x]  | `D00 T10 §1`  | Site Generator, Project Facts, Coverage, and Drift Gate                                                               | none       |    14 |
+| [x]  | `D00 T10 §2`  | Map Existing Docs Pages to Their Roadmap Files                                                                        | none       |     5 |
+| [x]  | `D00 T10 §3`  | Documentation Page Contract, Template, and create-todo Step                                                           | none       |     8 |
+| [x]  | `D00 T10 §4`  | Document: Infrastructure                                                                                              | none       |     6 |
+| [x]  | `D00 T10 §5`  | Document: Boot platform, part 1                                                                                       | none       |     8 |
+| [x]  | `D00 T10 §6`  | Document: Boot platform, part 2                                                                                       | none       |     8 |
+| [x]  | `D00 T10 §7`  | Document: Boot platform, part 3                                                                                       | none       |     7 |
+| [x]  | `D00 T10 §8`  | Document: Kernel core, part 1                                                                                         | none       |     8 |
+| [x]  | `D00 T10 §9`  | Document: Kernel core, part 2                                                                                         | none       |     8 |
+| [x]  | `D00 T10 §10` | Document: Kernel core, part 3                                                                                         | none       |     8 |
+| [x]  | `D00 T10 §11` | Document: Memory and concurrency                                                                                      | none       |     8 |
+| [x]  | `D00 T10 §12` | Document: Drivers and hardware, part 1                                                                                | none       |     9 |
+| [x]  | `D00 T10 §13` | Document: Drivers and hardware, part 2                                                                                | none       |     8 |
+| [x]  | `D00 T10 §14` | Document: Storage and filesystems                                                                                     | none       |    10 |
+| [x]  | `D00 T10 §15` | Document: Networking                                                                                                  | none       |     8 |
+| [x]  | `D00 T10 §16` | Document: Desktop foundation and graphics, part 1                                                                     | none       |     9 |
+| [x]  | `D00 T10 §17` | Document: Graphics and UI, part 2                                                                                     | none       |     8 |
+| [x]  | `D00 T10 §18` | Document: Desktop shell                                                                                               | none       |    10 |
+| [x]  | `D00 T10 §19` | Document: Platform services                                                                                           | none       |    10 |
+| [x]  | `D00 T10 §20` | Document: Applications and accessories                                                                                | none       |    10 |
+| [x]  | `D00 T10 §21` | Document: SDK and release                                                                                             | none       |    10 |
+| [x]  | `D00 T10 §22` | Doc Freshness: `sources=` and a Stale-Page Warning                                                                    | none       |     7 |
+| [x]  | `D00 T10 §23` | Site Polish: Sitemap, Last-Updated, Link Health, OpenGraph                                                            | none       |     8 |
+| [x]  | `D00 T10 §24` | Versioned Release Docs: Pinned Refs and Version-Scoped Rendering                                                      | none       |     4 |
+| [x]  | `D00 T10 §25` | Docs Search Completeness and Accessibility                                                                            | none       |     7 |
+| [x]  | `D00 T10 §26` | Document: Host tools                                                                                                  | none       |     8 |
+| [x]  | `D00 T10 §27` | Document: Architecture ports and future research                                                                      | none       |     8 |
+| [x]  | `D00 T10 §28` | Review-Class Nets for Site Tooling: Real Parsers, Scheduler Stress                                                    | none       |     3 |
+| [x]  | `D00 T10 §29` | Retained Release Trees: Snapshots, Manifest, Live Verification                                                        | none       |     7 |
+| [x]  | `D00 T10 §30` | SDK Release Docs and API Reference                                                                                    | none       |     4 |
+| [x]  | `D00 T10 §31` | Docs Search Quality and Automated Accessibility Audit                                                                 | none       |     7 |
+| [x]  | `D00 T10 §32` | Review-Class Nets: Fail Direction and Bounded Waits in Site Tooling                                                   | none       |     4 |
+| [x]  | `D00 T10 §33` | Docs Search Typo Tolerance and Wider Accessibility Audit                                                              | none       |     9 |
 
 ### Phase 1 -- Boot platform: firmware handoff, loader, measured boot and recovery
 

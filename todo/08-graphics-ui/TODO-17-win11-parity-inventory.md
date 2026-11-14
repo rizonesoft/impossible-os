@@ -9,6 +9,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 # TODO-17 -- Windows 11 Parity Inventory
 
 > **Validated:** 2026-11-14 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-11-14 | gap-audit + codex-gap-audit; 11 findings filed (§19 capture matrix and fixtures, boot and recovery screens, profile matrix, kept motion recordings)
 
 > **Goal:** "The same thing, in the same place" becomes measurable. A machine-readable inventory in `docs/design/inventory/` lists every visible element of the Windows 11 interface (shell surfaces, Settings pages, File Explorer, common dialogs, Control Panel, system tools, inbox utilities, shortcuts, gestures, metrics and motion) as one record per element: its name, kind, parent, order, control type, position at a fixed capture profile, and its behaviour in our own words. Every interface section in the roadmap then cites inventory ids, every record is owned by exactly one section that builds it, and a coverage report shows how much of the reference Impossible OS implements. The inventory also records where Windows 11 is inconsistent with itself and the one rule Impossible OS ships instead.
 
@@ -45,6 +46,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 - `docs/design/inventory/REFERENCE.md` pins the reference build, the capture profile and every documented absence.
 - `python3 scripts/inventory/inventory-report.py` writes `docs/design/inventory/COVERAGE.md`: records per surface and kind, dispositions, baseline completeness and implemented counts.
 - `python3 scripts/inventory/inventory-report.py --owners --check` names every record no roadmap section owns, and every record two sections claim.
+- `docs/design/inventory/expected.json` lists every surface, state and profile the one capture campaign must take, and `inventory-report.py --campaign --check` proves each has records and a shot.
 - `docs/design/inventory/consistency.json` lists each place Windows 11 disagrees with itself and the single rule Impossible OS ships.
 
 ## Record Quick Reference
@@ -71,9 +73,9 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [ ]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [ ]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [ ]   |
-| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §5       |  [ ]   |
+| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19      |  [ ]   |
 | 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8           |  [ ]   |
-| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §5       |  [ ]   |
+| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19      |  [ ]   |
 | 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10          |  [ ]   |
 | 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9           |  [ ]   |
 | 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12          |  [ ]   |
@@ -82,6 +84,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6   |  [ ]   |
 | ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14  |  [ ]   |
 | ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16     |  [ ]   |
+| 💎  |  19   | §19 Capture Matrix, Fixtures and Device Stand-ins                                           | §2, §5       |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -160,7 +163,7 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
   - `open()` brings the surface up by its own command or key, `root()` finds the element, `close()` dismisses it the way a user would
 - [ ] Expand one level: open each menu, flyout, combo box and split button, record its entries as `menuItem` records with `itemCount` on the opener, and close it again with nothing chosen
 - [ ] Never record data: no text of an edit box, no state of a check box, no entry of a list that holds the machine's own data
-  - Such lists hold files, apps, devices, networks or accounts; each is one record with `controlType: list` and no children, named in the module's `ENVIRONMENT_LISTS`
+  - Such lists hold files, apps, devices, networks or accounts; each is one record with `controlType: list` and no children, named in the module's `ENVIRONMENT_LISTS`; the synthetic fixtures of §19 supply the row template, captured separately
 - [ ] Add `--merge`: carries the hand-written fields (`behaviour`, `disposition`, `inconsistency`) across a re-capture by `id`, refreshes every captured fact, and keeps no record the capture did not see
 - [ ] Run `check-inventory.py` on the result before writing it; a file that fails is not published
 - [ ] Save a screenshot with every capture: each surface in each state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`
@@ -269,7 +272,7 @@ The report is the measure of progress, and the ownership check is the proof that
 - [ ] Define implemented: a record counts when its owning section is shipped with both stamps
   - Read from the classifier in `.claude/hooks/sequencer_triage.py`: reuse its function, do not restate its rule
 - [ ] Make the pre-commit lint refuse a stale `COVERAGE.md` when an inventory file or a TODO file is staged
-- [ ] Add `--campaign --check`: exits 1 naming every surface, state and profile with no records or no shot, every baseline row unmatched and every `unnamed` element without a label
+- [ ] Add `--campaign --check`: exits 1 naming every row of §19's `expected.json` with no records or no shot, every baseline row unmatched and every `unnamed` element without a label
   - The campaign of §8 to §14 ends, and the VM is shut down, only when it exits 0; a later miss is filed as a capture gap in `REFERENCE.md`
 - [ ] Write `docs/design/inventory/authoring.json`: the surface to owning-file map §15 fills, read by the report to print pending surfaces
 - [ ] Write `scripts/inventory/tests/test_report.py` with a three-record fixture tree: one owned, one ownerless, one doubly owned
@@ -313,7 +316,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the overflow: what happens when buttons no longer fit (the overflow button and its flyout)
   - Record by hand the behaviours
     - Drag to reorder, drag a file over a button to switch, middle click for a new window, Shift-click, Ctrl-click cycling, Win and a digit, auto-hide and its reveal edge
-  - Capture the taskbar on a second display and its three button modes (all taskbars, main and where open, where open)
+  - Capture the taskbar on a second display and its three button modes (all taskbars, main and where open, where open), on the topology of §19
   - Done when: `check-inventory.py --surface taskbar` passes; the file holds a `metric` record for bar height, icon size and button width at both alignments, and one `state` record per button state listed above.
 - [ ] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
   - Capture the tray's fixed order
@@ -371,6 +374,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - The app row, title, body lines, the image slot, the progress slot, the input slot, the button row (up to five), and the expand, settings and close controls
   - Capture the calendar: the collapsed date row, the month grid (6 by 7), the month, year and decade zoom levels, the scroll between months, and the focus session row beneath it
   - Capture a toast on screen: its position, size, the stack of several toasts, the time it stays, and the swipe or close dismissal
+    - Overflowing groups, long text, expanded and collapsed cards come from the notification fixtures of §19
   - Record by hand the toast kinds
     - Plain, with buttons, with a text reply, with a selection, with a progress bar, an alarm or reminder that stays, an incoming call, and an urgent toast that breaks through do not disturb
   - Capture the card's context menu: turn off for this app, go to notification settings, make high priority
@@ -428,13 +432,20 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the power button menu on the sign-in screen and the accessibility flyout's list
   - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
-  - Record the setup frame from a fresh VM: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
+  - Record the setup frame from the `pre-oobe` checkpoint of §19: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
   - Record each page in order as a `page` record with its controls: region, keyboard layout, second layout, network, device name, account, privacy choices, and the final preparing screen
   - Give every page tied to a Microsoft account, cloud backup, advertising or the assistant its disposition under §6
   - Record the keyboard path through setup and which pages can be skipped
   - Record the "getting ready" animation as a `motion` record: its duration, text slot changes and background behaviour
   - Record the first desktop after setup: which windows open, which toasts appear, and the default pins on the taskbar and Start as frames
   - Done when: `check-inventory.py --surface session` passes; `setup.json` lists the pages in order with no gap in `order`, and each cloud-tied page has `disposition` other than `build`.
+- [ ] Boot, Update, Stop and Recovery Screens: writes `docs/design/inventory/session/boot.json`
+  - Captured from the host side (Hyper-V screenshot of the VM framebuffer), because UIA does not run there; every record is `hand:<build>` with a shot
+  - The boot logo and spinner, the boot manager menu, the "working on updates" screens before and after restart, and the Safe mode desktop's marks
+  - The stop error screen, raised by a host NMI (`Debug-VM -InjectNonMaskableInterrupt` with `NMICrashDump` set), including its progress and restart
+  - The recovery environment: automatic repair, the troubleshoot menu, startup settings and the reset path, each page as a `page` with its choices; a checkpoint is taken before each so the VM returns clean
+  - Reconcile each screen against its owner in `D01 T15`, `D01 T14` and `D01 T22`, and note gaps in §15
+  - Done when: `check-inventory.py --surface session` passes; every screen listed has records and a shot, and the stop error records name each text slot without Microsoft's words.
 - [ ] Shell Overlays: writes `docs/design/inventory/flyouts/overlays.json`
   - Capture the volume and brightness indicator: its position, size, the icon slot, the bar, the number, and its timeout
   - Capture clipboard history (Win-V): the item card, pin, delete, clear all, the tab row it shares with the emoji panel, and the empty and disabled states
@@ -444,6 +455,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the Run dialog: the icon, the label, the combo box, the three buttons and the elevated variant's extra line
   - Capture the Project flyout (Win-P) and its four modes, and the Cast flyout (Win-K) as a frame
   - Capture the input switcher (Win-Space) and the touch keyboard: its layouts (default, small, split, traditional), the key rows, and the handwriting panel as a frame
+    - The shifted, symbol, emoji and contextual (password, number, URL) layers, and IME composition with its candidate window and paging, typed from fixed text fixtures in the Japanese and Chinese input methods
   - Capture the capture bar (Win-Shift-S): the mode buttons (rectangle, window, full screen, freeform), the video toggle, and close
   - Capture voice typing (Win-H): the bar, the microphone button, the settings flyout
   - Done when: `check-inventory.py --surface flyouts` passes; `overlays.json` holds one `surface` record per overlay named above, each with at least one child.
@@ -512,8 +524,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Touchpad: every gesture group (taps, scroll and zoom, three-finger, four-finger, advanced gestures) with each list's fixed choices
   - Pen, Touch, AutoPlay and USB: every switch and list
   - Reconcile against the `settings` baseline
-    - A page absent on the VM because the hardware is absent is recorded as hardware-gated in `REFERENCE.md` and captured by hand from a host that has it
-  - Done when: `check-inventory.py --surface settings` passes; the touchpad gesture lists carry their fixed choices as `menuItem` records, and every hardware-gated page is named in `REFERENCE.md`.
+    - A page absent on the VM because the hardware is absent is recorded as hardware-gated in `REFERENCE.md` and reached through its device stand-in of §19, or the physical capture of §19 where none exists
+  - Done when: `check-inventory.py --surface settings` passes; the touchpad gesture lists carry their fixed choices as `menuItem` records, and every hardware-gated page has records and a shot from §19's stand-in or physical capture.
 - [ ] Settings: Network and Internet: writes `docs/design/inventory/settings/network.json`
   - The category page: the status header (connection name, properties, data usage) and the list of pages
   - Wi-Fi: the switch, show available networks, manage known networks and a network's page, hardware properties, random hardware addresses
@@ -628,7 +640,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Done when: `check-inventory.py --surface settings` passes; every capability page listed above exists as a record that names the template record as its `parent` pattern, and no baseline row under these pages is unmatched.
 - [ ] Settings: Windows Update: writes `docs/design/inventory/settings/update.json`
   - The category page: the status header in each state, the main button, and the update row with its progress
-    - States: up to date, checking, available, downloading, installing, restart required, failed, paused
+    - States: up to date, checking, available, downloading, installing, restart required, failed, paused, each reached through the local update source of §19
   - Pause updates and its duration list, update history (the grouped list frame, uninstall updates link), and advanced options
     - Advanced: other products, get me up to date, metered download, restart notification, active hours and its dialog, optional updates
     - Advanced, continued: delivery optimization and its sub-page, recovery link, restart apps, configured policies
@@ -878,7 +890,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record text metrics per type ramp style as numbers: ascent, descent, line gap, and the advance width of each printable ASCII character and of 20 fixed test strings, so a metric-compatible font can be proven to lay out identically
   - Add `scripts/inventory/measure-motion.py`: records a surface into the scratch directory and writes one `motion` record
     - It records at the display's refresh rate, tracks one edge of the moving element, and writes duration, distance and the nearest cubic curve
-    - The recording is deleted after measurement
+    - The recording is kept in `R:\11\ref-shots\motion\` with its frame timestamps and raw edge samples, hashed into `shots.json`, so a curve is re-fitted without the VM
   - Measure the motions
     - Window open, close, minimize, maximize and restore; Start, flyout and menu open and close; toast in and out; Task View and desktop switch
     - Hover and press on a button; the page transition in Settings; the tab switch underline; the progress ring's cycle
@@ -887,19 +899,19 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the cursor roles with hot spot and nominal size; no cursor file is recorded
     - Arrow, text, busy, working in background, the eight resize directions, move, link, unavailable, precision, pen, the drag effects
   - Record the elevation levels found: which surfaces cast a shadow, its extent and offset, per surface kind
-  - Done when: `check-inventory.py --surface system` passes; each motion listed has a `motion` record with a duration between 50 and 1,000 milliseconds, and the scratch directory holds no recording after the run.
+  - Done when: `check-inventory.py --surface system` passes; each motion listed has a `motion` record with a duration between 50 and 1,000 milliseconds, and every motion has its recording and samples listed in `shots.json`.
 - [ ] Visual States, Themes and Scale Variants: writes `docs/design/inventory/system/states.json` and per-profile bounds files
-  - Add `capture-ui.py --profile <id>`: re-captures a surface under another profile and writes only `id` and `bounds` to `<surface>/<file>.<profile>.json`, so layout rules can be derived from three points
-  - Re-capture the desktop, taskbar, Start, quick settings, window chrome, Settings frame and File Explorer frame under `fhd-150`, and derive for each `metric` whether it scales, stays fixed or rounds
+  - Add `capture-ui.py --profile <id>`: re-captures a surface under another profile and writes only `id` and `bounds` to `<surface>/<file>.<profile>.json`, so layout rules can be derived from the five scale points of §19
+  - Re-capture the desktop, taskbar, Start, quick settings, window chrome, Settings frame and File Explorer frame under every scale profile of §19 (125 to 200 percent), and derive for each `metric` whether it scales, stays fixed or rounds
   - Add `scripts/inventory/sample-colours.py`: samples an element's fill, border and text colour in a given state from a screenshot in the scratch directory
     - It writes them as colour roles with their measured values in light and in dark
-  - Record the state matrix for each control type of the `controls` baseline, in light, dark and one contrast theme
+  - Record the state matrix for each control type of the `controls` baseline, in light, dark and all four contrast themes
     - States: rest, hover, pressed, disabled, focused (keyboard), selected, selected and hover
   - Record the focus visual: the two-ring rectangle, its thickness, offset and corner rule, and which surfaces still draw the older dotted rectangle (a ledger entry of §6)
   - Record the materials: which surfaces use the wallpaper-tinted backdrop, which use the blurred translucent one, and which are opaque
     - Also what each falls back to when transparency is off, on battery saver and in a contrast theme
   - Record the accent colour's uses: which elements take the accent, and the light and dark variants derived from it
-  - Done when: `check-inventory.py --surface system` passes; every control type of the `controls` baseline has all seven states in light and dark, and each metric of the seven re-captured surfaces has a scaling class.
+  - Done when: `check-inventory.py --surface system` passes; every control type of the `controls` baseline has all seven states in light, dark and the four contrast themes, and each metric of the seven re-captured surfaces has a scaling class.
 - [ ] Commit: `"inventory: shortcut, gesture, metric, motion and state catalogues captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
@@ -1003,6 +1015,37 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] Commit: `"inventory: pixel comparison against reference screenshots"`
 
 **Test checkpoint:** with a fixture reference and a fixture render that differ by one pixel outside any mask, `pixel-check.py --fixture` prints `pixel: 1 surfaces, 1 differ` and exits 1; the same pair differing only inside a text mask with equal ink boxes exits 0. Platform: reference screenshots from the campaign store; the comparison runs on Linux against QEMU TCG and never starts the VM.
+
+---
+
+## 19. Capture Matrix, Fixtures and Device Stand-ins
+
+> **Spawned-by:** §2 (split)
+
+**Design:** n/a -- prepares the reference machine and its expected captures, it draws nothing
+
+**Needs:** bare-metal
+
+Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and builds the fixtures that make each entry reachable.
+
+- [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
+  - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
+- [ ] Keep the setup flow replayable: take the checkpoint `pre-oobe` at the first setup page before the answer file runs, and run §9's First-Run Setup capture from it, for both the local-account and the network branches
+- [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 --verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
+  - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
+- [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
+  - Evidence for all three taskbar button modes on the second display is required before §8 closes
+- [ ] Add synthetic list fixtures: a script that fills the VM with made-up files, apps, devices, networks and accounts, so a list's row template, controls, bounds and states are captured while the payload stays fictional
+  - Capture each such list empty, populated and overflowing; `ENVIRONMENT_LISTS` of §3 then hides only real data, never the row layout
+- [ ] Add service-state fixtures with controlled connectivity: a local update source and a network switch that is toggled per checkpoint
+  - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
+- [ ] Add notification fixtures: a script that posts deterministic toasts in several groups, with long text and overflow, captured expanded, collapsed and at text size 150 percent
+- [ ] Prove a device stand-in for each hardware-gated surface (battery and its states, brightness, lid, touchpad, pen, touch, rotation and tablet posture)
+  - Hyper-V's virtual battery on a prerelease configuration version, and a clone of the reference disk under QEMU with `virtio-multitouch` and a tablet device; each proven stand-in is a fixture row in `expected.json`
+- [ ] Capture what no stand-in can show on a physical Windows 11 laptop installed from the same image at the same profiles, recorded as `hand:<build>` with screenshots in the same store
+- [ ] Commit: `"inventory: capture matrix, fixtures and device stand-ins"`
+
+**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 --verify` reports every profile of the matrix; every hardware-gated row of `expected.json` names a proven stand-in or the physical capture. Platform: the operator's Windows host with Hyper-V, and the physical laptop for the rows no stand-in covers.
 
 ---
 
