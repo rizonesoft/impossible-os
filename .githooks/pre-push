@@ -73,6 +73,23 @@ while read -r _lref _lsha rref _rsha; do
   esac
 done <<< "$STDIN_DATA"
 
+# A section built while the reviewer was down owes its review, and nothing is
+# pushed until it has had it: an outage is a delay, never an approval. Owner:
+# todo/00-infrastructure/TODO-08-automation-hardening.md section 45. A record
+# that cannot be read refuses too; there is no opt-out variable.
+OWED_TOOL="$REPO_ROOT/scripts/overnight/review_owed.py"
+if [ -f "$OWED_TOOL" ]; then
+  OWED_OUT="$(python3 "$OWED_TOOL" --root "$REPO_ROOT" gate 2>&1)"
+  OWED_RC=$?
+  if [ "$OWED_RC" -ne 0 ]; then
+    echo -e "\033[31m[pre-push] BLOCKED: a review is owed.\033[0m"
+    printf '%s\n' "$OWED_OUT" | sed 's/^/  /'
+    echo "  Review the owed section(s) first (python3 scripts/overnight/review_owed.py list),"
+    echo "  stamp them, then: python3 scripts/overnight/review_owed.py clear --todo <todo> --section <N>"
+    exit 1
+  fi
+fi
+
 # Files changed across every non-delete ref update in this push.
 pushed_files() {
   local lref loid rref roid base

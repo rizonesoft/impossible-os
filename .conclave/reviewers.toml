@@ -2,6 +2,9 @@
 #
 # Operator decision 2026-11-10: when Claude is the writer, the reviewer is always GPT-6 Astra through the Codex CLI.
 # One route, one reviewer, no fallback. An outage is never an approval.
+# Operator decision 2026-11-14: an outage is a delay, and it does not stop the run. A section built while the
+# reviewer is down is recorded as owed (scripts/overnight/review_owed.py), nothing is pushed while a debt is
+# open, and the owed sections are reviewed in full, first, when the reviewer answers.
 # Operator decision 2026-11-11: the review shape follows RasterFold's three passes. It is four here, on evidence:
 # replayed on shipped sections the same day, one combined round found one of four known performance defects that
 # the dedicated performance review had found, so performance stays a pass of its own

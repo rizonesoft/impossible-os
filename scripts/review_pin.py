@@ -304,6 +304,34 @@ STAMPS = ".claude/state/last-review-stamps.json"
 OLDER_KINDS = ("design", "adversarial", "adversarial-impl", "test-coverage", "consistency", "perf", "re-adversarial")
 
 
+OWED = pathlib.Path(".claude") / "state" / "review-owed.json"
+
+
+def section_base(root, todo, section, plan_head=""):
+    """The commit a section's review starts from.
+
+    A section built while the reviewer was down is recorded with the commit before its code
+    (scripts/overnight/review_owed.py); its plan pass is dispatched late, after that code, so the plan pass's
+    commit is not where the section started. That recorded base wins. Every other section starts at its plan
+    pass. A record that cannot be read raises Refused: guessing a later base would hide the section's code
+    from its own review.
+    """
+    import json
+    try:
+        records = json.loads((pathlib.Path(root) / OWED).read_text())
+    except FileNotFoundError:
+        return plan_head
+    except (OSError, ValueError) as exc:
+        raise Refused(f"{OWED} cannot be read: {exc}") from exc
+    if not isinstance(records, list):
+        raise Refused(f"{OWED} is not a list of owed sections")
+    for e in records:
+        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
+                and isinstance(e.get("base"), str) and e["base"]:
+            return e["base"]
+    return plan_head
+
+
 def section_status(root, todo, section):
     """Which review rules a section is on, and the commit it started from when that is known.
 
@@ -342,7 +370,7 @@ def section_status(root, todo, section):
                 and isinstance(e.get("head"), str):
             base = e["head"]
     if seen:
-        return ("passes", base)
+        return ("passes", section_base(root, todo, section, base))
     if older:
         return ("older", "")
     try:

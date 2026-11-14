@@ -159,9 +159,32 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
 - **Broker exit 75 = the Codex BACKEND is down: defer, do not retry.** The broker
   refuses when the last 2 completed legs in 20 minutes failed at the backend
   (HTTP status, stream disconnect, model at capacity; `scripts/overnight/codex-outage-check.py`).
-  Park the review with the outage as its blocker and do work that needs no Codex;
-  the gate clears when a leg succeeds or the window passes. Measured 2026-09-03:
-  five retries (10 calls, ~4m20s) before the run reached this conclusion by hand.
+  Measured 2026-09-03: five retries (10 calls, ~4m20s) before the run reached this
+  conclusion by hand. What to do next is the outage rule below.
+- **A REVIEWER OUTAGE LEAVES A REVIEW OWED, AND THE RUN CONTINUES (operator decision
+  2026-11-14).** An outage is a delay, never an approval and never a stop. Every section
+  starts with a plan pass, so while the reviewer is down the next section is built
+  unreviewed, as a recorded debt:
+  1. **Record the debt first, before the first edit:**
+     `python3 scripts/overnight/review_owed.py add --todo <todo-path> --section <N>`. It is
+     accepted only while the outage check reports an outage, and it keeps the commit the
+     section starts from. Record it before building: the outage evidence lasts 20 minutes
+     and a build lasts longer. Asking again later is harmless.
+  2. **Build the section and commit it.** Its implementation commit has no Codex evidence,
+     so it uses the section-commit gate's documented opt-out, alone on the call:
+     `SKIP_REVIEW_HOOK=1 SKIP_REVIEW_HOOK_REASON="reviewer outage: review owed (review_owed.py)" git commit ...`.
+     This is the one place that opt-out is the rule and not the exception.
+  3. **Move on.** `sequencer_triage.py --next` does not return an owed section while the
+     reviewer is down, a rollover does not refuse its unpushed commits, and the push gate
+     refuses every push while a debt is open. Do not push, and do not revert the section.
+  4. **When the reviewer answers** (`review_owed.py probe` exits 0), `--next` returns the
+     oldest owed section first, whichever file the run moved on to. Review it in full: a
+     late `plan` pass, then the wave. The recorded base is used for you by
+     `review_pin.py --section` (it prints `REVIEW_BASE=<sha>`), the second reviewer's
+     dispatcher and the stamp gate. Stamp it, then
+     `python3 scripts/overnight/review_owed.py clear --todo <todo-path> --section <N>`.
+  5. **Push once every debt is cleared.** The sections built meanwhile go out in that push.
+  `review_owed.py list` shows what is open.
 - **Every review prompt starts with a LITERAL `[review-kind: X]`** -- never
   `"$(cat file)"`, `"$VAR"` or a loop variable, which expand only at run time so
   the recorder attributes nothing (measured 2026-09-05: a five-leg approved wave

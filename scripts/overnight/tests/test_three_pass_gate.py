@@ -658,6 +658,29 @@ def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, mo
     gate._commit_diff_deadline.clear()
 
 
+def test_a_section_built_during_an_outage_is_judged_from_its_recorded_base(tmp_path):
+    root, h = _history(tmp_path, second=True)
+    # Built while the reviewer was down, so its plan pass came late: at `final`, after the kernel code.
+    late = _good(h, plan=(h["final"], 1), round=(h["docs"], 2), performance=(h["docs"], 3), completion=(h["docs"], 4))
+    # Read from the late plan pass, the section changed nothing the second reviewer reads.
+    assert _judge(root, **late) == (True, "")
+    owed = root / ".claude/state/review-owed.json"
+    owed.write_text(json.dumps([{"todo": TODO, "section": 7, "base": h["plan"], "since": 1}]))
+    try:
+        ok, why = _judge(root, **late)
+        assert not ok and "missing: second" in why, why
+        # A second pass shown only what follows the late plan pass was not shown the section.
+        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["final"])], **late)
+        assert not ok and "not from the section's start" in why, why
+        assert _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], **late) == (True, "")
+        # A record that cannot be read is said so; it is not read as nothing owed.
+        owed.write_text("{")
+        ok, why = _judge(root, **late)
+        assert not ok and "where this section started could not be read" in why, why
+    finally:
+        owed.unlink()
+
+
 def test_second_passes_never_count_toward_the_pass_cap(tmp_path):
     root, h = _history(tmp_path, second=True)
     manifest = root / gate._PASS_MANIFEST

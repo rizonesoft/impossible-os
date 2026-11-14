@@ -825,6 +825,19 @@ def _dirty_owner(porcelain_line: str, root: Path | None = None) -> str:
     return "tracked-source"
 
 
+def _reviews_owed(root: Path) -> bool:
+    """Whether a section built while the reviewer was down still owes its review
+    (scripts/overnight/review_owed.py). Nothing is pushed while one is open, so
+    unpushed commits are then expected and are not a failed rollover: counting
+    them as one would revert the section after two refusals. A record that
+    cannot be read is not a debt; the ordinary refusal stands."""
+    try:
+        records = json.loads((root / ".claude/state/review-owed.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(records, list) and bool(records)
+
+
 def _rollover_failures(root: Path, state: dict) -> list:
     """Machine gates for a verified rollover checkpoint. Every failure is a
     reason the worker context may NOT rotate yet."""
@@ -864,7 +877,7 @@ def _rollover_failures(root: Path, state: dict) -> list:
                              timeout=30)
         if out.returncode != 0:
             fails.append("no upstream configured (cannot verify pushed)")
-        elif out.stdout.strip() != "0":
+        elif out.stdout.strip() != "0" and not _reviews_owed(root):
             fails.append(f"{out.stdout.strip()} commit(s) not pushed")
     except Exception:
         fails.append("git rev-list unavailable")

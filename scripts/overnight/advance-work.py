@@ -60,9 +60,17 @@ def _next_section(sections):
     """The section the packet names: the first NEEDS_WORK section not waiting
     on an unfinished dependency; else the first NEEDS_WORK one (a stall the
     worker should see); else None. A BLOCKED section is a recoverable deferral
-    and is never picked, since the fixpoint loop retries it once unblocked."""
-    open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK"]
-    return next((s for s in open_secs if not s.get("waiting")), None) or next(iter(open_secs), None)
+    and is never picked, since the fixpoint loop retries it once unblocked.
+
+    Two marks from the oracle come first (the reviewer-outage rule): a section
+    carrying `review_first` is a debt the reviewer can now collect and is the
+    one to work, whatever precedes it; a section carrying `review_owed` waits
+    for a reviewer that is still down and is never picked, not even as the
+    fallback, or the run would retry its review in a loop."""
+    open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK" and not s.get("review_owed")]
+    return (next((s for s in open_secs if s.get("review_first")), None)
+            or next((s for s in open_secs if not s.get("waiting")), None)
+            or next(iter(open_secs), None))
 
 
 def _cursor_disagreement(state: dict, todo, nxt_sec) -> dict | None:

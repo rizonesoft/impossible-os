@@ -461,8 +461,53 @@ def _fresh_nodes(root):
         return None
 
 
-def runnable_sections(entry, per, ready):
+OWED_TOOL = os.path.join("scripts", "overnight", "review_owed.py")
+OWED_STATE = os.path.join(".claude", "state", "review-owed.json")
+
+
+_OWED_MEMO = {}
+
+
+def owed_reviews(root):
+    """One answer an invocation: the reviewer is probed once, however many callers ask."""
+    key = os.path.abspath(str(root))
+    if key not in _OWED_MEMO:
+        _OWED_MEMO[key] = _owed_reviews(root)
+    return _OWED_MEMO[key]
+
+
+def _owed_reviews(root):
+    """(blocked, recovered) for the sections whose review is owed (scripts/overnight/review_owed.py).
+
+    `blocked` is the set of (file, n) that must not be picked: the reviewer is still down, so picking one
+    would only fail its review again. `recovered` lists (file, n) oldest first once the reviewer answers:
+    they are reviewed before anything else, because nothing can be pushed while one is open. With no record
+    both are empty and nothing is probed. A record or a probe that cannot be read blocks nothing and recovers
+    nothing: the run then meets the owed section in the ordinary order, as before this existed.
+    """
+    try:
+        with open(os.path.join(root, OWED_STATE), encoding="utf-8") as fh:
+            records = json.load(fh)
+        owed = [(e["todo"], e["section"]) for e in records]
+    except (OSError, ValueError, TypeError, KeyError):  # fail-direction: no record -> the ordinary order
+        return frozenset(), []
+    if not owed:
+        return frozenset(), []
+    import subprocess
+    try:
+        done = subprocess.run([sys.executable, os.path.join(root, OWED_TOOL), "--root", str(root), "probe"],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):  # fail-direction: unknown -> the ordinary order
+        return frozenset(), []
+    if done.returncode == 75:
+        return frozenset(owed), []
+    return (frozenset(), owed) if done.returncode == 0 else (frozenset(), [])
+
+
+def runnable_sections(entry, per, ready, blocked=frozenset()):
     """NEEDS_WORK sections of one file that the run may start now, in file order.
+
+    `blocked` holds (file, n) of built sections whose review is owed while the reviewer is down: not runnable.
 
     A shipped section ([x] in its Implementation Order row) owes only its
     review, which no dependency can block, so it is always runnable. Any other
@@ -474,6 +519,8 @@ def runnable_sections(entry, per, ready):
     out = []
     for n, cls in per:
         if cls != NEEDS_WORK:
+            continue
+        if status.get(n) == "x" and (entry["file_path"], n) in blocked:
             continue
         if ready_here is None or status.get(n) == "x" or n in ready_here:
             out.append(n)
@@ -499,11 +546,22 @@ def next_file(cache, root, ready="unset"):
     return entry, cls
 
 
-def section_list(entry, per, ready):
+def section_list(entry, per, ready, owed=None):
     """The `sections` array `--classify` and `--next` print: each section's
-    class, plus `waiting` on a NEEDS_WORK section that cannot start yet."""
-    runnable = set(runnable_sections(entry, per, ready))
-    return [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {})}
+    class, plus `waiting` on a NEEDS_WORK section that cannot start yet.
+
+    `owed` is `owed_reviews()`'s answer. A built section whose review waits for
+    the reviewer to come back carries `review_owed`: no consumer may pick it,
+    not even as the fallback when everything else waits. Once the reviewer
+    answers, the oldest owed section of this file carries `review_first`: it is
+    the section to work, ahead of every other runnable one."""
+    blocked, recovered = owed or (frozenset(), [])
+    built = {s.get("n") for s in entry.get("sections") or [] if (s.get("status") or "").strip() == "x"}
+    runnable = set(runnable_sections(entry, per, ready, blocked))
+    first = next((n for f, n in recovered if f == entry["file_path"] and (n, NEEDS_WORK) in per), None)
+    return [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {}),
+             **({"review_owed": True} if c == NEEDS_WORK and n in built and (entry["file_path"], n) in blocked else {}),
+             **({"review_first": True} if n == first else {})}
             for n, c in per]
 
 
@@ -523,13 +581,28 @@ def pick_next(cache, root, ready="unset", want_ready=False):
     saw_blocked = False
     needs = {}
     order = []
+    blocked, recovered = owed_reviews(root)
     for entry in traversal_order(cache):
         cls, per = classify_file(entry, root)
         if cls == NEEDS_WORK:
+            built = {s.get("n") for s in entry.get("sections") or [] if (s.get("status") or "").strip() == "x"}
+            if all((entry["file_path"], n) in blocked and n in built for n, c in per if c == NEEDS_WORK):
+                # Everything this file still owes is a review the reviewer cannot give yet.
+                saw_blocked = True
+                continue
             needs[entry["file_path"]] = (entry, per)
             order.append(entry["file_path"])
         elif cls == BLOCKED:
             saw_blocked = True
+    # The reviewer is back: an owed section is reviewed before anything else, oldest first, whichever file the
+    # run moved on to. Nothing can be pushed while one is open.
+    for file_path, n in recovered:
+        if file_path in needs and (n, NEEDS_WORK) in needs[file_path][1]:
+            res = (needs[file_path][0], NEEDS_WORK, False)
+            if not want_ready:
+                return res
+            ready = plan_ready(root, cache) if ready == "unset" else ready
+            return (*res, ready, needs[file_path][1])
     if not order:
         res = (None, (BLOCKED if saw_blocked else None), False)
         return (*res, None, []) if want_ready else res
@@ -542,7 +615,8 @@ def pick_next(cache, root, ready="unset", want_ready=False):
     else:
         cur = _cursor_file(root)
         candidates = ([cur] if cur in needs else []) + [f for f, _n in ready if f in needs] + order
-        res = next(((needs[f][0], NEEDS_WORK, False) for f in candidates if runnable_sections(*needs[f], ready)),
+        res = next(((needs[f][0], NEEDS_WORK, False) for f in candidates
+                    if runnable_sections(*needs[f], ready, blocked)),
                    (needs[order[0]][0], NEEDS_WORK, True))
     return (*res, ready, needs[res[0]["file_path"]][1]) if want_ready else res
 
@@ -606,7 +680,7 @@ def cmd_next(cache, root):
         **({"waiting": True} if waiting else {}),
         # The chosen file's sections from the same plan snapshot, so a caller
         # needs no second `--classify` (and no second plan computation).
-        "sections": section_list(entry, per, ready),
+        "sections": section_list(entry, per, ready, owed_reviews(root)),
     }))
     return 0
 
@@ -626,7 +700,7 @@ def cmd_classify(cache, root, target):
         "lifecycle": lc,
         "stages_1_2_done": lc["validated"] and lc["gap_audited"],
         # `waiting`: still needs work, but a section it depends on is not done.
-        "sections": section_list(entry, per, plan_ready(root, cache)),
+        "sections": section_list(entry, per, plan_ready(root, cache), owed_reviews(root)),
     }, indent=1))
     return 0
 

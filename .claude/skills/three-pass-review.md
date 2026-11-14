@@ -122,6 +122,17 @@ python3 scripts/second_review_dispatch.py '[review-kind: second] <todo-path> sec
 - **Record what it was worth** once the section's second review is finished: `python3 scripts/overnight/second-review-log.py record --todo <todo-path> --section <N>` with one `--finding` per finding: `'fixed: <what>'`, `'rejected: <what> | <the code evidence>'` or `'filed: <what> | <the tracked item>'` (none when it found nothing). After ten sections `stats` (`--findings` lists each one) is the evidence for keeping it, narrowing its paths or dropping it. `unavailable` lists the stamps still owed a read.
 - In the stamp, name its passes beside Astra's: `Codex 5x (...), Gemini 2x`.
 
+## When the reviewer is down
+
+`scripts/overnight/review-broker-codex-dispatch.sh` exits 75 while the reviewer's backend is down (`scripts/overnight/codex-outage-check.py`). The section is then built unreviewed as a recorded debt, and reviewed in full when the reviewer answers:
+
+- `python3 scripts/overnight/review_owed.py add --todo <todo-path> --section <N>` before the first edit. It records the commit the section starts from.
+- Build and commit. Nothing is pushed while a debt is open; the push gate refuses.
+- When `python3 scripts/overnight/review_owed.py probe` exits 0: dispatch the `plan` pass late, then the wave. `python3 scripts/review_pin.py --section <todo-path> <N>` prints the recorded base as `REVIEW_BASE=`; use it, not the late plan pass's commit.
+- After the stamp commit: `python3 scripts/overnight/review_owed.py clear --todo <todo-path> --section <N>`, then push.
+
+The steps for an unattended run are in [`overnight-sequencer`](overnight-sequencer/SKILL.md).
+
 ## Which rules a section is on
 
 ```bash

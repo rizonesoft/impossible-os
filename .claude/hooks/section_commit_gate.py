@@ -2644,7 +2644,12 @@ def _second_issues(root: Path, todo: str, section: str, plan: dict | None, curre
         return ([why], None)
     if second is None or plan is None or not _receipt_complete(plan) or not current_head:
         return ([], None)      # no second reviewer pinned, or the plan is already reported
-    changed = _commit_diff(root, "--name-only", plan["head"], current_head)
+    try:
+        import review_pin
+        start = review_pin.section_base(root, todo, section, plan["head"])
+    except Exception as exc:
+        return ([f"where this section started could not be read ({exc})"], None)
+    changed = _commit_diff(root, "--name-only", start, current_head)
     if changed is None:
         return (["the files this section changed could not be listed, so whether a second review is owed is unknown"],
                 None)
@@ -2669,10 +2674,10 @@ def _second_issues(root: Path, todo: str, section: str, plan: dict | None, curre
         return ([], None)
     if not _second_complete(newest):
         return ([f"second has no checked, complete receipt (incomplete, or not dispatched with {run})"], None)
-    if newest.get("base") != plan["head"]:
-        # It was shown a range that is not this section's: from another commit than the plan pass's.
+    if newest.get("base") != start:
+        # It was shown a range that is not this section's: from another commit than where the section started.
         return ([f"second read the candidate from {str(newest.get('base'))[:10]}, not from the section's start "
-                 f"{plan['head'][:10]}: dispatch it again ({run})"], None)
+                 f"{start[:10]}: dispatch it again ({run})"], None)
     capped = spent >= second["round_cap"]
     if not covers:
         if capped:
