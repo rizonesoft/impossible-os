@@ -157,6 +157,13 @@ class Pure(unittest.TestCase):
         B.set_root(tmp)
         B.check_mockup_materials(errs)
         self.assertEqual(len(errs), 3, errs)
+        # A swapped pair: the frame's blur read from its noise and the reverse.
+        (tmp / B.MOCKUP).write_text(real.replace("--blur: var(--mat-frame-blur);", "--blur: var(--mat-frame-noise);")
+                                    .replace("--noise: var(--mat-frame-noise);", "--noise: var(--mat-frame-blur);"))
+        errs.clear()
+        B.check_mockup_materials(errs)
+        self.assertEqual(len(errs), 2, errs)
+        self.assertIn("--blur: var(--mat-frame-blur);", errs[0])
 
     def test_the_mockup_switches_between_the_three_strengths(self):
         css = B.design_tokens_css()

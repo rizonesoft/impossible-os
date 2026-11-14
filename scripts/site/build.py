@@ -1812,6 +1812,7 @@ def material_decls(t: dict, theme: str, strength: str) -> list[str]:
 MOCKUP = "gh-pages/design/index.html"
 MOCKUP_BACKDROP = "blur(var(--blur)) saturate(var(--sat))"
 MOCKUP_EDGE = "rgba(255,255,255,var(--edge))"
+MOCKUP_BINDINGS = (("tint", "tint"), ("blur", "blur"), ("noise", "noise"), ("sat", "saturate"), ("edge", "edge"))
 
 
 def check_mockup_materials(errors: list[str]) -> None:
@@ -1829,10 +1830,12 @@ def check_mockup_materials(errors: list[str]) -> None:
     for literal in ("saturate(1", "saturate(2", "blur(var(--blur)) saturate(0"):
         if literal in text.split("/* ---- materials", 1)[-1].split(".win {", 1)[0]:
             errors.append(f"{MOCKUP}: a material rule states a saturation of its own (`{literal}`); read `var(--sat)`")
+    # Each rule variable is bound to the token of the same meaning, so a swapped
+    # pair (the blur read from the noise) is refused as well as a missing one.
     for surface in MATERIAL_ROWS:
-        for name in ("tint", "blur", "noise", "saturate", "edge"):
-            if f"var(--mat-{surface}-{name})" not in text:
-                errors.append(f"{MOCKUP}: no rule reads --mat-{surface}-{name}; bind it in .mat-{surface}")
+        for var, name in MOCKUP_BINDINGS:
+            if f"--{var}: var(--mat-{surface}-{name});" not in text:
+                errors.append(f"{MOCKUP}: .mat-{surface} must bind `--{var}: var(--mat-{surface}-{name});`")
 
 
 def design_tokens_css() -> str:
