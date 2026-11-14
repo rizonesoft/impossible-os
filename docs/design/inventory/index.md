@@ -45,7 +45,7 @@ Matching Windows 11 is the default, so replacing is bound to evidence and loses 
 - **Two captured variants.** A `replaced` record's entry names at least two existing records, and the record is one of them or sits under one. An entry with fewer cannot be cited.
 - **A setting goes to a setting.** A replaced setting's `mergedInto` names a setting, and a replaced page's or dialog tab's names a page; the target is built. Many settings cannot be merged into one page.
 - **A setting only the replaced home has is still built.** It keeps `build` and names the page or group it lives under in Impossible OS in `placedUnder`; what sits under it needs no place of its own. A built record under a replaced home with no place is refused.
-- **A target is followed to its end.** A merge target or a place that is replaced or excluded, sits under such a record, or leads back to itself holds nothing, and is refused on the record that names it.
+- **A target is followed to its end.** A merge target or a place that is replaced or excluded, sits under such a record, names a record that does not exist, or leads back to itself holds nothing, and is refused on the record that names it.
 - **A home entry maps what has no link.** `placement` on a `home` entry maps a record of the replaced home (a Control Panel category) to the built page that takes its settings with no page of their own. It is filled when the replaced home is captured, and each side must be a record.
 - **Entry points stay.** The name, place and order of what opens a replaced flow are `build` records.
 

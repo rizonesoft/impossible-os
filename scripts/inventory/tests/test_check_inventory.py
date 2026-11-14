@@ -666,9 +666,9 @@ class Decisions(unittest.TestCase):
 
     def test_excluded_needs_a_reason_and_only_excluded_has_one(self):
         lines = three(); lines[1]["disposition"] = "excluded"
-        self.fails({"taskbar/bar.json": lines}, "'reason' is a required property")
+        self.fails({"taskbar/bar.json": lines}, "disposition-fields: win11.taskbar.bar.start: an excluded record gives its reason")
         lines = three(); lines[1]["reason"] = "advertising"
-        self.fails({"taskbar/bar.json": lines}, "schema")
+        self.fails({"taskbar/bar.json": lines}, "only an excluded record has one")
         lines = three(); lines[1].update(disposition="excluded", reason="advertising")
         self.assertEqual(decide({"taskbar/bar.json": lines}).returncode, 0)
 
@@ -702,13 +702,13 @@ class Decisions(unittest.TestCase):
         files["taskbar/bar.json"][1].update(disposition="replaced", inconsistency="home")
         self.fails(files, "replaced-evidence: win11.taskbar.bar.start: replaced under home, but it is not a variant")
 
-    def test_replaced_without_an_inconsistency_or_a_target_is_refused_by_the_schema(self):
+    def test_replaced_without_an_inconsistency_or_a_target_is_refused(self):
         files = panel(); del files["control-panel/a.json"][0]["inconsistency"]
-        self.fails(files, "'inconsistency' is a required property")
+        self.fails(files, "disposition-fields: win11.control-panel.frame: a replaced record names its ledger entry")
         files = panel(); del files["control-panel/a.json"][2]["mergedInto"]
-        self.fails(files, "'mergedInto' is a required property")
+        self.fails(files, "a replaced setting names the record that holds it in mergedInto")
         files = panel(); files["settings/a.json"][2]["mergedInto"] = "win11.settings.frame.sound"
-        self.fails(files, "schema")   # only a replaced record is merged
+        self.fails(files, "only a replaced record is mergedInto another")
 
     def test_many_settings_cannot_merge_into_a_page(self):
         files = panel()
@@ -749,7 +749,7 @@ class Decisions(unittest.TestCase):
         files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.control-panel.frame.sound"
         self.fails(files, "which is itself replaced; a place is built")
         files = panel(); files["control-panel/a.json"][2].update(placedUnder="win11.settings.frame.sound")
-        self.fails(files, "schema")   # a replaced record is merged, never placed
+        self.fails(files, "a replaced record is not built, so it has no placedUnder")
 
     def test_a_place_never_leads_back_to_itself(self):
         scheme = "win11.control-panel.frame.sound.scheme"
@@ -784,6 +784,16 @@ class Decisions(unittest.TestCase):
                 r = self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto "
                                       "win11.settings.frame.sound.volume, which sits under a replaced or excluded record", *args)
                 self.assertIn("placed-target: win11.control-panel.frame.sound.scheme", r.stdout)
+
+    def test_a_destination_chain_that_names_no_record_is_found_from_the_source_surface(self):
+        files = panel()
+        files["settings/a.json"][1]["placedUnder"] = "win11.settings.frame.typo"
+        for args in ((), ("--surface", "control-panel")):
+            with self.subTest(args=args):
+                r = self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto "
+                                      "win11.settings.frame.sound.volume, whose place or parent names no record", *args)
+                self.assertIn("placed-target: win11.control-panel.frame.sound.scheme: placedUnder win11.settings.frame.sound, "
+                              "whose place or parent names no record", r.stdout)
 
     def test_a_placement_maps_a_record_to_a_built_page(self):
         def with_placement(source, page):

@@ -99,7 +99,7 @@
       "minLength": 1
     },
     "disposition": {
-      "description": "What Impossible OS does with the record (section 6): build it as captured, build our own equivalent, capture it and build one design of ours in its place, or leave it out.",
+      "description": "What Impossible OS does with the record (section 6): build it as captured, build our own equivalent, capture it and build one design of ours in its place, or leave it out. The fields each value needs (reason, inconsistency, mergedInto, placedUnder) are the checker's rule disposition-fields, kept out of the schema because a conditional here runs on every record.",
       "enum": [
         "build",
         "equivalent",
@@ -328,103 +328,6 @@
     ]
   },
   "allOf": [
-    {
-      "if": {
-        "properties": {
-          "disposition": {
-            "const": "excluded"
-          }
-        },
-        "required": [
-          "disposition"
-        ]
-      },
-      "then": {
-        "required": [
-          "reason"
-        ]
-      },
-      "else": {
-        "not": {
-          "required": [
-            "reason"
-          ]
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "disposition": {
-            "const": "replaced"
-          }
-        },
-        "required": [
-          "disposition"
-        ]
-      },
-      "then": {
-        "required": [
-          "inconsistency"
-        ],
-        "not": {
-          "required": [
-            "placedUnder"
-          ]
-        }
-      },
-      "else": {
-        "not": {
-          "required": [
-            "mergedInto"
-          ]
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "disposition": {
-            "const": "replaced"
-          },
-          "kind": {
-            "enum": [
-              "page",
-              "dialogTab",
-              "setting"
-            ]
-          }
-        },
-        "required": [
-          "disposition",
-          "kind"
-        ]
-      },
-      "then": {
-        "required": [
-          "mergedInto"
-        ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "disposition": {
-            "const": "excluded"
-          }
-        },
-        "required": [
-          "disposition"
-        ]
-      },
-      "then": {
-        "not": {
-          "required": [
-            "placedUnder"
-          ]
-        }
-      }
-    },
     {
       "if": {
         "properties": {

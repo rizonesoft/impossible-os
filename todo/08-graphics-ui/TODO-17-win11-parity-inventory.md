@@ -310,7 +310,7 @@ Two decisions are made per record, once, and written on it: what we do with it, 
   - `equivalent` covers a Microsoft cloud service, account, store or assistant, and a surface on hardware that no stand-in and no host can show (an absent row of §19)
 - [x] `replaced` is evidence-bound: its `inconsistency` names an entry with two or more captured variants, and the record is one of them or sits under one
 - [x] Nothing is lost by replacing: `mergedInto` takes a replaced setting to a setting and a replaced page or dialog tab to a page, the target built
-  - A target or a place is followed to its end: one that is replaced or excluded, sits under such a record, or leads back to itself is refused on the record that names it
+  - A target or a place is followed to its end: one that is replaced or excluded, sits under such a record, names no record, or leads back to itself is refused on the record that names it
   - A setting only the replaced home has keeps `build` and names its page or group in `placedUnder`; a built record under a replaced home with no place is refused, and so is a place that leads back to itself
   - `HAND_FIELDS` of `capture_core.py` carries `reason`, `mergedInto` and `placedUnder` across a re-capture
 - [x] `docs/design/inventory/consistency.json`: entries of the schema's `$defs/ledgerEntry` with `id`, `kind` (`look`, `flow`, `home`), `question`, `variants`, `rule`, `reason`, and `design` on a `flow` or `home` entry
@@ -329,7 +329,7 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 
 **Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails; a fixture `replaced` record under a one-variant entry fails; a fixture `replaced` setting with no `mergedInto` fails, and several settings merged into one page fail. `consistency.json` holds at least the nine seeded entries and passes its own schema.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (122 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass)
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (123 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass)
 > **Notes:**
 > - `check-inventory.py` reads `consistency.json`, validates each entry, and holds every record's disposition to the rules above; ledger faults are reported on a whole-tree check, record faults under the record's surface.
 > - `capture.py` and `baselines.py` check their scratch copy with `--allow-undecided --design-root`, so a fresh capture publishes and an undecided record still cannot be committed.
@@ -1161,7 +1161,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - A valid three-record file passes and prints `3 records, 0 errors`
   - A duplicate `id`, an orphan `parent`, a `parent` cycle, a repeated `order`, a wrong `itemCount`, a `bounds` without `captureProfile` and an unknown `source` each exit 1 naming the rule
   - A label of 81 characters, a link, a missing `disposition` and an undefined `inconsistency` id each exit 1
-  - Done across §1, §4, §5 and §6: 122 cases
+  - Done across §1, §4, §5 and §6: 123 cases
 - [x] Create `scripts/inventory/tests/test_capture.py` (§3)
 - [x] Create `scripts/inventory/tests/test_baselines.py` (§5)
 - [ ] Create `scripts/inventory/tests/test_report.py` and `test_layout_check.py` with the fixtures named in §7 and §16

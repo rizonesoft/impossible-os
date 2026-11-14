@@ -598,7 +598,8 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
     # Where a record ends up in Impossible OS: follow placedUnder where a record
     # has one and its captured parent otherwise. "gone" when that chain meets a
     # replaced or excluded record (nothing built holds it), "cycle" when it never
-    # ends (a place under itself, or under what sits under it), else "ok". One
+    # ends (a place under itself, or under what sits under it), "missing" when it
+    # names a record that does not exist, else "ok". One
     # walk per chain, and a set beside the walk so a long chain stays linear.
     fate = {}
 
@@ -617,10 +618,12 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
             walk.append(node)
             on_walk.add(node)
             node = obj.get("placedUnder", obj.get("parent"))
-        found = fate.get(node, "ok")
+        # A chain ends at a record with no parent. One that names a record which
+        # does not exist ends nowhere, whichever surface the bad name is in.
+        found = fate.get(node, "ok" if node is None else "missing")
         for w in walk:
             fate.setdefault(w, found)
-        return fate.get(rid, "ok")
+        return fate.get(rid, "missing")
 
     under = {}   # (entry, record) -> the record is a variant of the entry or sits under one
 
@@ -647,6 +650,8 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
             return "whose place leads back to itself"
         if fate_of(target) == "gone":
             return "which sits under a replaced or excluded record"
+        if fate_of(target) == "missing":
+            return "whose place or parent names no record"
         return None
 
     if surface is None:
@@ -664,8 +669,22 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
         state = obj.get("disposition")
         if state is None and obj["kind"] not in CATALOGUE_KINDS and not allow_undecided:
             err(path, n, "disposition-missing", f"{rid}: a {obj['kind']} record carries a disposition (build, equivalent, replaced or excluded)")
+        # What each disposition needs. Here and not in the schema: a schema
+        # conditional is interpreted for every record (measured: half again the time).
+        if (state == "excluded") != ("reason" in obj):
+            err(path, n, "disposition-fields", f"{rid}: an excluded record gives its reason, and only an excluded record has one")
+        if state == "replaced" and "inconsistency" not in obj:
+            err(path, n, "disposition-fields", f"{rid}: a replaced record names its ledger entry in inconsistency")
+        if state == "replaced" and obj["kind"] in MERGE_KINDS and "mergedInto" not in obj:
+            err(path, n, "disposition-fields", f"{rid}: a replaced {obj['kind']} names the record that holds it in mergedInto")
+        if state != "replaced" and "mergedInto" in obj:
+            err(path, n, "disposition-fields", f"{rid}: only a replaced record is mergedInto another")
+        if state in GONE and "placedUnder" in obj:
+            err(path, n, "disposition-fields", f"{rid}: a {state} record is not built, so it has no placedUnder")
         name = obj.get("inconsistency")
-        if name is not None and name not in ledger:
+        if name is None:
+            pass
+        elif name not in ledger:
             err(path, n, "inconsistency-undefined", f"{rid}: inconsistency {name} is not an entry of {LEDGER_FILE}")
         elif state == "replaced":
             if len(variants[name]) < 2:
