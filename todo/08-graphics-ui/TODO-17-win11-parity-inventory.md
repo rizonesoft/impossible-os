@@ -128,6 +128,8 @@ The record format and the checker every later section writes against. One JSON o
 > - Measurements are typed (`measure`, `motion`, `textMetrics`, `colours`), and per-profile captures live in `<file>.<profile>.json` observation files, both from the plan review, so §14 and §17 have a machine contract.
 > - `baseline*.json` files are left to the baseline checks of §5; `disposition` (§6) and the label rules (§4) extend this same schema.
 > - Overview page: `docs/design/inventory/index.md`.
+> **Verified:** 2026-11-14 | commit `7986bb4b5` | 12/12 items | 33 tests OK, `check-inventory.py` clean, site `--check` OK
+> **Quality reviewed:** 2026-11-14 | Codex 10x (plan, round 3x, performance 3x, completion 3x) | 0H+11M+1L fixed, 0 open | scope: N/A (host tooling, no kernel surface)
 
 ---
 
