@@ -1500,6 +1500,9 @@ Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wav
 > - Canonical doc: [`three-pass-review.md`](../../.claude/skills/three-pass-review.md#the-second-reviewer).
 > - Scope boundary: an Astra outage is section 45; whether the second reviewer stays is decided from `second-review-log.py stats` after ten sections.
 
+> **Verified:** 2026-11-14 | commit `8a7d014ed` | 6/6 items | 139 tests OK (dispatcher, gate, pin, log) | `scripts/overnight/tests/run-all.sh` 93 passed, 0 failed | `review_pin.py --check` OK | lint 0 errors | live second pass returned a checked receipt in about 14 minutes
+> **Quality reviewed:** 2026-11-14 | Codex 17x (plan, round 6x, performance 5x, completion, reconciliation 4x) | 0H+15M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface; outside the second reviewer's paths)
+
 ## 45. A reviewer outage leaves a review owed and the run continues
 
 > **Spawned-by:** root
