@@ -140,9 +140,11 @@ function Protect-RefPath([string]$Path) {
 
 # One operation per VM at a time: two runs would restore each other's checkpoint
 # and share C:\ios\run. Keyed to the VM name, not the folder, since two folders
-# can name the same VM; Windows releases the mutex when the process exits.
+# can name the same VM; lower-cased because Hyper-V matches names without case
+# and mutex names are case-sensitive; Global, so another Windows session sees
+# it. Windows releases the mutex when the process exits.
 function Enter-RefLock([string]$Name) {
-    $script:RefLock = New-Object Threading.Mutex($false, "Local\ios-ref-vm-$Name")
+    $script:RefLock = New-Object Threading.Mutex($false, "Global\ios-ref-vm-$($Name.ToLowerInvariant())")
     try { $held = $script:RefLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
     if (-not $held) {
         Write-Host "ref: another ref-vm or ref-run is using $Name"

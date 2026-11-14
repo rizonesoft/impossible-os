@@ -176,7 +176,9 @@ function Invoke-Build() {
         }
     }
     if ($existing.Count) {
-        if (-not $Rebuild) { Write-Host "ref-vm: $Name exists; -Rebuild removes it and its checkpoints"; exit 3 }
+        if (-not $Rebuild) { Write-Host "ref-vm: $Name exists; -Rebuild removes it and its checkpoints"; $script:Refused = 3; return }
+        # Checked before anything is deleted: a mistyped ISO path must not cost the reference.
+        if (-not (Test-Path -LiteralPath $IsoPath -PathType Leaf)) { Write-Host "ref-vm: no ISO at $IsoPath; $Name is left as it was"; $script:Refused = 2; return }
         Write-Ref "removing the existing $Name"
         if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
         Remove-VM -Name $Name -Force
@@ -394,7 +396,7 @@ function Get-ProfileProblems($Session) {
 # uses, without reinstalling Windows.
 function Invoke-Reclean() {
     $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
-    if ($names -notcontains 'pre-oobe') { Write-Host "ref-vm: $Name has no pre-oobe checkpoint; build it with -Rebuild"; exit 1 }
+    if ($names -notcontains 'pre-oobe') { Write-Host "ref-vm: $Name has no pre-oobe checkpoint; build it with -Rebuild"; $script:Refused = 1; return }
     $script:LogPath = Join-Path $VmPath 'ref-vm.log'
     Write-Ref 'taking clean again from pre-oobe'
     Restore-RefCheckpoint $Name 'pre-oobe' $VmPath
@@ -409,10 +411,12 @@ $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
 # Every path ends with the VM off, a failed one included: a running reference VM
 # holds 4 GiB of the host. The exit comes after the finally, because cmdlets in a
 # finally entered by exit are skipped (seen 2026-11-14).
+# A refusal sets $script:Refused and returns, for the same reason.
 $rc = 1
+$script:Refused = 0
 try {
     if ($Reclean) { Invoke-Reclean } elseif (-not $Verify) { Invoke-Build }
-    $rc = Invoke-Verify | Select-Object -Last 1
+    if ($script:Refused) { $rc = $script:Refused } else { $rc = Invoke-Verify | Select-Object -Last 1 }
 } finally {
     $vm = Get-VM | Where-Object { $_.Name -eq $Name }
     if ($vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
