@@ -236,10 +236,10 @@ The inventory holds facts. Names of controls, their order, their sizes and their
 - [x] Judge the commit by its staged bytes: `--index` on both checkers under the commit gate, the whole tree on every other lint, so CI checks everything (filed by the §4 plan review)
 - [x] Commit: `"inventory: facts only, no Microsoft text or assets"`
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (70 cases), `python3 scripts/inventory/tests/test_check_no_ms_assets.py` (10 cases), nested suites `inventory_check` and `inventory_assets` of `scripts/test-tooling.sh`, lint Check 40
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (70 cases), `python3 scripts/inventory/tests/test_check_no_ms_assets.py` (12 cases), nested suites `inventory_check` and `inventory_assets` of `scripts/test-tooling.sh`, lint Check 40
 > **Notes:**
 > - `check-inventory.py` refuses a label over 80 characters (`label is a sentence`), any http or https text in a record or observation (`link in record`) and a `behaviour` that repeats its label, and validates `names.json`; `--index` checks the staged inventory.
-> - `check-no-ms-assets.py` hashes every image, sound, font and cursor type in `asset-types.txt` and refuses one on `ms-hashes.txt`; `--all` reads tracked files, `--index` the staged blobs, and an unreadable list exits 2.
+> - `check-no-ms-assets.py` hashes every image, sound, font and cursor type in `asset-types.txt` and refuses one on `ms-hashes.txt`; `--all` reads tracked files, `--index` the staged blobs and the staged hash and type lists, and an unreadable list exits 2.
 > - `ms-hashes.txt` came from `make-ms-hashes.ps1` on build 26300.9711: 20,339 files under `C:\Windows`, Program Files, `C:\ProgramData` and every inbox app package, 8,113 distinct; the 19 folders only SYSTEM may list hold no interface assets. All 295 tracked assets pass.
 > - `names.json` holds 12 replaced names (the eight above plus Windows Update, Windows Backup, Microsoft 365 and Microsoft Teams); lint Check 40 runs both checkers on every lint.
 > - Rule page: `docs/design/inventory/index.md#what-does-it-never-hold`.

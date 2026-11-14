@@ -78,6 +78,25 @@ class Checker(unittest.TestCase):
         self.put("a.png", MS)                  # an unstaged copy does not fail the commit
         self.assertEqual(self.run_check("--index").returncode, 0)
 
+    def test_index_judges_the_staged_policy(self):
+        types = self.repo / "types.txt"
+        types.write_text("png\n")
+        self.put("a.png", MS); self.git("add", "-A")
+        args = ("--index", "--types", str(types))
+        self.hashes.write_text(f"{line(b'other')}\n")   # unstaged removal of the hash
+        types.write_text("ico\n")                        # and of the type
+        self.assertEqual(self.run_check(*args).returncode, 1)
+        self.git("add", "-A")                             # staged removal clears it
+        self.assertEqual(self.run_check(*args).returncode, 0)
+        self.hashes.write_text(f"{line(MS)}\n"); types.write_text("png\n")
+        self.assertEqual(self.run_check(*args).returncode, 0)   # unstaged restore does not fail it
+
+    def test_index_without_a_staged_policy_fails_closed(self):
+        self.put("a.png", OURS); self.git("add", "a.png")
+        self.assertEqual(self.run_check("--index").returncode, 2)
+        self.git("add", "hashes.txt"); self.git("rm", "-q", "--cached", "hashes.txt")
+        self.assertEqual(self.run_check("--index").returncode, 2)
+
     def test_staged_deletion_and_untracked_file_are_not_checked(self):
         self.put("a.png", MS); self.git("add", "-A"); self.git("rm", "-q", "--cached", "a.png")
         self.assertEqual(self.run_check("--index").returncode, 0)

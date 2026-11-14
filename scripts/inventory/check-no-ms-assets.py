@@ -10,7 +10,7 @@ make-ms-hashes.ps1, no bytes kept). A file here whose hash and size are on that
 list is a copy, and is refused.
 
     python3 scripts/inventory/check-no-ms-assets.py --all     # tracked files, as on disk
-    python3 scripts/inventory/check-no-ms-assets.py --index   # the staged contents (commit gate)
+    python3 scripts/inventory/check-no-ms-assets.py --index   # the staged contents and staged lists (commit gate)
     python3 scripts/inventory/check-no-ms-assets.py FILE...   # named files
 
 Exit 0 when nothing matches, 1 when a file matches, 2 when the hash list or git
@@ -33,9 +33,26 @@ class Unreadable(Exception):
     pass
 
 
-def asset_types(path):
+def policy_text(path, repo, staged):
+    """The text of a policy file: its staged blob under --index when it lives in the repository.
+
+    A commit is judged by the policy it records too, so an unstaged edit to the
+    hash list or the type list can neither clear nor fail a staged asset.
+    """
+    path = path.resolve()
+    if staged:
+        try:
+            rel = path.relative_to(repo.resolve()).as_posix()
+        except ValueError:
+            rel = None
+        if rel is not None:
+            return git(repo, "cat-file", "blob", f":{rel}").decode("utf-8")
+    return path.read_text(encoding="utf-8")
+
+
+def asset_types(text, path):
     types = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
             types.add(line.lower())
@@ -44,9 +61,9 @@ def asset_types(path):
     return types
 
 
-def load_hashes(path):
+def load_hashes(text, path):
     known = set()
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(text.splitlines(), 1):
         if not line or line.startswith("#"):
             continue
         m = LINE.match(line)
@@ -124,8 +141,9 @@ def main(argv=None):
     args = ap.parse_args(argv)
     repo = pathlib.Path(args.repo)
     try:
-        types = asset_types(pathlib.Path(args.types))
-        known = load_hashes(pathlib.Path(args.hashes))
+        types_path, hashes_path = pathlib.Path(args.types), pathlib.Path(args.hashes)
+        types = asset_types(policy_text(types_path, repo, args.index), types_path)
+        known = load_hashes(policy_text(hashes_path, repo, args.index), hashes_path)
         if args.index:
             files = from_index(repo, types)
         elif args.all:
@@ -139,7 +157,7 @@ def main(argv=None):
             digest = hashlib.sha256(data).hexdigest()
             if (digest, len(data)) in known:
                 copies.append((name, digest, len(data)))
-    except (OSError, Unreadable, subprocess.TimeoutExpired) as exc:
+    except (OSError, UnicodeDecodeError, Unreadable, subprocess.TimeoutExpired) as exc:
         print(f"check-no-ms-assets: {exc}", file=sys.stderr)
         return 2
     for name, digest, size in copies:
