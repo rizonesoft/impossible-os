@@ -209,15 +209,17 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 - [x] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree and wire it into `scripts/test-tooling.sh`
 - [x] Commit: `"inventory: UI Automation capture tool"`
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (76 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (78 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
 > **Notes:**
 > - `capture-ui.py` (guest) reads every element through one UIA CacheRequest, splices unnamed hosting panes (XAML island bridges) so ids follow what a user sees, and records shortcuts from `AcceleratorKey`; tooltips, teaching tips, offscreen elements and prose are skipped.
 > - The first open of a menu after launch differs from later opens (Notepad's File menu 18 px narrower, an extra Edit entry), so the tool walks until two passes agree (`settle`, at most 4) and a `--fixture` dump is kept only when walking it gives the same records; the dump visits exactly what the walk visits, bounded by `MAX_RECORDS`.
 > - `capture.py` (host) holds one capture lock per run, stages the tool, runs it through `ref-run.ps1` within a deadline that always leaves ref-run room to turn the VM off (`-Stop` afterwards if it does not, or when the capture is interrupted: proven live, the VM off within 10 s), refuses an incomplete capture or a partial transfer (exit 3: runner exit, completeness and the record count all checked) before touching anything, merges by id, checks a scratch copy of the inventory and only then publishes records, screenshots and `shots.json`, all staged first and swapped in records last with each replaced file kept aside until the last swap and the swap journalled, so a failed or killed publication changes nothing (the next run rolls a journal back).
+> - At a live 125 percent session (scaling changed in the guest, no sign-out) the real capture exits 2 with `profile fhd-100: scaling is 125, expected 100`: a fresh probe process reads the new DPI, so no sign-out is needed (2026-11-14).
+> - Screenshots: the resting state is named after the file's root (`window.fhd-100.png`), and `shots.json` entries name their record file, so a capture replaces only its own file and profile's entries.
 > - Notepad: 76 records in 3 walks, 8 screenshots, byte-identical across three VM sessions; that run's tree and records are the test fixtures, so the walk over the fixture must equal the live capture.
 > - Page: `docs/design/inventory/index.md#how-is-a-surface-captured`.
 
-**Test checkpoint:** `python3 scripts/inventory/capture.py --surface notepad-smoke --file window --dry-run` captures at least 40 records in the reference VM and `check-inventory.py` passes on them; the fixture tests pass on Linux and refuse a 125 percent profile with `profile fhd-100: scaling is 125, expected 100`. The same refusal on a live 125 percent session is §19's, which owns switching the profile.
+**Test checkpoint:** `python3 scripts/inventory/capture.py --surface notepad-smoke --file window --dry-run` captures at least 40 records in the reference VM and `check-inventory.py` passes on them; with the display at 125 percent the same capture exits 2 with `profile fhd-100: scaling is 125, expected 100`. The fixture tests pass on Linux with no Windows present.
 
 ---
 
@@ -1088,7 +1090,6 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
 - [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
-  - At 125 percent, prove live that `capture-ui.py` exits 2 with `profile fhd-100: scaling is 125, expected 100` (handed over by §3, whose fixture test covers the message)
   - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
 - [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
   - Evidence for all three taskbar button modes on the second display is required before §8 closes
@@ -1129,10 +1130,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - A valid three-record file passes and prints `3 records, 0 errors`
   - A duplicate `id`, an orphan `parent`, a `parent` cycle, a repeated `order`, a wrong `itemCount`, a `bounds` without `captureProfile` and an unknown `source` each exit 1 naming the rule
   - A label of 81 characters, a link, a missing `disposition` and an undefined `inconsistency` id each exit 1
-- [ ] Create `scripts/inventory/tests/test_capture.py` with:
-  - The recorded tree fixture yields the expected record count and the expected `id` for a nested menu item
-  - `--merge` keeps a hand-written `behaviour` and drops a record the capture no longer sees
-  - A list named in `ENVIRONMENT_LISTS` yields one record and no children
+- [x] Create `scripts/inventory/tests/test_capture.py` (§3)
 - [ ] Create `scripts/inventory/tests/test_report.py` and `test_layout_check.py` with the fixtures named in §7 and §16
 - [ ] Register the suite in `scripts/test-tooling.sh` and add its paths to the scoped-pack triggers
 - [ ] Commit: `"test: inventory tooling suite"`

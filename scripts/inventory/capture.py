@@ -234,7 +234,7 @@ def recover(journal):
     return True
 
 
-def publish(target, records, surface, out, states, manifest_path, store, journal=None):
+def publish(target, records, surface, out, states, manifest_path, store, *, profile, journal=None):
     """Publish records and screenshots together, or leave the old publication alone.
 
     Stage: copy every screenshot next to its destination under a temporary name,
@@ -244,12 +244,17 @@ def publish(target, records, surface, out, states, manifest_path, store, journal
     removing the journal is its commit point; the .old copies go only after it.
     A failure puts every file back (roll_back) and re-raises; a kill, which no
     handler sees, leaves the journal, and the next run's recover() rolls back.
+    Each manifest entry names the record file it was taken for; this run replaces
+    only the entries of its own surface, file and profile, so a capture of
+    another file or profile keeps its screenshots on record.
     """
     journal = journal or JOURNAL
     names = [s["file"] for s in states]
     if len(set(names)) != len(names):
         raise OSError(f"two screenshots of {surface} share a file name; nothing staged")
-    manifest = [e for e in load_manifest(manifest_path) if e["surface"] != surface]
+    owner = (surface, target.stem, profile)
+    manifest = [e for e in load_manifest(manifest_path)
+                if (e["surface"], e.get("file"), e["profile"]) != owner]
     dest = store / surface
     staged = []
     try:
@@ -257,13 +262,15 @@ def publish(target, records, surface, out, states, manifest_path, store, journal
         target.parent.mkdir(parents=True, exist_ok=True)
         for s in states:
             src = out / "shots" / surface / s["file"]
-            state, profile = s["file"][: -len(".png")].rsplit(".", 1)
+            state, p = s["file"][: -len(".png")].rsplit(".", 1)
+            if p != profile:
+                raise OSError(f"{s['file']}: taken at {p}, but this capture is {profile}")
             tmp = dest / f".{s['file']}.{os.getpid()}.tmp"
             shutil.copyfile(src, tmp)
             staged.append((tmp, dest / s["file"]))
             if sha256(tmp) != sha256(src):
                 raise OSError(f"{tmp}: the copy differs from {src}")
-            manifest.append({"surface": surface, "state": state, "profile": profile, "width": s["width"],
+            manifest.append({"surface": surface, "file": target.stem, "state": state, "profile": p, "width": s["width"],
                              "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
         manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
         man_tmp = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
@@ -374,7 +381,8 @@ def capture_and_publish(args):
         print(f"capture: dry run, {len(records)} records checked, nothing published (raw output in {out})")
         return 0
     try:
-        publish(INVENTORY / rel, records, args.surface, out, meta.get("states", []), SHOTS_MANIFEST, STORE)
+        publish(INVENTORY / rel, records, args.surface, out, meta.get("states", []), SHOTS_MANIFEST, STORE,
+                profile=args.profile)
     except OSError as exc:
         print(f"capture: publishing failed ({exc}); the previous publication is unchanged")
         return 1

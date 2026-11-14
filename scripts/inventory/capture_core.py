@@ -310,7 +310,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
                 el.collapse()
 
     if shot:
-        cap.states.append(shot("rest", root, []))
+        cap.states.append(shot(root_slug, root, []))   # the resting surface, named after its root
     visit(root, f"win11.{surface}.{root_slug}", None, 0, 0)
     root_record = cap.records[0]
     root_record["kind"] = root_kind

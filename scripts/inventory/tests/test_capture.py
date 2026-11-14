@@ -608,9 +608,35 @@ class Shots(unittest.TestCase):
 
     STATE = [{"state": "rest", "file": "rest.fhd-100.png", "width": 2, "height": 1}]
 
-    def publish(self, records=({"id": "win11.notepad-smoke.window", "label": "Notepad"},)):
-        capture.publish(self.target, list(records), "notepad-smoke", self.out, self.STATE, self.manifest, self.store,
-                        journal=self.journal)
+    def publish(self, records=({"id": "win11.notepad-smoke.window", "label": "Notepad"},), target=None,
+                states=None, profile="fhd-100"):
+        capture.publish(target or self.target, list(records), "notepad-smoke", self.out, states or self.STATE,
+                        self.manifest, self.store, profile=profile, journal=self.journal)
+
+    def shot(self, name):
+        core.write_png(self.out / "shots" / "notepad-smoke" / name, 2, 1, b"\xff\x00\x00\x00\xff\x00")
+        return {"state": name.rsplit(".", 2)[0], "file": name, "width": 2, "height": 1}
+
+    def test_each_file_and_profile_keeps_its_own_screenshots(self):
+        self.publish()                                                     # window at fhd-100
+        menu = self.shot("menu.fhd-100.png")
+        self.publish([{"id": "win11.notepad-smoke.menu", "label": "Menu"}],
+                     target=self.target.with_name("menu.json"), states=[menu])
+        self.publish(states=[self.shot("rest.fhd-150.png")], profile="fhd-150")
+        owned = lambda: sorted((e.get("file"), e["state"], e["profile"])         # noqa: E731
+                               for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke")
+        self.assertEqual(owned(), [("menu", "menu", "fhd-100"), ("window", "rest", "fhd-100"),
+                                   ("window", "rest", "fhd-150")])
+        self.publish(states=[self.shot("other-open.fhd-100.png")])          # window at fhd-100 again, new states
+        self.assertEqual(owned(), [("menu", "menu", "fhd-100"), ("window", "other-open", "fhd-100"),
+                                   ("window", "rest", "fhd-150")])
+        mine = [e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke"]
+        self.assertEqual(capture.verify_shots(mine, self.store), [])
+
+    def test_a_shot_of_another_profile_publishes_nothing(self):
+        with self.assertRaises(OSError):
+            self.publish(profile="fhd-150")
+        self.assertFalse(self.target.exists())
 
     def test_publish_then_verify(self):
         self.publish()
@@ -670,7 +696,7 @@ class Shots(unittest.TestCase):
         before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
         with self.assertRaises(OSError):
             capture.publish(self.target, [{"id": "x"}], "notepad-smoke", self.out, self.STATE * 2,
-                            self.manifest, self.store, journal=self.journal)
+                            self.manifest, self.store, profile="fhd-100", journal=self.journal)
         self.assertEqual({p: p.read_bytes() for p in before}, before)
 
     def test_a_kill_part_way_is_rolled_back_by_the_next_run(self):
@@ -691,7 +717,8 @@ def dying(src, dst):
 capture.os.replace = dying
 t = pathlib.Path({str(self.tmp)!r})
 capture.publish(t / "inventory" / "notepad-smoke" / "window.json", [{{"id": "win11.notepad-smoke.window", "label": "New"}}],
-                "notepad-smoke", t / "out", {self.STATE!r}, t / "shots.json", t / "store", journal=t / "publish.journal")
+                "notepad-smoke", t / "out", {self.STATE!r}, t / "shots.json", t / "store", profile="fhd-100",
+                journal=t / "publish.journal")
 """
         r = capture.subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
         self.assertEqual(r.returncode, 9, r.stderr)
@@ -851,7 +878,7 @@ class States(unittest.TestCase):
         seen = []
         core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R",
                   shot=lambda state, el, items: seen.append(state) or {"file": f"{state}.p.png"})
-        self.assertEqual(sorted(seen), ["r.a-b-open", "r.a.b-open", "rest"])
+        self.assertEqual(sorted(seen), ["r", "r.a-b-open", "r.a.b-open"])
 
 
 class Dump(unittest.TestCase):
