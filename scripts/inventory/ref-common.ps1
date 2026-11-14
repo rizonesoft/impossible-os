@@ -280,9 +280,11 @@ function Receive-RefTree($Session, [string]$Source, [string]$Destination) {
 function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath) {
     # Inputs are checked before the VM is touched, so a bad argument leaves it as it was.
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
+    $snap = @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $Checkpoint })
+    if ($snap.Count -ne 1) { throw "$Name has $($snap.Count) checkpoints named '$Checkpoint'; want exactly one" }
     $script:RefTouched = $true   # from here the VM is this run's to turn off
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    Restore-VMSnapshot -VMName $Name -Name $Checkpoint -Confirm:$false
+    Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
     $id = (Get-VM -Name $Name).Id
     foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })) {
         # Through cmd so a refusal is an exit code, not a PowerShell error record;
