@@ -258,14 +258,16 @@ class LiveElement:
     def _pattern(self):
         return self.el.GetCurrentPattern(EXPAND_COLLAPSE).QueryInterface(self.live.UIA.IUIAutomationExpandCollapsePattern)
 
-    def expand(self):
+    def expand(self, skip=None):
+        """Open, wait for the entries to settle, return them. A popup container
+        that `skip` accepts (an environment list) is returned itself, rows unread."""
         before = self.live.popups(self.pid)
         self._pattern().Expand()
         last, stable, counts = None, 0, []
         deadline = time.monotonic() + SETTLE_S
         while len(counts) < MIN_POLLS or time.monotonic() < deadline:
             time.sleep(POLL_S)
-            items = self._entries(before)
+            items = self._entries(before, skip)
             counts.append(len(items))
             sig = tuple((i.control_type, i.name, i.automation_id, i.bounds) for i in items)
             if items and sig == last:
@@ -278,14 +280,18 @@ class LiveElement:
         raise core.Incomplete(f"{self.name or self.automation_id}: its entries did not appear and settle within "
                               f"{SETTLE_S:.0f} s (entries per poll: {counts}; new popups: {len(self._opened)})")
 
-    def _entries(self, before):
+    def _entries(self, before, skip=None):
         # A Win32 menu or a WinUI flyout opens as a new Menu or List container in
         # the same process; a combo box may also show its list as its own children.
         # Once the new container is found it is read directly, not searched for again.
         if not self._opened:
             self._opened = {k: e for k, e in self.live.popups(self.pid).items() if k not in before}
         if self._opened:
-            return [c for e in self._opened.values() for c in self.live.children(e)]
+            out = []
+            for e in self._opened.values():
+                box = self.live.wrap(e)
+                out.extend([box] if skip and skip(box) else self.live.children(e))
+            return out
         return [c for c in self.children() if c.control_type in ("ListItem", "MenuItem") and not c.offscreen]
 
     def _closed(self):

@@ -322,6 +322,9 @@ def main(argv=None):
     for flag, value in (("--surface", args.surface), ("--file", args.file)):
         if value != core.slug(value):
             ap.error(f"{flag} {value!r} must be a slug (lower-case letters, digits, single hyphens), not a path")
+    if args.file.startswith("baseline"):
+        # check-inventory.py reads a baseline* file as completeness rows and skips its records.
+        ap.error(f"--file {args.file!r}: names starting with baseline are completeness baselines, not record files")
     try:
         with exclusive(LOCK):
             return capture_and_publish(args)

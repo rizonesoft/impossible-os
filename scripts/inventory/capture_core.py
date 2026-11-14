@@ -242,10 +242,13 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
             cap.skipped[why] += 1
         return why is None
 
+    def is_environment(el):
+        return any(matches(el, spec) for spec in environment_lists)
+
     def visit(el, rid, parent, order, depth):
         if depth > MAX_DEPTH:
             raise Incomplete(f"{rid}: deeper than {MAX_DEPTH} levels")
-        env = any(matches(el, spec) for spec in environment_lists)
+        env = is_environment(el)
         kind = KIND_BY_TYPE.get(el.control_type, "control")
         if env:
             r = emit(el, rid, parent, order, kind)
@@ -259,14 +262,17 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
             visit(k, kid, rid, i, depth + 1)
         if el.can_expand and el.control_type in EXPANDABLE:
             try:                  # closed again even when the opening itself fails
-                items = [k for k in el.expand() if keep(k)]
+                items = [k for k in el.expand(skip=is_environment) if keep(k)]
                 # The id below the surface, dots kept: ids are unique, so states are.
                 state = f"{rid.split('.', 2)[2]}-open"
                 if shot:
                     cap.states.append(shot(state, el, items))
                 base = len(kids)
                 for i, (k, kid) in enumerate(zip(items, ids_for(rid, items))):
-                    emit(k, kid, rid, base + i, "menuItem")
+                    if is_environment(k):          # a popup list of the machine's own data: no rows
+                        emit(k, kid, rid, base + i, KIND_BY_TYPE.get(k.control_type, "control"))["controlType"] = "list"
+                    else:
+                        emit(k, kid, rid, base + i, "menuItem")
                 r["itemCount"] = len(kids) + len(items)
             finally:
                 el.collapse()
@@ -360,11 +366,21 @@ class FixtureElement:
             raise Incomplete(f"{self.name or self.automation_id}: {len(kids)} children, more than the {limit} left to read")
         return [FixtureElement(c) for c in kids]
 
-    def expand(self):
+    def expand(self, skip=None):
+        """The entries, as the live adapter returns them: an entry marked
+        "popup" is a popup container, flattened into its children unless `skip`
+        accepts it, when it is returned itself."""
         if self.d.get("expandFails"):
             raise Incomplete(f"{self.name or self.automation_id}: the flyout never settled")
         self.open = True
-        return [FixtureElement(c) for c in self.d.get("expands", [])]
+        out = []
+        for c in self.d.get("expands", []):
+            box = FixtureElement(c)
+            if c.get("popup") and not (skip and skip(box)):
+                out.extend(FixtureElement(k) for k in c.get("children", []))
+            else:
+                out.append(box)
+        return out
 
     def collapse(self):
         self.open = False
@@ -411,7 +427,8 @@ def dump(el, depth=0, entry=False, environment_lists=(), budget=None):
             d["children"] = kids
     if el.can_expand and el.control_type in EXPANDABLE and not el.offscreen:
         try:
-            d["expands"] = [dump(k, depth + 1, entry=True, budget=budget) for k in el.expand() if not excluded(k)]
+            skip = (lambda c: any(matches(c, spec) for spec in environment_lists)) if environment_lists else None
+            d["expands"] = [dump(k, depth + 1, entry=True, budget=budget) for k in el.expand(skip=skip) if not excluded(k)]
         finally:
             el.collapse()
     return d

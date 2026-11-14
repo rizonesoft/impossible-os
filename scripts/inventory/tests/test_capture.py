@@ -142,9 +142,9 @@ class Walk(unittest.TestCase):
         opened = []
         real = core.FixtureElement.expand
 
-        def spy(self):
+        def spy(self, **kw):
             opened.append(self)
-            return real(self)
+            return real(self, **kw)
         core.FixtureElement.expand = spy
         try:
             walk()
@@ -174,6 +174,20 @@ class NeverData(unittest.TestCase):
         self.assertEqual(tabs[0]["controlType"], "list")
         self.assertFalse([r for r in recs if r.get("parent") == tabs[0]["id"]])
         self.assertFalse([r for r in recs if "Untitled" in r["label"]])
+
+    def test_an_environment_list_in_a_popup_keeps_its_rows_out(self):
+        devices = dict(node("Devices", "List"), popup=True, children=[node("Jo's USB stick", "ListItem")])
+        t = node("Root", "Window", children=[node("Output", "ComboBox", expands=[devices])])
+        args = dict(surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        cap = core.walk(core.FixtureElement(t), environment_lists=[{"controlType": "List"}], **args)
+        self.assertNotIn("usb", json.dumps(cap.records).lower())
+        box = [r for r in cap.records if r.get("label") == "Devices"]
+        self.assertEqual((len(box), box[0]["controlType"]), (1, "list"))
+        d = core.dump(core.FixtureElement(t), environment_lists=[{"controlType": "List"}])
+        self.assertNotIn("usb", json.dumps(d).lower())
+        core.confirm_dump(d, cap, environment_lists=[{"controlType": "List"}], **args)
+        plain = core.walk(core.FixtureElement(t), **args)            # not marked: its rows are entries
+        self.assertIn("Jo's USB stick", [r.get("label") for r in plain.records])
 
     def test_live_values_are_withheld(self):
         cap = walk()
@@ -635,7 +649,7 @@ class Arguments(unittest.TestCase):
         real = capture.run_guest
         capture.run_guest = lambda *a: self.fail("the guest ran")
         try:
-            for bad in ("../../etc/x", "/tmp/x", "a/b", "Window"):
+            for bad in ("../../etc/x", "/tmp/x", "a/b", "Window", "baseline", "baseline-capture"):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ex:
                     capture.main(["--surface", "notepad-smoke", "--file", bad, "--dry-run"])
                 self.assertEqual(ex.exception.code, 2)
@@ -733,9 +747,9 @@ class Dump(unittest.TestCase):
         opened = []
         real = core.FixtureElement.expand
 
-        def spy(self):
+        def spy(self, **kw):
             opened.append(self.name)
-            return real(self)
+            return real(self, **kw)
         core.FixtureElement.expand = spy
         try:
             d = core.dump(core.FixtureElement(t))

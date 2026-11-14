@@ -209,7 +209,7 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 - [x] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree and wire it into `scripts/test-tooling.sh`
 - [x] Commit: `"inventory: UI Automation capture tool"`
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (67 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_capture.py` (68 cases), nested suite `inventory_capture` of `scripts/test-tooling.sh`, live `capture.py --surface notepad-smoke --dry-run` in the reference VM
 > **Notes:**
 > - `capture-ui.py` (guest) reads every element through one UIA CacheRequest, splices unnamed hosting panes (XAML island bridges) so ids follow what a user sees, and records shortcuts from `AcceleratorKey`; tooltips, teaching tips, offscreen elements and prose are skipped.
 > - The first open of a menu after launch differs from later opens (Notepad's File menu 18 px narrower, an extra Edit entry), so the tool walks until two passes agree (`settle`, at most 4) and a `--fixture` dump is kept only when walking it gives the same records; the dump visits exactly what the walk visits, bounded by `MAX_RECORDS`.
