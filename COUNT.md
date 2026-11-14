@@ -46,23 +46,23 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     699 |     162558 |
+| **Markdown** (`.md`)        |     699 |     162562 |
 | **JSON** (`.json`)          |      40 |       7305 |
 | **YAML** (`.yml`/`.yaml`)   |      18 |       2348 |
 | **HTML** (`.html`)          |      22 |       3483 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **781** | **176295** |
+| **Subtotal**                | **781** | **176299** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
 | **Core code + tooling**                              | **1478** |  **750442** |
-| **Supporting text + metadata**                       |  **781** |  **176295** |
-| **Written here**                                     | **2259** |  **926737** |
+| **Supporting text + metadata**                       |  **781** |  **176299** |
+| **Written here**                                     | **2259** |  **926741** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2849** | **1403065** |
+| **All lines in tree**                                | **2849** | **1403069** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,7 +77,7 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,403,065 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,403,069 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 13 day(s) |
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-11-14 22:22 · commit `39a90bb06`*
+*Last updated: 2026-11-14 22:26 · commit `92d2aaa0d`*

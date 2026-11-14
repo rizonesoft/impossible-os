@@ -1510,18 +1510,22 @@ Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wav
 
 Operator decision 2026-11-14: when Astra is unavailable the section is committed locally and marked "review owed", the run moves to the next section, owed reviews are done first when Astra answers, and nothing unreviewed is pushed.
 
-- [ ] `scripts/codex-dispatch.sh` tells an unavailable reviewer from a failed review: exit 4 and a receipt with `unavailable: true` when the reviewer never produced a turn.
-  - Done when a fixture companion that exits before its first turn yields exit 4, and a review that ran and found defects does not.
-- [ ] `scripts/overnight/review_owed.py add|list|clear|probe` keeps the owed sections (TODO, section, commit) and `probe` says whether the reviewer answers.
-  - Done when `add` after three exit-4 results spread over at least 30 minutes is accepted, an earlier `add` is refused, and `clear` requires the section's stamp.
-- [ ] The run may start the next section while a review is owed: the phase guard and the stop guard accept an owed section as handled, and `sequencer_triage.py --next` returns owed sections first once `probe` succeeds.
-  - Done when a fixture run with the reviewer down builds two sections and stamps neither, and with it back reviews the older one first.
-- [ ] `.githooks/pre-push` refuses a push while any section is owed, naming it.
-  - Done when a fixture push with one owed section is refused and passes after `clear`.
-- [ ] Say so in `.claude/skills/overnight-sequencer/SKILL.md`, `.claude/skills/three-pass-review.md` and the comment block of `.conclave/reviewers.toml` ("an outage is never an approval" stays true: it is a delay)
+What exists today: `scripts/overnight/codex-outage-check.py` already says when the reviewer's backend is down (two failed legs in twenty minutes; the broker then exits 75). What is missing is what happens next. Every section starts with a plan pass, so during an outage the next section can only be built unreviewed; and the phase guard's rollover refuses unpushed commits, then reverts the section after two refusals. So an outage either stalls the run or throws work away.
+
+- [ ] `scripts/overnight/review_owed.py add|list|clear|probe` keeps the sections whose review is owed, in `.claude/state/review-owed.json`
+  - `add --todo T --section N --base SHA` records a built, committed, unstamped section and the commit before its code; it is refused unless `probe` reports an outage, and adding it again keeps the first base
+  - `clear --todo T --section N` is refused until the section carries both stamps; `probe` is the existing outage check (exit 75 while the reviewer is down)
+- [ ] An owed section's range is its recorded base, not its plan pass's commit: `review_pin.section_status`, the second reviewer's dispatcher and the stamp gate read it through one helper
+  - Done when a section built during an outage, given its plan pass late, is reviewed and stamped over its whole range
+- [ ] `sequencer_triage.py --next` does not return an owed section while `probe` reports an outage, and returns it first once the reviewer answers
+- [ ] The phase guard's rollover accepts unpushed commits while a review is owed, so an owed section is never counted as a failed rollover and reverted (`.claude/hooks/run_phase_guard.py`, a frozen file: attended edit)
+- [ ] `.githooks/pre-push` refuses a push while any section is owed, naming it: nothing unreviewed reaches `main`
+- [ ] Say how in `.claude/skills/overnight-sequencer/SKILL.md` and `.claude/skills/three-pass-review.md`
+  - On exit 75: build the section, commit it, `add` it, move on
+  - When `probe` passes: review the owed sections first (a late `plan`, then the wave with the recorded base), stamp, `clear`, push
 - [ ] Commit: `"run: a reviewer outage leaves a review owed and the run continues"`
 
-**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures, and the two-section fixture run above ends with both sections owed, none stamped and nothing pushed.
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures: with the reviewer down two sections are built, both are owed, neither is picked again, a rollover is not refused for their commits and a push is refused; with it back the older one is returned first, and after its stamp and `clear` the push passes.
 
 ## Format Quick Reference
 

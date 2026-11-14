@@ -303,7 +303,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [ ]  | `D00 T08 §42` | The graph jobs run in a small pinned image                                                                            | none     |     3 |
 | [ ]  | `D00 T08 §43` | The control-plane commit gate tests the staged commit                                                                 | none     |     2 |
 | [x]  | `D00 T08 §44` | A second reviewer reads kernel, boot, security and ABI sections                                                       | none     |     6 |
-| [ ]  | `D00 T08 §45` | A reviewer outage leaves a review owed and the run continues                                                          | none     |     6 |
+| [ ]  | `D00 T08 §45` | A reviewer outage leaves a review owed and the run continues                                                          | none     |     7 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none     |    10 |
 | [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator |    11 |
 | [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none     |    11 |
