@@ -468,14 +468,28 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
         [{"todo": "todo/00-infrastructure/TODO-01-fixture.md", "section": 1, "base": "b", "since": 1}]))
     r = _rollover(fx)
     assert "not pushed" not in r.stderr, r.stderr
-    # The outage commit went through the gate's opt-out, which marks the last review used up. That is the
-    # recorded debt, not a review waiting to be read.
+    # The whole sequence, with the real producer. A dispatch that failed at the backend leaves the review
+    # state unreceived; the section is recorded as owed; its commit goes through the gate's opt-out, whose
+    # reset must write the skip down even though there was nothing to un-receive.
+    import section_commit_gate as gate
     review = fx / ".claude/state/last-codex-review.json"
-    review.write_text(json.dumps({"received": False, "skipped_section_commit": True}))
+    review.write_text(json.dumps({"received": False, "trigger": "a dispatch that failed at the backend"}))
+    gate._reset_review_state(fx)
+    assert json.loads(review.read_text())["skipped_section_commit"] is True
+    assert json.loads(review.read_text())["received"] is False
+    assert "outstanding Codex review" not in _rollover(fx).stderr
+    # The same skip after a review that had been received marks it as it always did.
+    review.write_text(json.dumps({"received": True}))
+    gate._reset_review_state(fx)
+    assert json.loads(review.read_text()) == {"received": False, "skipped_section_commit": True}
     assert "outstanding Codex review" not in _rollover(fx).stderr
     # A review that really is unread still holds the rollover, debt or no debt.
     review.write_text(json.dumps({"received": False}))
     assert "outstanding Codex review not yet received" in _rollover(fx).stderr
+    # With no debt recorded a skip never touches an unread review: it stays unread.
+    (fx / ".claude/state/review-owed.json").write_text("[]")
+    gate._reset_review_state(fx)
+    assert "skipped_section_commit" not in json.loads(review.read_text())
     # An empty record, or one that cannot be read, is no debt: the ordinary refusals stand.
     review.write_text(json.dumps({"received": False, "skipped_section_commit": True}))
     for text in ("[]", "{"):

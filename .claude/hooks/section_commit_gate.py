@@ -3558,6 +3558,15 @@ def _skip_record_append(record: dict, path: Path) -> bool:
         return False
 
 
+def _review_debt_recorded(root: Path) -> bool:
+    """Whether a section built while the reviewer was down still owes its review."""
+    try:
+        records = json.loads((root / ".claude" / "state" / "review-owed.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(records, list) and bool(records)
+
+
 def _reset_review_state(root: Path) -> None:
     """After a successful SKIP, write last-codex-review.json with
     received: false so the NEXT commit cannot reuse this review's
@@ -3574,9 +3583,18 @@ def _reset_review_state(root: Path) -> None:
     if not isinstance(state, dict):
         return
     if state.get("received") is not True:
-        return  # already not-received, nothing to do
+        # Already not received. During a reviewer outage that is the failed or refused dispatch itself: there
+        # was no review to receive. When the section is recorded as owed (scripts/overnight/review_owed.py) the
+        # skip is still written down, so the rollover can tell this recorded debt from a review that is
+        # waiting to be read. With no debt recorded nothing changes: an unread review stays unread.
+        if state.get("skipped_section_commit") is True or not _review_debt_recorded(root):
+            return
+        state["skipped_section_commit"] = True
+        _ensure_crc()._write_atomic(state_path, state)
+        return
     state["received"] = False
     state["skipped_section_commit"] = True
+    _ensure_crc()
     # Use the §3 hook's atomic writer so per-process tmp paths avoid
     # the race documented in codex_review_completed._write_atomic.
     crc._write_atomic(state_path, state)
