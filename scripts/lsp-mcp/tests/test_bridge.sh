@@ -11562,6 +11562,41 @@ check(gone(w), "[detached-transient] the helper survived once its stamp "
 check(recovered.completed is True, "[detached-transient] the recovering "
       "sweep did not complete")
 
+# The reader itself: an unreadable leader environment, one task read as
+# unstamped and another refused with EMFILE has proven nothing about the
+# stamp (Codex round review). Mixed reads go through the real reader.
+import errno as _errno
+import io as _io
+mixed_pid = 999999
+real_listdir_v = os.listdir
+
+
+def mixed_open(path, mode="r", *a, **kw):
+    if path == "/proc/%d/environ" % mixed_pid:
+        raise PermissionError(_errno.EACCES, "denied")
+    if path == "/proc/%d/task/1/environ" % mixed_pid:
+        return _io.BytesIO(b"PATH=/usr/bin\0")
+    if path == "/proc/%d/task/2/environ" % mixed_pid:
+        raise OSError(_errno.EMFILE, "Too many open files")
+    return open(path, mode, *a, **kw)
+
+
+def mixed_listdir(path="."):
+    if path == "/proc/%d/task" % mixed_pid:
+        return ["1", "2"]
+    return real_listdir_v(path)
+
+
+lsp_client.open = mixed_open
+os.listdir = mixed_listdir
+try:
+    mixed = lsp_client._read_env_markers_ex(mixed_pid)
+finally:
+    del lsp_client.open
+    os.listdir = real_listdir_v
+check(mixed == (None, None, True), "[mixed-read] an unstamped task beside "
+      "a transiently unreadable one answered %r, not undecided" % (mixed,))
+
 # The undecided answer comes from the ownership read itself, never a
 # second environment walk (Codex performance review, P2).
 walks = {"n": 0}

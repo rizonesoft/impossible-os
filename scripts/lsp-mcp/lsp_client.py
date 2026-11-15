@@ -1711,6 +1711,11 @@ def _read_failed_transiently(exc: BaseException) -> bool:
     foreign process, and ENOENT and ESRCH mean it is gone. Anything else
     (descriptor exhaustion, memory pressure, an interrupted read) says
     nothing about the process and may answer differently next round."""
+    # By class first: Python maps those errnos onto these classes, and an
+    # instance built without an errno still names the same refusal.
+    if isinstance(exc, (PermissionError, FileNotFoundError,
+                        ProcessLookupError)):
+        return False
     if isinstance(exc, OSError):
         return exc.errno not in (errno.EACCES, errno.EPERM, errno.ENOENT,
                                  errno.ESRCH)
@@ -1821,6 +1826,14 @@ def _read_env_markers_ex(
     if not read_any:
         # Every task refused to be read: nothing was proven either way.
         return None, None, transient
+    if transient:
+        # Some task could not be read for a reason that can pass, so the
+        # tasks that WERE read prove only their own markers: an unstamped
+        # thread beside an unreadable stamped worker is not "not ours"
+        # (Codex round review, section 27). Proven positives stand.
+        return (True if owner is True else None,
+                True if generation is True else None,
+                owner is not True)
     return (owner is True,
             None if gen_marker is None else generation is True, False)
 
