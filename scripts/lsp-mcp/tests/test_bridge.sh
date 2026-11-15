@@ -7767,6 +7767,9 @@ class _Immortal:
     procs = [(4194300, 1, 4194300, 4194300, 4242)]
     complete = True     # /proc was listed (section 27)
 
+    def has_unknown_rows(self):
+        return False
+
     def ours(self, pid, ticks, deadline=None, **kw):
         return True
 
@@ -7971,6 +7974,9 @@ class _OneTarget:
     def __init__(self, pid):
         self.procs = [(pid, 1, pid, pid, 4242)]
         self.complete = True    # /proc was listed (section 27)
+
+    def has_unknown_rows(self):
+        return False
 
     def ours(self, pid, ticks, deadline=None, **kw):
         return True                     # snapshot only NARROWS
@@ -11125,6 +11131,26 @@ read = inst.shutdown(timeout=3.0)
 check(gone(w), "[unreadable] the worker survived once its stat was readable")
 check(read is True, "[unreadable] the retry did not confirm the death")
 
+# --- L: the live re-proof cannot decide ------------------------------
+# The snapshot proves the worker, then the re-proof after its pidfd opened
+# fails (no descriptor left for the leader proof). That is "could not
+# decide", not "not ours": the group stays open (Codex round review, P1).
+inst, w = spawn("recheck")
+real_proof = lsp_client._provably_ours_and_gen
+lsp_client._provably_ours_and_gen = (
+    lambda pid, *a, _w=w, **kw: (False, False) if pid == _w
+    else real_proof(pid, *a, **kw))
+try:
+    undecided = inst.shutdown(timeout=1.0)
+finally:
+    lsp_client._provably_ours_and_gen = real_proof
+check(undecided is False, "[recheck] shutdown() confirmed a death when the "
+      "live re-proof of a proved worker could not decide")
+check(alive(w), "[recheck] the fixture lost its worker before the retry")
+decided = inst.shutdown(timeout=3.0)
+check(gone(w), "[recheck] the worker survived once the re-proof could run")
+check(decided is True, "[recheck] the retry did not confirm the death")
+
 # --- G: the worker left the leader's group but not its session ---------
 inst, w = spawn("setpgid", SERVER_PGRP)
 moved = inst.shutdown(timeout=3.0)
@@ -11221,6 +11247,26 @@ for w in workers:
     check(gone(w, 2.0), "worker %d survived the final force sweep" % w)
 check(not lsp_client._ABANDONED,
       "a failed construction is still abandoned after the final sweep")
+
+# --- M: a worker whose stat stays unreadable through a force sweep ----
+# Runs after the final sweep, so no earlier case's state can decide it.
+inst_m, w = spawn("sweep-unreadable")
+real_stat = lsp_client._stat_fields
+lsp_client._stat_fields = lambda pid, _w=w: (None if pid == _w
+                                             else real_stat(pid))
+try:
+    hidden_sweep = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._stat_fields = real_stat
+check(hidden_sweep.completed is False, "[sweep-unreadable] a force sweep "
+      "reported itself complete over a row it could not read")
+seen_sweep = lsp_client.force_kill_spawned(
+    settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w), "[sweep-unreadable] the worker survived once its stat was "
+      "readable")
+check(seen_sweep.completed is True, "[sweep-unreadable] the recovering "
+      "sweep did not complete")
 
 # --- K: a sweep that never listed /proc is not complete ---------------
 real_snap = lsp_client._proc_snapshot

@@ -989,11 +989,12 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
   - `_dispose_failed_spawn` runs one non-reaping escalation, `_reap_group`, and reaps only on an emptied group; an incomplete one goes to `_ABANDONED`, which `_collect_abandoned` drains.
 - [x] Widened the per-instance sweep to the leader's SESSION, so a worker that called `setpgid(0, 0)` is still collected (`_in_swept_group`).
 - [x] Refused emptiness from an unlisted `/proc`: `_ProcSnapshot.complete` is False then, and neither `_reap_group` nor the force sweep counts that scan as empty.
-  - A force sweep whose scans never listed `/proc` and never reached their fixpoint reports `completed` False.
+  - A force sweep whose scans never saw every row (an unlisted `/proc`, or an unreadable row that may be ours) and never reached their fixpoint reports `completed` False.
+  - A proved worker whose live re-proof cannot decide (no descriptor left for the leader proof) stays unresolved while it is still in the swept group or session.
   - A row whose stat is unreadable stays unresolved unless it is gone or its `/proc` entry belongs to another non-root uid (`_unreadable_row_may_be_ours`).
 - [x] Made `_collect_abandoned` take its lock without blocking, so a force sweep entered from a termination handler answers incomplete instead of deadlocking.
 - [x] Sub-test 9v runs a real PR_SET_DUMPABLE(0) worker of a real `LspSubprocess` through every collection path, then the final force sweep
-  - Paths: shutdown, retry after an exhausted first collection, descriptor exhaustion, an unlisted `/proc`, an unreadable stat, a `setpgid` worker, a contended registry, reader and stderr thread-start failures, a failed construction left abandoned and drained by the force sweep, a blind force sweep.
+  - Paths: shutdown, retry after an exhausted first collection, descriptor exhaustion, an unlisted `/proc`, an unreadable stat, an undecided re-proof, a `setpgid` worker, a contended registry, reader and stderr thread-start failures, a failed construction left abandoned and drained by the force sweep, a blind force sweep, a force sweep over a row it cannot read.
   - The driver runs under a child subreaper that signals only its own unreaped children; a planted decoy pid proves cleanup trusts no number.
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-tests; a non-dumpable descendant keeps `shutdown()` at False until it is collected, and a constructor failure after a fork leaves no surviving worker. Test on: host tooling only (no QEMU dependency).
@@ -1001,9 +1002,9 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 120/120 sub-tests PASS (9v opaque descendant collection is this section; 9p's exhaustion case now expects the confirmed death a provably empty group earns).
 
 > **Notes:**
-> - Eleven controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget, a blocking registry lock, an unlisted `/proc` read as complete, a group-only sweep, a blind sweep reported complete, an unreadable row discounted, an abandoned entry never drained.
+> - Thirteen controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget, a blocking registry lock, an unlisted `/proc` read as complete, a group-only sweep, a blind sweep reported complete, an unreadable row discounted, an abandoned entry never drained, an undecided re-proof read as exclusion, a force sweep ignoring unreadable rows.
 > - 9p's descriptor-exhaustion case expected False only because the polite wait had spent the sweep's budget; an empty group is provable with no descriptor, so it now expects True, and exhaustion with a worker present is 9v's case.
-> - Review 2026-11-15 (round, performance, completion on 24595a2fc): 3 High and 1 Medium, all fixed above. Wave 2 on 7879ef68d: 1 High and 4 Medium (performance approved), all fixed above.
+> - Review 2026-11-15 (round, performance, completion on 24595a2fc): 3 High and 1 Medium, all fixed above. Wave 2 on 7879ef68d: 1 High and 4 Medium (performance approved), all fixed above. Wave 3 on b1240346e: 1 High and 1 Medium (performance approved), both fixed above.
 > - Limit: on a host mounting `/proc` with `hidepid`, a root-owned process whose stat is hidden keeps a collection unconfirmed; that fails toward no kill and no replacement.
 > - Scope boundary: a descendant that called `setsid` itself, or whose leader was already reaped, is still out of reach without a kernel container (section 23's parked item).
 
