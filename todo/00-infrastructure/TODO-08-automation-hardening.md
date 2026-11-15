@@ -1562,6 +1562,18 @@ Operator direction 2026-11-15: the second reviewer (Gemini 4 Carbon through `agy
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes; `python3 scripts/review_pin.py --check` passes; `git grep -nE "second_review|second-review|_second_issues|--second"` outside `todo/` and `docs/plans/` finds nothing.
 
+> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_review_pin.py scripts/overnight/tests/test_three_pass_gate.py` (89 cases), `bash scripts/overnight/tests/run-all.sh`
+
+> **Notes:**
+> - What shipped: the second reviewer's dispatcher, log tool, tests, pin table, gate rules and doc paragraphs are gone; a pin that still carries `[second]` is refused.
+> - Plan review changed the design: the removed `_second_issues` was the only check refusing a stamp when the pin failed to load, so `_pin_issue` keeps that refusal on its own.
+> - Kept: `review_pin.section_base` (read by `review_owed.py`) and the three-pass plan document, which records the history.
+> - Scope boundary: section 44 keeps its stamps with a withdrawn note; nothing else in the roadmap referenced the mechanism.
+
+> **Verified:** 2026-11-15 at 72883c876: control-plane suite 93 passed, 0 failed; `review_pin.py --check` ok; the second-reviewer grep outside todo/ and docs/plans/ is empty; the pin-load control fails with the check removed.
+> **Quality reviewed:** 2026-11-15 | Codex 5x (plan 1 P2 fixed; working-tree round, round, performance, completion clean)
+
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
