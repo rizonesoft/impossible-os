@@ -355,6 +355,9 @@
 #   9t -- unconfirmed reaps propagate from reap_all_live,
 #         _shutdown_all_lsps and the shared spawner helper to the force
 #         phase, instead of being discarded.
+#   9u -- a completed descriptor claim is its own record state: answerable
+#         without a reaping poll, keeps its session proof and marker, and
+#         is retired with them.
 #
 #  15a -- workspace-root resolution priority chain.
 #  15b -- a file:// URI is rejected at the _dispatch_path entry.
@@ -10163,6 +10166,17 @@ try:
     verdict5 = inst5.shutdown(timeout=2.0)
 finally:
     os.dup, os.pidfd_open = real_dup2, real_open2
+# The SIGKILL is SENT inside shutdown(); it may LAND just after the call
+# returns, because shutdown() honours its budget. Wait for the exit,
+# bounded and without reaping, before judging it.
+for _ in range(100):
+    try:
+        if os.waitid(os.P_PID, stubborn.pid,
+                     os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+            break
+    except ChildProcessError:
+        break
+    time.sleep(0.02)
 check(stubborn.poll() is not None,
       "a SIGTERM-ignoring child survived shutdown(): the escalation spent "
       "its only identity on the SIGTERM and could not send the SIGKILL")
@@ -10889,6 +10903,248 @@ PY
     return 0
 }
 
+# --- 9u: a completed claim is its own state, neither wedged nor reaped ---
+# Operator decision Q43e (2026-11-13). A claim spends the record's
+# descriptor and removes it from _SPAWNED while the leader is still an
+# unreaped child. Before the `claimed` state the record was unanswerable:
+# `_leader_exited` said "not exited" forever, `_session_handle` lost the
+# session proof, `_retire_spawn` could not retire it, and spawn hygiene
+# dropped its marker. Marking it retired instead reaped before the
+# descendant sweep, which is why that was reverted in section 26.
+t_claimed_record_state() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, signal, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+def EMFILE(*a, **kw):
+    raise OSError("EMFILE")
+
+
+p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                     start_new_session=True)
+time.sleep(0.2)
+rec = lsp_client._record_spawn(p.pid)
+inst = object.__new__(lsp_client.LspSubprocess)
+inst._spawn_record = rec
+try:
+    check(rec.fd is not None and lsp_client._OWNED_SESSIONS.get(p.pid) is rec,
+          "fixture: the record has no descriptor or no session marker")
+    real_dup = os.dup
+    os.dup = EMFILE                     # the borrow fails, so the signal CLAIMS
+    try:
+        sent = lsp_client._signal_recorded(rec, signal.SIGKILL)
+    finally:
+        os.dup = real_dup
+    check(sent, "the claim path did not deliver the signal")
+    check(rec.claimed and not rec.retired and rec.fd is None
+          and rec not in lsp_client._SPAWNED,
+          f"after a claim: claimed={rec.claimed} retired={rec.retired} "
+          f"fd={rec.fd} listed={rec in lsp_client._SPAWNED}")
+    exited = False
+    for _ in range(250):
+        if inst._leader_exited(p):
+            exited = True
+            break
+        time.sleep(0.02)
+    check(exited, "a claimed leader that died was never seen to exit -- "
+                  "`alive` would report it live forever")
+    check(p.returncode is None,
+          "the liveness check REAPED a claimed leader before its "
+          "descendants were swept")
+    h = lsp_client._session_handle(p.pid)
+    check(h is not None, "a claimed leader lost its session proof while "
+                         "still unreaped")
+    if h is not None:
+        os.close(h)
+    # Spawn hygiene runs on every _record_spawn and must keep the marker.
+    other = subprocess.Popen([sys.executable, "-c", "pass"],
+                             start_new_session=True)
+    orec = lsp_client._record_spawn(other.pid)
+    other.wait(timeout=5)
+    lsp_client._retire_spawn(orec)
+    check(lsp_client._OWNED_SESSIONS.get(p.pid) is rec,
+          "spawn hygiene dropped a claimed record's session marker")
+    # A start time that no longer matches is not the same process.
+    real_ticks = rec.ticks
+    rec.ticks = real_ticks + 1
+    check(lsp_client._claimed_pidfd(rec) is None,
+          "a claimed record answered for a process with another start time")
+    rec.ticks = real_ticks
+    # An INCOMPLETE collection keeps it: no descriptor to leak, and the
+    # marker is what a retry needs to find an opaque descendant.
+    inst._post_death_lock = threading.Lock()
+    inst._post_death_done = False
+    inst._post_death_running = None
+    inst._gen_id = "9u-gen"
+    real_reap = lsp_client._reap_group
+    try:
+        lsp_client._reap_group = lambda *a, **kw: (0, False)
+        check(inst._collect_after_death(p, time.monotonic() + 1) is False,
+              "an incomplete collection reported done")
+        check(not rec.retired
+              and lsp_client._OWNED_SESSIONS.get(p.pid) is rec,
+              "an incomplete collection retired a claimed record and threw "
+              "away the session proof its retry needs")
+        check(p.returncode is None,
+              "an incomplete collection reaped the claimed leader")
+        # A complete one retires it: the flag, then the marker.
+        lsp_client._reap_group = lambda *a, **kw: (0, True)
+        check(inst._collect_after_death(p, time.monotonic() + 1) is True,
+              "a complete collection reported not done")
+    finally:
+        lsp_client._reap_group = real_reap
+    check(rec.retired, "_retire_spawn left a claimed record unretired")
+    check(lsp_client._OWNED_SESSIONS.get(p.pid) is None,
+          "a retired claimed record kept its session marker")
+    check(lsp_client._claimed_pidfd(rec) is None,
+          "a retired record still produced a handle")
+finally:
+    if p.poll() is None:
+        p.kill()
+    p.wait(timeout=5)
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e is not rec]
+    lsp_client._OWNED_SESSIONS.pop(p.pid, None)
+
+
+# --- shutdown() itself must not reap after an incomplete sweep --------
+# Both reap sites in shutdown() -- the escalation branch and step (7) --
+# used to wait() on the leader whatever the group sweep answered, which
+# threw away the unreaped-leader proof kept above (Codex adversarial
+# review, High). Exercised through shutdown(), for a leader that had
+# already exited (claimed) and one that needed the escalation.
+def make_inst(proc, rec):
+    i = object.__new__(lsp_client.LspSubprocess)
+    i.lang = "c"
+    i._proc = proc
+    i._initialized = False
+    i._shutdown_called = False
+    i._confirmed_dead = False
+    i._post_death_done = False
+    i._post_death_running = None
+    i._post_death_lock = threading.Lock()
+    i._init_lock = threading.Lock()
+    i._open_uris_lock = threading.Lock()
+    i._pending_lock = threading.Lock()
+    i._pending = {}
+    i._teardown_thread_id = None
+    i._reader_thread = None
+    i._stderr_thread = None
+    i.open_uris = set()
+    i.cleanup_paths = []
+    i._gen_id = "9u-shutdown"
+    i._spawn_record = rec
+    return i
+
+
+for shape in ("exited-claimed", "escalated"):
+    q = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                         start_new_session=True)
+    time.sleep(0.2)
+    qrec = lsp_client._record_spawn(q.pid)
+    try:
+        if shape == "exited-claimed":
+            real_dup = os.dup
+            os.dup = EMFILE
+            try:
+                lsp_client._signal_recorded(qrec, signal.SIGKILL)
+            finally:
+                os.dup = real_dup
+            probe = make_inst(q, qrec)
+            for _ in range(250):
+                if probe._leader_exited(q):
+                    break
+                time.sleep(0.02)
+        qi = make_inst(q, qrec)
+        real_reap = lsp_client._reap_group
+        lsp_client._reap_group = lambda *a, **kw: (0, False)
+        try:
+            # The first call and a RETRY (which takes _confirm_dead_late),
+            # both incomplete: neither may reap.
+            for attempt in ("first", "retry"):
+                verdict = qi.shutdown(timeout=1.0)
+                check(verdict is False,
+                      f"[{shape}/{attempt}] shutdown() confirmed a death its "
+                      "sweep did not finish")
+                check(q.returncode is None,
+                      f"[{shape}/{attempt}] shutdown() REAPED the leader after "
+                      "an incomplete sweep, destroying the proof the retry "
+                      "needs")
+                if shape == "exited-claimed":
+                    h = lsp_client._session_handle(q.pid)
+                    check(h is not None,
+                          f"[exited-claimed/{attempt}] the session proof was "
+                          "gone after an incomplete shutdown")
+                    if h is not None:
+                        os.close(h)
+        finally:
+            lsp_client._reap_group = real_reap
+        second = qi.shutdown(timeout=2.0)
+        check(second is True,
+              f"[{shape}] the retry did not confirm the death")
+        check(q.returncode is not None,
+              f"[{shape}] the retry confirmed the death but left the leader "
+              "unreaped")
+    finally:
+        if q.poll() is None:
+            q.kill()
+        q.wait(timeout=5)
+        lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED
+                                  if e is not qrec]
+        lsp_client._OWNED_SESSIONS.pop(q.pid, None)
+
+# --- the non-reaping exit wait honours the shutdown budget ------------
+# After an incomplete sweep the escalation waits for the leader to exit
+# without reaping it. That wait used its own one-second bound, so with the
+# budget spent and a probe that cannot answer (descriptor pressure) every
+# shutdown paid a full extra second (Codex perf review, Medium).
+q = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                     start_new_session=True)
+time.sleep(0.2)
+qrec = lsp_client._record_spawn(q.pid)
+try:
+    qi = make_inst(q, qrec)
+    real_reap = lsp_client._reap_group
+    lsp_client._reap_group = lambda *a, **kw: (0, False)
+    qi._leader_exited = lambda proc: False      # the probe cannot answer
+    t0 = time.monotonic()
+    try:
+        verdict = qi.shutdown(timeout=0.2)
+    finally:
+        lsp_client._reap_group = real_reap
+    spent = time.monotonic() - t0
+    check(verdict is False, "an unanswerable probe confirmed a death")
+    check(spent < 0.8,
+          f"shutdown(timeout=0.2) took {spent:.2f}s: the exit wait ran past "
+          "the shutdown budget")
+    check(q.returncode is None,
+          "the budget-bounded exit wait reaped the leader")
+finally:
+    if q.poll() is None:
+        q.kill()
+    q.wait(timeout=5)
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e is not qrec]
+    lsp_client._OWNED_SESSIONS.pop(q.pid, None)
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9u] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9u] claimed record OK: answerable without reaping, "
+                 "proof kept, retired with its marker\n")
+PY
+    return "$rc"
+}
+
 # --- 9r: liveness probes must not REAP -----------------------------------
 # Section 23's session continuity authorizes a hardened descendant by its
 # recorded leader still being there, and `_leader_alive` proves that with
@@ -11107,8 +11363,10 @@ except Exception:
     pass
 
 # --- a RETIRED record must not wedge the helper forever ---------------
-# _collect_after_death retires unconditionally (section 24's EMFILE fix),
-# so an instance keeps a reference to a record no longer in _SPAWNED. The
+# _collect_after_death retires an ordinary record whatever the sweep
+# answered (section 24's EMFILE fix; only a CLAIMED record on an incomplete
+# sweep is kept, see 9u), so an instance keeps a reference to a record no
+# longer in _SPAWNED. The
 # fail-closed rule then answered 'not exited' FOREVER: alive reported a
 # zombie alive indefinitely and the instance could never be confirmed
 # dead -- a wedge the rule created rather than prevented (Codex
@@ -11222,8 +11480,10 @@ b = Boom()
 b._schedule_crash_collection()          # must not raise
 
 # --- a RETIRED record must not wedge the helper forever ---------------
-# _collect_after_death retires unconditionally (section 24's EMFILE fix),
-# so an instance keeps a reference to a record no longer in _SPAWNED. The
+# _collect_after_death retires an ordinary record whatever the sweep
+# answered (section 24's EMFILE fix; only a CLAIMED record on an incomplete
+# sweep is kept, see 9u), so an instance keeps a reference to a record no
+# longer in _SPAWNED. The
 # fail-closed rule then answered 'not exited' FOREVER: alive reported a
 # zombie alive indefinitely and the instance could never be confirmed
 # dead -- a wedge the rule created rather than prevented (Codex
@@ -12051,6 +12311,7 @@ run "9q teardown single-flight"         t_teardown_single_flight
 run "9r non-reaping liveness"           t_nonreaping_liveness
 run "9s leader pass fair share"         t_leader_pass_fair_share
 run "9t unconfirmed reap propagation"   t_unconfirmed_reap_propagation
+run "9u claimed record state"           t_claimed_record_state
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

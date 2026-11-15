@@ -42,34 +42,35 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                | Depends On                        | Status |
-| --- | :---: | -------------------------------------------------------------------------- | --------------------------------- | :----: |
-| 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
-| 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
-| 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
-| 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [x]   |
-| 💎  |   5   | pyright integration (Python)                                               | §1                                |  [x]   |
-| 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [x]   |
-| ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [x]   |
-| ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [x]   |
-| 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
-| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
-| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
-| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
-| ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
-| 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
-| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
-| ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
-| ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
-| 💎  |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
-| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
-| ⭐  |  20   | Reap determinism + leak attribution for spawned language servers           | §1, §18                           |  [x]   |
-| 💎  |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [x]   |
-| ⭐  |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [x]   |
-| 💎  |  23   | Injected-clock deadline coverage + the non-dumpable-child reap blind spot  | §22                               |  [x]   |
-| 💎  |  24   | Single-pass procfs cleanup in the teardown sweep                           | §22, §23                          |  [x]   |
-| ⭐  |  25   | Restart-publish confirmed-dead gate + single-flight teardown               | §22, §23                          |  [/]   |
-| ⭐  |  26   | Teardown verdict propagation + a non-reaping liveness probe                | §22, §23, §25                     |  [x]   |
+| ⭐  | Order | Deliverable                                                                           | Depends On                        | Status |
+| --- | :---: | ------------------------------------------------------------------------------------- | --------------------------------- | :----: |
+| 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                               | --                                |  [x]   |
+| 💎  |   2   | clangd integration (C / H) with freestanding flags                                    | §1                                |  [x]   |
+| 💎  |   3   | asm-lsp integration (NASM flavor)                                                     | §1                                |  [x]   |
+| 💎  |   4   | bash-language-server integration (shell)                                              | §1                                |  [x]   |
+| 💎  |   5   | pyright integration (Python)                                                          | §1                                |  [x]   |
+| 💎  |   6   | PowerShellEditorServices integration (ps1)                                            | §1                                |  [x]   |
+| ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                                    | §1, §2-§6                         |  [x]   |
+| ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                             | §1, §7                            |  [x]   |
+| 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                                 | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
+| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                                 | §1-§9                             |  [x]   |
+| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action)            | §1, §7                            |  [x]   |
+| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)                     | §1, §7                            |  [x]   |
+| ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)                         | §1                                |  [x]   |
+| 💎  |  14   | Structured JSON logging + request correlation IDs                                     | §1                                |  [x]   |
+| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                                      | §1, §7                            |  [x]   |
+| ⭐  |  16   | Warm-index preloading + cold-start budget                                             | §1, §2, §3, §4, §5, §6            |  [x]   |
+| ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                               | §16                               |  [x]   |
+| 💎  |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                               | §1, §7, §11                       |  [x]   |
+| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                              | --                                |  [/]   |
+| ⭐  |  20   | Reap determinism + leak attribution for spawned language servers                      | §1, §18                           |  [x]   |
+| 💎  |  21   | Thread-group edge cases in the language-server reap (harness coverage)                | §20                               |  [x]   |
+| ⭐  |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader              | §20                               |  [x]   |
+| 💎  |  23   | Injected-clock deadline coverage + the non-dumpable-child reap blind spot             | §22                               |  [x]   |
+| 💎  |  24   | Single-pass procfs cleanup in the teardown sweep                                      | §22, §23                          |  [x]   |
+| ⭐  |  25   | Restart-publish confirmed-dead gate + single-flight teardown                          | §22, §23                          |  [/]   |
+| ⭐  |  26   | Teardown verdict propagation + a non-reaping liveness probe                           | §22, §23, §25                     |  [x]   |
+| ⭐  |  27   | Per-instance collection proves opaque descendants; constructor failure collects first | §23, §26                          |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -949,14 +950,13 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
       - The five spawner init-failure handlers share ONE `report_unconfirmed_shutdown` helper rather than five copies of a `sys.stderr.write` (PSES keeps its heavier 2.0s budget as an argument, not a silent change). The shutdown-publish gate in `bridge.py` routes through it too -- that caller is named in this item's original text and the first pass still missed it, which the test-coverage review caught: the instance is never in `_LIVE_LSPS`, so it is absent from the unconfirmed set as well, and a failed shutdown there left a fresh server surviving teardown with nothing anywhere recording it. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Report CONFIRMED reaps, not attempts, from the remaining teardown consumers")
 - [x] Commit: `"scripts/lsp-mcp: confirmed-reap teardown verdicts + non-reaping liveness probe"`
 
-- [/] Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord` -- BLOCKED on an operator decision to reopen the reap line (operator-gated, 2026-08-05: sections 20-26 are already seven consecutive sections on one teardown path)
-      - A record leaves `_SPAWNED` for two unrelated reasons: `_retire_spawn` (child confirmed dead, descriptor closed, identity finished) and the descriptor-exhaustion CLAIM path in `_escalate_recorded` / `_signal_recorded` / `signal_recorded_leaders`, which removes the entry precisely so it can keep using the original fd for one signal. `retired` distinguishes those two, but a COMPLETED claim is a third state it cannot express: out of `_SPAWNED`, fd closed, `retired` still False.
-      - Marking the claim finalizers `retired = True` was implemented and REVERTED here: it let the very next `_leader_exited` in `_confirm_dead_late` treat the record as finished and fall through to a REAPING poll -- before `_collect_after_death`, and with the claim having already removed the record `_session_handle` needs, so a hardened same-session descendant reads as collected and a replacement is published beside it (Codex re-adversarial, High).
-      - What SHIPPED is the opposite and milder residual, chosen on this file's own fail-closed rule: the record stays unanswerable, `alive` reports the instance live, and the force sweep collects it at teardown. A recoverable leak beats a duplicated server. The real fix is a state rather than a second boolean, plus an explicit ordering signal so only the final leader reap may poll -- both of which change when a reaping poll is permitted across the whole reap path, which is why this is an operator call rather than in-section work.
+- [x] Modelled CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord` (decided Q43e, done 2026-11-15)
+      - `claimed` is set by `_finish_claim` at all three claim sites; `_claimed_pidfd` answers a claimed, unretired record through a fresh pidfd checked against its start ticks, so `_leader_exited` and `_session_handle` work without a reaping poll.
+      - `_retire_spawn` retires a claimed record and drops its marker; spawn hygiene keeps the marker until then. Test 9u, with controls on the handle and the hygiene rule.
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 (118/118, 2026-08-05); a leader is proven exited without being reaped before the descendant sweep runs, an over-budget recorded-leader pass reports the sweep incomplete to its caller, and an unconfirmed instance is visible in the teardown result rather than silently dropped from `_LIVE_LSPS`. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 (119/119, 2026-11-15); a leader is proven exited without being reaped before the descendant sweep runs, an over-budget recorded-leader pass reports the sweep incomplete to its caller, and an unconfirmed instance is visible in the teardown result rather than silently dropped from `_LIVE_LSPS`. Test on: host tooling only (no QEMU dependency).
 
-> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 118/118 sub-tests PASS (9r non-reaping liveness, 9s leader-pass fair share, 9t unconfirmed reap propagation are this section); `bash scripts/lsp-mcp/tests/test_boundary.sh` -- 0 write-capable methods. No kernel test surface: host-side python tooling, no `TEST_CAT_*`.
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 119/119 sub-tests PASS (9r non-reaping liveness, 9s leader-pass fair share, 9t unconfirmed reap propagation, 9u claimed record state are this section); `bash scripts/lsp-mcp/tests/test_boundary.sh` -- 0 write-capable methods. No kernel test surface: host-side python tooling, no `TEST_CAT_*`.
 
 > **Notes:**
 > - Shipped: a non-reaping `_pidfd_exited` probe, a fair-share bound on the recorded-leader pass carried in `SweepCount.completed`, and `ReapCount` propagating unconfirmed reaps to the force phase.
@@ -965,10 +965,27 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 > - Canonical doc: this section plus the `_pidfd_exited`, `_leader_exited` and `_schedule_crash_collection` docstrings in `lsp_client.py`.
 > - Scope boundary: does NOT re-cover §25's restart gate or single-flight sweep; it consumes their verdicts. The spawn-publication window stays parked in §23 (needs sigwait).
 > - Rejected on evidence: nothing -- all 10 findings across four review legs were verified at file:line and fixed.
+> - 2026-11-15: the claimed record state (Q43e) closes the last item; a completed claim is answerable without reaping and is retired with its session marker.
+> - 2026-11-15 review: every leader reap (shutdown escalation and step 7, `_confirm_dead_late`, `_collect_after_death`'s retirement of a claimed record) now waits for a CONFIRMED-empty sweep, `_leader_exited`'s fallback asks with `waitid(WNOWAIT)` instead of the reaping `poll()`, and the non-reaping exit wait is bounded by the shutdown budget. Two older Highs went to §27.
 
 > **Verified:** 2026-08-05 | commit `9d635e79` + review fixes | 4/4 items | build OK | 118/118 lsp-mcp sub-tests, 0 write-capable methods, 1287/1287 tooling, 28326 kernel + 17 user-mode, lint 0 errors
-> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item e, decided): [L] reap hardening beyond dev-tool depth -- operator-gated. A completed descriptor claim is a third record state `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection; §26 shipped the fail-closed residual -> XREF: 00-infrastructure/TODO-07 §26 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
 > **Quality reviewed:** 2026-08-05 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 12H+8M+1L fixed, 1 deferred, 1 accepted | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
+> **Re-reviewed:** 2026-11-15 | Codex 8x (adversarial x4, consistency x2, perf x2) | 3H+2M fixed, 2H filed to §27 | 119/119 lsp-mcp sub-tests
+
+## 27. Per-Instance Collection Proves Opaque Descendants; Constructor Failure Collects First
+
+> **Spawned-by:** section 26 (review)
+
+> **User impact:** a language server that forks a worker which hides its `/proc` entry can be reported dead while that worker still runs, so the bridge publishes a replacement beside it; and a server whose bridge threads fail to start right after it forked can leave a worker no teardown finds.
+
+Filed from §26's fourth adversarial round, as two High findings older than §26's claimed-state item: `_provably_ours_and_gen` is unchanged by it, and the constructor path predates it. §23 already reaps such a descendant at FINAL teardown through session continuity (pass 0); what is missing is the same proof in the per-instance collection whose verdict gates the restart. -> XREF: [`TODO-07 §23`](#23-injected-clock-deadline-coverage-and-the-non-dumpable-child-reap-blind-spot) (item: "Reaped a language server that made its own `/proc` entry unreadable") -> XREF: [`TODO-07 §26`](#26-teardown-verdict-propagation-and-a-non-reaping-liveness-probe) (item: "Modelled CLAIMED-and-in-use separately from safely RETIRED")
+
+- [ ] The group sweep in `_collect_after_death` counts a same-session descendant whose environment is unreadable as ours by session proof bound to the exact spawn generation, or reports the collection incomplete; never empty.
+  - Today `_provably_ours_and_gen` answers the generation False when the environment cannot be read, so `_reap_group` reports empty and `shutdown()` confirms the death.
+- [ ] Constructor failure collects descendants before it reaps: non-reaping exit observation during its escalation, `_reap_group` before any `wait()`, and a cleanup owner kept when collection is incomplete.
+- [ ] Regression tests with a real non-dumpable descendant (no mocked `_reap_group`): one through `shutdown()`, one through a thread-start failure after a real fork, each checked again after the final force sweep.
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-tests; a non-dumpable descendant keeps `shutdown()` at False until it is collected, and a constructor failure after a fork leaves no surviving worker. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 

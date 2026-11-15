@@ -268,9 +268,19 @@ class _SpawnRecord:
     Inferring retirement from membership conflated the two, so a
     `_confirm_dead_late` landing mid-claim reaped the leader before the
     descendant sweep -- destroying the session proof under exactly the FD
-    pressure the claim path exists for (Codex re-adversarial, High)."""
+    pressure the claim path exists for (Codex re-adversarial, High).
 
-    __slots__ = ("pid", "ticks", "fd", "retired")
+    `claimed` is the THIRD state (operator decision Q43e, 2026-11-13). A
+    completed claim has spent the record's descriptor and left `_SPAWNED`,
+    but the child is not finished: it is unreaped, so its session still
+    holds and its pid cannot be recycled. Without the state it was
+    unanswerable -- `alive` wedged on True and `_session_handle` lost the
+    proof -- and marking it `retired` instead let the next liveness check
+    fall through to a REAPING poll before the descendant sweep. A claimed,
+    unretired record is answered by `_claimed_pidfd`: a fresh descriptor
+    whose start ticks still match the record."""
+
+    __slots__ = ("pid", "ticks", "fd", "retired", "claimed")
 
     def __init__(self, pid: int, ticks: Optional[int],
                  fd: Optional[int]) -> None:
@@ -278,6 +288,7 @@ class _SpawnRecord:
         self.ticks = ticks
         self.fd = fd
         self.retired = False
+        self.claimed = False
 
 
 _SPAWNED: list = []
@@ -824,13 +835,15 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     try:
         if pid != os.getsid(0):
             # Hygiene only -- the marker itself went out above. Drops
-            # entries whose record has already left _SPAWNED through
-            # the two descriptor-claim paths, which run in a dying
-            # process and may not take a lock.
+            # entries whose record has left _SPAWNED and is FINISHED. A
+            # claimed, unretired record has left the list too, but its
+            # leader is unreaped and its session still ours, so its
+            # marker stays until _retire_spawn drops it.
             with _OWNED_SESSIONS_LOCK:
                 live = {id(e) for e in list(_SPAWNED)}
                 for sid in [k for k, v in list(_OWNED_SESSIONS.items())
-                            if id(v) not in live]:
+                            if id(v) not in live
+                            and not (v.claimed and not v.retired)]:
                     _OWNED_SESSIONS.pop(sid, None)
     except Exception:
         pass
@@ -856,7 +869,17 @@ def _retire_spawn(target) -> None:
     Closing regardless -- as the first version did -- lets two concurrent
     retirements of the same pid close the same descriptor twice, and the
     second close lands on whatever unrelated file has since been handed
-    that number (Codex adversarial review, Medium)."""
+    that number (Codex adversarial review, Medium).
+
+    A CLAIMED record is no longer in `_SPAWNED` and has no descriptor left
+    to close, so it is retired directly: the flag, then its session
+    marker. Walking only the list left it unretired and its marker
+    published for good."""
+    if isinstance(target, _SpawnRecord) and target.claimed:
+        if not target.retired and target not in _SPAWNED:
+            target.retired = True
+            _drop_session_mark(target)
+        return
     for entry in list(_SPAWNED):
         if isinstance(target, _SpawnRecord):
             if entry is not target:
@@ -883,16 +906,52 @@ def _retire_spawn(target) -> None:
         # stale retirement pop the replacement's marker, after which the
         # replacement's non-dumpable descendants became unidentifiable
         # (Codex adversarial review, High).
-        if _OWNED_SESSIONS_LOCK.acquire(blocking=False):
-            try:
-                if _OWNED_SESSIONS.get(entry.pid) is entry:
-                    _OWNED_SESSIONS.pop(entry.pid, None)
-            finally:
-                _OWNED_SESSIONS_LOCK.release()
+        _drop_session_mark(entry)
         # By NUMBER, retire exactly one generation. Sweeping every record
         # sharing a PID is how a live replacement lost its descriptor.
         if not isinstance(target, _SpawnRecord):
             return
+
+
+def _drop_session_mark(entry: "_SpawnRecord") -> None:
+    """Remove `entry`'s session marker if it is still the one published.
+
+    By OBJECT IDENTITY and under the lock. A stale generation and a live
+    replacement can share a PID; comparing start ticks instead let a
+    stale retirement pop the replacement's marker, after which the
+    replacement's non-dumpable descendants became unidentifiable (Codex
+    adversarial review, High)."""
+    if _OWNED_SESSIONS_LOCK.acquire(blocking=False):
+        try:
+            if _OWNED_SESSIONS.get(entry.pid) is entry:
+                _OWNED_SESSIONS.pop(entry.pid, None)
+        finally:
+            _OWNED_SESSIONS_LOCK.release()
+
+
+def _finish_claim(entry: "_SpawnRecord") -> None:
+    """A claim has spent the record's descriptor: say so on the record.
+
+    Called once the claimed descriptor is closed. The fd is cleared first
+    so nothing can close it twice; `claimed` then tells every later reader
+    that the identity is the start time alone (see `_claimed_pidfd`)."""
+    entry.fd = None
+    entry.claimed = True
+
+
+def _claimed_pidfd(entry: "_SpawnRecord") -> Optional[int]:
+    """A caller-owned pidfd for a CLAIMED, unretired record, or None.
+
+    The claim spent the record's own descriptor, so this opens a fresh one
+    and accepts it only when the process behind it still has the recorded
+    start time. That is sound here and not for an arbitrary number: the
+    child is unreaped until retirement (descendants are swept, then the
+    record is retired, then the leader is reaped), so its pid cannot have
+    been reused, and the tick check rejects the case where it was."""
+    if not entry.claimed or entry.retired or entry.ticks is None:
+        return None
+    return _own_pidfd(entry.pid,
+                      lambda p, t=entry.ticks: proc_start_ticks(p) == t)
 
 
 def _borrow_pidfd(entry: tuple) -> Optional[int]:
@@ -1122,8 +1181,12 @@ def _session_handle(sid: Optional[int]) -> Optional[int]:
     # A dup of the record's own descriptor, taken the same race-safe way
     # every other reader takes one: _borrow_pidfd validates that the record
     # is still in _SPAWNED after the dup, so a concurrent retirement cannot
-    # have closed it and handed the number to an unrelated file.
-    return _borrow_pidfd(record)
+    # have closed it and handed the number to an unrelated file. A claimed
+    # record has no descriptor to dup; its proof is a fresh one.
+    fd = _borrow_pidfd(record)
+    if fd is None:
+        fd = _claimed_pidfd(record)
+    return fd
 
 
 def _leader_alive(fd: int) -> bool:
@@ -1137,6 +1200,29 @@ def _leader_alive(fd: int) -> bool:
         return True
     except Exception:
         return False
+
+
+def _child_exited_nowait(proc) -> bool:
+    """Has our child `proc` exited? Asked with WNOWAIT, so it is not reaped.
+
+    The fallback for an instance whose record can no longer answer (none,
+    or retired by `_collect_after_death` on an incomplete sweep). It used
+    to be `proc.poll()`, which REAPS: a retry after an incomplete sweep
+    then collected the leader on its way into the collection that needed
+    it unreaped (Codex adversarial review, High). The pid is sound to ask
+    about because it names our own child, and an unreaped child's pid
+    cannot be reused. Once someone has reaped it (ChildProcessError),
+    `poll()` only reads the cached status."""
+    if proc.returncode is not None:
+        return True
+    try:
+        info = os.waitid(os.P_PID, proc.pid,
+                         os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    except ChildProcessError:
+        return proc.poll() is not None
+    except OSError:
+        return False
+    return info is not None
 
 
 def _pidfd_exited(fd: int) -> Optional[bool]:
@@ -1332,22 +1418,11 @@ def _signal_recorded(target, sig: int) -> bool:
                     os.close(entry.fd)
                 except Exception:
                     pass
-                entry.fd = None
-                # NOT marked retired here, deliberately. Doing so was
-                # tried and REVERTED: a claim completing inside
-                # _retry_pinned_kill let the very next _leader_exited in
-                # _confirm_dead_late treat the record as finished and
-                # fall through to a REAPING poll -- before
-                # _collect_after_death, and with the claim having already
-                # removed the record _session_handle needs. A hardened
-                # same-session descendant then reads as collected and a
-                # replacement is published beside it (Codex
-                # re-adversarial, High). The residual is the opposite and
-                # milder failure: this record stays unanswerable, so
-                # `alive` reports the instance live and the force sweep
-                # collects it at teardown. A recoverable leak beats a
-                # duplicated server -- the fail-closed rule this whole
-                # file is built on. Owned by section 27.
+                _finish_claim(entry)
+                # CLAIMED, not retired: marking it retired let the next
+                # _leader_exited fall through to a REAPING poll before
+                # _collect_after_death (Codex re-adversarial, High). The
+                # claimed state keeps it answerable without that poll.
         # FAIL CLOSED on absent identity. `ticks is None` means the start
         # time could not be read when the child was recorded, and nothing
         # else here identifies the NUMBER.
@@ -1501,22 +1576,11 @@ def _escalate_recorded(target, is_dead, sigs=None,
             except Exception:
                 pass
             if claimed:
-                entry.fd = None         # nobody else may close it now
-                # NOT marked retired here, deliberately. Doing so was
-                # tried and REVERTED: a claim completing inside
-                # _retry_pinned_kill let the very next _leader_exited in
-                # _confirm_dead_late treat the record as finished and
-                # fall through to a REAPING poll -- before
-                # _collect_after_death, and with the claim having already
-                # removed the record _session_handle needs. A hardened
-                # same-session descendant then reads as collected and a
-                # replacement is published beside it (Codex
-                # re-adversarial, High). The residual is the opposite and
-                # milder failure: this record stays unanswerable, so
-                # `alive` reports the instance live and the force sweep
-                # collects it at teardown. A recoverable leak beats a
-                # duplicated server -- the fail-closed rule this whole
-                # file is built on. Owned by section 27.
+                _finish_claim(entry)    # nobody else may close it now
+                # CLAIMED, not retired: marking it retired let the next
+                # _leader_exited fall through to a REAPING poll before
+                # _collect_after_death (Codex re-adversarial, High). The
+                # claimed state keeps it answerable without that poll.
         return sent
     return False
 
@@ -2261,7 +2325,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                     except Exception:
                         pass
                     if claimed:
-                        entry.fd = None     # nobody else may close it now
+                        _finish_claim(entry)    # nobody else may close it now
         return complete
 
     # ONE /proc walk per round, shared by both scans that need one.
@@ -4325,8 +4389,8 @@ class LspSubprocess:
         `_confirm_dead_late` answers "not confirmed", which is retryable
         by design.
 
-        `proc.poll()` remains only for an instance with NO record at all
-        -- nothing to protect, and no other way to ask.
+        An instance whose record cannot answer (none, or retired) is asked
+        through `_child_exited_nowait`, which does not reap either.
 
         `returncode` is consulted before either: once an authorized
         reaper has run, the cached value is the answer and no syscall is
@@ -4335,10 +4399,11 @@ class LspSubprocess:
             return True
         rec = self._spawn_record
         if rec is not None and rec.retired:
-            # RETIRED, asked EXPLICITLY. `_collect_after_death` retires
-            # unconditionally (section 24's fix for descriptor
-            # accumulation), so the instance keeps a reference to a record
-            # that is finished: it can authorize nothing, and `_own_pidfd`
+            # RETIRED, asked EXPLICITLY. `_collect_after_death` retires an
+            # ordinary record whatever the sweep answered (section 24's fix
+            # for descriptor accumulation; only a CLAIMED record on an
+            # incomplete sweep is kept), so the instance keeps a reference
+            # to a record that is finished: it can authorize nothing, and `_own_pidfd`
             # rejects it anyway. Treating it as live made this helper
             # answer "not exited" FOREVER -- `alive` reported a zombie
             # alive indefinitely and the instance could never be confirmed
@@ -4352,7 +4417,11 @@ class LspSubprocess:
             rec = None
         if rec is not None:
             fd = _borrow_pidfd(rec)
-            if fd is None and rec.ticks is not None:
+            if fd is None and rec.claimed:
+                # A completed claim spent the descriptor; the record is
+                # neither finished nor gone, so ask through a fresh one.
+                fd = _claimed_pidfd(rec)
+            elif fd is None and rec.ticks is not None:
                 # No descriptor, but a start time IS an identity, and
                 # `_own_pidfd` can open a fresh handle against it -- the
                 # same acquisition `_escalate_recorded` falls back to.
@@ -4384,7 +4453,7 @@ class LspSubprocess:
             # assigned, so "no identity" there means "not yet", not
             # "never", and reaping in that window is the documented race.
             return False
-        return proc.poll() is not None
+        return _child_exited_nowait(proc)
 
     def _collect_after_death(self, proc, deadline: Optional[float]) -> bool:
         """Group collection + record retirement, once per instance.
@@ -4440,14 +4509,23 @@ class LspSubprocess:
             # (Codex adversarial + consistency + perf review, High).
             _killed, emptied = _reap_group(proc.pid, gen=self._gen_id,
                                            deadline=deadline)
-            # Retired UNCONDITIONALLY, incomplete sweep included. The
-            # record is a descriptor pinning the LEADER, which is already
+            # An ORDINARY record is retired whatever the sweep answered,
+            # incomplete included. It is a descriptor pinning the LEADER, which is already
             # dead; the group sweep addresses members by pgid plus the
             # owner and generation stamps, none of which live in it. So a
             # retry loses nothing by retiring now, while KEEPING it is
             # what accumulated one descriptor per dead generation until
             # EMFILE (section 24, Codex adversarial review, Medium).
-            _retire_spawn(self._spawn_record or proc.pid)
+            #
+            # Except a CLAIMED record on an incomplete sweep. It holds no
+            # descriptor, so keeping it accumulates nothing, and it still
+            # carries the session marker a retry needs to identify an
+            # opaque same-session descendant. Retiring it here threw that
+            # proof away while the leader was kept unreaped for exactly
+            # that retry (Codex adversarial review, High).
+            rec = self._spawn_record
+            if emptied or rec is None or not rec.claimed:
+                _retire_spawn(rec or proc.pid)
             ok = bool(emptied)
         except Exception:
             ok = False
@@ -4457,15 +4535,6 @@ class LspSubprocess:
                 self._post_death_running = None
             running.set()
         return ok
-        # Retired UNCONDITIONALLY once the leader is confirmed dead. Its
-        # descriptor can identify nothing further, and the group sweep
-        # addresses members by pgid plus the owner and generation stamps
-        # -- none of which live in this record. The earlier version kept
-        # it whenever the sweep had not finished, which on an expired
-        # deadline meant forever: shutdown is idempotent and the force
-        # sweep only ever borrows a duplicate, so a respawn loop on a
-        # loaded host accumulated one descriptor per dead generation
-        # until EMFILE (Codex adversarial review, Medium).
 
     def _retry_pinned_kill(self, proc, deadline: float) -> None:
         """Re-attempt the identity-pinned termination, nothing else.
@@ -4550,12 +4619,14 @@ class LspSubprocess:
         # collected: publishing a replacement over surviving descendants
         # is the same duplication as publishing over a live leader.
         self._confirmed_dead = self._collect_after_death(proc, deadline)
-        # Descendants are collected; the leader's identity has no further
-        # work to do, so collect it rather than leaving a zombie.
-        try:
-            proc.wait(timeout=1.0)
-        except Exception:
-            pass
+        # Reaped only once the descendants are CONFIRMED collected, as in
+        # shutdown() and _schedule_crash_collection: an unreaped leader is
+        # the proof the next retry needs (Codex adversarial review, High).
+        if self._confirmed_dead:
+            try:
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
         return self._confirmed_dead
 
     def shutdown(self, timeout: float = 5.0) -> bool:
@@ -4735,14 +4806,34 @@ class LspSubprocess:
             # workers need collecting, and its identity is still provable
             # only while it is unreaped. Anything the leader forked goes
             # through the ownership-verified group sweep.
-            _reap_group(proc.pid, gen=self._gen_id,
-                        deadline=group_deadline)
-            try:
-                proc.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                # Child is stuck in uninterruptible sleep; give up and
-                # let the OS reap it at our exit.
-                pass
+            _killed, emptied = _reap_group(proc.pid, gen=self._gen_id,
+                                           deadline=group_deadline)
+            # Reaped ONLY on a confirmed-empty group. An unreaped leader
+            # is the proof that authorizes an opaque same-session
+            # descendant on the retry (section 23); reaping it after an
+            # incomplete sweep let that descendant read as a clean group
+            # (Codex adversarial review, High). Step (7) retries the
+            # collection and reaps once it completes.
+            if emptied:
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    # Child is stuck in uninterruptible sleep; give up
+                    # and let the OS reap it at our exit.
+                    pass
+            else:
+                # Still wait for the SIGKILL to LAND, without collecting:
+                # the reap used to double as that wait, and returning
+                # while the leader is still dying left the caller's retry
+                # looking at a live process. Bounded by the shared group
+                # deadline as well as the old one second, so an expired
+                # budget (or a probe that cannot answer under descriptor
+                # pressure) costs nothing extra (Codex perf review, Medium).
+                until = min(group_deadline, time.monotonic() + 1.0)
+                while time.monotonic() < until:
+                    if self._leader_exited(proc):
+                        break
+                    time.sleep(min(0.02, max(0.0, until - time.monotonic())))
 
         # (4) Close remaining pipes + let the reader thread notice EOF.
         for f in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
@@ -4810,15 +4901,20 @@ class LspSubprocess:
             # asking it separately was asking the same question twice.
             self._confirmed_dead = self._collect_after_death(
                 proc, group_deadline)
-            # THE reap, and the only one on this path. Descendants have
-            # been swept, so the leader's identity has no further work to
-            # do and leaving it a zombie would leak a task slot for the
-            # life of the bridge. Bounded and best-effort: it is already
-            # known to have exited, so this collects rather than waits.
-            try:
-                proc.wait(timeout=1.0)
-            except Exception:
-                pass
+            # THE reap, and only once the descendants are CONFIRMED swept.
+            # Then the leader's identity has no further work to do and
+            # leaving it a zombie would leak a task slot for the life of
+            # the bridge. On an incomplete sweep it stays unreaped, as the
+            # crash collector already leaves it: it is the proof a retry
+            # needs, and the verdict below is False, so the caller retries
+            # (Codex adversarial review, High). Bounded and best-effort: it
+            # is already known to have exited, so this collects rather
+            # than waits.
+            if self._confirmed_dead:
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
         return self._confirmed_dead
 
     # ------------------------------------------------------------------
