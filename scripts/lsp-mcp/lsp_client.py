@@ -1917,14 +1917,26 @@ class _ProcSnapshot:
             self._ours[key] = True
         return answer is True
 
-    def has_unknown_rows(self) -> bool:
+    def has_unknown_rows(self, deadline: Optional[float] = None,
+                         clock: "_Clock" = None) -> bool:
         """True when /proc was not listed, or a listed row's stat was
         unreadable and the row may be ours: a scan holding either cannot
-        be counted as empty by any fixpoint (section 27)."""
+        be counted as empty by any fixpoint (section 27).
+
+        Bounded by `deadline`: an expired budget answers True, because an
+        inspection cut short has not shown the rows are known (Codex
+        performance review, P2)."""
         if not self.complete:
             return True
-        return any(pgrp is None and _unreadable_row_may_be_ours(pid)
-                   for pid, _pp, pgrp, _sid, _t in self.procs)
+        clk = clock if clock is not None else _REAL_CLOCK
+        for pid, _pp, pgrp, _sid, _t in self.procs:
+            if pgrp is not None:
+                continue
+            if deadline is not None and clk.now() >= deadline:
+                return True
+            if _unreadable_row_may_be_ours(pid):
+                return True
+        return False
 
     def markers(self, pid: int, ticks: Optional[int], gen: Optional[str],
                 deadline: Optional[float] = None,
@@ -2151,13 +2163,15 @@ def _group_members(
                 pid, gen, deadline=deadline, clock=clock, session_gen=pgid)
             if (not _in_swept_group(pid, pgid) or not live_ours
                     or not live_gen):
-                # Proved ours a moment ago and STILL in the swept group or
-                # session: a failed re-proof here is "could not decide"
-                # (typically no descriptor left for the leader proof once
-                # the target's was opened), not exclusion. While the
-                # leader is unreaped no stranger can hold this group or
-                # session, so it stays unresolved (Codex round review, P1).
-                if unresolved is not None and _in_swept_group(pid, pgid):
+                # Proved ours a moment ago, so a failed re-proof is "could
+                # not decide" unless the process POSITIVELY left: its
+                # handle says it is gone, or a readable stat shows another
+                # group and session. The re-reads themselves fail when the
+                # target's pidfd took the last descriptor, and a failed
+                # membership read is not departure either (Codex round
+                # review, P1 twice). Unresolved is never signalled.
+                if (unresolved is not None
+                        and not _positively_departed(pid, fd, pgid)):
                     unresolved.append(pid)
                 try:
                     os.close(fd)
@@ -2170,6 +2184,26 @@ def _group_members(
         # High -- the rule this file applies everywhere else).
         members.append((pid, fd, proc_start_ticks(pid)))
     return members
+
+
+def _positively_departed(pid: int, fd: int, pgid: int) -> bool:
+    """True only when `pid` is PROVABLY no longer in the swept group or
+    session: its pidfd reports the process gone, or its stat is readable
+    and names another group and another session. Any read that fails
+    answers False, so a candidate the snapshot placed in the group stays
+    unresolved under descriptor exhaustion rather than reading as gone."""
+    try:
+        signal.pidfd_send_signal(fd, 0)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False        # fail-direction: unknown keeps the group open
+    fields = _stat_fields(pid)
+    try:
+        return (fields is not None and int(fields[2]) != pgid
+                and int(fields[3]) != pgid)
+    except (IndexError, ValueError):
+        return False
 
 
 def _unreadable_row_may_be_ours(pid: int) -> bool:
@@ -2751,7 +2785,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # snapshot is in no round that saw it, and once the leaders die
         # its session can no longer be proven. Two consecutive empty
         # rounds, the same rule the stamped phase uses.
-        unknown = snap.has_unknown_rows()
+        unknown = snap.has_unknown_rows(deadline, clock)
         saw_blind = saw_blind or unknown
         if hit == 0 and not unknown:     # an unseen row proves nothing
             session_empty += 1
@@ -2781,7 +2815,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             break                           # checked BEFORE the scan
         snap_b = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
                                 clock=clock)
-        unknown_b = snap_b.has_unknown_rows()
+        unknown_b = snap_b.has_unknown_rows(deadline, clock)
         saw_blind = saw_blind or unknown_b
         if stamped_round(snap_b) or unknown_b:
             # An unlisted /proc is not an empty scan (Codex completion

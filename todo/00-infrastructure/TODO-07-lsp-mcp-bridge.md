@@ -71,6 +71,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |  25   | Restart-publish confirmed-dead gate + single-flight teardown                          | §22, §23                          |  [/]   |
 | ⭐  |  26   | Teardown verdict propagation + a non-reaping liveness probe                           | §22, §23, §25                     |  [x]   |
 | ⭐  |  27   | Per-instance collection proves opaque descendants; constructor failure collects first | §23, §26                          |  [x]   |
+| ⭐  |  28   | Per-instance collection of stamped workers that left the session                      | §27                               |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -993,8 +994,9 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
   - A proved worker whose live re-proof cannot decide (no descriptor left for the leader proof) stays unresolved while it is still in the swept group or session.
   - A row whose stat is unreadable stays unresolved unless it is gone or its `/proc` entry belongs to another non-root uid (`_unreadable_row_may_be_ours`).
 - [x] Made `_collect_abandoned` take its lock without blocking, so a force sweep entered from a termination handler answers incomplete instead of deadlocking.
+- [x] Kept a candidate the snapshot placed in the group unresolved unless it POSITIVELY left (`_positively_departed`), so a re-read that fails under descriptor exhaustion is not departure; bounded `has_unknown_rows` by the deadline.
 - [x] Sub-test 9v runs a real PR_SET_DUMPABLE(0) worker of a real `LspSubprocess` through every collection path, then the final force sweep
-  - Paths: shutdown, retry after an exhausted first collection, descriptor exhaustion, an unlisted `/proc`, an unreadable stat, an undecided re-proof, a `setpgid` worker, a contended registry, reader and stderr thread-start failures, a failed construction left abandoned and drained by the force sweep, a blind force sweep, a force sweep over a row it cannot read.
+  - Paths: shutdown, retry after an exhausted first collection, descriptor exhaustion, an unlisted `/proc`, an unreadable stat, an undecided re-proof, a real one-slot descriptor limit, a `setpgid` worker, a contended registry, reader and stderr thread-start failures, a failed construction left abandoned and drained by the force sweep, a blind force sweep, a force sweep over a row it cannot read.
   - The driver runs under a child subreaper that signals only its own unreaped children; a planted decoy pid proves cleanup trusts no number.
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-tests; a non-dumpable descendant keeps `shutdown()` at False until it is collected, and a constructor failure after a fork leaves no surviving worker. Test on: host tooling only (no QEMU dependency).
@@ -1002,11 +1004,26 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 120/120 sub-tests PASS (9v opaque descendant collection is this section; 9p's exhaustion case now expects the confirmed death a provably empty group earns).
 
 > **Notes:**
-> - Thirteen controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget, a blocking registry lock, an unlisted `/proc` read as complete, a group-only sweep, a blind sweep reported complete, an unreadable row discounted, an abandoned entry never drained, an undecided re-proof read as exclusion, a force sweep ignoring unreadable rows.
+> - Fifteen controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget, a blocking registry lock, an unlisted `/proc` read as complete, a group-only sweep, a blind sweep reported complete, an unreadable row discounted, an abandoned entry never drained, an undecided re-proof read as exclusion, a force sweep ignoring unreadable rows, a failed membership read taken as departure, an unbounded unknown-row scan.
 > - 9p's descriptor-exhaustion case expected False only because the polite wait had spent the sweep's budget; an empty group is provable with no descriptor, so it now expects True, and exhaustion with a worker present is 9v's case.
-> - Review 2026-11-15 (round, performance, completion on 24595a2fc): 3 High and 1 Medium, all fixed above. Wave 2 on 7879ef68d: 1 High and 4 Medium (performance approved), all fixed above. Wave 3 on b1240346e: 1 High and 1 Medium (performance approved), both fixed above.
+> - Review 2026-11-15 (round, performance, completion on 24595a2fc): 3 High and 1 Medium, all fixed above. Wave 2 on 7879ef68d: 1 High and 4 Medium (performance approved), all fixed above. Wave 3 on b1240346e: 1 High and 1 Medium (performance approved), both fixed above. Wave 4 on 90eb7bdf7: 1 High and 1 Medium fixed above; 1 Medium (a stamped `setsid` worker) filed as section 28.
 > - Limit: on a host mounting `/proc` with `hidepid`, a root-owned process whose stat is hidden keeps a collection unconfirmed; that fails toward no kill and no replacement.
-> - Scope boundary: a descendant that called `setsid` itself, or whose leader was already reaped, is still out of reach without a kernel container (section 23's parked item).
+> - Scope boundary: a descendant whose ownership markers are unreadable and that called `setsid` itself, or whose leader was already reaped, is out of reach without a kernel container (section 23's parked item). A `setsid` descendant whose stamps are still readable is identifiable and belongs to section 28. -> XREF: [`TODO-07 §28`](#28-per-instance-collection-of-stamped-workers-that-left-the-session) (item: "Collected an owner- and generation-stamped descendant that called `setsid`")
+
+## 28. Per-Instance Collection of Stamped Workers That Left the Session
+
+> **Spawned-by:** section 27 (review)
+
+> **User impact:** a language server whose worker detaches with `setsid` but keeps this bridge's owner and generation stamps can be reported dead while that worker runs, so a replacement is published beside it until final teardown.
+
+`_group_members` filters by group or session before it reads any stamp, so a detached worker is never asked whether it is ours. The force sweep's stamped phase already finds such workers at final teardown; the per-instance collection whose verdict gates a restart does not. -> XREF: [`TODO-07 §27`](#27-per-instance-collection-proves-opaque-descendants-constructor-failure-collects-first) (scope boundary in its Notes)
+
+- [ ] Collected an owner- and generation-stamped descendant that called `setsid`, in the per-instance collection, before its verdict confirms the death
+  - Candidates outside the swept group and session are signalled only on a readable owner stamp AND this instance's generation stamp, re-proved after the pidfd opens.
+  - The scan shares the round's snapshot and is bounded by the collection's deadline.
+- [ ] Regression with a real `setsid` worker that keeps its stamps: `shutdown()` collects it and confirms; a namesake generation's detached worker is left alone.
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-test; a stamped `setsid` worker keeps `shutdown()` at False until it is collected. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 

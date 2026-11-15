@@ -7767,7 +7767,7 @@ class _Immortal:
     procs = [(4194300, 1, 4194300, 4194300, 4242)]
     complete = True     # /proc was listed (section 27)
 
-    def has_unknown_rows(self):
+    def has_unknown_rows(self, *a, **kw):
         return False
 
     def ours(self, pid, ticks, deadline=None, **kw):
@@ -7975,7 +7975,7 @@ class _OneTarget:
         self.procs = [(pid, 1, pid, pid, 4242)]
         self.complete = True    # /proc was listed (section 27)
 
-    def has_unknown_rows(self):
+    def has_unknown_rows(self, *a, **kw):
         return False
 
     def ours(self, pid, ticks, deadline=None, **kw):
@@ -11150,6 +11150,45 @@ check(alive(w), "[recheck] the fixture lost its worker before the retry")
 decided = inst.shutdown(timeout=3.0)
 check(gone(w), "[recheck] the worker survived once the re-proof could run")
 check(decided is True, "[recheck] the retry did not confirm the death")
+
+# --- N: a REAL descriptor limit with one free slot ---------------------
+# The target's pidfd takes the last slot, so every live re-read after it
+# fails; that is not departure, and the group must stay open (Codex round
+# review, P1 twice). No mocks: the limit is real.
+import resource
+inst, w = spawn("fdlimit")
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+limit = max(int(x) for x in os.listdir("/proc/self/fd")) + 8
+nul = os.open("/dev/null", os.O_RDONLY)
+fillers = []
+while True:
+    d = os.dup(nul)
+    if d >= limit - 1:
+        os.close(d)            # leave exactly the one slot below the limit
+        break
+    fillers.append(d)
+resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+try:
+    starved_reap = lsp_client._reap_group(
+        inst._proc.pid, gen=inst._gen_id, deadline=time.monotonic() + 1.0)
+finally:
+    resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+    for d in fillers + [nul]:
+        os.close(d)
+check(starved_reap[1] is False, "[fdlimit] _reap_group confirmed an empty "
+      "group with one descriptor free and a live worker in it")
+check(alive(w), "[fdlimit] the fixture lost its worker before the retry")
+fed = inst.shutdown(timeout=3.0)
+check(gone(w), "[fdlimit] the worker survived once descriptors returned")
+check(fed is True, "[fdlimit] the retry did not confirm the death")
+
+# --- O: the unknown-row inspection honours its deadline ---------------
+ghosts = lsp_client._ProcSnapshot([(4194301 + i, None, None, None, None)
+                                   for i in range(50)])
+check(ghosts.has_unknown_rows() is False, "[deadline] rows that are gone "
+      "were counted as unknown")
+check(ghosts.has_unknown_rows(time.monotonic() - 1.0) is True,
+      "[deadline] an expired inspection reported every row known")
 
 # --- G: the worker left the leader's group but not its session ---------
 inst, w = spawn("setpgid", SERVER_PGRP)

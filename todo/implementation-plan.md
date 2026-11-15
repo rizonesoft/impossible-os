@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **980 of 2711 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **980 of 2712 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -259,7 +259,8 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T07 §24` | Single-Pass Procfs Cleanup in the Teardown Sweep                                                                      | none     |     4 |
 | [x]  | `D00 T07 §25` | Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown                                                        | none     |     7 |
 | [x]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none     |     6 |
-| [/]  | `D00 T07 §27` | Per-Instance Collection Proves Opaque Descendants; Constructor Failure Collects First                                 | none     |     8 |
+| [/]  | `D00 T07 §27` | Per-Instance Collection Proves Opaque Descendants; Constructor Failure Collects First                                 | none     |     9 |
+| [ ]  | `D00 T07 §28` | Per-Instance Collection of Stamped Workers That Left the Session                                                      | none     |     2 |
 | [x]  | `D00 T08 §1`  | Codex MCP Wiring + Cross-Config Drift Validator                                                                       | none     |    10 |
 | [x]  | `D00 T08 §2`  | Codex Invocation Policy: No `--model` / `--effort` From Claude                                                        | none     |     7 |
 | [x]  | `D00 T08 §3`  | `receiving-code-review` Hard Gate: State File + Post-Codex Hook Block                                                 | none     |    10 |
