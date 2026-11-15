@@ -8414,7 +8414,7 @@ def _scripted_members(seq):
     box = list(seq)
 
     def _gm(pgid, exclude=-1, deadline=None, snapshot=None, gen=None,
-            clock=None, unresolved=None):
+            clock=None, unresolved=None, revalidate=False):
         _gm_calls["n"] += 1
         return box.pop(0) if box else []
 
@@ -10991,6 +10991,19 @@ def check(cond, msg):
 
 
 def alive(pid):
+    # A zombie is dead: the fixture leaders never reap their workers, and
+    # a signal-0 probe succeeding on a signalled, unreaped worker let a
+    # check that a namesake was left alone pass after it had been killed.
+    # A worker that never started (None) is not alive either, and must not
+    # abort the cases after the one that lost it.
+    if pid is None:
+        return False
+    try:
+        with open("/proc/%d/stat" % pid) as fh:
+            if fh.read().rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+    except (OSError, IndexError):
+        pass
     try:
         os.kill(pid, 0)
         return True
@@ -11597,6 +11610,34 @@ finally:
 check(mixed == (None, None, True), "[mixed-read] an unstamped task beside "
       "a transiently unreadable one answered %r, not undecided" % (mixed,))
 
+# Ownership proven by one task, the generation left unread by a passing
+# failure on the next: the generation is undecided, not another one
+# (Codex plan review, section 28).
+gen_v = "gen-under-test"
+
+
+def gen_open(path, mode="r", *a, **kw):
+    if path == "/proc/%d/environ" % mixed_pid:
+        raise PermissionError(_errno.EACCES, "denied")
+    if path == "/proc/%d/task/1/environ" % mixed_pid:
+        return _io.BytesIO(b"LSP_BRIDGE_OWNER=" + lsp_client._OWNER_ID.encode()
+                           + b"\0")
+    if path == "/proc/%d/task/2/environ" % mixed_pid:
+        raise OSError(_errno.EMFILE, "Too many open files")
+    return open(path, mode, *a, **kw)
+
+
+lsp_client.open = gen_open
+os.listdir = mixed_listdir
+try:
+    gen_mixed = lsp_client._read_env_markers_ex(mixed_pid, gen_v)
+finally:
+    del lsp_client.open
+    os.listdir = real_listdir_v
+check(gen_mixed[0] is True and gen_mixed[1] is not False
+      and gen_mixed[2] is True, "[gen-transient] a generation a passing "
+      "failure left unread answered %r, not undecided" % (gen_mixed,))
+
 # The undecided answer comes from the ownership read itself, never a
 # second environment walk (Codex performance review, P2).
 walks = {"n": 0}
@@ -11678,6 +11719,1486 @@ check(rec_x.claimed and rec_x.pid in lsp_client._OWNED_SESSIONS,
 raced = inst_x.shutdown(timeout=3.0)
 check(gone(w) and raced is True, "[claim-race] the claimed generation's "
       "opaque worker was not collected")
+
+# --- Y: a worker that called setsid but kept its stamps (section 28) ---
+# Outside the group and the session only its own readable owner and
+# generation stamps prove it this generation's. Until it is collected the
+# collection is not confirmed; another generation's detached worker is
+# left alone.
+inst_y, w = spawn("detached-own", SERVER_DETACHED)
+inst_n, w_other = spawn("detached-namesake", SERVER_DETACHED)
+real_open_y = lsp_client._pidfd_open
+lsp_client._pidfd_open = lambda pid, _w=w: (None if pid == _w
+                                            else real_open_y(pid))
+try:
+    unpinned = inst_y.shutdown(timeout=1.0)
+finally:
+    lsp_client._pidfd_open = real_open_y
+check(unpinned is False, "[detached-own] shutdown() confirmed a death "
+      "while the generation's detached worker could not be signalled")
+check(alive(w), "[detached-own] the fixture lost its worker before the "
+      "retry")
+own_done = inst_y.shutdown(timeout=3.0)
+check(gone(w), "[detached-own] a setsid worker carrying this generation's "
+      "stamps survived shutdown()")
+check(own_done is True, "[detached-own] shutdown() did not confirm the "
+      "collection")
+check(alive(w_other), "[detached-namesake] another generation's detached "
+      "worker was signalled by this instance's collection")
+other_done = inst_n.shutdown(timeout=3.0)
+check(gone(w_other) and other_done is True, "[detached-namesake] its own "
+      "instance did not collect it")
+
+# --- Y2: the detached worker's stamps change after it is pinned -------
+# The pidfd signal consults no predicate, so the stamps re-read after the
+# open are the authorization: an image that dropped them is left alone.
+inst_e, w = spawn("detached-exec", SERVER_DETACHED)
+real_rem_e = lsp_client._read_env_markers_ex
+seen_e = {"n": 0}
+
+
+def exec_after_pin(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_e["n"] += 1
+        if seen_e["n"] > 1:
+            return True, False, False   # stamped, another generation now
+    return real_rem_e(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = exec_after_pin
+try:
+    inst_e.shutdown(timeout=1.0)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_e
+check(seen_e["n"] >= 2, "[detached-exec] the worker was never re-read "
+      "after its pidfd opened")
+check(alive(w), "[detached-exec] a detached worker whose stamps changed "
+      "after it was pinned was signalled")
+inst_e.shutdown(timeout=3.0)
+
+# --- Y3: no pidfd, the signal by number allowed ------------------------
+# Then the reap predicate alone authorizes the signal: it accepts this
+# generation's detached worker, and refuses another generation's worker
+# that read as this one when it was nominated (an exec in between).
+inst_b, w = spawn("bare-own", SERVER_DETACHED)
+inst_bn, w_bn = spawn("bare-namesake", SERVER_DETACHED)
+real_open_b = lsp_client._pidfd_open
+real_allow_b = lsp_client._bare_pid_signal_allowed
+real_rem_b = lsp_client._read_env_markers_ex
+seen_b = {"n": 0}
+
+
+def nominate_once(pid, gen=None, deadline=None, clock=None, _n=w_bn,
+                  _g=inst_b._gen_id):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _n and gen == _g:
+        seen_b["n"] += 1
+        if seen_b["n"] == 1:
+            return True, True, False    # read as this generation, once
+    return real_rem_b(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._pidfd_open = lambda pid, _w=w, _n=w_bn: (
+    None if pid in (_w, _n) else real_open_b(pid))
+lsp_client._bare_pid_signal_allowed = lambda: True
+lsp_client._read_env_markers_ex = nominate_once
+try:
+    inst_b.shutdown(timeout=3.0)
+finally:
+    lsp_client._pidfd_open = real_open_b
+    lsp_client._bare_pid_signal_allowed = real_allow_b
+    lsp_client._read_env_markers_ex = real_rem_b
+check(seen_b["n"] >= 2, "[bare-namesake] the predicate never re-read the "
+      "nominated worker before signalling it")
+check(gone(w), "[bare-own] without a pidfd the predicate refused this "
+      "generation's detached worker")
+check(alive(w_bn), "[bare-namesake] without a pidfd the predicate "
+      "signalled another generation's detached worker")
+inst_bn.shutdown(timeout=3.0)
+
+# --- Y4: a proven detached worker turns unreadable after the pin ------
+# Its first read proved it this generation's; once it hardens itself the
+# reads prove nothing, and that keeps the collection unconfirmed rather
+# than forgetting it (Codex round review, section 28).
+inst_h, w = spawn("detached-hardens", SERVER_DETACHED)
+real_rem_h = lsp_client._read_env_markers_ex
+seen_h = {"n": 0}
+
+
+def hardens_after_pin(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_h["n"] += 1
+        if seen_h["n"] > 1:
+            return None, None, False    # unreadable for a lasting reason
+    return real_rem_h(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = hardens_after_pin
+try:
+    hardened = inst_h.shutdown(timeout=1.0)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_h
+check(seen_h["n"] >= 3, "[detached-hardens] the proven worker was not "
+      "judged again on a later round (%d reads)" % seen_h["n"])
+check(hardened is False, "[detached-hardens] shutdown() confirmed a death "
+      "over a proven worker whose stamps became unreadable")
+check(alive(w), "[detached-hardens] a worker whose stamps proved nothing "
+      "after the pin was signalled")
+check(inst_h.shutdown(timeout=3.0) is True and gone(w),
+      "[detached-hardens] the retry did not collect it once readable")
+
+# --- Y5: a detached worker past the first pass's share -----------------
+# Every other row costs scripted time; the worker is ordered last. One
+# pass cannot reach it, but rows already shown not ours are not read
+# again, so the passes together do (Codex performance review).
+inst_f, w = spawn("far-row", SERVER_DETACHED)
+leader_f = inst_f._proc.pid
+
+
+class StepClock(lsp_client._Clock):
+    def __init__(self):
+        self.t = 1000.0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, secs):
+        self.t += secs
+
+
+clk_f = StepClock()
+real_rem_f = lsp_client._read_env_markers_ex
+real_snap_f = lsp_client._proc_snapshot
+reads_f = {"strangers": 0, "settled_again": 0}
+negative_f = set()
+pass_f = {"revalidate": False}
+real_dm_f = lsp_client._detached_members
+
+
+def tracked_pass(*a, **kw):
+    pass_f["revalidate"] = kw.get("revalidate", False)
+    return real_dm_f(*a, **kw)
+
+
+def costly(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    answer = real_rem_f(pid, gen, deadline=deadline, **kw)
+    if pid != _w and gen is not None:
+        reads_f["strangers"] += 1
+        if pid in negative_f and not pass_f["revalidate"]:
+            # The scan that would confirm emptiness re-reads them by
+            # design (an exec can bring stamps); no other pass may.
+            reads_f["settled_again"] += 1
+        if answer[0] is False or answer[1] is False:
+            # Only a decisive read costs scripted time: a refusal is
+            # rightly re-read every pass, and the hardened servers earlier
+            # sub-tests leave behind must not spend the budget this case
+            # sizes from the rows the exclusion settles.
+            clk_f.t += 0.01
+            negative_f.add(pid)         # readable and positively not ours
+    return answer
+
+
+def worker_last(*a, _w=w, **kw):
+    snap = real_snap_f(*a, **kw)
+    snap.procs.sort(key=lambda row: row[0] == _w)
+    return snap
+
+
+probe = real_snap_f(None)
+outside = sum(1 for row in probe.procs
+              if row[2] != leader_f and row[3] != leader_f)
+decisive_f = 0
+for row in probe.procs:
+    if row[2] != leader_f and row[3] != leader_f and row[0] != w \
+            and not lsp_client._provably_foreign(row[0]):
+        a_f = real_rem_f(row[0], inst_f._gen_id)
+        if a_f[0] is False or a_f[1] is False:
+            decisive_f += 1
+check(decisive_f >= 3, "[far-row] only %d rows read as not ours: too few "
+      "to model the cost" % decisive_f)
+budget_f = 1.4 * decisive_f * 0.01  # one pass: 0.7 of them; all: 1.4
+lsp_client._read_env_markers_ex = costly
+lsp_client._proc_snapshot = worker_last
+lsp_client._detached_members = tracked_pass
+try:
+    killed_f, emptied_f = lsp_client._reap_group(
+        leader_f, deadline=clk_f.now() + budget_f, gen=inst_f._gen_id,
+        clock=clk_f)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_f
+    lsp_client._proc_snapshot = real_snap_f
+    lsp_client._detached_members = real_dm_f
+check(gone(w), "[far-row] a detached worker past one pass's share was "
+      "never reached (%d stranger reads over %d rows, killed %d)"
+      % (reads_f["strangers"], outside, killed_f))
+check(reads_f["settled_again"] == 0, "[far-row] rows already shown not "
+      "ours were read again (%d repeat reads)" % reads_f["settled_again"])
+inst_f.shutdown(timeout=3.0)
+
+# --- Y5b: a second pass skips rows already shown not ours -------------
+probe_b = real_snap_f(None)
+rows_b = [(r[0], r[4]) for r in probe_b.procs if r[0] != os.getpid()]
+counts_b = {}
+
+
+def counting(pid, gen=None, deadline=None, clock=None):
+    kw = {} if clock is None else {"clock": clock}
+    answer = real_rem_f(pid, gen, deadline=deadline, **kw)
+    counts_b.setdefault(pid, []).append(answer)
+    return answer
+
+
+lsp_client._read_env_markers_ex = counting
+try:
+    lsp_client._detached_members(rows_b, "gen-skip-probe", None,
+                                 lsp_client._REAL_CLOCK, [], pgid=-424242)
+    lsp_client._detached_members(rows_b, "gen-skip-probe", None,
+                                 lsp_client._REAL_CLOCK, [], pgid=-424242)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_f
+    lsp_client._drop_detached_ledger(-424242, "gen-skip-probe")
+negative_b = [p for p, a in counts_b.items()
+              if a[0][0] is False or a[0][1] is False]
+check(negative_b and all(len(counts_b[p]) == 1 for p in negative_b),
+      "[settled-skip] %d of %d rows positively shown not ours were read "
+      "again on the second pass" % (sum(len(counts_b[p]) > 1
+                                       for p in negative_b),
+                                   len(negative_b)))
+
+# --- Y6: a failed listing between the proof and an unreadable read ----
+# A proven worker missing from one incomplete snapshot is not gone: the
+# ledger keeps it, so its later unreadable reads keep the collection
+# open (Codex round + completion review, section 28).
+inst_l, w = spawn("detached-lost-scan", SERVER_DETACHED)
+leader_l = inst_l._proc.pid
+real_rem_l = lsp_client._read_env_markers_ex
+real_snap_l = lsp_client._proc_snapshot
+real_open_l = lsp_client._pidfd_open
+seen_l = {"reads": 0, "snaps": 0}
+
+
+def proven_then_dark(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_l["reads"] += 1
+        if seen_l["reads"] > 1:
+            return None, None, False
+    return real_rem_l(pid, gen, deadline=deadline, **kw)
+
+
+def second_scan_fails(*a, **kw):
+    snap = real_snap_l(*a, **kw)
+    seen_l["snaps"] += 1
+    if seen_l["snaps"] == 2:
+        snap.procs = []
+        snap.complete = False
+    return snap
+
+
+lsp_client._read_env_markers_ex = proven_then_dark
+lsp_client._proc_snapshot = second_scan_fails
+lsp_client._pidfd_open = lambda pid, _w=w: (None if pid == _w
+                                            else real_open_l(pid))
+try:
+    killed_l, emptied_l = lsp_client._reap_group(
+        leader_l, deadline=time.monotonic() + 2.0, gen=inst_l._gen_id)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_l
+    lsp_client._proc_snapshot = real_snap_l
+    lsp_client._pidfd_open = real_open_l
+check(seen_l["snaps"] >= 4, "[detached-lost-scan] the reap took %d scans, "
+      "too few to reach the unreadable reads" % seen_l["snaps"])
+check(emptied_l is False and alive(w), "[detached-lost-scan] one failed "
+      "listing erased a proven worker and the collection was confirmed "
+      "(emptied %r, alive %r)" % (emptied_l, alive(w)))
+inst_l.shutdown(timeout=3.0)
+
+# --- Y7: a row whose read always runs out of budget, before the worker -
+# Without a resuming cursor every pass would spend itself on that row.
+inst_c, w = spawn("detached-behind-slow", SERVER_DETACHED)
+leader_c = inst_c._proc.pid
+clk_c = StepClock()
+real_rem_c = lsp_client._read_env_markers_ex
+real_snap_c = lsp_client._proc_snapshot
+slow_c = {"pid": None, "reads": 0}
+
+
+def slow_first(*a, _w=w, **kw):
+    snap = real_snap_c(*a, **kw)
+    outside_rows = [r for r in snap.procs
+                    if r[2] != leader_c and r[3] != leader_c
+                    and r[0] not in (_w, os.getpid())]
+    if outside_rows:
+        slow_c["pid"] = min(r[0] for r in outside_rows)
+        snap.procs.sort(key=lambda r: (r[0] != slow_c["pid"], r[0] != _w))
+    return snap
+
+
+def slow_read(pid, gen=None, deadline=None, clock=None):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == slow_c["pid"] and gen is not None:
+        slow_c["reads"] += 1
+        if deadline is not None:
+            clk_c.t = max(clk_c.t, deadline)    # the walk runs out
+        return None, None, True
+    return real_rem_c(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = slow_read
+lsp_client._proc_snapshot = slow_first
+try:
+    killed_c, emptied_c = lsp_client._reap_group(
+        leader_c, deadline=clk_c.now() + 4.0, gen=inst_c._gen_id,
+        clock=clk_c)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_c
+    lsp_client._proc_snapshot = real_snap_c
+check(slow_c["reads"] >= 1, "[detached-behind-slow] the slow row was "
+      "never read")
+check(gone(w), "[detached-behind-slow] a row that spends every pass "
+      "starved the detached worker behind it (%d slow reads)"
+      % slow_c["reads"])
+check(emptied_c is False, "[detached-behind-slow] a collection whose "
+      "slow row never resolved was confirmed")
+inst_c.shutdown(timeout=3.0)
+
+# --- Y8: a refused worker becomes readable again ----------------------
+# A hardened worker can call PR_SET_DUMPABLE(1); its identity is the same,
+# so a refusal is never settled, and the next read collects it (Codex
+# round review, section 28).
+inst_r, w = spawn("detached-readable-again", SERVER_DETACHED)
+real_rem_r = lsp_client._read_env_markers_ex
+seen_r = {"n": 0}
+
+
+def refused_once(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_r["n"] += 1
+        if seen_r["n"] == 1:
+            return None, None, False    # EACCES, a lasting refusal
+    return real_rem_r(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = refused_once
+try:
+    killed_r, emptied_r = lsp_client._reap_group(
+        inst_r._proc.pid, deadline=time.monotonic() + 3.0,
+        gen=inst_r._gen_id)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_r
+check(seen_r["n"] >= 2 and gone(w), "[detached-readable-again] a worker "
+      "refused once was never read again and survived (%d reads, emptied "
+      "%r)" % (seen_r["n"], emptied_r))
+inst_r.shutdown(timeout=3.0)
+
+# --- Y9: ledger upkeep leaves the reap time to signal ------------------
+# A ledger holding many proven entries the snapshot no longer shows must
+# not spend the budget discovery needs to reach a detached worker, and
+# each pass resumes the checks where the last stopped (Codex round +
+# performance review).
+inst_m, w = spawn("ledger-upkeep", SERVER_DETACHED)
+leader_m = inst_m._proc.pid
+clk_m = StepClock()
+ledger_m = lsp_client._detached_ledger(leader_m, inst_m._gen_id)
+for i in range(100):
+    ledger_m.proven[(4000000 + i, 1)] = None
+real_dep_m = lsp_client._proven_departed
+probes_m = {"n": 0}
+
+
+probed_m = []
+
+
+def slow_departure(pid, ticks, deadline=None, clock=None):
+    probes_m["n"] += 1
+    probed_m.append(pid)
+    clk_m.t += 0.01
+    return False
+
+
+lsp_client._proven_departed = slow_departure
+try:
+    killed_m, _em = lsp_client._reap_group(
+        leader_m, deadline=clk_m.now() + 0.3, gen=inst_m._gen_id,
+        clock=clk_m)
+finally:
+    lsp_client._proven_departed = real_dep_m
+    lsp_client._drop_detached_ledger(leader_m, inst_m._gen_id)
+check(killed_m >= 1 and gone(w), "[ledger-upkeep] %d departure probes "
+      "spent the budget and the detached worker was never signalled"
+      % probes_m["n"])
+fake_m = [p for p in probed_m if 4000000 <= p < 4000100]
+check(len(fake_m) > 8 and len(set(fake_m[:100])) == min(len(fake_m), 100),
+      "[ledger-upkeep] the departure checks did not resume where the last "
+      "pass stopped (%d probes, %d distinct)"
+      % (len(fake_m), len(set(fake_m))))
+inst_m.shutdown(timeout=3.0)
+
+# --- Y10: a proven worker the snapshot no longer shows -----------------
+# Absence is not departure: it keeps the collection open until a gone
+# entry, new start ticks or a dead thread group shows it left (Codex
+# completion review, section 28).
+gen_a = "gen-absent-probe"
+led_a = lsp_client._detached_ledger(-434343, gen_a)
+real_dep_a = lsp_client._proven_departed
+lsp_client._proven_departed = lambda pid, ticks, **kw: False
+try:
+    led_a.proven[(4100000, 1)] = None
+    unres_a = []
+    lsp_client._detached_members([], gen_a, None, lsp_client._REAL_CLOCK,
+                                 unres_a, pgid=-434343)
+finally:
+    lsp_client._proven_departed = real_dep_a
+check(4100000 in unres_a and (4100000, 1) in led_a.proven, "[proven-absent] a "
+      "proven worker missing from the rows did not keep the collection "
+      "open (unresolved %r)" % unres_a)
+unres_a = []
+lsp_client._detached_members([], gen_a, None, lsp_client._REAL_CLOCK,
+                             unres_a, pgid=-434343)
+check(unres_a == [] and (4100000, 1) not in led_a.proven, "[proven-absent] a "
+      "proven worker whose /proc entry is gone still held the collection "
+      "(unresolved %r)" % unres_a)
+import subprocess
+corpse = subprocess.Popen(["sleep", "0.2"])
+try:
+    ticks_a = lsp_client.proc_start_ticks(corpse.pid)
+    end_a = time.monotonic() + 5.0
+    while time.monotonic() < end_a and not lsp_client._is_zombie(corpse.pid):
+        time.sleep(0.05)
+    led_a.proven[(corpse.pid, ticks_a)] = None
+    unres_a = []
+    lsp_client._detached_members([], gen_a, None, lsp_client._REAL_CLOCK,
+                                 unres_a, pgid=-434343)
+    check(unres_a == [] and (corpse.pid, ticks_a) not in led_a.proven,
+          "[proven-zombie] a proven worker that died unreaped held the "
+          "collection open (unresolved %r, zombie %r)"
+          % (unres_a, lsp_client._is_zombie(corpse.pid)))
+finally:
+    corpse.kill()
+    corpse.wait()
+    lsp_client._drop_detached_ledger(-434343, gen_a)
+
+# --- Y11: another user's processes cost no environment walk ------------
+probe_u = real_snap_f(None)
+rows_u = [(r[0], r[4]) for r in probe_u.procs if r[0] != os.getpid()][:20]
+real_stat_u = lsp_client.os.stat
+real_uid_u = lsp_client.os.getuid
+reads_u = []
+
+
+class _ForeignStat:
+    st_uid = 54321
+
+
+def foreign_stat(path, *a, **kw):
+    if isinstance(path, str) and path.startswith("/proc/") \
+            and path.count("/") == 2:
+        return _ForeignStat()
+    return real_stat_u(path, *a, **kw)
+
+
+def counted(pid, gen=None, deadline=None, clock=None):
+    reads_u.append(pid)
+    return None, None, False
+
+
+real_rem_u = lsp_client._read_env_markers_ex
+lsp_client._read_env_markers_ex = counted
+lsp_client.os.stat = foreign_stat
+lsp_client.os.getuid = lambda: 1000
+try:
+    lsp_client._detached_members(rows_u, "gen-foreign-probe", None,
+                                 lsp_client._REAL_CLOCK, [], pgid=-454545)
+finally:
+    lsp_client.os.stat = real_stat_u
+    lsp_client.os.getuid = real_uid_u
+    lsp_client._read_env_markers_ex = real_rem_u
+    lsp_client._drop_detached_ledger(-454545, "gen-foreign-probe")
+check(rows_u and reads_u == [], "[foreign-uid] %d of %d rows owned by "
+      "another user were still read" % (len(reads_u), len(rows_u)))
+
+# --- Y12: setsid and hardening between the group proof and the pin -----
+# The group pass proved it; before the post-pin check it left the group
+# and session and turned unreadable. Leaving is not death, so the
+# collection stays open (Codex round review, section 28).
+inst_s, w = spawn("setsid-after-proof", SERVER_PLAIN)
+leader_s = inst_s._proc.pid
+real_rem_s = lsp_client._read_env_markers_ex
+real_snap_s = lsp_client._proc_snapshot
+real_live_s = lsp_client._provably_ours_and_gen
+real_swept_s = lsp_client._in_swept_group
+real_left_s = lsp_client._positively_departed
+seen_s = {"reads": 0, "snaps": 0}
+
+
+def proven_once(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_s["reads"] += 1
+        if seen_s["reads"] > 1:
+            return None, None, False    # hardened: a lasting refusal
+    return real_rem_s(pid, gen, deadline=deadline, **kw)
+
+
+def detached_after_first(*a, _w=w, **kw):
+    snap = real_snap_s(*a, **kw)
+    seen_s["snaps"] += 1
+    if seen_s["snaps"] > 1:
+        snap.procs = [(r[0], r[1], _w, _w, r[4]) if r[0] == _w else r
+                      for r in snap.procs]
+    return snap
+
+
+lsp_client._read_env_markers_ex = proven_once
+lsp_client._proc_snapshot = detached_after_first
+lsp_client._provably_ours_and_gen = (
+    lambda pid, gen, _w=w, **kw: (False, False) if pid == _w
+    else real_live_s(pid, gen, **kw))
+lsp_client._in_swept_group = (
+    lambda pid, pgid, _w=w: False if pid == _w else real_swept_s(pid, pgid))
+lsp_client._positively_departed = (
+    lambda pid, fd, pgid, _w=w: True if pid == _w
+    else real_left_s(pid, fd, pgid))
+try:
+    killed_s, emptied_s = lsp_client._reap_group(
+        leader_s, deadline=time.monotonic() + 2.0, gen=inst_s._gen_id)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_s
+    lsp_client._proc_snapshot = real_snap_s
+    lsp_client._provably_ours_and_gen = real_live_s
+    lsp_client._in_swept_group = real_swept_s
+    lsp_client._positively_departed = real_left_s
+check(seen_s["snaps"] >= 3, "[setsid-after-proof] the reap took %d scans, "
+      "too few to reach the detached rounds" % seen_s["snaps"])
+check(emptied_s is False and alive(w), "[setsid-after-proof] a worker that "
+      "left the session after its group proof was forgotten and the "
+      "collection confirmed (emptied %r, alive %r)" % (emptied_s, alive(w)))
+check(inst_s.shutdown(timeout=3.0) is True and gone(w),
+      "[setsid-after-proof] the retry did not collect it")
+
+# --- Y13: a host of cached rows still stops at the pass's share --------
+# Skipping a row judged earlier costs time too; with that cost modelled,
+# the pass stops at half the budget and records itself cut short (Codex
+# performance review, section 28).
+
+
+class TickClock(lsp_client._Clock):
+    def __init__(self):
+        self.t = 1000.0
+        self.calls = 0
+
+    def now(self):
+        self.calls += 1
+        self.t += 1e-6
+        return self.t
+
+    def sleep(self, secs):
+        self.t += secs
+
+
+rows_k = [(5000000 + i, 7) for i in range(50000)]
+led_k = lsp_client._detached_ledger(-464646, "gen-cached-probe")
+led_k.excluded.update((p_k, (t_k, 0)) for p_k, t_k in rows_k)
+clk_k = TickClock()
+start_k = clk_k.t
+unres_k = []
+try:
+    lsp_client._detached_members(rows_k, "gen-cached-probe",
+                                 start_k + 0.002, clk_k, unres_k,
+                                 pgid=-464646)
+finally:
+    lsp_client._drop_detached_ledger(-464646, "gen-cached-probe")
+check(None in unres_k and clk_k.t - start_k < 0.0015, "[cached-rows] a "
+      "pass over cached rows ran %.4f of a 0.002 budget without recording "
+      "itself cut short (unresolved %r)" % (clk_k.t - start_k, unres_k[:3]))
+
+# --- Y14: an empty scan, then a proof that hardens before the pin -----
+# The scan that first proves a worker must itself stay open: the
+# departure checks have already run, and a worker unreadable after its
+# pin would otherwise make it the second empty scan (Codex round review,
+# section 28).
+inst_e, w = spawn("proof-then-hardens", SERVER_DETACHED)
+leader_e = inst_e._proc.pid
+real_rem_e = lsp_client._read_env_markers_ex
+real_snap_e = lsp_client._proc_snapshot
+seen_e = {"reads": 0, "snaps": 0}
+
+
+def readable_once(pid, gen=None, deadline=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if pid == _w and gen is not None:
+        seen_e["reads"] += 1
+        if seen_e["reads"] > 1:
+            return None, None, False    # hardened after the pin
+    return real_rem_e(pid, gen, deadline=deadline, **kw)
+
+
+def hidden_first(*a, _w=w, **kw):
+    # Hidden until one scan without the leader (which the first scan
+    # signals) has come back empty, so the scan that proves the worker is
+    # the second empty one.
+    snap = real_snap_e(*a, **kw)
+    seen_e["snaps"] += 1
+    if any(r[0] == leader_e for r in snap.procs):
+        seen_e["leaderless"] = 0
+    else:
+        seen_e["leaderless"] = seen_e.get("leaderless", 0) + 1
+    if seen_e.get("leaderless", 0) < 2:
+        snap.procs = [r for r in snap.procs if r[0] != _w]
+    return snap
+
+
+lsp_client._read_env_markers_ex = readable_once
+lsp_client._proc_snapshot = hidden_first
+try:
+    killed_e, emptied_e = lsp_client._reap_group(
+        leader_e, deadline=time.monotonic() + 2.0, gen=inst_e._gen_id)
+    kept_e = any(k[0] == w for k in lsp_client._detached_ledger(
+        leader_e, inst_e._gen_id).proven)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_e
+    lsp_client._proc_snapshot = real_snap_e
+check(seen_e["reads"] >= 2 and seen_e.get("leaderless", 0) >= 2,
+      "[proof-then-hardens] the worker was not re-read after its pin (%d "
+      "reads, %d leaderless scans)" % (seen_e["reads"],
+                                       seen_e.get("leaderless", 0)))
+check(emptied_e is False and alive(w) and kept_e, "[proof-then-hardens] a "
+      "scan that proved a worker counted as empty and the collection "
+      "confirmed (emptied %r, alive %r, kept %r)"
+      % (emptied_e, alive(w), kept_e))
+check(inst_e.shutdown(timeout=3.0) is True and gone(w),
+      "[proof-then-hardens] the retry did not collect it")
+
+# --- Y15: a large proven ledger stops at its quarter -------------------
+# Each departure check costs time, so the walk stops at its share and
+# leaves one sentinel rather than visiting every entry (Codex
+# performance + reconciliation review, section 28).
+led_q = lsp_client._detached_ledger(-474747, "gen-ledger-probe")
+for i in range(50000):
+    led_q.proven[(6000000 + i, 9)] = None
+real_dep_q = lsp_client._proven_departed
+lsp_client._proven_departed = lambda pid, ticks, **kw: False
+clk_q = TickClock()
+start_q = clk_q.t
+unres_q = []
+try:
+    lsp_client._detached_members([], "gen-ledger-probe", start_q + 0.002,
+                                 clk_q, unres_q, pgid=-474747)
+finally:
+    lsp_client._proven_departed = real_dep_q
+    lsp_client._drop_detached_ledger(-474747, "gen-ledger-probe")
+check(None in unres_q and len(unres_q) < 2000
+      and clk_q.t - start_q < 0.0015, "[ledger-bound] the departure checks "
+      "walked %d entries, %.4f of a 0.002 budget"
+      % (len(unres_q), clk_q.t - start_q))
+
+# --- Y16: the cursor at the last row, every row touched charged -------
+# Finding where to resume must not scan the host before the first
+# deadline check: every row the pass touches, by iteration or by index,
+# costs scripted time here (Codex round + performance review, section
+# 28).
+clk_r = TickClock()
+
+
+class ChargedRows(list):
+    def __iter__(self):
+        for row in list.__iter__(self):
+            clk_r.t += 1e-6
+            yield row
+
+    def __getitem__(self, i):
+        clk_r.t += 1e-6
+        return list.__getitem__(self, i)
+
+
+rows_r = ChargedRows((7000000 + i, 3) for i in range(50000))
+led_r = lsp_client._detached_ledger(-484848, "gen-cursor-probe")
+for pid_r, ticks_r in list.__iter__(rows_r):
+    led_r.excluded[pid_r] = (ticks_r, 0)
+led_r.after = len(rows_r) - 1
+start_r = clk_r.t
+unres_r = []
+try:
+    lsp_client._detached_members(rows_r, "gen-cursor-probe", start_r + 0.002,
+                                 clk_r, unres_r, pgid=-484848)
+finally:
+    lsp_client._drop_detached_ledger(-484848, "gen-cursor-probe")
+check(None in unres_r and clk_r.t - start_r < 0.0015, "[cursor-at-end] a "
+      "pass resuming at the last row spent %.4f of a 0.002 budget "
+      "(unresolved %r)" % (clk_r.t - start_r, unres_r[:3]))
+
+# --- Y17: an exec that gains this generation's stamps after exclusion --
+# An exec keeps the pid and start ticks but can bring new stamps, so the
+# scan that would confirm emptiness re-reads every cached exclusion
+# (Codex round review, section 28). The chain process starts without the
+# stamps, is excluded, then execs into an environment that carries them.
+import errno
+import json
+import subprocess
+inst_x, w0 = spawn("exec-gains-stamps", SERVER_PLAIN)
+leader_x = inst_x._proc.pid
+with open("/proc/%d/environ" % w0, "rb") as fh:
+    stamped_x = dict(kv.split("=", 1) for kv in
+                     fh.read().decode("utf-8", "replace").split("\0")
+                     if "=" in kv)
+bare_x = {k: v for k, v in stamped_x.items()
+          if os.environ.get(k) == v}
+# The instance is shut down first: its own crash collector shares the
+# ledger and would race the collection under test.
+inst_x.shutdown(timeout=3.0)
+check(len(bare_x) < len(stamped_x), "[exec-gains-stamps] no stamp "
+      "variables told apart from the inherited environment")
+trig_x = os.path.join(tmp, "exec-gains-stamps.go")
+env_file_x = os.path.join(tmp, "exec-gains-stamps.env")
+ready_x = os.path.join(tmp, "exec-gains-stamps.b")
+with open(env_file_x, "w") as fh:
+    json.dump(stamped_x, fh)
+stage_b_x = os.path.join(tmp, "exec-gains-stamps-b.py")
+with open(stage_b_x, "w") as fh:
+    fh.write("import sys,time\n"
+             "open(sys.argv[1], 'w').write('b')\n"
+             "time.sleep(15)\n")
+STAGE_A = (
+    "import json,os,sys,time\n"
+    "end=time.monotonic()+15\n"
+    "while not os.path.exists(sys.argv[1]):\n"
+    "    if time.monotonic()>end: sys.exit(0)\n"
+    "    time.sleep(0.01)\n"
+    "env=json.load(open(sys.argv[2]))\n"
+    "os.execve(sys.executable,[sys.executable,sys.argv[4],sys.argv[3]],"
+    "env)\n")
+chain_x = subprocess.Popen([sys.executable, "-c", STAGE_A, trig_x,
+                            env_file_x, ready_x, stage_b_x], env=bare_x,
+                           start_new_session=True)
+real_snap_x = lsp_client._proc_snapshot
+seen_x = {"snaps": 0, "excluded": False}
+
+
+def exec_after_first(*a, **kw):
+    seen_x["snaps"] += 1
+    if seen_x["snaps"] == 2:
+        led = lsp_client._detached_ledger(leader_x, inst_x._gen_id)
+        seen_x["excluded"] = chain_x.pid in led.excluded
+        open(trig_x, "w").close()
+        end = time.monotonic() + 10.0
+        while time.monotonic() < end and not os.path.exists(ready_x):
+            time.sleep(0.01)
+    return real_snap_x(*a, **kw)
+
+
+lsp_client._proc_snapshot = exec_after_first
+try:
+    killed_x, emptied_x = lsp_client._reap_group(
+        leader_x, deadline=time.monotonic() + 3.0, gen=inst_x._gen_id)
+    # Judged at the moment the collection returns: the instance's own
+    # crash collector runs afterwards on a fresh ledger and would collect
+    # the chain anyway, hiding a confirmation made over a live worker.
+    live_at_verdict_x = alive(chain_x.pid)
+    caught_x = gone(chain_x.pid, secs=1.0)
+finally:
+    lsp_client._proc_snapshot = real_snap_x
+    try:
+        chain_x.kill()
+    except OSError:
+        pass
+    chain_x.wait()
+check(seen_x["excluded"] and os.path.exists(ready_x), "[exec-gains-stamps] "
+      "the chain was not excluded before its exec (excluded %r, exec %r)"
+      % (seen_x["excluded"], os.path.exists(ready_x)))
+check(not (emptied_x and live_at_verdict_x) and caught_x,
+      "[exec-gains-stamps] a collection confirmed while a process that "
+      "exec'd into this generation's stamps after its exclusion ran "
+      "(emptied %r, alive at the verdict %r)"
+      % (emptied_x, live_at_verdict_x))
+
+# --- Y18: a zombie check over a large thread group keeps its budget ----
+# The departure probe's zombie walk enumerates tasks one at a time and
+# stops at its deadline (Codex performance review, section 28).
+hold_z = threading.Event()
+threads_z = [threading.Thread(target=hold_z.wait) for _ in range(200)]
+for th in threads_z:
+    th.start()
+clk_z = TickClock()
+real_fields_z = lsp_client._stat_fields
+real_at_z = lsp_client._stat_fields_at
+me_z = os.getpid()
+
+
+def leader_z(pid):
+    return ["Z"] if pid == me_z else real_fields_z(pid)
+
+
+def task_z(path):
+    if path.startswith("/proc/%d/task/" % me_z):
+        clk_z.t += 1e-4
+        return ["Z"]
+    return real_at_z(path)
+
+
+lsp_client._stat_fields = leader_z
+lsp_client._stat_fields_at = task_z
+try:
+    start_z = clk_z.t
+    dead_z = lsp_client._proven_departed(
+        me_z, lsp_client.proc_start_ticks(me_z), deadline=start_z + 0.001,
+        clock=clk_z)
+    spent_z = clk_z.t - start_z
+finally:
+    lsp_client._stat_fields = real_fields_z
+    lsp_client._stat_fields_at = real_at_z
+    hold_z.set()
+    for th in threads_z:
+        th.join()
+check(dead_z is False and spent_z < 0.002, "[zombie-budget] a zombie "
+      "check over 200 tasks spent %.4f of a 0.001 budget (departed %r)"
+      % (spent_z, dead_z))
+
+# --- Y19: a refused signal after the exec, then a retry ---------------
+# Y17's exec, but the first pin fails: the proof must clear the cached
+# exclusion, or every later ordinary scan skips the worker and no retry
+# ever signals it (Codex round review, section 28).
+inst_y, w0 = spawn("exec-then-retry", SERVER_PLAIN)
+leader_y = inst_y._proc.pid
+with open("/proc/%d/environ" % w0, "rb") as fh:
+    stamped_y = dict(kv.split("=", 1) for kv in
+                     fh.read().decode("utf-8", "replace").split("\0")
+                     if "=" in kv)
+bare_y = {k: v for k, v in stamped_y.items() if os.environ.get(k) == v}
+# The instance is shut down first: its own crash collector shares the
+# ledger and would race the collection under test.
+inst_y.shutdown(timeout=3.0)
+trig_y = os.path.join(tmp, "exec-then-retry.go")
+env_file_y = os.path.join(tmp, "exec-then-retry.env")
+ready_y = os.path.join(tmp, "exec-then-retry.b")
+with open(env_file_y, "w") as fh:
+    json.dump(stamped_y, fh)
+chain_y = subprocess.Popen([sys.executable, "-c", STAGE_A, trig_y,
+                            env_file_y, ready_y, stage_b_x], env=bare_y,
+                           start_new_session=True)
+real_snap_y = lsp_client._proc_snapshot
+real_open_y = lsp_client._pidfd_open
+seen_y = {"snaps": 0}
+
+
+def exec_after_first_y(*a, **kw):
+    seen_y["snaps"] += 1
+    if seen_y["snaps"] == 2:
+        open(trig_y, "w").close()
+        end = time.monotonic() + 10.0
+        while time.monotonic() < end and not os.path.exists(ready_y):
+            time.sleep(0.01)
+    return real_snap_y(*a, **kw)
+
+
+lsp_client._proc_snapshot = exec_after_first_y
+lsp_client._pidfd_open = (lambda pid, _c=chain_y.pid:
+                          None if pid == _c else real_open_y(pid))
+try:
+    first_y = lsp_client._reap_group(
+        leader_y, deadline=time.monotonic() + 2.0, gen=inst_y._gen_id)
+    lsp_client._pidfd_open = real_open_y
+    alive_between_y = alive(chain_y.pid)
+    second_y = lsp_client._reap_group(
+        leader_y, deadline=time.monotonic() + 2.0, gen=inst_y._gen_id)
+    # Judged at the return: the instance's own crash collector shares the
+    # ledger and may be the one whose signal lands, so the count is not
+    # the property; no confirmation over the live worker is.
+    live_at_second_y = alive(chain_y.pid)
+    caught_y = gone(chain_y.pid, secs=1.0)
+finally:
+    lsp_client._proc_snapshot = real_snap_y
+    lsp_client._pidfd_open = real_open_y
+    try:
+        chain_y.kill()
+    except OSError:
+        pass
+    chain_y.wait()
+check(os.path.exists(ready_y) and first_y[1] is False and alive_between_y,
+      "[exec-then-retry] the first collection did not stay open over the "
+      "unpinnable worker (first %r, alive %r)" % (first_y, alive_between_y))
+check(caught_y and not (second_y[1] and live_at_second_y),
+      "[exec-then-retry] the retry left the exec'd worker its proof had "
+      "nominated, or confirmed while it ran (second %r, alive %r)"
+      % (second_y, live_at_second_y))
+
+# --- Y21: an exclusion from an earlier collection, then an exec -------
+# A collection that finds nothing of ours still rereads, at its
+# confirmation, every exclusion an earlier collection left: the epoch
+# starts with the confirmation, not with a sighting (Codex round review,
+# section 28).
+inst_v, w0 = spawn("stale-exclusion", SERVER_PLAIN)
+leader_v = inst_v._proc.pid
+with open("/proc/%d/environ" % w0, "rb") as fh:
+    stamped_v = dict(kv.split("=", 1) for kv in
+                     fh.read().decode("utf-8", "replace").split("\0")
+                     if "=" in kv)
+bare_v = {k: v for k, v in stamped_v.items() if os.environ.get(k) == v}
+# The instance is shut down first: its own crash collector shares the
+# ledger and would race the collection under test.
+inst_v.shutdown(timeout=3.0)
+trig_v = os.path.join(tmp, "stale-exclusion.go")
+env_file_v = os.path.join(tmp, "stale-exclusion.env")
+ready_v = os.path.join(tmp, "stale-exclusion.b")
+with open(env_file_v, "w") as fh:
+    json.dump(stamped_v, fh)
+chain_v = subprocess.Popen([sys.executable, "-c", STAGE_A, trig_v,
+                            env_file_v, ready_v, stage_b_x], env=bare_v,
+                           start_new_session=True)
+try:
+    led_v = lsp_client._detached_ledger(leader_v, inst_v._gen_id)
+    led_v.excluded[chain_v.pid] = (lsp_client.proc_start_ticks(chain_v.pid),
+                                   led_v.epoch)
+    open(trig_v, "w").close()
+    end_v = time.monotonic() + 10.0
+    while time.monotonic() < end_v and not os.path.exists(ready_v):
+        time.sleep(0.01)
+    emptied_v = lsp_client._reap_group(
+        leader_v, deadline=time.monotonic() + 3.0, gen=inst_v._gen_id)[1]
+    live_v = alive(chain_v.pid)
+finally:
+    lsp_client._drop_detached_ledger(leader_v, inst_v._gen_id)
+    try:
+        chain_v.kill()
+    except OSError:
+        pass
+    chain_v.wait()
+check(os.path.exists(ready_v) and not (emptied_v and live_v),
+      "[stale-exclusion] a collection confirmed over an exclusion an "
+      "earlier one left, while that process ran with this generation's "
+      "stamps (emptied %r, alive %r)" % (emptied_v, live_v))
+
+# --- Y22: confirming passes cut short keep one confirmation ----------
+# A confirming pass that runs out having seen nothing of ours does not
+# end the confirmation, so the epoch, and every fresh read taken under
+# it, survives to the pass that finishes (Codex performance review,
+# section 28).
+gen_w = "gen-window-probe"
+pgid_w = -525252
+seen_w = {"confirming": 0}
+epochs_w = []
+real_gm_w = lsp_client._group_members
+
+
+def scripted_w(pgid, exclude=-1, deadline=None, snapshot=None, gen=None,
+               clock=None, unresolved=None, revalidate=False):
+    epochs_w.append(lsp_client._detached_ledger(pgid, gen).epoch)
+    if revalidate:
+        seen_w["confirming"] += 1
+        if seen_w["confirming"] < 4:
+            unresolved.append(None)     # this pass ran out of its share
+    return []
+
+
+lsp_client._group_members = scripted_w
+try:
+    lsp_client._detached_ledger(pgid_w, gen_w)
+    emptied_w = lsp_client._reap_group(
+        pgid_w, deadline=time.monotonic() + 5.0, gen=gen_w,
+        clock=lsp_client._Clock(now=time.monotonic,
+                                sleep=lambda s: None))[1]
+finally:
+    lsp_client._group_members = real_gm_w
+    lsp_client._drop_detached_ledger(pgid_w, gen_w)
+check(emptied_w and len(set(epochs_w[1:])) == 1 and len(epochs_w) == 5,
+      "[confirm-window] confirming passes cut short restarted the "
+      "confirmation (emptied %r, epochs %r)" % (emptied_w, epochs_w))
+
+# --- Y23: a stale negative never erases a newer proof ------------------
+# Two collectors share the ledger: A's read begins before the worker's
+# exec and publishes its negative after B has proved the worker. The
+# proof stays, so a later pass over the hardened worker holds the
+# collection open (Codex round review, section 28).
+gen_s = "gen-stale-probe"
+pgid_s = -535353
+sleeper_s = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(30)"],
+                             start_new_session=True)
+rows_s = [(sleeper_s.pid, lsp_client.proc_start_ticks(sleeper_s.pid))]
+go_s = threading.Event()
+in_read_s = threading.Event()
+answer_s = {"main": (True, True, False)}
+real_rem_s = lsp_client._read_env_markers_ex
+
+
+def staged_s(pid, gen=None, deadline=None, clock=None):
+    if pid != sleeper_s.pid:
+        return real_rem_s(pid, gen, deadline=deadline, clock=clock)
+    if threading.current_thread() is thread_s:
+        in_read_s.set()
+        go_s.wait(10.0)
+        return False, False, False      # read before the exec: not ours
+    return answer_s["main"]
+
+
+def collector_a():
+    lsp_client._detached_members(rows_s, gen_s, None, lsp_client._REAL_CLOCK,
+                                 [], pgid=pgid_s)
+
+
+lsp_client._read_env_markers_ex = staged_s
+thread_s = threading.Thread(target=collector_a)
+try:
+    thread_s.start()
+    in_read_s.wait(10.0)
+    lsp_client._detached_members(rows_s, gen_s, None, lsp_client._REAL_CLOCK,
+                                 [], pgid=pgid_s)      # B proves it
+    go_s.set()
+    thread_s.join(10.0)
+    answer_s["main"] = (None, None, False)            # hardened since
+    unres_s = []
+    lsp_client._detached_members(rows_s, gen_s, None, lsp_client._REAL_CLOCK,
+                                 unres_s, pgid=pgid_s)
+    kept_s = rows_s[0] in lsp_client._detached_ledger(pgid_s,
+                                                      gen_s).proven
+    # Readable again: the retained proof must outrank the stale
+    # exclusion, so the worker is nominated, with its pidfd, for the
+    # signal.
+    answer_s["main"] = (True, True, False)
+    found_s = lsp_client._detached_members(
+        rows_s, gen_s, None, lsp_client._REAL_CLOCK, [], pgid=pgid_s)
+    nominated_s = [f[0] for f in found_s]
+    for f in found_s:
+        if f[1] is not None:
+            os.close(f[1])
+finally:
+    go_s.set()
+    lsp_client._read_env_markers_ex = real_rem_s
+    lsp_client._drop_detached_ledger(pgid_s, gen_s)
+    sleeper_s.kill()
+    sleeper_s.wait()
+check(kept_s and sleeper_s.pid in unres_s, "[stale-negative] a negative "
+      "read begun before another collector's proof erased it (kept %r, "
+      "unresolved %r)" % (kept_s, unres_s))
+check(nominated_s == [sleeper_s.pid], "[stale-negative] a stale exclusion "
+      "beside a retained proof kept the readable worker from nomination "
+      "(%r)" % (nominated_s,))
+
+# --- Y26: pending rows are checked inside the departure budget --------
+# Rows a probe was stopped inside accumulate; their departure checks
+# rotate within the quarter, deadline passed down (Codex performance +
+# reconciliation review, section 28).
+gen_q = "gen-pending-probe"
+clk_q = StepClock()
+led_q = lsp_client._detached_ledger(-565656, gen_q)
+for i_q in range(100):
+    led_q.pending[(8200000 + i_q, 7)] = None
+seen_q = {"no_deadline": 0}
+real_dep_q2 = lsp_client._proven_departed
+
+
+def charged_departure(pid, ticks, deadline=None, clock=None):
+    if deadline is None:
+        seen_q["no_deadline"] += 1
+    clk_q.t += 0.01
+    return False
+
+
+lsp_client._proven_departed = charged_departure
+try:
+    start_q = clk_q.now()
+    unres_q = []
+    lsp_client._detached_members([], gen_q, start_q + 0.1, clk_q, unres_q,
+                                 pgid=-565656)
+    spent_q = clk_q.now() - start_q
+    left_q = len(led_q.pending)
+finally:
+    lsp_client._proven_departed = real_dep_q2
+    lsp_client._drop_detached_ledger(-565656, gen_q)
+check(spent_q <= 0.04 and seen_q["no_deadline"] == 0 and unres_q == [None]
+      and left_q == 100, "[pending-budget] 100 pending rows spent %.3f of "
+      "a 0.1 budget (%d checks without a deadline, unresolved %r, %d kept)"
+      % (spent_q, seen_q["no_deadline"], unres_q, left_q))
+
+# --- Y24: a probe the deadline interrupts is a cut, not an answer -----
+# The row is reported as cut short, so the confirmation goes on, and the
+# next pass reads it first (Codex performance review, section 28).
+gen_i = "gen-interrupt-probe"
+clk_i = StepClock()
+rows_i = [(8100000 + i, 5) for i in range(10)]
+real_rem_i = lsp_client._read_env_markers_ex
+
+
+def interrupted_i(pid, gen=None, deadline=None, clock=None):
+    if pid == 8100006:
+        clk_i.t = deadline + 1.0        # the task walk ran out inside
+        return None, None, True
+    clk_i.t += 0.001
+    return False, False, False
+
+
+real_dep_i = lsp_client._proven_departed
+lsp_client._read_env_markers_ex = interrupted_i
+lsp_client._proven_departed = lambda pid, ticks, **kw: False   # rows live
+try:
+    unres_i = []
+    lsp_client._detached_members(rows_i, gen_i, clk_i.now() + 1.0, clk_i,
+                                 unres_i, pgid=-545454, revalidate=True)
+    after_i = lsp_client._detached_ledger(-545454, gen_i).after
+    pend_i = (8100006, 5) in lsp_client._detached_ledger(-545454, gen_i).pending
+    # A pass that never reaches the pending row still cannot confirm.
+    unres_i2 = []
+    lsp_client._detached_members(
+        [r for r in rows_i if r[0] != 8100006], gen_i, clk_i.now() + 1.0,
+        clk_i, unres_i2, pgid=-545454, revalidate=True)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_i
+    lsp_client._proven_departed = real_dep_i
+    lsp_client._drop_detached_ledger(-545454, gen_i)
+check(unres_i == [None] and after_i == 7 and pend_i, "[probe-interrupted] "
+      "a probe the deadline stopped was reported as undecided, or not kept "
+      "pending (unresolved %r, next row %r, pending %r)"
+      % (unres_i, after_i, pend_i))
+check(unres_i2 == [None], "[probe-interrupted] a pass that never reached "
+      "the row stopped inside its read reported nothing pending (%r)"
+      % (unres_i2,))
+
+# --- Y25: an exclusion carries the epoch read before its probe --------
+# A read that began before a confirmation started publishes under the
+# older epoch, so that confirmation reads the row again (Codex round
+# review, section 28).
+gen_e = "gen-epoch-probe"
+pgid_e = -555555
+sleeper_e = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(30)"],
+                             start_new_session=True)
+rows_e = [(sleeper_e.pid, lsp_client.proc_start_ticks(sleeper_e.pid))]
+go_e = threading.Event()
+in_read_e = threading.Event()
+reads_e = {"main": 0}
+real_rem_e = lsp_client._read_env_markers_ex
+
+
+def staged_e(pid, gen=None, deadline=None, clock=None):
+    if pid != sleeper_e.pid:
+        return real_rem_e(pid, gen, deadline=deadline, clock=clock)
+    if threading.current_thread() is thread_e:
+        in_read_e.set()
+        go_e.wait(10.0)
+    else:
+        reads_e["main"] += 1
+    return False, False, False
+
+
+def collector_e():
+    lsp_client._detached_members(rows_e, gen_e, None, lsp_client._REAL_CLOCK,
+                                 [], pgid=pgid_e)
+
+
+lsp_client._read_env_markers_ex = staged_e
+lsp_client._detached_ledger(pgid_e, gen_e)
+thread_e = threading.Thread(target=collector_e)
+try:
+    thread_e.start()
+    in_read_e.wait(10.0)
+    lsp_client._advance_detached_epoch(pgid_e, gen_e)  # confirmation starts
+    go_e.set()
+    thread_e.join(10.0)
+    lsp_client._detached_members(rows_e, gen_e, None, lsp_client._REAL_CLOCK,
+                                 [], pgid=pgid_e, revalidate=True)
+finally:
+    go_e.set()
+    lsp_client._read_env_markers_ex = real_rem_e
+    lsp_client._drop_detached_ledger(pgid_e, gen_e)
+    sleeper_e.kill()
+    sleeper_e.wait()
+check(reads_e["main"] == 1, "[epoch-before-read] a confirmation trusted "
+      "an exclusion whose read began before it started (%d reads)"
+      % reads_e["main"])
+
+# --- Y27: a confirmation larger than one call's budget finishes ------
+# Collections cut short by their deadline leave the confirmation open in
+# the ledger, so retries resume it under the same epoch (Codex
+# performance review, section 28). The real reap loop and detached pass
+# run over 100 scripted rows at 10 ms a read.
+gen_r = "gen-resume-probe"
+pgid_r = -575757
+clk_r2 = StepClock()
+rows_r2 = [(8300000 + i, 6) for i in range(100)]
+reads_r2 = {"n": 0}
+real_rem_r2 = lsp_client._read_env_markers_ex
+real_gm_r2 = lsp_client._group_members
+
+
+def negative_r2(pid, gen=None, deadline=None, clock=None):
+    reads_r2["n"] += 1
+    clk_r2.t += 0.01
+    return False, False, False
+
+
+def scripted_r2(pgid, exclude=-1, deadline=None, snapshot=None, gen=None,
+                clock=None, unresolved=None, revalidate=False):
+    return lsp_client._detached_members(rows_r2, gen, deadline, clock,
+                                        unresolved, pgid=pgid,
+                                        revalidate=revalidate)
+
+
+lsp_client._read_env_markers_ex = negative_r2
+lsp_client._group_members = scripted_r2
+clock_r2 = lsp_client._Clock(now=clk_r2.now, sleep=lambda s: None)
+calls_r2 = None
+try:
+    for call_r2 in range(10):
+        if lsp_client._reap_group(pgid_r, deadline=clk_r2.now() + 0.6,
+                                  gen=gen_r, clock=clock_r2)[1]:
+            calls_r2 = call_r2 + 1
+            break
+finally:
+    lsp_client._read_env_markers_ex = real_rem_r2
+    lsp_client._group_members = real_gm_r2
+    lsp_client._drop_detached_ledger(pgid_r, gen_r)
+check(calls_r2 is not None and reads_r2["n"] <= 230, "[confirm-resumes-"
+      "across-calls] 100 rows at 10 ms never confirmed over 0.6 s calls "
+      "(confirmed on call %r, %d reads)" % (calls_r2, reads_r2["n"]))
+
+# --- Y28: a departure removes only the identity it checked ------------
+# A reused pid proved under new start ticks while the old identity's
+# departure check runs keeps its proof (Codex round review, section 28).
+gen_d = "gen-identity-probe"
+pgid_d = -585858
+led_d = lsp_client._detached_ledger(pgid_d, gen_d)
+led_d.proven[(8400000, 100)] = None
+real_dep_d = lsp_client._proven_departed
+
+
+def replaced_d(pid, ticks, deadline=None, clock=None):
+    if (pid, ticks) == (8400000, 100):
+        led_d.proven[(8400000, 200)] = None    # another collector, meanwhile
+        return True
+    return False                                # the replacement lives
+
+
+lsp_client._proven_departed = replaced_d
+try:
+    unres_d = []
+    lsp_client._detached_members([], gen_d, None, lsp_client._REAL_CLOCK,
+                                 unres_d, pgid=pgid_d)
+    unres_d2 = []
+    lsp_client._detached_members([], gen_d, None, lsp_client._REAL_CLOCK,
+                                 unres_d2, pgid=pgid_d)
+    keys_d = list(led_d.proven)
+    # Through the reap loop, a confirmation already under way: the pass
+    # whose departure check saw the newer proof published must not
+    # confirm over it.
+    lsp_client._drop_detached_ledger(pgid_d, gen_d)
+    led_d = lsp_client._detached_ledger(pgid_d, gen_d)
+    led_d.proven[(8400000, 100)] = None
+    led_d.confirming = True
+    real_gm_d = lsp_client._group_members
+    lsp_client._group_members = (
+        lambda pgid, exclude=-1, deadline=None, snapshot=None, gen=None,
+        clock=None, unresolved=None, revalidate=False:
+        lsp_client._detached_members([], gen, deadline, clock, unresolved,
+                                     pgid=pgid, revalidate=revalidate))
+    try:
+        emptied_d = lsp_client._reap_group(
+            pgid_d, deadline=time.monotonic() + 0.3, gen=gen_d)[1]
+    finally:
+        lsp_client._group_members = real_gm_d
+finally:
+    lsp_client._proven_departed = real_dep_d
+    lsp_client._drop_detached_ledger(pgid_d, gen_d)
+check(keys_d == [(8400000, 200)] and 8400000 in unres_d
+      and 8400000 in unres_d2, "[departure-identity] the old identity's "
+      "departure took a newer proof under the same pid, or let a pass "
+      "pass over it (kept %r, unresolved %r then %r)"
+      % (keys_d, unres_d, unres_d2))
+check(emptied_d is False, "[departure-identity] a confirmation under way "
+      "confirmed over a proof published during its departure check")
+
+# --- Y29: a pending identity outranks a cached negative ---------------
+# Collector B caches a negative in the current epoch; collector A then
+# marks the same row pending. The next pass reads the row again and
+# clears it (Codex round review, section 28).
+gen_p = "gen-pending-cache-probe"
+pgid_p = -595959
+led_p = lsp_client._detached_ledger(pgid_p, gen_p)
+led_p.excluded[8500000] = (3, led_p.epoch)
+led_p.pending[(8500000, 3)] = None
+reads_p = {"n": 0}
+real_rem_p = lsp_client._read_env_markers_ex
+real_dep_p = lsp_client._proven_departed
+
+
+def negative_p(pid, gen=None, deadline=None, clock=None):
+    reads_p["n"] += 1
+    return False, False, False
+
+
+lsp_client._read_env_markers_ex = negative_p
+lsp_client._proven_departed = lambda pid, ticks, **kw: False
+try:
+    unres_p = []
+    lsp_client._detached_members([(8500000, 3)], gen_p, None,
+                                 lsp_client._REAL_CLOCK, unres_p,
+                                 pgid=pgid_p, revalidate=True)
+    left_p = list(led_p.pending)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_p
+    lsp_client._proven_departed = real_dep_p
+    lsp_client._drop_detached_ledger(pgid_p, gen_p)
+check(reads_p["n"] == 1 and left_p == [] and unres_p == [],
+      "[pending-cache] a pending row hidden by a cached negative was never "
+      "read again (%d reads, pending %r, unresolved %r)"
+      % (reads_p["n"], left_p, unres_p))
+
+# --- Y31: a ledger set changing under the lookup ----------------------
+# The other collector can empty a set, or change its size, between the
+# emptiness check and the lookup. The pass must return, held open, not
+# raise (Codex round + reconciliation review, section 28).
+import collections as _collections_v
+
+
+class _Emptied(_collections_v.OrderedDict):
+    def __iter__(self):
+        return iter(())         # removed by the other collector meanwhile
+
+
+class _Resized(_collections_v.OrderedDict):
+    def __iter__(self):
+        raise RuntimeError("OrderedDict mutated during iteration")
+
+
+results_v = []
+real_dep_v = lsp_client._proven_departed
+lsp_client._proven_departed = lambda pid, ticks, **kw: False
+try:
+    for kind_v in (_Emptied, _Resized):
+        gen_v = "gen-race-probe"
+        led_v = lsp_client._detached_ledger(-606060, gen_v)
+        led_v.proven = kind_v()
+        led_v.proven[(8600000, 4)] = None
+        led_v.pending = kind_v()
+        led_v.pending[(8600001, 4)] = None
+        unres_v = []
+        try:
+            lsp_client._detached_members([], gen_v, None,
+                                         lsp_client._REAL_CLOCK, unres_v,
+                                         pgid=-606060)
+            results_v.append((kind_v.__name__, unres_v))
+        except Exception as exc:
+            results_v.append((kind_v.__name__, repr(exc)))
+        finally:
+            lsp_client._drop_detached_ledger(-606060, gen_v)
+finally:
+    lsp_client._proven_departed = real_dep_v
+check(results_v == [("_Emptied", [None]), ("_Resized", [None])],
+      "[ledger-race] a set changing under its lookup raised or confirmed "
+      "the pass (%r)" % (results_v,))
+
+# --- Y30: a live refused leader costs one read, not a task walk -------
+# The task walk is for a leader that has exited. A live PR_SET_DUMPABLE(0)
+# process with many threads is refused at its leader environ and its
+# threads are not read one by one (Codex performance review, section 28).
+hard_t = subprocess.Popen([sys.executable, "-c",
+                           "import ctypes, sys, threading, time\n"
+                           "ctypes.CDLL('libc.so.6').prctl(4, 0, 0, 0, 0)\n"
+                           "ev = threading.Event()\n"
+                           "ts = [threading.Thread(target=ev.wait, "
+                           "daemon=True) for _ in range(200)]\n"
+                           "[t.start() for t in ts]\n"
+                           "print('ready', flush=True)\n"
+                           "time.sleep(30)\n"], stdout=subprocess.PIPE,
+                          start_new_session=True)
+opened_t = []
+real_open_t = open
+
+
+def counting_open(path, *a, **kw):
+    if isinstance(path, str) and path.startswith("/proc/%d/task/" % hard_t.pid):
+        opened_t.append(path)
+    if path == "/proc/%d/environ" % hard_t.pid:
+        # The refusal a non-root bridge meets, made explicit so the case
+        # is checked under any uid (root would read the environ).
+        raise PermissionError(errno.EACCES, "refused", path)
+    return real_open_t(path, *a, **kw)
+
+
+try:
+    hard_t.stdout.readline()
+    lsp_client.open = counting_open
+    try:
+        answer_t = lsp_client._read_env_markers_ex(hard_t.pid, "gen-walk")
+    finally:
+        del lsp_client.open
+finally:
+    hard_t.kill()
+    hard_t.wait()
+check(answer_t == (None, None, False) and not opened_t, "[live-leader-"
+      "refused] a live hardened leader walked %d task environs (answer %r)"
+      % (len(opened_t), answer_t))
+
+# --- Y20: a confirmation larger than one pass's share finishes --------
+# A confirming pass that runs out keeps its fresh reads, so the next one
+# resumes instead of rereading the host (Codex performance review,
+# section 28).
+gen_c = "gen-confirm-probe"
+led_c = lsp_client._detached_ledger(-494949, gen_c)
+rows_c = [(8000000 + i, 4) for i in range(100)]
+for p_c, t_c in rows_c:
+    led_c.excluded[p_c] = (t_c, 0)
+led_c.epoch = 1                     # every cached read is stale
+clk_c2 = StepClock()
+reads_c = []
+real_rem_c2 = lsp_client._read_env_markers_ex
+
+
+def negative_c(pid, gen=None, deadline=None, clock=None):
+    reads_c.append(pid)
+    clk_c2.t += 0.01
+    return False, False, False
+
+
+lsp_client._read_env_markers_ex = negative_c
+finished_c = None
+try:
+    for attempt_c in range(6):
+        unres_c = []
+        lsp_client._detached_members(rows_c, gen_c, clk_c2.now() + 0.6,
+                                     clk_c2, unres_c, pgid=-494949,
+                                     revalidate=True)
+        if None not in unres_c:
+            finished_c = attempt_c
+            break
+finally:
+    lsp_client._read_env_markers_ex = real_rem_c2
+    lsp_client._drop_detached_ledger(-494949, gen_c)
+check(finished_c is not None and len(reads_c) <= 110, "[confirm-resumes] "
+      "a confirmation over 100 rows at 30 a pass never finished (finished "
+      "%r, %d reads)" % (finished_c, len(reads_c)))
+
+# --- Z: probing the host never starves the signal ---------------------
+# Every unrelated process is slow to read (one read outlasts the
+# detached pass's share on any host, however few processes it runs). The group pass finds the
+# worker first and the detached pass gets half of what is left, so the
+# reap still has time to signal it (Codex plan review, section 28).
+inst_z, w = spawn("slow-host", SERVER_PLAIN)
+leader_z = inst_z._proc.pid
+real_rem_z = lsp_client._read_env_markers_ex
+
+
+def slow_strangers(pid, gen=None, deadline=None, clock=None, _l=leader_z):
+    kw = {} if clock is None else {"clock": clock}
+    if lsp_client._session_of(pid) != _l:
+        time.sleep(0.35)        # one stranger outlasts the detached share
+    return real_rem_z(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = slow_strangers
+try:
+    _c0 = time.monotonic()
+    killed_z, emptied_z = lsp_client._reap_group(
+        leader_z, deadline=time.monotonic() + 0.6, gen=inst_z._gen_id)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_z
+check(killed_z >= 1 and gone(w), "[slow-host] a slow host-wide scan left "
+      "the group's worker unsignalled (killed %d)" % killed_z)
+check(emptied_z is False, "[slow-host] a collection whose detached scan "
+      "ran out of budget was confirmed empty")
+inst_z.shutdown(timeout=3.0)
 
 # --- K: a sweep that never listed /proc is not complete ---------------
 real_snap = lsp_client._proc_snapshot

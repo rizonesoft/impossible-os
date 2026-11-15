@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import atexit
+import collections
 import errno
 import io
 import json
@@ -1132,8 +1133,14 @@ def _ppid_of(pid: int) -> Optional[int]:
         return None
 
 
-def _is_zombie(pid: int) -> bool:
+def _is_zombie(pid: int, deadline: Optional[float] = None,
+               clock: Optional[_Clock] = None) -> bool:
     """True only when EVERY thread of this process has exited.
+
+    With `deadline`, the tasks are enumerated one at a time and the walk
+    answers False (not shown dead) when it runs out, so one large thread
+    group cannot spend a caller's budget (Codex performance review,
+    section 28).
 
     A zombie still has a /proc entry and still answers pidfd_open, so a
     sweep that does not exclude it reports killing processes that were
@@ -1152,17 +1159,21 @@ def _is_zombie(pid: int) -> bool:
     f = _stat_fields(pid)
     if not f or f[0] != "Z":
         return False
+    if clock is None:
+        clock = _REAL_CLOCK
+    seen = 0
     try:
-        tasks = os.listdir(f"/proc/{pid}/task")
+        with os.scandir(f"/proc/{pid}/task") as tasks:
+            for entry in tasks:
+                if deadline is not None and clock.now() >= deadline:
+                    return False    # fail-direction: unfinished is alive
+                tf = _stat_fields_at(f"/proc/{pid}/task/{entry.name}/stat")
+                if tf is None or tf[0] != "Z":
+                    return False
+                seen += 1
     except Exception:
         return False
-    if not tasks:
-        return False
-    for tid in tasks:
-        tf = _stat_fields_at(f"/proc/{pid}/task/{tid}/stat")
-        if tf is None or tf[0] != "Z":
-            return False
-    return True
+    return seen > 0
 
 
 def _pgrp_of(pid: int) -> Optional[int]:
@@ -1765,6 +1776,13 @@ def _read_env_markers(
     return owner, generation
 
 
+def _still_open(owner: Optional[bool], generation: Optional[bool],
+                gen_marker: Optional[bytes]) -> bool:
+    """Is any requested marker still short of a proven True?"""
+    return owner is not True or (gen_marker is not None
+                                 and generation is not True)
+
+
 def _read_env_markers_ex(
     pid: int, gen: Optional[str] = None,
     deadline: Optional[float] = None,
@@ -1796,11 +1814,13 @@ def _read_env_markers_ex(
     return would answer one marker from a read environment and downgrade
     the other to a guess.
 
-    The third answer says whether an unresolved owner could resolve on a
-    later read: the walk was cut short, or a read failed for a reason
-    other than a lasting refusal. A sweep may not count such a row as
-    "not ours" in an emptiness proof (Codex round review, section 27).
-    It is False whenever the owner was resolved."""
+    The third answer says whether a REQUESTED marker left unresolved
+    could resolve on a later read: the walk was cut short, or a read
+    failed for a reason other than a lasting refusal. A sweep may not
+    count such a row as "not ours" in an emptiness proof (Codex round
+    review, section 27), nor as "another generation" when only the
+    generation went unread (Codex plan review, section 28). It is False
+    whenever every requested marker was resolved."""
     owner_marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
     gen_marker = (b"LSP_BRIDGE_GEN=" + gen.encode()
                   if gen is not None else None)
@@ -1818,6 +1838,16 @@ def _read_env_markers_ex(
                 None if gen_marker is None else gen_marker in env, False)
     except Exception as exc:
         transient = _read_failed_transiently(exc)
+    # The walk below is for a thread-group leader that has EXITED. A live
+    # leader refused for a lasting reason is refused for every thread
+    # too, since they share its memory and its dumpable flag, so walking
+    # thousands of them proved nothing and spent every collection's share
+    # on one unrelated service (Codex performance review, section 28).
+    # An unreadable stat keeps the walk: unknown is not "alive".
+    if not transient:
+        f = _stat_fields(pid)
+        if f is not None and f[0] != "Z":
+            return None, None, False
     # Only now walk the threads. The leader environ answers for almost
     # every process, and reading EVERY task environment before trusting it
     # made an unstamped multithreaded process (a browser, a JVM, a build
@@ -1841,7 +1871,7 @@ def _read_env_markers_ex(
             # still UNKNOWN rather than negative.
             return (True if owner is True else None,
                     True if generation is True else None,
-                    owner is not True)
+                    _still_open(owner, generation, gen_marker))
         try:
             with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
                 data = fh.read().split(b"\0")
@@ -1865,7 +1895,7 @@ def _read_env_markers_ex(
         # (Codex round review, section 27). Proven positives stand.
         return (True if owner is True else None,
                 True if generation is True else None,
-                owner is not True)
+                _still_open(owner, generation, gen_marker))
     return (owner is True,
             None if gen_marker is None else generation is True, False)
 
@@ -2226,9 +2256,12 @@ def _group_members(
     pgid: int, exclude: int = -1, deadline: Optional[float] = None,
     snapshot: Optional[_ProcSnapshot] = None, gen: Optional[str] = None,
     clock: _Clock = _REAL_CLOCK, unresolved: Optional[list] = None,
+    revalidate: bool = False,
 ) -> list[tuple[int, Optional[int], Optional[int]]]:
     """(pid, pidfd) for every live process in process group `pgid` that
-    this bridge can prove it started.
+    this bridge can prove it started. `revalidate` is passed to the
+    detached pass: the scan that would confirm emptiness trusts no
+    cached exclusion.
 
     A process group is addressed by a bare number -- the leader's PID --
     and that number stops meaning anything the moment the group empties:
@@ -2259,6 +2292,7 @@ def _group_members(
     if not snap.complete and unresolved is not None:
         unresolved.append(None)     # /proc unlisted: members unknown
     me = os.getpid()
+    detached: list[tuple[int, Optional[int]]] = []
     for pid, _ppid, pgrp, sid, ticks in snap.procs:
         if deadline is not None and clock.now() >= deadline:
             break
@@ -2272,6 +2306,8 @@ def _group_members(
                 unresolved.append(pid)
             continue
         if pgrp != pgid and sid != pgid:
+            if gen is not None:
+                detached.append((pid, ticks))   # judged after this pass
             continue
         # BOTH stamps from one environment traversal, and one cache entry
         # per answer: asking ours() and then _carries_gen_id() read the
@@ -2283,6 +2319,13 @@ def _group_members(
             continue
         if not gen_ok:
             continue        # a namesake generation, not this one
+        if gen is not None:
+            # Proven this generation's, so remembered beyond the group: a
+            # worker can call setsid and harden between this read and the
+            # post-pin check below, and leaving the session is not death.
+            # Only positive departure forgets it (Codex round review,
+            # section 28).
+            _detached_ledger(pgid, gen).proven[(pid, ticks)] = None
         fd = _pidfd_open(pid)
         # Recheck BOTH facts after opening the fd, not just the group: a
         # PID that was replaced between the stamp check and the open would
@@ -2314,7 +2357,386 @@ def _group_members(
         # number and cannot authorize a kill (Codex adversarial review,
         # High -- the rule this file applies everywhere else).
         members.append((pid, fd, proc_start_ticks(pid)))
+    members.extend(_detached_members(detached, gen, deadline, clock,
+                                     unresolved, pgid=pgid,
+                                     revalidate=revalidate))
     return members
+
+
+class _DetachedLedger:
+    """What one collection already knows about rows outside its group.
+
+    `proven` holds the (pid, start ticks) identity of each process once
+    proved this generation's, by its readable stamps here or by the group
+    pass before it could call setsid: while it lives it keeps the
+    collection unconfirmed, even when a later read proves nothing (Codex
+    round review). Keyed by identity, not pid, so removing a departed
+    process is one operation that can never take a newer process's proof
+    with it under a reused pid (Codex round review). `excluded`
+    maps a pid to the start ticks of a process a readable environment
+    positively showed not to be this generation's: only our descendants
+    carry the owner stamp, so the answer holds for that process, and
+    later rounds skip it (Codex performance review). A row
+    refused for a lasting reason is never settled, because a hardened
+    worker can become readable again (Codex round review)."""
+
+    __slots__ = ("proven", "excluded", "after", "epoch", "pending",
+                 "confirming")
+
+    def __init__(self) -> None:
+        # Ordered, so the departure checks rotate in O(1) per entry: the
+        # one checked moves to the end and the next pass starts with the
+        # oldest unchecked (Codex performance review).
+        self.proven: ("collections.OrderedDict["
+                      "tuple[int, Optional[int]], None]") = (
+            collections.OrderedDict())
+        # Keyed by pid, so it is bounded by the pid space and never needs
+        # pruning: a reused pid carries new start ticks, which do not
+        # match, and is judged afresh (Codex performance review). Each
+        # entry also records the epoch of its read.
+        self.excluded: dict[int, tuple[Optional[int], int]] = {}
+        self.after = 0      # the row index the next pass starts at
+        # Advanced when a confirmation starts (the first empty scan of a
+        # collection). A confirming scan trusts only exclusions read in
+        # the current epoch, so its fresh reads survive a pass that runs
+        # out and the next one resumes instead of rereading the host
+        # (Codex performance review).
+        self.epoch = 0
+        # Rows a probe was stopped inside, by identity. Each keeps
+        # the collection unconfirmed, as a cut, until a pass reads it to
+        # an answer or it departs; the cursor moves past it all the same,
+        # so a row whose read never fits a pass cannot starve the rows
+        # behind it (Codex performance review).
+        self.pending: ("collections.OrderedDict["
+                       "tuple[int, Optional[int]], None]") = (
+            collections.OrderedDict())
+        # True while a confirmation is under way: a collection cut short
+        # by its deadline or round cap leaves it set, so the next one
+        # resumes under the same epoch instead of starting over (Codex
+        # performance review).
+        self.confirming = False
+
+
+
+# Keyed by (group id, generation), so a reused leader pid never inherits
+# another generation's knowledge. Dropped when a collection confirms the
+# group empty.
+#
+# No lock, deliberately: every access is ONE dict or set operation, which
+# the interpreter performs atomically, so a termination handler that
+# interrupts a collection between bytecodes and runs the emergency sweep
+# on the same thread can never wait on it. A blocking lock here deadlocked
+# that path (Codex round review). A lost update costs one extra read,
+# never a wrong verdict: a proven entry is removed only by a departure,
+# never by a negative read, and an exclusion carries the epoch read
+# before its probe began, so a stale read can neither erase a newer proof
+# nor claim a newer confirmation (Codex round review).
+_DETACHED_LEDGERS: dict[tuple[int, str], "_DetachedLedger"] = {}
+
+
+def _detached_ledger(pgid: int, gen: str) -> _DetachedLedger:
+    return _DETACHED_LEDGERS.setdefault((pgid, gen), _DetachedLedger())
+
+
+def _drop_detached_ledger(pgid: int, gen: Optional[str]) -> None:
+    if gen is not None:
+        _DETACHED_LEDGERS.pop((pgid, gen), None)
+
+
+def _first_identity(entries: "collections.OrderedDict") -> Optional[tuple]:
+    """The oldest identity in a ledger set, or None when it is empty.
+
+    The other collector may remove or add entries at any moment, so an
+    emptiness check and the lookup are never two steps: iterating a set
+    that changes size between iter() and next() raises RuntimeError, and
+    one emptied in between raises StopIteration (Codex round +
+    reconciliation review, section 28)."""
+    try:
+        return next(iter(entries))
+    except (StopIteration, RuntimeError):
+        return None
+
+
+def _advance_detached_epoch(pgid: int, gen: Optional[str]) -> None:
+    """A confirmation starts: every exclusion read so far is stale for
+    it. A lost update under the emergency sweep costs one confirming
+    reread, never a verdict."""
+    ledger = _DETACHED_LEDGERS.get((pgid, gen)) if gen is not None else None
+    if ledger is not None:
+        ledger.epoch += 1
+
+
+def _proven_departed(pid: int, ticks: Optional[int],
+                     deadline: Optional[float] = None,
+                     clock: Optional[_Clock] = None) -> bool:
+    """True only on POSITIVE evidence that the proven process `pid` is no
+    longer the one proven: its /proc entry is gone, or its start ticks are
+    readable and differ. Absence from one snapshot is not evidence: a
+    failed listing, a scan cut short or an unreadable stat all leave a
+    live worker out of the rows (Codex round + completion review).
+
+    A zombie whose every task is Z is positive evidence too: the thread
+    group is dead and only waits for its parent, which may never reap it,
+    so keeping it proven would hold the collection open over a corpse
+    (Codex round + performance review, section 28)."""
+    try:
+        os.stat(f"/proc/{pid}")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False        # fail-direction: unknown keeps it proven
+    now = proc_start_ticks(pid)
+    if now is not None and ticks is not None and now != ticks:
+        return True
+    return (now is not None and now == ticks
+            and _is_zombie(pid, deadline=deadline, clock=clock))
+
+
+def _provably_foreign(pid: int) -> bool:
+    """True when `pid`'s /proc entry is owned by another NON-root uid
+    while this bridge is not root: no descendant of ours can hold one.
+    Ours keep our uid, or root's when PR_SET_DUMPABLE(0) or a setuid exec
+    reassigns the entry, and an unprivileged process cannot take another
+    user's uid. A root bridge can read every environment, so it never
+    pays the refused task walk this skips, and its workers may drop to
+    any uid (Codex performance review, section 28)."""
+    me = os.getuid()
+    if me == 0:
+        return False
+    try:
+        owner = os.stat(f"/proc/{pid}").st_uid
+    except OSError:
+        return False        # fail-direction: unknown is judged as usual
+    return owner not in (me, 0)
+
+
+def _detached_members(
+    rows: list[tuple[int, Optional[int]]], gen: Optional[str],
+    deadline: Optional[float], clock: _Clock,
+    unresolved: Optional[list], pgid: int = -1, revalidate: bool = False,
+) -> list[tuple[int, Optional[int], Optional[int]]]:
+    """Members of THIS generation that called `setsid` (section 28).
+
+    An exclusion is a cache, not a fact: an exec keeps the pid and start
+    ticks and can bring this generation's stamps, so the scan whose
+    emptiness would CONFIRM a collection (`revalidate`) rereads every row
+    not read since the confirmation started (Codex round review); a confirmation cut short resumes where it stopped (Codex
+    performance review). Earlier scans still skip the rows they settled.
+
+    Runs AFTER the group pass, so the cheap members are always found
+    first, and within HALF of what remains of the budget: probing every
+    other process on the host must never leave the reap no time to
+    signal what was found (Codex plan review). A pass that runs out
+    records itself unresolved, so a collection it cut short is never
+    confirmed empty. A proven worker, here or in the group pass, keeps
+    it unresolved too, until its departure is positively shown (Codex
+    completion + round review); those checks take at most a quarter of the
+    budget and resume where the last pass stopped, so a ledger of
+    survivors never consumes the share discovery needs (Codex round +
+    performance review). Each pass resumes after the last row position the
+    previous one reached, so a row whose read always runs out of budget delays the
+    rows behind it by one pass instead of starving them (Codex
+    performance review). Each nomination is re-proved by the same
+    readable stamps after its pidfd opens; without a pidfd the reap
+    predicate re-proves them before the opt-in signal by number."""
+    if gen is None:
+        return []
+    ledger = _detached_ledger(pgid, gen)
+    # The budget is read FIRST: bookkeeping over every row used to run
+    # before it, and on a crowded host near the deadline that consumed the
+    # time reserved for signalling (Codex performance review).
+    sub = kept_end = None
+    if deadline is not None:
+        start = clock.now()
+        sub = start + max(0.0, deadline - start) / 2
+        kept_end = start + max(0.0, deadline - start) / 4
+    # Every proven worker, wherever the snapshot placed it, keeps the
+    # collection open until it is shown gone: one that is alive is ours
+    # and not yet collected, and absence is not departure (a failed or
+    # cut-short scan, a hidden entry, a signal that has not landed yet).
+    # Each check is O(1) and the walk stops at its quarter of the budget,
+    # leaving one sentinel for the entries it did not reach: a large
+    # ledger must not spend discovery's or the signal's time on
+    # bookkeeping (Codex performance + reconciliation review).
+    for _ in range(len(ledger.proven)):
+        if kept_end is not None and clock.now() >= kept_end:
+            if unresolved is not None:
+                unresolved.append(None)     # entries unchecked: open
+            break
+        first = _first_identity(ledger.proven)
+        if first is None:
+            break
+        pid, ticks = first
+        if _proven_departed(pid, ticks, deadline=kept_end, clock=clock):
+            ledger.proven.pop((pid, ticks), None)
+            continue
+        try:
+            ledger.proven.move_to_end((pid, ticks))
+        except KeyError:
+            pass            # dropped meanwhile by the emergency sweep
+        if unresolved is not None:
+            unresolved.append(pid)
+    # The rotation covers the entries present when it began. One proved
+    # meanwhile, by another collector, is ours and alive all the same, so
+    # it holds this pass open (Codex reconciliation review).
+    if unresolved is not None and not any(u is not None for u in unresolved):
+        late = _first_identity(ledger.proven)
+        if late is not None:
+            unresolved.append(late[0])
+        elif ledger.proven:
+            unresolved.append(None)     # changing under us: stay open
+    # Rows a probe was stopped inside are checked the same way, in the
+    # same quarter: rotated in O(1) each, deadline passed down, and an
+    # unchecked one simply stays pending (Codex performance +
+    # reconciliation review).
+    for _ in range(len(ledger.pending)):
+        if kept_end is not None and clock.now() >= kept_end:
+            break
+        first = _first_identity(ledger.pending)
+        if first is None:
+            break
+        pid, ticks = first
+        if _proven_departed(pid, ticks, deadline=kept_end, clock=clock):
+            ledger.pending.pop((pid, ticks), None)
+            continue
+        try:
+            ledger.pending.move_to_end((pid, ticks))
+        except KeyError:
+            pass            # read to an answer meanwhile
+
+    cut = [False]       # a probe the deadline stopped inside its read
+
+    def judge(pid: int, ticks: Optional[int]) -> Optional[bool]:
+        passing: list = []
+        # The epoch is taken BEFORE the read: a negative published after a
+        # confirmation started must not claim that confirmation's epoch,
+        # since the process may have exec'd in between (Codex round
+        # review).
+        epoch = ledger.epoch
+        answer = _stamped_this_gen(pid, gen, deadline=sub, clock=clock,
+                                   undecided=passing)
+        if (answer is None and sub is not None and clock.now() >= sub):
+            # Out of budget inside the read: the row is unjudged, not
+            # undecided, so it is reported as a cut (the confirmation
+            # goes on) and read again first next pass (Codex performance
+            # review).
+            cut[0] = True
+            ledger.pending[(pid, ticks)] = None
+            return None
+        ledger.pending.pop((pid, ticks), None)  # read to an answer
+        if passing and unresolved is not None:
+            unresolved.extend(passing)
+        if answer is True:
+            ledger.proven[(pid, ticks)] = None
+            # Unresolved from THIS pass, not the next one: the departure
+            # checks already ran, and a worker that hardens before its
+            # post-pin read would otherwise let this scan count as empty
+            # (Codex round review).
+            if unresolved is not None:
+                unresolved.append(pid)
+        elif answer is False:
+            # One operation, no lock (see _DETACHED_LEDGERS). A negative
+            # never removes a proof: a collector whose read began before
+            # another one proved this worker would otherwise erase that
+            # proof, and only a departure is evidence a proven worker is
+            # gone (Codex round review). A proven worker that now reads
+            # as not ours keeps the collection open and is never
+            # signalled: the safe direction.
+            ledger.excluded[pid] = (ticks, epoch)
+        # A proven worker that reads as nothing now is already unresolved:
+        # the departure checks above hold every proven entry open.
+        # A refusal is NOT settled: a worker that hardened itself can call
+        # PR_SET_DUMPABLE(1) again and become readable under the same
+        # identity, so it is re-read on every pass (Codex round review).
+        # The cursor, not a cache, is what keeps such rows from starving
+        # the ones behind them.
+        return answer
+
+    # The rotation is by position, so finding where to start costs nothing
+    # and every row visited is checked against the deadline first: a
+    # search for the last judged pid scanned the whole host before its
+    # first check (Codex round + performance review).
+    n_rows = len(rows)
+    first = ledger.after % n_rows if n_rows else 0
+    found: list[tuple[int, Optional[int], Optional[int]]] = []
+    for step in range(n_rows):
+        # The deadline before the cache: a skip costs time too, and a
+        # host of cached rows must not run the pass past its share.
+        if sub is not None and clock.now() >= sub:
+            if unresolved is not None:
+                unresolved.append(None)     # cut short: rows unjudged
+            break
+        index = (first + step) % n_rows
+        pid, ticks = rows[index]
+        ledger.after = index + 1            # the next pass starts past it
+        cached = ledger.excluded.get(pid)
+        # A retained proof outranks the cache: a stale negative published
+        # beside it must not stop the worker from ever being read, and
+        # so signalled, again (Codex round review). Signalling still
+        # needs this pass's readable stamps. A pending identity does too,
+        # or a negative another collector cached first would hide it
+        # behind its own pending mark for good (Codex round review).
+        if cached is not None and cached[0] == ticks and (
+                not revalidate or cached[1] == ledger.epoch) and (
+                (pid, ticks) not in ledger.proven) and (
+                (pid, ticks) not in ledger.pending):
+            continue                        # judged earlier: not ours
+        epoch = ledger.epoch
+        if _provably_foreign(pid):
+            ledger.excluded[pid] = (ticks, epoch)   # another user's
+            continue
+        if judge(pid, ticks) is not True:
+            if cut[0]:
+                if unresolved is not None:
+                    unresolved.append(None)     # cut short inside a read
+                break
+            continue
+        fd = _pidfd_open(pid)
+        # With a pidfd the signal is sent without the reap predicate, so
+        # THIS read is the authorization: the stamps re-proved after the
+        # target is pinned, or no signal (an exec in between is a
+        # stranger's image).
+        if fd is not None and judge(pid, ticks) is not True:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            if cut[0]:
+                if unresolved is not None:
+                    unresolved.append(None)
+                break
+            continue
+        found.append((pid, fd, proc_start_ticks(pid)))
+    # A row stopped inside its read is unjudged until a later pass reads
+    # it or it is shown gone (above).
+    if ledger.pending and unresolved is not None and None not in unresolved:
+        unresolved.append(None)
+    return found
+
+def _stamped_this_gen(pid: int, gen: str,
+                      deadline: Optional[float] = None,
+                      clock: _Clock = _REAL_CLOCK,
+                      undecided: Optional[list] = None) -> Optional[bool]:
+    """True only when `pid`'s environment is READ and carries both this
+    bridge's owner stamp and generation `gen`. False when a readable
+    stamp positively says otherwise (not ours, or another generation);
+    None when nothing was proven either way.
+
+    The proof for a worker that left the swept group and session by
+    calling `setsid` (section 28). Session continuity cannot speak for
+    it, so nothing but its own readable stamps can: an unreadable
+    environment is never enough. `undecided`, when given, receives `pid`
+    when a requested marker went unread for a reason that may pass, so
+    an emptiness proof does not discount it."""
+    owner, generation, transient = _read_env_markers_ex(
+        pid, gen, deadline=deadline, clock=clock)
+    if owner is True and generation is True:
+        return True
+    if owner is False or generation is False:
+        return False
+    if transient and undecided is not None:
+        undecided.append(pid)
+    return None
 
 
 def _positively_departed(pid: int, fd: int, pgid: int) -> bool:
@@ -2388,7 +2810,12 @@ def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
         if ticks is None or proc_start_ticks(p) != ticks:
             return False
         if not _in_swept_group(p, pgid):
-            return False
+            # A detached worker of this generation (section 28): only its
+            # own readable stamps, read live, may authorize the signal.
+            ok = gen is not None and _stamped_this_gen(
+                p, gen, deadline=deadline, clock=clock) is True
+            return ok and not (deadline is not None
+                               and clock.now() >= deadline)
         # One traversal for both stamps; the budget re-check below is why
         # they are read together rather than in sequence.
         ours, gen_ok = _provably_ours_and_gen(p, gen, deadline=deadline,
@@ -2422,14 +2849,30 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
     closes it, bounded so a pathological forker cannot hold shutdown
     open forever."""
     killed = 0
-    empty_scans = 0
+    ledger = _detached_ledger(pgid, gen) if gen is not None else None
+    # A confirmation an earlier call ran out of budget in goes on: its
+    # fresh reads stand under the same epoch (Codex performance review).
+    empty_scans = 1 if ledger is not None and ledger.confirming else 0
     emptied = False
     for _ in range(20):                     # ~ bounded; see deadline below
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan, not after
         unresolved: list = []
+        # The scan that would make a second empty one re-reads every
+        # cached exclusion: emptiness is only confirmed on fresh reads.
         members = _group_members(pgid, deadline=deadline, gen=gen,
-                                 clock=clock, unresolved=unresolved)
+                                 clock=clock, unresolved=unresolved,
+                                 revalidate=empty_scans >= 1)
+        if not members and unresolved and empty_scans >= 1 and all(
+                u is None for u in unresolved):
+            # A confirming pass that ran out of its share and saw nothing
+            # of ours: the confirmation goes on, and the next pass resumes
+            # at the cursor over the fresh reads it already took (Codex
+            # performance review). Nothing proven can be hiding behind the
+            # cut: a window opens only after a scan that left no proven
+            # entry unresolved, and a new proof is reported by pid.
+            clock.sleep(0.02)
+            continue
         if not members and unresolved:
             # Something is in the group that could be neither proved ours
             # nor ruled out: an opaque process whose session proof had no
@@ -2441,6 +2884,8 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
             # gone and a stranger took the number, the cost is a False
             # verdict, never a kill.
             empty_scans = 0
+            if ledger is not None:
+                ledger.confirming = False
             clock.sleep(0.02)
             continue
         if not members:
@@ -2461,12 +2906,22 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
             if deadline is not None and clock.now() >= deadline:
                 break                       # incomplete, not empty
             empty_scans += 1
+            if empty_scans == 1:
+                # Confirmation starts: every exclusion read until now is
+                # stale for it, since an exec keeps the pid and start
+                # ticks and can bring the stamps (Codex round review).
+                _advance_detached_epoch(pgid, gen)
+                if ledger is not None:
+                    ledger.confirming = True
             if empty_scans >= 2:
                 emptied = True
+                _drop_detached_ledger(pgid, gen)
                 break
             clock.sleep(0.02)
             continue
         empty_scans = 0
+        if ledger is not None:
+            ledger.confirming = False
         for pid, fd, ticks in members:
             if deadline is None or clock.now() < deadline:
                 if _kill_verified(
