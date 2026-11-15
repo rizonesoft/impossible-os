@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **978 of 2710 sections complete (36%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **979 of 2710 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -229,7 +229,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §54` | The Gate Adjudicates the WORKING TREE While the Push Carries the COMMIT                                               | none     |     4 |
 | [x]  | `D00 T06 §55` | The Byte-Identical Path Pays for a Full Base Checkout It Does Not Need                                                | none     |     6 |
 | [x]  | `D00 T06 §56` | The Resolver Walks Leak What the Tree Spawns on the Path Where They SUCCEED                                           | none     |     6 |
-| [/]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none     |     4 |
+| [x]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none     |     4 |
 | [x]  | `D00 T06 §58` | Head-Versus-Tree Checks Section 54 Made Unreachable Are Retired or Re-Fixtured                                        | none     |     5 |
 | [x]  | `D00 T06 §59` | The Identity-Gate Fixture Group Pays for a Whole Repository and Proves Less Than It Claims                            | none     |     6 |
 | [x]  | `D00 T06 §60` | Every Name-Resolved Use of TMP_DIR Is Still a Name                                                                    | none     |     5 |

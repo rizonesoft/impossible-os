@@ -3271,6 +3271,9 @@ Filed 2026-08-26 from §54's consistency round, as two `[high]` findings §54 ve
 > - The fixture stubs the static-analysis gate and the tooling-reads helper, because the hook refuses when either is missing and neither is under test.
 > - Scope boundary: what the gate does with its arguments stays with section 54, and the committed mode with section 51.
 
+> **Verified:** 2026-11-15 | commit `02888e96c` | 4/4 items | `test_prepush_identity_caller.py` 9 passed | `scripts/overnight/tests/run-all.sh` 93 passed, 0 failed | controls: no `--head`, the old `-x` predicate and plain `subprocess.run` each fail their test
+> **Quality reviewed:** 2026-11-15 | Codex 7x (plan clean; round and performance 1 P2 process-tree leak fixed; round, performance, completion and reconciliation clean)
+
 ---
 
 ## 58. Head-Versus-Tree Checks Section 54 Made Unreachable Are Retired or Re-Fixtured
