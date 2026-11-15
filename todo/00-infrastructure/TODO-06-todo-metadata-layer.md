@@ -105,7 +105,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | 💎  |  54   |   §54   | The gate adjudicates the WORKING TREE while the push carries the COMMIT                    | §16, §50      |  [x]   |
 | ⭐  |  55   |   §55   | The byte-identical path pays for a full base checkout it does not need                     | §51           |  [x]   |
 | ⭐  |  56   |   §56   | The resolver walks leak what the tree spawns on the path where they SUCCEED                | §53           |  [x]   |
-| 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                            | §16, §54      |  [/]   |
+| 💎  |  57   |   §57   | The hook certifies repository HEAD, not the commit being pushed                            | §16, §54      |  [x]   |
 | ⭐  |  58   |   §58   | Head-versus-tree checks section 54 made unreachable are retired or re-fixtured             | §50, §51, §54 |  [x]   |
 | ⭐  |  59   |   §59   | The identity-gate fixture group pays for a whole repository and proves less than it claims | §54, §55, §56 |  [x]   |
 | 💎  |  60   |   §60   | Every name-resolved use of TMP_DIR is still a name                                         | §55, §56      |  [x]   |
@@ -3255,14 +3255,20 @@ Filed 2026-08-26 from §54's consistency round, as two `[high]` findings §54 ve
   - -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- owns the workflow and hook wiring this changes.
   - -> XREF: [`TODO-06 §54`](#54-the-gate-adjudicates-the-working-tree-while-the-push-carries-the-commit) -- made `--head` name a commit the gate genuinely reads, which is why passing the wrong one now matters.
 - [x] operator-gated, DONE 2026-08-29: stop predicating the gate block on the executable bit; run the script through `bash` whenever the closure is touched, and refuse rather than skip when the driver file is missing.
-- [/] operator-gated, PARTIAL 2026-08-29: the caller contract is pinned on the hook text; the end-to-end fixture with a real push whose OID differs from `HEAD` is still not staged.
-  - Pinned by `scripts/overnight/tests/test_prepush_identity_caller.py`: local OID captured, `--head` passed, no `-x` predicate, missing-driver refusal, gate failure still exits 1.
-  - Still open: the integration fixture needs a remote and an interrupted rebase, which the runner suite has no harness for.
+- [x] the caller contract is pinned on the hook text and end to end, DONE 2026-11-15: a copy of the real hook pushes an explicit SHA that is not `HEAD` to a bare remote.
+  - `scripts/overnight/tests/test_prepush_identity_caller.py`: the stub gate records `--head <pushed>` and the remote OID as base; an uncommitted `chmod -x` still runs it; a failing gate leaves the remote unmoved.
+  - No interrupted rebase is needed: a push of `<sha>:main` with `HEAD` elsewhere is the same mismatch.
 - [x] operator-gated, DONE 2026-08-29: landed in the v17 close-out commit (`close: canary v17 -> v18`), together with the tooling pack's nested-suite failure detail.
 
 **Test checkpoint:** with the hook fixed, a push whose local OID is not repository `HEAD` produces a gate run whose `head <sha>` line names the pushed OID, and an uncommitted `chmod -x` on the driver no longer skips the block. Scope: this section owns the CALLER's arguments and its run condition. It does NOT re-open what the gate does with them, which is §54's, nor `GATE_SCRIPT_NOT_EXECUTABLE`, which is §51's and is about the committed mode. Platforms: host tooling only; no kernel surface.
 
-> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): `.githooks/**` is control-plane code the unattended runner is forbidden to edit (CLAUDE.md "The run captures; the attended session repairs"), so both findings are recorded here with their evidence and left for an attended session. -> XREF: [`TODO-06 §54`](#54-the-gate-adjudicates-the-working-tree-while-the-push-carries-the-commit) (item: "Whichever is chosen, make the OTHER one impossible to reach silently" -- the gate-side half, shipped).
+> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_prepush_identity_caller.py` (8 cases)
+
+> **Notes:**
+> - What shipped: the hook changes landed 2026-08-29; this pass adds the end-to-end push fixture that closes the last item.
+> - Controls: with `--head` removed from a copy of the hook, both push tests fail; with the old `-x` predicate restored, the mode-change test fails.
+> - The fixture stubs the static-analysis gate and the tooling-reads helper, because the hook refuses when either is missing and neither is under test.
+> - Scope boundary: what the gate does with its arguments stays with section 54, and the committed mode with section 51.
 
 ---
 

@@ -12,9 +12,9 @@ And the pack reported a nested suite's TALLY only, discarding the `[FAIL]`
 lines that name the assertion, so a pack-only refusal cost a full re-run to
 learn nothing (measured ~4,500s on one section).
 
-The hook cannot be exercised end to end without a remote, so its contract is
-pinned on the hook TEXT the way test_tooling_scoped_suites pins the pack's
-regexes; the nested-detail helper IS exercised, extracted from the pack by
+The contract is pinned on the hook TEXT, and since 2026-11-15 also end to end:
+a copy of the real hook pushes an explicit SHA that is not HEAD to a bare
+remote, against a stub gate that records its arguments. The nested-detail helper IS exercised, extracted from the pack by
 its function boundaries so no test seam is added to a control-plane file.
 """
 import os
@@ -105,10 +105,100 @@ def test_nested_detail_is_wired_after_every_nested_t_fail_and_never_a_pass():
             "detail call not on a t_fail path"
 
 
+STUB_GATE = """#!/usr/bin/env bash
+printf 'base=%s args=%s\\n' "${IDENTITY_GATE_LAST_GATED_SHA:-}" "$*" >> "$GATE_LOG"
+"""
+
+
+def _git(root, *args):
+    r = subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        *args], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
+
+
+def _push_fixture(d):
+    """A clone of a bare remote carrying the real hook and a stub gate that records its arguments.
+
+    History: `base` (on the remote), `pushed` (a resolver-closure change), `later` (HEAD, not pushed).
+    """
+    d = pathlib.Path(d)
+    remote, root = d / "remote.git", d / "work"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True, timeout=60)
+    subprocess.run(["git", "clone", "-q", str(remote), str(root)], check=True, timeout=60,
+                   capture_output=True)
+    (root / ".githooks/lib").mkdir(parents=True)
+    for rel in (".githooks/pre-push", ".githooks/lib/isolate-git-env.sh"):
+        (root / rel).write_text((REPO / rel).read_text())
+    (root / ".githooks/pre-push").chmod(0o755)
+    # The hook refuses when a sibling gate's script is missing; those gates are not under test.
+    (root / "scripts/hooks").mkdir(parents=True)
+    (root / "scripts/hooks/static-analysis-gate.sh").write_text("exit 0\n")
+    (root / "scripts/hooks/tooling-pack-reads.sh").write_text("exit 0\n")
+    gate = root / "scripts/todo-graph/identity-gate.sh"
+    gate.parent.mkdir(parents=True)
+    gate.write_text(STUB_GATE)
+    gate.chmod(0o755)
+    heads = {}
+    for name, path in (("base", "README"), ("pushed", "scripts/todo-graph/build.py"), ("later", "NOTES")):
+        (root / path).write_text(name + "\n")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", name)
+        heads[name] = _git(root, "rev-parse", "HEAD")
+        if name == "base":
+            _git(root, "push", "-q", "origin", "main")
+    _git(root, "config", "core.hooksPath", ".githooks")
+    return root, gate, heads
+
+
+def _push(root, sha, log):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # Only the identity block is under test: the other gates are switched off by their own opt-outs.
+    env.update(GATE_LOG=str(log), SKIP_PUSH_IDENTITY_CHECK="1", SKIP_HOST_GATES="1",
+               SKIP_TOOLING_SUITE="1", SKIP_RUNNER_SUITE="1", SKIP_CI_PARITY="1",
+               SKIP_CI_PARITY_REASON="fixture", SKIP_STATIC_ANALYSIS="1")
+    return subprocess.run(["git", "-C", str(root), "push", "-q", "origin", f"{sha}:refs/heads/main"],
+                          capture_output=True, text=True, env=env, timeout=120)
+
+
+def test_a_push_that_is_not_head_is_gated_on_the_pushed_commit():
+    with tempfile.TemporaryDirectory() as d:
+        root, _gate, h = _push_fixture(d)
+        log = pathlib.Path(d) / "gate.log"
+        assert _git(root, "rev-parse", "HEAD") == h["later"] != h["pushed"]
+        r = _push(root, h["pushed"], log)
+        assert r.returncode == 0, r.stdout + r.stderr
+        lines = log.read_text().splitlines()
+        assert lines == [f"base={h['base']} args=--head {h['pushed']}"], lines
+
+
+def test_an_uncommitted_mode_change_does_not_skip_the_gate():
+    with tempfile.TemporaryDirectory() as d:
+        root, gate, h = _push_fixture(d)
+        log = pathlib.Path(d) / "gate.log"
+        gate.chmod(0o644)
+        r = _push(root, h["pushed"], log)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert log.exists() and f"--head {h['pushed']}" in log.read_text(), r.stdout
+
+
+def test_a_failing_gate_blocks_the_push_of_a_commit_that_is_not_head():
+    with tempfile.TemporaryDirectory() as d:
+        root, gate, h = _push_fixture(d)
+        log = pathlib.Path(d) / "gate.log"
+        gate.write_text(STUB_GATE + "exit 1\n")
+        r = _push(root, h["pushed"], log)
+        assert r.returncode != 0 and "push blocked" in r.stdout + r.stderr, r.stdout + r.stderr
+        assert _git(root, "ls-remote", "origin", "main").split()[0] == h["base"]
+
+
 if __name__ == "__main__":
     test_identity_block_is_not_gated_on_the_executable_bit()
     test_missing_gate_refuses_instead_of_declining_quietly()
     test_gate_is_told_which_commit_is_being_pushed()
     test_nested_detail_names_the_failing_assertion_and_keeps_the_log()
     test_nested_detail_is_wired_after_every_nested_t_fail_and_never_a_pass()
+    test_a_push_that_is_not_head_is_gated_on_the_pushed_commit()
+    test_an_uncommitted_mode_change_does_not_skip_the_gate()
+    test_a_failing_gate_blocks_the_push_of_a_commit_that_is_not_head()
     print("PASS: pre-push identity caller + nested-suite failure detail")
