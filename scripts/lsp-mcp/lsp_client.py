@@ -1704,11 +1704,35 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
         return False
 
 
+def _read_failed_transiently(exc: BaseException) -> bool:
+    """Was this /proc read refused for a reason that can pass?
+
+    EACCES and EPERM are the kernel's lasting answer for a hardened or
+    foreign process, and ENOENT and ESRCH mean it is gone. Anything else
+    (descriptor exhaustion, memory pressure, an interrupted read) says
+    nothing about the process and may answer differently next round."""
+    if isinstance(exc, OSError):
+        return exc.errno not in (errno.EACCES, errno.EPERM, errno.ENOENT,
+                                 errno.ESRCH)
+    return True
+
+
 def _read_env_markers(
     pid: int, gen: Optional[str] = None,
     deadline: Optional[float] = None,
     clock: _Clock = _REAL_CLOCK,
 ) -> tuple[Optional[bool], Optional[bool]]:
+    """`(owner, generation)`; see _read_env_markers_ex."""
+    owner, generation, _transient = _read_env_markers_ex(
+        pid, gen, deadline=deadline, clock=clock)
+    return owner, generation
+
+
+def _read_env_markers_ex(
+    pid: int, gen: Optional[str] = None,
+    deadline: Optional[float] = None,
+    clock: _Clock = _REAL_CLOCK,
+) -> tuple[Optional[bool], Optional[bool], bool]:
     """`(owner, generation)` from ONE traversal of `pid`'s environments.
 
     Each answer is True, False when an environment was read and did not
@@ -1733,7 +1757,13 @@ def _read_env_markers(
     For the same reason the walk does not stop at the first task carrying
     the owner stamp while the generation is still unresolved -- an early
     return would answer one marker from a read environment and downgrade
-    the other to a guess."""
+    the other to a guess.
+
+    The third answer says whether an unresolved owner could resolve on a
+    later read: the walk was cut short, or a read failed for a reason
+    other than a lasting refusal. A sweep may not count such a row as
+    "not ours" in an emptiness proof (Codex round review, section 27).
+    It is False whenever the owner was resolved."""
     owner_marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
     gen_marker = (b"LSP_BRIDGE_GEN=" + gen.encode()
                   if gen is not None else None)
@@ -1742,14 +1772,15 @@ def _read_env_markers(
         return deadline is not None and clock.now() >= deadline
 
     if expired():
-        return None, None               # budget spent before we even read
+        return None, None, True         # budget spent before we even read
+    transient = False
     try:
         with open(f"/proc/{pid}/environ", "rb") as fh:
             env = fh.read().split(b"\0")
         return (owner_marker in env,
-                None if gen_marker is None else gen_marker in env)
-    except Exception:
-        pass
+                None if gen_marker is None else gen_marker in env, False)
+    except Exception as exc:
+        transient = _read_failed_transiently(exc)
     # Only now walk the threads. The leader environ answers for almost
     # every process, and reading EVERY task environment before trusting it
     # made an unstamped multithreaded process (a browser, a JVM, a build
@@ -1762,8 +1793,8 @@ def _read_env_markers(
     # worker's /proc/PID/task/<tid>/environ still carries the stamp.
     try:
         tids = os.listdir(f"/proc/{pid}/task")
-    except Exception:
-        return None, None
+    except Exception as exc:
+        return None, None, transient or _read_failed_transiently(exc)
     owner: Optional[bool] = None
     generation: Optional[bool] = None
     read_any = False
@@ -1772,11 +1803,13 @@ def _read_env_markers(
             # Truncated: a resolved positive stands, everything else is
             # still UNKNOWN rather than negative.
             return (True if owner is True else None,
-                    True if generation is True else None)
+                    True if generation is True else None,
+                    owner is not True)
         try:
             with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
                 data = fh.read().split(b"\0")
-        except Exception:
+        except Exception as exc:
+            transient = transient or _read_failed_transiently(exc)
             continue
         read_any = True
         if owner_marker in data:
@@ -1787,14 +1820,15 @@ def _read_env_markers(
             break                       # every asked marker answered
     if not read_any:
         # Every task refused to be read: nothing was proven either way.
-        return None, None
+        return None, None, transient
     return (owner is True,
-            None if gen_marker is None else generation is True)
+            None if gen_marker is None else generation is True, False)
 
 
 def _carries_our_owner_id(
     pid: int, deadline: Optional[float] = None,
     clock: _Clock = _REAL_CLOCK,
+    transient: Optional[list] = None,
 ) -> Optional[bool]:
     """True if this process was started by THIS bridge process, False if
     an environment was read and did NOT carry the stamp, and None when no
@@ -1835,8 +1869,16 @@ def _carries_our_owner_id(
     (Codex adversarial review, Medium, reproduced).
 
     The traversal itself lives in _read_env_markers, which answers this
-    question and the generation question from the same read."""
-    return _read_env_markers(pid, None, deadline=deadline, clock=clock)[0]
+    question and the generation question from the same read.
+
+    `transient`, when given, receives `pid` if the answer is None for a
+    reason that may pass (see _read_env_markers_ex), taken from this same
+    traversal rather than a second one."""
+    owner, _gen, was_transient = _read_env_markers_ex(
+        pid, None, deadline=deadline, clock=clock)
+    if owner is None and was_transient and transient is not None:
+        transient.append(pid)
+    return owner
 
 
 class _ProcSnapshot:
@@ -1898,7 +1940,8 @@ class _ProcSnapshot:
     def ours(self, pid: int, ticks: Optional[int],
              deadline: Optional[float] = None,
              sid: Optional[int] = None,
-             clock: _Clock = _REAL_CLOCK) -> bool:
+             clock: _Clock = _REAL_CLOCK,
+             undecided: Optional[list] = None) -> bool:
         # No start time means no cache KEY -- the pair is what pins
         # identity, and a bare pid would let a recycled number inherit
         # the previous occupant's answer. Such a row is probed afresh
@@ -1907,7 +1950,9 @@ class _ProcSnapshot:
         key = (pid, ticks) if ticks is not None else None
         if key is not None and self._ours.get(key):
             return True
-        answer = _carries_our_owner_id(pid, deadline=deadline, clock=clock)
+        passing: Optional[list] = [] if undecided is not None else None
+        answer = _carries_our_owner_id(pid, deadline=deadline, clock=clock,
+                                       transient=passing)
         # The environ probe could not read ANYTHING. Before giving up on
         # a candidate, ask the one ownership question that survives an
         # unreadable environment -- session continuity. Consulted only on
@@ -1917,6 +1962,14 @@ class _ProcSnapshot:
             # being alive, which a later round can falsify; the cache
             # stores only facts that cannot change under a live process.
             return True
+        # `undecided` collects a row whose False here is not a proof: a
+        # read that may resolve later, or a member of one of our sessions
+        # whose proof is gone. Both come from the one traversal above,
+        # never from reading the environment again (Codex round and
+        # performance review, section 27).
+        if answer is None and undecided is not None and (
+                passing or (sid is not None and sid in _OWNED_SESSIONS)):
+            undecided.append(pid)
         # POSITIVES only. Ownership is not immutable for a (pid, ticks)
         # pair the way it looks: the stamp reaches the child through the
         # env passed to Popen, so a probe landing between fork and exec
@@ -2054,7 +2107,8 @@ def _proc_snapshot(deadline: Optional[float] = None,
         return _ProcSnapshot(procs, ours_cache, complete=False)
     for name in entries:
         if deadline is not None and clock.now() >= deadline:
-            break
+            # fail-direction: rows never reached are unseen, not absent.
+            return _ProcSnapshot(procs, ours_cache, complete=False)
         if not name.isdigit():
             continue
         pid = int(name)
@@ -2626,7 +2680,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # and the ownership probing behind it was not (Codex adversarial
         # review, High).
         targets: list[tuple[int, Optional[int]]] = []
-        owed = 0
+        undecided: list[int] = []
         for pid, _ppid, _pgrp, sid, ticks in snap.procs:
             if deadline is not None and clock.now() >= deadline:
                 break
@@ -2639,12 +2693,8 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             if not leaders_done and sid == pid and pid in _OWNED_SESSIONS:
                 continue
             if snap.ours(pid, ticks, deadline=deadline, sid=sid,
-                         clock=clock):
+                         clock=clock, undecided=undecided):
                 targets.append((pid, ticks))
-            elif (sid is not None and sid in _OWNED_SESSIONS
-                  and _carries_our_owner_id(pid, deadline=deadline,
-                                            clock=clock) is None):
-                owed += 1       # in our session, ownership unreadable
         for pid, _ticks in targets:
             if deadline is not None and clock.now() >= deadline:
                 break
@@ -2689,6 +2739,9 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                         os.close(own)
                     except Exception:
                         pass
+        owed = len(undecided)
+        if deadline is not None and clock.now() >= deadline:
+            owed += 1   # cut short: rows after the break were never judged
         return bool(targets), owed
 
     # TWO fixpoint phases, each taking ONE /proc walk per round.
@@ -2848,6 +2901,8 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # snapshot is in no round that saw it, and once the leaders die
         # its session can no longer be proven. Two consecutive empty
         # rounds, the same rule the stamped phase uses.
+        if deadline is not None and clock.now() >= deadline:
+            owed += 1   # cut short: rows after the break were never judged
         unknown = snap.has_unknown_rows(deadline, clock)
         if hit == 0 and not unknown and owed == 0:
             session_empty += 1              # nothing unseen, nothing owed

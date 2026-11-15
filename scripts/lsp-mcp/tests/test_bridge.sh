@@ -8934,7 +8934,8 @@ def instrument(clk):
         clk.event("scan")
         return lsp_client._ProcSnapshot(list(FAKE_PROCS), ours_cache)
 
-    def owner(pid, deadline=None, clock=lsp_client._REAL_CLOCK):
+    def owner(pid, deadline=None, clock=lsp_client._REAL_CLOCK,
+              transient=None):
         clk.event("probe")
         return True
 
@@ -10973,6 +10974,12 @@ assert SERVER_PGRP != SERVER
 SERVER_PLAIN = SERVER.replace("ctypes.CDLL('libc.so.6').prctl(4,0,0,0,0)\\n",
                               "")
 assert SERVER_PLAIN != SERVER
+# A readable worker that called setsid: in no recorded session, found
+# only by its owner stamp.
+SERVER_DETACHED = SERVER_PLAIN.replace(
+    "import ctypes,os,sys,time\\n",
+    "import ctypes,os,sys,time\\nos.setsid()\\n", 1)
+assert SERVER_DETACHED != SERVER_PLAIN
 fails = []
 workers = []
 
@@ -11473,6 +11480,108 @@ if alive(w):
     finally:
         os.close(_wfd)
 check(gone(w), "[session-only] the fixture could not stop its worker")
+
+# --- U: the deadline cuts the scan that would prove emptiness --------
+# The first stamped scan is honestly empty of the worker; the second runs
+# out of budget before it reaches any row. A cut-short scan is not an
+# empty one (Codex round review).
+inst_u, w = spawn("late-scan", SERVER_PLAIN)
+leader_u = inst_u._proc.pid
+fired_u = {"leader": False, "after": 0}
+real_snap_u = lsp_client._proc_snapshot
+real_open_u = lsp_client._pidfd_open
+real_send_u = _signal.pidfd_send_signal
+
+
+def mark_leader(fd, sig, *a, _l=leader_u):
+    if sig == _signal.SIGKILL and names(fd, _l):
+        fired_u["leader"] = True
+    return real_send_u(fd, sig, *a)
+
+
+def late_snapshot(deadline=None, ours_cache=None, clock=None, _w=w):
+    kw = {} if clock is None else {"clock": clock}
+    if fired_u["leader"]:
+        fired_u["after"] += 1
+        if fired_u["after"] >= 2 and deadline is not None:
+            time.sleep(max(0.0, deadline - time.monotonic()) + 0.01)
+            return real_snap_u(deadline=deadline, ours_cache=ours_cache,
+                               **kw)
+    snap = real_snap_u(deadline=deadline, ours_cache=ours_cache, **kw)
+    snap.procs = [r for r in snap.procs if r[0] != _w]
+    return snap
+
+
+lsp_client._proc_snapshot = late_snapshot
+lsp_client._pidfd_open = lambda pid, _w=w: (None if pid == _w
+                                            else real_open_u(pid))
+_signal.pidfd_send_signal = mark_leader
+try:
+    late = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._proc_snapshot = real_snap_u
+    lsp_client._pidfd_open = real_open_u
+    _signal.pidfd_send_signal = real_send_u
+check(fired_u["after"] >= 2, "[late-scan] the sweep never reached a "
+      "second stamped scan")
+check(late.completed is False, "[late-scan] a force sweep counted a scan "
+      "the deadline cut short as empty and reported itself complete")
+lsp_client.force_kill_spawned(settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w), "[late-scan] the worker survived the recovering sweep")
+
+# --- V: a detached helper whose stamp cannot be read for now ----------
+# Outside every recorded session only the stamp finds it, and a read that
+# fails for a passing reason (EMFILE here) is undecided, not "not ours"
+# (Codex round review).
+inst_v, w = spawn("detached-transient", SERVER_DETACHED)
+real_rem_v = lsp_client._read_env_markers_ex
+
+
+def emfile_for(pid, gen=None, deadline=None, clock=None, _w=w):
+    if pid == _w:
+        return None, None, True
+    kw = {} if clock is None else {"clock": clock}
+    return real_rem_v(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers_ex = emfile_for
+try:
+    blocked = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_v
+check(blocked.completed is False, "[detached-transient] a force sweep "
+      "reported itself complete over a stamped helper it could not read")
+check(alive(w), "[detached-transient] the fixture lost its worker before "
+      "recovery")
+recovered = lsp_client.force_kill_spawned(
+    settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w), "[detached-transient] the helper survived once its stamp "
+      "was readable")
+check(recovered.completed is True, "[detached-transient] the recovering "
+      "sweep did not complete")
+
+# The undecided answer comes from the ownership read itself, never a
+# second environment walk (Codex performance review, P2).
+walks = {"n": 0}
+
+
+def counted_walk(pid, gen=None, deadline=None, clock=None):
+    walks["n"] += 1
+    return None, None, True
+
+
+lsp_client._read_env_markers_ex = counted_walk
+try:
+    undecided_rows = []
+    lsp_client._ProcSnapshot([], None).ours(
+        os.getpid(), None, undecided=undecided_rows)
+finally:
+    lsp_client._read_env_markers_ex = real_rem_v
+check(walks["n"] == 1 and undecided_rows == [os.getpid()],
+      "[detached-transient] an undecided ownership answer cost %d "
+      "environment walks, or was not reported" % walks["n"])
 
 # --- K: a sweep that never listed /proc is not complete ---------------
 real_snap = lsp_client._proc_snapshot
