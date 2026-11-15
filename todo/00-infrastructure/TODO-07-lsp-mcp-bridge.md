@@ -1020,6 +1020,9 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
 > - Limit: on a host mounting `/proc` with `hidepid`, a root-owned process whose stat is hidden keeps a collection unconfirmed; that fails toward no kill and no replacement.
 > - Scope boundary: a descendant whose ownership markers are unreadable and that called `setsid` itself, or whose leader was already reaped, is out of reach without a kernel container (section 23's parked item). A `setsid` descendant whose stamps are still readable is identifiable and belongs to section 28. -> XREF: [`TODO-07 §28`](#28-per-instance-collection-of-stamped-workers-that-left-the-session) (item: "Collected an owner- and generation-stamped descendant that called `setsid`")
 
+> **Verified:** 2026-11-15 | commit `df2a2e7c8` | all items | build OK | 120/120 lsp-mcp sub-tests, 25 controls each failing 9v with its fix removed, lint 0 errors
+> **Quality reviewed:** 2026-11-15 | Codex 33 passes (11 waves of round, performance, completion; reconciliation last) | 15H+9M fixed, 1M filed as section 28 | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
+
 ## 28. Per-Instance Collection of Stamped Workers That Left the Session
 
 > **Spawned-by:** section 27 (review)
