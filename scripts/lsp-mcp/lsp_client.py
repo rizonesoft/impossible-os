@@ -2112,9 +2112,15 @@ def _group_members(
             break
         if pid == exclude or pid == me:
             continue
-        if pgrp is None or (pgrp != pgid and sid != pgid):
-            continue        # unreadable stat: not groupable, but the
-                            # stamp-wide pass still sees it
+        if pgrp is None:
+            # Unreadable stat: membership unknown. Counting it as "not in
+            # the group" let two scans confirm emptiness over a live
+            # worker (Codex round + completion review, P2).
+            if unresolved is not None and _unreadable_row_may_be_ours(pid):
+                unresolved.append(pid)
+            continue
+        if pgrp != pgid and sid != pgid:
+            continue
         # BOTH stamps from one environment traversal, and one cache entry
         # per answer: asking ours() and then _carries_gen_id() read the
         # same file twice per candidate per round (section 24).
@@ -2147,6 +2153,24 @@ def _group_members(
         # High -- the rule this file applies everywhere else).
         members.append((pid, fd, proc_start_ticks(pid)))
     return members
+
+
+def _unreadable_row_may_be_ours(pid: int) -> bool:
+    """Whether a process whose stat could not be read might still be one
+    of ours, so an emptiness proof must not discount it.
+
+    Gone is not ours. A /proc entry owned by another non-root uid is a
+    stranger's: ours keep our uid, or root's when PR_SET_DUMPABLE(0)
+    reassigns them, and discounting strangers keeps a hidepid host from
+    holding every verdict unconfirmed. Anything else, including a stat of
+    the directory that itself fails, may be ours."""
+    try:
+        st = os.stat(f"/proc/{pid}")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True         # fail-direction: unknown keeps the group open
+    return st.st_uid in (os.getuid(), 0)
 
 
 def _in_swept_group(pid: int, pgid: int) -> bool:
@@ -2492,6 +2516,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     owner_cache: dict = {}
     leaders_done = False
     leaders_complete = True
+    saw_blind = False       # some scan could not list /proc at all
     session_empty = 0
 
     def fire_leaders() -> None:
@@ -2709,6 +2734,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # snapshot is in no round that saw it, and once the leaders die
         # its session can no longer be proven. Two consecutive empty
         # rounds, the same rule the stamped phase uses.
+        saw_blind = saw_blind or not snap.complete
         if hit == 0 and snap.complete:   # an unlisted /proc proves nothing
             session_empty += 1
         else:
@@ -2731,11 +2757,13 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     fire_leaders()
 
     stamped_empty = 0
+    stamped_fixpoint = False
     for _ in range(20):                     # PHASE B -- stamped fixpoint
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan
         snap_b = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
                                 clock=clock)
+        saw_blind = saw_blind or not snap_b.complete
         if stamped_round(snap_b) or not snap_b.complete:
             # An unlisted /proc is not an empty scan (Codex completion
             # review, High): it resets the fixpoint like a hit does.
@@ -2746,6 +2774,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             # looks clean.
             stamped_empty += 1
             if stamped_empty >= 2:
+                stamped_fixpoint = True
                 break
         # Re-checked BEFORE the sleep, not only before the scan: the
         # round's signalling can carry the budget past its end, and
@@ -2763,6 +2792,11 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     # and reaps rather than hunts. An unfinished one keeps the sweep from
     # reporting itself whole.
     if not _collect_abandoned(deadline, clock=clock):
+        leaders_complete = False
+    if saw_blind and not stamped_fixpoint:
+        # The descendant scans never saw /proc and never reached their
+        # fixpoint: nothing was inspected, so the sweep is not whole and
+        # the caller's fallback must still run (Codex round review, P2).
         leaders_complete = False
     return SweepCount(len(signalled), leaders_complete)
 

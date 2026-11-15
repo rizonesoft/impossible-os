@@ -7765,6 +7765,7 @@ class _Immortal:
     # session id since section 23, so the second ownership signal costs
     # no extra procfs read.
     procs = [(4194300, 1, 4194300, 4194300, 4242)]
+    complete = True     # /proc was listed (section 27)
 
     def ours(self, pid, ticks, deadline=None, **kw):
         return True
@@ -7969,6 +7970,7 @@ real_snapshot = lsp_client._proc_snapshot
 class _OneTarget:
     def __init__(self, pid):
         self.procs = [(pid, 1, pid, pid, 4242)]
+        self.complete = True    # /proc was listed (section 27)
 
     def ours(self, pid, ticks, deadline=None, **kw):
         return True                     # snapshot only NARROWS
@@ -11105,6 +11107,24 @@ seen = inst.shutdown(timeout=3.0)
 check(gone(w), "[unlisted] the worker survived once /proc was listable")
 check(seen is True, "[unlisted] the retry did not confirm the death")
 
+# --- I: the worker's stat cannot be read ------------------------------
+# /proc lists it but its stat is unreadable: membership is unknown, not
+# absent, so the group stays open (Codex round + completion review, P2).
+inst, w = spawn("unreadable")
+real_stat = lsp_client._stat_fields
+lsp_client._stat_fields = lambda pid, _w=w: (None if pid == _w
+                                             else real_stat(pid))
+try:
+    hidden = inst.shutdown(timeout=1.0)
+finally:
+    lsp_client._stat_fields = real_stat
+check(hidden is False, "[unreadable] shutdown() confirmed a death over a "
+      "worker whose stat it could not read")
+check(alive(w), "[unreadable] the fixture lost its worker before the retry")
+read = inst.shutdown(timeout=3.0)
+check(gone(w), "[unreadable] the worker survived once its stat was readable")
+check(read is True, "[unreadable] the retry did not confirm the death")
+
 # --- G: the worker left the leader's group but not its session ---------
 inst, w = spawn("setpgid", SERVER_PGRP)
 moved = inst.shutdown(timeout=3.0)
@@ -11158,18 +11178,64 @@ for which in ("lsp-reader", "lsp-stderr"):
     check(w is not None and gone(w),
           "[%s] the opaque worker survived the constructor's cleanup" % tag)
 
+# --- J: a constructor whose own collection is incomplete --------------
+# The failed construction must stay ABANDONED with its leader unreaped
+# across garbage collection, and the force sweep must finish it.
+tag = "ctor-abandoned"
+path = os.path.join(tmp, tag)
+real_start, real_reap = threading.Thread.start, lsp_client._reap_group
+
+
+def failing_reader(self, _path=path):
+    if self.name.startswith("lsp-reader"):
+        wait_worker(_path)
+        raise RuntimeError("can't start new thread")
+    return real_start(self)
+
+
+threading.Thread.start = failing_reader
+lsp_client._reap_group = lambda *a, **kw: (0, False)    # never completes
+raised = False
+try:
+    lsp_client.LspSubprocess([sys.executable, "-c", SERVER, path], "c")
+except Exception:
+    raised = True
+finally:
+    threading.Thread.start = real_start
+    lsp_client._reap_group = real_reap
+check(raised, "[%s] the constructor did not raise" % tag)
+w = wait_worker(path)
+if w is not None:
+    workers.append(w)
+gc.collect()
+check(w is not None and alive(w), "[%s] the worker died without a "
+      "collection, so this case proves nothing" % tag)
+check(len(lsp_client._ABANDONED) == 1, "[%s] an incomplete collection "
+      "was not handed to the abandoned registry" % tag)
+check(all(e[0].returncode is None for e in lsp_client._ABANDONED),
+      "[%s] an abandoned leader was reaped before its sweep" % tag)
+
 # --- every worker is gone after the final sweep, nothing is abandoned --
 lsp_client.force_kill_spawned(settle=0.2, deadline=time.monotonic() + 10.0)
 for w in workers:
     check(gone(w, 2.0), "worker %d survived the final force sweep" % w)
 check(not lsp_client._ABANDONED,
       "a failed construction is still abandoned after the final sweep")
-for w in workers:
-    if alive(w):
-        try:
-            os.kill(w, 9)
-        except Exception:
-            pass
+
+# --- K: a sweep that never listed /proc is not complete ---------------
+real_snap = lsp_client._proc_snapshot
+lsp_client._proc_snapshot = (lambda *a, **kw:
+                             lsp_client._ProcSnapshot([], complete=False))
+try:
+    blind_sweep = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 5.0)
+finally:
+    lsp_client._proc_snapshot = real_snap
+check(blind_sweep.completed is False, "[blind-sweep] a force sweep that "
+      "never listed /proc reported itself complete")
+# No cleanup by number here: the supervisor reaps these workers as they
+# die, so a recorded pid may already name a stranger. It signals only its
+# own unreaped children once this driver ends.
 sys.stdout.write("RESULT %s\n" % ("FAIL" if fails else "OK"))
 PY
     # A decoy that is NOT a fixture descendant, with its pid planted in the
