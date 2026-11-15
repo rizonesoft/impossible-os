@@ -3262,11 +3262,12 @@ Filed 2026-08-26 from §54's consistency round, as two `[high]` findings §54 ve
 
 **Test checkpoint:** with the hook fixed, a push whose local OID is not repository `HEAD` produces a gate run whose `head <sha>` line names the pushed OID, and an uncommitted `chmod -x` on the driver no longer skips the block. Scope: this section owns the CALLER's arguments and its run condition. It does NOT re-open what the gate does with them, which is §54's, nor `GATE_SCRIPT_NOT_EXECUTABLE`, which is §51's and is about the committed mode. Platforms: host tooling only; no kernel surface.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_prepush_identity_caller.py` (8 cases)
+> **Test runner:** N/A (host tooling) | validation: `python3 -m pytest -q scripts/overnight/tests/test_prepush_identity_caller.py` (9 cases)
 
 > **Notes:**
 > - What shipped: the hook changes landed 2026-08-29; this pass adds the end-to-end push fixture that closes the last item.
 > - Controls: with `--head` removed from a copy of the hook, both push tests fail; with the old `-x` predicate restored, the mode-change test fails.
+> - Every fixture command runs in its own session and its whole group is killed on timeout and at teardown; a gate that stalls is stopped with its tree (the review wave's one finding, with a control that fails under plain `subprocess.run`).
 > - The fixture stubs the static-analysis gate and the tooling-reads helper, because the hook refuses when either is missing and neither is under test.
 > - Scope boundary: what the gate does with its arguments stays with section 54, and the committed mode with section 51.
 
