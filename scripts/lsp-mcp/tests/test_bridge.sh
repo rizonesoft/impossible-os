@@ -11651,11 +11651,14 @@ check(gen_unread is True, "[gen-unread] shutdown() did not confirm the "
 inst_x, w = spawn("claim-race")
 rec_x = inst_x._spawn_record
 real_close_x = os.close
-pruned = {"in_window": None}
+pruned = {"in_window": None, "loser": None}
 
 
 def close_then_prune(fd, _r=rec_x):
     if fd == _r.fd and pruned["in_window"] is None:
+        # A second claimant arrives while the winner is mid-claim, loses,
+        # and must not take the winner's protection with it.
+        pruned["loser"] = lsp_client._take_for_claim(_r)
         lsp_client._prune_owned_sessions()
         pruned["in_window"] = rec_x.pid in lsp_client._OWNED_SESSIONS
     return real_close_x(fd)
@@ -11666,6 +11669,8 @@ try:
     lsp_client._claim_for_retry(rec_x)
 finally:
     os.close = real_close_x
+check(pruned["loser"] is False, "[claim-race] the second claimant did not "
+      "lose the record")
 check(pruned["in_window"] is True, "[claim-race] registry hygiene during "
       "a claim deleted the session marker (saw %r)" % pruned["in_window"])
 check(rec_x.claimed and rec_x.pid in lsp_client._OWNED_SESSIONS,

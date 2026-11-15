@@ -982,12 +982,18 @@ def _take_for_claim(entry: "_SpawnRecord") -> bool:
     `claiming` is published BEFORE the removal, so between leaving the
     list and `_finish_claim` the record is never in neither state, which
     `_prune_owned_sessions` read as finished and deleted its session
-    marker (Codex round review). Returns False when another thread won."""
+    marker (Codex round review). Returns False when another thread won.
+
+    A LOSER never clears the flag. The winner may still be between its
+    removal and `_finish_claim`, and a loser that reset it handed the
+    marker back to the pruner (Codex round + completion review). Left set
+    it is harmless: a claim that won publishes `claimed` and clears it,
+    and a retirement that won marks the record `retired`, which the
+    pruner drops regardless."""
     entry.claiming = True
     try:
         _SPAWNED.remove(entry)
     except ValueError:
-        entry.claiming = False
         return False
     return True
 
