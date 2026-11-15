@@ -111,6 +111,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  43   |   §43   | The control-plane commit gate tests the staged commit                                            | none                       |  [ ]   |
 | ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [x]   |
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [x]   |
+| ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1540,6 +1541,24 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
 
 > **Verified:** 2026-11-15 | commit `bcb092101` | 7/7 items | 158 tests OK (owed record, gate, pin, dispatchers) | `scripts/overnight/tests/run-all.sh` 94 passed, 0 failed | `review_pin.py --check` OK | lint 0 errors | `review_owed.py gate` exits 0 on the real tree
 > **Quality reviewed:** 2026-11-15 | Codex 17x (plan, round 6x, performance 5x, completion, reconciliation 4x) | 5H+6M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface)
+
+## 46. The second reviewer's switched-off machinery is removed
+
+> **Spawned-by:** root
+> **User impact:** none at run time: the pin names no second reviewer, so every piece of it is dead code that the stamp gate still parses and every reader of the review docs still has to skip.
+
+Operator direction 2026-11-15: the second reviewer (Gemini 4 Carbon through `agy`, wired by section 44 and unpinned on 2026-11-14) is removed outright rather than kept switched off. Kept: `review_pin.section_base` (section 45's owed-review base reads it) and the dated plan `docs/plans/2026-11-11-three-pass-review.md`, which records what was decided at the time.
+
+- [ ] Delete `scripts/second_review_dispatch.py` and its row in `scripts/overnight/control-plane-manifest.txt`
+- [ ] Delete `scripts/overnight/second-review-log.py` and its log file
+- [ ] Delete `scripts/overnight/tests/test_second_dispatch.py` and `test_second_review_log.py`
+- [ ] Remove the `[second]` table support from `scripts/review_pin.py` (`--second`, `--second-applies`, `SECOND_KIND`) and its cases in `test_review_pin.py`
+- [ ] Remove `_second_issues` and the `second` receipt rules from `.claude/hooks/section_commit_gate.py`, the `second` kind from `review_convergence.py`, and their cases in `test_three_pass_gate.py`
+- [ ] Remove the second-reviewer paragraphs from `CLAUDE.md` (Model Roles), `.claude/skills/three-pass-review.md`, `docs/infrastructure/ai-system.md` and the comment in `.conclave/reviewers.toml`
+- [ ] Section 44 keeps its stamps and gains a note that it was withdrawn on 2026-11-15, pointing here
+- [ ] Commit: `"review: the second reviewer's machinery is removed"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes; `python3 scripts/review_pin.py --check` passes; `git grep -nE "second_review|second-review|_second_issues|--second"` outside `todo/` and `docs/plans/` finds nothing.
 
 ## Format Quick Reference
 
