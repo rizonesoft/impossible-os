@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **982 of 2712 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **982 of 2713 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -44,7 +44,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §3`  | UIA Capture Tool                                                                                                      | none     |    13 |
 | [x]  | `D08 T17 §5`  | Completeness Baselines                                                                                                | none     |     9 |
 | [x]  | `D08 T17 §6`  | Record Dispositions and Consistency Ledger                                                                            | none     |    10 |
-| [ ]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none     |     9 |
+| [/]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none     |     9 |
 | [ ]  | `D08 T17 §19` | Capture Matrix, Fixtures and Device Stand-ins                                                                         | none     |    12 |
 | [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | none     |     8 |
 | [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none     |     7 |
@@ -2257,6 +2257,7 @@ The taskbar, Start, the file manager and the settings surfaces are built from th
 | [ ]  | `D09 T06 §9`  | User Switching                                | none  |     5 |
 | [ ]  | `D09 T06 §10` | File Permissions                              | none  |     9 |
 | [ ]  | `D09 T06 §11` | UAC-Equivalent Elevation                      | none  |     9 |
+| [ ]  | `D09 T06 §12` | Sign-in Method Enrolment                      | none  |     6 |
 | [ ]  | `D09 T07 §1`  | Crypto Primitives                             | none  |    18 |
 | [ ]  | `D09 T07 §2`  | TLS Handshake Helper                          | none  |     5 |
 | [ ]  | `D09 T07 §3`  | X.509 Certificate Store                       | none  |     9 |

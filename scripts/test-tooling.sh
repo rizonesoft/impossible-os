@@ -1388,6 +1388,7 @@ _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inven
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py" inventory_assets
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_capture.py" inventory_capture
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_baselines.py" inventory_baselines
+_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_report.py" inventory_report
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
@@ -1513,6 +1514,22 @@ if [ -f "$INV_BASELINES_TEST" ]; then
     fi
 else
     t_fail "scripts/inventory/tests/test_baselines.py not found"
+fi
+
+# Coverage report and ownership check (scripts/inventory/tests/test_report.py):
+# the three-record ownership fixture, prefix precedence, ledger owners, the
+# capture-matrix reconciliation, and a Deferred section counting as unshipped.
+INV_REPORT_TEST="$REPO_ROOT/scripts/inventory/tests/test_report.py"
+if [ -f "$INV_REPORT_TEST" ]; then
+    INV_REPORT_OUT=$(_tt_nested_collect inventory_report python3 "$INV_REPORT_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/inventory/tests/test_report.py PASS ($(printf '%s\n' "$INV_REPORT_OUT" | tail -3 | tr '\n' ' '))"
+    else
+        t_fail "scripts/inventory/tests/test_report.py FAIL ($(printf '%s\n' "$INV_REPORT_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_report" "$INV_REPORT_OUT"
+    fi
+else
+    t_fail "scripts/inventory/tests/test_report.py not found"
 fi
 
 # Release image binding gate (scripts/tests/test_release_image_binding.py): real

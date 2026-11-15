@@ -72,7 +72,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [x]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [x]   |
-| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [ ]   |
+| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [x]   |
 | 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19      |  [ ]   |
 | 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8           |  [ ]   |
 | 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19      |  [ ]   |
@@ -349,22 +349,26 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 
 The report is the measure of progress, and the ownership check is the proof that nothing is ownerless and nothing is claimed twice.
 
-- [ ] Write `scripts/inventory/inventory-report.py`, which writes `docs/design/inventory/COVERAGE.md`
-  - Records per surface and kind, dispositions per surface, baseline rows matched, absent, pending and unmatched, and implemented counts
-- [ ] Define ownership: a roadmap section owns a record when its body carries `**Inventory:** <id or id prefix>`; a prefix owns every record under it that no longer prefix owns
-- [ ] Add `--owners --check`: exits 1 listing every `build` or `equivalent` record with no owner and every record with two owners of the same prefix length
-  - A `replaced` record needs no owner: its `mergedInto` target does, and the report counts `replaced` records apart from built ones
-  - A `flow` or `home` ledger entry is owned like a record, by `**Inventory:** ledger:<id>`: the section that builds our design; an entry with no owner or two is listed
-- [ ] Define implemented: a record counts when its owning section is shipped with both stamps
-  - Read from the classifier in `.claude/hooks/sequencer_triage.py`: reuse its function, do not restate its rule
-- [ ] Make the pre-commit lint refuse a stale `COVERAGE.md` when an inventory file or a TODO file is staged
-- [ ] Add `--campaign --check`: exits 1 naming every row of §19's `expected.json` with no records or no shot, every baseline row unmatched and every `unnamed` element without a label
-  - The campaign of §8 to §14 ends, and the VM is shut down, only when it exits 0; a later miss is filed as a capture gap in `REFERENCE.md`
-- [ ] Write `docs/design/inventory/authoring.json`: the surface to owning-file map §15 fills, read by the report to print pending surfaces
-- [ ] Write `scripts/inventory/tests/test_report.py` with a three-record fixture tree: one owned, one ownerless, one doubly owned
-- [ ] Commit: `"inventory: coverage report and 1:1 ownership check"`
+- [x] `scripts/inventory/inventory-report.py` writes `docs/design/inventory/COVERAGE.md`
+  - Records per surface and kind, dispositions per surface, each baseline's matched, absent, pending and unmatched rows, owned and implemented counts, ledger owners
+- [x] Ownership: an `**Inventory:**` line owns the record ids, id prefixes and `ledger:<id>` tokens on it; the longest prefix wins, and a line with no token owns nothing
+- [x] `--owners --check` lists every ownerless or doubly owned `build`/`equivalent` record and `flow`/`home` entry, and every token that owns nothing
+  - `replaced`, `excluded` and catalogue records need no owner; `replaced` is counted apart
+  - The two ledger entries got owners: `settings-home` in 09-desktop-shell/TODO-11 section 2, `hello-enrolment` in the new 09-desktop-shell/TODO-06 section 12
+- [x] Implemented: the owning section is done in the plan (`todo-plan.py`, a graph built fresh per run) and carries both the Verified and the Quality reviewed stamp, so a Deferred close implements nothing
+- [x] Lint Check 41 refuses a stale `COVERAGE.md`; at commit the staged report runs on a snapshot of the staged tree, its own code included
+- [x] `--campaign --check` reconciles §19's `expected.json`: rows without records, shot or recording, absent rows without a reason, open baseline rows, captures left without a hand label
+  - Row shape, which §19 writes: `{surface, state, profile, needs: [records|shot|recording], fixture?, source?: stand-in|host|absent, reason?}`; a missing matrix fails
+- [x] `docs/design/inventory/authoring.json` seeded `{}`: the surface to owning-file map §15 fills; surfaces with records and no entry print as pending
+- [x] `scripts/inventory/tests/test_report.py`: the three-record ownership fixture, prefix precedence, ledger owners, fenced lines, campaign rows, the Deferred rule
+- [x] Commit: `"inventory: coverage report and 1:1 ownership check"`
 
 **Test checkpoint:** on the fixture tree, `inventory-report.py --owners --check` exits 1 and prints exactly two lines, `no owner: win11.fixture.b` and `two owners: win11.fixture.c`. On the real tree `COVERAGE.md` regenerates byte-identically twice in a row.
+
+> **Test runner:** `python3 scripts/inventory/tests/test_report.py` -- 15 tests OK (in `scripts/test-tooling.sh` as `inventory_report`); `python3 scripts/inventory/inventory-report.py --owners --check` exits 0 on the real tree.
+> **Notes:**
+> - Plan review 2026-11-16: 3 Medium (a Deferred close counted as implemented; a stale cache or an unstaged regeneration could pass the staleness check; the campaign check covered only a missing matrix), all fixed above.
+> - Round 1, 2026-11-16: 5 Medium, all fixed: nested `- ## N.` headings now use the shared section walk; Check 41 runs the staged report on the staged snapshot (an unstaged edit or deletion no longer decides it); ownerless lookups use a set; the baseline summary is shared with `check-inventory.py` (`baseline_summary`) instead of validating twice; a null or blank absence reason fails.
 
 ---
 
@@ -1120,6 +1124,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 - [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
   - A hardware-gated row carries `source`: `stand-in`, `host` or `absent`
+  - The row shape is §7's (`scripts/inventory/inventory-report.py`); an `absent` row carries its `reason`
 - [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
   - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts

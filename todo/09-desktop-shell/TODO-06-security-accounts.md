@@ -61,6 +61,7 @@ title: "TODO-06 -- Security & User Accounts"
 | 💎  |   9   | §9 User switching -- Start Menu avatar → Switch/Sign out, fast-user-switch session stub                    | §7 login flow; 08-graphics-ui/TODO-11 Start Menu user area                               |  [ ]   |
 | ⭐  |  10   | §10 File permissions -- wire `ixfs_check_perm()` into `vfs_open/write/exec`; FAT32 fallback                | §3 user accounts (uid available); `ixfs_check_perm()` (exists in ixfs.h, no callers yet) |  [ ]   |
 | ⭐  |  11   | §11 UAC elevation -- `privilege_request(reason)` consent dialog, process token, `SYS_PRIVILEGE_REQUEST=59` | §4 auth API; §10 permissions; D08 T06 §8 dialog; `task_t` priv token                     |  [ ]   |
+| 💎  |  12   | §12 Sign-in method enrolment -- one dialog flow for PIN, face, fingerprint and security key | §4 auth API; §11 dialog | [ ] |
 
 ---
 
@@ -262,6 +263,26 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 - [ ] `#define SYS_PRIVILEGE_REQUEST 59` in `syscall.h`; `sys_privilege_request(reason_ptr)` handler
 - [ ] `auth_is_admin()` checks `current_task->priv_level` (runtime check, not just user account level)
 - [ ] Commit: `"security: UAC elevation -- privilege_request(), task priv token, consent dialog, SYS_PRIVILEGE_REQUEST=59"`
+
+
+## 12. Sign-in Method Enrolment
+
+> **Spawned-by:** root
+
+**Design:** [`shell.md#sign-in-method-enrolment`](../../docs/design/shell.md#sign-in-method-enrolment), [`controls.md#dialog`](../../docs/design/controls.md#dialog)
+
+**Inventory:** ledger:hello-enrolment
+
+Windows 11 enrols each sign-in method through its own wizard; Impossible OS uses one dialog flow behind the same four entry points on the sign-in options page (TODO-17 section 6, the `hello-enrolment` ledger entry).
+
+- [ ] One enrolment dialog with Back, the primary action and Cancel; Cancel at any step leaves nothing enrolled
+- [ ] Step 1 confirms the user with the current password or PIN, skipped only when the account has neither
+- [ ] Step 2 enrols the method: a PIN typed twice, or a face, fingerprint or security key read with a determinate progress ring and one instruction line
+- [ ] Step 3 asks for a fallback PIN when the account has none and the method is not a PIN
+- [ ] Step 4 names what was added and offers "Add another method"; removing and changing a method use the same dialog
+- [ ] Commit: `"accounts: one sign-in method enrolment flow"`
+
+**Test checkpoint:** enrolling a PIN, then cancelling a fingerprint enrolment at step 2, leaves exactly one method enrolled; a device-backed method runs against the emulated sensor stand-in.
 
 ---
 

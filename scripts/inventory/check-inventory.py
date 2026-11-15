@@ -463,6 +463,78 @@ def load_absent(root, baselines, err, surface, build):
     return out, old
 
 
+def baseline_summary(root, surface, records, err):
+    """Each baseline's rows, matched, absent, pending, unmatched, stale and removed.
+
+    records maps an id to (path, line, record, in scope); err(path, line, rule,
+    message) receives the baseline errors of in-scope records. check() reports
+    them; the coverage report (inventory-report.py) counts with it and ignores
+    them, since lint Check 40 has already judged the same tree."""
+    # Baselines: every row is matched by a record, documented absent, or open.
+    ref = root / "reference.json"
+    build = json.loads(ref.read_text(encoding="utf-8")).get("build") if ref.is_file() else None
+    baselines = load_baselines(root, surface, build, err)
+    matched = {name: set() for name in baselines}
+    stale = {name: set() for name in baselines}
+    for rid, (path, n, obj, mine) in records.items():
+        if obj.get("baselineMissing") and "baselineId" in obj:
+            if mine:
+                err(path, n, "baseline-both", f"{rid}: baselineMissing says no row lists it, but it names {obj['baselineId']}")
+            continue
+        if "baselineId" not in obj:
+            continue
+        name, _, row = obj["baselineId"].partition(":")
+        b = baselines.get(name)
+        orphan = f"{rid}: baselineId {obj['baselineId']} names no baseline row"
+        if b is None:
+            if mine:
+                err(path, n, "baseline-orphan", orphan)
+            continue
+        # Against the reference build, for every baseline: an imported one
+        # (controls) has no build of its own, and the capture is what must be current.
+        if build is not None and obj["capturedFrom"] != build:
+            # Staleness is judged before the row: a row the new build no longer
+            # has is not this old record's error, and the re-capture unbinds it.
+            # A capture of another build is stale evidence: it never counts, and
+            # the row stays open until the surface is captured again. It is not an
+            # error, or a new reference build could be reached from neither side:
+            # the new baselines would fail on the old records, and a re-capture
+            # on the old baselines.
+            stale[name].add(row)
+            continue
+        if row not in b["rows"]:
+            if mine:
+                err(path, n, "baseline-orphan", orphan)
+            continue
+        # Any surface's record may match a row (the settings index lists the classic
+        # Control Panel entries, which are captured under control-panel); the owner
+        # is who answers for the rows still open, not who alone may match one.
+        matched[name].add(row)
+    absent, old = load_absent(root, baselines, err, surface, build)
+    for name, row in old:
+        stale[name].add(row)
+    for (name, row), (n, _) in list(absent.items()):
+        if row in matched[name]:
+            # A matched row is counted once, as matched.
+            del absent[(name, row)]
+            if baselines[name]["mine"]:
+                err(root / "REFERENCE.md", n, "absent-matched", f"{name}:{row} is listed absent and a record matches it")
+    captured = {p.parent.name for p, _, obj, _ in records.values()}
+    summary = {}
+    for name, b in baselines.items():
+        rows = set(b["rows"])
+        gone = {r for (bn, r) in absent if bn == name} & rows
+        left = len(rows - matched[name] - gone)
+        owner = b["header"].get("owner")
+        open_ = left if owner in captured else 0
+        summary[name] = {"owner": owner, "rows": len(rows), "matched": len(matched[name]), "absent": len(gone),
+                         "pending": left - open_, "unmatched": open_, "stale": len((stale[name] & rows) - matched[name] - gone),
+                         # Old evidence for a row this build no longer has: nothing to count, but
+                         # named, so the entry is reconciled instead of forgotten.
+                         "removed": sorted(stale[name] - rows)}
+    return summary
+
+
 def check(root, surface=None, allow_undecided=False, design_root=None):
     schema = json.loads((root / "schema.json").read_text(encoding="utf-8"))
     record_v = Draft202012Validator(schema)
@@ -716,68 +788,7 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
         elif state in ("build", "equivalent") and obj["kind"] not in CATALOGUE_KINDS and fate_of(rid) == "gone":
             err(path, n, "unplaced", f"{rid}: built, but its captured home is replaced or excluded; name where it lives in placedUnder")
 
-    # Baselines: every row is matched by a record, documented absent, or open.
-    ref = root / "reference.json"
-    build = json.loads(ref.read_text(encoding="utf-8")).get("build") if ref.is_file() else None
-    baselines = load_baselines(root, surface, build, err)
-    matched = {name: set() for name in baselines}
-    stale = {name: set() for name in baselines}
-    for rid, (path, n, obj, mine) in records.items():
-        if obj.get("baselineMissing") and "baselineId" in obj:
-            if mine:
-                err(path, n, "baseline-both", f"{rid}: baselineMissing says no row lists it, but it names {obj['baselineId']}")
-            continue
-        if "baselineId" not in obj:
-            continue
-        name, _, row = obj["baselineId"].partition(":")
-        b = baselines.get(name)
-        orphan = f"{rid}: baselineId {obj['baselineId']} names no baseline row"
-        if b is None:
-            if mine:
-                err(path, n, "baseline-orphan", orphan)
-            continue
-        # Against the reference build, for every baseline: an imported one
-        # (controls) has no build of its own, and the capture is what must be current.
-        if build is not None and obj["capturedFrom"] != build:
-            # Staleness is judged before the row: a row the new build no longer
-            # has is not this old record's error, and the re-capture unbinds it.
-            # A capture of another build is stale evidence: it never counts, and
-            # the row stays open until the surface is captured again. It is not an
-            # error, or a new reference build could be reached from neither side:
-            # the new baselines would fail on the old records, and a re-capture
-            # on the old baselines.
-            stale[name].add(row)
-            continue
-        if row not in b["rows"]:
-            if mine:
-                err(path, n, "baseline-orphan", orphan)
-            continue
-        # Any surface's record may match a row (the settings index lists the classic
-        # Control Panel entries, which are captured under control-panel); the owner
-        # is who answers for the rows still open, not who alone may match one.
-        matched[name].add(row)
-    absent, old = load_absent(root, baselines, err, surface, build)
-    for name, row in old:
-        stale[name].add(row)
-    for (name, row), (n, _) in list(absent.items()):
-        if row in matched[name]:
-            # A matched row is counted once, as matched.
-            del absent[(name, row)]
-            if baselines[name]["mine"]:
-                err(root / "REFERENCE.md", n, "absent-matched", f"{name}:{row} is listed absent and a record matches it")
-    captured = {p.parent.name for p, _, obj, _ in records.values()}
-    summary = {}
-    for name, b in baselines.items():
-        rows = set(b["rows"])
-        gone = {r for (bn, r) in absent if bn == name} & rows
-        left = len(rows - matched[name] - gone)
-        owner = b["header"].get("owner")
-        open_ = left if owner in captured else 0
-        summary[name] = {"owner": owner, "rows": len(rows), "matched": len(matched[name]), "absent": len(gone),
-                         "pending": left - open_, "unmatched": open_, "stale": len((stale[name] & rows) - matched[name] - gone),
-                         # Old evidence for a row this build no longer has: nothing to count, but
-                         # named, so the entry is reconciled instead of forgotten.
-                         "removed": sorted(stale[name] - rows)}
+    summary = baseline_summary(root, surface, records, err)
 
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
     return count, len(observations), errors, summary

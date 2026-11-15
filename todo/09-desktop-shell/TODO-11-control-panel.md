@@ -80,6 +80,8 @@ title: "TODO-11 -- Control Panel & Settings"
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
+**Inventory:** ledger:settings-home
+
 `src/apps/control/control.c`; the Settings and Control Panel frame of `docs/design/shell.md#settings-and-control-panel-frame`: a `THEME_SIZE_NAV_PANE_WIDTH` (280) navigation pane (user card, search box, `THEME_SIZE_NAV_ITEM_HEIGHT` (36) category items with the 3 x 16 accent pill on the selected one) beside the content (page title in the title style, then applets as settings rows per `controls.md#cards-and-settings-rows`). Scan `C:\Impossible\System32\` for `.cpl` files + compiled-in applets. Group by category. `CPL_DBLCLK` → render UI. Win+I opens.
 
 **Files:** `src/apps/control/control.c` (new), `include/apps/control.h` (extend)
