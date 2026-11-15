@@ -70,7 +70,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎  |  24   | Single-pass procfs cleanup in the teardown sweep                                      | §22, §23                          |  [x]   |
 | ⭐  |  25   | Restart-publish confirmed-dead gate + single-flight teardown                          | §22, §23                          |  [/]   |
 | ⭐  |  26   | Teardown verdict propagation + a non-reaping liveness probe                           | §22, §23, §25                     |  [x]   |
-| ⭐  |  27   | Per-instance collection proves opaque descendants; constructor failure collects first | §23, §26                          |  [ ]   |
+| ⭐  |  27   | Per-instance collection proves opaque descendants; constructor failure collects first | §23, §26                          |  [x]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -980,12 +980,23 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 
 Filed from §26's fourth adversarial round, as two High findings older than §26's claimed-state item: `_provably_ours_and_gen` is unchanged by it, and the constructor path predates it. §23 already reaps such a descendant at FINAL teardown through session continuity (pass 0); what is missing is the same proof in the per-instance collection whose verdict gates the restart. -> XREF: [`TODO-07 §23`](#23-injected-clock-deadline-coverage-and-the-non-dumpable-child-reap-blind-spot) (item: "Reaped a language server that made its own `/proc` entry unreadable") -> XREF: [`TODO-07 §26`](#26-teardown-verdict-propagation-and-a-non-reaping-liveness-probe) (item: "Modelled CLAIMED-and-in-use separately from safely RETIRED")
 
-- [ ] The group sweep in `_collect_after_death` counts a same-session descendant whose environment is unreadable as ours by session proof bound to the exact spawn generation, or reports the collection incomplete; never empty.
-  - Today `_provably_ours_and_gen` answers the generation False when the environment cannot be read, so `_reap_group` reports empty and `shutdown()` confirms the death.
-- [ ] Constructor failure collects descendants before it reaps: non-reaping exit observation during its escalation, `_reap_group` before any `wait()`, and a cleanup owner kept when collection is incomplete.
-- [ ] Regression tests with a real non-dumpable descendant (no mocked `_reap_group`): one through `shutdown()`, one through a thread-start failure after a real fork, each checked again after the final force sweep.
+- [x] Proved an opaque same-session descendant's GENERATION by session continuity in the per-instance sweep, and an unprovable one keeps the group not-empty
+  - `_session_proves_gen` accepts only a candidate whose session id is the swept pgid: the leader this generation created with `start_new_session` and keeps unreaped. Wired through `_ProcSnapshot.markers`, `_provably_ours_and_gen`, `_group_members` and `_reap_predicate`.
+  - A same-group candidate that is neither provable nor ruled out (unreadable environment, no descriptor for the session proof) is collected in `unresolved`, and `_reap_group` no longer counts that scan as empty: it is never signalled, and the verdict stays False.
+- [x] Kept the session proof of an ORDINARY record across an incomplete collection: `_claim_for_retry` moves it to the CLAIMED state (descriptor closed, marker kept) instead of retiring it.
+- [x] Gave the escalation and collection their share of `shutdown()`'s budget: the polite exit wait takes at most half of what is left, so a server that ignores stdin EOF no longer leaves every group sweep starting expired.
+- [x] Collected descendants before the reap on constructor failure, and held an incomplete one with a strong owner the force sweep drains
+  - `_dispose_failed_spawn` runs one non-reaping escalation, `_reap_group`, and reaps only on an emptied group; an incomplete one goes to `_ABANDONED`, which `_collect_abandoned` drains.
+- [x] Sub-test 9v with a real PR_SET_DUMPABLE(0) worker of a real `LspSubprocess`: shutdown, retry after an exhausted first collection, descriptor exhaustion, reader and stderr thread-start failures, then the final force sweep.
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-tests; a non-dumpable descendant keeps `shutdown()` at False until it is collected, and a constructor failure after a fork leaves no surviving worker. Test on: host tooling only (no QEMU dependency).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 120/120 sub-tests PASS (9v opaque descendant collection is this section; 9p's exhaustion case now expects the confirmed death a provably empty group earns).
+
+> **Notes:**
+> - Five controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget.
+> - 9p's descriptor-exhaustion case expected False only because the polite wait had spent the sweep's budget; an empty group is provable with no descriptor, so it now expects True, and exhaustion with a worker present is 9v's case.
+> - Scope boundary: a descendant that called `setsid` itself, or whose leader was already reaped, is still out of reach without a kernel container (section 23's parked item).
 
 ## Format Quick Reference
 

@@ -358,6 +358,10 @@
 #   9u -- a completed descriptor claim is its own record state: answerable
 #         without a reaping poll, keeps its session proof and marker, and
 #         is retired with them.
+#   9v -- a real PR_SET_DUMPABLE(0) worker is collected by shutdown(), by
+#         its retry after an exhausted first collection, after descriptor
+#         exhaustion (unconfirmed until then), and by a constructor whose
+#         reader or stderr thread failed to start.
 #
 #  15a -- workspace-root resolution priority chain.
 #  15b -- a file:// URI is rejected at the _dispatch_path entry.
@@ -8402,7 +8406,7 @@ def _scripted_members(seq):
     box = list(seq)
 
     def _gm(pgid, exclude=-1, deadline=None, snapshot=None, gen=None,
-            clock=None):
+            clock=None, unresolved=None):
         _gm_calls["n"] += 1
         return box.pop(0) if box else []
 
@@ -10180,14 +10184,17 @@ for _ in range(100):
 check(stubborn.poll() is not None,
       "a SIGTERM-ignoring child survived shutdown(): the escalation spent "
       "its only identity on the SIGTERM and could not send the SIGKILL")
-# The LEADER is dead, but the group sweep ran inside the same exhaustion
-# and could not prove the group empty -- so the verdict is honestly still
-# False, and becomes True once descriptors return.
-check(verdict5 is False,
-      "shutdown() confirmed a death whose group sweep could not acquire a "
-      "single handle to prove it with")
+# The LEADER is dead and the group holds nothing else, which two clean
+# /proc scans prove WITHOUT a descriptor: emptiness needs no handle, only
+# ownership does. So the death is confirmed even under exhaustion. This
+# case used to expect False, and got it only because the polite wait spent
+# the whole budget before any sweep ran (section 27). Exhaustion with an
+# opaque worker actually present is 9v's, where it must stay unconfirmed.
+check(verdict5 is True,
+      "shutdown() refused to confirm a dead leader whose group is provably "
+      "empty without any descriptor")
 check(inst5.shutdown(timeout=2.0) is True,
-      "the verdict never recovered once descriptors were available again")
+      "a repeat shutdown() lost the confirmed verdict")
 try:
     stubborn.kill()
 except Exception:
@@ -10911,6 +10918,230 @@ PY
 # session proof, `_retire_spawn` could not retire it, and spawn hygiene
 # dropped its marker. Marking it retired instead reaped before the
 # descendant sweep, which is why that was reverted in section 26.
+t_opaque_descendant_collection() {
+    # Section 27: a real PR_SET_DUMPABLE(0) worker of a real LspSubprocess
+    # must be collected by the PER-INSTANCE path (shutdown, its retry, and
+    # a constructor whose threads failed to start), not left to the final
+    # force sweep, and never survive that sweep either.
+    local drv out err dir rc=0
+    dir="$(mktemp -d -t lsp-opaque-pids.XXXXXX)"
+    drv="$(mktemp -t lsp-opaque.XXXXXX.py)"
+    out="$(mktemp -t lsp-opaque-out.XXXXXX)"
+    err="$(mktemp -t lsp-opaque-err.XXXXXX)"
+    cat > "$drv" <<'PY'
+import ctypes, gc, os, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+try:
+    ctypes.CDLL("libc.so.6", use_errno=True)
+except Exception as exc:
+    sys.stdout.write("NOSHAPE libc.so.6 did not load: %s\n" % exc)
+    sys.exit(0)
+
+# The worker hardens itself, THEN publishes its pid, then lives.
+WORKER = (
+    "import ctypes,os,sys,time\n"
+    "ctypes.CDLL('libc.so.6').prctl(4,0,0,0,0)\n"
+    "open(sys.argv[1]+'.tmp','w').write(str(os.getpid()))\n"
+    "os.rename(sys.argv[1]+'.tmp', sys.argv[1])\n"
+    "time.sleep(300)\n"
+)
+# The server: forks the worker (same session and group) and idles.
+SERVER = (
+    "import os,subprocess,sys,time\n"
+    "open(sys.argv[1]+'.leader','w').write(str(os.getpid()))\n"
+    "subprocess.Popen([sys.executable,'-c',%r,sys.argv[1]])\n"
+    "time.sleep(300)\n" % WORKER
+)
+fails = []
+workers = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+        sys.stdout.write("[9v] FAIL: %s\n" % msg)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def gone(pid, secs=3.0):
+    end = time.monotonic() + secs
+    while time.monotonic() < end:
+        if not alive(pid):
+            return True
+        time.sleep(0.02)
+    return not alive(pid)
+
+
+def wait_worker(path, secs=5.0):
+    end = time.monotonic() + secs
+    while time.monotonic() < end:
+        try:
+            return int(open(path).read())
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.02)
+    return None
+
+
+tmp = sys.argv[1]
+shaped = []
+
+
+def spawn(tag):
+    path = os.path.join(tmp, tag)
+    inst = lsp_client.LspSubprocess([sys.executable, "-c", SERVER, path], "c")
+    w = wait_worker(path)
+    check(w is not None, "[%s] the worker never started" % tag)
+    if w is not None:
+        workers.append(w)
+        for _ in range(100):
+            if lsp_client._carries_our_owner_id(w) is None:
+                shaped.append(tag)
+                break
+            time.sleep(0.02)
+    return inst, w
+
+
+# --- A: shutdown() collects the opaque worker itself -------------------
+inst, w = spawn("shutdown")
+if not shaped:
+    sys.stdout.write("NOSHAPE the worker's environ stayed readable "
+                     "(PR_SET_DUMPABLE had no effect on this host)\n")
+    inst.shutdown(timeout=2.0)
+    lsp_client.force_kill_spawned(settle=0.2,
+                                  deadline=time.monotonic() + 10.0)
+    sys.exit(0)
+verdict = inst.shutdown(timeout=3.0)
+check(gone(w), "[shutdown] the opaque worker survived shutdown(): the "
+      "per-instance sweep did not prove its generation")
+check(verdict is True, "[shutdown] shutdown() did not confirm the death")
+
+# --- B: an exhausted first collection, then a retry --------------------
+inst, w = spawn("retry")
+real_reap = lsp_client._reap_group
+calls = {"n": 0}
+
+
+def first_expired(pgid, deadline=None, gen=None, clock=lsp_client._REAL_CLOCK):
+    calls["n"] += 1
+    if calls["n"] == 1:
+        deadline = time.monotonic() - 1.0      # a budget already spent
+    return real_reap(pgid, deadline=deadline, gen=gen, clock=clock)
+
+
+lsp_client._reap_group = first_expired
+try:
+    first = inst.shutdown(timeout=1.0)
+finally:
+    lsp_client._reap_group = real_reap
+check(first is False, "[retry] an exhausted collection confirmed a death")
+check(alive(w), "[retry] the fixture lost its worker before the retry")
+second = inst.shutdown(timeout=3.0)
+check(gone(w), "[retry] the opaque worker survived the retry: the "
+      "incomplete first collection threw away the session proof")
+check(second is True, "[retry] the retry did not confirm the death")
+
+# --- E: descriptor exhaustion with the opaque worker present ------------
+# No handle means no session proof, so the worker can be neither proved
+# ours nor ruled out. That is NOT an empty group: the verdict must stay
+# unconfirmed until descriptors return, then the worker is collected.
+def EMFILE(*a, **kw):
+    raise OSError(24, "Too many open files")
+
+
+inst, w = spawn("exhausted")
+real_dup, real_open = os.dup, os.pidfd_open
+os.dup = EMFILE
+os.pidfd_open = EMFILE
+try:
+    starved = inst.shutdown(timeout=1.0)
+finally:
+    os.dup, os.pidfd_open = real_dup, real_open
+check(starved is False, "[exhausted] shutdown() confirmed a death while an "
+      "opaque worker it could not prove or rule out was still running")
+check(alive(w), "[exhausted] the fixture lost its worker before the retry")
+recovered = inst.shutdown(timeout=3.0)
+check(gone(w), "[exhausted] the worker survived once descriptors returned")
+check(recovered is True, "[exhausted] the retry did not confirm the death")
+
+# --- C/D: a thread that cannot start after the server forked -----------
+for which in ("lsp-reader", "lsp-stderr"):
+    tag = "ctor-" + which
+    path = os.path.join(tmp, tag)
+    real_start = threading.Thread.start
+
+    def failing_start(self, _which=which, _path=path):
+        if self.name.startswith(_which):
+            wait_worker(_path)                 # the worker exists first
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    threading.Thread.start = failing_start
+    raised = False
+    try:
+        lsp_client.LspSubprocess([sys.executable, "-c", SERVER, path], "c")
+    except Exception:
+        raised = True
+    finally:
+        threading.Thread.start = real_start
+    check(raised, "[%s] the constructor did not raise" % tag)
+    w = wait_worker(path)
+    if w is not None:
+        workers.append(w)
+    gc.collect()
+    check(w is not None and gone(w),
+          "[%s] the opaque worker survived the constructor's cleanup" % tag)
+
+# --- every worker is gone after the final sweep, nothing is abandoned --
+lsp_client.force_kill_spawned(settle=0.2, deadline=time.monotonic() + 10.0)
+for w in workers:
+    check(gone(w, 2.0), "worker %d survived the final force sweep" % w)
+check(not lsp_client._ABANDONED,
+      "a failed construction is still abandoned after the final sweep")
+for w in workers:
+    if alive(w):
+        try:
+            os.kill(w, 9)
+        except Exception:
+            pass
+sys.stdout.write("RESULT %s\n" % ("FAIL" if fails else "OK"))
+PY
+    timeout 120 python3 "$drv" "$dir" > "$out" 2> "$err" || rc=$?
+    # Every server and worker wrote its pid here; none outlives the test,
+    # whatever ended the driver (a timeout stops only the driver).
+    local f
+    for f in "$dir"/*; do
+        [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null
+    done
+    rm -rf "$dir"
+    if grep -q '^NOSHAPE' "$out"; then
+        LSP_SKIPPED_SHAPES="${LSP_SKIPPED_SHAPES}${LSP_SKIPPED_SHAPES:+
+}9v opaque descendant collection: $(sed -n 's/^NOSHAPE //p' "$out")"
+        rm -f "$drv" "$out" "$err"
+        printf '[9v] live non-dumpable shape SKIPPED on this host\n'
+        return 0
+    fi
+    if [ "$rc" != "0" ] || ! grep -q '^RESULT OK' "$out"; then
+        grep '^\[9v\]' "$out" >&2
+        sed 's/^/     /' "$err" | tail -20 >&2
+        rm -f "$drv" "$out" "$err"; return 1
+    fi
+    rm -f "$drv" "$out" "$err"
+    printf '[9v] opaque descendants OK: shutdown, its retry and both '
+    printf 'constructor failures collect a PR_SET_DUMPABLE(0) worker\n'
+    return 0
+}
+
 t_claimed_record_state() {
     local rc=0
     python3 - <<'PY' || rc=$?
@@ -11363,9 +11594,9 @@ except Exception:
     pass
 
 # --- a RETIRED record must not wedge the helper forever ---------------
-# _collect_after_death retires an ordinary record whatever the sweep
-# answered (section 24's EMFILE fix; only a CLAIMED record on an incomplete
-# sweep is kept, see 9u), so an instance keeps a reference to a record no
+# _collect_after_death retires a record once its sweep completes
+# (section 24's EMFILE fix; an incomplete sweep CLAIMS it instead, see 9u),
+# so an instance keeps a reference to a record no
 # longer in _SPAWNED. The
 # fail-closed rule then answered 'not exited' FOREVER: alive reported a
 # zombie alive indefinitely and the instance could never be confirmed
@@ -11480,9 +11711,9 @@ b = Boom()
 b._schedule_crash_collection()          # must not raise
 
 # --- a RETIRED record must not wedge the helper forever ---------------
-# _collect_after_death retires an ordinary record whatever the sweep
-# answered (section 24's EMFILE fix; only a CLAIMED record on an incomplete
-# sweep is kept, see 9u), so an instance keeps a reference to a record no
+# _collect_after_death retires a record once its sweep completes
+# (section 24's EMFILE fix; an incomplete sweep CLAIMS it instead, see 9u),
+# so an instance keeps a reference to a record no
 # longer in _SPAWNED. The
 # fail-closed rule then answered 'not exited' FOREVER: alive reported a
 # zombie alive indefinitely and the instance could never be confirmed
@@ -12312,6 +12543,7 @@ run "9r non-reaping liveness"           t_nonreaping_liveness
 run "9s leader pass fair share"         t_leader_pass_fair_share
 run "9t unconfirmed reap propagation"   t_unconfirmed_reap_propagation
 run "9u claimed record state"           t_claimed_record_state
+run "9v opaque descendant collection"  t_opaque_descendant_collection
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

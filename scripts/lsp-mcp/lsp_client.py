@@ -170,6 +170,16 @@ _FORBIDDEN_LSP_METHODS = frozenset({
 # deregister, which is correct because __del__ closes the pipes.
 _LIVE_SUBPROCS: "weakref.WeakSet[LspSubprocess]" = weakref.WeakSet()
 
+# Failed constructions whose group sweep did not complete, held STRONGLY
+# as `(Popen, _SpawnRecord, generation)` until it does. The half-built
+# instance cannot be the owner: _LIVE_SUBPROCS is weak, so once the
+# exception is dropped the instance goes, and so does its Popen -- whose
+# finalizer then reaps the leader, destroying the session proof the
+# final sweep needs to find an opaque worker (Codex plan review, High).
+# Drained by `_collect_abandoned` from the force sweep.
+_ABANDONED: list = []
+_ABANDONED_LOCK = threading.Lock()
+
 
 # ----------------------------------------------------------------------
 # Ownership identity: which LSP processes did THIS bridge start?
@@ -929,6 +939,33 @@ def _drop_session_mark(entry: "_SpawnRecord") -> None:
             _OWNED_SESSIONS_LOCK.release()
 
 
+def _claim_for_retry(entry: "_SpawnRecord") -> None:
+    """Move an ORDINARY record to the CLAIMED state after an incomplete
+    collection: release its descriptor, keep its session marker.
+
+    Retiring it threw away the marker that proves an opaque same-session
+    descendant ours, so the retry found no provable member and reported
+    the group empty (Codex plan review, High). Keeping it as it was held a
+    descriptor per dead generation, the accumulation section 24 removed.
+    The claimed state keeps the proof for neither cost: the leader stays
+    unreaped, so `_claimed_pidfd` re-opens an exact handle on demand.
+
+    The list removal is the ownership token, as in `_retire_spawn`: a
+    concurrent retirement or claim that won it owns the descriptor."""
+    if entry.claimed or entry.retired:
+        return
+    try:
+        _SPAWNED.remove(entry)
+    except ValueError:
+        return
+    if entry.fd is not None:
+        try:
+            os.close(entry.fd)
+        except Exception:
+            pass
+    _finish_claim(entry)
+
+
 def _finish_claim(entry: "_SpawnRecord") -> None:
     """A claim has spent the record's descriptor: say so on the record.
 
@@ -1309,7 +1346,9 @@ def _provably_ours(pid: int, deadline: Optional[float] = None,
 
 def _provably_ours_and_gen(pid: int, gen: Optional[str],
                            deadline: Optional[float] = None,
-                           clock: _Clock = _REAL_CLOCK) -> tuple[bool, bool]:
+                           clock: _Clock = _REAL_CLOCK,
+                           session_gen: Optional[int] = None
+                           ) -> tuple[bool, bool]:
     """_provably_ours and _carries_gen_id from ONE environment traversal.
 
     Identical answers to asking them separately, including the rule that
@@ -1320,16 +1359,46 @@ def _provably_ours_and_gen(pid: int, gen: Optional[str],
     (section 24).
 
     The second element is True when no generation was asked for, so a
-    caller can consume it unconditionally."""
+    caller can consume it unconditionally.
+
+    `session_gen` is the session id whose continuity also proves the
+    GENERATION (see `_session_proves_gen`); None keeps the environment as
+    the only generation evidence."""
     owner, generation = _read_env_markers(pid, gen, deadline=deadline,
                                           clock=clock)
+    by_session = False
     if owner is True:
         ours = True
     elif owner is not None:
         ours = False                # readable and unstamped: not ours
     else:
-        ours = _session_marks_ours(pid, _session_of(pid))
-    return ours, (True if gen is None else generation is True)
+        sid = _session_of(pid)
+        ours = by_session = _session_marks_ours(pid, sid)
+    if gen is None:
+        return ours, True
+    return ours, (generation is True
+                  or (by_session and _session_proves_gen(pid, session_gen)))
+
+
+def _session_proves_gen(pid: int, session_gen: Optional[int]) -> bool:
+    """Does session continuity prove `pid` belongs to the swept GENERATION?
+
+    Only for an opaque candidate already proved ours by session
+    continuity, and only when its session is `session_gen`: the pgid a
+    per-instance collection sweeps, which is that generation's own leader.
+    Every spawn starts a new session, so that session was created by this
+    generation's leader and by no other, and `_session_marks_ours` has
+    just proved the leader is still the process we recorded, so the
+    number cannot have been recycled. An unreadable environment used to
+    answer the generation False, which excluded exactly the descendant the
+    session marker exists for: the group read empty while it ran, and the
+    restart gate could publish beside it (Codex adversarial review, High).
+
+    Re-reads the session rather than trusting the caller's snapshot: the
+    same live read the ownership answer was based on."""
+    if session_gen is None:
+        return False
+    return _session_of(pid) == session_gen
 
 
 def _signal_recorded(target, sig: int) -> bool:
@@ -1846,7 +1915,9 @@ class _ProcSnapshot:
     def markers(self, pid: int, ticks: Optional[int], gen: Optional[str],
                 deadline: Optional[float] = None,
                 sid: Optional[int] = None,
-                clock: _Clock = _REAL_CLOCK) -> tuple[bool, bool]:
+                clock: _Clock = _REAL_CLOCK,
+                session_gen: Optional[int] = None,
+                unknown: Optional[list] = None) -> tuple[bool, bool]:
         """`(ours, matches_gen)` for one candidate from ONE traversal.
 
         The group filter needs both answers about the same process, and
@@ -1860,7 +1931,15 @@ class _ProcSnapshot:
         probe and never cached (its truth depends on a leader that a
         later round can find gone).
 
-        `matches_gen` is True when no generation was asked for."""
+        `matches_gen` is True when no generation was asked for. A
+        session-proved candidate also matches when its session is
+        `session_gen` (`_session_proves_gen`); that answer is never cached
+        either, for the same reason.
+
+        `unknown`, when given, collects a candidate whose ownership could
+        not be decided at all: an unreadable environment AND no session
+        proof (typically no descriptor to hold one with). Rejecting it is
+        right; counting the rejection as "not in the group" is not."""
         key = (pid, ticks) if ticks is not None else None
         gkey = ((pid, ticks, gen)
                 if (key is not None and gen is not None) else None)
@@ -1871,16 +1950,22 @@ class _ProcSnapshot:
         owner, generation = _read_env_markers(pid, gen, deadline=deadline,
                                               clock=clock)
         ours = have_ours or owner is True
+        by_session = False
         # Consulted only on None, never on a readable-and-unstamped
         # False, and never cached -- see ours().
         if not ours and owner is None and _session_marks_ours(pid, sid):
-            ours = True
+            ours = by_session = True
+        if not ours and owner is None and unknown is not None:
+            unknown.append(pid)
         if owner is True and key is not None:
             self._ours[key] = True
         if generation is True and gkey is not None:
             self._gen[gkey] = True
-        return ours, (True if gen is None
-                      else have_gen or generation is True)
+        if gen is None:
+            return ours, True
+        return ours, (have_gen or generation is True
+                      or (by_session
+                          and _session_proves_gen(pid, session_gen)))
 
 
 def _proc_snapshot(deadline: Optional[float] = None,
@@ -1981,7 +2066,7 @@ def _carries_gen_id(pid: int, gen: str,
 def _group_members(
     pgid: int, exclude: int = -1, deadline: Optional[float] = None,
     snapshot: Optional[_ProcSnapshot] = None, gen: Optional[str] = None,
-    clock: _Clock = _REAL_CLOCK,
+    clock: _Clock = _REAL_CLOCK, unresolved: Optional[list] = None,
 ) -> list[tuple[int, Optional[int], Optional[int]]]:
     """(pid, pidfd) for every live process in process group `pgid` that
     this bridge can prove it started.
@@ -2025,7 +2110,8 @@ def _group_members(
         # per answer: asking ours() and then _carries_gen_id() read the
         # same file twice per candidate per round (section 24).
         is_ours, gen_ok = snap.markers(pid, ticks, gen, deadline=deadline,
-                                       sid=sid, clock=clock)
+                                       sid=sid, clock=clock,
+                                       session_gen=pgid, unknown=unresolved)
         if not is_ours:
             continue
         if not gen_ok:
@@ -2038,7 +2124,7 @@ def _group_members(
         # not a filter -- but it is still ONE traversal for both stamps.
         if fd is not None:
             live_ours, live_gen = _provably_ours_and_gen(
-                pid, gen, deadline=deadline, clock=clock)
+                pid, gen, deadline=deadline, clock=clock, session_gen=pgid)
             if _pgrp_of(pid) != pgid or not live_ours or not live_gen:
                 try:
                     os.close(fd)
@@ -2075,7 +2161,7 @@ def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
         # One traversal for both stamps; the budget re-check below is why
         # they are read together rather than in sequence.
         ours, gen_ok = _provably_ours_and_gen(p, gen, deadline=deadline,
-                                              clock=clock)
+                                              clock=clock, session_gen=pgid)
         if not ours or not gen_ok:
             return False
         return not (deadline is not None and clock.now() >= deadline)
@@ -2110,8 +2196,22 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
     for _ in range(20):                     # ~ bounded; see deadline below
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan, not after
+        unresolved: list = []
         members = _group_members(pgid, deadline=deadline, gen=gen,
-                                 clock=clock)
+                                 clock=clock, unresolved=unresolved)
+        if not members and unresolved:
+            # Something is in the group that could be neither proved ours
+            # nor ruled out: an opaque process whose session proof had no
+            # descriptor to stand on. While the leader is unreaped nothing
+            # else can hold this pgid, so it is almost certainly OUR
+            # worker, and an empty member list is not an empty group.
+            # Unknown fails toward still-there; it is never signalled
+            # (Codex adversarial review, High). If the leader is already
+            # gone and a stranger took the number, the cost is a False
+            # verdict, never a kill.
+            empty_scans = 0
+            clock.sleep(0.02)
+            continue
         if not members:
             # TWO consecutive empty scans, not one. A scan snapshots
             # /proc before examining it, so a helper forked after the
@@ -2631,7 +2731,49 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     # recorded server got a real attempt. The wrapper combines it with
     # finished-inside-the-budget, because both must hold before a caller
     # heading for os._exit may treat the sweep as whole.
+    # Failed constructions last: their groups were already signalled by
+    # the passes above when their markers still stood, so this confirms
+    # and reaps rather than hunts. An unfinished one keeps the sweep from
+    # reporting itself whole.
+    if not _collect_abandoned(deadline, clock=clock):
+        leaders_complete = False
     return SweepCount(len(signalled), leaders_complete)
+
+
+def _collect_abandoned(deadline: Optional[float],
+                       clock: _Clock = _REAL_CLOCK) -> bool:
+    """Finish the collection a failed construction could not: sweep each
+    abandoned group, and only once it is CONFIRMED empty reap the leader,
+    retire its record and release the strong reference.
+
+    True when nothing is left abandoned. Bounded by `deadline` through
+    `_reap_group`; an entry it cannot finish stays for the next sweep, its
+    leader unreaped and its record CLAIMED, so the proof survives."""
+    with _ABANDONED_LOCK:
+        pending = list(_ABANDONED)
+    for entry in pending:
+        proc, rec, gen = entry
+        if deadline is not None and clock.now() >= deadline:
+            break
+        try:
+            _killed, emptied = _reap_group(proc.pid, gen=gen,
+                                           deadline=deadline, clock=clock)
+        except Exception:
+            emptied = False
+        if not emptied:
+            continue
+        try:
+            proc.wait(timeout=0.5)
+        except Exception:
+            pass
+        _retire_spawn(rec if rec is not None else proc.pid)
+        with _ABANDONED_LOCK:
+            try:
+                _ABANDONED.remove(entry)
+            except ValueError:
+                pass
+    with _ABANDONED_LOCK:
+        return not _ABANDONED
 
 
 class SweepCount(int):
@@ -3287,52 +3429,67 @@ class LspSubprocess:
             )
             self._stderr_thread.start()
         except Exception:
-            # Thread creation / start failed. Reap the child so it
-            # does not outlive the LspSubprocess ctor failure.
+            # Thread creation / start failed. Collect the child and
+            # everything it forked so none of it outlives the ctor.
             proc = self._proc
-            self._proc = None
             try:
                 if proc is not None:
-                    # Identity-pinned like every other signal in this
-                    # file. No reader thread exists yet on this path, so
-                    # nothing can reap the child underneath us -- but
-                    # "safe because of who else happens to be running" is
-                    # the assumption that produced the bugs above.
-                    _signal_recorded(self._spawn_record or proc.pid,
-                                 signal.SIGTERM)
-                    try:
-                        proc.wait(timeout=1.0)
-                    except subprocess.TimeoutExpired:
-                        _signal_recorded(self._spawn_record or proc.pid,
-                                     signal.SIGKILL)
-                        try:
-                            proc.wait(timeout=1.0)
-                        except subprocess.TimeoutExpired:
-                            pass
-                    for f in (proc.stdin, proc.stdout, proc.stderr):
-                        try:
-                            if f is not None:
-                                f.close()
-                        except Exception:
-                            pass
-                    # Retire the identity record unconditionally. Without
-                    # this, every failed construction leaves a dead record
-                    # holding a pidfd, and the failure most likely to
-                    # repeat here is thread/resource exhaustion -- so the
-                    # leak compounds exactly the condition that caused it,
-                    # until the bridge hits EMFILE (Codex adversarial
-                    # review, Medium: 20 forced failures took the fd count
-                    # 4 -> 24). Gating on poll() left the same leak for a
-                    # child that died just after the final poll: the ctor
-                    # is raising, so no LspSubprocess will ever exist to
-                    # retire it later. We have already sent SIGKILL and
-                    # taken the group with it below, so the record has no
-                    # remaining job.
-                    _reap_group(proc.pid, gen=self._gen_id)
-                    _retire_spawn(self._spawn_record or proc.pid)
+                    self._dispose_failed_spawn(proc)
             except Exception:
                 pass
+            self._proc = None
             raise
+
+    def _dispose_failed_spawn(self, proc) -> None:
+        """Tear down a spawn whose constructor failed, descendants FIRST.
+
+        The server may already have forked workers: thread start fails
+        after Popen succeeds. This used to wait() on the leader before any
+        sweep, which reaped it and destroyed the proof that authorizes an
+        opaque same-session worker, so the worker survived both this
+        cleanup and the final force sweep (Codex adversarial review, High).
+
+        Same order as shutdown(): ONE identity-pinned escalation observed
+        without reaping, the group sweep, and the reap only on a
+        confirmed-empty group. An incomplete sweep hands the spawn to
+        `_ABANDONED`, a strong owner the force sweep drains, with its
+        record CLAIMED: descriptor released, session marker kept.
+
+        The record is otherwise retired here as before: every failed
+        construction leaving a live descriptor compounds the resource
+        exhaustion most likely to have caused it, until EMFILE (Codex
+        adversarial review, Medium: 20 forced failures took the fd count
+        4 -> 24)."""
+        rec = self._spawn_record
+        deadline = time.monotonic() + 2.0
+        try:
+            _escalate_recorded(rec or proc.pid,
+                               lambda: self._leader_exited(proc),
+                               deadline=deadline)
+        except Exception:
+            pass
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if f is not None:
+                    f.close()
+            except Exception:
+                pass
+        try:
+            _killed, emptied = _reap_group(proc.pid, gen=self._gen_id,
+                                           deadline=deadline + 1.0)
+        except Exception:
+            emptied = False
+        if emptied:
+            try:
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
+            _retire_spawn(rec or proc.pid)
+            return
+        if rec is not None:
+            _claim_for_retry(rec)
+        with _ABANDONED_LOCK:
+            _ABANDONED.append((proc, rec, self._gen_id))
 
     def _stderr_drain_loop(self) -> None:
         """Discard stderr output to prevent the pipe from filling
@@ -4399,10 +4556,10 @@ class LspSubprocess:
             return True
         rec = self._spawn_record
         if rec is not None and rec.retired:
-            # RETIRED, asked EXPLICITLY. `_collect_after_death` retires an
-            # ordinary record whatever the sweep answered (section 24's fix
-            # for descriptor accumulation; only a CLAIMED record on an
-            # incomplete sweep is kept), so the instance keeps a reference
+            # RETIRED, asked EXPLICITLY. `_collect_after_death` retires a
+            # record once its sweep completes (section 24's fix for
+            # descriptor accumulation; an incomplete sweep CLAIMS it
+            # instead), so the instance keeps a reference
             # to a record that is finished: it can authorize nothing, and `_own_pidfd`
             # rejects it anyway. Treating it as live made this helper
             # answer "not exited" FOREVER -- `alive` reported a zombie
@@ -4509,23 +4666,27 @@ class LspSubprocess:
             # (Codex adversarial + consistency + perf review, High).
             _killed, emptied = _reap_group(proc.pid, gen=self._gen_id,
                                            deadline=deadline)
-            # An ORDINARY record is retired whatever the sweep answered,
-            # incomplete included. It is a descriptor pinning the LEADER, which is already
+            # A record is not KEPT as it was once the leader is dead. It
+            # is a descriptor pinning the LEADER, which is already
             # dead; the group sweep addresses members by pgid plus the
             # owner and generation stamps, none of which live in it. So a
             # retry loses nothing by retiring now, while KEEPING it is
             # what accumulated one descriptor per dead generation until
             # EMFILE (section 24, Codex adversarial review, Medium).
             #
-            # Except a CLAIMED record on an incomplete sweep. It holds no
-            # descriptor, so keeping it accumulates nothing, and it still
+            # Except on an incomplete sweep, where the record still
             # carries the session marker a retry needs to identify an
-            # opaque same-session descendant. Retiring it here threw that
+            # opaque same-session descendant. Retiring it there threw that
             # proof away while the leader was kept unreaped for exactly
-            # that retry (Codex adversarial review, High).
+            # that retry (Codex adversarial review, High). So an
+            # incomplete sweep CLAIMS an ordinary record instead: the
+            # descriptor is released and the marker kept (Codex plan
+            # review, High). A complete one retires it as before.
             rec = self._spawn_record
-            if emptied or rec is None or not rec.claimed:
+            if emptied or rec is None:
                 _retire_spawn(rec or proc.pid)
+            else:
+                _claim_for_retry(rec)
             ok = bool(emptied)
         except Exception:
             ok = False
@@ -4761,11 +4922,20 @@ class LspSubprocess:
         # hardened descendant needs (section 23). The leader is reaped
         # deliberately further down, after the descendants are collected
         # (Codex design review, High).
-        deadline = time.monotonic() + max(timeout, 0.1)
+        #
+        # At most HALF of what the budget has left. The polite wait and
+        # the escalation-plus-collection below share one deadline, and a
+        # server that does not exit on stdin EOF used to spend all of it
+        # here: the escalation then ran with nothing left to wait in and
+        # every group sweep started expired, so shutdown() reported an
+        # unconfirmed death for a server it could have collected, and a
+        # same-session worker outlived it (section 27).
+        polite = max(0.0, shutdown_deadline - time.monotonic()) / 2.0
+        deadline = time.monotonic() + polite
         while time.monotonic() < deadline:
             if self._leader_exited(proc):
                 break
-            time.sleep(0.05)
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
         # ONE absolute budget for every group sweep this shutdown runs.
         # Created HERE, before the first one can fire: the stubborn
         # escalation below reaped a group with no deadline at all, and
