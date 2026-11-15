@@ -370,6 +370,9 @@ The report is the measure of progress, and the ownership check is the proof that
 > - Plan review 2026-11-16: 3 Medium (a Deferred close counted as implemented; a stale cache or an unstaged regeneration could pass the staleness check; the campaign check covered only a missing matrix), all fixed above.
 > - Round 1, 2026-11-16: 5 Medium, all fixed: nested `- ## N.` headings now use the shared section walk; Check 41 runs the staged report on the staged snapshot (an unstaged edit or deletion no longer decides it); ownerless lookups use a set; the baseline summary is shared with `check-inventory.py` (`baseline_summary`) instead of validating twice; a null or blank absence reason fails.
 
+> **Verified:** 2026-11-16 | commit `a6c0f65e8` | 9/9 items | 15 tests OK, `--owners --check` exit 0 on the real tree, `COVERAGE.md` byte-identical twice, lint Check 41 refuses a stale staged report
+> **Quality reviewed:** 2026-11-16 | Codex 7x (plan, round 2x, performance 2x, completion 2x) | 0H+8M fixed, 0 open | scope: N/A (host tooling, no kernel surface)
+
 ---
 
 ## 8. Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts
