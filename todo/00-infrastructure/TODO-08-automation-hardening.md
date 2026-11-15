@@ -111,7 +111,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  43   |   §43   | The control-plane commit gate tests the staged commit                                            | none                       |  [ ]   |
 | ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [x]   |
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [x]   |
-| ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [ ]   |
+| ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [x]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1463,6 +1463,8 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 > **Spawned-by:** root
 > **User impact:** the costliest defects here passed every review by one model (the loader that ignored its relocations, the exec race that survived 297 commits). A second model with different blind spots reads the sections where a miss is most expensive, without reopening the first reviewer's loop.
 
+> **Withdrawn 2026-11-15:** unpinned on 2026-11-14 and its machinery removed by [section 46](#46-the-second-reviewers-switched-off-machinery-is-removed); the stamps below record what shipped.
+
 Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wave is clean; it is wired now and measured on real sections; it applies to sections that change `src/kernel/`, `include/kernel/`, `src/boot/`, or a security or ABI surface; at most three rounds (find, confirm the repair, one more if the repair is wrong); Gemini confirms repairs and Astra reads a repair again only when it is large; an unavailable Gemini is retried, marked and never blocks.
 
 - [x] `[second]` in `.conclave/reviewers.toml`, validated by `scripts/review_pin.py`: the reviewer (`cli = "agy"`, its model), `paths`, `round_cap = 3`, `retries = 3`, `small_fix_lines = 50`, `limit_seconds = 1500`
@@ -1549,14 +1551,14 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
 
 Operator direction 2026-11-15: the second reviewer (Gemini 4 Carbon through `agy`, wired by section 44 and unpinned on 2026-11-14) is removed outright rather than kept switched off. Kept: `review_pin.section_base` (section 45's owed-review base reads it) and the dated plan `docs/plans/2026-11-11-three-pass-review.md`, which records what was decided at the time.
 
-- [ ] Delete `scripts/second_review_dispatch.py` and its row in `scripts/overnight/control-plane-manifest.txt`
-- [ ] Delete `scripts/overnight/second-review-log.py` and its log file
-- [ ] Delete `scripts/overnight/tests/test_second_dispatch.py` and `test_second_review_log.py`
-- [ ] Remove the `[second]` table support from `scripts/review_pin.py` (`--second`, `--second-applies`, `SECOND_KIND`) and its cases in `test_review_pin.py`
-- [ ] Remove `_second_issues` and the `second` receipt rules from `.claude/hooks/section_commit_gate.py`, the `second` kind from `review_convergence.py`, and their cases in `test_three_pass_gate.py`
-- [ ] Remove the second-reviewer paragraphs from `CLAUDE.md` (Model Roles), `.claude/skills/three-pass-review.md`, `docs/infrastructure/ai-system.md` and the comment in `.conclave/reviewers.toml`
-- [ ] Section 44 keeps its stamps and gains a note that it was withdrawn on 2026-11-15, pointing here
-- [ ] Commit: `"review: the second reviewer's machinery is removed"`
+- [x] Delete `scripts/second_review_dispatch.py` and its row in `scripts/overnight/control-plane-manifest.txt`
+- [x] Delete `scripts/overnight/second-review-log.py` and its log file
+- [x] Delete `scripts/overnight/tests/test_second_dispatch.py` and `test_second_review_log.py`
+- [x] Remove the `[second]` table support from `scripts/review_pin.py` (`--second`, `--second-applies`, `SECOND_KIND`) and its cases in `test_review_pin.py`
+- [x] Remove `_second_issues` and the `second` receipt rules from `.claude/hooks/section_commit_gate.py`, the `second` kind from `review_convergence.py`, and their cases in `test_three_pass_gate.py`
+- [x] Remove the second-reviewer paragraphs from `CLAUDE.md` (Model Roles), `.claude/skills/three-pass-review.md`, `docs/infrastructure/ai-system.md` and the comment in `.conclave/reviewers.toml`
+- [x] Section 44 keeps its stamps and gains a note that it was withdrawn on 2026-11-15, pointing here
+- [x] Commit: `"review: the second reviewer's machinery is removed"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes; `python3 scripts/review_pin.py --check` passes; `git grep -nE "second_review|second-review|_second_issues|--second"` outside `todo/` and `docs/plans/` finds nothing.
 

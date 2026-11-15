@@ -453,7 +453,6 @@ def test_two_passes_of_one_kind_in_the_same_second_keep_their_own_transcripts(tm
     assert len(list((tmp_path / "reviews").glob("*-completion-direct.out"))) == 2
 
 
-
 def test_the_worst_level_of_a_review_is_read_from_its_last_highest_line():
     assert rp.highest("LENS record: clean\nHIGHEST: none\n") == "none"
     assert rp.highest("- HIGHEST: P2\n") == "P2" and rp.highest("`HIGHEST: P1`") == "P1"
@@ -686,102 +685,19 @@ def test_a_pass_earns_a_step_only_through_a_dispatcher_that_checks_it():
     assert set(rp.SECTION_KINDS) <= set(m.bound_review_kinds("implement-todo-section"))
 
 
-# ---- the second reviewer ([second]) ----
-
-# The repository pins no second reviewer (it was tried and removed on 2026-11-14). The mechanism stays, switched
-# off, so it is tested on the repository's pin with a second reviewer added.
-SECOND = '''
-[reviewers.carbon]
-cli = "agy"
-model = "gemini-4-carbon-medium"
-
-[second]
-reviewer = "carbon"
-paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
-round_cap = 3
-retries = 3
-small_fix_lines = 50
-limit_seconds = 1500
-'''
-WITH_SECOND = GOOD + SECOND
-
-
-def test_the_repository_pins_no_second_reviewer():
-    pin = _pin()
-    assert pin["second"] is None and not rp.second_applies(pin, ["src/kernel/mm/pmm.c"])
-    assert rp.main(["--second"]) == 1
-
-
-def test_a_pin_may_name_a_second_reviewer_for_the_expensive_paths():
-    second = _pin(WITH_SECOND)["second"]
-    assert (second["reviewer"], second["cli"], second["model"]) == ("carbon", "agy", "gemini-4-carbon-medium")
-    assert (second["round_cap"], second["retries"], second["small_fix_lines"], second["limit_seconds"]) == (3, 3, 50, 1500)
-    assert {"src/kernel/", "include/kernel/", "src/boot/"} <= set(second["paths"])
-    pin = _pin(WITH_SECOND)
-    assert rp.second_applies(pin, ["docs/x.md", "src/kernel/mm/pmm.c"])
-    assert rp.second_applies(pin, ["user/include/syscall.h"])
-    # The ABI has a user side too: the startup code that performs the handshake.
-    assert rp.second_applies(pin, ["user/lib/crt_init.c"])
-    assert not rp.second_applies(pin, ["scripts/x.py", "docs/kernel/x.md", "todo/x.md"])
-    assert not rp.second_applies(pin, [])
-    # Its pass is no part of the schedule: no kind, no lens, nothing toward pass_cap.
-    assert "second" not in rp.kinds(pin)
-
-
-def test_a_pin_without_a_second_reviewer_is_the_pin_as_it_was():
-    pin = _pin()
-    assert pin["second"] is None and not rp.second_applies(pin, ["src/kernel/a.c"])
-    assert {k: v for k, v in pin.items() if k != "second"} == \
-        {k: v for k, v in _pin(WITH_SECOND).items() if k != "second"}
-
-
-@pytest.mark.parametrize("old, new", [
-    ('reviewer = "carbon"', 'reviewer = "astra"'),                 # a second opinion from the same reviewer
-    ('reviewer = "carbon"', 'reviewer = "nobody"'),
-    ('cli = "agy"', 'cli = "codex"'),
-    ('model = "gemini-4-carbon-medium"', 'model = ""'),
-    ('model = "gemini-4-carbon-medium"', 'model = "gemini-4-carbon-medium"\neffort = "high"'),
-    ("round_cap = 3", "round_cap = 0"),
-    ("round_cap = 3", 'round_cap = "3"'),
-    ("retries = 3", "retries = 0"),
-    ("small_fix_lines = 50", "small_fix_lines = -1"),
-    ("small_fix_lines = 50", "small_fix_lines = true"),
-    ("small_fix_lines = 50\n", ""),
-    ("small_fix_lines = 50", "small_fix_lines = 50\nlenses = []"),
-    ("limit_seconds = 1500", "limit_seconds = 30"),
-    ("limit_seconds = 1500", 'limit_seconds = "1500"'),
-    ("limit_seconds = 1500\n", ""),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', "paths = []"),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', 'paths = ["/etc/"]'),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', 'paths = ["../x/"]'),
-    ("\n[second]\n", "\n[third]\n"),
-    ('[reviewers.carbon]\ncli = "agy"\nmodel = "gemini-4-carbon-medium"\n', ""),   # [second] names no reviewer entry
-])
-def test_refusal_one_wrong_key_refuses_the_second_reviewer(old, new):
-    assert old in WITH_SECOND
+# The second reviewer was removed on 2026-11-15 (the automation-hardening roadmap's removal section). A pin
+# that still carries its table is refused, never half-read: the gate would otherwise judge a stamp against a
+# schedule nobody wrote.
+def test_refusal_a_leftover_second_table_is_refused():
+    text = GOOD + '\n[second]\nreviewer = "carbon"\npaths = ["src/kernel/"]\n'
     with pytest.raises(rp.Refused):
-        _pin(WITH_SECOND.replace(old, new, 1))
+        _pin(text)
 
 
 def test_refusal_a_reviewer_entry_nothing_routes_to_is_refused():
     text = GOOD.replace('[routes]', '[reviewers.carbon]\ncli = "agy"\nmodel = "m"\n\n[routes]')
     with pytest.raises(rp.Refused):
         _pin(text)
-
-
-def test_the_command_line_says_whether_a_section_is_the_second_reviewers(tmp_path):
-    pin = tmp_path / "reviewers.toml"
-    pin.write_text(WITH_SECOND)
-    paths = tmp_path / "paths"
-    paths.write_text("src/boot/uefi/bootx64.c\n")
-    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 0
-    paths.write_text("scripts/x.py\n")
-    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 1
-    assert rp.main(["--second", "--pin", str(pin)]) == 0
-    pin.write_text(GOOD)
-    assert rp.main(["--second", "--pin", str(pin)]) == 1
-    paths.write_text("src/boot/uefi/bootx64.c\n")
-    assert rp.main(["--second-applies", "--paths-file", str(paths), "--pin", str(pin)]) == 1
 
 
 def test_a_raw_transcript_is_read_whole_for_its_worst_level(tmp_path, capsys):

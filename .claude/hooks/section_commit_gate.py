@@ -2365,8 +2365,7 @@ def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
 
 
 # A comparison of two COMMITS never changes, and the stamp check asks for the same one several times: the
-# round, the performance pass and the last pass usually name one commit, and the second reviewer's checks
-# compare it with HEAD again. Each is run once an invocation and given a short wait, so the checks together
+# round, the performance pass and the last pass usually name one commit. Each is run once an invocation and given a short wait, so the checks together
 # stay inside the hook's deadline and a slow one fails as "could not be listed", never as a hung hook.
 _COMMIT_DIFF_TIMEOUT = 3
 # All of them together share one budget inside the hook's ten seconds. When it is spent no further comparison
@@ -2507,211 +2506,23 @@ def _receipt_complete(receipt: dict) -> bool:
         and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7
 
 
-# The second reviewer (the pin's [second] table; scripts/second_review_dispatch.py). Its pass is not one of
-# _PASS_KINDS: it never counts toward pass_cap and a section outside its paths never owes one.
-_SECOND_KIND = "second"
-_SECOND_ROUTE = "second_review_dispatch.py"
-_SECOND_UNAVAILABLE_MARK = "second: unavailable"
-_QUALITY_STAMP = "> **Quality reviewed:**"
+def _pin_issue(root: Path) -> str:
+    """Why the reviewer pin cannot be used, or "" when it loads.
 
-
-def _second_pin(root: Path) -> tuple[dict | None, str]:
-    """(the pin's second reviewer or None, why it could not be read)."""
-    scripts = str(root / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
+    _blocking_levels and _pass_cap fall back when the pin does not load, so that a broken pin can still be
+    reported; this is the check that refuses the stamp for it. A stamp judged against a pin nobody could read
+    has not been judged against the schedule at all.
+    """
     try:
         import review_pin
-        return (review_pin.load_pin(root / ".conclave" / "reviewers.toml").get("second"), "")
+        review_pin.load_pin(root / ".conclave" / "reviewers.toml")
     except Exception as exc:
-        return (None, f"the reviewer pin could not be read, so whether a second review is owed is unknown ({exc})")
-
-
-def _second_complete(receipt: dict) -> bool:
-    return receipt.get("route") == _SECOND_ROUTE and receipt.get("pass_checked") is True \
-        and receipt.get("rc") == 0 and receipt.get("unavailable") is not True \
-        and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7
-
-
-def _second_spent(lines: list[str], todo: str, section: str) -> int:
-    """Complete second passes for one section, over the whole manifest.
-
-    Counted exactly as scripts/second_review_dispatch.py counts them before it refuses a pass beyond the cap:
-    every readable line, a damaged one skipped. The two must agree, or the dispatcher would refuse a pass the
-    gate still asks for. Which receipt is TRUSTED as the newest is a separate question, answered below.
-    """
-    spent = 0
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(e, dict) and e.get("todo") == todo and e.get("kind") == _SECOND_KIND \
-                and str(e.get("section", "")) == section and _second_complete(e):
-            spent += 1
-    return spent
-
-
-def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple[dict | None, int, int, bool]:
-    """(newest second receipt, its age, complete second passes spent, readable) for one section.
-
-    Once `cap` complete passes are spent no further pass can be dispatched, so a receipt that is not a
-    complete pass and is newer than the last of them (one that overlapped it) is passed over: nothing could
-    ever replace it.
-
-    Read as _pass_receipts reads: newest first, the same age count (so an age here compares with one there),
-    and stopping at a line that cannot be read and may be this TODO's.
-    """
-    try:
-        lines = (root / _PASS_MANIFEST).read_text().splitlines()
-    except FileNotFoundError:
-        return (None, 0, 0, True)
-    except (OSError, UnicodeDecodeError):
-        return (None, 0, 0, False)
-    newest, newest_age, age, last_complete = None, 0, 0, None
-    spent = _second_spent(lines, todo, section)
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        age += 1
-        try:
-            e = json.loads(line)
-        except ValueError:
-            if '"todo": "' not in line or f'"todo": "{todo}"' in line:
-                if cap and spent >= cap:
-                    # The cap is already spent by readable receipts, and no pass can be dispatched beyond it:
-                    # whatever this line was, it is not a second receipt that could replace one of them. Read on,
-                    # or a line cut short after the last pass would leave the section asking for a pass the
-                    # dispatcher must refuse.
-                    continue
-                return (newest, newest_age, spent, False)
-            continue
-        if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") != _SECOND_KIND \
-                or str(e.get("section", "")) != section:
-            continue
-        if newest is None:
-            newest, newest_age = e, age
-        if _second_complete(e) and last_complete is None:
-            last_complete = (e, age)
-    if cap and spent >= cap and newest is not None and not _second_complete(newest) and last_complete is not None:
-        newest, newest_age = last_complete
-    return (newest, newest_age, spent, True)
-
-
-def _covers_candidate(root: Path, head: str, current_head: str) -> bool:
-    """Whether a pass dispatched at `head` read the candidate at `current_head`: the same commit, or an
-    ancestor with nothing changed since that a pass reads."""
-    if not head or not current_head:
-        return False
-    if head == current_head:
-        return True
-    if not _git_is_ancestor(root, head, current_head):
-        return False
-    changed = _commit_diff(root, "--name-only", head, current_head)
-    return changed is not None and not _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
-
-
-def _stamp_marks_second_unavailable(root: Path, todo: str, section: str) -> bool:
-    """Whether the staged `todo` says, on the Quality reviewed stamp of `section`, that the second reviewer
-    was unavailable. The mark in prose, or on another section's stamp, says nothing about this one; the same
-    line is what scripts/overnight/second-review-log.py lists for a later read.
-    """
-    try:
-        text = subprocess.check_output(["git", "show", f":{todo}"], cwd=str(root), text=True, timeout=10,
-                                       stderr=subprocess.DEVNULL)
-    except Exception:
-        return False
-    here = None
-    for line in text.splitlines():
-        m = _SECTION_HEADING_RE.match(line)
-        if m:
-            here = m.group(1)
-        elif here == section and line.startswith(_QUALITY_STAMP) and _SECOND_UNAVAILABLE_MARK in line:
-            return True
-    return False
-
-
-def _second_issues(root: Path, todo: str, section: str, plan: dict | None, current_head: str,
-                   blocking: tuple[str, ...]) -> tuple[list[str], dict | None]:
-    """What the section owes the second reviewer, and the small-repair allowance it earns.
-
-    The allowance, when not None, is {"age": the clean second receipt's age, "lines": small_fix_lines}: the
-    second reviewer read the candidate being stamped and ended below a blocking level, so a routed pass that is
-    older than it may stand when little changed since (see _pass_covers).
-    """
-    second, why = _second_pin(root)
-    if why:
-        return ([why], None)
-    if second is None or plan is None or not _receipt_complete(plan) or not current_head:
-        return ([], None)      # no second reviewer pinned, or the plan is already reported
-    try:
-        import review_pin
-        start = review_pin.section_base(root, todo, section, plan["head"])
-    except Exception as exc:
-        return ([f"where this section started could not be read ({exc})"], None)
-    changed = _commit_diff(root, "--name-only", start, current_head)
-    if changed is None:
-        return (["the files this section changed could not be listed, so whether a second review is owed is unknown"],
-                None)
-    if not any(p.startswith(prefix) for p in changed for prefix in second["paths"]):
-        return ([], None)      # outside the second reviewer's paths: judged exactly as before
-    newest, age, spent, readable = _second_receipts(root, todo, section, second["round_cap"])
-    run = "python3 scripts/second_review_dispatch.py"
-    if newest is None:
-        if not readable:
-            return ([f"{_PASS_MANIFEST} cannot be read past a line that may be this TODO's; dispatch the second "
-                     f"review again ({run})"], None)
-        return ([f"missing: second (this section changes files the second reviewer reads; {run})"], None)
-    head = newest.get("head") if isinstance(newest.get("head"), str) else ""
-    covers = _covers_candidate(root, head, current_head)
-    if newest.get("route") == _SECOND_ROUTE and newest.get("unavailable") is True:
-        if not covers:
-            return ([f"the second reviewer was unavailable at {head[:10]}, and the candidate changed since: "
-                     f"dispatch it again ({run})"], None)
-        if not _stamp_marks_second_unavailable(root, todo, section):
-            return ([f"the second reviewer was unavailable: the stamp says so with `{_SECOND_UNAVAILABLE_MARK}` "
-                     f"on its Quality reviewed line, so the section is read later"], None)
-        return ([], None)
-    if not _second_complete(newest):
-        return ([f"second has no checked, complete receipt (incomplete, or not dispatched with {run})"], None)
-    if newest.get("base") != start:
-        # It was shown a range that is not this section's: from another commit than where the section started.
-        return ([f"second read the candidate from {str(newest.get('base'))[:10]}, not from the section's start "
-                 f"{start[:10]}: dispatch it again ({run})"], None)
-    capped = spent >= second["round_cap"]
-    if not covers:
-        if capped:
-            # Its passes are spent and a repair followed the last one. The routed reviewer's passes must then
-            # each read the candidate themselves: no allowance, and the loop in _three_pass_issues holds them to it.
-            return ([], None)
-        return ([f"second is not the last word on this candidate: it ran at {head[:10]} and the candidate changed "
-                 f"since; dispatch it again ({run})"], None)
-    level = newest.get("highest")
-    if level not in ("P1", "P2", "P3", "none"):
-        return ([f"second receipt at {head[:10]} records no HIGHEST level"], None)
-    if level in blocking:
-        if capped:
-            return ([], None)   # round_cap passes spent: what is open is filed, and nothing is waived for the routed passes
-        return ([f"second ended at {level}: fix its findings, commit, and dispatch it again ({run})"], None)
-    return ([], {"age": age, "lines": second["small_fix_lines"]})
-
-
-def _lines_changed(root: Path, old: str, new: str, paths: list[str]) -> int | None:
-    """Lines added plus removed in `paths` between two commits; None when it cannot be counted (a binary file)."""
-    out = _commit_diff(root, "--numstat", old, new, *paths)
-    if out is None:
-        return None
-    total = 0
-    for line in out:
-        cells = line.split("\t")
-        if len(cells) < 3 or not cells[0].isdigit() or not cells[1].isdigit():
-            return None
-        total += int(cells[0]) + int(cells[1])
-    return total
+        return f"the reviewer pin could not be read, so the schedule this stamp answers to is unknown ({exc})"
+    return ""
 
 
 def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
-                 blocking: tuple[str, ...], allowance: dict | None = None, age: int = 0) -> tuple[bool, str]:
+                 blocking: tuple[str, ...]) -> tuple[bool, str]:
     """Whether a pass read the candidate being stamped and ended below a blocking level.
 
     Its receipt must say the pass was checked and complete. The candidate it
@@ -2736,17 +2547,9 @@ def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
             return (False, f"{kind}: could not list what changed since {head[:10]}")
         unread = _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
         if unread:
-            # A small repair the second reviewer asked for and then read: its clean pass on this candidate is
-            # newer than this one, and no more than small_fix_lines lines a pass reads changed in between.
-            small = None
-            if allowance is not None and allowance["age"] < age:
-                small = _lines_changed(root, head, current_head, unread)
-            if small is None or small > allowance["lines"]:
-                more = f" (+{len(unread) - 3} more)" if len(unread) > 3 else ""
-                size = f" ({small} lines, over the {allowance['lines']} a second review may cover)" \
-                    if small is not None else ""
-                return (False, f"{kind} is not the last word on this candidate: changed since it ran: "
-                               f"{unread[:3]}{more}{size}")
+            more = f" (+{len(unread) - 3} more)" if len(unread) > 3 else ""
+            return (False, f"{kind} is not the last word on this candidate: changed since it ran: "
+                           f"{unread[:3]}{more}")
     level = receipt.get("highest")
     if level not in ("P1", "P2", "P3", "none"):
         return (False, f"{kind} receipt at {head[:10]} records no HIGHEST level")
@@ -2767,10 +2570,7 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
       again after their findings are fixed, so the receipt that counts is the
       one for the fixed candidate.
     - Nothing a pass reads may ride along in the stamp commit.
-    - Where the pin names a second reviewer and the section changed files under its paths, its newest pass
-      must have read the candidate and ended below a blocking level (_second_issues). An unavailable one is
-      accepted when the stamp says so. A clean second pass on the candidate lets an older round, performance
-      or last pass stand when only a small repair followed it.
+    - The reviewer pin must load (_pin_issue): the blocking levels and the pass cap are read from it.
     - `capped`: the section has spent pass_cap passes, which ends its round loop
       (docs/specs/2026-11-11-three-pass-review-design.md). The round is then not
       required to be clean; the performance pass and the last pass still must
@@ -2778,6 +2578,9 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
       last round is read by a pass.
     """
     parts: list[str] = []
+    pin_issue = _pin_issue(root)
+    if pin_issue:
+        parts.append(pin_issue)
     blocking = _blocking_levels(root)
     # Receipts found before an unreadable line are newer than it and stand. Only
     # a pass that would have to be looked for PAST that line is affected, so
@@ -2798,9 +2601,8 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     completion, c_age = receipts.get("completion", (None, 0))
     reconciliation, r_age = receipts.get("reconciliation", (None, 0))
     newer_reconciliation = completion is not None and reconciliation is not None and r_age < c_age
-    final_kind, final, final_age = ("reconciliation", reconciliation, r_age) if newer_reconciliation \
-        else ("completion", completion, c_age)
-    second_owed, allowance = _second_issues(root, todo, section, plan, current_head, blocking) if todo else ([], None)
+    final_kind, final = ("reconciliation", reconciliation) if newer_reconciliation \
+        else ("completion", completion)
     # A section built while the reviewer was down starts at its recorded base, before its code; its plan pass
     # came late. Each pass after the plan must have been shown the section from that base (the dispatcher
     # records it): one based at the late plan pass or at HEAD read little or nothing of it.
@@ -2812,19 +2614,18 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
             owed_base = start if start != plan["head"] else ""
         except Exception as exc:
             parts.append(f"where this section started could not be read ({exc})")
-    for kind, (receipt, age) in (("round", receipts.get("round", (None, 0))),
-                                 ("performance", receipts.get("performance", (None, 0))),
-                                 (final_kind, (final, final_age))):
+    for kind, receipt in (("round", receipts.get("round", (None, 0))[0]),
+                          ("performance", receipts.get("performance", (None, 0))[0]),
+                          (final_kind, final)):
         if kind == "round" and capped and receipt is not None:
             continue
-        ok, why = _pass_covers(root, kind, receipt, current_head, blocking, allowance, age)
+        ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
         if not ok:
             parts.append(why)
         elif owed_base and receipt.get("base") != owed_base:
             parts.append(f"{kind} was shown this section from {str(receipt.get('base'))[:10]}, but it was built "
                          f"while the reviewer was down and starts at {owed_base[:10]}: dispatch it again "
                          f"(scripts/codex-dispatch.sh takes the recorded base when REVIEW_BASE is unset)")
-    parts.extend(second_owed)
 
     staged = _git_lines(root, "diff", "--cached", "--no-renames", "--name-only")
     if staged is None:

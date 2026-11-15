@@ -81,7 +81,6 @@ scripts/overnight/supervisor.py
 scripts/overnight/heartbeat.sh
 scripts/overnight/run-common.sh
 scripts/run.sh
-scripts/second_review_dispatch.py
 scripts/review_pin.py
 scripts/overnight/ship_count.py
 # CI install steps and their helper: test_ci_toolchain_install.py pins them, and

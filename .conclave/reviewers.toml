@@ -33,13 +33,6 @@ schema_version = 1
 cli = "codex"
 model = "gpt-6-astra"
 
-# No second reviewer is pinned (operator decision 2026-11-14, the same evening it was tried). Gemini 4 Carbon
-# through the `agy` CLI was wired as a second reviewer for kernel, boot and ABI sections, and removed: a pass
-# over a real section took about 14 minutes against the five expected, and it did not work as the operator
-# wanted. The mechanism is still here, switched off: a `[second]` table and its `[reviewers.<name>]` entry turn
-# it on again (scripts/review_pin.py documents the keys), and without them every section is reviewed by the
-# routed reviewer alone, exactly as before.
-
 [routes]
 claude = ["astra"]
 

@@ -135,8 +135,6 @@ KIND_SCOPES = {
     "round": ("src", "todo", "tooling"),
     "completion": ("src", "todo", "tooling"),
     "reconciliation": ("src", "todo", "tooling"),
-    # The second reviewer's pass (scripts/second_review_dispatch.py) reads the same candidate.
-    "second": ("src", "todo", "tooling"),
 }
 
 

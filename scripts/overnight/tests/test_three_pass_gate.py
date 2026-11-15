@@ -20,35 +20,11 @@ BODY = "# X\n\n## 7. Seven\n\n- [x] item\n\n## 8. Eight\n\n- [ ] item\n"
 STAMP = "> **Verified:** 2026-11-11 by the gate test.\n"
 README = "# Project\n\nSuites: <!-- project:stat_x -->1<!-- /project --> so far.\n\nHand-written text.\n"
 PASSES = ("plan", "round", "performance", "completion", "reconciliation")
-STAMP_UNAVAILABLE = STAMP + "> **Quality reviewed:** 2026-11-14 | Codex 4x | second: unavailable\n"
 
 
-SECOND = '''
-[reviewers.carbon]
-cli = "agy"
-model = "gemini-4-carbon-medium"
-
-[second]
-reviewer = "carbon"
-paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
-round_cap = 3
-retries = 3
-small_fix_lines = 50
-limit_seconds = 1500
-'''
-
-
-def _pin(second=False, small_fix_lines=None):
-    """The repository's own pin, which names no second reviewer. With `second`, one is added: the mechanism
-    is switched off in the repository and is tested on a pin that switches it on."""
-    text = (REPO / ".conclave/reviewers.toml").read_text()
-    if not second:
-        return text
-    block = SECOND
-    if small_fix_lines is not None:
-        assert "small_fix_lines = 50" in block
-        block = block.replace("small_fix_lines = 50", f"small_fix_lines = {small_fix_lines}")
-    return text + block
+def _pin():
+    """The repository's own pin."""
+    return (REPO / ".conclave/reviewers.toml").read_text()
 
 
 def _git(root, *args):
@@ -58,7 +34,7 @@ def _git(root, *args):
     return done.stdout.strip()
 
 
-def _history(tmp_path, second=False, small_fix_lines=None, source="src/kernel/a.c"):
+def _history(tmp_path, source="src/kernel/a.c"):
     """plan-time commit, the build, the fix after the first round, a tooling change, a TODO-only commit; and an
     unrelated branch. `final` is the last commit that changes anything a pass reads."""
     root = tmp_path / "repo"
@@ -66,7 +42,7 @@ def _history(tmp_path, second=False, small_fix_lines=None, source="src/kernel/a.
     _git(root, "init", "-q", "-b", "main")
     (root / "README.md").write_text(README)
     (root / ".conclave").mkdir()
-    (root / ".conclave/reviewers.toml").write_text(_pin(second, small_fix_lines))
+    (root / ".conclave/reviewers.toml").write_text(_pin())
     heads = {}
     for name, path, text in (("plan", TODO, BODY), ("build", source, "int a;\n"),
                              ("fix", source, "int a = 1;\n"), ("final", "scripts/x.sh", "echo x\n"),
@@ -91,26 +67,14 @@ def _receipt(kind, head, order, section="7", **over):
     return line
 
 
-def _second(head, order, section="7", **over):
-    """A receipt of the second reviewer's dispatcher: complete and clean unless `over` says otherwise."""
-    line = {"kind": "second", "todo": TODO, "section": int(section), "head": head, "jobId": f"second:{order}",
-            "route": "second_review_dispatch.py", "rc": 0, "pass_checked": True, "highest": "none",
-            "unavailable": False}
-    line.update(over)
-    return (order, line)
-
-
 def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, manifest_tail="",
-           manifest_head="", seconds=(), stamp=STAMP, **stamps):
+           manifest_head="", stamp=STAMP, **stamps):
     """stamps: kind=(head, order) or (head, order, section). A pass kind becomes the dispatcher's receipt in the
     reviews manifest, oldest first by `order` (worst level `none` unless `highest` names another; `receipt` gives
     per-kind overrides). An older kind becomes a stamp. Stages a stamp under one section (or several,
     comma-separated), asks the gate about TODO, and puts the tree back."""
     now = time.time_ns()
     entry, receipts = {}, []
-    for order, line in seconds:
-        # Shown the whole section: from the commit the plan pass was dispatched at.
-        receipts.append((order, dict({"base": stamps["plan"][0]} if "plan" in stamps else {}, **line)))
     for kind, spec in stamps.items():
         head, order = spec[0], spec[1]
         section = spec[2] if len(spec) > 2 else "7"
@@ -455,172 +419,8 @@ def test_refusal_another_sections_receipt_does_not_lift_the_fix_commit_hold(tmp_
     assert not ok and "re-adversarial" in why, why
 
 
-# ---- the second reviewer (.conclave/reviewers.toml [second]) ----
-
-def test_a_kernel_section_owes_the_second_reviewer_a_clean_pass_on_the_candidate(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    ok, why = _judge(root, **_good(h))
-    assert not ok and "missing: second" in why, why
-    assert _judge(root, seconds=[_second(h["final"], 5)], **_good(h)) == (True, "")
-    # At HEAD itself, which adds only TODO text over `final`.
-    assert _judge(root, seconds=[_second(h["docs"], 5)], **_good(h)) == (True, "")
-    # It read an earlier candidate.
-    ok, why = _judge(root, seconds=[_second(h["build"], 5)], **_good(h))
-    assert not ok and "second is not the last word" in why, why
-    # It ended at a blocking level; a finding below one is filed and does not hold the stamp.
-    ok, why = _judge(root, seconds=[_second(h["final"], 5, highest="P2")], **_good(h))
-    assert not ok and "second ended at P2" in why, why
-    assert _judge(root, seconds=[_second(h["final"], 5, highest="P3")], **_good(h)) == (True, "")
-    # A pass that was not checked, came another way, or was for another section earns nothing.
-    for over in ({"pass_checked": False}, {"route": "codex-dispatch.sh"}, {"rc": 3}, {"highest": ""}):
-        ok, why = _judge(root, seconds=[_second(h["final"], 5, **over)], **_good(h))
-        assert not ok and "second" in why, (over, why)
-    ok, why = _judge(root, seconds=[_second(h["final"], 5, section="8")], **_good(h))
-    assert not ok and "missing: second" in why, why
-
-
-def test_refusal_a_second_pass_shown_less_than_the_section_is_not_its_review(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    # Dispatched from the last repair's parent: it was shown one commit, not the section.
-    ok, why = _judge(root, seconds=[_second(h["final"], 5, base=h["fix"])], **_good(h))
-    assert not ok and "not from the section's start" in why, why
-    ok, why = _judge(root, seconds=[_second(h["final"], 5, base=None)], **_good(h))
-    assert not ok and "not from the section's start" in why, why
-
-
-def test_refusal_the_outage_mark_counts_only_on_this_sections_quality_stamp(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    down = [_second(h["final"], 5, rc=4, unavailable=True, highest="")]
-    for stamp in (STAMP + "Notes: second: unavailable, to be read later.\n",          # prose
-                  STAMP + "> **Notes:** second: unavailable\n",                        # another quoted line
-                  STAMP + "> **Quality reviewed:** 2026-11-14 | Codex 4x\n"):          # the stamp, without the mark
-        ok, why = _judge(root, seconds=down, stamp=stamp, **_good(h))
-        assert not ok and "second: unavailable" in why, (stamp, why)
-    # The mark on section 8's stamp says nothing about section 7.
-    body = (root / TODO).read_text()
-    (root / TODO).write_text(body.replace("## 8. Eight\n\n- [ ] item\n",
-                                          "## 8. Eight\n\n- [ ] item\n\n" + STAMP_UNAVAILABLE))
-    _git(root, "commit", "-qam", "eight is marked")
-    ok, why = _judge(root, seconds=[_second(_git(root, "rev-parse", "HEAD"), 5, rc=4, unavailable=True, highest="")],
-                     **_good(h))
-    assert not ok and "second: unavailable" in why, why
-
-
-def test_an_overlapping_pass_that_lands_after_the_last_one_cannot_wedge_the_section(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    spent = [_second(h["build"], 5, highest="P2"), _second(h["fix"], 6, highest="P2"), _second(h["final"], 7)]
-    # A pass that was already running when the third finished, and came back incomplete after it.
-    late = spent + [_second(h["final"], 8, rc=3, highest="")]
-    assert _judge(root, seconds=late, **_good(h)) == (True, "")
-    # Before the cap an incomplete newest pass is simply dispatched again.
-    ok, why = _judge(root, seconds=spent[1:] + [_second(h["final"], 8, rc=3, highest="")], **_good(h))
-    assert not ok and "no checked, complete receipt" in why, why
-
-
-def test_a_damaged_manifest_line_does_not_make_the_gate_and_the_dispatcher_count_differently(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("second_review_dispatch", REPO / "scripts/second_review_dispatch.py")
-    dispatcher = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(dispatcher)
-    spent = [dict(_second(h["build"], 5, highest="P2")[1], base=h["plan"]),
-             dict(_second(h["fix"], 6, highest="P2")[1], base=h["plan"]),
-             dict(_second(h["final"], 7, highest="P2")[1], base=h["plan"])]
-    # A line cut short while it was written, between the first complete pass and the other two.
-    damaged = json.dumps(spent[0]) + "\n" + '{"todo": "' + TODO + '", "kind": "sec\n' \
-        + "".join(json.dumps(r) + "\n" for r in spent[1:])
-    # The cap is spent by both counts, so the section ships with what is open filed.
-    assert _judge(root, manifest_head=damaged, **{k: (v[0], v[1] + 10) for k, v in _good(h).items()}) == (True, "")
-    manifest = root / gate._PASS_MANIFEST
-    manifest.write_text(damaged)
-    assert dispatcher.spent(manifest, TODO, "7") == 3
-    assert gate._second_receipts(root, TODO, "7", 3)[2] == 3
-    # Cut short after the last pass, with nothing left to say whose line it was: the same answer.
-    whole = "".join(json.dumps(r) + "\n" for r in spent)
-    for tail in ('{"ts": 1, "kind": "sec', '{"todo": "' + TODO + '", "kind": "second", "sect'):
-        # The routed reviewer's passes were dispatched again after the damage, as its own rule asks.
-        assert _judge(root, manifest_head=whole + tail + "\n",
-                      **{k: (v[0], v[1] + 10) for k, v in _good(h).items()}) == (True, ""), tail
-        manifest.write_text(whole + tail)
-        assert dispatcher.spent(manifest, TODO, "7") == 3
-        newest, _age, count, readable = gate._second_receipts(root, TODO, "7", 3)
-        assert (newest["head"], count, readable) == (h["final"], 3, True)
-    # Below the cap the same line still stops the scan: a pass can be dispatched again, and must be.
-    manifest.write_text("".join(json.dumps(r) + "\n" for r in spent[:2]) + '{"ts": 1, "kind": "sec')
-    assert gate._second_receipts(root, TODO, "7", 3) == (None, 0, 2, False)
-
-
-def test_a_section_outside_the_second_reviewers_paths_is_judged_as_before(tmp_path):
-    root, h = _history(tmp_path, second=True, source="scripts/a.sh")
-    assert _judge(root, **_good(h)) == (True, "")
-
-
-def test_an_unavailable_second_reviewer_is_accepted_only_when_the_stamp_says_so(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    down = dict(rc=4, unavailable=True, highest="")
-    ok, why = _judge(root, seconds=[_second(h["final"], 5, **down)], **_good(h))
-    assert not ok and "second: unavailable" in why, why
-    assert _judge(root, seconds=[_second(h["final"], 5, **down)], stamp=STAMP_UNAVAILABLE, **_good(h)) == (True, "")
-    # An outage recorded for an earlier candidate does not cover this one.
-    ok, why = _judge(root, seconds=[_second(h["build"], 5, **down)], stamp=STAMP_UNAVAILABLE, **_good(h))
-    assert not ok and "unavailable at" in why and "dispatch it again" in why, why
-    # The mark alone, with no receipt of an outage, is nothing.
-    ok, why = _judge(root, stamp=STAMP_UNAVAILABLE, **_good(h))
-    assert not ok and "missing: second" in why, why
-    # A later pass that did answer replaces the outage.
-    assert _judge(root, seconds=[_second(h["final"], 5, **down), _second(h["final"], 6)], **_good(h)) == (True, "")
-
-
-def test_a_small_repair_read_by_the_second_reviewer_does_not_reopen_the_routed_passes(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    early = _good(h, round=(h["build"], 2), performance=(h["build"], 3), completion=(h["build"], 4))
-    # Without the second reviewer's clean pass on the candidate, the routed passes are behind it.
-    ok, why = _judge(root, seconds=[_second(h["build"], 5, highest="P2")], **early)
-    assert not ok and "round is not the last word" in why, why
-    # build -> final changed three lines a pass reads; the second reviewer then read the candidate.
-    assert _judge(root, seconds=[_second(h["build"], 5, highest="P2"), _second(h["final"], 6)], **early) == (True, "")
-    # Its clean pass must be newer than the routed pass it stands in for.
-    ok, why = _judge(root, seconds=[_second(h["final"], 1)],
-                     **_good(h, plan=(h["plan"], 0), round=(h["build"], 2), performance=(h["build"], 3),
-                             completion=(h["build"], 4)))
-    assert not ok and "round is not the last word" in why, why
-    # A blocking level on the routed pass is still a blocking level.
-    ok, why = _judge(root, highest={"round": "P2"}, seconds=[_second(h["final"], 6)], **early)
-    assert not ok and "round ended at P2" in why, why
-
-
-def test_a_repair_larger_than_the_allowance_goes_back_to_the_routed_reviewer(tmp_path):
-    root, h = _history(tmp_path, second=True, small_fix_lines=2)
-    early = _good(h, round=(h["build"], 2), performance=(h["build"], 3), completion=(h["build"], 4))
-    ok, why = _judge(root, seconds=[_second(h["final"], 6)], **early)
-    assert not ok and "round is not the last word" in why and "3 lines, over the 2" in why, why
-    # One line changed since `fix`: inside the allowance.
-    late = _good(h, round=(h["fix"], 2), performance=(h["fix"], 3), completion=(h["fix"], 4))
-    assert _judge(root, seconds=[_second(h["final"], 6)], **late) == (True, "")
-
-
-def test_after_its_last_pass_the_routed_reviewer_reads_any_further_repair(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    spent = [_second(h["build"], 5, highest="P2"), _second(h["build"], 6, highest="P2"),
-             _second(h["fix"], 7, highest="P2")]
-    # Three passes spent and a repair after the third: no fourth pass exists, so the routed passes on the
-    # repaired candidate are what finishes the section.
-    assert _judge(root, seconds=spent, **_good(h)) == (True, "")
-    behind = _good(h, round=(h["fix"], 2), performance=(h["fix"], 3), completion=(h["fix"], 4))
-    ok, why = _judge(root, seconds=spent, **behind)
-    assert not ok and "round is not the last word" in why, why
-    # Spent with the last pass on the candidate and still blocking: what is open is filed, and the section ships.
-    at_cap = [_second(h["build"], 5, highest="P2"), _second(h["fix"], 6, highest="P2"),
-              _second(h["final"], 7, highest="P2")]
-    assert _judge(root, seconds=at_cap, **_good(h)) == (True, "")
-    # Two passes are not the cap.
-    ok, why = _judge(root, seconds=at_cap[1:], **_good(h))
-    assert not ok and "second ended at P2" in why, why
-
-
 def test_one_comparison_of_two_commits_is_run_once_and_given_a_short_wait(tmp_path, monkeypatch):
-    root, h = _history(tmp_path, second=True)
-    early = _good(h, round=(h["build"], 2), performance=(h["build"], 3), completion=(h["build"], 4))
+    root, h = _history(tmp_path)
     gate._commit_diffs.clear()
     real, seen = subprocess.check_output, []
 
@@ -630,22 +430,21 @@ def test_one_comparison_of_two_commits_is_run_once_and_given_a_short_wait(tmp_pa
         return real(cmd, **kw)
 
     monkeypatch.setattr(gate.subprocess, "check_output", counting)
-    assert _judge(root, seconds=[_second(h["final"], 6)], **early) == (True, "")
+    # Three routed passes at one commit before HEAD: one list of changed files serves all of them.
+    assert _judge(root, **_good(h)) == (True, "")
     commands = [cmd for cmd, _ in seen]
-    assert len(commands) == len(set(commands)), "a comparison of the same two commits ran twice"
-    # Three routed passes at one commit: one list of changed files and one line count for all of them.
-    assert sum("--numstat" in cmd for cmd in commands) == 1
+    assert commands and len(commands) == len(set(commands)), "a comparison of the same two commits ran twice"
     assert all(wait == gate._COMMIT_DIFF_TIMEOUT for _, wait in seen)
     # A comparison that cannot be made is said so; it is not a pass.
     gate._commit_diffs.clear()
     monkeypatch.setattr(gate, "_commit_diff", lambda *a, **k: None)
-    ok, why = _judge(root, seconds=[_second(h["final"], 6)], **_good(h))
-    assert not ok and "could not be listed" in why, why
+    ok, why = _judge(root, **_good(h))
+    assert not ok and "could not list what changed" in why, why
 
 
 def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, monkeypatch):
-    root, h = _history(tmp_path, second=True)
-    # Every routed pass at a different commit, and every comparison timing out: four of them at three seconds
+    root, h = _history(tmp_path)
+    # Every routed pass at a different commit, and every comparison timing out: three of them at three seconds
     # each would outlast the hook.
     apart = _good(h, round=(h["build"], 2), performance=(h["fix"], 3), completion=(h["final"], 4))
     gate._commit_diffs.clear()
@@ -661,7 +460,7 @@ def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, mo
     monkeypatch.setattr(gate, "_git_lines", lambda root, *args, timeout=10: (
         slow(root, *args, timeout=timeout) if args[:1] == ("diff",) and "--cached" not in args else
         gate.subprocess.check_output(["git", *args], cwd=str(root), text=True).splitlines()))
-    ok, why = _judge(root, seconds=[_second(h["docs"], 6)], **apart)
+    ok, why = _judge(root, **apart)
     assert not ok and "could not" in why, why
     assert sum(waits) <= gate._COMMIT_DIFF_BUDGET and waits == [3, 3], waits
     gate._commit_diffs.clear()
@@ -669,28 +468,21 @@ def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, mo
 
 
 def test_a_section_built_during_an_outage_is_judged_from_its_recorded_base(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    # Built while the reviewer was down, so its plan pass came late: at `final`, after the kernel code.
+    root, h = _history(tmp_path)
+    # Built while the reviewer was down, so its plan pass came late: at `final`, after the code.
     late = _good(h, plan=(h["final"], 1), round=(h["docs"], 2), performance=(h["docs"], 3), completion=(h["docs"], 4))
-    # Read from the late plan pass, the section changed nothing the second reviewer reads.
     assert _judge(root, **late) == (True, "")
     owed = root / ".claude/state/review-owed.json"
     owed.write_text(json.dumps([{"todo": TODO, "section": 7, "base": h["plan"], "since": 1}]))
     shown = {k: {"base": h["plan"]} for k in ("round", "performance", "completion")}
     try:
         # The routed reviewer's own passes were based at the late plan pass: they read nothing of the section.
-        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])],
-                         receipt={k: {"base": h["final"]} for k in shown}, **late)
+        ok, why = _judge(root, receipt={k: {"base": h["final"]} for k in shown}, **late)
         assert not ok and "round was shown this section from" in why and "performance was shown" in why, why
         # And a receipt that names no base at all is not evidence either.
-        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], **late)
+        ok, why = _judge(root, **late)
         assert not ok and "completion was shown this section from" in why, why
-        ok, why = _judge(root, receipt=shown, **late)
-        assert not ok and "missing: second" in why, why
-        # A second pass shown only what follows the late plan pass was not shown the section.
-        ok, why = _judge(root, seconds=[_second(h["docs"], 5, base=h["final"])], receipt=shown, **late)
-        assert not ok and "not from the section's start" in why, why
-        assert _judge(root, seconds=[_second(h["docs"], 5, base=h["plan"])], receipt=shown, **late) == (True, "")
+        assert _judge(root, receipt=shown, **late) == (True, "")
         # A record that cannot be read is said so; it is not read as nothing owed.
         owed.write_text("{")
         ok, why = _judge(root, receipt=shown, **late)
@@ -699,9 +491,31 @@ def test_a_section_built_during_an_outage_is_judged_from_its_recorded_base(tmp_p
         owed.unlink()
 
 
-def test_second_passes_never_count_toward_the_pass_cap(tmp_path):
-    root, h = _history(tmp_path, second=True)
-    manifest = root / gate._PASS_MANIFEST
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text("".join(json.dumps(_second(h["final"], n)[1]) + "\n" for n in range(60)))
-    assert gate._spent_passes(root, TODO, "7") == 0
+def test_refusal_a_stamp_needs_a_pin_that_loads(tmp_path):
+    """The blocking levels and the pass cap fall back when the pin cannot be read; the stamp must not."""
+    root, h = _history(tmp_path)
+    pin = root / ".conclave/reviewers.toml"
+    good = pin.read_text()
+    cases = (
+        (None, "could not be read"),
+        ("schema_version = [", "could not be read"),
+        # The second reviewer was removed: a pin that still names one is refused, never quietly half-read.
+        (good + '\n[second]\nreviewer = "carbon"\n', "could not be read"),
+    )
+    try:
+        for text, want in cases:
+            if text is None:
+                pin.unlink()
+            else:
+                pin.write_text(text)
+            _git(root, "add", "-A", "--", ".conclave")
+            _git(root, "commit", "-q", "--allow-empty", "-m", "pin")
+            head = _git(root, "rev-parse", "HEAD")
+            ok, why = _judge(root, **_good(h, round=(head, 2), performance=(head, 3), completion=(head, 4)))
+            assert not ok and want in why and "reviewer pin" in why, (text, why)
+            _git(root, "reset", "-q", "--hard", "HEAD~1")
+    finally:
+        pin.write_text(good)
+    assert _judge(root, **_good(h)) == (True, "")
+
+
