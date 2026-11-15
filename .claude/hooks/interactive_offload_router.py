@@ -21,29 +21,36 @@ import re
 import sys
 
 
-# (pattern, agent, note) -- first match wins; keep the list ordered by
+# (pattern, kind, target, note) -- kind is "agent" (dispatch it) or
+# "script" (run it: green mechanics spend no model). First match wins; keep the list ordered by
 # specificity (most specific domain first, generic exploration last).
 _ROUTES = [
     (r"\b(?:validate|check|audit)\b.{0,40}\bTODO-\d+",
-     "todo-validation-mapper",
-     "structural evidence map (sections/table/stamps/XREFs/Inputs)"),
+     "agent", "todo-validation-mapper",
+     "run scripts/todo-graph/query.py first; the mapper maps only the fuzzy "
+     "residue (sections/table/stamps/XREFs/Inputs)"),
     (r"\b(?:run|rerun|re-run)\b.{0,30}\b(?:build|test(?:s|-suite)?|lint|smoke)\b",
-     "checks-runner",
-     "runs the named verification script, returns verdict + failure digest"),
+     "script", "bash scripts/overnight/run-artifact.sh <label> -- <command>",
+     "a deterministic envelope, no model; dispatch diagnostic-digester only "
+     "on a FAIL envelope"),
     (r"\b(?:when|what commit|which commit|who)\b.{0,50}\b(?:br(?:eak|oke|oken)|chang(?:e|ed)|introduc|regress)",
-     "git-historian",
+     "agent", "git-historian",
      "read-only git archaeology, returns a commit-trail digest"),
-    (r"\b(?:ci|workflow|pipeline|pull request|pr\b|issue)s?\b.{0,40}\b(?:status|state|red|green|fail|pass|list)",
-     "gh-query-runner",
-     "read-only gh queries, returns the state without paginated output"),
+    (r"\b(?:ci|workflow|pipeline)s?\b.{0,40}\b(?:status|state|red|green|fail|pass|list)",
+     "script", "gh run list --json headSha,status,conclusion,workflowName",
+     "a direct query, no model; gh-query-runner only for --log-failed slices "
+     "of a run already confirmed red"),
+    (r"\b(?:pull request|pr\b|issue)s?\b.{0,40}\b(?:status|state|list)",
+     "agent", "gh-query-runner",
+     "read-only gh pr/issue queries, returns the state without paginated output"),
     (r"\bserial\b.{0,20}\blog|boot.{0,10}log.{0,30}\b(?:analy|audit|check|look)",
-     "serial-log-auditor",
+     "agent", "serial-log-auditor",
      "sweeps the log set, returns an anomaly timeline"),
     (r"\bovernight\b.{0,30}\b(?:log|run|report|transcript|cost|token)",
-     "overnight-log-explorer",
+     "agent", "overnight-log-explorer",
      "run-transcript cost/behavior digest"),
     (r"\b(?:test )?coverage\b.{0,30}\b(?:gap|missing|map|check)|\bwhat(?:'s| is) untested\b",
-     "test-coverage-mapper",
+     "agent", "test-coverage-mapper",
      "coverage brief: spec status, signatures, wiring points"),
     # D2: "where do the X helpers live / is there a Y primitive" hunts. These
     # otherwise run as 3-6 inline greps before any dispatch (measured: the 6-round
@@ -52,24 +59,29 @@ _ROUTES = [
     (r"\b(?:where (?:do|does|are|is)|is there|do we have|does .{0,20} have|which)\b"
      r".{0,50}\b(?:helper|function|primitive|api|symbol|struct|macro|routine|"
      r"wrapper|allocator|lock|intrinsic)s?\b",
-     "kernel-explorer",
+     "agent", "kernel-explorer",
      "locate/inventory the helpers+symbols in one map, not N inline greps"),
     (r"\b(?:explore|trace|how does|walk (?:me )?through|call path|who calls)\b.{0,60}\b(?:kernel|boot|driver|src/|scheduler|vmm|pmm|vfs|irq|apic)",
-     "kernel-explorer",
+     "agent", "kernel-explorer",
      "execution-path trace + integration surface"),
     (r"\b(?:explore|find where|search (?:the )?(?:code|repo|codebase)|where is)\b",
-     "Explore",
+     "agent", "Explore",
      "broad read-only fan-out search"),
 ]
 
 
 _HINT = (
     "[offload hint -- not a block] This prompt matches an offloadable shape. "
-    "Default: dispatch Agent(subagent_type=\"{agent}\") -- {note} -- and keep "
+    "Default: dispatch Agent(subagent_type=\"{target}\") -- {note} -- and keep "
     "the main context lean; verify load-bearing findings at file:line before "
     "acting (trust contract). Work inline only if the task is genuinely one "
-    "or two reads. Doctrine: CLAUDE.md \"Specialist agents\" interactive "
-    "offload table."
+    "or two reads. Doctrine: CLAUDE.md \"Interactive offload\"."
+)
+
+_SCRIPT_HINT = (
+    "[offload hint -- not a block] This prompt matches a deterministic shape. "
+    "Run `{target}` -- {note}. Doctrine: CLAUDE.md \"Interactive offload\" "
+    "(green mechanics never spend a model)."
 )
 
 
@@ -85,7 +97,7 @@ def main() -> int:
     if not isinstance(prompt, str) or not prompt:
         return 0
 
-    for pat, agent, note in _ROUTES:
+    for pat, kind, target, note in _ROUTES:
         if re.search(pat, prompt, re.I):
             # T1-4: budget this advisory. Measured 2026-07-27: 487 injections
             # across the offload-events log with ZERO recorded follows -- the
@@ -107,11 +119,12 @@ def main() -> int:
                 import _offload_log
                 from pathlib import Path
                 _offload_log.log_event(Path.cwd(), "fire",
-                                       "interactive_offload_router", agent)
+                                       "interactive_offload_router", target)
             except Exception:
                 pass
             print(json.dumps(
-                {"systemMessage": _HINT.format(agent=agent, note=note)}))
+                {"systemMessage": (_SCRIPT_HINT if kind == "script" else _HINT).format(
+                    target=target, note=note)}))
             return 0
     return 0
 

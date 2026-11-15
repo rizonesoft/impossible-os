@@ -91,6 +91,6 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [xref-dependency-mapper](../agents/xref-dependency-mapper.md) | sonnet | `implement-todo-section` step 2 (3+ XREFs) |
 | [overnight-log-explorer](../agents/overnight-log-explorer.md) | sonnet | ad-hoc + `todo/RUN-ISSUES.md` (run-transcript cost/behavior digest) |
 | [todo-validation-mapper](../agents/todo-validation-mapper.md) | sonnet | `validate-todo-file` / `todo-pipeline` legwork + ad-hoc TODO structure checks |
-| [checks-runner](../agents/checks-runner.md) | sonnet (runner) | `implement-todo-section` step 16 + `review-todo-section` build + `complete-todo-file` verification |
+| [checks-runner](../agents/checks-runner.md) | sonnet (runner) | only a verbatim run `run-artifact.sh` cannot bound; builds, suites and smoke runs go through `scripts/overnight/run-artifact.sh` |
 | [git-historian](../agents/git-historian.md) | sonnet (runner) | `debug-session` + `diagnose-serial-log` regression pass |
-| [gh-query-runner](../agents/gh-query-runner.md) | haiku (runner) | `complete-todo-file` post-push CI check + GitHub state queries |
+| [gh-query-runner](../agents/gh-query-runner.md) | haiku (runner) | `--log-failed` slices of a CI run already red; CI status is a direct `gh run list --json` query |

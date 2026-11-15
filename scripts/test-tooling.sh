@@ -4619,10 +4619,11 @@ else
 fi
 IOR_OUT2="$(printf '%s' '{"prompt":"run the full test suite"}' | \
     python3 "$IOR_HOOK" 2>/dev/null)"
-if grep -q "checks-runner" <<<"$IOR_OUT2"; then
-    t_pass "offload_router_checks  run-tests prompt routes to checks-runner"
+if grep -q "scripts/overnight/run-artifact.sh" <<<"$IOR_OUT2" && \
+   ! grep -q "Agent(subagent_type" <<<"$IOR_OUT2"; then
+    t_pass "offload_router_runs  run-tests prompt routes to run-artifact.sh, no agent"
 else
-    t_fail "offload_router_checks  expected checks-runner hint, got: $IOR_OUT2"
+    t_fail "offload_router_runs  expected a run-artifact.sh hint, got: $IOR_OUT2"
 fi
 IOR_OUT3="$(printf '%s' '{"prompt":"fix this typo in the README"}' | \
     python3 "$IOR_HOOK" 2>/dev/null)"

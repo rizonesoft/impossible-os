@@ -33,13 +33,16 @@ _RESET = {"Agent", "Task"}
 _MSG = (
     "[inline-churn -- not a block] {n} inline Bash/Read/Grep/Glob ops since "
     "the last Agent dispatch. If this is fan-out exploration or verification, "
-    "offload it: repo/code search -> Explore or kernel-explorer; "
-    "build/test/lint runs -> checks-runner; TODO structure -> "
-    "todo-validation-mapper; git archaeology -> git-historian; gh state -> "
-    "gh-query-runner; log analysis -> serial-log-auditor / "
-    "overnight-log-explorer. Trust-contract spot-checks and genuinely small "
-    "tasks are fine inline; sustained fan-out is not. Doctrine: CLAUDE.md "
-    "\"Interactive offload\" + memory feedback_interactive_agent_offload."
+    "take the first rung that answers: build/test/lint/smoke runs -> "
+    "scripts/overnight/run-artifact.sh (no model; diagnostic-digester only on "
+    "a FAIL); CI status -> gh run list --json (gh-query-runner only for "
+    "--log-failed slices of a run already red); TODO structure -> "
+    "scripts/todo-graph/query.py, then todo-validation-mapper for the fuzzy "
+    "residue; kernel/boot code -> kernel-explorer; other code -> "
+    "section-context-mapper; broad repo search -> Explore; git archaeology "
+    "-> git-historian; logs -> serial-log-auditor / overnight-log-explorer. "
+    "Trust-contract spot-checks and genuinely small tasks are fine inline; "
+    "sustained fan-out is not. Doctrine: CLAUDE.md \"Interactive offload\"."
 )
 
 

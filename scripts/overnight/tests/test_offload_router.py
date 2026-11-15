@@ -37,7 +37,7 @@ def test_ordinary_prompt_no_hint():
 
 
 def test_existing_routes_still_fire():
-    assert "checks-runner" in (_hint("re-run the mm test suite") or "")
+    assert "run-artifact.sh" in (_hint("re-run the mm test suite") or "")
 
 
 if __name__ == "__main__":
