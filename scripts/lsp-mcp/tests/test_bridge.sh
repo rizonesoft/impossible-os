@@ -10968,6 +10968,11 @@ SERVER_PGRP = SERVER.replace(
     "ctypes.CDLL('libc.so.6').prctl",
     "os.setpgid(0,0)\\nctypes.CDLL('libc.so.6').prctl")
 assert SERVER_PGRP != SERVER
+# The same worker WITHOUT hardening: its owner and generation stamps stay
+# readable, so only the case's own fault decides it.
+SERVER_PLAIN = SERVER.replace("ctypes.CDLL('libc.so.6').prctl(4,0,0,0,0)\\n",
+                              "")
+assert SERVER_PLAIN != SERVER
 fails = []
 workers = []
 
@@ -11328,6 +11333,146 @@ check(gone(w), "[sweep-unreadable] the worker survived once its stat was "
       "readable")
 check(seen_sweep.completed is True, "[sweep-unreadable] the recovering "
       "sweep did not complete")
+
+# --- Q: the force sweep cannot pin its target --------------------------
+# No exact handle means no signal; it does not mean done.
+inst_q, w = spawn("sweep-nofd")
+real_pidfd_open = lsp_client._pidfd_open
+lsp_client._pidfd_open = lambda pid, _w=w: (None if pid == _w
+                                            else real_pidfd_open(pid))
+try:
+    pinned = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._pidfd_open = real_pidfd_open
+check(pinned.completed is False, "[sweep-nofd] a force sweep reported "
+      "itself complete over a target it could not pin")
+check(alive(w), "[sweep-nofd] the fixture lost its worker before recovery")
+pinned_after = lsp_client.force_kill_spawned(
+    settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w), "[sweep-nofd] the worker survived once it could be pinned")
+check(pinned_after.completed is True, "[sweep-nofd] the recovering sweep "
+      "did not complete")
+
+# --- R: a readable, unstamped image after the target is pinned ---------
+# The owner stamp is re-read after the pidfd opens; a positive "not ours"
+# then sends nothing (Codex round review).
+inst_r, w = spawn("sweep-exec")
+real_owner = lsp_client._carries_our_owner_id
+seen_owner = {"n": 0}
+
+
+def owner_flips(pid, *a, _w=w, **kw):
+    if pid == _w:
+        seen_owner["n"] += 1
+        return None if seen_owner["n"] == 1 else False
+    return real_owner(pid, *a, **kw)
+
+
+lsp_client._carries_our_owner_id = owner_flips
+try:
+    lsp_client.force_kill_spawned(settle=0.0,
+                                  deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._carries_our_owner_id = real_owner
+check(seen_owner["n"] >= 2, "[sweep-exec] the owner stamp was not re-read "
+      "after the target was pinned")
+check(alive(w), "[sweep-exec] the sweep signalled a target whose re-read "
+      "stamp said it is not ours")
+lsp_client.force_kill_spawned(settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w), "[sweep-exec] the worker survived the recovering sweep")
+
+# --- S: the recorded leader's SIGKILL is denied -----------------------
+import signal as _signal
+inst_s, w = spawn("leader-denied")
+leader_s = inst_s._proc.pid
+real_send = _signal.pidfd_send_signal
+
+
+denials = {"n": 0}
+
+
+def deny_leader(fd, sig, *a, _l=leader_s):
+    # Only the FIRST SIGKILL to the leader (the recorded-leader pass) is
+    # denied, so the later stamped pass can succeed and only the leader
+    # pass's own verdict is on trial.
+    if sig == _signal.SIGKILL and denials["n"] == 0:
+        try:
+            info = open("/proc/self/fdinfo/%d" % fd).read()
+            if ("\nPid:\t%d\n" % _l) in info:
+                denials["n"] += 1
+                raise PermissionError(1, "Operation not permitted")
+        except OSError as exc:
+            if isinstance(exc, PermissionError):
+                raise
+    return real_send(fd, sig, *a)
+
+
+_signal.pidfd_send_signal = deny_leader
+try:
+    denied = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    _signal.pidfd_send_signal = real_send
+check(denials["n"] == 1, "[leader-denied] the fixture never denied the "
+      "leader's SIGKILL")
+check(denied.completed is False, "[leader-denied] a force sweep whose "
+      "leader SIGKILL was denied reported itself complete")
+lsp_client.force_kill_spawned(settle=0.0, deadline=time.monotonic() + 5.0)
+check(gone(w) and gone(leader_s), "[leader-denied] the recovering sweep "
+      "left the server or its worker")
+
+# --- T: the session phase is the only net ----------------------------
+# The worker cannot be pinned while the session phase runs, and its
+# leader is reaped the moment the leader pass kills it, so after that no
+# session proof exists and the stamped phase cannot see the opaque
+# worker at all. An undecided session row must keep the session phase
+# open; reading it as empty fired the leaders and reported a complete
+# sweep over a live worker (Codex round review).
+inst_t, w = spawn("session-only")
+leader_t = inst_t._proc.pid
+fired = {"leader": False}
+real_open_t = lsp_client._pidfd_open
+real_send_t = _signal.pidfd_send_signal
+
+
+def names(fd, pid):
+    try:
+        return ("\nPid:\t%d\n" % pid) in open(
+            "/proc/self/fdinfo/%d" % fd).read()
+    except OSError:
+        return False
+
+
+def send_and_reap(fd, sig, *a, _l=leader_t):
+    rc = real_send_t(fd, sig, *a)
+    if sig == _signal.SIGKILL and not fired["leader"] and names(fd, _l):
+        fired["leader"] = True
+        try:
+            os.waitpid(_l, 0)
+        except ChildProcessError:
+            pass
+    return rc
+
+
+lsp_client._pidfd_open = lambda pid, _w=w: (
+    None if pid == _w and not fired["leader"] else real_open_t(pid))
+_signal.pidfd_send_signal = send_and_reap
+try:
+    session_only = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 3.0)
+finally:
+    lsp_client._pidfd_open = real_open_t
+    _signal.pidfd_send_signal = real_send_t
+check(session_only.completed is False, "[session-only] a force sweep "
+      "reported itself complete over a session row it never decided")
+if alive(w):
+    _wfd = os.pidfd_open(w)     # the fixture's own worker, pinned
+    try:
+        real_send_t(_wfd, _signal.SIGKILL)
+    finally:
+        os.close(_wfd)
+check(gone(w), "[session-only] the fixture could not stop its worker")
 
 # --- K: a sweep that never listed /proc is not complete ---------------
 real_snap = lsp_client._proc_snapshot

@@ -1226,6 +1226,20 @@ def _session_handle(sid: Optional[int]) -> Optional[int]:
     return fd
 
 
+def _leader_state(fd: int) -> Optional[bool]:
+    """True: the process behind `fd` is there. False: it is GONE (the
+    kernel said ESRCH). None: the probe itself failed, which proves
+    neither. A sweep that read None as "gone" dropped a worker it could
+    not decide about from its emptiness proof (Codex round review)."""
+    try:
+        signal.pidfd_send_signal(fd, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return None         # fail-direction: callers count it as owed
+
+
 def _leader_alive(fd: int) -> bool:
     """Is the process behind this borrowed leader handle still there?
 
@@ -2511,8 +2525,10 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                     try:
                         signal.pidfd_send_signal(own, signal.SIGKILL)
                         signalled.add(pid)
-                    except (ProcessLookupError, OSError):
-                        pass
+                    except ProcessLookupError:
+                        pass            # already gone: the attempt landed
+                    except OSError:
+                        complete = False    # denied or failed: no attempt
                 elif _kill_verified(pid, None, still):
                     signalled.add(pid)
                 else:
@@ -2576,7 +2592,9 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     owner_cache: dict = {}
     leaders_done = False
     leaders_complete = True
-    saw_blind = False       # some scan could not list /proc at all
+    # Phase A converged: its fixpoint, or no session left to sweep. A
+    # deadline or round-cap exit is NOT convergence (Codex round review).
+    session_converged = not _OWNED_SESSIONS
     session_empty = 0
 
     def fire_leaders() -> None:
@@ -2585,12 +2603,17 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             leaders_complete = signal_recorded_leaders()
             leaders_done = True
 
-    def stamped_round(snap) -> bool:
+    def stamped_round(snap) -> tuple[bool, int]:
         """Signal every OTHER live process carrying this run's stamp:
         descendants of a recorded leader, a helper reparented away after
         its leader died, one that called setsid and left both the group
         and the child list, and a spawn interrupted before it could write
-        a record. Returns whether the scan found anything.
+        a record. Returns whether the scan found anything (a target it
+        could not signal is still found next round, which keeps the
+        fixpoint open), and how many rows it OWES: members of one of our
+        sessions whose ownership could not be read, which the session
+        proof can no longer settle once the leaders are gone (Codex round
+        review).
 
         This and the per-leader group sweep were once separate passes
         asking the same question: _group_members requires the owner stamp
@@ -2603,6 +2626,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # and the ownership probing behind it was not (Codex adversarial
         # review, High).
         targets: list[tuple[int, Optional[int]]] = []
+        owed = 0
         for pid, _ppid, _pgrp, sid, ticks in snap.procs:
             if deadline is not None and clock.now() >= deadline:
                 break
@@ -2617,6 +2641,10 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             if snap.ours(pid, ticks, deadline=deadline, sid=sid,
                          clock=clock):
                 targets.append((pid, ticks))
+            elif (sid is not None and sid in _OWNED_SESSIONS
+                  and _carries_our_owner_id(pid, deadline=deadline,
+                                            clock=clock) is None):
+                owed += 1       # in our session, ownership unreadable
         for pid, _ticks in targets:
             if deadline is not None and clock.now() >= deadline:
                 break
@@ -2661,7 +2689,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                         os.close(own)
                     except Exception:
                         pass
-        return bool(targets)
+        return bool(targets), owed
 
     # TWO fixpoint phases, each taking ONE /proc walk per round.
     #
@@ -2694,6 +2722,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
 
     for _ in range(20):                     # PHASE A -- session fixpoint
         if leaders_done or not _OWNED_SESSIONS:
+            session_converged = True
             break
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan
@@ -2711,6 +2740,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # opened while the proof holds IS an identity, so the proof and
         # the signal travel together.
         hit = 0
+        owed = 0    # rows of our sessions this round could not decide
         for pid, _ppid, _pgrp, sid, _ticks in snap.procs:
             if deadline is not None and clock.now() >= deadline:
                 break
@@ -2732,6 +2762,8 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             # concurrency (Codex adversarial review, High).
             proof = _session_handle(sid)
             if proof is None:
+                if sid is not None and sid in _OWNED_SESSIONS:
+                    owed += 1   # our session, no handle to prove it with
                 continue
             # EVERYTHING from here to the close is inside the finally.
             # The probe-refusal and expired-budget branches below used
@@ -2741,8 +2773,12 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             # scarce enough for the leak to disable the reserve
             # (Codex adversarial review, High).
             try:
-                if not _leader_alive(proof):
+                state = _leader_state(proof)
+                if state is None:
+                    owed += 1   # the probe failed: proves nothing
                     continue
+                if state is False:
+                    continue    # leader gone: the session proof is lost
                 # The environ probe gets first refusal, as everywhere
                 # else: a readable environment that does not carry our
                 # stamp is positive evidence the process is NOT ours,
@@ -2760,7 +2796,9 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                     break
                 fd = _pidfd_open(pid)
                 if fd is None:
-                    continue    # no exact handle, no signal
+                    if os.path.exists(f"/proc/{pid}"):
+                        owed += 1   # no exact handle, no signal, not done
+                    continue
                 try:
                     # Re-prove AFTER the descriptor pins the process,
                     # so a PID recycled between the walk and the open
@@ -2770,16 +2808,32 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                     # because the candidate may have left our session
                     # in between; the leader is re-checked through the
                     # same proof.
-                    if (_session_of(pid) == sid
-                            and _leader_alive(proof)
-                            and not (deadline is not None
-                                     and clock.now() >= deadline)):
+                    #
+                    # The owner stamp is re-read too: an opaque process
+                    # can exec a readable, unstamped image between the
+                    # first check and the open, and that image is a
+                    # stranger's (Codex round review). Unreadable stays on
+                    # the session proof; a read that cannot decide the
+                    # session or the leader is OWED, never "left".
+                    live_sid = _session_of(pid)
+                    owner_now = _carries_our_owner_id(
+                        pid, deadline=deadline, clock=clock)
+                    state = _leader_state(proof)
+                    if owner_now is False:
+                        pass                # positively not ours now
+                    elif live_sid is None or state is None:
+                        owed += 1           # could not decide
+                    elif (live_sid == sid and state is True
+                          and not (deadline is not None
+                                   and clock.now() >= deadline)):
                         try:
                             signal.pidfd_send_signal(fd, signal.SIGKILL)
                             signalled.add(pid)
                             hit += 1
-                        except (ProcessLookupError, OSError):
-                            pass
+                        except ProcessLookupError:
+                            pass            # it exited first: done
+                        except OSError:
+                            owed += 1       # denied: still there
                 finally:
                     try:
                         os.close(fd)
@@ -2795,12 +2849,12 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # its session can no longer be proven. Two consecutive empty
         # rounds, the same rule the stamped phase uses.
         unknown = snap.has_unknown_rows(deadline, clock)
-        saw_blind = saw_blind or unknown
-        if hit == 0 and not unknown:     # an unseen row proves nothing
-            session_empty += 1
+        if hit == 0 and not unknown and owed == 0:
+            session_empty += 1              # nothing unseen, nothing owed
         else:
             session_empty = 0
         if session_empty >= 2:
+            session_converged = True
             break                           # the leaders fire below, now
         # Shares THIS round's snapshot. Whatever it kills is real work --
         # a detached owner-stamped helper reachable now rather than only
@@ -2825,8 +2879,8 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         snap_b = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
                                 clock=clock)
         unknown_b = snap_b.has_unknown_rows(deadline, clock)
-        saw_blind = saw_blind or unknown_b
-        if stamped_round(snap_b) or unknown_b:
+        found_b, owed_b = stamped_round(snap_b)
+        if found_b or unknown_b or owed_b:
             # An unlisted /proc is not an empty scan (Codex completion
             # review, High): it resets the fixpoint like a hit does.
             stamped_empty = 0
@@ -2855,11 +2909,13 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     # reporting itself whole.
     if not _collect_abandoned(deadline, clock=clock):
         leaders_complete = False
-    if saw_blind and not stamped_fixpoint:
-        # Some scan could not see every row (an unlisted /proc, or a row
-        # whose stat was unreadable and may be ours) and the scans never
-        # reached their fixpoint: the sweep is not whole and the caller's
-        # fallback must still run (Codex round + completion review, P2).
+    if not stamped_fixpoint or not session_converged:
+        # Completion means CONVERGENCE: both fixpoints reached, with
+        # nothing unseen and nothing owed in the rounds that proved them.
+        # A round-cap or deadline exit, a blind scan, a target that could
+        # not be signalled or an undecided row all leave the sweep
+        # unfinished, so the caller's fallback still runs (Codex round
+        # + completion review).
         leaders_complete = False
     return SweepCount(len(signalled), leaders_complete)
 
