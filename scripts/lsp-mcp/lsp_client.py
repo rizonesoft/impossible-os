@@ -1989,9 +1989,18 @@ class _ProcSnapshot:
             self._gen[gkey] = True
         if gen is None:
             return ours, True
-        return ours, (have_gen or generation is True
-                      or (by_session
-                          and _session_proves_gen(pid, session_gen)))
+        if have_gen or generation is True:
+            return ours, True
+        if not by_session or session_gen is None:
+            return ours, False
+        # The generation proof re-reads the session. A read that FAILS is
+        # "could not decide", not a namesake generation: recorded as
+        # unknown so the group stays open (Codex round + completion
+        # review, wave 5). Only a readable, different session excludes.
+        live_sid = _session_of(pid)
+        if live_sid is None and unknown is not None:
+            unknown.append(pid)
+        return ours, live_sid is not None and live_sid == session_gen
 
 
 def _proc_snapshot(deadline: Optional[float] = None,

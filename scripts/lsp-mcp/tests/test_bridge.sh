@@ -11190,6 +11190,28 @@ check(ghosts.has_unknown_rows() is False, "[deadline] rows that are gone "
 check(ghosts.has_unknown_rows(time.monotonic() - 1.0) is True,
       "[deadline] an expired inspection reported every row known")
 
+# --- P: the generation proof cannot re-read the session ---------------
+# Session ownership holds, then the generation proof's own session read
+# fails: undecided, not a namesake generation (Codex round + completion
+# review, wave 5).
+inst, w = spawn("gen-unreadable")
+real_sess = lsp_client._session_of
+lsp_client._session_of = lambda pid, _w=w: (None if pid == _w
+                                            else real_sess(pid))
+try:
+    gen_blind = inst.shutdown(timeout=1.0)
+finally:
+    lsp_client._session_of = real_sess
+check(gen_blind is False, "[gen-unreadable] shutdown() confirmed a death "
+      "when the generation proof could not read the worker's session")
+check(alive(w), "[gen-unreadable] the fixture lost its worker before the "
+      "retry")
+gen_seen = inst.shutdown(timeout=3.0)
+check(gone(w), "[gen-unreadable] the worker survived once its session was "
+      "readable")
+check(gen_seen is True, "[gen-unreadable] the retry did not confirm the "
+      "death")
+
 # --- G: the worker left the leader's group but not its session ---------
 inst, w = spawn("setpgid", SERVER_PGRP)
 moved = inst.shutdown(timeout=3.0)
