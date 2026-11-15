@@ -2749,6 +2749,11 @@ The first live pass of the second reviewer (Gemini 4 Carbon, 2026-11-14, candida
 
 **Test checkpoint:** every finding has a test that fails before its fix, or a rejection quoting the lines that make it impossible; `make test-exec` and the user-mode suite pass; `second-review-log.py stats --findings` lists all five.
 
+> **Test runner:** `bash scripts/test.sh SUITE=exec` | expected: 2534 kernel + 17 user-mode tests pass
+
+> **Verified:** 2026-11-15 | commit `76ce331c6` | 7/7 items | build OK | 38220 kernel + 17 user-mode tests pass | 5 fix controls fail with their fix removed (1, 2, 6, 4 and 2 assertions) | `utest-reason-lint.py --check` OK | lint 0 errors
+> **Quality reviewed:** 2026-11-15 | Codex 5x (plan, round 2x, performance, completion) | 0H+1M+0L fixed, 0 open | scope: kernel test launcher (`src/kernel/test/`, `src/kernel/main/boot_tests.c`); kernel-code-quality gates walked
+
 ## OS Comparison
 
 | ⭐  | Feature                                                     | 🪟 Win11                                             | 🐧 Linux                                             | 🚀 Impossible OS                                                        |
