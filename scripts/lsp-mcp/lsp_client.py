@@ -290,7 +290,7 @@ class _SpawnRecord:
     unretired record is answered by `_claimed_pidfd`: a fresh descriptor
     whose start ticks still match the record."""
 
-    __slots__ = ("pid", "ticks", "fd", "retired", "claimed")
+    __slots__ = ("pid", "ticks", "fd", "retired", "claimed", "claiming")
 
     def __init__(self, pid: int, ticks: Optional[int],
                  fd: Optional[int]) -> None:
@@ -299,6 +299,10 @@ class _SpawnRecord:
         self.fd = fd
         self.retired = False
         self.claimed = False
+        # Set BEFORE a claim removes the record from _SPAWNED and cleared
+        # once `claimed` is published, so the registry hygiene never sees
+        # a record that is in neither state (Codex round review).
+        self.claiming = False
 
 
 _SPAWNED: list = []
@@ -844,17 +848,7 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     record.ticks = proc_start_ticks(pid)
     try:
         if pid != os.getsid(0):
-            # Hygiene only -- the marker itself went out above. Drops
-            # entries whose record has left _SPAWNED and is FINISHED. A
-            # claimed, unretired record has left the list too, but its
-            # leader is unreaped and its session still ours, so its
-            # marker stays until _retire_spawn drops it.
-            with _OWNED_SESSIONS_LOCK:
-                live = {id(e) for e in list(_SPAWNED)}
-                for sid in [k for k, v in list(_OWNED_SESSIONS.items())
-                            if id(v) not in live
-                            and not (v.claimed and not v.retired)]:
-                    _OWNED_SESSIONS.pop(sid, None)
+            _prune_owned_sessions()
     except Exception:
         pass
 
@@ -939,6 +933,24 @@ def _drop_session_mark(entry: "_SpawnRecord") -> None:
             _OWNED_SESSIONS_LOCK.release()
 
 
+def _prune_owned_sessions() -> None:
+    """Drop session markers whose record is FINISHED.
+
+    Hygiene only: a marker goes out when its spawn is recorded and comes
+    back with `_retire_spawn`. A record still in `_SPAWNED` is live. A
+    claimed or claiming, unretired record has left the list, but its
+    leader is unreaped and its session still ours, so its marker stays.
+    A claim in progress counted as finished here deleted the proof an
+    opaque worker of that session needed, and the force sweep then
+    reported success over it (Codex round review)."""
+    with _OWNED_SESSIONS_LOCK:
+        live = {id(e) for e in list(_SPAWNED)}
+        for sid in [k for k, v in list(_OWNED_SESSIONS.items())
+                    if id(v) not in live
+                    and (v.retired or not (v.claimed or v.claiming))]:
+            _OWNED_SESSIONS.pop(sid, None)
+
+
 def _claim_for_retry(entry: "_SpawnRecord") -> None:
     """Move an ORDINARY record to the CLAIMED state after an incomplete
     collection: release its descriptor, keep its session marker.
@@ -954,16 +966,30 @@ def _claim_for_retry(entry: "_SpawnRecord") -> None:
     concurrent retirement or claim that won it owns the descriptor."""
     if entry.claimed or entry.retired:
         return
-    try:
-        _SPAWNED.remove(entry)
-    except ValueError:
-        return
+    if not _take_for_claim(entry):
+        return                  # another thread owns it now
     if entry.fd is not None:
         try:
             os.close(entry.fd)
         except Exception:
             pass
     _finish_claim(entry)
+
+
+def _take_for_claim(entry: "_SpawnRecord") -> bool:
+    """Win the ownership token for a claim: remove `entry` from _SPAWNED.
+
+    `claiming` is published BEFORE the removal, so between leaving the
+    list and `_finish_claim` the record is never in neither state, which
+    `_prune_owned_sessions` read as finished and deleted its session
+    marker (Codex round review). Returns False when another thread won."""
+    entry.claiming = True
+    try:
+        _SPAWNED.remove(entry)
+    except ValueError:
+        entry.claiming = False
+        return False
+    return True
 
 
 def _finish_claim(entry: "_SpawnRecord") -> None:
@@ -974,6 +1000,7 @@ def _finish_claim(entry: "_SpawnRecord") -> None:
     that the identity is the start time alone (see `_claimed_pidfd`)."""
     entry.fd = None
     entry.claimed = True
+    entry.claiming = False
 
 
 def _claimed_pidfd(entry: "_SpawnRecord") -> Optional[int]:
@@ -1390,6 +1417,9 @@ def _provably_ours_and_gen(pid: int, gen: Optional[str],
         ours = by_session = _session_marks_ours(pid, sid)
     if gen is None:
         return ours, True
+    if owner is True and generation is None:
+        # Proven ours, generation unread: the session may still prove it.
+        by_session = _session_marks_ours(pid, _session_of(pid))
     return ours, (generation is True
                   or (by_session and _session_proves_gen(pid, session_gen)))
 
@@ -1487,9 +1517,7 @@ def _signal_recorded(target, sig: int) -> bool:
             # replacement over it (Codex adversarial review, High). So
             # CLAIM the original: a successful remove transfers ownership
             # from _retire_spawn to us, and needs no new descriptor.
-            try:
-                _SPAWNED.remove(entry)
-            except ValueError:
+            if not _take_for_claim(entry):
                 return False            # another thread owns it now
             try:
                 signal.pidfd_send_signal(entry.fd, sig)
@@ -1596,9 +1624,7 @@ def _escalate_recorded(target, is_dead, sigs=None,
         own = _borrow_pidfd(entry)
         claimed = False
         if own is None and entry.fd is not None:
-            try:
-                _SPAWNED.remove(entry)
-            except ValueError:
+            if not _take_for_claim(entry):
                 continue                # another thread owns it now
             own, claimed = entry.fd, True
         elif own is None:
@@ -2071,7 +2097,16 @@ class _ProcSnapshot:
             return ours, True
         if have_gen or generation is True:
             return ours, True
+        # Ownership proven by the stamp but the generation left unread (a
+        # task refused for a passing reason): session continuity can
+        # still prove the generation, and when it cannot the row is
+        # undecided, never a namesake (Codex round review).
+        gen_unread = ours and not by_session and generation is None
+        if gen_unread and _session_marks_ours(pid, sid):
+            by_session = True
         if not by_session or session_gen is None:
+            if gen_unread and unknown is not None:
+                unknown.append(pid)
             return ours, False
         # The generation proof re-reads the session. A read that FAILS is
         # "could not decide", not a namesake generation: recorded as
@@ -2580,9 +2615,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
                 # original descriptor from _retire_spawn to this caller,
                 # which is the one operation that needs no new file
                 # descriptor at all.
-                try:
-                    _SPAWNED.remove(entry)
-                except ValueError:
+                if not _take_for_claim(entry):
                     continue            # another thread owns it now
                 own, claimed = entry.fd, True
             elif own is None:

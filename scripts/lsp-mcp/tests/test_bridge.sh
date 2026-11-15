@@ -11618,6 +11618,62 @@ check(walks["n"] == 1 and undecided_rows == [os.getpid()],
       "[detached-transient] an undecided ownership answer cost %d "
       "environment walks, or was not reported" % walks["n"])
 
+# --- W: ownership proven, generation unread ---------------------------
+# One task proves the stamp and another is refused for a passing reason,
+# so the generation is unknown. The session still proves it; reading it
+# as another generation confirmed an empty group over the worker (Codex
+# round review).
+inst_w, w = spawn("gen-unread", SERVER_PLAIN)
+real_rem_w = lsp_client._read_env_markers
+
+
+def owner_only(pid, gen=None, deadline=None, clock=None, _w=w):
+    if pid == _w and gen is not None:
+        return True, None
+    kw = {} if clock is None else {"clock": clock}
+    return real_rem_w(pid, gen, deadline=deadline, **kw)
+
+
+lsp_client._read_env_markers = owner_only
+try:
+    gen_unread = inst_w.shutdown(timeout=3.0)
+finally:
+    lsp_client._read_env_markers = real_rem_w
+check(gone(w), "[gen-unread] a worker proven ours with an unread "
+      "generation survived shutdown()")
+check(gen_unread is True, "[gen-unread] shutdown() did not confirm the "
+      "collection")
+
+# --- X: a spawn registered while another record is being claimed -------
+# The registry hygiene runs inside every spawn. A record between leaving
+# _SPAWNED and `claimed` read as finished, and its session marker, the
+# only proof for an opaque worker, was deleted (Codex round review).
+inst_x, w = spawn("claim-race")
+rec_x = inst_x._spawn_record
+real_close_x = os.close
+pruned = {"in_window": None}
+
+
+def close_then_prune(fd, _r=rec_x):
+    if fd == _r.fd and pruned["in_window"] is None:
+        lsp_client._prune_owned_sessions()
+        pruned["in_window"] = rec_x.pid in lsp_client._OWNED_SESSIONS
+    return real_close_x(fd)
+
+
+os.close = close_then_prune
+try:
+    lsp_client._claim_for_retry(rec_x)
+finally:
+    os.close = real_close_x
+check(pruned["in_window"] is True, "[claim-race] registry hygiene during "
+      "a claim deleted the session marker (saw %r)" % pruned["in_window"])
+check(rec_x.claimed and rec_x.pid in lsp_client._OWNED_SESSIONS,
+      "[claim-race] the claimed record lost its session marker")
+raced = inst_x.shutdown(timeout=3.0)
+check(gone(w) and raced is True, "[claim-race] the claimed generation's "
+      "opaque worker was not collected")
+
 # --- K: a sweep that never listed /proc is not complete ---------------
 real_snap = lsp_client._proc_snapshot
 lsp_client._proc_snapshot = (lambda *a, **kw:

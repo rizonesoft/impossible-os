@@ -259,7 +259,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T07 §24` | Single-Pass Procfs Cleanup in the Teardown Sweep                                                                      | none     |     4 |
 | [x]  | `D00 T07 §25` | Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown                                                        | none     |     7 |
 | [x]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none     |     6 |
-| [/]  | `D00 T07 §27` | Per-Instance Collection Proves Opaque Descendants; Constructor Failure Collects First                                 | none     |     9 |
+| [/]  | `D00 T07 §27` | Per-Instance Collection Proves Opaque Descendants; Constructor Failure Collects First                                 | none     |    10 |
 | [ ]  | `D00 T07 §28` | Per-Instance Collection of Stamped Workers That Left the Session                                                      | none     |     2 |
 | [x]  | `D00 T08 §1`  | Codex MCP Wiring + Cross-Config Drift Validator                                                                       | none     |    10 |
 | [x]  | `D00 T08 §2`  | Codex Invocation Policy: No `--model` / `--effort` From Claude                                                        | none     |     7 |
