@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **976 of 2709 sections complete (36%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **976 of 2709 sections complete (36%).** 127 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -157,7 +157,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §60` | An Aggregate Budget for Pointer Validation Under the Retention Mutex                                                  | none     |     8 |
 | [x]  | `D00 T04 §61` | Validate the Commit Marker as a Shape, and Read Each Record Document From One Snapshot                                | none     |     9 |
 | [x]  | `D00 T04 §62` | Detaching an Age Candidate Before Classifying It                                                                      | none     |    10 |
-| [ ]  | `D00 T04 §63` | Verdict Paths the Second Reviewer Questioned Are Checked and Closed                                                   | none     |     7 |
+| [/]  | `D00 T04 §63` | Verdict Paths the Second Reviewer Questioned Are Checked and Closed                                                   | none     |     7 |
 | [x]  | `D00 T05 §1`  | Framebuffer Snapshot API                                                                                              | none     |     5 |
 | [x]  | `D00 T05 §2`  | QEMU Framebuffer Dump                                                                                                 | none     |     5 |
 | [x]  | `D00 T05 §3`  | Desktop Smoke Test                                                                                                    | none     |     7 |

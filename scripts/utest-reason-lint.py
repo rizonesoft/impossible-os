@@ -94,6 +94,7 @@ COMPOSED = (
     ("UTEST_REASON_EXIT",    "u_reason_exit"),
     ("UTEST_REASON_LEAK",    "u_reason_leak"),
     ("UTEST_REASON_ISOLATE", "u_reason_isolate"),
+    ("UTEST_REASON_UNQUIESCED", "u_reason_unquiesced"),
     ("UTEST_REASON_INVALID", "u_reason_invalid"),
     ("UTEST_REASON_STALL",   "u_reason_stall"),
     ("UTEST_REASON_KLOG",    "u_reason_klog"),

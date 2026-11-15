@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-11-13 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-11-15 -->
 # User-Mode Test Output Formats
 
 The user-mode test launcher emits **four** output streams on serial.
@@ -143,6 +143,12 @@ Every binary produces two kernel-side lines:
 [INFO] UTEST-1a2b3c4d: <name>: PASS (exit=0)
 [ OK ] UTEST-1a2b3c4d: === N passed, M failed, K skipped of T total ===
 ```
+
+A binary passes only on exit 0 with proof it ran: a syscall from ring 3.
+A binary that timed out fails as a timeout whatever status it then died
+with, a pass or skip status with no ring-3 syscall is counted as never ran
+(an `ERROR` record), and a binary whose `fork()` descendants did not finish
+fails as `descendants did not finish`, even when its own exit was clean.
 
 Plus whatever the user-mode harness writes via `[PASS]` / `[FAIL]` /
 `[UTEST-BEGIN]` / `[UTEST-END]` lines. This stream is parsed by
@@ -1487,7 +1493,7 @@ is corruption, and authenticating one would present a damaged identity as
 genuine launcher output.
 
 The value's **unit lives in the label**, because it is not one semantic
-type across the six paths:
+type across the seven paths:
 
 | Identity | Published when | Value |
 |---|---|---|
@@ -1497,6 +1503,7 @@ type across the six paths:
 | `agg_manifest_bad_unknown.exe` | the manifest exists but would not parse | **unknown** -- see below |
 | `agg_glob_kept_<n>.exe` | more glob refusals than can be published individually | refusals **retained** before the cap |
 | `agg_filter_bad_unknown.exe` | the `utest_filter=` value was longer than the 63 bytes boot.conf can carry, so no binary was planned | **unknown** (the loader keeps only the prefix that fits) |
+| `agg_filter_unmatched_<n>.exe` | pattern `<n>` of `utest_filter=` (counting from 1, empty segments included) explicitly matched no binary the plan considered: a misspelled name, or an opt-in binary missing from the image. Selection by default (ordinary binaries planned beside an opt-in name) is not a match | the pattern's **position** |
 
 Whether a kind publishes a number is a COLUMN in the launcher's table, not
 a per-call-site decision, so exactly one value form is emittable per kind.

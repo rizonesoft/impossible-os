@@ -41,6 +41,7 @@
 
 #include "kernel/types.h"
 #include "kernel/klog.h"
+#include "kernel/boot_info.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
@@ -254,6 +255,33 @@ void test_usermode_set_filter_truncated(int truncated)
     s_filter_truncated = truncated ? 1 : 0;
 }
 
+void test_usermode_configure(const struct boot_config *cfg)
+{
+    /* An empty value clears the filter (test_usermode_set_filter). The
+     * loader defaults utest_isolation to 1, so 0 is only ever boot.conf's
+     * explicit opt-out; every other knob reads 0 as its own default. */
+    test_usermode_set_filter(cfg->utest_filter);
+    test_usermode_set_filter_truncated(cfg->utest_filter_truncated);
+    test_usermode_set_timeout_ms(cfg->utest_timeout_ms);
+    test_usermode_set_tap(cfg->tap);
+    test_usermode_set_isolation(cfg->utest_isolation != 0);
+    test_usermode_set_xml(cfg->xml);
+    test_usermode_set_json(cfg->json);
+    test_usermode_set_stress_iters(cfg->stress_iters);
+}
+
+void test_usermode_knobs(struct utest_knobs *out)
+{
+    out->filter           = s_filter;
+    out->timeout_ms       = s_timeout_ms;
+    out->stress_iters     = s_stress_iters;
+    out->filter_truncated = (uint8_t)s_filter_truncated;
+    out->tap              = (uint8_t)s_tap_mode;
+    out->isolation        = (uint8_t)s_isolation_enabled;
+    out->xml              = (uint8_t)s_xml_mode;
+    out->json             = (uint8_t)s_json_mode;
+}
+
 void test_usermode_set_timeout_ms(uint32_t ms)
 {
     s_timeout_ms = ms;
@@ -422,20 +450,35 @@ static int u_has_star(const char *s)
     return 0;
 }
 
-int test_usermode_filter_selects(const char *filter, const char *name);
-int test_usermode_filter_selects(const char *filter, const char *name)
+/* Every segment is one bit, by its position in the list. A value holds at
+ * most UTEST_FILTER_MAX - 1 bytes, so it has at most UTEST_FILTER_MAX
+ * segments (all of them empty), and that many bits fit a uint64_t. */
+_Static_assert(UTEST_FILTER_MAX <= 64,
+               "utest_filter segments are tracked in a 64-bit mask");
+
+/* The selection rule above, plus the evidence of which patterns MATCHED.
+ * Selection and a match are not the same thing: an ordinary name is selected
+ * by DEFAULT when the list holds only opt-in patterns, and that default must
+ * never count as a match for any of them, or `utest_filter=` naming an opt-in
+ * binary that is not on the image would be satisfied by every ordinary one.
+ * With `hits`, every segment that explicitly matches `name` sets its bit,
+ * the scan does not stop at the first, and the default sets none. */
+static int u_filter_match(const char *filter, const char *name, uint64_t *hits)
 {
     /* One segment, NUL-terminated for the glob. The boot_info field bounds
      * the whole value, so a segment can never be longer than it. */
     char seg[UTEST_FILTER_MAX];
     int name_opt_in = u_is_opt_in_name(name);
     int saw_ordinary = 0;
+    int selected = 0;
+    uint32_t idx = 0;
     const char *p = filter;
 
     if (!filter)
         return !name_opt_in;
     while (*p) {
         uint32_t n = 0;
+        int matched = 0;
 
         while (p[n] && p[n] != ':')
             n++;
@@ -450,23 +493,101 @@ int test_usermode_filter_selects(const char *filter, const char *name)
             seg[n] = '\0';
             opt_in_pattern = !u_has_star(seg) && u_is_opt_in_name(seg);
             if (opt_in_pattern) {
-                if (name_opt_in && test_usermode_glob_match(seg, name))
-                    return 1;
+                matched = name_opt_in && test_usermode_glob_match(seg, name);
             } else {
                 saw_ordinary = 1;
-                if (!name_opt_in && test_usermode_glob_match(seg, name))
-                    return 1;
+                matched = !name_opt_in && test_usermode_glob_match(seg, name);
             }
         } else if (n >= sizeof(seg)) {
             /* Longer than the field can carry: unreachable from boot.conf,
              * and treated as an ordinary pattern that matches nothing. */
             saw_ordinary = 1;
         }
+        if (matched) {
+            selected = 1;
+            if (!hits)
+                return 1;
+            if (idx < 64u)
+                *hits |= (uint64_t)1u << idx;
+        }
+        idx++;
         p += n;
         if (*p == ':')
             p++;
     }
-    return !name_opt_in && !saw_ordinary;
+    return selected || (!name_opt_in && !saw_ordinary);
+}
+
+int test_usermode_filter_selects(const char *filter, const char *name);
+int test_usermode_filter_selects(const char *filter, const char *name)
+{
+    return u_filter_match(filter, name, (uint64_t *)0);
+}
+
+/* The segments of `filter` that are patterns: every non-empty one, by the
+ * position u_filter_match numbers it with. Empty segments are ignored, so a
+ * value of separators alone holds no pattern and means no filter. */
+static uint64_t u_filter_patterns(const char *filter)
+{
+    uint64_t mask = 0;
+    uint32_t idx = 0;
+    const char *p = filter;
+
+    if (!filter)
+        return 0;
+    while (*p) {
+        uint32_t n = 0;
+
+        while (p[n] && p[n] != ':')
+            n++;
+        if (n > 0 && idx < 64u)
+            mask |= (uint64_t)1u << idx;
+        idx++;
+        p += n;
+        if (*p == ':')
+            p++;
+    }
+    return mask;
+}
+
+/* The patterns of `filter` that matched nothing the plan considered, given
+ * the plan's `hits`. None when there is no filter, when it was cut (that
+ * plans nothing and fails on its own aggregate) or when no plan exists. */
+static uint64_t u_filter_unmatched(const char *filter, int truncated,
+                                   int alloc_failed, uint64_t hits)
+{
+    if (!filter || truncated || alloc_failed)
+        return 0;
+    return u_filter_patterns(filter) & ~hits;
+}
+
+/* Copy segment `want` (by the same numbering) into `out`, NUL-terminated and
+ * cut to `cap - 1` bytes, for naming a pattern in a log line. */
+static void u_filter_segment(const char *filter, uint32_t want, char *out, uint32_t cap)
+{
+    uint32_t idx = 0;
+    const char *p = filter;
+
+    out[0] = '\0';
+    if (!filter || cap == 0)
+        return;
+    while (*p) {
+        uint32_t n = 0;
+
+        while (p[n] && p[n] != ':')
+            n++;
+        if (idx == want) {
+            uint32_t k;
+            for (k = 0; k < n && k + 1u < cap; k++)
+                out[k] = p[k];
+            out[k] = '\0';
+            return;
+        }
+        idx++;
+        p += n;
+        if (*p == ':')
+            p++;
+    }
 }
 
 static int u_is_test_binary(const char *name)
@@ -1544,6 +1665,10 @@ struct plan_state {
      * enumeration sources. */
     uint32_t           skipped_by_filter;
     uint32_t           skipped_opt_in;   /* opt-in names no filter named */
+    /* The utest_filter= segments that explicitly matched a name this plan
+     * considered (u_filter_match). A pattern with no bit selected nothing,
+     * and the run reports it by name rather than passing without it. */
+    uint64_t           filter_hits;
     uintptr_t          block_phys;
     /* 1 = the entry array or the name arena filled. The plan is then no
      * longer the complete enumeration, so nothing may run off it. */
@@ -2019,6 +2144,7 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                     ms->refused_smoke_selected[ms->refused_count] =
                         (uint8_t)((verdict == UTEST_NAME_REFUSE_ATTR &&
                                    entry_type == UTEST_TYPE_SMOKE &&
+                                   !s_filter_truncated &&
                                    test_usermode_filter_selects(s_filter,
                                                                 name_start))
                                   ? 1 : 0);
@@ -2167,6 +2293,30 @@ static void u_loader_stage_fault(struct task *self)
  * A pure function, deliberately: its only alternative was an inline
  * conditional that no test could reach without driving a real loader
  * failure through live infrastructure the test policy forbids. */
+/* How a reaped binary's exit is classified, before any escalation. The
+ * order is the verdict: a timeout is a timeout whatever status the task
+ * died with (a binary that exits 0 inside the termination grace still
+ * missed its deadline), and a pass or skip status counts only with PROOF the
+ * image ran: a syscall from ring 3 (`entered_user`). Every binary that runs
+ * reaches its exit status through one, so a status without it is a task that
+ * died before ring 3. A pure function, so the order is assertable. */
+static int u_exit_class(int32_t exit_status, int timed_out, uint32_t entered_user)
+{
+    if (timed_out)
+        return UTEST_EXIT_CLASS_TIMEOUT;
+    if (exit_status == 0 || exit_status == UTEST_EXIT_SKIP) {
+        if (!entered_user)
+            return UTEST_EXIT_CLASS_UNRAN;
+        return exit_status == 0 ? UTEST_EXIT_CLASS_PASS : UTEST_EXIT_CLASS_SKIP;
+    }
+    return UTEST_EXIT_CLASS_FAIL;
+}
+
+int test_usermode_exit_class(int32_t exit_status, int timed_out, uint32_t entered_user)
+{
+    return u_exit_class(exit_status, timed_out, entered_user);
+}
+
 static int u_record_verdict(int verdict, int loader_stage_fault,
                             int timed_out, int reached_exec,
                             int frame_adopted, int entered_user)
@@ -3032,6 +3182,7 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
 #define UTEST_RSNC_NEG          "-"
 #define UTEST_RSNC_LEAK         " handle(s) leaked"
 #define UTEST_RSNC_ISOLATE      "isolation failed"
+#define UTEST_RSNC_UNQUIESCED   "descendants did not finish"
 #define UTEST_RSNC_INVALID      "invalid test report"
 #define UTEST_RSNC_KLOG         "kernel error mismatch"
 #define UTEST_RSNC_ISR          "interrupt depth leaked"
@@ -3048,6 +3199,7 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
                               + UTEST_DIGITS_U32)
 #define UTEST_REASON_LEAK    (UTEST_DIGITS_U32 + UTEST_LIT(UTEST_RSNC_LEAK))
 #define UTEST_REASON_ISOLATE UTEST_LIT(UTEST_RSNC_ISOLATE)
+#define UTEST_REASON_UNQUIESCED UTEST_LIT(UTEST_RSNC_UNQUIESCED)
 #define UTEST_REASON_INVALID UTEST_LIT(UTEST_RSNC_INVALID)
 #define UTEST_REASON_KLOG    UTEST_LIT(UTEST_RSNC_KLOG)
 #define UTEST_REASON_ISR     UTEST_LIT(UTEST_RSNC_ISR)
@@ -3105,6 +3257,9 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
  * planned and this one aggregate makes the run red. 22 bytes, inside the
  * UTEST_RSN_SHAPE maximum (29). */
 #define UTEST_RSN_FILTER_CUT "utest_filter truncated"
+/* A utest_filter= pattern selected no binary the plan considered, so what it
+ * asked for did not run. 28 bytes, inside the UTEST_RSN_SHAPE maximum (29). */
+#define UTEST_RSN_FILTER_NONE "utest_filter matched nothing"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
@@ -3122,12 +3277,14 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
                                                            UTEST_LIT(UTEST_RSN_TASK_CREATE)), \
                                                 UTEST_MAX2(UTEST_LIT(UTEST_RSN_MISMATCH), \
                                                            UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNVERIFIED), \
-                                                                      UTEST_LIT(UTEST_RSN_FILTER_CUT)))))))
+                                                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_FILTER_CUT), \
+                                                                                 UTEST_LIT(UTEST_RSN_FILTER_NONE))))))))
 #define UTEST_REASON_MAX                                                   \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
                                      UTEST_REASON_EXIT),                   \
                           UTEST_MAX2(UTEST_REASON_LEAK,                    \
-                                     UTEST_REASON_ISOLATE)),               \
+                                     UTEST_MAX2(UTEST_REASON_ISOLATE,      \
+                                                UTEST_REASON_UNQUIESCED))), \
                UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_INVALID,      \
                                                 UTEST_REASON_STALL),       \
                                      UTEST_MAX2(UTEST_REASON_KLOG,         \
@@ -3215,6 +3372,14 @@ static void u_reason_isolate(char (*dst)[UTEST_REASON_BUF])
 
     (*dst)[0] = '\0';
     u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);
+}
+
+static void u_reason_unquiesced(char (*dst)[UTEST_REASON_BUF])
+{
+    uint32_t rp = 0;
+
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_UNQUIESCED);
 }
 
 static void u_reason_klog(char (*dst)[UTEST_REASON_BUF])
@@ -3508,7 +3673,8 @@ _Static_assert(UTEST_REFUSAL_ID_FIXED + UTEST_REFUSAL_PREFIX_MIN <=
     X(MANIFEST_KEPT, "manifest_kept", 1)                                   \
     X(MANIFEST_BAD,  "manifest_bad",  0)                                   \
     X(GLOB_KEPT,     "glob_kept",     1)                                   \
-    X(FILTER_BAD,    "filter_bad",    0)
+    X(FILTER_BAD,    "filter_bad",    0)                                   \
+    X(FILTER_UNMATCHED, "filter_unmatched", 1)
 
 typedef enum {
 #define UTEST_AGG_ENUM(name, label, has_value) UTEST_AGG_##name,
@@ -6689,7 +6855,9 @@ int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_
 }
 
 /* Every escalation a finished binary's verdict goes through, in the one
- * order u_run_one applies them: a handle leak (PASS only), then the kernel
+ * order u_run_one applies them: descendants that did not finish (PASS or
+ * SKIP; first, because a survivor can cause every fault after it), a handle
+ * leak (PASS only), then the kernel
  * error window and interrupt depth (PASS or SKIP), then an isolation breach
  * (PASS only), then the leak reason when nothing else wrote one. Each step
  * acts only on a verdict that is not already FAIL, so the FIRST escalation
@@ -6702,6 +6870,11 @@ static int u_escalate_run(int verdict, const struct utest_escalation *in, uint32
     int why;
 
     *line = UTEST_FAIL_LINE_OTHER;
+    if (in->unquiesced && verdict != 1) {
+        verdict = u_report_apply_invalid(verdict, counters);
+        u_reason_unquiesced(reason);
+        *line = UTEST_FAIL_LINE_UNQUIESCED;
+    }
     if (in->have_stem && in->leaked > 0 && verdict == 0) {
         verdict = 1;
         counters[0]--;  /* undo PASS */
@@ -7915,6 +8088,7 @@ static int u_plan_init(struct plan_state *ps)
     ps->names_used        = 0;
     ps->skipped_by_filter = 0;
     ps->skipped_opt_in = 0;
+    ps->filter_hits       = 0;
     ps->smoke_refused     = 0;
     ps->block_phys        = 0;
     ps->overflowed   = 0;
@@ -8075,7 +8249,7 @@ static int u_plan_add_run_klog(struct plan_state *ps, const char *name,
         ps->skipped_by_filter++;
         return 1;
     }
-    if (!test_usermode_filter_selects(s_filter, name)) {
+    if (!u_filter_match(s_filter, name, &ps->filter_hits)) {
         /* An opt-in binary left out is not a filter exclusion the operator
          * asked for: it is counted apart, so the default run's summary line
          * keeps its shape and the artifacts are not told a filter ran. */
@@ -8957,6 +9131,7 @@ static void u_run_one(const char *name, utest_type_t type,
     char reason[UTEST_REASON_BUF];
     int  have_stem;
     int  isolation_failed = 0;
+    int  unquiesced = 0;       /* the reap could not show the tree finished */
     uint32_t ni, pi;
     int pid = -1;
     int32_t exit_status = 0;
@@ -8969,6 +9144,7 @@ static void u_run_one(const char *name, utest_type_t type,
     uint64_t start_ms;
     uint8_t isr_depth_before = 0;
     int fail_line = UTEST_FAIL_LINE_OTHER;   /* the escalation that claimed `reason`, if any */
+    int exit_class;                          /* u_exit_class of the reaped status */
     uint32_t klog_fails;
     uint64_t end_ms;
     /* The verdict the ARTIFACTS carry, which is not always the verdict the
@@ -9108,13 +9284,28 @@ static void u_run_one(const char *name, utest_type_t type,
      * ... not ok N" pair for the same test_num.  Emitting a PASS log
      * before the leak check fires lets a subsequent FAIL produce two
      * lines for the same run. */
-    if (exit_status == 0) {
+    exit_class = u_exit_class(exit_status, timed_out, loader.entered_user);
+    if (exit_class == UTEST_EXIT_CLASS_PASS) {
         counters[0]++;  /* passed (may be rolled back by escalations) */
         *out_verdict = 0;
-    } else if (exit_status == UTEST_EXIT_SKIP) {
+    } else if (exit_class == UTEST_EXIT_CLASS_SKIP) {
         counters[2]++;  /* skipped */
         *out_verdict = 2;
-    } else if (timed_out) {
+    } else if (exit_class == UTEST_EXIT_CLASS_UNRAN) {
+        /* A pass or skip status with no syscall ever made from ring 3: the
+         * task died on its way there (a loader path that returned instead of
+         * exiting, a remote termination with status 0), so nothing this
+         * binary could assert ever executed. Counted as never-ran, the class
+         * a refusal is, never as the PASS its status alone would read as. */
+        counters[1]++;
+        counters[3]++;
+        record_verdict = 3;
+        *out_verdict = 1;
+        u_reason_exit(&reason, exit_status);
+        utest_record_log(LOG_ERROR,
+                         "%s: exit status %d with no ring-3 syscall -- never ran",
+                         name_copy, (int64_t)exit_status);
+    } else if (exit_class == UTEST_EXIT_CLASS_TIMEOUT) {
         counters[1]++;  /* failed (timeout) */
         /* A timeout with nothing published never reached ring 3 -- the
          * loader stalled on its way there. Same class as a refusal. */
@@ -9203,6 +9394,7 @@ static void u_run_one(const char *name, utest_type_t type,
         struct utest_reap_result reap;
 
         u_capture_reap_tree((uint32_t)pid, &reap);
+        unquiesced = reap.live || !reap.exact || reap.stalled;
 
         if (reap.live)
             utest_record_log(LOG_WARN,
@@ -9291,6 +9483,7 @@ static void u_run_one(const char *name, utest_type_t type,
          * PASS becomes FAIL; a FAIL or SKIP keeps its verdict and the WARN
          * below names the breach. Codex quality M 2026-04-20. */
         esc.isolation_failed = (uint8_t)isolation_failed;
+        esc.unquiesced = (uint8_t)unquiesced;
         if (esc.depth_after != isr_depth_before)
             klog(LOG_ERROR, "UTEST",
                  "%s :: interrupt depth changed across the run (%u -> %u)",
@@ -9348,12 +9541,14 @@ static void u_run_one(const char *name, utest_type_t type,
         utest_record_log(LOG_INFO, "%s: SKIP (exit=77)", name_copy);
         u_emit_tap_point(1, test_num, name_copy, "SKIP");
     } else if (fail_line != UTEST_FAIL_LINE_OTHER) {
-        /* A leak, the kernel error window or an isolation breach turned the
-         * verdict into a FAIL: print the reason that escalation recorded,
-         * which is the one TAP, XML and JSON carry. Only the error window can
-         * escalate a SKIP, so the others always started from PASS. */
+        /* Unfinished descendants, a leak, the kernel error window or an
+         * isolation breach turned the verdict into a FAIL: print the reason
+         * that escalation recorded, which is the one TAP, XML and JSON carry.
+         * Only the error window and unfinished descendants can escalate a
+         * SKIP, so the others always started from PASS. */
         utest_record_log(LOG_ERROR, "%s: FAIL (%s -- escalated%s)", name_copy, reason,
-                         fail_line == UTEST_FAIL_LINE_KLOG ? "" : " from PASS");
+                         (fail_line == UTEST_FAIL_LINE_KLOG ||
+                          fail_line == UTEST_FAIL_LINE_UNQUIESCED) ? "" : " from PASS");
     } else if (timed_out && stalled) {
         /* SERIAL AGREES WITH THE ARTIFACTS. This branch re-derives its text
          * from the flags rather than using the finalized `reason` below, which
@@ -9589,6 +9784,7 @@ static void u_run_plan(void)
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
     uint32_t              skipped_opt_in = 0;
+    uint64_t              filter_unmatched = 0;  /* patterns that matched nothing */
     /* Per-run refusal counter. Function-local, so the launcher gains no
      * shared mutable state: test_usermode_run is the single enumerator,
      * and a static here would make two runs in one boot collide. It is
@@ -9836,6 +10032,15 @@ static void u_run_plan(void)
         u_plan_drop_runs(&plan);
     }
 
+    /* A pattern that matched nothing is a binary that was asked for and did
+     * not run: each one is a counted aggregate, so a misspelled name or an
+     * opt-in binary missing from the image turns the run red rather than
+     * passing without it (or, with nothing planned at all, publishing a
+     * green empty suite). Not judged when the filter was cut, which plans
+     * nothing and fails on its own aggregate, or when no plan exists. */
+    filter_unmatched = u_filter_unmatched(s_filter, s_filter_truncated,
+                                          plan.alloc_failed, plan.filter_hits);
+    total_planned      += (uint32_t)__builtin_popcountll(filter_unmatched);
     total_planned      += plan.count;
     skipped_by_filter   = plan.skipped_by_filter;
     skipped_opt_in      = plan.skipped_opt_in;
@@ -10037,6 +10242,18 @@ static void u_run_plan(void)
         total_ran++;
         u_emit_aggregate(UTEST_RSN_FILTER_CUT, UTEST_AGG_FILTER_BAD,
                          0u, &tap_point, counters, &rt);
+    }
+    for (i = 0; i < 64u; i++) {
+        char pat[UTEST_FILTER_MAX];
+
+        if (!(filter_unmatched & ((uint64_t)1u << i)))
+            continue;
+        u_filter_segment(s_filter, i, pat, sizeof(pat));
+        klog(LOG_ERROR, "UTEST",
+             "utest_filter pattern %u '%s' matched no binary", (uint64_t)(i + 1u), pat);
+        total_ran++;
+        u_emit_aggregate(UTEST_RSN_FILTER_NONE, UTEST_AGG_FILTER_UNMATCHED,
+                         i + 1u, &tap_point, counters, &rt);
     }
     if (glob_refusal_overflowed) {
         total_ran++;
@@ -10617,13 +10834,16 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
      * restore it around the probe so a filtered boot cannot make this
      * assertion vacuous by excluding the synthetic names. */
     const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     s_filter = (const char *)0;
+    s_filter_truncated = 0;
     u_plan_add_run(&ps, a_name, (utest_type_t)a_type, (uint8_t)a_expects, 1);
     u_plan_add_run(&ps, b_name, (utest_type_t)b_type, (uint8_t)b_expects, 1);
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     for (i = 0; i < ps.count; i++) {
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;
         else                                               refusals++;
@@ -10657,10 +10877,12 @@ int test_usermode_plan_overflow(uint32_t *out_overflowed,
     uint32_t i, runs = 0;
     char name[16];
     const char *saved_filter = s_filter;   /* see the dedup probe above */
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     s_filter = (const char *)0;
+    s_filter_truncated = 0;
     /* Distinct names so the dedup never folds two of them together --
      * this test is about capacity, not identity. */
     for (i = 0; i < UTEST_PLAN_MAX + 4u; i++) {
@@ -10673,6 +10895,7 @@ int test_usermode_plan_overflow(uint32_t *out_overflowed,
         u_plan_add_run(&ps, name, UTEST_TYPE_CORRECTNESS, 1u, 1);
     }
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     if (out_overflowed) *out_overflowed = (uint32_t)ps.overflowed;
     /* The IMMUTABLE capture, not ps.count: the point of the field is that
      * it survives every later compaction. */
@@ -10709,6 +10932,32 @@ uint32_t test_usermode_plan_capacity(void)
  * longer stop at a capped runnable array, so a regression there would
  * silently restore the metadata loss the section removed. Returns 0 if
  * the plan could not be allocated. */
+/* The utest_filter= patterns that matched nothing when `buf` is planned as
+ * the manifest under `filter`: the mask test_usermode_run publishes one
+ * aggregate per bit of. Returns 0 when no plan could be allocated. */
+int test_usermode_manifest_unmatched(char *buf, uint32_t len, const char *filter,
+                                     uint64_t *out_unmatched);
+int test_usermode_manifest_unmatched(char *buf, uint32_t len, const char *filter,
+                                     uint64_t *out_unmatched)
+{
+    struct plan_state    ps;
+    struct manifest_state ms;
+    const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    u_manifest_reset(&ms);
+    s_filter = filter;
+    s_filter_truncated = 0;
+    u_manifest_parse(&ms, &ps, buf, len);
+    s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
+    *out_unmatched = u_filter_unmatched(filter, 0, 0, ps.filter_hits);
+    u_plan_free(&ps);
+    return 1;
+}
+
 int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
@@ -10733,16 +10982,20 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
     uint32_t i, runs = 0, refusals = 0;
     int first = -1, last = -1;
     const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     u_manifest_reset(&ms);
     /* The filter is a PARAMETER, not a forced NULL: forcing it hid the
      * path where a manifest whose entries are all excluded must still be
-     * authoritative. Saved and restored so a filtered boot is unaffected. */
+     * authoritative. Saved and restored so a filtered boot is unaffected.
+     * The truncation flag is the caller's too (a test sets it to plan a cut
+     * filter), so it is restored but not cleared. */
     s_filter = filter;
     u_manifest_parse(&ms, &ps, buf, len);
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     /* Exactly what u_manifest_load returns to the launcher, and therefore
      * what decides whether the directory glob runs at all. */
     if (out_authoritative) *out_authoritative = (ms.count > 0) ? 1u : 0u;
@@ -10808,13 +11061,16 @@ int test_usermode_manifest_klog(char *buf, uint32_t len, uint32_t *out_runs,
     const struct plan_entry *first = (const struct plan_entry *)0;
     uint32_t i, runs = 0, refusals = 0;
     const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     u_manifest_reset(&ms);
     s_filter = (const char *)0;
+    s_filter_truncated = 0;
     u_manifest_parse(&ms, &ps, buf, len);
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     for (i = 0; i < ms.refused_count; i++) {
         if (!u_plan_add_refusal(&ps, ms.refused_names[i], ms.refused_digest[i],
                                 ms.refused_verdict[i], (const char *)0, 0, 1,
@@ -10857,15 +11113,18 @@ int test_usermode_plan_lossy_refusal_suppresses(int exact, uint32_t *out_runs)
     struct plan_state ps;
     uint32_t i, runs = 0;
     const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     s_filter = (const char *)0;
+    s_filter_truncated = 0;
     u_plan_add_refusal(&ps, "test_bad_.exe", 0u,
                        (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
                        1, exact, 0);
     u_plan_add_run(&ps, "test_bad_.exe", UTEST_TYPE_CORRECTNESS, 1u, 1);
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     for (i = 0; i < ps.count; i++)
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN)
             runs++;
@@ -10930,10 +11189,12 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
     uint32_t i, before, refusals = 0, order_kept = 1;
     char name[16];
     const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
 
     if (!u_plan_init(&ps))
         return 0;
     s_filter = (const char *)0;
+    s_filter_truncated = 0;
     /* Alternate kinds so compaction has something to preserve, and give
      * every refusal a digest equal to its ordinal so order is checkable
      * after the runnables are removed. */
@@ -10958,6 +11219,7 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
                        (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
                        1, 0, 0);
     s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
     if (out_overflowed)   *out_overflowed = (uint32_t)ps.overflowed;
     if (out_count_stable) *out_count_stable = (ps.count == before) ? 1u : 0u;
     for (i = 0; i < ps.count; i++)
@@ -11032,12 +11294,22 @@ int test_usermode_freeze_refuses(const char *name, int as_smoke,
                                  const char **out_reason)
 {
     struct plan_state ps;
+    /* The probe names its own binary, so the boot's filter (or a cut one,
+     * which selects nothing) must not decide whether it is planned. */
+    const char *saved_filter = s_filter;
+    int saved_truncated = s_filter_truncated;
+    int added;
 
     if (!u_plan_init(&ps))
         return 0;
-    if (!u_plan_add_run(&ps, name,
-                        as_smoke ? UTEST_TYPE_SMOKE : UTEST_TYPE_CORRECTNESS,
-                        1u, 1)) {
+    s_filter = (const char *)0;
+    s_filter_truncated = 0;
+    added = u_plan_add_run(&ps, name,
+                           as_smoke ? UTEST_TYPE_SMOKE : UTEST_TYPE_CORRECTNESS,
+                           1u, 1);
+    s_filter = saved_filter;
+    s_filter_truncated = saved_truncated;
+    if (!added) {
         u_plan_free(&ps);
         return 0;
     }

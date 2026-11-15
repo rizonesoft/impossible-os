@@ -120,7 +120,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐  |  60   | An aggregate budget for pointer validation under the retention mutex         | §38, §45, §52                 |  [x]   |
 | ⭐  |  61   | Marker validated as a shape; record documents read from one snapshot         | §38, §52                      |  [x]   |
 | 💎  |  62   | Detaching an age candidate before classifying it                             | §46, §53                      |  [/]   |
-| ⭐  |  63   | Verdict paths the second reviewer questioned are checked and closed          | §47                           |  [ ]   |
+| ⭐  |  63   | Verdict paths the second reviewer questioned are checked and closed          | §47                           |  [x]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -2737,13 +2737,15 @@ Retention classifies every record and then destroys the losers in a second loop,
 
 The first live pass of the second reviewer (Gemini 4 Carbon, 2026-11-14, candidate `0b268dec2`) reported five findings in `src/kernel/test/test_usermode.c` and `src/kernel/main/boot_tests.c`, in code the routed reviewer had passed. None is verified. Each is checked at its lines first: fixed with a test that fails before the fix, or rejected with the code evidence. Its full text is in `.claude/overnight/reviews/20261114-204702-2985430-second-direct.out`.
 
-- [ ] `utest_filter=` naming a binary that does not exist: check whether an unmatched pattern, alone or in a colon list, ends in a suite with 0 failed and nothing not run (reported P1, `test_usermode_filter_selects`)
-- [ ] `u_run_one` reads `exit_status == 0` before `timed_out` and without the loader's evidence: check whether a child that died before ring 3 with status 0 is reported `PASS (exit=0)` (reported P1)
-- [ ] A top-level process that exits 0 while its `fork()` descendants have not quiesced: check whether `reap.live`, `!reap.exact` and `reap.stalled` only warn and leave the verdict a pass (reported P1, `u_capture_reap_tree`)
-- [ ] `boot_tests_run()` installs the `boot.conf` knobs with one-way guards after the kernel tests ran: check whether a kernel test that left a filter or isolation setting behind changes an unfiltered boot (reported P2)
-- [ ] A truncated `utest_filter` still installs its 63-byte prefix: check whether it can select a refused smoke entry and abort the suite, and whether the plan test shims save and clear `s_filter_truncated` (reported P3)
-- [ ] Record each one with `python3 scripts/overnight/second-review-log.py record` (`fixed`, or `rejected` with the evidence): they are the first entries of the second reviewer's trial
-- [ ] Commit: `"utest: the verdict paths the second reviewer questioned"`
+- [x] An unmatched `utest_filter=` pattern fails the run on `agg_filter_unmatched_<n>.exe`
+- [x] A pass or skip needs ring-3 proof and a timeout is decided first (`u_exit_class`)
+- [x] Unfinished `fork()` descendants fail a PASS or SKIP (`unquiesced` escalation)
+- [x] The boot installs every launcher knob unconditionally (`test_usermode_configure`)
+- [x] A truncated filter selects no refused smoke, and every plan shim saves and restores the flag
+- [x] All five recorded with `second-review-log.py record` as fixed
+- [x] Commit: `"utest: the verdict paths the second reviewer questioned"`
+
+**Notes:** the claim in the fifth finding that `utest_filter=:` plans every binary is rejected: a list of separators only holds no pattern and is documented as no filter. Each fix's control was run: removing it fails 1 to 6 of the new assertions.
 
 **Test checkpoint:** every finding has a test that fails before its fix, or a rejection quoting the lines that make it impossible; `make test-exec` and the user-mode suite pass; `second-review-log.py stats --findings` lists all five.
 

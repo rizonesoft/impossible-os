@@ -217,6 +217,28 @@ int test_usermode_boot_verdict(void);
  * does not copy it. */
 void test_usermode_set_filter(const char *filter);
 
+/* Install EVERY launcher knob from the boot configuration, each one
+ * unconditionally: a value boot.conf left at its default resets the knob to
+ * that default rather than leaving whatever was there. The kernel tests run
+ * first and drive the setters directly, so a guarded install ("set the
+ * filter only if boot.conf names one") let a knob a test left behind reach an
+ * unfiltered boot. `cfg->utest_filter` must outlive test_usermode_run(). */
+struct boot_config;
+void test_usermode_configure(const struct boot_config *cfg);
+
+/* The launcher's knobs as they stand, for assertions. */
+struct utest_knobs {
+    const char *filter;           /* NULL when no filter is set */
+    uint32_t    timeout_ms;
+    uint32_t    stress_iters;
+    uint8_t     filter_truncated;
+    uint8_t     tap;
+    uint8_t     isolation;
+    uint8_t     xml;
+    uint8_t     json;
+};
+void test_usermode_knobs(struct utest_knobs *out);
+
 /* Mark the utest_filter= value as truncated (boot.conf held more than
  * UTEST_FILTER_MAX - 1 bytes). The next run plans no binary and publishes
  * a counted `utest_filter truncated` refusal, so it fails rather than run a
@@ -360,6 +382,15 @@ int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_
 #define UTEST_FAIL_LINE_KLOG    1   /* the kernel error window or interrupt depth */
 #define UTEST_FAIL_LINE_LEAK    2
 #define UTEST_FAIL_LINE_ISOLATE 3
+#define UTEST_FAIL_LINE_UNQUIESCED 4  /* descendants outlived the binary's reap */
+
+/* A reaped binary's exit, before escalation (u_exit_class). */
+#define UTEST_EXIT_CLASS_PASS    0
+#define UTEST_EXIT_CLASS_FAIL    1
+#define UTEST_EXIT_CLASS_SKIP    2
+#define UTEST_EXIT_CLASS_TIMEOUT 3   /* timed out, whatever status it died with */
+#define UTEST_EXIT_CLASS_UNRAN   4   /* a pass or skip status with no ring-3 syscall */
+int test_usermode_exit_class(int32_t exit_status, int timed_out, uint32_t entered_user);
 
 /* The size of the `reason` buffer test_usermode_escalate_run writes. */
 #define UTEST_ESCALATION_REASON_BUF 96u
@@ -372,6 +403,11 @@ struct utest_escalation {
     uint8_t  depth_after;       /* and after the reap */
     uint8_t  have_stem;         /* isolation ran, so `leaked` was measured */
     uint8_t  isolation_failed;  /* setup or reap left stale state behind */
+    /* The binary's fork() descendants did not finish: the reap left some
+     * alive, could not account for an in-flight fork, or its wait ended on a
+     * stalled clock. The binary's work was not all observed, so it cannot
+     * pass, whatever its own exit status said. */
+    uint8_t  unquiesced;
 };
 
 /* Apply every escalation to `verdict` (0 PASS, 1 FAIL, 2 SKIP) in the order
@@ -610,6 +646,8 @@ void test_usermode_capture_reap_tree_ops(uint32_t owner_pid,
 static inline int test_usermode_run(void) { return UTEST_BOOT_OK; }
 static inline int test_usermode_boot_verdict(void) { return UTEST_BOOT_OK; }
 static inline void test_usermode_set_filter(const char *filter __attribute__((unused))) {}
+struct boot_config;
+static inline void test_usermode_configure(const struct boot_config *cfg __attribute__((unused))) {}
 static inline void test_usermode_set_filter_truncated(int truncated __attribute__((unused))) {}
 static inline void test_usermode_set_timeout_ms(uint32_t ms __attribute__((unused))) {}
 static inline void test_usermode_set_tap(int enable __attribute__((unused))) {}

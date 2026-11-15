@@ -137,27 +137,10 @@ void boot_tests_run(void)
          * the kernel tests in test_boot_init can drive the API
          * directly without setting up a fake config. */
         if (g_boot_info.config.test && run_usermode_tests) {
-            if (g_boot_info.config.utest_filter[0])
-                test_usermode_set_filter(g_boot_info.config.utest_filter);
-            if (g_boot_info.config.utest_filter_truncated)
-                test_usermode_set_filter_truncated(1);
-            if (g_boot_info.config.utest_timeout_ms)
-                test_usermode_set_timeout_ms(
-                    g_boot_info.config.utest_timeout_ms);
-            if (g_boot_info.config.tap)
-                test_usermode_set_tap(1);
-            /* Per-test isolation defaults ON; honour an explicit 0 in
-             * boot.conf as the only way to disable it. Matches the
-             * user-visible "production runs always isolate" contract. */
-            if (g_boot_info.config.utest_isolation == 0)
-                test_usermode_set_isolation(0);
-            if (g_boot_info.config.xml)
-                test_usermode_set_xml(1);
-            if (g_boot_info.config.json)
-                test_usermode_set_json(1);
-            if (g_boot_info.config.stress_iters)
-                test_usermode_set_stress_iters(
-                    g_boot_info.config.stress_iters);
+            /* Every knob, unconditionally: the kernel tests above drive
+             * the same setters, and a guarded install would let one they
+             * left behind reach a boot whose boot.conf never set it. */
+            test_usermode_configure(&g_boot_info.config);
             /* A POISONED verdict halts here, before boot_phase3 creates
              * cmd.exe: an unfinished fork constructor may own the slot that
              * task_create_internal would hand the shell (todo/answers.md Q16,

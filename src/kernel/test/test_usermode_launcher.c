@@ -95,6 +95,8 @@ int test_usermode_manifest_klog(char *buf, uint32_t len, uint32_t *out_runs,
                                 uint32_t *out_refusals, uint32_t *out_n,
                                 uint32_t *out_optional, const char **out_tag0,
                                 const char **out_text0);
+int test_usermode_manifest_unmatched(char *buf, uint32_t len, const char *filter,
+                                     uint64_t *out_unmatched);
 int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
@@ -637,6 +639,20 @@ static void test_filter_truncated_plans_nothing(void)
     TEST_ASSERT_EQ(runs, 0u, "a truncated filter plans no runnable binary");
     TEST_ASSERT_EQ(smoke, 0u, "and arms no refused-smoke gate of its own");
 
+    /* A refused smoke declaration the cut prefix happens to match: the
+     * prefix selects nothing, so it must not arm the smoke abort either. */
+    smoke = 99;
+    test_usermode_set_filter_truncated(1);
+    ok = u_opt_in_parse("test_gate.exe type=smoke expects_tasks=0\ntest_a.exe\n",
+                        "test_gate.exe", &runs, &refusals, &smoke, (uint32_t *)0);
+    test_usermode_set_filter_truncated(0);
+    if (!ok) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 1u, "the refused declaration still publishes");
+    TEST_ASSERT_EQ(smoke, 0u, "but a cut filter does not select it into the smoke gate");
+
     runs = 99;
     if (!u_opt_in_parse("test_smoke_boot.exe\ntest_a.exe\n", (const char *)0,
                         &runs, &refusals, &smoke, (uint32_t *)0)) {
@@ -644,6 +660,126 @@ static void test_filter_truncated_plans_nothing(void)
         return;
     }
     TEST_ASSERT_EQ(runs, 2u, "clearing the flag restores the plan");
+}
+
+/* Restore every knob from a snapshot, through the setters. */
+static void u_knobs_restore(const struct utest_knobs *k)
+{
+    test_usermode_set_filter(k->filter);
+    test_usermode_set_filter_truncated(k->filter_truncated);
+    test_usermode_set_timeout_ms(k->timeout_ms);
+    test_usermode_set_tap(k->tap);
+    test_usermode_set_isolation(k->isolation);
+    test_usermode_set_xml(k->xml);
+    test_usermode_set_json(k->json);
+    test_usermode_set_stress_iters(k->stress_iters);
+}
+
+/* The boot installs every knob from boot.conf, each unconditionally, so a
+ * knob a kernel test left behind cannot reach an unfiltered boot. */
+static void test_configure_resets_left_knobs(void)
+{
+    static struct boot_config cfg;
+    struct utest_knobs saved, k;
+    static const char want[] = "test_a.exe";
+    uint32_t i;
+
+    test_usermode_knobs(&saved);
+    /* What a test that returned early could leave behind. */
+    test_usermode_set_filter("test_left_behind.exe");
+    test_usermode_set_filter_truncated(1);
+    test_usermode_set_timeout_ms(5);
+    test_usermode_set_tap(1);
+    test_usermode_set_isolation(0);
+    test_usermode_set_xml(1);
+    test_usermode_set_json(1);
+    test_usermode_set_stress_iters(7);
+
+    /* A boot.conf that sets none of them, as the loader leaves it. */
+    for (i = 0; i < sizeof(cfg); i++)
+        ((uint8_t *)&cfg)[i] = 0;
+    cfg.utest_isolation = 1;
+    test_usermode_configure(&cfg);
+    test_usermode_knobs(&k);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)k.filter, 0ull, "no filter survives an unfiltered boot");
+    TEST_ASSERT_EQ(k.filter_truncated, 0u, "nor a truncation flag");
+    TEST_ASSERT_EQ(k.timeout_ms, 0u, "the timeout is back at its default");
+    TEST_ASSERT_EQ(k.tap, 0u, "TAP is off");
+    TEST_ASSERT_EQ(k.isolation, 1u, "isolation is back on");
+    TEST_ASSERT_EQ(k.xml, 0u, "XML is off");
+    TEST_ASSERT_EQ(k.json, 0u, "JSON is off");
+    TEST_ASSERT_EQ(k.stress_iters, 0u, "the stress count is back at its default");
+
+    /* And a boot.conf that sets each one installs it. */
+    for (i = 0; i < sizeof(want); i++)
+        cfg.utest_filter[i] = want[i];
+    cfg.utest_filter_truncated = 1;
+    cfg.utest_timeout_ms = 250;
+    cfg.tap = cfg.xml = cfg.json = 1;
+    cfg.utest_isolation = 0;
+    cfg.stress_iters = 3;
+    test_usermode_configure(&cfg);
+    test_usermode_knobs(&k);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)k.filter, (uint64_t)(uintptr_t)cfg.utest_filter,
+                   "the filter points at boot.conf's value");
+    TEST_ASSERT_EQ(k.filter_truncated, 1u, "the truncation flag is installed");
+    TEST_ASSERT_EQ(k.timeout_ms, 250u, "the timeout is installed");
+    TEST_ASSERT_EQ(k.tap + k.xml + k.json, 3u, "the three output formats are installed");
+    TEST_ASSERT_EQ(k.isolation, 0u, "an explicit utest_isolation=0 is honoured");
+    TEST_ASSERT_EQ(k.stress_iters, 3u, "the stress count is installed");
+
+    u_knobs_restore(&saved);
+}
+
+/* The utest_filter= patterns that matched nothing, as the real manifest
+ * parse plans them. 0xDEAD.. marks "no plan" so a skipped allocation is not
+ * read as an empty mask. */
+static uint64_t u_unmatched(const char *text, const char *filter)
+{
+    static char buf[512];
+    uint32_t p = 0;
+    uint64_t mask = 0;
+
+    while (text[p] && p < sizeof(buf) - 1u) {
+        buf[p] = text[p];
+        p++;
+    }
+    buf[p] = '\0';
+    if (!test_usermode_manifest_unmatched(buf, p, filter, &mask))
+        return 0xDEADDEADDEADDEADull;
+    return mask;
+}
+
+/* A pattern that selects nothing is a binary that was asked for and did not
+ * run, so the run reports it rather than passing without it. Selection by
+ * DEFAULT (ordinary binaries planned beside an opt-in name) is not a match. */
+static void test_filter_unmatched_patterns(void)
+{
+    const char *m = "test_smoke_boot.exe\ntest_a.exe\ntest_optin_x.exe\n";
+
+    if (u_unmatched(m, (const char *)0) == 0xDEADDEADDEADDEADull) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(u_unmatched(m, (const char *)0), 0ull, "no filter has no pattern to miss");
+    TEST_ASSERT_EQ(u_unmatched(m, "::"), 0ull, "separators alone hold no pattern");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_missing.exe"), 1ull,
+                   "a name that is not on the image matched nothing");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_optin_missing.exe"), 1ull,
+                   "a missing opt-in name is not satisfied by the default plan");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_optin_x.exe"), 0ull, "a present opt-in name matched");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_a.exe:test_missing.exe"), 2ull,
+                   "the unmatched segment of a list is named by its position");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_optin_x.exe:test_optin_missing.exe"), 2ull,
+                   "and among opt-in names");
+    TEST_ASSERT_EQ(u_unmatched(m, ":test_missing.exe"), 2ull,
+                   "positions count the empty segments too");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_a.exe:test_*.exe"), 0ull,
+                   "overlapping patterns both matched: the scan does not stop at the first");
+    TEST_ASSERT_EQ(u_unmatched(m, "test_optin_*.exe"), 1ull,
+                   "a wildcard never selects an opt-in binary, so it matched nothing here");
+    TEST_ASSERT_EQ(u_unmatched("test_optin_x.exe\n", "test_*.exe"), 1ull,
+                   "nor in a manifest of opt-in binaries only");
 }
 
 /* The smoke provenance of a REFUSED declaration uses the same rule: an
@@ -1660,8 +1796,8 @@ static void test_every_aggregate_identity_conforms(void)
     uint32_t kinds = test_usermode_aggregate_count();
     uint32_t k, i;
 
-    TEST_ASSERT(kinds == 6u,
-                "the launcher publishes exactly six fail-closed aggregates");
+    TEST_ASSERT(kinds == 7u,
+                "the launcher publishes exactly seven fail-closed aggregates");
 
     for (k = 0; k < kinds; k++) {
         const char *label = test_usermode_aggregate_label(k);
@@ -8147,6 +8283,61 @@ static void test_escalation_sequence(void)
     TEST_ASSERT_EQ((uint32_t)v, 0u, "a clean run stays PASS");
     TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_OTHER, "with no escalation");
     TEST_ASSERT_EQ((uint32_t)reason[0], 0u, "and no reason");
+
+}
+
+/* The exit classification, in its order: a timeout first, then a pass or
+ * skip status only with proof of ring-3 execution. */
+static void test_exit_class_order(void)
+{
+    TEST_ASSERT_EQ(test_usermode_exit_class(0, 0, 1), UTEST_EXIT_CLASS_PASS, "exit 0 after ring 3 passes");
+    TEST_ASSERT_EQ(test_usermode_exit_class(UTEST_EXIT_SKIP, 0, 1), UTEST_EXIT_CLASS_SKIP,
+                   "the skip code after ring 3 skips");
+    TEST_ASSERT_EQ(test_usermode_exit_class(0, 1, 1), UTEST_EXIT_CLASS_TIMEOUT,
+                   "exit 0 inside the termination grace is still a timeout");
+    TEST_ASSERT_EQ(test_usermode_exit_class(UTEST_EXIT_SKIP, 1, 1), UTEST_EXIT_CLASS_TIMEOUT,
+                   "and so is the skip code");
+    TEST_ASSERT_EQ(test_usermode_exit_class(0, 0, 0), UTEST_EXIT_CLASS_UNRAN,
+                   "exit 0 with no ring-3 syscall never ran");
+    TEST_ASSERT_EQ(test_usermode_exit_class(UTEST_EXIT_SKIP, 0, 0), UTEST_EXIT_CLASS_UNRAN,
+                   "nor did a skip code without one");
+    TEST_ASSERT_EQ(test_usermode_exit_class(-5, 0, 0), UTEST_EXIT_CLASS_FAIL,
+                   "a loader failure code is a FAIL, which the loader evidence then classes");
+    TEST_ASSERT_EQ(test_usermode_exit_class(3, 0, 1), UTEST_EXIT_CLASS_FAIL, "a nonzero exit fails");
+}
+
+/* A binary whose fork() descendants did not finish cannot pass: its work was
+ * not all observed, whatever its own exit status said. */
+static void test_escalation_unquiesced(void)
+{
+    struct utest_escalation in;
+    char reason[UTEST_ESCALATION_REASON_BUF];
+    uint32_t c[3];
+    int line, v, start;
+
+    for (start = 0; start <= 2; start++) {
+        memset(&in, 0, sizeof(in));
+        in.have_stem = 1;
+        in.unquiesced = 1;
+        in.leaked = 2;            /* a survivor's handles: the cause comes first */
+        c[0] = start == 0;
+        c[1] = start == 1;
+        c[2] = start == 2;
+        reason[0] = '\0';
+        v = test_usermode_escalate_run(start, &in, c, reason, &line);
+        TEST_ASSERT_EQ((uint32_t)v, 1u, "unfinished descendants leave no PASS or SKIP");
+        TEST_ASSERT_EQ(c[0] + c[1] + c[2], 1u, "and count the binary once");
+        TEST_ASSERT_EQ(c[1], 1u, "as failed");
+        if (start != 1) {
+            TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_UNQUIESCED,
+                           "the unfinished tree claims the line over the leak");
+            TEST_ASSERT_EQ((uint32_t)strcmp(reason, "descendants did not finish"), 0u,
+                           "and the reason");
+        } else {
+            TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_OTHER,
+                           "an existing FAIL keeps its own line");
+        }
+    }
 }
 
 /* ---- The window lifecycle on a fixture watch ---- */
@@ -8908,6 +9099,14 @@ void test_register_usermode_launcher(void)
                             test_filter_pattern_list, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: a truncated utest_filter plans nothing",
                             test_filter_truncated_plans_nothing, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a utest_filter pattern that selected nothing is reported",
+                            test_filter_unmatched_patterns, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: the boot installs every launcher knob unconditionally",
+                            test_configure_resets_left_knobs, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: unfinished descendants fail the binary",
+                            test_escalation_unquiesced, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an exit counts only in its order and with ring-3 proof",
+                            test_exit_class_order, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */
