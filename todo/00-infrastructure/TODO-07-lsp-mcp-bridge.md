@@ -987,15 +987,21 @@ Filed from §26's fourth adversarial round, as two High findings older than §26
 - [x] Gave the escalation and collection their share of `shutdown()`'s budget: the polite exit wait takes at most half of what is left, so a server that ignores stdin EOF no longer leaves every group sweep starting expired.
 - [x] Collected descendants before the reap on constructor failure, and held an incomplete one with a strong owner the force sweep drains
   - `_dispose_failed_spawn` runs one non-reaping escalation, `_reap_group`, and reaps only on an emptied group; an incomplete one goes to `_ABANDONED`, which `_collect_abandoned` drains.
-- [x] Sub-test 9v with a real PR_SET_DUMPABLE(0) worker of a real `LspSubprocess`: shutdown, retry after an exhausted first collection, descriptor exhaustion, reader and stderr thread-start failures, then the final force sweep.
+- [x] Widened the per-instance sweep to the leader's SESSION, so a worker that called `setpgid(0, 0)` is still collected (`_in_swept_group`).
+- [x] Refused emptiness from an unlisted `/proc`: `_ProcSnapshot.complete` is False then, and neither `_reap_group` nor the force sweep counts that scan as empty.
+- [x] Made `_collect_abandoned` take its lock without blocking, so a force sweep entered from a termination handler answers incomplete instead of deadlocking.
+- [x] Sub-test 9v runs a real PR_SET_DUMPABLE(0) worker of a real `LspSubprocess` through every collection path, then the final force sweep
+  - Paths: shutdown, retry after an exhausted first collection, descriptor exhaustion, an unlisted `/proc`, a `setpgid` worker, a contended registry, reader and stderr thread-start failures.
+  - The driver runs under a child subreaper that signals only its own unreaped children; a planted decoy pid proves cleanup trusts no number.
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the new sub-tests; a non-dumpable descendant keeps `shutdown()` at False until it is collected, and a constructor failure after a fork leaves no surviving worker. Test on: host tooling only (no QEMU dependency).
 
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 120/120 sub-tests PASS (9v opaque descendant collection is this section; 9p's exhaustion case now expects the confirmed death a provably empty group earns).
 
 > **Notes:**
-> - Five controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget.
+> - Eight controls, each fails 9v with its fix removed: no session generation proof, retire instead of claim, constructor reaps first, an unresolved member counted as empty, the polite wait spending the whole budget, a blocking registry lock, an unlisted `/proc` read as complete, a group-only sweep.
 > - 9p's descriptor-exhaustion case expected False only because the polite wait had spent the sweep's budget; an empty group is provable with no descriptor, so it now expects True, and exhaustion with a worker present is 9v's case.
+> - Review 2026-11-15 (round, performance, completion on 24595a2fc): 3 High and 1 Medium, all fixed above.
 > - Scope boundary: a descendant that called `setsid` itself, or whose leader was already reaped, is still out of reach without a kernel container (section 23's parked item).
 
 ## Format Quick Reference

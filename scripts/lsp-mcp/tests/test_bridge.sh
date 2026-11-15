@@ -10954,6 +10954,12 @@ SERVER = (
     "subprocess.Popen([sys.executable,'-c',%r,sys.argv[1]])\n"
     "time.sleep(300)\n" % WORKER
 )
+# The same worker, but it leaves the leader's GROUP first (keeping the
+# session), the shape a group-only sweep cannot see.
+SERVER_PGRP = SERVER.replace(
+    "ctypes.CDLL('libc.so.6').prctl",
+    "os.setpgid(0,0)\\nctypes.CDLL('libc.so.6').prctl")
+assert SERVER_PGRP != SERVER
 fails = []
 workers = []
 
@@ -10997,9 +11003,9 @@ tmp = sys.argv[1]
 shaped = []
 
 
-def spawn(tag):
+def spawn(tag, server=SERVER):
     path = os.path.join(tmp, tag)
-    inst = lsp_client.LspSubprocess([sys.executable, "-c", SERVER, path], "c")
+    inst = lsp_client.LspSubprocess([sys.executable, "-c", server, path], "c")
     w = wait_worker(path)
     check(w is not None, "[%s] the worker never started" % tag)
     if w is not None:
@@ -11074,6 +11080,56 @@ recovered = inst.shutdown(timeout=3.0)
 check(gone(w), "[exhausted] the worker survived once descriptors returned")
 check(recovered is True, "[exhausted] the retry did not confirm the death")
 
+# --- F: /proc cannot be listed ----------------------------------------
+# An unlisted /proc is "saw nothing", never "nothing is there": two such
+# scans must not confirm an empty group (Codex completion review, High).
+inst, w = spawn("unlisted")
+real_listdir = os.listdir
+
+
+def no_proc(path=".", *a):
+    if path == "/proc":
+        raise OSError(24, "Too many open files")
+    return real_listdir(path, *a)
+
+
+os.listdir = no_proc
+try:
+    blind = inst.shutdown(timeout=1.0)
+finally:
+    os.listdir = real_listdir
+check(blind is False, "[unlisted] shutdown() confirmed a death from scans "
+      "that never listed /proc")
+check(alive(w), "[unlisted] the fixture lost its worker before the retry")
+seen = inst.shutdown(timeout=3.0)
+check(gone(w), "[unlisted] the worker survived once /proc was listable")
+check(seen is True, "[unlisted] the retry did not confirm the death")
+
+# --- G: the worker left the leader's group but not its session ---------
+inst, w = spawn("setpgid", SERVER_PGRP)
+moved = inst.shutdown(timeout=3.0)
+check(gone(w), "[setpgid] a same-session worker in its own group survived "
+      "shutdown(): the sweep looked at the group only")
+check(moved is True, "[setpgid] shutdown() did not confirm the death")
+
+# --- H: the abandoned registry is contended during collection ----------
+# The force sweep can run inside a termination handler on a thread that
+# was interrupted holding this lock; it must answer incomplete in its
+# budget, never wait (Codex round + performance review, High).
+held = lsp_client._ABANDONED_LOCK.acquire(timeout=1.0)
+check(held, "[contended] the fixture could not take the registry lock")
+try:
+    t0 = time.monotonic()
+    got = lsp_client._collect_abandoned(time.monotonic() + 0.05,
+                                        lsp_client._REAL_CLOCK)
+    took = time.monotonic() - t0
+finally:
+    if held:
+        lsp_client._ABANDONED_LOCK.release()
+check(got is False, "[contended] a contended registry reported complete")
+check(took < 0.5, "[contended] collection blocked %.2fs on the registry "
+      "lock" % took)
+
 # --- C/D: a thread that cannot start after the server forked -----------
 for which in ("lsp-reader", "lsp-stderr"):
     tag = "ctor-" + which
@@ -11116,14 +11172,77 @@ for w in workers:
             pass
 sys.stdout.write("RESULT %s\n" % ("FAIL" if fails else "OK"))
 PY
-    timeout 120 python3 "$drv" "$dir" > "$out" 2> "$err" || rc=$?
-    # Every server and worker wrote its pid here; none outlives the test,
-    # whatever ended the driver (a timeout stops only the driver).
-    local f
-    for f in "$dir"/*; do
-        [ -f "$f" ] && kill -9 "$(cat "$f")" 2>/dev/null
-    done
+    # A decoy that is NOT a fixture descendant, with its pid planted in the
+    # fixture's pid directory: cleanup must never signal it, which is what
+    # a reused number would look like (Codex round review, High).
+    local decoy
+    sleep 300 & decoy=$!
+    printf '%s' "$decoy" > "$dir/decoy"
+    # The driver runs under a CHILD SUBREAPER, so every fixture process
+    # that outlives its parent is reparented to the supervisor rather than
+    # to init. The supervisor reaps as it goes (a zombie would read as
+    # alive to the driver's checks) and, once the driver ends or times
+    # out, SIGKILLs only its own unreaped children: a pid nobody has
+    # reaped cannot be reused, so no number is ever trusted.
+    python3 - "$drv" "$dir" > "$out" 2> "$err" <<'SUP' || rc=$?
+import ctypes, os, signal, subprocess, sys, time
+if ctypes.CDLL("libc.so.6", use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
+    sys.stdout.write("NOSHAPE PR_SET_CHILD_SUBREAPER refused\n")
+    sys.exit(0)
+me = os.getpid()
+drv = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])
+rc, end = None, time.monotonic() + 120.0     # deadline: the old timeout
+while rc is None:
+    try:
+        pid, st = os.waitpid(-1, os.WNOHANG)
+    except ChildProcessError:
+        break
+    if pid == drv.pid:
+        rc = os.waitstatus_to_exitcode(st)
+    elif pid == 0:
+        if time.monotonic() >= end:
+            os.kill(drv.pid, signal.SIGKILL)   # our unreaped child
+            end = float("inf")
+        time.sleep(0.01)
+
+
+def children():
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            stat = open("/proc/%s/stat" % name).read()
+        except OSError:
+            continue
+        if int(stat.rsplit(")", 1)[1].split()[1]) == me:
+            out.append(int(name))
+    return out
+
+
+stop = time.monotonic() + 10.0               # deadline: bounded collection
+while time.monotonic() < stop:
+    for pid in children():
+        try:
+            os.kill(pid, signal.SIGKILL)       # a child we have not reaped
+        except ProcessLookupError:
+            pass
+    try:
+        while os.waitpid(-1, os.WNOHANG)[0] > 0:
+            pass
+    except ChildProcessError:
+        break                                # no children remain at all
+    time.sleep(0.02)
+sys.exit(1 if rc is None else rc)
+SUP
+    local decoy_alive=0
+    kill -0 "$decoy" 2>/dev/null && decoy_alive=1
+    kill "$decoy" 2>/dev/null; wait "$decoy" 2>/dev/null
     rm -rf "$dir"
+    if [ "$decoy_alive" != "1" ]; then
+        printf '[9v] FAIL: cleanup signalled a planted pid that is not a fixture descendant\n' >&2
+        rm -f "$drv" "$out" "$err"; return 1
+    fi
     if grep -q '^NOSHAPE' "$out"; then
         LSP_SKIPPED_SHAPES="${LSP_SKIPPED_SHAPES}${LSP_SKIPPED_SHAPES:+
 }9v opaque descendant collection: $(sed -n 's/^NOSHAPE //p' "$out")"

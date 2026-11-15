@@ -1854,7 +1854,7 @@ class _ProcSnapshot:
     And in every case the cache only NARROWS the candidate set --
     authorization to signal is a live re-read after the pidfd is open."""
 
-    __slots__ = ("procs", "_ours", "_gen")
+    __slots__ = ("procs", "_ours", "_gen", "complete")
 
     def __init__(
         self,
@@ -1862,8 +1862,13 @@ class _ProcSnapshot:
                           Optional[int], Optional[int]]],
         ours_cache: Optional[dict] = None,
         gen_cache: Optional[dict] = None,
+        complete: bool = True,
     ) -> None:
         self.procs = procs
+        # False when /proc itself could not be listed. An empty `procs`
+        # then means "saw nothing", not "nothing is there", and no caller
+        # may read it as an empty group (Codex completion review, High).
+        self.complete = complete
         # A caller looping over several snapshots shares one cache: the
         # (pid, ticks) key pins identity, and a live process cannot gain
         # a stamp it did not inherit at exec, so a stored answer stays
@@ -2000,7 +2005,9 @@ def _proc_snapshot(deadline: Optional[float] = None,
     try:
         entries = os.listdir("/proc")
     except Exception:
-        return _ProcSnapshot(procs, ours_cache)
+        # fail-direction: the snapshot is marked incomplete, which every
+        # emptiness proof treats as "members unknown", never as "none".
+        return _ProcSnapshot(procs, ours_cache, complete=False)
     for name in entries:
         if deadline is not None and clock.now() >= deadline:
             break
@@ -2097,13 +2104,15 @@ def _group_members(
     members: list[tuple[int, Optional[int], Optional[int]]] = []
     snap = (snapshot if snapshot is not None
             else _proc_snapshot(deadline, clock=clock))
+    if not snap.complete and unresolved is not None:
+        unresolved.append(None)     # /proc unlisted: members unknown
     me = os.getpid()
     for pid, _ppid, pgrp, sid, ticks in snap.procs:
         if deadline is not None and clock.now() >= deadline:
             break
         if pid == exclude or pid == me:
             continue
-        if pgrp is None or pgrp != pgid:
+        if pgrp is None or (pgrp != pgid and sid != pgid):
             continue        # unreadable stat: not groupable, but the
                             # stamp-wide pass still sees it
         # BOTH stamps from one environment traversal, and one cache entry
@@ -2125,7 +2134,8 @@ def _group_members(
         if fd is not None:
             live_ours, live_gen = _provably_ours_and_gen(
                 pid, gen, deadline=deadline, clock=clock, session_gen=pgid)
-            if _pgrp_of(pid) != pgid or not live_ours or not live_gen:
+            if (not _in_swept_group(pid, pgid) or not live_ours
+                    or not live_gen):
                 try:
                     os.close(fd)
                 except Exception:
@@ -2137,6 +2147,21 @@ def _group_members(
         # High -- the rule this file applies everywhere else).
         members.append((pid, fd, proc_start_ticks(pid)))
     return members
+
+
+def _in_swept_group(pid: int, pgid: int) -> bool:
+    """True when `pid` is in the process group `pgid` OR in the session
+    whose id is `pgid`.
+
+    The leader was started with `start_new_session`, so its pid is both
+    the group and the session id. A worker that calls `setpgid(0, 0)`
+    leaves the group but keeps the session, and is still this
+    generation's: a group-only test let the per-instance sweep confirm an
+    empty group and retire the leader while that worker ran (Codex
+    completion review, Medium). Ownership is still proved separately;
+    this only widens where to look. A worker that called `setsid` left
+    both and stays out of reach (section 23)."""
+    return _pgrp_of(pid) == pgid or _session_of(pid) == pgid
 
 
 def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
@@ -2156,7 +2181,7 @@ def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
             return False
         if ticks is None or proc_start_ticks(p) != ticks:
             return False
-        if _pgrp_of(p) != pgid:
+        if not _in_swept_group(p, pgid):
             return False
         # One traversal for both stamps; the budget re-check below is why
         # they are read together rather than in sequence.
@@ -2684,7 +2709,7 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
         # snapshot is in no round that saw it, and once the leaders die
         # its session can no longer be proven. Two consecutive empty
         # rounds, the same rule the stamped phase uses.
-        if hit == 0:
+        if hit == 0 and snap.complete:   # an unlisted /proc proves nothing
             session_empty += 1
         else:
             session_empty = 0
@@ -2709,9 +2734,11 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     for _ in range(20):                     # PHASE B -- stamped fixpoint
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan
-        if stamped_round(_proc_snapshot(deadline=deadline,
-                                        ours_cache=owner_cache,
-                                        clock=clock)):
+        snap_b = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
+                                clock=clock)
+        if stamped_round(snap_b) or not snap_b.complete:
+            # An unlisted /proc is not an empty scan (Codex completion
+            # review, High): it resets the fixpoint like a hit does.
             stamped_empty = 0
         else:
             # TWO consecutive empty scans, not one, because a helper
@@ -2748,32 +2775,52 @@ def _collect_abandoned(deadline: Optional[float],
 
     True when nothing is left abandoned. Bounded by `deadline` through
     `_reap_group`; an entry it cannot finish stays for the next sweep, its
-    leader unreaped and its record CLAIMED, so the proof survives."""
-    with _ABANDONED_LOCK:
+    leader unreaped and its record CLAIMED, so the proof survives.
+
+    Every lock acquisition here is NON-blocking. This runs inside the
+    force sweep, which a termination handler reaches on the main thread;
+    if that thread was interrupted inside `_dispose_failed_spawn`'s locked
+    append, a blocking acquire waits for a frame that cannot resume until
+    the handler returns, and teardown hangs (Codex round + performance
+    review, High). Contention answers "incomplete", never "wait"."""
+    if not _ABANDONED_LOCK.acquire(blocking=False):
+        return False
+    try:
         pending = list(_ABANDONED)
+    finally:
+        _ABANDONED_LOCK.release()
+    done = True
     for entry in pending:
         proc, rec, gen = entry
         if deadline is not None and clock.now() >= deadline:
-            break
+            return False
         try:
             _killed, emptied = _reap_group(proc.pid, gen=gen,
                                            deadline=deadline, clock=clock)
         except Exception:
             emptied = False
         if not emptied:
+            done = False
             continue
+        # Released BEFORE the reap: a later sweep must not find an entry
+        # whose leader is already collected. Contention keeps it listed
+        # (its group is confirmed empty, so a later pass reaps and drops
+        # it at no risk).
+        if not _ABANDONED_LOCK.acquire(blocking=False):
+            done = False
+            continue
+        try:
+            _ABANDONED.remove(entry)
+        except ValueError:
+            pass
+        finally:
+            _ABANDONED_LOCK.release()
         try:
             proc.wait(timeout=0.5)
         except Exception:
             pass
         _retire_spawn(rec if rec is not None else proc.pid)
-        with _ABANDONED_LOCK:
-            try:
-                _ABANDONED.remove(entry)
-            except ValueError:
-                pass
-    with _ABANDONED_LOCK:
-        return not _ABANDONED
+    return done
 
 
 class SweepCount(int):
