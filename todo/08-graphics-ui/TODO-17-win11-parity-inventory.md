@@ -75,7 +75,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6                  |  [x]   |
 | 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22           |  [ ]   |
 | 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                          |  [ ]   |
-| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21, §23, §24 |  [ ]   |
+| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21, §23, §27 |  [ ]   |
 | 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10                         |  [ ]   |
 | 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9                          |  [ ]   |
 | 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12                         |  [ ]   |
@@ -87,11 +87,12 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5                      |  [x]   |
 | 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                     |  [x]   |
 | 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [x]   |
-| 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [/]   |
+| 💎  |  24   | §24 Reference Machine on the Host's Build                                                   | §2, §5, §19                 |  [x]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [x]   |
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [x]   |
 | 💎  |  25   | §25 Service-State Fixtures: Delivered Updates                                               | §2, §20, §23                |  [ ]   |
 | 💎  |  26   | §26 Service-State Fixtures: Network Switch and Page States                                  | §2, §20, §23                |  [ ]   |
+| 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -1130,7 +1131,7 @@ The layout check proves every element is in the right place. This proves the pix
 
 **Design:** n/a -- prepares the reference machine and its expected captures, it draws nothing
 
-Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and the profiles each entry is taken under; §22 adds the profiles that need a changed machine, §20 builds the fixtures that make each entry reachable, §21 covers the hardware-gated entries with stand-ins and §24 with host captures.
+Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and the profiles each entry is taken under; §22 adds the profiles that need a changed machine, §20 builds the fixtures that make each entry reachable, §21 covers the hardware-gated entries with stand-ins and §27 with host captures.
 
 - [x] `docs/design/inventory/expected.json`: the capture matrix, reconciled by `--campaign --check`, which also refuses an unknown profile
 - [x] The live profile matrix (scaling to 175, dark, four contrast themes, text 150) in `profiles.json` and `REFERENCE.md`, applied by `guest/set-profile.ps1` in `-Verify -Profile` and `capture.py --profile`
@@ -1169,7 +1170,7 @@ The states a capture must reach without real user data: fictional list payloads 
 
 **Design:** n/a -- prepares hardware-gated captures, it draws nothing
 
-No physical laptop is used (operator decision 2026-11-14): a hardware-gated surface is shown by a stand-in device on a copy of the reference disk, or recorded absent and designed as ours. The host captures are §24's.
+No physical laptop is used (operator decision 2026-11-14): a hardware-gated surface is shown by a stand-in device on a copy of the reference disk, or recorded absent and designed as ours. The host captures are §27's.
 
 - [x] Derive the stand-in machine: the clean reference disk booted under QEMU with an ACPI AC adapter, battery, lid and display backlight, running jobs in ref's session
 - [x] Prove a stand-in for each hardware-gated surface (battery charging, discharging and saver, brightness, lid, touchpad, pen, touch, rotation and tablet posture)
@@ -1227,24 +1228,24 @@ Windows Update and network pages show states the offline reference VM never reac
 
 ---
 
-## 24. Host Build and Host Captures
+## 24. Reference Machine on the Host's Build
 
 > **Spawned-by:** section 21 (split)
 
-**Needs:** operator
-
 **Design:** n/a -- prepares hardware-gated captures, it draws nothing
 
-What the VM cannot show and the operator's Windows host has, captured on the host at the reference build.
+The host captures (§27) must share the reference VM's build, so the VM follows the operator's host build from its first setup page on.
 
 - [x] Move the reference VM to the host's build, 26300.9974 (KB5132061, which the host applies at its pending restart), before any host capture
   - `update-iso.ps1` puts the update into the install image and the VM is rebuilt from it; §2's `reference.json`, the derived profiles, the stand-in disk, §4's `ms-hashes.txt` and §5's baselines are taken again on it
-- [/] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
-  - Waits for the operator's restart of the host: until then the host runs 26300.9818 with KB5132061 pending, and a capture there would not match `reference.json`
-  - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
-- [ ] Commit: `"inventory: host build and host captures"`
+- [x] Commit: `"inventory: reference machine on the host's build 26300.9974"`
 
-**Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
+**Test checkpoint:** `ref-vm.ps1 -Verify -Profile all` passes every profile at the build `reference.json` names, and that build is the one the host's installed cumulative update gives.
+
+> **Test runner:** `python3 -m unittest discover -s scripts/inventory/tests` (316 OK) | validation: `ref-vm.ps1 -Verify -Profile all` exit 0 at 26300.9974
+>
+> **Verified:** 2026-11-16 | commit `abb79c054` | 2/2 items | `ref-vm.ps1 -Verify -Profile all` passes all 18 profiles at 26300.9974; `standin/prove.py` proves the five stand-ins on the new disk; `ms-hashes.txt` regenerated (20,151 files, 8,133 distinct) and `check-no-ms-assets.py --all` finds 0 copied; seven baselines re-read; the `update-iso.ps1` reuse path rebuilt the ISO with label `ESD_ISO` and the verified ISO's 983 files; the lock, manifest, label and `Remove-RefVm` tests each fail against the old code
+> **Quality reviewed:** 2026-11-16 | Codex 10x (round 3x, performance 3x, completion 4x) | 7M 1L fixed, 0 open | scope: N/A (Hyper-V host tooling, no kernel surface)
 
 ---
 
@@ -1277,6 +1278,25 @@ The network states need a network the host switches per checkpoint, with no rout
 - [ ] Commit: `"inventory: network and page states"`
 
 **Test checkpoint:** `fixtures/run.py --twice` leaves the same state twice for every variant; a screenshot shows each state.
+
+---
+
+## 27. Host Captures
+
+> **Spawned-by:** section 24 (split)
+
+**Needs:** operator
+
+**Design:** n/a -- prepares hardware-gated captures, it draws nothing
+
+What the VM cannot show and the operator's Windows host has, captured on the host at the reference build §24 put the VM on.
+
+- [ ] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
+  - Waits for the operator's restart of the host: until then the host runs 26300.9818 with KB5132061 pending, and a capture there would not match `reference.json`
+  - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
+- [ ] Commit: `"inventory: host captures"`
+
+**Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
 
 ---
 
