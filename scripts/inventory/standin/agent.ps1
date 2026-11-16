@@ -22,6 +22,15 @@ while (-not $job -and (Get-Date) -lt $deadline) {
 # Under QEMU a missing job is a failed run: shut down now, so run.py reports it
 # at once instead of waiting out its timeout.
 if (-not $job) { Stop-Computer -Force; exit 0 }
+# A cold sign-in leaves no window with focus, where clean's desktop has it; Win+D
+# gives it to the desktop, so the job starts from clean's state.
+Add-Type -Namespace Ios -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);'
+$KEYUP = 2
+[Ios.Keys]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero)
+[Ios.Keys]::keybd_event(0x44, 0, 0, [UIntPtr]::Zero)
+[Ios.Keys]::keybd_event(0x44, 0, $KEYUP, [UIntPtr]::Zero)
+[Ios.Keys]::keybd_event(0x5B, 0, $KEYUP, [UIntPtr]::Zero)
+Start-Sleep -Seconds 2
 $root = Split-Path -Parent $job
 $out = Join-Path $root 'out'
 New-Item -ItemType Directory -Path $out -Force | Out-Null

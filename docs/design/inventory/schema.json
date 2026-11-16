@@ -307,7 +307,7 @@
         "remote",
         "physical"
       ],
-      "description": "The session the record was captured through (section 19)"
+      "description": "The session the record was captured through (section 19); every captured record and observation names it (section 22). Captures run in the machine's console session: the reference VM's or the stand-in machine's"
     }
   },
   "dependentRequired": {
@@ -325,6 +325,9 @@
     ],
     "overridable": [
       "shortcut"
+    ],
+    "captureProfile": [
+      "session"
     ]
   },
   "allOf": [
@@ -513,7 +516,8 @@
       "required": [
         "id",
         "captureProfile",
-        "capturedFrom"
+        "capturedFrom",
+        "session"
       ],
       "properties": {
         "id": {

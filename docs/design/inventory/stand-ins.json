@@ -12,8 +12,8 @@
     "shows": "Power & battery at 60 percent on AC, charging, with the time until fully charged",
     "proof": {
       "file": "stand-ins/battery-charging.png",
-      "sha256": "f2aea368fe27ee2c3bef83b1e3284271c399e0df7477bc5c497ea33608596817",
-      "size": 2502925,
+      "sha256": "ba3aa7f8574fdce28ec3754f64e149660b9cb7bb85df6b8e4c1798282b38dd8c",
+      "size": 2502996,
       "date": "2026-11-16"
     },
     "marker": "Power Mode"
@@ -31,8 +31,8 @@
     "shows": "Power & battery at 60 percent on battery, with the time remaining",
     "proof": {
       "file": "stand-ins/battery-discharging.png",
-      "sha256": "6af86ed4635b7abbe747ee2e1b91cb7405d8b230a823e9eb3c7781d8df9634e7",
-      "size": 2502444,
+      "sha256": "67c2a19bbdacb03c647a0e44318969697fbe68071e0d94ceb23201cc149bbafe",
+      "size": 2502551,
       "date": "2026-11-16"
     },
     "marker": "Power Mode"
@@ -50,8 +50,8 @@
     "shows": "Power & battery at 15 percent with Energy saver on",
     "proof": {
       "file": "stand-ins/battery-saver.png",
-      "sha256": "9d94114d0e9f08569bb6bbfa814ba65b68de9351f4d19cbcb2e87040b9397535",
-      "size": 2504260,
+      "sha256": "24b750c6775f697256de29a898f606af37f05435c0917a52d948e3e80feada96",
+      "size": 2504233,
       "date": "2026-11-16"
     },
     "marker": "Power Mode"
@@ -65,8 +65,8 @@
     "shows": "Lid & power button controls on Power & battery, from the ACPI lid",
     "proof": {
       "file": "stand-ins/lid-and-power-buttons.png",
-      "sha256": "f2aea368fe27ee2c3bef83b1e3284271c399e0df7477bc5c497ea33608596817",
-      "size": 2502925,
+      "sha256": "ba3aa7f8574fdce28ec3754f64e149660b9cb7bb85df6b8e4c1798282b38dd8c",
+      "size": 2502996,
       "date": "2026-11-16"
     },
     "marker": "Power Mode"
@@ -80,8 +80,8 @@
     "shows": "Brightness for the built-in display, from the panel's ACPI backlight methods",
     "proof": {
       "file": "stand-ins/brightness.png",
-      "sha256": "e0fd0f3623d6f94a53a1debc87e4a759f3a39e8d662550f9ee966f90b55684e2",
-      "size": 2450568,
+      "sha256": "9c448cca754f5abf71003d0b61c6aa84c0d40b821d200b13f9e4c6912d79fb4b",
+      "size": 2445369,
       "date": "2026-11-16"
     },
     "marker": "Brightness"

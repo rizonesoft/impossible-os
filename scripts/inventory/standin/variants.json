@@ -16,5 +16,9 @@
     "state": 1,
     "rate": 8000,
     "remaining": 7200
+  },
+  "dual": {
+    "displays": 2,
+    "laptop": false
   }
 }

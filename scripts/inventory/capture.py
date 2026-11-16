@@ -9,7 +9,8 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
     python3 scripts/inventory/capture.py --verify-shots
 
 1. Stages capture-ui.py, capture_core.py, the surface module and profiles.json,
-   and runs capture-ui.py on a fresh restore of clean.
+   and runs capture-ui.py on a fresh restore of clean (of profile-<id> for a
+   machine profile, which ref-vm.ps1 -Derive takes).
    One capture runs at a time (build/inventory/capture.lock, exit 4 when held),
    and ref-run gets its timeout plus a margin before the host gives up and runs
    ref-run -Stop, which turns the VM off only when no live run holds it.
@@ -30,9 +31,11 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
    SHA-256); writes build/inventory/<surface>-unnamed.json for hand labels.
 
 --standin VARIANT runs step 1 on the stand-in machine (standin/run.py: the
-clean disk under QEMU with a laptop's battery, lid, backlight and touch screen,
-section 21) instead of the reference VM, for the rows expected.json marks
-"stand-in".
+clean disk under QEMU with a laptop's battery, lid and backlight, section 21)
+instead of the reference VM, for the rows expected.json marks "stand-in". A
+profile with two displays is captured there without asking: Hyper-V gives the
+reference VM one display, so the variant with two heads ("dual") provides it
+(capture_core.standin_variant, section 22).
 
 --verify-shots re-hashes the store against shots.json and names every missing or
 changed file. --dry-run does steps 1 to 4 and publishes nothing. --fixture also
@@ -128,7 +131,8 @@ def run_guest(surface, profile, timeout, fixture=False, prepare=None, standin=No
         cmd = f"{run} -Variant {variant} && {cmd}" if variant else f"{run} && {cmd}"
     if standin:
         return standin_run(surface, files, cmd, timeout, standin)
-    return ref_run(surface, files, cmd, timeout)
+    profiles = json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8"))
+    return ref_run(surface, files, cmd, timeout, checkpoint=core.checkpoint_for(profile, profiles))
 
 
 def standin_run(label, files, cmd, timeout, variant):
@@ -172,9 +176,10 @@ def stop_runner(p, grace=STANDIN_STOP_GRACE):
         p.communicate()
 
 
-def ref_run(label, files, cmd, timeout, who="capture"):
+def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     """Stage `files` ({path under C:\\ios\\in: source}) and run `cmd` in the VM on a
-    fresh restore of clean. Returns (output folder, exit code); 3 when ref-run
+    fresh restore of `checkpoint` (clean, or a machine profile's profile-<id>).
+    Returns (output folder, exit code); 3 when ref-run
     outlived its margin (the VM is then turned off), and on an interrupt the VM is
     turned off before the interrupt goes on. The staging folder is always removed."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -186,7 +191,8 @@ def ref_run(label, files, cmd, timeout, who="capture"):
             (stage / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, stage / rel)
         r = subprocess.run(runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
-                                     "-Command", cmd], capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
+                                     "-Checkpoint", checkpoint, "-Command", cmd],
+                           capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
     except subprocess.TimeoutExpired:
         # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
         print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner))
@@ -465,13 +471,16 @@ def main(argv=None):
         ap.error(f"--surface {args.surface!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
     if args.prepare and core.fixture_problem(FIXTURES, args.prepare):
         ap.error(f"--prepare: {core.fixture_problem(FIXTURES, args.prepare)}")
-    if args.standin is not None:
-        variants = json.loads((HERE / "standin" / "variants.json").read_text(encoding="utf-8"))
-        if args.standin not in variants:
-            ap.error(f"--standin {args.standin!r} is not in scripts/inventory/standin/variants.json "
-                     f"(there are: {', '.join(variants)})")
-    if args.profile not in json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8")):
+    variants = json.loads((HERE / "standin" / "variants.json").read_text(encoding="utf-8"))
+    if args.standin is not None and args.standin not in variants:
+        ap.error(f"--standin {args.standin!r} is not in scripts/inventory/standin/variants.json "
+                 f"(there are: {', '.join(variants)})")
+    profiles = json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8"))
+    if args.profile not in profiles:
         ap.error(f"--profile {args.profile!r} is not in docs/design/inventory/profiles.json")
+    args.standin, problem = core.standin_variant(args.profile, profiles[args.profile], variants, args.standin)
+    if problem:
+        ap.error(problem)
     if args.file.startswith("baseline"):
         # check-inventory.py reads a baseline* file as completeness rows and skips its records.
         ap.error(f"--file {args.file!r}: names starting with baseline are completeness baselines, not record files")

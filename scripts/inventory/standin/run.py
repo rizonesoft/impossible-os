@@ -7,7 +7,10 @@ The stand-in machine is the reference VM's clean disk (derive.ps1, converted
 once to qcow2 beside it) booted under QEMU on a throwaway overlay, with the
 devices Hyper-V cannot show: an AC adapter, a battery, a lid and a built-in
 panel's backlight, from standin.asl. variants.json sets the battery state per
-variant. (A virtio multitouch screen was tried for touch and pen: the
+variant; a variant with "displays": 2 has two virtio GPU heads instead (virtio-vga
+in slot 3 and virtio-gpu-pci in slot 5, driven by the viogpudo driver derive.ps1
+stages), and "laptop": false leaves the laptop table out, so its taskbar is the
+reference VM's. (A virtio multitouch screen was tried for touch and pen: the
 virtio-win 0.1.302 input driver fails to start it, code 10, 0xC000009A, so those
 surfaces are absent rows.) The job runs in ref's desktop session through the logon
 agent (agent.ps1) from a FAT volume labelled IOSJOB; its output folder is
@@ -39,6 +42,19 @@ OVMF_VARS = pathlib.Path("/usr/share/OVMF/OVMF_VARS_4M.fd")
 JOB_MB = 512
 TOOL_TIMEOUT = 300
 STOP_GRACE = 30  # deadline: iasl, mkfs.fat, mtools and qemu-img on local files
+
+
+def heads(v: dict) -> list:
+    """The display devices of variant `v`: the standard VGA head (Windows' basic
+    display driver), or two virtio GPU heads. Slot 3 is the S18 node standin.asl
+    extends with backlight control, so the first head always sits there."""
+    n = v.get("displays", 1)
+    if n == 1:
+        return ["-device", "VGA,xres=1920,yres=1080,edid=on,addr=0x3"]
+    if n == 2:
+        return ["-device", "virtio-vga,xres=1920,yres=1080,edid=on,addr=0x3",
+                "-device", "virtio-gpu-pci,xres=1920,yres=1080,edid=on,addr=0x5"]
+    raise ValueError(f"displays {n}: the stand-in machine has one or two heads")
 
 
 def fill(template: str, v: dict) -> str:
@@ -120,9 +136,9 @@ def qemu_cmd(overlay, vars_fd, aml, job_img, variant, qmp):
            # Removable: Windows mounts a partitionless FAT volume only on removable media.
            "-drive", f"if=none,id=job,format=raw,file={job_img}", "-device", "usb-storage,drive=job,bus=xhci.0,removable=on",
            "-device", "usb-tablet,bus=xhci.0", "-device", "usb-kbd,bus=xhci.0",
-           # Slot 3 is the S18 node standin.asl extends with backlight control.
-           "-device", "VGA,xres=1920,yres=1080,edid=on,addr=0x3",
-           "-nic", "none", "-acpitable", f"file={aml}", "-qmp", f"unix:{qmp},server=on,wait=off"]
+           *heads(variant), "-nic", "none", "-qmp", f"unix:{qmp},server=on,wait=off"]
+    if aml is not None:
+        cmd += ["-acpitable", f"file={aml}"]
     return cmd
 
 
@@ -153,8 +169,11 @@ def run(variant_name, job, files, out, *, disk=DISK, timeout=1200, variants=None
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="standin-") as tmp:
         t = pathlib.Path(tmp)
-        (t / "standin.asl").write_text(fill((HERE / "standin.asl").read_text(encoding="utf-8"), variant))
-        tool("iasl", "-p", str(t / "standin"), str(t / "standin.asl"))
+        aml = None
+        if variant.get("laptop", True):
+            (t / "standin.asl").write_text(fill((HERE / "standin.asl").read_text(encoding="utf-8"), variant))
+            tool("iasl", "-p", str(t / "standin"), str(t / "standin.asl"))
+            aml = t / "standin.aml"
         job_img = t / "job.img"
         with open(job_img, "wb") as fh:
             fh.truncate(JOB_MB * 1024 * 1024)
@@ -183,7 +202,7 @@ def run(variant_name, job, files, out, *, disk=DISK, timeout=1200, variants=None
         p = None
         try:
             # A new session, so the whole QEMU process group is stopped together.
-            p = subprocess.Popen(qemu_cmd(overlay, vars_fd, t / "standin.aml", job_img, variant, qmp),
+            p = subprocess.Popen(qemu_cmd(overlay, vars_fd, aml, job_img, variant, qmp),
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                  start_new_session=True, preexec_fn=_die_with_parent)
             try:

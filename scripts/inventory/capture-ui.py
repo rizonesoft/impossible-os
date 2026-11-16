@@ -431,6 +431,10 @@ def main(argv=None):
         for w in wrong:
             print(w)
         return 2
+    session = core.session_type(seen)
+    if session is None:
+        print("capture-ui: the capture runs in a remote session; captures run in the machine's console session")
+        return 2
     win32()
     user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     build = seen["build"]
@@ -450,7 +454,7 @@ def main(argv=None):
         grab(str(shots / name), x0, y0, x1 - x0, y1 - y0)
         return {"state": state, "file": name, "width": x1 - x0, "height": y1 - y0}
 
-    walk_args = dict(surface=mod.SURFACE, build=build, profile=args.profile, root_slug=mod.ROOT_SLUG,
+    walk_args = dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=mod.ROOT_SLUG,
                      root_label=mod.ROOT_LABEL, root_kind=getattr(mod, "ROOT_KIND", "surface"),
                      environment_lists=getattr(mod, "ENVIRONMENT_LISTS", ()), values=getattr(mod, "VALUES", ()),
                      identity=getattr(mod, "IDENTITY", ()))

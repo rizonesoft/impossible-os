@@ -88,7 +88,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                     |  [x]   |
 | 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [x]   |
 | 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [ ]   |
-| 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [ ]   |
+| 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [x]   |
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
@@ -1190,15 +1190,17 @@ No physical laptop is used (operator decision 2026-11-14): a hardware-gated surf
 
 **Design:** n/a -- prepares the reference machine, it draws nothing
 
-The profiles that a setting in `ref`'s session cannot reach: another display language, another video mode and a second display. Each is a checkpoint derived from `clean`, checked by `ref-vm.ps1 -Verify` like the live profiles.
+The profiles that a setting in `ref`'s session cannot reach: another display language, another video mode and a second display. A language or video mode is a checkpoint derived from `clean` (`ref-vm.ps1 -Derive`); two displays run on the stand-in machine, since Hyper-V gives a VM one (decision: `todo/answers.md` Q45). All are checked by `ref-vm.ps1 -Verify` like the live profiles.
 
-- [ ] Add `fhd-100-rtl` (Arabic display language, from the language pack installed while setup still has network) for every frame surface
-- [ ] Add a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts, and `qhd-200`: 2560 by 1440 at 200 percent, for every frame surface
-- [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
+- [x] Add `fhd-100-rtl` (Arabic display language, the language pack installed over a network adapter that exists only while it installs) for every frame surface
+- [x] Add a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts, and `qhd-200`: 2560 by 1440 at 200 percent, for every frame surface
+- [x] Define the multi-display topology: two displays at different scales, then the primary swapped, on the stand-in machine's `dual` variant, with the session type recorded on each record
   - Evidence for all three taskbar button modes on the second display is required before §8 closes
-- [ ] Commit: `"inventory: derived reference machines"`
+- [x] Commit: `"inventory: derived reference machines"`
 
 **Test checkpoint:** `ref-vm.ps1 -Verify -Profile all` reports the right-to-left, wide, tall and two-display profiles beside the live ones.
+
+> **Test runner:** `python3 -m unittest test_capture test_check_inventory` in `scripts/inventory/tests` (the `Displays` class and the session refusals); `powershell.exe -File scripts\inventory\ref-vm.ps1 -Verify -Profile all` passes every profile (2026-11-16).
 
 ---
 

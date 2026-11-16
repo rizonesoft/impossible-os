@@ -42,20 +42,26 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 
 Every profile is an entry of `profiles.json`, the one place its values live; this table describes them. A profile lists every probed value, so a capture under it checks all of them.
 
-| Profile                                                                 | Differs from `fhd-100` by                             | Kind    |
-| ----------------------------------------------------------------------- | ----------------------------------------------------- | ------- |
-| `fhd-125`, `fhd-150`, `fhd-175`                                         | scaling 125, 150 or 175 percent (120, 144 or 168 DPI) | live    |
-| `fhd-100-dark`                                                          | dark mode for apps and system                         | live    |
-| `fhd-100-aquatic`, `fhd-100-desert`, `fhd-100-dusk`, `fhd-100-nightsky` | the contrast theme of that Settings name              | live    |
-| `fhd-100-text150`                                                       | text size 150 percent                                 | live    |
-| `qhd-200`                                                               | 2560 by 1440 at 200 percent                           | machine |
-| `fhd-100-rtl`                                                           | display language `ar-SA`, right to left               | machine |
-| `wide-100`, `tall-100`                                                  | a 2560 by 1080 or 1080 by 1920 display                | machine |
-| `dual-100-150`, `dual-150-100`                                          | two displays, the second at the other scale           | machine |
+| Profile                                                                 | Differs from `fhd-100` by                             | Kind     |
+| ----------------------------------------------------------------------- | ----------------------------------------------------- | -------- |
+| `fhd-125`, `fhd-150`, `fhd-175`                                         | scaling 125, 150 or 175 percent (120, 144 or 168 DPI) | live     |
+| `fhd-100-dark`                                                          | dark mode for apps and system                         | live     |
+| `fhd-100-aquatic`, `fhd-100-desert`, `fhd-100-dusk`, `fhd-100-nightsky` | the contrast theme of that Settings name              | live     |
+| `fhd-100-text150`                                                       | text size 150 percent                                 | live     |
+| `qhd-200`                                                               | 2560 by 1440 at 200 percent                           | machine  |
+| `fhd-100-rtl`                                                           | display language `ar-SA`, right to left               | machine  |
+| `wide-100`, `tall-100`                                                  | a 2560 by 1080 or 1080 by 1920 display                | machine  |
+| `dual-100-150`, `dual-150-100`                                          | two displays at 100 and 150 percent, then swapped     | stand-in |
 
 **Live** profiles are applied in `ref`'s session from `clean` by `guest/set-profile.ps1`, each setting through the path Windows itself uses: scaling through the logical DPI override (Hyper-V's display refuses the per-display scale call), a contrast theme through its theme file, light and dark through the Personalize values, and text size through the Settings slider and its Apply button (the registry value alone changes no font). A contrast theme sets the light values itself, so those profiles do not list them. `ref-vm.ps1 -Verify -Profile live` applies and probes every live profile in turn; `capture.py --profile` applies its profile before it checks it.
 
-**Machine** profiles need a changed VM (another resolution, a second display or another display language) and are built as derived machines by [Derived Reference Machines](../../graphics/win11-parity-inventory.md); `-Verify` refuses one by name on the `fhd-100` machine. 200 percent is a machine profile because Windows offers at most 175 percent at 1920 by 1080 (measured 2026-11-16).
+**Machine** profiles need a changed VM (another resolution or another display language). Each is a checkpoint `profile-<id>` derived from `clean` by `ref-vm.ps1 -Derive -Profile <id>` (or `-Profile machine` for all of them), and a capture under it restores that checkpoint instead of `clean`. A resolution is the VM's video mode (`Set-VMVideo`, set with the guest off). The Arabic display language is the `ar-SA` language pack, installed through a network adapter on the Default Switch that exists only while it installs, with automatic and Store updates held off by policy for that time; the build is checked after, so a derived machine is the same build as `clean`. Each derived machine then gets its live values from `set-profile.ps1`, and the whole profile is probed before the checkpoint is taken. `clean` has OneDrive not installed with its first-run setup pending; captures from `clean` never sign in again, but a derived machine restarts, so the pending entry is removed first and the derived machine keeps `clean`'s software. After that cold sign-in no window has focus, so Win+D gives it to the desktop, the state `clean` starts in. 200 percent is a machine profile because Windows offers at most 175 percent at 1920 by 1080 (measured 2026-11-16).
+
+**Stand-in** profiles need two displays, and Hyper-V gives a VM one, so they run on the stand-in machine's `dual` variant (below): two virtio GPU heads side by side. `dual-100-150` has the main display at 100 percent with the second one, at 150 percent, on its right. `dual-150-100` is the same pair after Windows' "Make this my main display" on the right-hand one: the main display is now at 150 percent and the old main display sits on its left. `set-profile.ps1` applies both values in the session. It first extends the desktop over both displays, as Win+P "Extend" does, because on a first boot Windows may show the desktop on the first one only (it reports as an integrated panel). Then `secondSide` moves the main display with `SetDisplayConfig`, and each display's scale (`dpi` for the main one, `secondDpi` for the other) is set through the per-display scale call, as Settings sets each display. The virtio display driver accepts that call where Hyper-V's refuses it, and the logical DPI override the live profiles use would move both displays at once. `capture.py` picks the variant from the profile's display count.
+
+`ref-vm.ps1 -Verify -Profile all` checks every profile: the live ones in one session from `clean`, each machine profile on its own checkpoint, and each stand-in profile through `standin/probe.py`, which applies the profile on the stand-in machine and returns the probe's line for the same comparison.
+
+Every captured record and observation names its `session`: `console`, the machine's own console session, which is where every capture runs (the reference VM's or the stand-in machine's). A capture in a remote session is refused, because inside the guest an enhanced session cannot be told apart from a remote one.
 
 Windows stores a contrast theme under its pre-Win11 name (Aquatic is `High Contrast #1`, Desert `High Contrast #2`, Dusk `High Contrast Black`, Night sky `High Contrast White`); the probe reports the Settings name.
 
@@ -100,20 +106,21 @@ The machine and the tools are kept after the inventory is captured, so anything 
 
 ## How are the hardware pages captured?
 
-Hyper-V shows no battery, lid, backlight or touch screen, so the Settings pages for them are captured on a stand-in machine: the `clean` disk booted under QEMU on the WSL host with a laptop's devices described in ACPI. No physical laptop is used.
+Hyper-V shows no battery, lid, backlight, touch screen or second display, so the Settings pages for them are captured on a stand-in machine: the `clean` disk booted under QEMU on the WSL host with a laptop's devices described in ACPI, or with two displays. No physical laptop or monitor is used.
 
 | Part | Value |
 | --- | --- |
-| Disk | `clean` merged into one VHDX by `standin/derive.ps1`, converted to qcow2 at `~/.local/share/ios-standin/standin.qcow2`; each run writes to a throwaway overlay |
-| Machine | QEMU q35 under KVM, OVMF without Secure Boot, AHCI, xHCI with a USB keyboard and tablet, the VGA display at 1920 by 1080 with EDID |
+| Disk | `clean` merged into one VHDX by `standin/derive.ps1`, converted to qcow2 at `~/.local/share/ios-standin/standin.qcow2`; each run writes to a throwaway overlay. The derive also stages the virtio GPU display driver (`viogpudo`) in the driver store, from the virtio-win 0.1.302 ISO pinned by SHA-256 in `standin/drivers.json` (BSD-3-Clause, fetched, not redistributed) |
+| Machine | QEMU q35 under KVM, OVMF without Secure Boot, AHCI, xHCI with a USB keyboard and tablet, the VGA display at 1920 by 1080 with EDID; the `dual` variant has two virtio GPU heads at 1920 by 1080 instead, which `viogpudo` drives as two displays |
 | Devices | `standin/standin.asl`: an AC adapter, a 50 Wh battery, a lid, and backlight control on the display (`_BCL`, `_BCM`, `_BQC`); Windows binds its inbox drivers |
-| Variants | `standin/variants.json`: `charging` (60 percent on AC), `discharging` (60 percent on battery), `saver` (15 percent, below the 30 percent Energy saver threshold) |
-| Jobs | a logon task in `ref`'s session runs `ios-job\job.ps1` from a removable FAT volume labelled IOSJOB, writes its exit code, and shuts the guest down |
+| Variants | `standin/variants.json`: `charging` (60 percent on AC), `discharging` (60 percent on battery), `saver` (15 percent, below the 30 percent Energy saver threshold), and `dual` (two displays, no laptop devices, so its taskbar is the reference VM's) |
+| Jobs | a logon task in `ref`'s session gives the desktop focus (Win+D, the state `clean` starts in), runs `ios-job\job.ps1` from a removable FAT volume labelled IOSJOB, writes its exit code, and shuts the guest down |
 
 ```bash
 powershell.exe -File scripts\inventory\standin\derive.ps1 -Out R:\11\standin\standin.vhdx
 qemu-img convert -f vhdx -O qcow2 /mnt/r/11/standin/standin.vhdx ~/.local/share/ios-standin/standin.qcow2
 python3 scripts/inventory/standin/prove.py                        # proves every stand-in, records each proof
+python3 scripts/inventory/standin/probe.py dual-100-150           # applies a two-display profile there, prints the probe
 python3 scripts/inventory/capture.py --surface settings --file battery --standin saver   # once the Settings walker exists
 ```
 

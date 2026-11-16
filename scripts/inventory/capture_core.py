@@ -113,6 +113,51 @@ def compare_profile(seen, want, name):
     return out
 
 
+# The profile values set-profile.ps1 applies in ref's session; any other value
+# that differs from fhd-100 needs a changed machine. ref-vm.ps1 holds the same
+# list ($LiveKeys); a test keeps the two equal.
+LIVE_KEYS = ("dpi", "appsLight", "systemLight", "highContrast", "textScale", "secondDpi", "secondSide")
+
+
+def checkpoint_for(name, profiles):
+    """The reference VM checkpoint a capture under profile `name` restores: clean
+    for fhd-100 and the live profiles, profile-<name> for a machine profile
+    (another resolution or display language, derived by ref-vm.ps1 -Derive). A
+    two-display profile never runs on the reference VM (standin_variant)."""
+    base = profiles["fhd-100"]
+    machine = [k for k, v in profiles[name].items() if k not in LIVE_KEYS and str(v) != str(base.get(k))]
+    return f"profile-{name}" if machine else "clean"
+
+
+def session_type(seen):
+    """The schema's session for a capture whose profile probe saw `seen`, or None.
+    Every capture runs in the machine's console session (the reference VM's or the
+    stand-in machine's), so that is the answer; a remote session is refused (None),
+    because inside the guest an enhanced session cannot be told from a remote one
+    and the record could not name it truly."""
+    return None if seen.get("remote") else "console"
+
+
+def standin_variant(name, profile, variants, requested=None):
+    """(variant, problem) for capturing under profile `name`. A profile with more
+    than one display needs the stand-in variant with that many heads (Hyper-V
+    gives the reference VM one); a one-display profile runs on the reference VM
+    unless `requested` names a one-head variant. Exactly one of the two is None,
+    except (None, None) for the reference VM."""
+    n = profile.get("monitors", 1)
+    if requested is not None:
+        heads = variants[requested].get("displays", 1)
+        if heads != n:
+            return None, f"--standin {requested} has {heads} display(s); profile {name} needs {n}"
+        return requested, None
+    if n == 1:
+        return None, None
+    fits = sorted(k for k, v in variants.items() if v.get("displays", 1) == n)
+    if len(fits) != 1:
+        return None, f"profile {name} needs {n} displays; {len(fits)} stand-in variants have that many heads, want one"
+    return fits[0], None
+
+
 def matches(element, spec):
     """True when every field the spec names equals the element's."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
@@ -194,9 +239,12 @@ class Capture:
         self.states = []
 
 
-def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="surface",
+def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
          environment_lists=(), values=(), identity=(), shot=None):
     """Capture one surface. Returns a Capture or raises Incomplete.
+
+    session is the schema's session the capture ran in (session_type), written
+    on every record.
 
     identity is the surface module's IDENTITY: (spec, segment) pairs that name an
     element whose automation id, name and class do not tell it from a sibling.
@@ -225,7 +273,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
                 cap.unnamed.append({"id": rid, "uiaId": el.automation_id or "", "className": el.class_name or "",
                                     "controlType": el.control_type, "why": why})
         r = {"id": rid, "surface": surface, "kind": kind, "label": label, "order": order,
-             "source": f"uia:{build}", "capturedFrom": build, "captureProfile": profile,
+             "source": f"uia:{build}", "capturedFrom": build, "captureProfile": profile, "session": session,
              "controlType": (el.control_type or "Custom").lower()}
         if parent:
             r["parent"] = parent

@@ -27,6 +27,20 @@ fhd-100 in live settings only, and "all" every profile; a profile that needs a c
 -Reclean: restores pre-oobe, completes setup again and replaces clean, without
 reinstalling Windows; then verifies. Use it when the profile or the probes change.
 
+-Derive -Profile <id>|machine: takes the checkpoint profile-<id> from clean for a
+profile that needs a changed machine on one display: the VM's video mode for
+another resolution (Set-VMVideo, with the guest shut down), and for another
+display language the language pack, installed through a network adapter on the
+Default Switch that exists only while it installs (automatic updates and Store
+updates are held off by policy for that time, and the build is checked after),
+then the user's display language. The live values are applied with
+set-profile.ps1 and the whole profile is probed before the checkpoint is taken;
+an existing profile-<id> is replaced only once its successor exists. "machine"
+derives every such profile. A two-display profile is refused: Hyper-V gives a VM
+one display, so those are the stand-in machine's ("dual" in standin/variants.json).
+-Verify -Profile all then restores each profile-<id> and probes it, and checks
+each two-display profile on the stand-in machine (standin/probe.py).
+
 Windows PowerShell 5.1 on the Hyper-V host; Hyper-V Administrators membership,
 no elevation. From WSL: powershell.exe -File scripts\inventory\ref-vm.ps1 -Verify
 
@@ -46,6 +60,7 @@ param(
     [switch]$Verify,
     [switch]$Rebuild,
     [switch]$Reclean,
+    [switch]$Derive,
     [Alias('Profile')][string]$ProfileId = 'fhd-100'
 )
 $ErrorActionPreference = 'Stop'
@@ -59,8 +74,11 @@ $FhdProfile = $AllProfiles.'fhd-100'
 if (-not $FhdProfile) { throw 'docs/design/inventory/profiles.json has no fhd-100 profile' }
 # The settings set-profile.ps1 applies in ref's session; any other difference
 # from fhd-100 needs a changed machine.
-$LiveKeys = 'dpi', 'appsLight', 'systemLight', 'highContrast', 'textScale'
+$LiveKeys = 'dpi', 'appsLight', 'systemLight', 'highContrast', 'textScale', 'secondDpi', 'secondSide'
 $GuestScripts = 'probe-profile.ps1', 'probe-notepad.ps1', 'set-profile.ps1'
+# The machine keys a derived Hyper-V checkpoint provides; a profile needing any
+# other (a second display) is the stand-in machine's.
+$DerivableKeys = 'width', 'height', 'uiLanguage'
 
 function Get-MachineKeys($Want) {
     return @($Want.PSObject.Properties | Where-Object { $LiveKeys -notcontains $_.Name -and "$($_.Value)" -ne "$($FhdProfile.($_.Name))" } | ForEach-Object { $_.Name })
@@ -435,9 +453,11 @@ function Invoke-Verify() {
             $problems += @(Get-ProfileProblems $s)
             $problems += @(Get-RuntimeProblems $s)
             $base = $script:Seen
+            $script:MachineIds = @()
             if ($problems.Count -eq 0) { $problems += @(Test-LiveProfiles $s) }
             $script:Seen = $base
         } finally { if ($s) { Remove-PSSession $s } }
+        foreach ($id in $script:MachineIds) { $problems += @(Test-DerivedProfile $id) }
     }
     if ($problems.Count) {
         foreach ($p in $problems) { Write-Host "ref-vm: $p" }
@@ -477,13 +497,19 @@ function Test-LiveProfiles($Session) {
         $ids = @($others | Where-Object { (Get-MachineKeys $_.Value).Count -eq 0 } | ForEach-Object { $_.Name })
     } elseif ($ProfileId -eq 'all') {
         $ids = @($others | ForEach-Object { $_.Name })
+    } elseif ($ProfileId -eq 'machine') {
+        $ids = @($others | Where-Object { (Get-MachineKeys $_.Value).Count } | ForEach-Object { $_.Name })
     } else { $ids = @($ProfileId) }
     $problems = @()
     foreach ($id in $ids) {
         $want = $AllProfiles.$id
         if (-not $want) { $problems += "no profile $id in docs/design/inventory/profiles.json"; continue }
         $machine = @(Get-MachineKeys $want)
-        if ($machine.Count) { $problems += "profile $id needs a changed machine ($($machine -join ', ')), not a live setting"; continue }
+        if ($machine.Count) {
+            if ('all', 'machine', $id -contains $ProfileId) { $script:MachineIds += $id }
+            else { $problems += "profile $id needs a changed machine ($($machine -join ', ')), not a live setting" }
+            continue
+        }
         $r = Invoke-RefInteractive $Session "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\set-profile.ps1 -Profiles C:\ios\probe\profiles.json -Name $id" 300
         if ($r.ExitCode -ne 0) { $problems += "profile $id not applied: $("$($r.Output)".Trim())"; continue }
         $wrong = @(Get-ProfileProblems $Session $want)
@@ -517,6 +543,168 @@ function Get-ProfileProblems($Session, $Expected = $FhdProfile) {
     return @(Compare-RefProfile $script:Seen (Get-RefIdentity) $Expected $script:QuietForeground)
 }
 
+# A machine profile is checked on its own checkpoint, restored like any capture's.
+function Test-DerivedProfile([string]$Id) {
+    $want = $AllProfiles.$Id
+    $other = @(Get-MachineKeys $want | Where-Object { $DerivableKeys -notcontains $_ })
+    if ($other.Count) { return @(Test-StandinProfile $Id $want) }
+    $cp = "profile-$Id"
+    if (-not (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $cp })) { return @("missing checkpoint $cp (ref-vm.ps1 -Derive -Profile $Id)") }
+    $s = $null
+    try {
+        $s = Start-RefFrom $Name $VmPath $cp
+        Send-GuestScripts $s
+        $wrong = @(Get-ProfileProblems $s $want)
+        if ($wrong.Count) { return @($wrong | ForEach-Object { "profile ${Id}: $_" }) }
+        Write-Host "ref-vm: profile $Id ok (checkpoint $cp)"
+        return @()
+    } finally { if ($s) { Remove-PSSession $s } }
+}
+
+# A profile with two displays is the stand-in machine's (Hyper-V gives a VM one
+# display): standin/probe.py boots its variant under QEMU in WSL, applies the
+# profile there and prints the probe's line, which is compared here like any other.
+function Test-StandinProfile([string]$Id, $Want) {
+    $linux = (& wsl.exe -e wslpath -u $PSScriptRoot | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $linux) { return @("profile ${Id}: this checkout's path has no WSL form ($PSScriptRoot)") }
+    $out = @(& wsl.exe -e python3 "$linux/standin/probe.py" $Id 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) { return @("profile ${Id} on the stand-in machine: $(($out | Select-Object -Last 3) -join ' / ')") }
+    $script:SeenJson = ($out | Select-Object -Last 1).Trim()
+    $seen = $script:SeenJson | ConvertFrom-Json
+    $wrong = @(Compare-RefProfile $seen (Get-RefIdentity) $Want $script:QuietForeground)
+    if ($seen.remote) { $wrong += 'the stand-in probe ran in a remote session, not the console' }
+    if ($wrong.Count) { return @($wrong | ForEach-Object { "profile ${Id} (stand-in): $_" }) }
+    Write-Host "ref-vm: profile $Id ok (stand-in machine, console session)"
+    return @()
+}
+
+# The machine profiles this VM can provide: they differ from fhd-100 in the
+# resolution or the display language, and in nothing else a VM sets.
+function Get-DerivableIds([string]$Which) {
+    $ids = @()
+    foreach ($p in $AllProfiles.PSObject.Properties) {
+        $machine = @(Get-MachineKeys $p.Value)
+        if (-not $machine.Count) { continue }
+        if ($Which -ne 'machine' -and $Which -ne $p.Name) { continue }
+        $other = @($machine | Where-Object { $DerivableKeys -notcontains $_ })
+        if ($other.Count) {
+            if ($Which -eq $p.Name) { throw "profile $($p.Name) needs $($other -join ', '): Hyper-V gives a VM one display, so it is the stand-in machine's (standin/probe.py)" }
+            continue
+        }
+        $ids += $p.Name
+    }
+    if (-not $ids.Count) { throw "no machine profile named $Which in docs/design/inventory/profiles.json" }
+    return $ids
+}
+
+# Language pack install with a network adapter that exists only for it. Policies
+# hold off automatic and Store updates while the guest is online; both are
+# removed again, with the adapter, before anything is checkpointed.
+function Install-RefLanguage($Session, [string]$Language) {
+    $adapter = 'ios-derive-net'
+    # Only what is added here is removed again: the values, and a key only when
+    # this function created it.
+    $created = Invoke-Command -Session $Session -ScriptBlock {
+        $made = @()
+        foreach ($k in 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore') {
+            if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k | Out-Null; $made += $k }
+        }
+        Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -Name NoAutoUpdate -Value 1 -Type DWord
+        Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' -Name AutoDownload -Value 2 -Type DWord
+        return $made
+    }
+    try {
+        Add-VMNetworkAdapter -VMName $Name -SwitchName 'Default Switch' -Name $adapter
+        Write-Ref "installing the $Language language pack (temporary network)"
+        Invoke-Command -Session $Session -ArgumentList $Language -ScriptBlock {
+            param($lang)
+            $ErrorActionPreference = 'Stop'
+            $deadline = (Get-Date).AddMinutes(3)
+            while (-not (Test-NetConnection -ComputerName 'www.msftconnecttest.com' -Port 80 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+                if ((Get-Date) -gt $deadline) { throw 'the guest found no network on the Default Switch' }
+                Start-Sleep -Seconds 5
+            }
+            Install-Language -Language $lang -ExcludeFeatures | Out-Null
+            if (-not (Get-InstalledLanguage -Language $lang)) { throw "Install-Language $lang reported success but the language is not installed" }
+        }
+    } finally {
+        Get-VMNetworkAdapter -VMName $Name | Where-Object { $_.Name -eq $adapter } | Remove-VMNetworkAdapter
+        Invoke-Command -Session $Session -ArgumentList (, @($created)) -ScriptBlock {
+            param($made)
+            Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -Name NoAutoUpdate -ErrorAction SilentlyContinue
+            Remove-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' -Name AutoDownload -ErrorAction SilentlyContinue
+            # Deepest first, so a parent is empty when its turn comes.
+            foreach ($k in @($made | Sort-Object Length -Descending)) { Remove-Item -LiteralPath $k -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+function Invoke-DeriveProfile([string]$Id) {
+    $want = $AllProfiles.$Id
+    Write-Ref "deriving profile-$Id from clean"
+    $s = Start-RefFrom $Name $VmPath 'clean'
+    try {
+        Clear-RefPendingSetup $s
+        if ("$($want.uiLanguage)" -ne "$($FhdProfile.uiLanguage)") {
+            Install-RefLanguage $s $want.uiLanguage
+            # ref's display language, as Settings sets it: the language first in ref's
+            # list and as the override, the US keyboard kept as the input method so a
+            # typed fixture types the same text, and the format the profile's own.
+            $l = $want.uiLanguage
+            $r = Invoke-RefInteractive $s ("powershell.exe -NoProfile -Command `$l = New-WinUserLanguageList $l; `$l.Add('en-US'); " +
+                "Set-WinUserLanguageList `$l -Force; Set-WinUILanguageOverride -Language $l; " +
+                "Set-WinDefaultInputMethodOverride -InputTip '0409:00000409'; Set-Culture $($want.format)") 120
+            if ($r.ExitCode -ne 0) { throw "display language not set: $($r.Output.Trim())" }
+        }
+    } finally { Remove-PSSession $s }
+    # The video mode is set with the guest off; the language takes effect at the
+    # next sign-in, which autologon makes.
+    Stop-VM -Name $Name -Force
+    Set-VMVideo -VMName $Name -ResolutionType Single -HorizontalResolution $want.width -VerticalResolution $want.height
+    Start-VM -Name $Name
+    $s = New-RefSession $Name $VmPath
+    try {
+        Send-GuestScripts $s
+        $wrong = @(Test-RefIdentity $s)
+        if ($wrong.Count) { throw "the build changed while online: $($wrong -join '; ')" }
+        $r = Invoke-RefInteractive $s "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\set-profile.ps1 -Profiles C:\ios\probe\profiles.json -Name $Id" 300
+        if ($r.ExitCode -ne 0) { throw "profile $Id not applied: $("$($r.Output)".Trim())" }
+        # As for clean: the first sign-in may open Start; the desktop must have focus.
+        $problems = @('not checked')
+        for ($try = 1; $try -le 5 -and $problems.Count; $try++) {
+            Start-Sleep -Seconds 20
+            Send-RefKey $Name 0x1B
+            # After a cold sign-in no window holds focus; clean's desktop got it when
+            # Start closed. Win+D gives it to the desktop the same way a user would.
+            Send-RefChord $Name 0x5B 0x44
+            Start-Sleep -Seconds 3
+            $problems = @(Get-ProfileProblems $s $want)
+            Write-Ref "profile-$Id before checkpoint (try $try): $($script:SeenJson)"
+        }
+        if ($problems.Count) {
+            # Say what ref's session holds, so a language that did not take names why.
+            $d = Invoke-RefInteractive $s ("powershell.exe -NoProfile -Command `"'override=' + (Get-WinUILanguageOverride).Name; " +
+                "'list=' + ((Get-WinUserLanguageList).LanguageTag -join ','); 'installed=' + ((Get-InstalledLanguage).LanguageId -join ',')`"") 120
+            throw "profile-$Id not taken: $($problems -join '; ') ($("$($d.Output)".Trim() -replace '\s+', ' '))"
+        }
+    } finally { Remove-PSSession $s }
+    if (@(Get-VMNetworkAdapter -VMName $Name).Count) { throw "profile-$Id not taken: the VM still has a network adapter" }
+    $cp = "profile-$Id"
+    foreach ($old in @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq "$cp-next" })) { Remove-VMSnapshot -VMSnapshot $old }
+    # Renamed through the object Checkpoint-VM returns: a lookup by name straight
+    # after the checkpoint did not find it (seen 2026-11-16).
+    $next = Checkpoint-VM -Name $Name -SnapshotName "$cp-next" -Passthru
+    foreach ($old in @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $cp })) { Remove-VMSnapshot -VMSnapshot $old }
+    Rename-VMSnapshot -VMSnapshot $next -NewName $cp
+    Write-Ref "checkpoint $cp taken"
+}
+
+function Invoke-Derive() {
+    $script:LogPath = Join-Path $VmPath 'ref-vm.log'
+    $ids = Get-DerivableIds $ProfileId
+    foreach ($id in $ids) { Invoke-DeriveProfile $id }
+}
+
 # Take clean again from pre-oobe: the same restore a replay of first-run setup
 # uses, without reinstalling Windows.
 function Invoke-Reclean() {
@@ -542,7 +730,7 @@ $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
 $rc = 1
 $script:Refused = 0
 try {
-    if ($Reclean) { Invoke-Reclean } elseif (-not $Verify) { Invoke-Build }
+    if ($Derive) { Invoke-Derive } elseif ($Reclean) { Invoke-Reclean } elseif (-not $Verify) { Invoke-Build }
     if ($script:Refused) { $rc = $script:Refused } else { $rc = Invoke-Verify | Select-Object -Last 1 }
 } finally {
     $vm = Get-VM | Where-Object { $_.Name -eq $Name }

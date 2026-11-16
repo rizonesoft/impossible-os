@@ -80,9 +80,9 @@ class Passing(unittest.TestCase):
 
     def test_profile_observation_of_one_element_at_two_profiles(self):
         r = run({"taskbar/bar.json": three(),
-                 "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150",
+                 "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console",
                                                "bounds": {"x": 0, "y": 0, "width": 60, "height": 60}, "capturedFrom": B}],
-                 "taskbar/bar.fhd-125.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-125",
+                 "taskbar/bar.fhd-125.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-125", "session": "console",
                                                "bounds": {"x": 0, "y": 0, "width": 50, "height": 50}, "capturedFrom": B}]})
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("inventory: 3 records, 0 errors", r.stdout)
@@ -106,9 +106,9 @@ class Passing(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_scalar_and_font_observations_need_no_bounds(self):
-        obs = [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B,
+        obs = [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console", "capturedFrom": B,
                 "measure": {"value": 18, "unit": "px", "scaling": "snapped"}},
-               {"id": "win11.taskbar.bar.search", "captureProfile": "fhd-150", "capturedFrom": B,
+               {"id": "win11.taskbar.bar.search", "captureProfile": "fhd-150", "session": "console", "capturedFrom": B,
                 "textMetrics": {"sizePx": 21, "ascent": 22, "descent": 6, "lineGap": 0, "advances": {"a": 10.6}}}]
         r = run({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": obs})
         self.assertEqual(r.returncode, 0, r.stdout)
@@ -452,15 +452,32 @@ class Failing(unittest.TestCase):
     def test_blank_line(self):
         self.fails({"taskbar/bar.json": [three()[0], ""]}, "blank-line")
 
+    def test_a_captured_record_names_its_session(self):
+        # A record that names its capture profile names the session it was captured
+        # through too (section 22); the same file with the session passes.
+        t = three()
+        t[1].update(captureProfile="fhd-100", bounds={"x": 0, "y": 0, "width": 1, "height": 1})
+        self.fails({"taskbar/bar.json": t}, "schema")
+        t[1]["session"] = "console"
+        r = run({"taskbar/bar.json": t})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_an_observation_names_its_session(self):
+        obs = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B,
+               "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}}
+        self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [obs]}, "schema")
+        r = run({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [dict(obs, session="console")]})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_observation_of_missing_record(self):
         self.fails({"taskbar/bar.json": three(),
-                    "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.gone", "captureProfile": "fhd-150",
+                    "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.gone", "captureProfile": "fhd-150", "session": "console",
                                                   "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "capturedFrom": B}]},
                    "observation-orphan")
 
     def test_observation_profile_differs_from_file(self):
         self.fails({"taskbar/bar.json": three(),
-                    "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-125",
+                    "taskbar/bar.fhd-150.json": [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-125", "session": "console",
                                                   "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "capturedFrom": B}]},
                    "observation-profile")
 
@@ -480,11 +497,11 @@ class Failing(unittest.TestCase):
             line = json.dumps(rec("win11.taskbar.h", kind="metric", measure={"value": 0, "unit": "px"})).replace('"value": 0', f'"value": {bad}')
             with self.subTest(bad=bad):
                 self.fails({"taskbar/bar.json": [line]}, "non-finite")
-                obs = '{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": "%s", "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "measure": {"value": %s, "unit": "px"}}' % (B, bad)
+                obs = '{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console", "capturedFrom": "%s", "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "measure": {"value": %s, "unit": "px"}}' % (B, bad)
                 self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [obs]}, "non-finite")
 
     def test_duplicate_observation(self):
-        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150",
+        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console",
              "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "capturedFrom": B}
         self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [o],
                     "taskbar/more.fhd-150.json": [o]}, "duplicate-observation")
@@ -511,7 +528,7 @@ class Failing(unittest.TestCase):
 
     def test_observation_without_a_measurement(self):
         self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [
-            {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B}]}, "schema")
+            {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console", "capturedFrom": B}]}, "schema")
 
     def test_surface_must_be_a_folder_name(self):
         for spelling in ("taskbar/", "./taskbar", "..", "taskbar/../start"):
@@ -562,7 +579,7 @@ class Facts(Failing):
                 self.assertIn("link in record", r.stdout)
 
     def test_link_in_an_observation(self):
-        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B,
+        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "session": "console", "capturedFrom": B,
              "measure": {"value": 1, "unit": "px", "readBy": "per https://learn.microsoft.com"}}
         r = self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [o]}, "link")
         self.assertNotIn(": schema: ", r.stdout)

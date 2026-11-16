@@ -59,7 +59,7 @@ def tree():
 
 
 def walk(t=None, **kw):
-    args = dict(surface="notepad-smoke", build="26300.9711", profile="fhd-100", root_slug=smoke.ROOT_SLUG,
+    args = dict(surface="notepad-smoke", build="26300.9711", profile="fhd-100", session="console", root_slug=smoke.ROOT_SLUG,
                 root_label=smoke.ROOT_LABEL, environment_lists=smoke.ENVIRONMENT_LISTS, values=smoke.VALUES)
     args.update(kw)
     return core.walk(core.FixtureElement(t or tree()), **args)
@@ -170,7 +170,7 @@ class NeverData(unittest.TestCase):
     def test_the_walk_reads_structure_only(self):
         walk(core_root := tree())
         cap = core.walk(Strict(core.FixtureElement(core_root)), surface="notepad-smoke", build="26300.9711",
-                        profile="fhd-100", root_slug="window", root_label="Notepad",
+                        profile="fhd-100", session="console", root_slug="window", root_label="Notepad",
                         environment_lists=smoke.ENVIRONMENT_LISTS, values=smoke.VALUES)
         self.assertGreaterEqual(len(cap.records), 40)
 
@@ -185,7 +185,7 @@ class NeverData(unittest.TestCase):
     def test_an_environment_list_in_a_popup_keeps_its_rows_out(self):
         devices = dict(node("Devices", "List"), popup=True, children=[node("Jo's USB stick", "ListItem")])
         t = node("Root", "Window", children=[node("Output", "ComboBox", expands=[devices])])
-        args = dict(surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        args = dict(surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         cap = core.walk(core.FixtureElement(t), environment_lists=[{"controlType": "List"}], **args)
         self.assertNotIn("usb", json.dumps(cap.records).lower())
         box = [r for r in cap.records if r.get("label") == "Devices"]
@@ -199,7 +199,7 @@ class NeverData(unittest.TestCase):
     def test_an_unnamed_environment_pane_is_never_opened(self):
         rows = dict(node("", "Pane", cls="DeviceRows"), children=[node("Jo's USB stick", "ListItem")])
         t = node("Root", "Window", children=[rows])
-        args = dict(surface="s", build="1.2", profile="p", root_slug="r", root_label="R",
+        args = dict(surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R",
                     environment_lists=[{"className": "DeviceRows"}])
         read = []
         real = core.FixtureElement.children
@@ -227,10 +227,10 @@ class NeverData(unittest.TestCase):
     def test_an_unnamed_teaching_tip_pane_is_pruned_whole(self):
         tip = node("", "Pane", cls="Microsoft.UI.Xaml.Controls.TeachingTip", children=[node("Try it", "Text")])
         t = node("Root", "Window", children=[tip, node("OK", "Button")])
-        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         self.assertEqual([r["label"] for r in cap.records[1:]], ["OK"])
         d = core.dump(core.FixtureElement(t))
-        core.confirm_dump(d, cap, surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        core.confirm_dump(d, cap, surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
 
     def test_a_wide_element_is_refused_before_its_children_are_made(self):
         made = []
@@ -243,7 +243,7 @@ class NeverData(unittest.TestCase):
         core.FixtureElement.__init__ = count
         try:
             with self.assertRaises(core.Incomplete):
-                core.walk(core.FixtureElement(wide), surface="s", build="1.2", profile="p", root_slug="r",
+                core.walk(core.FixtureElement(wide), surface="s", build="1.2", profile="p", session="console", root_slug="r",
                           root_label="R")
         finally:
             core.FixtureElement.__init__ = real
@@ -253,13 +253,13 @@ class NeverData(unittest.TestCase):
         panes = [node("", "Pane") for _ in range(core.MAX_VISITS + 1)]
         t = node("Root", "Window", children=[node("", "Pane", children=panes)])
         with self.assertRaises(core.Incomplete):
-            core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+            core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
 
     def test_tooltips_teaching_tips_and_prose_are_skipped(self):
         t = node("Root", "Window", bounds=(0, 0, 500, 500), children=[
             node("Help", "ToolTip"), node("", "Pane", "Tip", "Microsoft.UI.Xaml.Controls.TeachingTip"),
             node("x" * 81, "Text"), node("OK", "Button"), node("Hidden", "Button", offscreen=True)])
-        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="fhd-100", root_slug="r",
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="fhd-100", session="console", root_slug="r",
                         root_label="Root")
         self.assertEqual([r["label"] for r in cap.records[1:]], ["OK"])
         self.assertEqual(cap.skipped, {"offscreen": 1, "tooltip": 2, "prose": 1, "hosting": 0})
@@ -387,7 +387,7 @@ class Unnamed(unittest.TestCase):
 
     def test_number_only_automation_ids_do_not_name_an_id(self):
         t = node("Root", "Window", children=[node("Open", "MenuItem", "1001")])
-        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         self.assertEqual(cap.records[1]["id"], "win11.s.r.open")
 
 
@@ -397,7 +397,7 @@ class Identity(unittest.TestCase):
                                                   for n in names])
 
     def run_walk(self, t, identity=()):
-        return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r",
+        return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r",
                          root_label="R", identity=identity)
 
     def test_siblings_sharing_a_segment_are_ambiguous(self):
@@ -427,7 +427,7 @@ class Identity(unittest.TestCase):
         # A Text with no automation id is named by its name; when that name is a
         # live value the id would publish it and move with it.
         t = node("Root", "Window", children=[node("Private document.txt", "Text")])
-        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r",
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r",
                         root_label="R", values=[{"controlType": "Text"}])
         self.assertNotIn("private", json.dumps(cap.records).lower())
         self.assertEqual(cap.records[1]["id"], "win11.s.r.text")
@@ -465,7 +465,7 @@ class Incomplete(unittest.TestCase):
         for _ in range(core.MAX_DEPTH + 2):
             deep = node("G", "Group", children=[deep])
         with self.assertRaises(core.Incomplete):
-            core.walk(core.FixtureElement(deep), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+            core.walk(core.FixtureElement(deep), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
 
 
 class Merge(unittest.TestCase):
@@ -530,7 +530,7 @@ class Merge(unittest.TestCase):
         # the other's, so a note on twin.apply would move to the other group.
         t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
                                              node("", "Group", "Twin", children=[node("Apply", "Button")])])
-        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin--1.apply" else r for r in cap.records]
         with self.assertRaises(ValueError) as ex:
             core.merge(old, cap.records, cap.ambiguous)
@@ -541,7 +541,7 @@ class Merge(unittest.TestCase):
         # is removed: Save must not inherit "Deletes the document."
         def cap_of(*names):
             t = node("Root", "Window", children=[node(n, "Button", "Twin") for n in names])
-            return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r",
+            return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r",
                              root_label="R")
         before = cap_of("Delete", "Save")
         old = [dict(r, behaviour="Deletes the document.") if r.get("label") == "Delete" else r for r in before.records]
@@ -555,10 +555,10 @@ class Merge(unittest.TestCase):
         # genuinely named Twin-1, with a child. Neither may inherit the note.
         t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
                                              node("", "Group", "Twin")])
-        before = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        before = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         old = [dict(r, behaviour="Saves.") if r["id"].startswith("win11.s.r.twin--1") else r for r in before.records]
         t2 = node("Root", "Window", children=[node("", "Group", "Twin-1", children=[node("Apply", "Button")])])
-        after = core.walk(core.FixtureElement(t2), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        after = core.walk(core.FixtureElement(t2), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
         out, dropped = core.merge(old, after.records, after.ambiguous)
         self.assertNotIn("Saves.", json.dumps(out))
         self.assertEqual(sorted(dropped), ["win11.s.r.twin--1", "win11.s.r.twin--1.apply"])
@@ -942,15 +942,27 @@ class Fixtures(unittest.TestCase):
     def test_prepare_runs_the_fixture_before_the_walk(self):
         seen = {}
         real = capture.ref_run
-        capture.ref_run = lambda label, files, cmd, timeout: seen.update(files=files, cmd=cmd) or ("out", 0)
+        capture.ref_run = lambda label, files, cmd, timeout, checkpoint: seen.update(files=files, cmd=cmd, cp=checkpoint) or ("out", 0)
         try:
             capture.run_guest("notepad-smoke", "fhd-100", 60, prepare="lists:populated")
         finally:
             capture.ref_run = real
+        self.assertEqual(seen["cp"], "clean")
         self.assertIn("fixtures/lists.ps1", seen["files"])
         first, _, rest = seen["cmd"].partition(" && ")
         self.assertTrue(first.endswith("C:\\ios\\in\\fixtures\\lists.ps1 -Variant populated"), first)
         self.assertTrue(rest.startswith("python C:\\ios\\in\\capture-ui.py"), rest)
+
+    def test_a_machine_profile_is_captured_on_its_checkpoint(self):
+        seen = {}
+        real = capture.ref_run
+        capture.ref_run = lambda label, files, cmd, timeout, checkpoint: seen.update(cp=checkpoint, cmd=cmd) or ("out", 0)
+        try:
+            capture.run_guest("notepad-smoke", "fhd-100-rtl", 60)
+        finally:
+            capture.ref_run = real
+        self.assertEqual(seen["cp"], "profile-fhd-100-rtl")
+        self.assertIn("--profile fhd-100-rtl", seen["cmd"])
 
     def test_an_unknown_fixture_is_refused_before_the_vm(self):
         real = capture.run_guest
@@ -982,6 +994,91 @@ class Fixtures(unittest.TestCase):
         self.assertEqual(run.verdict(self.dir, "lists:empty"), ("lists:empty: no state after round 2", False))
 
 
+class Displays(unittest.TestCase):
+    """Two-display profiles on the stand-in machine (section 22)."""
+
+    runner = load("standin_run_displays", INV / "standin" / "run.py")
+    probe = load("standin_probe", INV / "standin" / "probe.py")
+    variants = json.loads((INV / "standin" / "variants.json").read_text())
+    profiles = json.loads((INV.parents[1] / "docs" / "design" / "inventory" / "profiles.json").read_text())
+
+    def test_two_heads_replace_the_basic_display_and_drop_the_laptop(self):
+        cmd = self.runner.qemu_cmd("o.qcow2", "v.fd", None, "j.img", self.variants["dual"], "q.sock")
+        line = " ".join(cmd)
+        self.assertIn("virtio-vga,xres=1920,yres=1080,edid=on,addr=0x3", line)
+        self.assertIn("virtio-gpu-pci,xres=1920,yres=1080,edid=on,addr=0x5", line)
+        self.assertNotIn("VGA,xres", line.replace("virtio-vga,xres", ""))
+        self.assertNotIn("-acpitable", cmd)
+        one = self.runner.qemu_cmd("o.qcow2", "v.fd", "a.aml", "j.img", self.variants["charging"], "q.sock")
+        self.assertIn("-acpitable", one)
+        self.assertIn("VGA,xres=1920,yres=1080,edid=on,addr=0x3", one)
+
+    def test_a_head_count_the_machine_lacks_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.runner.heads({"displays": 3})
+
+    def test_a_two_display_profile_picks_the_two_head_variant(self):
+        v, why = core.standin_variant("dual-100-150", self.profiles["dual-100-150"], self.variants)
+        self.assertEqual((v, why), ("dual", None))
+        self.assertEqual(core.standin_variant("fhd-100", self.profiles["fhd-100"], self.variants), (None, None))
+        v, why = core.standin_variant("dual-150-100", self.profiles["dual-150-100"], self.variants, "charging")
+        self.assertIsNone(v)
+        self.assertIn("needs 2", why)
+        v, why = core.standin_variant("fhd-100", self.profiles["fhd-100"], self.variants, "dual")
+        self.assertIsNone(v)
+        self.assertIn("--standin dual has 2", why)
+        v, why = core.standin_variant("x", {"monitors": 3}, self.variants)
+        self.assertIsNone(v)
+        self.assertIn("0 stand-in variants", why)
+
+    def test_every_two_display_profile_names_its_second_display(self):
+        live = re.search(r"\$LiveKeys = (.*)", (INV / "ref-vm.ps1").read_text()).group(1)
+        for name, p in self.profiles.items():
+            if p.get("monitors", 1) == 2:
+                self.assertIn(p.get("secondSide"), ("left", "right"), name)
+                self.assertIn(round(p["secondDpi"] * 100 / 96), (100, 125, 150, 175, 200), name)
+                self.assertNotEqual(p["secondDpi"], p["dpi"], name)   # two displays at different scales
+            else:
+                self.assertNotIn("secondDpi", p, name)
+                self.assertNotIn("secondSide", p, name)
+        for key in ("'secondDpi'", "'secondSide'"):
+            self.assertIn(key, live)       # set-profile applies them in the session
+
+    def test_the_primary_swap_is_the_second_profile(self):
+        a, b = self.profiles["dual-100-150"], self.profiles["dual-150-100"]
+        self.assertEqual((a["dpi"], a["secondDpi"]), (b["secondDpi"], b["dpi"]))
+        self.assertEqual({a["secondSide"], b["secondSide"]}, {"left", "right"})
+
+    def test_a_machine_profile_restores_its_own_checkpoint(self):
+        self.assertEqual(core.checkpoint_for("fhd-100", self.profiles), "clean")
+        self.assertEqual(core.checkpoint_for("fhd-150", self.profiles), "clean")          # live: applied in clean
+        for name in ("fhd-100-rtl", "wide-100", "tall-100", "qhd-200"):
+            self.assertEqual(core.checkpoint_for(name, self.profiles), f"profile-{name}", name)
+
+    def test_the_live_keys_are_the_same_in_both_tools(self):
+        live = re.search(r"\$LiveKeys = (.*)", (INV / "ref-vm.ps1").read_text()).group(1)
+        self.assertEqual(tuple(re.findall(r"'([A-Za-z]+)'", live)), core.LIVE_KEYS)
+
+    def test_a_remote_session_is_never_recorded_as_console(self):
+        self.assertEqual(core.session_type({"remote": False}), "console")
+        self.assertEqual(core.session_type({}), "console")
+        self.assertIsNone(core.session_type({"remote": True}))
+
+    def test_the_probe_tells_a_refusal_from_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            (out / "seen.json").write_text('{"monitors":2}\n', encoding="utf-8")
+            self.assertEqual(self.probe.result(0, out), (0, '{"monitors":2}'))
+            (out / "seen.json").unlink()
+            (out / "stdout.txt").write_text("set-profile: second-display scaling 175 is not offered", encoding="utf-8")
+            self.assertEqual(self.probe.result(1, out)[0], 1)          # no refusal marker: a failure
+            (out / "refused.txt").write_text("refused", encoding="utf-8")
+            self.assertEqual(self.probe.result(1, out), (2, "set-profile: second-display scaling 175 is not offered"))
+            (out / "refused.txt").unlink()
+            (out / "stdout.txt").unlink()
+            self.assertEqual(self.probe.result(3, out), (3, "probe: the job left no probe line"))
+
+
 class StandIn(unittest.TestCase):
     """The stand-in machine (section 21): its ACPI devices, its runner and its proofs."""
 
@@ -992,6 +1089,8 @@ class StandIn(unittest.TestCase):
         asl = (INV / "standin" / "standin.asl").read_text()
         variants = json.loads((INV / "standin" / "variants.json").read_text())
         for name, v in variants.items():
+            if not v.get("laptop", True):
+                continue          # no laptop table on this variant: nothing is filled
             filled = self.runner.fill(asl, v)
             # Only the comment's own "@NAME@" remains; every value is filled.
             self.assertEqual(re.findall(r"@[A-Z_]+@", filled), ["@NAME@"], name)
@@ -1250,7 +1349,7 @@ class States(unittest.TestCase):
                                              node("", "Group", "a", children=[
                                                  node("", "MenuItem", "b", expands=[node("Y", "MenuItem")])])])
         seen = []
-        core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R",
+        core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R",
                   shot=lambda state, el, items: seen.append(state) or {"file": f"{state}.p.png"})
         self.assertEqual(sorted(seen), ["r", "r.a-b-open", "r.a.b-open"])
 
@@ -1259,7 +1358,7 @@ class Dump(unittest.TestCase):
     def test_the_dump_walks_to_the_same_records(self):
         cap = walk()
         d = core.dump(core.FixtureElement(tree()), environment_lists=smoke.ENVIRONMENT_LISTS)
-        core.confirm_dump(d, cap, surface="notepad-smoke", build="26300.9711", profile="fhd-100",
+        core.confirm_dump(d, cap, surface="notepad-smoke", build="26300.9711", profile="fhd-100", session="console",
                           root_slug=smoke.ROOT_SLUG, root_label=smoke.ROOT_LABEL,
                           environment_lists=smoke.ENVIRONMENT_LISTS, values=smoke.VALUES)
         self.assertEqual(core.dump(core.FixtureElement(copy.deepcopy(d)), environment_lists=smoke.ENVIRONMENT_LISTS), d)
@@ -1330,7 +1429,7 @@ class Settle(unittest.TestCase):
         self.assertIn(f"in {core.MAX_PASSES} walks", str(ex.exception))
 
     def walk_args(self):
-        return dict(surface="notepad-smoke", build="26300.9711", profile="fhd-100", root_slug="window",
+        return dict(surface="notepad-smoke", build="26300.9711", profile="fhd-100", session="console", root_slug="window",
                     root_label="Notepad", environment_lists=smoke.ENVIRONMENT_LISTS, values=smoke.VALUES)
 
     def test_a_dump_that_matches_its_walk_is_accepted(self):

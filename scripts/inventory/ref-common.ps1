@@ -49,6 +49,25 @@ function Send-RefKey([string]$Name, [uint32]$Key) {
     [void](Invoke-CimMethod -InputObject (Get-RefKeyboard $Name) -MethodName TypeKey -Arguments @{ keyCode = $Key })
 }
 
+# A key typed while a modifier is held, such as Win+D (0x5B, 0x44): the modifier
+# is released even when the typed key fails.
+function Send-RefChord([string]$Name, [uint32]$Modifier, [uint32]$Key) {
+    $kb = Get-RefKeyboard $Name
+    [void](Invoke-CimMethod -InputObject $kb -MethodName PressKey -Arguments @{ keyCode = $Modifier })
+    try { [void](Invoke-CimMethod -InputObject $kb -MethodName TypeKey -Arguments @{ keyCode = $Key }) }
+    finally { [void](Invoke-CimMethod -InputObject $kb -MethodName ReleaseKey -Arguments @{ keyCode = $Modifier }) }
+}
+
+# clean has OneDrive not installed, with its per-user setup pending at the next
+# sign-in (checked 2026-11-16). Captures from clean never sign in again; a machine
+# derived from clean does, which would install OneDrive and open its sign-in
+# window. The pending entry goes, so the derived machine keeps clean's software.
+function Clear-RefPendingSetup($Session) {
+    Invoke-Command -Session $Session -ScriptBlock {
+        Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name OneDriveSetup -ErrorAction SilentlyContinue
+    }
+}
+
 # Host-to-guest values already set on the VM, by name.
 function Get-HostKvp([string]$Name) {
     $vm = Get-WmiObject -Namespace $script:Ns -Class Msvm_ComputerSystem -Filter "ElementName='$Name'"

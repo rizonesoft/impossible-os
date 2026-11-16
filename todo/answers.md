@@ -515,3 +515,14 @@ Section 41 moves the CI jobs into an image pinned by digest. The digest exists o
 - **C:** build the image inside `build.yml` on every run, which is the install-at-run-time failure the section removes.
 
 A: (run decision, 2026-11-13) A. Later toolchain changes need two pushes the same way (publish, then pin), which is the property the section asks for: the toolchain moves only when a digest changes. Reversal cost: none; the pin can return to a runner label in one commit.
+
+## Q45 (08-graphics-ui/TODO-17 §22): how are the derived reference machines made?
+
+The section text has the Arabic pack "installed while setup still has network", and every machine profile as a checkpoint derived from `clean`. Setup ran offline (the VM has no network adapter, so nothing updates the pinned build), and `clean` already exists, so the pack cannot come from setup without rebuilding the reference VM from the ISO.
+
+- **Resolution (`wide-100`, `tall-100`, `qhd-200`):** the VM's own video mode (`Set-VMVideo`, which takes 2560 by 1440, 2560 by 1080 and 1080 by 1920, measured 2026-11-16), set with the guest off, in a checkpoint `profile-<id>` derived from `clean`. Reversal: delete the checkpoints.
+- **Arabic (`fhd-100-rtl`):** the `ar-SA` pack through `Install-Language`, over a network adapter on the Default Switch that exists only while it installs, with automatic updates and Store updates held off by policy for that time and the build checked after (`Test-RefIdentity`). Rejected: a rebuild from the ISO with network during setup (12 minutes plus a second clean, and an online setup can take a cumulative update, which moves the pinned build). Reversal: delete the checkpoint.
+- **Two displays (`dual-100-150`, `dual-150-100`):** Hyper-V gives a VM one display, and an enhanced session's extra monitors exist only when the host has that many physical ones. They run on the stand-in machine (section 21) with two virtio GPU heads and the virtio-win 0.1.302 `viogpudo` driver (BSD-3-Clause, fetched by pinned SHA-256, not redistributed), which shows two displays with no reboot (measured 2026-11-16). "Primary swapped" is Windows' "Make this my main display" on the right-hand display, so the profiles record the second display's scale and side (`secondDpi`, `secondSide`). The session type is `console` on every captured record: every capture runs in the machine's console session. Reversal: drop the variant and the two keys.
+- **OneDrive:** `clean` has OneDrive not installed with its first-run setup pending at the next sign-in. A derived machine signs in again, so the pending entry is removed first and it keeps `clean`'s software (the stand-in disk the same). Reversal: delete one registry call.
+
+A: (run decision, 2026-11-16) as listed.
