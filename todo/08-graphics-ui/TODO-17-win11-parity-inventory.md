@@ -1222,6 +1222,9 @@ Windows Update and network pages show states the offline reference VM never reac
 
 **Test checkpoint:** `fixtures/run.py --twice services:update-checking services:update-failed` leaves the same state twice; UI Automation and a screenshot of Settings > Windows Update show "Checking for updates..." and "Error encountered" with Retry. A Settings row is captured by its surface's walker, which the surface's own section adds.
 
+> **Verified:** 2026-11-16 | commit `023b09b93` | 2/2 items | 312 inventory tests OK; `fixtures/run.py --twice services:update-checking services:update-failed` passes on the VM, the fixture confirming 'Checking for updates' and 'Error encountered' on the page with the policy removed; a copy expecting the wrong status refuses
+> **Quality reviewed:** 2026-11-16 | Codex 4x (round 2x, performance 1x, completion 1x) | 1M fixed, 0 open | scope: N/A (guest fixture tooling, no kernel surface)
+
 ---
 
 ## 24. Host Build and Host Captures
