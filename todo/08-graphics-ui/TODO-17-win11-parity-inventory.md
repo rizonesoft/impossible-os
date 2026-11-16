@@ -85,7 +85,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14            |  [ ]   |
 | ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16               |  [ ]   |
 | 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5                 |  [x]   |
-| 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                |  [ ]   |
+| 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                |  [x]   |
 | 💎  |  21   | §21 Device Stand-ins and Host Captures                                                      | §2, §5, §19            |  [ ]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                |  [ ]   |
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20           |  [ ]   |
@@ -1154,6 +1154,9 @@ The states a capture must reach without real user data: fictional list payloads 
 - [x] Commit: `"inventory: capture fixtures"`
 
 **Test checkpoint:** `fixtures/run.py --twice` runs each fixture variant twice on a restored `clean` checkpoint and prints the same non-empty state both times; `inventory-report.py --campaign --check` names a row whose fixture has no script.
+
+> **Verified:** 2026-11-16 | commit `562a8fa3d` | 4/4 items | 90 capture and 18 report tests OK; `fixtures/run.py --twice all` passes all five variants on the VM; screenshots show the sample entries in Installed apps, Printers & scanners, VPN, Other users, the notification centre and an empty File Explorer folder
+> **Quality reviewed:** 2026-11-16 | Codex 5x (round 2x, performance, completion 2x) | 0H+1M fixed, 0 open | scope: N/A (host and guest tooling, no kernel surface)
 
 ---
 
