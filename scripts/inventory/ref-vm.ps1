@@ -425,7 +425,7 @@ function Complete-Clean() {
         if ($problems.Count) { throw "clean not taken: $($problems -join '; ')" }
     } finally { Remove-PSSession $s }
     # The old clean is replaced only once its successor exists.
-    Repair-CleanPromotion
+    Repair-RefPromotion $Name 'clean'
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean-next' }) { Remove-VMSnapshot -VMName $Name -Name 'clean-next' }
     Checkpoint-VM -Name $Name -SnapshotName 'clean-next'
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean' }) { Remove-VMSnapshot -VMName $Name -Name 'clean' }
@@ -437,7 +437,7 @@ function Invoke-Verify() {
     $problems = @()
     $vm = Get-VM | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
     if (-not $vm) { Write-Host "ref-vm: no VM named $Name"; return 1 }
-    Repair-CleanPromotion
+    Repair-RefPromotion $Name 'clean'
     $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
     foreach ($c in 'pre-oobe', 'clean') { if ($names -notcontains $c) { $problems += "missing checkpoint $c" } }
     if ($vm.ProcessorCount -ne 4) { $problems += "vCPU $($vm.ProcessorCount), want 4" }
@@ -465,17 +465,6 @@ function Invoke-Verify() {
     }
     Write-Host "ref-vm: $Name ok, profile fhd-100 (Windows 11 $($script:Seen.edition) $($script:Seen.displayVersion) build $($script:Seen.build))"
     return 0
-}
-
-# A run stopped between removing clean and renaming clean-next leaves clean-next
-# as the only desktop checkpoint: finish that promotion before anything else.
-# With clean present, a clean-next is a stale candidate and may go.
-function Repair-CleanPromotion() {
-    $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
-    if ($names -contains 'clean-next' -and $names -notcontains 'clean') {
-        Rename-VMSnapshot -VMName $Name -Name 'clean-next' -NewName 'clean'
-        Write-Ref 'finished an interrupted promotion of clean-next to clean'
-    }
 }
 
 # Everything that must hold in clean: the reference identity, the fhd-100 values
@@ -549,6 +538,7 @@ function Test-DerivedProfile([string]$Id) {
     $other = @(Get-MachineKeys $want | Where-Object { $DerivableKeys -notcontains $_ })
     if ($other.Count) { return @(Test-StandinProfile $Id $want) }
     $cp = "profile-$Id"
+    Repair-RefPromotion $Name $cp
     if (-not (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $cp })) { return @("missing checkpoint $cp (ref-vm.ps1 -Derive -Profile $Id)") }
     $s = $null
     try {
@@ -642,6 +632,9 @@ function Install-RefLanguage($Session, [string]$Language) {
 function Invoke-DeriveProfile([string]$Id) {
     $want = $AllProfiles.$Id
     Write-Ref "deriving profile-$Id from clean"
+    # A validated profile-<id>-next left by an interrupted promotion becomes
+    # profile-<id> before the stale -next below is removed.
+    Repair-RefPromotion $Name "profile-$Id"
     $s = Start-RefFrom $Name $VmPath 'clean'
     try {
         Clear-RefPendingSetup $s

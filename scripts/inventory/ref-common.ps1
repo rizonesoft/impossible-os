@@ -296,7 +296,20 @@ function Receive-RefTree($Session, [string]$Source, [string]$Destination) {
 # it: a restore of pre-oobe was refused "Access is denied" on answer-install.iso
 # without it (seen 2026-11-14). Media outside the folder, such as the operator's
 # ISO, is not ours to change and keeps the access Hyper-V gave it.
+# A checkpoint is replaced by taking <name>-next, removing <name> and renaming
+# <name>-next. An interruption between the last two leaves <name>-next as the
+# only validated copy; this finishes that promotion, so nothing restores or
+# replaces a checkpoint before it is back under its own name.
+function Repair-RefPromotion([string]$Name, [string]$Checkpoint) {
+    $names = @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.Name })
+    if ($names -contains "$Checkpoint-next" -and $names -notcontains $Checkpoint) {
+        Rename-VMSnapshot -VMName $Name -Name "$Checkpoint-next" -NewName $Checkpoint
+        Write-Ref "finished an interrupted promotion of $Checkpoint-next to $Checkpoint"
+    }
+}
+
 function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath) {
+    Repair-RefPromotion $Name $Checkpoint
     # Inputs are checked before the VM is touched, so a bad argument leaves it as it was.
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
     $snap = @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $Checkpoint })
