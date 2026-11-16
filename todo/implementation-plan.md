@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **985 of 2718 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **986 of 2718 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -47,7 +47,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §7`  | Coverage Report and Ownership Check                                                                                   | none     |     9 |
 | [x]  | `D08 T17 §19` | Capture Matrix and Profile Matrix                                                                                     | none     |     3 |
 | [x]  | `D08 T17 §20` | Capture Fixtures                                                                                                      | none     |     4 |
-| [ ]  | `D08 T17 §21` | Device Stand-ins                                                                                                      | none     |     4 |
+| [x]  | `D08 T17 §21` | Device Stand-ins                                                                                                      | none     |     4 |
 | [ ]  | `D08 T17 §22` | Derived Reference Machines: Right-to-Left, Viewports and Two Displays                                                 | none     |     4 |
 | [ ]  | `D08 T17 §23` | Service-State Fixtures: Update Source and Network Switch                                                              | none     |     2 |
 | [ ]  | `D08 T17 §24` | Host Build and Host Captures                                                                                          | none     |     3 |

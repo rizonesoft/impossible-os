@@ -86,7 +86,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16                    |  [ ]   |
 | 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5                      |  [x]   |
 | 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                     |  [x]   |
-| 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [ ]   |
+| 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [x]   |
 | 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [ ]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [ ]   |
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [ ]   |
@@ -1178,6 +1178,10 @@ No physical laptop is used (operator decision 2026-11-14): a hardware-gated surf
 - [x] Commit: `"inventory: device stand-ins"`
 
 **Test checkpoint:** `inventory-report.py --campaign --check` names every `stand-in` row whose stand-in is unproven and every absent row without a sibling; each proof is a screenshot from `standin/prove.py`, taken once the page shows its marker element, and kept only when the device facts the guest reads afterwards meet the stand-in's expectations.
+
+> **Verified:** 2026-11-16 | commit `b091b94ca` | 4/4 items | 105 capture and 20 report tests OK; `standin/prove.py` proves all five stand-ins live (448 s, three variants), screenshots show Power & battery charging, discharging and at 15 percent with Energy saver on, and the Brightness slider
+> **Quality reviewed:** 2026-11-16 | Codex 8x (round 3x, performance 2x, completion 3x) | 1H+6M fixed, 0 open | scope: N/A (host and guest tooling, no kernel surface)
+
 ---
 
 ## 22. Derived Reference Machines: Right-to-Left, Viewports and Two Displays
