@@ -623,8 +623,12 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
     for parent, kids in children.items():
         by_order = {}
         for rid in kids:
-            by_order.setdefault(records[rid][2]["order"], []).append(rid)
-        for order, same in by_order.items():
+            # Interface entries and catalogue records (which describe their parent
+            # rather than being one of its entries) number themselves apart, so a
+            # recapture that renumbers the entries never meets a hand note.
+            kind = records[rid][2].get("kind")
+            by_order.setdefault((kind in CATALOGUE_KINDS, records[rid][2]["order"]), []).append(rid)
+        for (_, order), same in by_order.items():
             if len(same) > 1:
                 for rid in same:
                     path, n, _, mine = records[rid]
@@ -633,9 +637,9 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
 
     for rid, (path, n, obj, mine) in records.items():
         if "itemCount" in obj and mine:
-            have = len(children.get(rid, []))
+            have = sum(1 for k in children.get(rid, []) if records[k][2].get("kind") not in CATALOGUE_KINDS)
             if have != obj["itemCount"]:
-                err(path, n, "item-count", f"{rid}: itemCount {obj['itemCount']} but {have} child record(s) present")
+                err(path, n, "item-count", f"{rid}: itemCount {obj['itemCount']} but {have} interface child record(s) present")
 
     # Observations are read only from the selected surface, so every one is in scope.
     seen = {}

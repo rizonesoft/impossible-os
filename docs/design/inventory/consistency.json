@@ -3,7 +3,18 @@
   "id": "context-menus",
   "kind": "look",
   "question": "What does a right-click show?",
-  "variants": [],
+  "variants": [
+   "win11.desktop.menu",
+   "win11.desktop.file-menu",
+   "win11.desktop.folder-menu",
+   "win11.desktop.shortcut-menu",
+   "win11.desktop.recycle-bin-menu",
+   "win11.desktop.classic-menu",
+   "win11.desktop.classic-file-menu",
+   "win11.desktop.classic-folder-menu",
+   "win11.desktop.classic-shortcut-menu",
+   "win11.desktop.classic-recycle-bin-menu"
+  ],
   "rule": "One menu holds every verb, grouped and ordered by one scheme; no second menu sits behind a more-options entry.",
   "reason": "The reference shows a modern menu with a classic menu behind it, and a verb can be in either."
  },

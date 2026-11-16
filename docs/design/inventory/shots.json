@@ -1,1 +1,202 @@
-[]
+[
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "classic-file-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 477,
+  "size": 7003,
+  "sha256": "0b108bc90889b10368edc2bad829f73595ee47fc0d600f8b4e2bc4a8f019b9b2"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "classic-folder-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 453,
+  "size": 6706,
+  "sha256": "4d12ddf76ae50119e6fca6d70694292bd3b453e3fe0fcc91a99ac966362a5e4d"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "classic-menu",
+  "profile": "fhd-100",
+  "width": 218,
+  "height": 319,
+  "size": 4811,
+  "sha256": "526231396f53463ac769d408deab5740d95494a050c97d74faea18fb32eb4b6c"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "classic-recycle-bin-menu",
+  "profile": "fhd-100",
+  "width": 215,
+  "height": 192,
+  "size": 2953,
+  "sha256": "6829fd4cef90e6cee1d97f37d9e7c3583deb0a1647bf3ceb3ba89b66faef39d3"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "classic-shortcut-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 501,
+  "size": 8191,
+  "sha256": "65c05dc28b5c91f0dd3244ac6656c5f2c92b2421a6ac4c7b619442c4585f28d0"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "desktop",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 5493831,
+  "sha256": "f0db7711d912f65b015c76e7de1d68c7dcb32f0b1ad4dbd3bdd9360126f59db6"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "file-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 401,
+  "size": 13052,
+  "sha256": "71c00ad018584def8dd922bb4624db9099a519d7629391a6ba24ca2c6dc49174"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "file-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 533,
+  "height": 97,
+  "size": 7250,
+  "sha256": "84cee9209a85f94095d35bab8c1df311fa9057a797d22e4df9642484bbcec926"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "file-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 7408,
+  "sha256": "5d3218e09c206f5fa4af206bee96e7ce1b8f390c272c9d440ca2f86e7548045d"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "file-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4631,
+  "sha256": "c682a73b1b43d4a9828a80a741b92a1ca5025c374550f204b2a3b96840f97f4b"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "folder-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 337,
+  "size": 10954,
+  "sha256": "ef7e888a6a40ca43739b38f8cba88938a05e24aae67d117839e4b418e31b9ddf"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "folder-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 7219,
+  "sha256": "fe3341a75e61d534504501aa2cbf5a58e1bc03fb91ff03efcdd13ad3fc23424f"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "menu",
+  "profile": "fhd-100",
+  "width": 254,
+  "height": 484,
+  "size": 11215,
+  "sha256": "3d14b46e520b045e0575527a99f8bcc48674b0f14152ea46156369c76425ba03"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "menu.arrange-open",
+  "profile": "fhd-100",
+  "width": 356,
+  "height": 129,
+  "size": 5968,
+  "sha256": "85cf097d2d5e0d2256cf2fc167aca35feb1ac53a9ee4972b34312df1bebccb46"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "menu.new-open",
+  "profile": "fhd-100",
+  "width": 469,
+  "height": 161,
+  "size": 11316,
+  "sha256": "35a36bc310930571fa8377d0fd76ad0f8082842033c82b6f853196217a7eda1b"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "menu.view-open",
+  "profile": "fhd-100",
+  "width": 537,
+  "height": 202,
+  "size": 12717,
+  "sha256": "a916fbe32a84b00cb4429b49021ea36ee63b1b086097a17ef81bf9cef7b8e817"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "recycle-bin-menu",
+  "profile": "fhd-100",
+  "width": 268,
+  "height": 264,
+  "size": 6985,
+  "sha256": "a8e7d4790900fa3bbf6a1b8172f34376bc4f0b47ae976f4cac24b4c9983b5b07"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "shortcut-menu",
+  "profile": "fhd-100",
+  "width": 393,
+  "height": 465,
+  "size": 16500,
+  "sha256": "6bebd72301260e7723e4e485fefa36ae803a89e7f709f98e9ad4ea9028ca2a91"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "shortcut-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 521,
+  "height": 129,
+  "size": 7597,
+  "sha256": "8265e79bb11418696c5e4d488828504f8518eda4ddefa2ddc2612d76e2735b7f"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "shortcut-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 518,
+  "height": 65,
+  "size": 4621,
+  "sha256": "52e171516b5101b07d260123c35bfc91643a4f766c7048342c31d5445f0d761e"
+ }
+]

@@ -53,6 +53,7 @@ SETTLE_S = 10.0         # a flyout gets this long to open and stop changing
 MIN_POLLS = 3           # and is always looked at this often: a provider busy animating answers slowly
 POLL_S = 0.2
 EXPAND_COLLAPSE = 10005
+INVOKE = 10000
 PROP_EC_AVAILABLE = 30028
 PROP_EC_STATE = 30070
 EXPANDED, COLLAPSED = 1, 0
@@ -60,7 +61,9 @@ TREE_ELEMENT, TREE_CHILDREN, TREE_DESCENDANTS = 1, 2, 4
 # Top-level window classes that are popups themselves: a Win32 menu, a combo box
 # list, a windowed XAML popup. A popup hosted elsewhere fails the capture (exit 3)
 # rather than being missed, and is added here when it is met.
-POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup"}
+# A WinUI 3 menu opens in its own top-level PopupWindowSiteBridge (the desktop's
+# context menu and its submenus, seen 2026-11-16 on 26300.9974).
+POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Microsoft.UI.Content.PopupWindowSiteBridge"}
 PROP_CONTROL_TYPE = 30003
 PROP_PROCESS_ID = 30002
 PROP_IS_OFFSCREEN = 30022
@@ -118,7 +121,8 @@ def read_profile():
 
 # ---------------------------------------------------------------- input --
 VK = {"alt": 0x12, "ctrl": 0x11, "shift": 0x10, "win": 0x5B, "esc": 0x1B, "enter": 0x0D, "tab": 0x09,
-      "f4": 0x73, "f10": 0x79, "space": 0x20, "down": 0x28, "up": 0x26}
+      "space": 0x20, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
+      **{f"f{n}": 0x6F + n for n in range(1, 13)}}
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -126,9 +130,14 @@ class KEYBDINPUT(ctypes.Structure):
                 ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
 class INPUT(ctypes.Structure):
     class _U(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT), ("pad", ctypes.c_byte * 32)]
+        _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("pad", ctypes.c_byte * 32)]
     _anonymous_ = ("u",)
     _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
@@ -140,6 +149,22 @@ def keys(chord):
     arr = (INPUT * len(seq))(*[INPUT(type=1, ki=KEYBDINPUT(wVk=c, dwFlags=f)) for c, f in seq])
     if user32.SendInput(len(seq), arr, ctypes.sizeof(INPUT)) != len(seq):
         raise core.Incomplete(f"SendInput refused {chord}")
+    time.sleep(0.3)
+
+
+# Down and up flags of MOUSEINPUT per button.
+BUTTONS = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040)}
+
+
+def click(x, y, button="left"):
+    """Press and release a mouse button at (x, y) in physical pixels (the tool is
+    per-monitor DPI aware, so UI Automation bounds are in the same pixels)."""
+    down, up = BUTTONS[button]
+    if not user32.SetCursorPos(int(x), int(y)):
+        raise core.Incomplete(f"SetCursorPos refused ({x}, {y})")
+    arr = (INPUT * 2)(INPUT(type=0, mi=MOUSEINPUT(dwFlags=down)), INPUT(type=0, mi=MOUSEINPUT(dwFlags=up)))
+    if user32.SendInput(2, arr, ctypes.sizeof(INPUT)) != 2:
+        raise core.Incomplete(f"SendInput refused a {button} click")
     time.sleep(0.3)
 
 
@@ -384,13 +409,87 @@ class Context:
     def launch(self, *argv):
         return subprocess.Popen(list(argv))
 
+    def click(self, el, button="left"):
+        """Click the centre of an element (a LiveElement or anything with bounds)."""
+        x, y, w, h = el.bounds
+        if w <= 0 or h <= 0:
+            raise core.Incomplete(f"{getattr(el, 'name', '') or 'element'} has no area to click")
+        click(x + w // 2, y + h // 2, button)
+
+    def invoke(self, el):
+        """Run an element's default action through its Invoke pattern (a menu
+        entry that a synthesized click does not reach)."""
+        try:
+            el.el.GetCurrentPattern(INVOKE).QueryInterface(self.live.UIA.IUIAutomationInvokePattern).Invoke()
+        except self.live.COMError as exc:
+            raise core.Incomplete(f"{el.name or el.automation_id}: Invoke failed ({exc})") from None
+        time.sleep(0.3)
+
+    def click_at(self, x, y, button="left"):
+        click(x, y, button)
+
+    def powershell(self, script, timeout=120):
+        """Run a PowerShell script in the capture's session (a fixture: desktop
+        icons, a setting); a failure or a timeout fails the capture."""
+        try:
+            r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                               capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise core.Incomplete(f"a fixture script ran past {timeout} s") from None
+        if r.returncode:
+            raise core.Incomplete(f"a fixture script failed ({r.returncode}): {(r.stderr or r.stdout).strip()[:300]}")
+        return r.stdout
+
+    def gone(self, timeout=10, **spec):
+        """Wait until no top-level window matching spec is on screen (a menu closing)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if not any(core.matches(w, spec) and not w.offscreen
+                           for w in self.live.children(self.live.uia.GetRootElement())):
+                    return
+            except self.live.COMError:
+                pass
+            time.sleep(0.3)
+        raise core.Incomplete(f"a window matching {spec} stayed open past {timeout} s")
+
+    def find(self, within=None, timeout=15, depth=8, **spec):
+        """The first element matching spec, searched breadth first below `within`
+        (the desktop when None) to `depth` levels, waiting up to `timeout` s.
+        Offscreen containers are searched too: a WinUI menu's popup window
+        reports offscreen while its entries are on screen."""
+        deadline = time.monotonic() + timeout
+        while True:
+            level = [within] if within is not None else None
+            try:
+                level = level or self.live.children(self.live.uia.GetRootElement())
+                for _ in range(depth):
+                    nxt = []
+                    for el in level:
+                        if el is not within and core.matches(el, spec):
+                            return el
+                        nxt.extend(el.children())
+                    level = nxt
+                    if not level:
+                        break
+            except self.live.COMError:
+                pass                 # a window closed mid-search; look again
+            if time.monotonic() >= deadline:
+                raise core.Incomplete(f"no element matching {spec} within {timeout} s")
+            time.sleep(0.5)
+
     def find_window(self, timeout=15, **spec):
         """The first top-level window matching spec (className, name, automationId)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            for w in self.live.children(self.live.uia.GetRootElement()):
+            # The raw view: a classic menu's #32768 window is not a control
+            # element, so the control view leaves it out.
+            for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition()):
                 if core.matches(w, spec) and not w.offscreen:
-                    user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
+                    # A popup is never brought forward: a menu that loses the
+                    # foreground to itself closes (2026-11-16, the classic menu).
+                    if w.class_name not in POPUP_WINDOWS:
+                        user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
                     return w
             time.sleep(0.5)
         raise core.Incomplete(f"no window matching {spec} within {timeout} s")
@@ -406,6 +505,7 @@ def load_surface(name):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--surface", required=True)
+    ap.add_argument("--module", help="the surface module to walk (default: the one named after --surface)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--shots")
     ap.add_argument("--meta")
@@ -438,7 +538,10 @@ def main(argv=None):
     win32()
     user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     build = seen["build"]
-    mod = load_surface(args.surface)
+    mod = load_surface(args.module or args.surface)
+    if mod.SURFACE != args.surface:
+        print(f"capture-ui: module {args.module} walks surface {mod.SURFACE}, not {args.surface}")
+        return 2
     live = Live()
     ctx = Context(live)
     meta = {"surface": args.surface, "build": build, "profile": args.profile, "complete": False}
@@ -446,49 +549,68 @@ def main(argv=None):
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
 
-    def shot(state, el, items):
-        boxes = [el.bounds] + [i.bounds for i in items if i.bounds[2] and i.bounds[3]]
+    try:
+        scenes = core.scenes_of(mod)
+    except ValueError as exc:
+        print(f"capture-ui: {args.surface}: {exc}")
+        return 2
+    written = []                      # this scene's screenshots from its last walk
+
+    def shot(state, el, items, box=None):
+        # box: the root's extent when it has no area of its own (core.extent).
+        boxes = [box or el.bounds] + [i.bounds for i in items if i.bounds[2] and i.bounds[3]]
         x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
         x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
         name = f"{state}.{args.profile}.png"
         grab(str(shots / name), x0, y0, x1 - x0, y1 - y0)
+        written.append(shots / name)
         return {"state": state, "file": name, "width": x1 - x0, "height": y1 - y0}
 
-    walk_args = dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=mod.ROOT_SLUG,
-                     root_label=mod.ROOT_LABEL, root_kind=getattr(mod, "ROOT_KIND", "surface"),
-                     environment_lists=getattr(mod, "ENVIRONMENT_LISTS", ()), values=getattr(mod, "VALUES", ()),
-                     identity=getattr(mod, "IDENTITY", ()))
+    def walk_args(sc):
+        return dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=sc.slug,
+                    root_label=sc.label, root_kind=sc.kind, environment_lists=sc.environment_lists,
+                    values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels)
 
-    def walk_once():
-        if shots:                     # each pass replaces the last pass's screenshots
-            for old in shots.glob("*.png"):
-                old.unlink()
-        return core.walk(mod.root(ctx), shot=shot if shots else None, **walk_args)
+    def walk_scene(sc):
+        # Each pass replaces this scene's screenshots from the pass before; an
+        # earlier scene's are kept.
+        for old in written:
+            old.unlink(missing_ok=True)
+        written.clear()
+        return core.walk(sc.root(ctx), shot=shot if shots else None, **walk_args(sc))
+
+    trees = {}
+
+    def dump_scene(sc, cap):
+        written.clear()               # settled: these screenshots stay
+        if args.dump:
+            tree = core.dump(sc.root(ctx), environment_lists=sc.environment_lists, expand=sc.expand, hosts=sc.hosts)
+            core.confirm_dump(tree, cap, **walk_args(sc))
+            trees[sc.slug] = tree
 
     code = 3
-    mod.open(ctx)
     try:
-        cap, passes = core.settle(walk_once)
+        cap, passes = core.run_scenes(scenes, ctx, walk_scene, on_open=dump_scene)
+        records = cap.records
+        records += core.authored(getattr(mod, "HAND", ()), surface=mod.SURFACE, build=build, source="hand")
+        metrics = mod.METRICS(cap.records + cap.measured) if hasattr(mod, "METRICS") else ()
+        records += core.authored(metrics, surface=mod.SURFACE, build=build, source="uia",
+                                 profile=args.profile, session=session)
         if args.dump:
-            tree = core.dump(mod.root(ctx), environment_lists=walk_args["environment_lists"])
-            core.confirm_dump(tree, cap, **walk_args)
-            pathlib.Path(args.dump).write_text(json.dumps(tree, indent=1), encoding="utf-8")
-        core.write_records(args.out, cap.records)
-        meta.update(complete=True, passes=passes, records=len(cap.records), unnamed=cap.unnamed,
-                    ambiguous=cap.ambiguous, skipped=cap.skipped, states=cap.states)
+            # One scene keeps the bare tree the fixtures were written from.
+            body = trees[scenes[0].slug] if len(scenes) == 1 else {"scenes": trees}
+            pathlib.Path(args.dump).write_text(json.dumps(body, indent=1), encoding="utf-8")
+        core.write_records(args.out, records)
+        meta.update(complete=True, passes=max(passes.values()), scenePasses=passes, records=len(records),
+                    unnamed=cap.unnamed, ambiguous=cap.ambiguous, skipped=cap.skipped, states=cap.states)
         code = 0
-    except (core.Incomplete, live.COMError) as exc:
+    except (core.Incomplete, live.COMError, ValueError) as exc:
         # A UI Automation call that fails mid-walk (an element gone, a provider
         # that stopped answering) leaves the capture unproven, never half-taken.
-        meta["incomplete"] = str(exc) if isinstance(exc, core.Incomplete) else f"UI Automation failed: {exc}"
+        # A ValueError is a module whose authored records are malformed.
+        meta["incomplete"] = str(exc) if not isinstance(exc, live.COMError) else f"UI Automation failed: {exc}"
         print(f"capture-ui: incomplete: {meta['incomplete']}")
     finally:
-        try:
-            mod.close(ctx)
-        except (core.Incomplete, live.COMError) as exc:
-            meta["complete"] = False
-            meta["incomplete"] = f"close: {exc}"
-            code = 3
         if args.meta:
             pathlib.Path(args.meta).write_text(json.dumps(meta, indent=1), encoding="utf-8")
     if code == 0:

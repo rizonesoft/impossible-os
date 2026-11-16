@@ -110,15 +110,17 @@ def verify_shots(manifest, store):
     return out
 
 
-def run_guest(surface, profile, timeout, fixture=False, prepare=None, standin=None):
+def run_guest(surface, profile, timeout, fixture=False, prepare=None, standin=None, module=None):
     """Run capture-ui.py in the VM (or on the stand-in machine in variant
     `standin`), after the fixture `prepare` (name:variant) when one is named.
-    Returns (output folder, exit code)."""
+    `module` is the surface module to walk (default: the one named after the
+    surface). Returns (output folder, exit code)."""
+    module = module or surface
     files = {"capture-ui.py": HERE / "capture-ui.py", "capture_core.py": HERE / "capture_core.py",
-             f"surfaces/{surface}.py": HERE / "surfaces" / f"{surface}.py",
+             f"surfaces/{module}.py": HERE / "surfaces" / f"{module}.py",
              "profiles.json": INVENTORY / "profiles.json",
              "probe-profile.ps1": HERE / "guest" / "probe-profile.ps1", "set-profile.ps1": HERE / "guest" / "set-profile.ps1"}
-    cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --profile {profile} --out C:\\ios\\out\\records.json "
+    cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --module {module} --profile {profile} --out C:\\ios\\out\\records.json "
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:
         cmd += " --dump C:\\ios\\out\\tree.json"
@@ -444,6 +446,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--surface")
     ap.add_argument("--file", help="the record file under the surface folder, without .json")
+    ap.add_argument("--module", help="the surface module that writes this file (default: the one named after --surface)")
     ap.add_argument("--profile", default="fhd-100")
     ap.add_argument("--merge", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
@@ -461,14 +464,15 @@ def main(argv=None):
         return 1 if bad else 0
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")
-    for flag, value in (("--surface", args.surface), ("--file", args.file)):
+    args.module = args.module or args.surface
+    for flag, value in (("--surface", args.surface), ("--file", args.file), ("--module", args.module)):
         if value != core.slug(value):
             ap.error(f"{flag} {value!r} must be a slug (lower-case letters, digits, single hyphens), not a path")
     # Refused here, before the VM starts: a walker this checkout lacks, or a
     # profile profiles.json does not define, cannot be captured.
-    if not (HERE / "surfaces" / f"{args.surface}.py").is_file():
+    if not (HERE / "surfaces" / f"{args.module}.py").is_file():
         walkers = sorted(p.stem for p in (HERE / "surfaces").glob("*.py"))
-        ap.error(f"--surface {args.surface!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
+        ap.error(f"--module {args.module!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
     if args.prepare and core.fixture_problem(FIXTURES, args.prepare):
         ap.error(f"--prepare: {core.fixture_problem(FIXTURES, args.prepare)}")
     variants = json.loads((HERE / "standin" / "variants.json").read_text(encoding="utf-8"))
@@ -498,7 +502,8 @@ def main(argv=None):
 def capture_and_publish(args):
     if recover(JOURNAL):
         print("capture: rolled back a publication that was interrupted; the previous one is restored")
-    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare, args.standin)
+    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare, args.standin,
+                        module=args.module)
     if rc == 2:
         return 2
     try:

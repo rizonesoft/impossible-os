@@ -389,22 +389,21 @@ The report is the measure of progress, and the ownership check is the proof that
 
 **Design:** n/a -- records the reference, draws nothing
 
+**Needs:** operator
+
 **Inventory:** writes the files under `docs/design/inventory/desktop/`, `taskbar/`, `start/` and `flyouts/` named in each item
 
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
-- [ ] Desktop Surface: writes `docs/design/inventory/desktop/desktop.json`
-  - Capture the desktop surface: the icon grid (cell size, margins, label width, label line count, selection and hover rectangles) as `metric` records, with the Recycle Bin as the only default icon
-  - Capture the desktop context menu (empty area): every entry and submenu in order
-    - View, Sort by, Refresh, Paste, Paste shortcut, Undo, New, Display settings, Personalize, and the terminal entry, with each submenu's entries
-  - Capture the classic menu behind "Show more options" for the empty area, for a file icon, a folder icon, a shortcut icon and the Recycle Bin, as separate `contextMenu` records
-  - Capture the New submenu's entries and the order they appear in
-  - Record by hand the desktop's behaviours
-    - Rubber-band selection, drag to move, Ctrl-drag copy, Alt-drag shortcut, F2 rename, auto arrange, align to grid, show desktop icons
-    - Icon size by Ctrl and wheel: the three sizes and their pixel values
-  - Capture the wallpaper fit modes (Fill, Fit, Stretch, Tile, Center, Span) as records under the surface; the wallpaper image itself is never recorded
-  - Capture the drag-and-drop feedback: the drop tip text shapes ("Move to", "Copy to", "Create link in") as labels and the cursor role for each
-  - Done when: `check-inventory.py --surface desktop` passes; `desktop.json` holds at least one `contextMenu` record for each of the five trigger kinds and the `itemCount` of each matches its children.
+- [x] Desktop Surface: writes `docs/design/inventory/desktop/desktop.json`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/desktop.py` (279 records, 20 screenshots); the default icons on this build are the Recycle Bin, Microsoft Edge and the Spotlight "Learn about this picture" icon, the last two `equivalent`
+  - Icon grid as `metric` records measured from the captured cells: cell 76 px wide, 70 px tall with one label line and 15 px per further line, row pitch 100, and the cell at large (106 by 118), medium (76 by 70) and small (76 by 54) icons
+  - Modern menus for the empty area, a file, a folder, a shortcut and the Recycle Bin, each with its icon row and every submenu's entries (View, Sort by, New, Open with, Share with, Compress to); Paste, Paste shortcut and Undo come from an Explorer copy and paste before the capture
+  - Classic menus behind "Show more options" for the same five triggers, as `contextMenu` records `replaced` under the `context-menus` ledger entry; their submenus do not open under UI Automation, and the same submenus are recorded from the modern menus
+  - Behaviours by hand: rubber-band selection, drag to move, Ctrl-drag copy, Alt-drag shortcut, Ctrl and wheel icon size, double-click to open, F2 rename, and the three drop tips ("Move to", "Copy to", "Create link in") as `cursor` records; auto arrange, align to grid and show desktop icons are the captured View entries
+  - Owners: the window manager's Desktop Icons section, the desktop shell's Desktop Right-Click Menu section and the desktop icons' Icon Right-Click Context Menu section
+- [/] Wallpaper fit modes (Fill, Fit, Stretch, Tile, Center, Span) captured from the background page as records under `win11.desktop.desktop`
+  - Blocked: the reference VM's Windows is not activated, so Settings disables personalization and the fit list never shows (seen 2026-11-16); capture it once the operator activates the reference machine
 - [ ] Taskbar: writes `docs/design/inventory/taskbar/taskbar.json`
   - Capture the bar: height, icon size, button width and spacing, the active and running indicator sizes, at centre alignment and at left alignment, as `metric` records
   - Capture each default item in order

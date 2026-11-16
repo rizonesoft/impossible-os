@@ -137,6 +137,8 @@ Per `docs/design/shell.md#snap-layouts`: hovering the maximize button for `THEME
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 
+**Inventory:** `win11.desktop.desktop`
+
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §1 and TODO-06 §1, §3, §4`, which is superseded there so the shell has one implementation.
 
 `struct desktop_icon` (name, path, icon_id, x, y). Load from `C:\Users\Default\Desktop\` at startup via `vfs_readdir()`. Per `docs/design/shell.md#desktop`: icons sit in a column-major grid from the top-left, `THEME_SIZE_DESKTOP_MARGIN` (8) from the screen edges, in `THEME_SIZE_DESKTOP_CELL_WIDTH` x `THEME_SIZE_DESKTOP_CELL_HEIGHT` (76 x 86) cells; each draws a `THEME_SIZE_DESKTOP_ICON` (48) icon 6 px from the top of the cell and a two-line caption label in `desktop_label` with the `desktop_label_shadow` shadow. Hover: 12% white fill + 16% white 1 px stroke; selection: `selection_fill` + `selection_stroke`; radius 4. Single-click select, double-click launch via `task_create_user`. Drag to reposition snaps to the 76 x 86 cell grid. Right-click → context menu (`08-graphics-ui/TODO-09` §1). Registry persistence for icon positions.

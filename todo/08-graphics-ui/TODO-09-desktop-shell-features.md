@@ -90,6 +90,8 @@ title: "TODO-09 -- Desktop Shell Features"
 
 **Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
+**Inventory:** `win11.desktop.menu`
+
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §2`, which is superseded there so the shell has one implementation.
 
 Right-click on wallpaper → the desktop menu in the order fixed by `docs/design/shell.md#context-menus`: View ›, Sort by ›, Refresh | New › (Folder, Text Document, Shortcut) | Display settings, Personalize | Open in Terminal, Show more options (Shift+F10). Paste and the other classic verbs live under Show more options.

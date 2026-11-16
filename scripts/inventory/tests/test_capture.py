@@ -1446,7 +1446,7 @@ class States(unittest.TestCase):
                                                  node("", "MenuItem", "b", expands=[node("Y", "MenuItem")])])])
         seen = []
         core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R",
-                  shot=lambda state, el, items: seen.append(state) or {"file": f"{state}.p.png"})
+                  shot=lambda state, el, items, *_: seen.append(state) or {"file": f"{state}.p.png"})
         self.assertEqual(sorted(seen), ["r", "r.a-b-open", "r.a.b-open"])
 
 
@@ -1538,6 +1538,188 @@ class Settle(unittest.TestCase):
         t["bounds"][2] += 18                     # the window grew between the walk and the dump
         with self.assertRaises(core.Incomplete):
             core.confirm_dump(t, cap, **self.walk_args())
+
+
+class Scenes(unittest.TestCase):
+    """A module walks several roots into one file (section 8: the desktop and
+    each of its context menus)."""
+
+    def mod(self, **kw):
+        log = []
+        menu = node("", "Window", "OverflowPopup", bounds=(0, 0, 0, 0),
+                    children=[node("View", "MenuItem", "view", bounds=(500, 300, 170, 32)),
+                              node("Refresh", "MenuItem", "refresh", bounds=(500, 332, 170, 32))])
+        desk = node("Desktop", "Pane", "", "Progman", bounds=(0, 0, 1920, 1080),
+                    children=[node("Recycle Bin", "ListItem", bounds=(0, 5, 76, 70))])
+
+        def scene(slug, label, t, kind="surface"):
+            return dict(slug=slug, label=label, kind=kind, open=lambda ctx: log.append(f"open {slug}"),
+                        root=lambda ctx: core.FixtureElement(t), close=lambda ctx: log.append(f"close {slug}"))
+        m = types.SimpleNamespace(SURFACE="scenetest", SCENES=[scene("desktop", "Desktop", desk),
+                                                              scene("menu", "Desktop menu", menu, "contextMenu")], **kw)
+        return m, log
+
+    def walk_scene(self, sc):
+        return core.walk(sc.root(None), surface="scenetest", build="26300.9974", profile="fhd-100", session="console",
+                         root_slug=sc.slug, root_label=sc.label, root_kind=sc.kind, identity=sc.identity)
+
+    def test_every_scene_is_walked_in_order_into_one_capture(self):
+        m, log = self.mod()
+        cap, passes = core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        roots = [r for r in cap.records if "parent" not in r]
+        self.assertEqual([(r["id"], r["kind"], r["order"]) for r in roots],
+                         [("win11.scenetest.desktop", "surface", 0), ("win11.scenetest.menu", "contextMenu", 1)])
+        self.assertEqual(log, ["open desktop", "close desktop", "open menu", "close menu"])
+        self.assertEqual(passes, {"desktop": 2, "menu": 2})
+        code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records})
+        self.assertEqual(code, 0, report)
+
+    def test_a_root_with_no_area_takes_the_box_around_its_entries(self):
+        # A WinUI menu's popup window reports an empty box (2026-11-16).
+        m, _ = self.mod()
+        cap, _ = core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        by = {r["id"]: r for r in cap.records}
+        self.assertEqual(by["win11.scenetest.menu"]["bounds"], {"x": 0, "y": 0, "width": 170, "height": 64})
+        self.assertEqual(by["win11.scenetest.menu.refresh"]["bounds"], {"x": 0, "y": 32, "width": 170, "height": 32})
+        empty = core.FixtureElement(node("", "Window", bounds=(0, 0, 0, 0)))
+        with self.assertRaises(core.Incomplete):
+            core.extent(empty)
+
+    def test_a_failed_scene_is_closed_and_ends_the_capture(self):
+        m, log = self.mod()
+        m.SCENES[0]["root"] = lambda ctx: (_ for _ in ()).throw(core.Incomplete("gone"))
+        with self.assertRaises(core.Incomplete):
+            core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        self.assertEqual(log, ["open desktop", "close desktop"])
+
+    def test_a_measuring_scene_is_not_published(self):
+        m, _ = self.mod()
+        m.SCENES[1]["keep"] = False
+        cap, _ = core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        self.assertFalse([r for r in cap.records if r["id"].startswith("win11.scenetest.menu")])
+        self.assertEqual(cap.measured[0]["id"], "win11.scenetest.menu")
+        self.assertEqual([s["state"] for s in cap.states], [])
+
+    def test_a_scene_that_does_not_expand_records_its_entries_only(self):
+        t = node("", "Menu", bounds=(0, 0, 100, 60),
+                 children=[node("View", "MenuItem", "view", expands=[node("Large icons", "MenuItem")])])
+        args = dict(surface="scenetest", build="26300.9974", profile="fhd-100", session="console", root_slug="m",
+                    root_label="M", root_kind="contextMenu")
+        opened = core.walk(core.FixtureElement(t), **args)
+        flat = core.walk(core.FixtureElement(t), expand=False, **args)
+        self.assertIn("win11.scenetest.m.view.large-icons", [r["id"] for r in opened.records])
+        self.assertEqual([r["id"] for r in flat.records], ["win11.scenetest.m", "win11.scenetest.m.view"])
+        self.assertNotIn("itemCount", flat.records[1])
+        self.assertNotIn("expands", core.dump(core.FixtureElement(t), expand=False)["children"][0])
+
+    def test_a_win32_entry_keeps_its_shortcut_out_of_its_name(self):
+        t = node("", "Menu", bounds=(0, 0, 100, 60), children=[node("Undo Copy\tCtrl+Z", "MenuItem")])
+        cap = core.walk(core.FixtureElement(t), surface="scenetest", build="26300.9974", profile="fhd-100",
+                        session="console", root_slug="m", root_label="M", root_kind="contextMenu")
+        entry = cap.records[1]
+        self.assertEqual((entry["id"], entry["label"], entry["shortcut"]), ("win11.scenetest.m.undo-copy", "Undo Copy", "Ctrl+Z"))
+
+    def test_scene_slugs_are_slugs_and_distinct(self):
+        m, _ = self.mod()
+        m.SCENES[1]["slug"] = "desktop"
+        with self.assertRaises(ValueError):
+            core.scenes_of(m)
+        m.SCENES[1]["slug"] = "Menu"
+        with self.assertRaises(ValueError):
+            core.scenes_of(m)
+        m.SCENES[1]["slug"], m.SCENES[1]["colour"] = "menu", "red"
+        with self.assertRaises(ValueError):
+            core.scenes_of(m)
+
+    def test_a_module_without_scenes_is_one_scene(self):
+        (sc,) = core.scenes_of(smoke)
+        self.assertEqual((sc.slug, sc.label, sc.kind), (smoke.ROOT_SLUG, smoke.ROOT_LABEL, getattr(smoke, "ROOT_KIND", "surface")))
+        self.assertEqual(sc.environment_lists, tuple(smoke.ENVIRONMENT_LISTS))
+
+
+class Authored(unittest.TestCase):
+    def test_hand_and_metric_records_check_beside_the_capture(self):
+        m, _ = Scenes().mod()
+        cap, _ = core.run_scenes(core.scenes_of(m), None, Scenes().walk_scene)
+        hand = core.authored([{"id": "desktop.rubber-band", "parent": "desktop", "kind": "gesture", "label": "Rubber-band selection",
+                               "order": 0, "behaviour": "Drag on the empty area selects the icons the rectangle touches."},
+                              {"id": "desktop.selected", "parent": "desktop", "kind": "state", "label": "Selected", "order": 1}],
+                             surface="scenetest", build="26300.9974", source="hand")
+        metric = core.authored([{"id": "desktop.cell-width", "parent": "desktop", "kind": "metric", "label": "Icon cell width",
+                                 "order": 2, "measure": {"value": 76, "unit": "px"}}],
+                               surface="scenetest", build="26300.9974", source="uia", profile="fhd-100", session="console")
+        self.assertEqual(hand[0]["source"], "hand:26300.9974")
+        self.assertNotIn("captureProfile", hand[0])
+        self.assertEqual((metric[0]["source"], metric[0]["captureProfile"]), ("uia:26300.9974", "fhd-100"))
+        code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records + hand + metric})
+        self.assertEqual(code, 0, report)
+
+    def test_a_field_outside_the_list_is_refused(self):
+        with self.assertRaises(ValueError):
+            core.authored([{"id": "a.b", "kind": "state", "label": "x", "order": 0, "source": "uia:1.2"}],
+                          surface="scenetest", build="26300.9974", source="hand")
+
+
+class Modules(unittest.TestCase):
+    def test_the_module_is_staged_and_named_to_the_guest(self):
+        seen = {}
+        real = capture.ref_run
+        capture.ref_run = lambda label, files, cmd, timeout, checkpoint: seen.update(files=files, cmd=cmd) or ("out", 0)
+        try:
+            capture.run_guest("notepad-smoke", "fhd-100", 60, module="other")
+        finally:
+            capture.ref_run = real
+        self.assertIn("surfaces/other.py", seen["files"])
+        self.assertNotIn("surfaces/notepad-smoke.py", seen["files"])
+        self.assertIn("--surface notepad-smoke --module other ", seen["cmd"])
+
+    def test_a_missing_module_is_refused_before_the_vm(self):
+        real = capture.run_guest
+        capture.run_guest = lambda *a, **k: self.fail("the guest ran")
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ex:
+                capture.main(["--surface", "notepad-smoke", "--module", "no-such-walker", "--file", "x", "--dry-run"])
+            self.assertEqual(ex.exception.code, 2)
+            self.assertIn("--module 'no-such-walker' has no walker", err.getvalue())
+        finally:
+            capture.run_guest = real
+
+    def test_a_file_whose_ids_another_file_of_the_surface_holds_is_refused(self):
+        # Two modules of one surface folder (taskbar and tray) must not write one id.
+        m, _ = Scenes().mod()
+        cap, _ = core.run_scenes(core.scenes_of(m), None, Scenes().walk_scene)
+        code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records, "scenetest/other.json": cap.records[:1]})
+        self.assertEqual(code, 1)
+        self.assertIn("duplicate-id", report)
+
+
+class DesktopMetrics(unittest.TestCase):
+    def setUp(self):
+        self.desk = load("surface_desktop", INV / "surfaces" / "desktop.py")
+
+    def cells(self):
+        def cell(name, y, h):
+            return {"id": f"win11.desktop.desktop.desktop.{name}", "parent": "win11.desktop.desktop.desktop",
+                    "controlType": "listitem", "bounds": {"x": 0, "y": y, "width": 76, "height": h}}
+        out = [cell("recycle-bin", 5, 70), cell("edge", 105, 85), cell("folder", 205, 70)]
+        out += [{"id": f"win11.desktop.icons-{k}", "bounds": {"x": 0, "y": 0, "width": w, "height": h}}
+                for k, w, h in (("large", 106, 118), ("medium", 76, 70), ("small", 76, 54))]
+        return out
+
+    def test_the_grid_is_measured_from_the_cells(self):
+        got = {m["id"]: m["measure"]["value"] for m in self.desk.METRICS(self.cells())}
+        self.assertEqual((got["desktop.cell-width"], got["desktop.cell-height-one-line"], got["desktop.label-line-height"],
+                          got["desktop.row-pitch"], got["desktop.margin-top"], got["desktop.cell-height-small"]),
+                         (76, 70, 15, 100, 5, 54))
+
+    def test_a_missing_measuring_scene_fails_the_capture(self):
+        with self.assertRaises(ValueError):
+            self.desk.METRICS([c for c in self.cells() if c["id"] != "win11.desktop.icons-large"])
+
+    def test_hand_records_and_metrics_do_not_share_an_order(self):
+        orders = [m["order"] for m in self.desk.METRICS(self.cells())] + [h["order"] for h in self.desk.HAND]
+        self.assertEqual(len(orders), len(set(orders)))
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ class Passing(unittest.TestCase):
                 textMetrics={"sizePx": 14, "ascent": 15, "descent": 4, "lineGap": 0, "advances": {"a": 7.1}},
                 colours={"fill": {"light": "#f3f3f3", "dark": "#202020"}}),
         ]
-        lines[0]["itemCount"] = 5
+        # itemCount counts interface entries; the descriptive records are not entries.
         r = run({"taskbar/bar.json": lines})
         self.assertEqual(r.returncode, 0, r.stdout)
 
@@ -93,7 +93,7 @@ class Passing(unittest.TestCase):
                        rec("win11.taskbar.bar.hover", kind="state", parent="win11.taskbar.bar", order=3, state="selected-hover"),
                        rec("win11.taskbar.bar.pad", kind="metric", parent="win11.taskbar.bar", order=4,
                            measure={"value": 12, "unit": "px", "scaling": "snapped"})]
-        t[0]["itemCount"] = 5
+        # itemCount counts interface entries; the descriptive records are not entries.
         obs = [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B, "session": "enhanced",
                 "bounds": {"x": 0, "y": 0, "width": 60, "height": 60},
                 "textMetrics": {"sizePx": 21, "ascent": 22, "descent": 6, "lineGap": 0, "advances": {"a": 10.6}}}]
@@ -427,6 +427,22 @@ class Failing(unittest.TestCase):
         t = three(); t[0]["itemCount"] = 3
         self.fails({"taskbar/bar.json": t}, "item-count")
 
+    def test_item_count_counts_entries_not_descriptive_records(self):
+        # A hand-written state under an expandable entry is not one of its menu
+        # items (plan review 2026-11-16): two states keep itemCount 2, numbered
+        # 0 and 1 like the entries, and an extra entry still fails.
+        t = three() + [rec("win11.taskbar.bar.on", kind="state", parent="win11.taskbar.bar", order=0, source=f"hand:{B}"),
+                       rec("win11.taskbar.bar.off", kind="state", parent="win11.taskbar.bar", order=1, source=f"hand:{B}")]
+        r = run({"taskbar/bar.json": t})
+        self.assertEqual(r.returncode, 0, r.stdout)
+        t.append(rec("win11.taskbar.bar.extra", parent="win11.taskbar.bar", order=2))
+        self.fails({"taskbar/bar.json": t}, "item-count")
+
+    def test_two_descriptive_records_cannot_share_an_order(self):
+        t = three() + [rec("win11.taskbar.bar.on", kind="state", parent="win11.taskbar.bar", order=0, source=f"hand:{B}"),
+                       rec("win11.taskbar.bar.off", kind="state", parent="win11.taskbar.bar", order=0, source=f"hand:{B}")]
+        self.fails({"taskbar/bar.json": t}, "duplicate-order")
+
     def test_unknown_source(self):
         t = three(); t[1]["source"] = "guess:1.0"
         self.fails({"taskbar/bar.json": t}, "schema")
@@ -677,7 +693,6 @@ class Decisions(unittest.TestCase):
     def test_a_catalogue_record_needs_no_disposition(self):
         lines = three() + [rec("win11.taskbar.bar.height", kind="metric", parent="win11.taskbar.bar", order=2,
                                measure={"value": 48, "unit": "px"}, disposition=None)]
-        lines[0]["itemCount"] = 3
         r = decide({"taskbar/bar.json": lines})
         self.assertEqual(r.returncode, 0, r.stdout)
 

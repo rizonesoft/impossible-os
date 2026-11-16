@@ -73,6 +73,19 @@ def clean(text):
     return " ".join((text or "").split())
 
 
+def name_of(el):
+    """el's name as a label: a Win32 menu entry carries its shortcut after a tab
+    ("Undo Copy\tCtrl+Z", seen 2026-11-16 on the classic desktop menu), which is
+    not part of the name."""
+    return clean((el.name or "").split("\t", 1)[0])
+
+
+def tab_shortcut(el):
+    """The shortcut a Win32 menu entry carries after a tab in its name, or ""."""
+    parts = (el.name or "").split("\t", 1)
+    return clean(parts[1]) if len(parts) == 2 else ""
+
+
 def slug(text):
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return s[:60].strip("-")
@@ -161,7 +174,7 @@ def standin_variant(name, profile, variants, requested=None):
 def matches(element, spec):
     """True when every field the spec names equals the element's."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
-              "className": element.class_name, "name": clean(element.name)}
+              "className": element.class_name, "name": name_of(element)}
     return all(fields[k] == v for k, v in spec.items())
 
 
@@ -177,7 +190,7 @@ def _segment(el, identity=(), values=()):
             return s
     # A live value never names an id: it would publish the value and move with it.
     # Nor does a sentence: help text is withheld from the label, so from the id too.
-    label = clean(el.name)
+    label = name_of(el)
     withheld = len(label) > LABEL_MAX or any(matches(el, spec) for spec in values)
     name = "" if withheld else slug(label)
     return name or slug(el.class_name) or slug(el.control_type) or "element"
@@ -221,13 +234,28 @@ def excluded(el):
         return "offscreen"
     if el.control_type in NEVER or el.class_name in NEVER_CLASSES:
         return "tooltip"
-    if el.control_type == "Text" and len(clean(el.name)) > LABEL_MAX:
+    if el.control_type == "Text" and len(name_of(el)) > LABEL_MAX:
         return "prose"                 # a description under a setting is not a label
     return None
 
 
 def is_hosting(el):
-    return el.control_type == "Pane" and not clean(el.name) and not (el.automation_id or "").strip()
+    return el.control_type == "Pane" and not name_of(el) and not (el.automation_id or "").strip()
+
+
+def extent(el):
+    """el's bounds, or the box around its on-screen children when el has no area
+    of its own: a WinUI menu's popup window reports an empty, offscreen box while
+    its entries are on screen (seen 2026-11-16 on 26300.9974)."""
+    x, y, w, h = el.bounds
+    if w > 0 and h > 0:
+        return el.bounds
+    boxes = [k.bounds for k in el.children() if not k.offscreen and k.bounds[2] > 0 and k.bounds[3] > 0]
+    if not boxes:
+        raise Incomplete(f"{clean(el.name) or el.class_name or 'the root'} has no area and no child on screen")
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+    return (x0, y0, x1 - x0, y1 - y0)
 
 
 class Capture:
@@ -237,10 +265,11 @@ class Capture:
         self.ambiguous = []
         self.skipped = {"offscreen": 0, "tooltip": 0, "prose": 0, "hosting": 0}
         self.states = []
+        self.measured = []            # records of unkept scenes (Scene.keep)
 
 
 def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
-         environment_lists=(), values=(), identity=(), shot=None):
+         environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=()):
     """Capture one surface. Returns a Capture or raises Incomplete.
 
     session is the schema's session the capture ran in (session_type), written
@@ -249,12 +278,22 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
     identity is the surface module's IDENTITY: (spec, segment) pairs that name an
     element whose automation id, name and class do not tell it from a sibling.
     Each segment must be a slug, so it can never look positional.
+
+    expand=False walks without opening submenus (a scene whose openers do not
+    open under UI Automation: the classic desktop menu, 2026-11-16).
+
+    hosts are specs of containers that are always read through, never recorded,
+    even when they report offscreen: a WinUI menu's command bar and overflow
+    popup do while their entries are on screen (2026-11-16).
+
+    labels are (spec, label) pairs: the label of an element with no usable name
+    that the spec matches (an entry's icon), so it is not reported unnamed.
     """
     for _, seg in identity:
         if seg != slug(seg) or not seg:
             raise ValueError(f"IDENTITY segment {seg!r} is not a slug (lower-case letters, digits, single hyphens)")
     cap = Capture()
-    origin = root.bounds
+    origin = extent(root)
 
     def rel(b):
         return {"x": int(b[0] - origin[0]), "y": int(b[1] - origin[1]), "width": max(0, int(b[2])), "height": max(0, int(b[3]))}
@@ -262,8 +301,11 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
     def emit(el, rid, parent, order, kind, label=None):
         if len(cap.records) >= MAX_RECORDS:
             raise Incomplete(f"more than {MAX_RECORDS} elements; the surface module must name a smaller root")
-        name = clean(el.name)
+        name = name_of(el)
         live = any(matches(el, spec) for spec in values)
+        given = next((lab for spec, lab in labels if matches(el, spec)), None)
+        if label is None and given is not None and not (name and len(name) <= LABEL_MAX and not live):
+            label = given
         if label is None:
             if name and len(name) <= LABEL_MAX and not live:
                 label = name
@@ -281,8 +323,8 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
             r["uiaId"] = el.automation_id
         if el.class_name:
             r["className"] = el.class_name
-        r["bounds"] = rel(el.bounds)
-        shortcut = clean(getattr(el, "accelerator", ""))
+        r["bounds"] = rel(origin if el is root else el.bounds)
+        shortcut = clean(getattr(el, "accelerator", "")) or tab_shortcut(el)
         if shortcut:
             r["shortcut"] = shortcut
         if not getattr(el, "enabled", True):
@@ -305,6 +347,12 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
             visits[0] += 1
             if visits[0] > MAX_VISITS:
                 raise Incomplete(f"more than {MAX_VISITS} elements read; the surface module must name a smaller root")
+            if any(matches(k, spec) for spec in hosts):
+                if depth > MAX_DEPTH:
+                    raise Incomplete(f"hosting panes nest deeper than {MAX_DEPTH} levels")
+                cap.skipped["hosting"] += 1
+                out.extend(interface_children(k, depth + 1))
+                continue
             if not keep(k):
                 continue
             if is_hosting(k) and not is_environment(k):   # a marked list is never flattened open
@@ -361,9 +409,13 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
         if el.control_type in CONTENT:
             return
         kids = interface_children(el, depth)
+        if depth == 0 and shot:
+            # The resting surface, named after its root: the root and its entries,
+            # which a menu's flyout places outside its own box.
+            cap.states.append(shot(root_slug, el, kids, origin))
         for i, (k, kid) in enumerate(zip(kids, ids_for(rid, kids))):
             visit(k, kid, rid, i, depth + 1)
-        if el.can_expand and el.control_type in EXPANDABLE:
+        if expand and el.can_expand and el.control_type in EXPANDABLE:
             try:                  # closed again even when the opening itself fails
                 items = [k for k in el.expand(skip=is_environment) if keep(k)]
                 # The id below the surface, dots kept: ids are unique, so states are.
@@ -380,14 +432,123 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
             finally:
                 el.collapse()
 
-    if shot:
-        cap.states.append(shot(root_slug, root, []))   # the resting surface, named after its root
     visit(root, f"win11.{surface}.{root_slug}", None, 0, 0)
     root_record = cap.records[0]
     root_record["kind"] = root_kind
     root_record["label"] = root_label
     cap.unnamed = [u for u in cap.unnamed if u["id"] != root_record["id"]]
     return cap
+
+
+class Scene:
+    """One root a surface module walks: its own open, root and close.
+
+    A module lists several in SCENES (a surface and each of its context menus);
+    a module without SCENES is one scene made from ROOT_SLUG, ROOT_LABEL,
+    ROOT_KIND, open, root and close. IDENTITY, VALUES and ENVIRONMENT_LISTS come
+    from the module unless a scene names its own.
+    """
+
+    FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
+              "expand", "hosts", "labels")
+
+    def __init__(self, mod, **spec):
+        unknown = set(spec) - set(self.FIELDS)
+        if unknown:
+            raise ValueError(f"scene {spec.get('slug')!r}: unknown field(s) {sorted(unknown)}")
+        self.slug = spec["slug"]
+        if self.slug != slug(self.slug) or not self.slug:
+            raise ValueError(f"scene slug {self.slug!r} is not a slug (lower-case letters, digits, single hyphens)")
+        self.label = spec["label"]
+        self.kind = spec.get("kind", "surface")
+        self.open, self.root, self.close = spec["open"], spec["root"], spec["close"]
+        self.identity = tuple(spec.get("identity", getattr(mod, "IDENTITY", ())))
+        self.values = tuple(spec.get("values", getattr(mod, "VALUES", ())))
+        self.environment_lists = tuple(spec.get("environment_lists", getattr(mod, "ENVIRONMENT_LISTS", ())))
+        # keep=False: a measuring scene (the desktop at another icon size); its
+        # records reach METRICS and are not published, nor are its screenshots.
+        self.keep = bool(spec.get("keep", True))
+        self.expand = bool(spec.get("expand", True))
+        self.hosts = tuple(spec.get("hosts", getattr(mod, "HOSTS", ())))
+        self.labels = tuple(spec.get("labels", getattr(mod, "LABELS", ())))
+
+
+def scenes_of(mod):
+    """The module's scenes, in order; their slugs are distinct."""
+    if hasattr(mod, "SCENES"):
+        scenes = [Scene(mod, **spec) for spec in mod.SCENES]
+    else:
+        scenes = [Scene(mod, slug=mod.ROOT_SLUG, label=mod.ROOT_LABEL, kind=getattr(mod, "ROOT_KIND", "surface"),
+                        open=mod.open, root=mod.root, close=mod.close)]
+    if not scenes:
+        raise ValueError("SCENES is empty")
+    seen = set()
+    for sc in scenes:
+        if sc.slug in seen:
+            raise ValueError(f"two scenes share the slug {sc.slug!r}")
+        seen.add(sc.slug)
+    return scenes
+
+
+def run_scenes(scenes, ctx, walk_scene, on_open=None):
+    """Open, walk to a settled capture, and close each scene in turn.
+
+    Returns (Capture, passes by slug); an unkept scene's records are in the
+    Capture's `measured`, not its `records`. A scene is closed even when its walk
+    fails, and the first failure ends the capture: a later scene may depend on
+    the state an earlier one left. Each scene's root takes its place in the list
+    as its order, so the file keeps the scenes in the order the module gives.
+    on_open(scene) runs after a scene opens, before its walk (a dump hook).
+    """
+    total, passes = Capture(), {}
+    for n, sc in enumerate(scenes):
+        sc.open(ctx)
+        try:
+            cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
+            if on_open:
+                on_open(sc, cap)
+        finally:
+            sc.close(ctx)
+        cap.records[0]["order"] = n
+        if not sc.keep:
+            total.measured.extend(cap.records)
+            continue
+        total.records.extend(cap.records)
+        total.unnamed.extend(cap.unnamed)
+        total.ambiguous.extend(cap.ambiguous)
+        total.states.extend(cap.states)
+        for k, v in cap.skipped.items():
+            total.skipped[k] = total.skipped.get(k, 0) + v
+    return total, passes
+
+
+# Fields an authored record may carry beyond the ones authored() writes.
+AUTHORED_FIELDS = ("kind", "label", "order", "behaviour", "openedBy", "shortcut", "shortcutScope", "overridable",
+                   "measure", "motion", "state", "enabled", "itemCount", "controlType")
+
+
+def authored(items, *, surface, build, source, profile=None, session=None):
+    """Records a surface module writes itself: HAND (what UI Automation cannot
+    read, source hand:<build>) and METRICS (numbers computed from captured
+    bounds, source uia:<build>). Each item names its id and parent below
+    win11.<surface>.; a recapture writes them again, so they never need to be
+    carried across a merge."""
+    out = []
+    for it in items:
+        extra = set(it) - set(AUTHORED_FIELDS) - {"id", "parent"}
+        if extra:
+            raise ValueError(f"{it.get('id')}: field(s) {sorted(extra)} cannot be authored")
+        r = {"id": f"win11.{surface}.{it['id']}", "surface": surface, "kind": it["kind"], "label": it["label"],
+             "order": it["order"], "source": f"{source}:{build}", "capturedFrom": build}
+        if it.get("parent"):
+            r["parent"] = f"win11.{surface}.{it['parent']}"
+        if profile:
+            r["captureProfile"] = profile
+        if session:
+            r["session"] = session
+        r.update({k: v for k, v in it.items() if k not in ("id", "parent", "kind", "label", "order")})
+        out.append(r)
+    return out
 
 
 def settle(walk_once, max_passes=MAX_PASSES):
@@ -520,7 +681,7 @@ class _Budget:
             raise Incomplete(f"more than {MAX_RECORDS} elements to dump; the surface module must name a smaller root")
 
 
-def dump(el, depth=0, entry=False, environment_lists=(), budget=None):
+def dump(el, depth=0, entry=False, environment_lists=(), budget=None, expand=True, hosts=()):
     """The fixture form of a tree: structure only, the same fields the walk reads.
 
     It visits exactly what the walk visits: an element the walk excludes (offscreen,
@@ -545,11 +706,12 @@ def dump(el, depth=0, entry=False, environment_lists=(), budget=None):
     if any(matches(el, spec) for spec in environment_lists):
         return d                       # rows are the machine's own data
     if el.control_type not in CONTENT:
-        kids = [dump(k, depth + 1, environment_lists=environment_lists, budget=budget)
-                for k in el.children() if not excluded(k)]
+        # A host is kept whatever it reports: the walk reads through it.
+        kids = [dump(k, depth + 1, environment_lists=environment_lists, budget=budget, expand=expand, hosts=hosts)
+                for k in el.children() if not excluded(k) or any(matches(k, spec) for spec in hosts)]
         if kids:
             d["children"] = kids
-    if el.can_expand and el.control_type in EXPANDABLE and not el.offscreen:
+    if expand and el.can_expand and el.control_type in EXPANDABLE and not el.offscreen:
         try:
             skip = (lambda c: any(matches(c, spec) for spec in environment_lists)) if environment_lists else None
             d["expands"] = [dump(k, depth + 1, entry=True, budget=budget) for k in el.expand(skip=skip) if not excluded(k)]

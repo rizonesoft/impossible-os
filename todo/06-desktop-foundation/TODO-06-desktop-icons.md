@@ -138,6 +138,8 @@ Show correct icon based on file extension.
 ## 7. Icon Right-Click Context Menu
 
 **Design:** [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
+
+**Inventory:** `win11.desktop.file-menu`, `win11.desktop.folder-menu`, `win11.desktop.shortcut-menu`, `win11.desktop.recycle-bin-menu`
 Per-icon context menu with standard actions.
 
 **Files:** `src/desktop/desktop.c`
