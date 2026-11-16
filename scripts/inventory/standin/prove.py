@@ -4,12 +4,15 @@
     standin/prove.py [ID ...]
 
 docs/design/inventory/stand-ins.json names, per stand-in, the variant that
-shows it, the page that shows it and what the guest must report (`expect`):
+shows it, the page that shows it, the `marker` (the name of an element only
+that page shows; the screenshot waits for it) and what the guest must report
+(`expect`):
 `power` (AC line, battery percent and Energy saver from GetSystemPowerStatus),
 `device` (a present, working PnP device whose instance id matches) or
 `brightness` (a monitor that reports brightness through WMI). For each variant
-one job on the stand-in machine (run.py) checks every expectation and takes a
-screenshot of each page. A stand-in whose expectation holds gets its screenshot
+one job on the stand-in machine (run.py) opens each distinct page once, waits up
+to 120 s for its marker, takes the screenshot, then reads the facts. Each
+variant's verdicts are written before the next variant boots. A stand-in whose expectation holds gets its screenshot
 moved to the store (R:\\11\\ref-shots\\stand-ins\\<id>.png) and a `proof`
 (file, SHA-256, size, date) in stand-ins.json; one that fails is named, keeps
 no proof, and the command exits 1. The `stand-in` rows of expected.json name
@@ -23,6 +26,7 @@ import datetime
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import sys
@@ -35,7 +39,7 @@ STORE = pathlib.Path("/mnt/r/11/ref-shots/stand-ins")
 
 JOB = r"""param([string]$Out)
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+Add-Type -AssemblyName System.Drawing, System.Windows.Forms, UIAutomationClient, UIAutomationTypes
 Add-Type -TypeDefinition @'
 using System.Runtime.InteropServices;
 public static class Power {
@@ -50,23 +54,42 @@ function Shot($name) {
     $g = [System.Drawing.Graphics]::FromImage($b)
     $g.CopyFromScreen(0, 0, 0, 0, $b.Size); $b.Save("$Out\$name.png"); $g.Dispose(); $b.Dispose()
 }
-# The desktop and its first-boot device installs settle before anything is read.
-Start-Sleep 60
+$A = [System.Windows.Automation.AutomationElement]
+# True once the Settings window shows an element named $marker: the page itself,
+# not the desktop, a loading frame or the previous page.
+function Showing($marker) {
+    $w = $A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,
+        (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Settings')))
+    if (-not $w) { return $false }
+    return [bool]$w.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $marker)))
+}
+$pages = @()
+PAGES
+$ready = @()
+foreach ($pg in $pages) {
+    # Opened again every 30 s in case the first launch landed before the shell
+    # was ready; a page that never shows its marker in 120 s gets no screenshot.
+    $deadline = (Get-Date).AddSeconds(120); $next = Get-Date; $shown = $false
+    while (-not $shown -and (Get-Date) -lt $deadline) {
+        if ((Get-Date) -ge $next) { Start-Process $pg[1]; $next = (Get-Date).AddSeconds(30) }
+        Start-Sleep 1
+        try { $shown = Showing $pg[2] } catch { $shown = $false }
+    }
+    if ($shown) { Start-Sleep 2; Shot $pg[0]; $ready += $pg[0] }   # the page's entrance animation ends
+    Get-Process SystemSettings -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Sleep 2
+}
+# Read after the pages, so first-boot device installs have had that long to finish.
 $st = New-Object Power+Status
 [void][Power]::GetSystemPowerStatus([ref]$st)
 $facts = [ordered]@{
     power = [ordered]@{ ac = [int]$st.AC; percent = [int]$st.Percent; saver = [int]$st.SaverFlag }
     devices = @(Get-PnpDevice -PresentOnly | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.InstanceId })
     brightness = [bool]@(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue).Count
+    ready = $ready
 }
 $facts | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 "$Out\facts.json"
-$pages = @()
-PAGES
-foreach ($pair in $pages) {
-    Start-Process $pair[1]; Start-Sleep 15; Shot $pair[0]
-    Get-Process SystemSettings -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep 3
-}
 exit 0
 """
 
@@ -78,11 +101,22 @@ def _load(name, path):
     return mod
 
 
+def pages_for(ids, entries):
+    """{page: (shot name, marker)} for one variant: each distinct page is opened
+    and shot once, and every id on it shares that screenshot."""
+    pages = {}
+    for i in ids:
+        e = entries[i]
+        pages.setdefault((e["page"], e["marker"]), f"page{len(pages)}")
+    return pages
+
+
 def job_for(ids, entries):
-    """The proof job for one variant: its facts, then a screenshot of each id's page.
-    Ids and pages are fixed text from stand-ins.json; the unary comma keeps each
-    pair one element of $pages."""
-    lines = "\n".join(f"$pages += ,@('{i}', '{entries[i]['page']}')" for i in ids)
+    """The proof job for one variant: a screenshot of each distinct page once its
+    marker shows, then the facts. Pages and markers are fixed text from
+    stand-ins.json; the unary comma keeps each triple one element of $pages."""
+    lines = "\n".join(f"$pages += ,@('{shot}', '{page}', '{marker}')"
+                       for (page, marker), shot in pages_for(ids, entries).items())
     return JOB.replace("PAGES", lines)
 
 
@@ -105,6 +139,54 @@ def unmet(expect, facts):
     return out
 
 
+def write_registry(entries, path=None):
+    """Replace stand-ins.json atomically."""
+    path = path or STAND_INS
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def verdicts(group, entries, rc, facts):
+    """{id: [unmet reasons]} for one variant's run; an empty list is proven."""
+    pages = pages_for(group, entries)
+    out = {}
+    for i in group:
+        if rc != 0 or facts is None:
+            out[i] = ["the stand-in job failed"]
+            continue
+        why = unmet(entries[i]["expect"], facts)
+        if pages[(entries[i]["page"], entries[i]["marker"])] not in facts.get("ready", []):
+            why.append(f"{entries[i]['page']} never showed {entries[i]['marker']!r}")
+        out[i] = why
+    return out
+
+
+def prove_variant(run, variant, group, entries, timeout, failed):
+    pages = pages_for(group, entries)
+    with tempfile.TemporaryDirectory(prefix="standin-prove-") as tmp:
+        t = pathlib.Path(tmp)
+        (t / "job.ps1").write_text(job_for(group, entries), encoding="utf-8")
+        rc = run.run(variant, t / "job.ps1", [], t / "out", timeout=timeout)
+        facts_file = t / "out" / "facts.json"
+        facts = json.loads(facts_file.read_text(encoding="utf-8-sig")) if facts_file.is_file() else None
+        for i, why in verdicts(group, entries, rc, facts).items():
+            shot = t / "out" / f"{pages[(entries[i]['page'], entries[i]['marker'])]}.png"
+            if not why and not shot.is_file():
+                why = ["no screenshot"]
+            if why:
+                failed.append(i)
+                entries[i].pop("proof", None)
+                print(f"prove: {i}: not proven ({'; '.join(why)})", flush=True)
+                continue
+            STORE.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(shot, STORE / f"{i}.png")
+            data = (STORE / f"{i}.png").read_bytes()
+            entries[i]["proof"] = {"file": f"stand-ins/{i}.png", "sha256": hashlib.sha256(data).hexdigest(),
+                                   "size": len(data), "date": datetime.date.today().isoformat()}
+            print(f"prove: {i}: proven ({variant})", flush=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("ids", nargs="*", help="stand-in ids (default: all)")
@@ -121,29 +203,18 @@ def main(argv=None) -> int:
         by_variant.setdefault(entries[i]["variant"], []).append(i)
     failed = []
     for variant, group in by_variant.items():
-        with tempfile.TemporaryDirectory(prefix="standin-prove-") as tmp:
-            t = pathlib.Path(tmp)
-            (t / "job.ps1").write_text(job_for(group, entries), encoding="utf-8")
-            rc = run.run(variant, t / "job.ps1", [], t / "out", timeout=args.timeout)
-            facts_file = t / "out" / "facts.json"
-            facts = json.loads(facts_file.read_text(encoding="utf-8-sig")) if facts_file.is_file() else None
+        # Each variant's verdicts are written before the next boots, so a later
+        # failure never leaves an invalidated proof standing on disk.
+        try:
+            prove_variant(run, variant, group, entries, args.timeout, failed)
+        except Exception as exc:  # noqa: BLE001 -- one variant's failure must not lose the others' verdicts
             for i in group:
-                shot = t / "out" / f"{i}.png"
-                why = (["the stand-in job failed"] if rc != 0 or facts is None else unmet(entries[i]["expect"], facts))
-                if not why and not shot.is_file():
-                    why = ["no screenshot"]
-                if why:
+                if i not in failed:
                     failed.append(i)
                     entries[i].pop("proof", None)
-                    print(f"prove: {i}: not proven ({'; '.join(why)})", flush=True)
-                    continue
-                STORE.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(shot, STORE / f"{i}.png")
-                data = (STORE / f"{i}.png").read_bytes()
-                entries[i]["proof"] = {"file": f"stand-ins/{i}.png", "sha256": hashlib.sha256(data).hexdigest(),
-                                       "size": len(data), "date": datetime.date.today().isoformat()}
-                print(f"prove: {i}: proven ({variant})", flush=True)
-    STAND_INS.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+                    print(f"prove: {i}: not proven (the run failed: {exc})", flush=True)
+        finally:
+            write_registry(entries)
     return 1 if failed else 0
 
 

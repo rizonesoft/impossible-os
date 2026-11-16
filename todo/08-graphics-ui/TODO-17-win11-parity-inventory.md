@@ -1172,7 +1172,7 @@ No physical laptop is used (operator decision 2026-11-14): a hardware-gated surf
 - [x] Derive the stand-in machine: the clean reference disk booted under QEMU with an ACPI AC adapter, battery, lid and display backlight, running jobs in ref's session
 - [x] Prove a stand-in for each hardware-gated surface (battery charging, discharging and saver, brightness, lid, touchpad, pen, touch, rotation and tablet posture)
   - Each proven stand-in names its variant and proof in `stand-ins.json`; each `stand-in` row of `expected.json` names a proven one
-- [x] Record every surface that no stand-in can show (fingerprint and face enrolment, and each stand-in above that fails its proof) as an absent row naming its nearest captured sibling
+- [x] Record every surface that no stand-in can show (fingerprint and face enrolment, and each stand-in above that fails its proof) as an absent row naming its nearest sibling, a page the campaign captures
   - §6 gives such a surface the `equivalent` disposition and it is designed as ours; nothing waits on hardware
   - Proven: battery charging, discharging and saver, brightness, lid; absent with a sibling: touch, pen, touchpad, rotation, tablet posture (virtio-win's multitouch driver fails with code 10; no emulated pen, precision touchpad, orientation sensor or slate indicator has a Windows driver)
 - [x] Commit: `"inventory: device stand-ins"`

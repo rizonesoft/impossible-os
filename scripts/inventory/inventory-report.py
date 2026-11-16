@@ -36,7 +36,7 @@ array of rows {surface, state, profile, needs, fixture?, source?, reason?}.
 surface), "shot" (a PNG in shots.json for that surface, state and profile) and
 "recording" (a video entry there). A row whose `source` is "absent" is a
 documented absence: it needs a reason and a `sibling` (surface/state of a
-captured row it is designed from) and no evidence. A row whose `source` is
+row the campaign captures, which it is designed from) and no evidence. A row whose `source` is
 "stand-in" names in `standin` an entry of stand-ins.json (section 21) whose
 variant exists in standin/variants.json and whose proof screenshot is hashed. The campaign check also
 fails on every baseline row still pending or unmatched and on every element a
@@ -351,7 +351,7 @@ def campaign_problems(root, inv, records, summary):
             if not isinstance(reason, str) or not reason.strip():
                 problems.append(f"absent without a reason: {name}")
             elif row.get("sibling") not in captured:
-                problems.append(f"absent without a sibling: {name} (sibling names the surface/state of a captured row)")
+                problems.append(f"absent without a sibling: {name} (sibling names the surface/state of a row the campaign captures)")
             continue
         if source == "stand-in":
             problem = standin_problem(row.get("standin"), stand_ins, standin_variants)

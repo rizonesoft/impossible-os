@@ -2,7 +2,8 @@
 # booted under QEMU with stand-in devices). Waits for a removable volume holding
 # ios-job\job.ps1, runs it in this interactive session with its output in
 # ios-job\out, writes ios-job\done.txt with the exit code, then shuts down so the
-# host reads the result. With no job volume (the disk under Hyper-V) it exits.
+# host reads the result. Under Hyper-V (never a job volume) it exits at once;
+# under QEMU with no job after 10 minutes it shuts down.
 # Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 21.
 $ErrorActionPreference = 'Stop'
 $deadline = (Get-Date).AddMinutes(10)
@@ -18,7 +19,9 @@ while (-not $job -and (Get-Date) -lt $deadline) {
         Start-Sleep 5
     }
 }
-if (-not $job) { exit 0 }
+# Under QEMU a missing job is a failed run: shut down now, so run.py reports it
+# at once instead of waiting out its timeout.
+if (-not $job) { Stop-Computer -Force; exit 0 }
 $root = Split-Path -Parent $job
 $out = Join-Path $root 'out'
 New-Item -ItemType Directory -Path $out -Force | Out-Null

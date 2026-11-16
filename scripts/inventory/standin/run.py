@@ -18,6 +18,8 @@ Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 21.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import ctypes
 import json
 import os
 import pathlib
@@ -35,7 +37,8 @@ DISK = pathlib.Path.home() / ".local/share/ios-standin/standin.qcow2"
 OVMF_CODE = pathlib.Path("/usr/share/OVMF/OVMF_CODE_4M.fd")
 OVMF_VARS = pathlib.Path("/usr/share/OVMF/OVMF_VARS_4M.fd")
 JOB_MB = 512
-TOOL_TIMEOUT = 300  # deadline: iasl, mkfs.fat, mtools and qemu-img on local files
+TOOL_TIMEOUT = 300
+STOP_GRACE = 30  # deadline: iasl, mkfs.fat, mtools and qemu-img on local files
 
 
 def fill(template: str, v: dict) -> str:
@@ -46,6 +49,38 @@ def fill(template: str, v: dict) -> str:
 
 def _interrupt(signum, frame):
     raise KeyboardInterrupt
+
+
+PR_SET_PDEATHSIG = 1
+
+
+def _die_with_parent():
+    """In the QEMU child before exec: the kernel sends it SIGTERM when run.py
+    dies, even by SIGKILL, so a killed runner never leaves a guest running."""
+    ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
+def stop(p, grace=STOP_GRACE):
+    """Stop the QEMU process group and reap it: SIGTERM, then SIGKILL after
+    `grace` seconds. Returns QEMU's output. Safe on an exited process."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if p.poll() is not None:
+            break
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(p.pid, sig)
+        try:
+            return p.communicate(timeout=grace)[0]
+        except subprocess.TimeoutExpired:
+            continue
+    return p.communicate()[0]
+
+
+def clear_stale_overlays(disk):
+    """Remove run-<pid>.qcow2 overlays whose run.py no longer exists."""
+    for f in disk.parent.glob("run-*.qcow2"):
+        pid = f.stem.removeprefix("run-")
+        if pid.isdigit() and not pathlib.Path(f"/proc/{pid}").exists():
+            f.unlink(missing_ok=True)
 
 
 def tool(*cmd, **kw):
@@ -136,33 +171,35 @@ def run(variant_name, job, files, out, *, disk=DISK, timeout=1200, variants=None
         vars_fd = t / "vars.fd"
         shutil.copyfile(OVMF_VARS, vars_fd)
         # The overlay sits beside the disk, so the base is opened by a relative name.
+        clear_stale_overlays(disk)
         overlay = disk.with_name(f"run-{os.getpid()}.qcow2")
         tool("qemu-img", "create", "-q", "-f", "qcow2", "-b", disk.name, "-F", "qcow2", str(overlay))
         qmp = t / "qmp.sock"
+        # A stop of run.py itself (SIGTERM) also ends the guest; installed before
+        # QEMU starts so no stop can land between the two.
+        previous = signal.signal(signal.SIGTERM, _interrupt)
+        p = None
         try:
-            # A new session: on timeout the whole QEMU process group is stopped.
+            # A new session, so the whole QEMU process group is stopped together.
             p = subprocess.Popen(qemu_cmd(overlay, vars_fd, t / "standin.aml", job_img, variant, qmp),
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-            # A stop of run.py itself (SIGTERM) also ends the guest: never orphan QEMU.
-            previous = signal.signal(signal.SIGTERM, _interrupt)
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                 start_new_session=True, preexec_fn=_die_with_parent)
             try:
                 log, _ = p.communicate(timeout=timeout)
             except KeyboardInterrupt:
-                os.killpg(p.pid, signal.SIGTERM)
-                p.communicate(timeout=60)
                 print("standin: stopped")
                 return 3
             except subprocess.TimeoutExpired:
                 screendump(qmp, out / "timeout.png")
-                os.killpg(p.pid, signal.SIGTERM)
-                log, _ = p.communicate(timeout=60)
-                (out / "qemu.log").write_text(log or "")
+                (out / "qemu.log").write_text(stop(p) or "")
                 print(f"standin: the guest did not finish in {timeout}s (its screen: {out / 'timeout.png'})")
                 return 3
-            finally:
-                signal.signal(signal.SIGTERM, previous)
             (out / "qemu.log").write_text(log or "")
         finally:
+            # QEMU is reaped before its overlay goes, whatever ended the run.
+            if p is not None:
+                stop(p)
+            signal.signal(signal.SIGTERM, previous)
             overlay.unlink(missing_ok=True)
         done = subprocess.run(["mtype", "-i", str(job_img), "::/ios-job/done.txt"],
                               capture_output=True, text=True, timeout=TOOL_TIMEOUT)

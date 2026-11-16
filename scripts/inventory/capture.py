@@ -74,6 +74,7 @@ WORK = pathlib.Path("/mnt/r/11/captures")
 # 600 s; this margin covers restore, transfer and teardown on top, so ref-run's
 # own finally (which turns the VM off) always gets to run before the host gives up.
 RUN_MARGIN = 1800
+STANDIN_STOP_GRACE = 120   # run.py's own teardown: QEMU's 30 s grace, twice, plus the reap
 LOCK = REPO / "build" / "inventory" / "capture.lock"
 JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap, rolled back by the next run
 
@@ -142,16 +143,33 @@ def standin_run(label, files, cmd, timeout, variant):
             (stage / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, stage / rel)
         # run.py stops its own guest at --timeout; the margin covers boot and teardown.
-        r = subprocess.run([sys.executable, str(HERE / "standin" / "run.py"), "--variant", variant, "--in", str(stage),
-                            "--command", cmd, "--out", str(out), "--timeout", str(timeout)],
-                           capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
-    except subprocess.TimeoutExpired:
-        print(f"capture: standin/run.py did not finish within {timeout + RUN_MARGIN} s")
-        return out, 3
+        p = subprocess.Popen([sys.executable, str(HERE / "standin" / "run.py"), "--variant", variant, "--in", str(stage),
+                              "--command", cmd, "--out", str(out), "--timeout", str(timeout)],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            log, _ = p.communicate(timeout=timeout + RUN_MARGIN)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+            stop_runner(p)
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            print(f"capture: standin/run.py did not finish within {timeout + RUN_MARGIN} s")
+            return out, 3
     finally:
         shutil.rmtree(stage, ignore_errors=True)
-    print((r.stdout + r.stderr).strip())
-    return out, r.returncode
+    print(log.strip())
+    return out, p.returncode
+
+
+def stop_runner(p, grace=STANDIN_STOP_GRACE):
+    """Stop standin/run.py: SIGTERM runs its teardown (QEMU stopped and reaped,
+    overlay removed); SIGKILL only after `grace` seconds, and QEMU then still
+    stops, since run.py starts it with a parent-death signal."""
+    p.terminate()
+    try:
+        p.communicate(timeout=grace)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.communicate()
 
 
 def ref_run(label, files, cmd, timeout, who="capture"):

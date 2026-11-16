@@ -20,6 +20,9 @@ import io
 import json
 import subprocess
 import pathlib
+import time
+import signal
+import os
 import re
 import shutil
 import struct
@@ -1020,11 +1023,120 @@ class StandIn(unittest.TestCase):
         self.assertEqual(unmet({"brightness": True}, {"brightness": False}), ["brightness reported is False, want True"])
         self.assertEqual(unmet({"colour": 1}, {}), ["unknown expectation 'colour'"])
 
-    def test_one_page_stays_one_pair(self):
-        entries = {"a": {"page": "ms-settings:display"}}
-        job = self.prove.job_for(["a"], entries)
-        self.assertIn("$pages += ,@('a', 'ms-settings:display')", job)
+    def test_each_page_is_opened_once_and_shared(self):
+        entries = {"a": {"page": "ms-settings:batterysaver", "marker": "Power Mode"},
+                   "b": {"page": "ms-settings:display", "marker": "Brightness"},
+                   "c": {"page": "ms-settings:batterysaver", "marker": "Power Mode"}}
+        job = self.prove.job_for(["a", "b", "c"], entries)
+        self.assertEqual(job.count("$pages += ,@("), 2)
+        self.assertIn("$pages += ,@('page0', 'ms-settings:batterysaver', 'Power Mode')", job)
+        self.assertIn("$pages += ,@('page1', 'ms-settings:display', 'Brightness')", job)
         self.assertNotIn("PAGES", job)
+        self.assertNotIn("Start-Sleep 60", job)
+
+    def test_a_page_that_never_showed_is_not_proven(self):
+        entries = {"a": {"page": "ms-settings:display", "marker": "Brightness", "expect": {"brightness": True}}}
+        facts = {"brightness": True, "ready": []}
+        self.assertEqual(self.prove.verdicts(["a"], entries, 0, facts),
+                         {"a": ["ms-settings:display never showed 'Brightness'"]})
+        self.assertEqual(self.prove.verdicts(["a"], entries, 0, dict(facts, ready=["page0"])), {"a": []})
+        self.assertEqual(self.prove.verdicts(["a"], entries, 3, None), {"a": ["the stand-in job failed"]})
+
+    def test_a_later_failure_keeps_the_earlier_invalidation_on_disk(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        reg = tmp / "stand-ins.json"
+        old = {"variant": "charging", "page": "p", "marker": "m", "expect": {}, "proof": {"sha256": "a" * 64}}
+        reg.write_text(json.dumps({"x": dict(old), "y": dict(old, variant="saver")}))
+        calls = []
+
+        def fake(run, variant, group, entries, timeout, failed):
+            calls.append(variant)
+            if variant == "charging":
+                failed.append("x")
+                entries["x"].pop("proof")
+                return
+            raise OSError("disk full")
+        real = (self.prove.STAND_INS, self.prove.prove_variant, self.prove._load)
+        self.prove.STAND_INS, self.prove.prove_variant, self.prove._load = reg, fake, lambda *a: None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = self.prove.main([])
+        finally:
+            self.prove.STAND_INS, self.prove.prove_variant, self.prove._load = real
+            got = json.loads(reg.read_text())
+            shutil.rmtree(tmp)
+        self.assertEqual((rc, calls), (1, ["charging", "saver"]))
+        self.assertNotIn("proof", got["x"])
+        self.assertNotIn("proof", got["y"])
+
+    def _sleeper(self, ignore_term=False):
+        # A child that sleeps at most 30 s; with ignore_term it survives SIGTERM.
+        code = "import signal,time\n" + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_term else "")
+        code += "print('up', flush=True)\ntime.sleep(30)"
+        p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, start_new_session=True)
+        p.stdout.readline()
+        return p
+
+    def test_stop_escalates_to_sigkill_and_reaps(self):
+        p = self._sleeper(ignore_term=True)
+        try:
+            self.runner.stop(p, grace=0.5)
+            self.assertEqual(p.returncode, -9)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+
+    def test_stop_on_an_exited_guest_is_harmless(self):
+        p = self._sleeper()
+        p.terminate()
+        p.wait()
+        self.runner.stop(p, grace=0.5)
+
+    def test_qemu_dies_with_a_killed_runner(self):
+        # The runner starts a child with _die_with_parent, prints its pid, then is SIGKILLed.
+        code = ("import importlib.util,subprocess,sys,time\n"
+                f"spec=importlib.util.spec_from_file_location('r', {str(INV / 'standin' / 'run.py')!r})\n"
+                "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+                "c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],preexec_fn=m._die_with_parent)\n"
+                "print(c.pid, flush=True); time.sleep(30)")
+        runner = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, start_new_session=True)
+        child = int(runner.stdout.readline())
+        try:
+            runner.kill()
+            runner.wait()
+            for _ in range(50):
+                if not pathlib.Path(f"/proc/{child}").exists() or "Z" in pathlib.Path(f"/proc/{child}/stat").read_text().split()[2]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("the child outlived its killed runner")
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+
+    def test_stale_overlays_are_cleared_and_live_ones_kept(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        try:
+            disk = tmp / "standin.qcow2"
+            dead = subprocess.Popen([sys.executable, "-c", "pass"])
+            dead.wait()
+            for pid in (dead.pid, os.getpid()):
+                (tmp / f"run-{pid}.qcow2").write_text("x")
+            self.runner.clear_stale_overlays(disk)
+            self.assertEqual(sorted(f.name for f in tmp.iterdir()), [f"run-{os.getpid()}.qcow2"])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_a_cancelled_capture_stops_the_runner(self):
+        p = self._sleeper(ignore_term=True)
+        try:
+            capture.stop_runner(p, grace=0.5)
+            self.assertEqual(p.returncode, -9)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
 
     def test_the_registry_and_the_matrix_agree(self):
         entries = json.loads((INV.parents[1] / "docs" / "design" / "inventory" / "stand-ins.json").read_text())

@@ -12,10 +12,11 @@
     "shows": "Power & battery at 60 percent on AC, charging, with the time until fully charged",
     "proof": {
       "file": "stand-ins/battery-charging.png",
-      "sha256": "20610df71ece86cc0e0c8b203649245b60cb673070b9ebb097ae766337de8af2",
-      "size": 427336,
+      "sha256": "f2aea368fe27ee2c3bef83b1e3284271c399e0df7477bc5c497ea33608596817",
+      "size": 2502925,
       "date": "2026-11-16"
-    }
+    },
+    "marker": "Power Mode"
   },
   "battery-discharging": {
     "variant": "discharging",
@@ -30,10 +31,11 @@
     "shows": "Power & battery at 60 percent on battery, with the time remaining",
     "proof": {
       "file": "stand-ins/battery-discharging.png",
-      "sha256": "9a19f98049100e6067b74b29092f796bb11b941f83adcb9b0477e7e1a8ebf58e",
-      "size": 426797,
+      "sha256": "6af86ed4635b7abbe747ee2e1b91cb7405d8b230a823e9eb3c7781d8df9634e7",
+      "size": 2502444,
       "date": "2026-11-16"
-    }
+    },
+    "marker": "Power Mode"
   },
   "battery-saver": {
     "variant": "saver",
@@ -48,10 +50,11 @@
     "shows": "Power & battery at 15 percent with Energy saver on",
     "proof": {
       "file": "stand-ins/battery-saver.png",
-      "sha256": "003a084c80c3e6e5a86a8574aaa0eb89d5a8b6142e6a2f737d503ece784378ca",
-      "size": 427011,
+      "sha256": "9d94114d0e9f08569bb6bbfa814ba65b68de9351f4d19cbcb2e87040b9397535",
+      "size": 2504260,
       "date": "2026-11-16"
-    }
+    },
+    "marker": "Power Mode"
   },
   "lid-and-power-buttons": {
     "variant": "charging",
@@ -62,10 +65,11 @@
     "shows": "Lid & power button controls on Power & battery, from the ACPI lid",
     "proof": {
       "file": "stand-ins/lid-and-power-buttons.png",
-      "sha256": "e3bc1256cf570967a34e245ec006c1b3322cb666e0d92780ecea1d2975c2af60",
-      "size": 340475,
+      "sha256": "f2aea368fe27ee2c3bef83b1e3284271c399e0df7477bc5c497ea33608596817",
+      "size": 2502925,
       "date": "2026-11-16"
-    }
+    },
+    "marker": "Power Mode"
   },
   "brightness": {
     "variant": "charging",
@@ -76,9 +80,10 @@
     "shows": "Brightness for the built-in display, from the panel's ACPI backlight methods",
     "proof": {
       "file": "stand-ins/brightness.png",
-      "sha256": "07f17de660885c5705f66136880fca57420aea850626b23ff76d30308bbda1be",
-      "size": 621407,
+      "sha256": "e0fd0f3623d6f94a53a1debc87e4a759f3a39e8d662550f9ee966f90b55684e2",
+      "size": 2450568,
       "date": "2026-11-16"
-    }
+    },
+    "marker": "Brightness"
   }
 }

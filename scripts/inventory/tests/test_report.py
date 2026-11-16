@@ -199,8 +199,8 @@ class Campaign(unittest.TestCase):
         for sibling in (None, "", "taskbar/nowhere", "battery/face"):
             out = self.run_campaign(rows=[dict(base, sibling=sibling), other_absent])
             self.assertEqual(out.stdout.splitlines(), [
-                "absent without a sibling: battery/low/fhd-100 (sibling names the surface/state of a captured row)",
-                "absent without a sibling: battery/face/fhd-100 (sibling names the surface/state of a captured row)"],
+                "absent without a sibling: battery/low/fhd-100 (sibling names the surface/state of a row the campaign captures)",
+                "absent without a sibling: battery/face/fhd-100 (sibling names the surface/state of a row the campaign captures)"],
                 sibling)
 
     def test_a_stand_in_row_needs_a_proven_stand_in(self):
