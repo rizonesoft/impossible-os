@@ -64,27 +64,30 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                 | Depends On   | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------- | ------------ | :----: |
-| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --           |  [x]   |
-| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1           |  [x]   |
-| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4   |  [x]   |
-| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1           |  [x]   |
-| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4   |  [x]   |
-| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1           |  [x]   |
-| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6   |  [x]   |
-| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19      |  [ ]   |
-| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8           |  [ ]   |
-| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19      |  [ ]   |
-| 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10          |  [ ]   |
-| 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9           |  [ ]   |
-| 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12          |  [ ]   |
-| 💎  |  14   | §14 Shortcut, Gesture, Metric, Motion and State Catalogues                                  | §8, §10, §12 |  [ ]   |
-| ⭐  |  15   | §15 Inventory-to-Roadmap Authoring                                                          | §6, §7, §14  |  [ ]   |
-| ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6   |  [ ]   |
-| ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14  |  [ ]   |
-| ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16     |  [ ]   |
-| 💎  |  19   | §19 Capture Matrix, Fixtures and Device Stand-ins                                           | §2, §5       |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                 | Depends On        | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------- | ----------------- | :----: |
+| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --                |  [x]   |
+| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1                |  [x]   |
+| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4        |  [x]   |
+| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1                |  [x]   |
+| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4        |  [x]   |
+| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1                |  [x]   |
+| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6        |  [x]   |
+| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22 |  [ ]   |
+| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                |  [ ]   |
+| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21 |  [ ]   |
+| 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10               |  [ ]   |
+| 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9                |  [ ]   |
+| 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12               |  [ ]   |
+| 💎  |  14   | §14 Shortcut, Gesture, Metric, Motion and State Catalogues                                  | §8, §10, §12      |  [ ]   |
+| ⭐  |  15   | §15 Inventory-to-Roadmap Authoring                                                          | §6, §7, §14       |  [ ]   |
+| ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6        |  [ ]   |
+| ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14       |  [ ]   |
+| ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16          |  [ ]   |
+| 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5            |  [ ]   |
+| 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19           |  [ ]   |
+| 💎  |  21   | §21 Device Stand-ins and Host Captures                                                      | §2, §5, §19       |  [ ]   |
+| 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19           |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -467,7 +470,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - The app row, title, body lines, the image slot, the progress slot, the input slot, the button row (up to five), and the expand, settings and close controls
   - Capture the calendar: the collapsed date row, the month grid (6 by 7), the month, year and decade zoom levels, the scroll between months, and the focus session row beneath it
   - Capture a toast on screen: its position, size, the stack of several toasts, the time it stays, and the swipe or close dismissal
-    - Overflowing groups, long text, expanded and collapsed cards come from the notification fixtures of §19
+    - Overflowing groups, long text, expanded and collapsed cards come from the notification fixtures of §20
   - Record by hand the toast kinds
     - Plain, with buttons, with a text reply, with a selection, with a progress bar, an alarm or reminder that stays, an incoming call, and an urgent toast that breaks through do not disturb
   - Capture the card's context menu: turn off for this app, go to notification settings, make high priority
@@ -525,7 +528,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the power button menu on the sign-in screen and the accessibility flyout's list
   - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
-  - Record the setup frame from the `pre-oobe` checkpoint of §19: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
+  - Record the setup frame from the `pre-oobe` checkpoint of §20: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
   - Record each page in order as a `page` record with its controls: region, keyboard layout, second layout, network, device name, account, privacy choices, and the final preparing screen
   - Give every page tied to a Microsoft account, cloud backup, advertising or the assistant its disposition under §6
   - Record the keyboard path through setup and which pages can be skipped
@@ -1116,28 +1119,54 @@ The layout check proves every element is in the right place. This proves the pix
 
 ---
 
-## 19. Capture Matrix, Fixtures and Device Stand-ins
+## 19. Capture Matrix and Profile Matrix
 
 > **Spawned-by:** §2 (split)
 
 **Design:** n/a -- prepares the reference machine and its expected captures, it draws nothing
 
-Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and builds the fixtures that make each entry reachable. No physical laptop is used (operator decision 2026-11-14): a hardware-gated surface is shown by a stand-in in the VM, captured on the operator's Windows host, or recorded absent and designed as ours.
+Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and the profiles each entry is taken under; §22 adds the profiles that need a changed machine, §20 builds the fixtures that make each entry reachable, and §21 covers the hardware-gated entries.
 
 - [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
   - A hardware-gated row carries `source`: `stand-in`, `host` or `absent`
   - The row shape is §7's (`scripts/inventory/inventory-report.py`); an `absent` row carries its `reason`
-- [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
-  - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
-- [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
-  - Evidence for all three taskbar button modes on the second display is required before §8 closes
+  - Each is applied live in `ref`'s session from `clean` and verified there; the profiles that change the machine are §22's
+- [ ] Commit: `"inventory: capture matrix and profile matrix"`
+
+**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 -Verify -Profile all` reports every live profile of the matrix.
+
+---
+
+## 20. Capture Fixtures
+
+> **Spawned-by:** section 19 (split)
+
+**Design:** n/a -- guest fixture scripts, it draws nothing
+
+The states a capture must reach without real user data: a replayable setup flow, fictional list payloads, controlled service states and deterministic notifications.
+
+- [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Add synthetic list fixtures: a script that fills the VM with made-up files, apps, devices, networks and accounts, so a list's row template, controls, bounds and states are captured while the payload stays fictional
   - Capture each such list empty, populated and overflowing; `ENVIRONMENT_LISTS` of §3 then hides only real data, never the row layout
 - [ ] Add service-state fixtures with controlled connectivity: a local update source and a network switch that is toggled per checkpoint
   - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
 - [ ] Add notification fixtures: a script that posts deterministic toasts in several groups, with long text and overflow, captured expanded, collapsed and at text size 150 percent
+- [ ] Commit: `"inventory: capture fixtures"`
+
+**Test checkpoint:** each fixture script runs twice on a restored `clean` checkpoint and leaves the same state both times; every `expected.json` row naming a `fixture` names one that exists.
+
+---
+
+## 21. Device Stand-ins and Host Captures
+
+> **Spawned-by:** section 19 (split)
+
+**Design:** n/a -- prepares hardware-gated captures, it draws nothing
+
+No physical laptop is used (operator decision 2026-11-14): a hardware-gated surface is shown by a stand-in in the VM, captured on the operator's Windows host, or recorded absent and designed as ours.
+
 - [ ] Prove a device stand-in for each hardware-gated surface (battery and its states, brightness, lid, touchpad, pen, touch, rotation and tablet posture)
   - Hyper-V's virtual battery on a prerelease configuration version, and a clone of the reference disk under QEMU with `virtio-multitouch` and a tablet device; each proven stand-in is a `stand-in` row in `expected.json`
 - [ ] Move the reference VM to the host's build (26300.9818) before any host capture: re-pin §2's `reference.json` and re-run §5's baselines, so host and VM records share one build
@@ -1145,9 +1174,27 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
 - [ ] Record every surface that no stand-in and no host can show (fingerprint and face enrolment, and each stand-in above that fails its proof) as an absent row in `REFERENCE.md` naming its nearest captured sibling
   - §6 gives such a surface the `equivalent` disposition and it is designed as ours; nothing waits on hardware
-- [ ] Commit: `"inventory: capture matrix, fixtures and device stand-ins"`
+- [ ] Commit: `"inventory: device stand-ins and host captures"`
 
-**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 --verify` reports every profile of the matrix; every hardware-gated row of `expected.json` names a proven stand-in, a host capture or an absent row of `REFERENCE.md`. Platform: the operator's Windows host with Hyper-V.
+**Test checkpoint:** every hardware-gated row of `expected.json` names a proven stand-in, a host capture or an absent row of `REFERENCE.md`.
+
+---
+
+## 22. Derived Reference Machines: Right-to-Left, Viewports and Two Displays
+
+> **Spawned-by:** section 19 (split)
+
+**Design:** n/a -- prepares the reference machine, it draws nothing
+
+The profiles that a setting in `ref`'s session cannot reach: another display language, another video mode and a second display. Each is a checkpoint derived from `clean`, checked by `ref-vm.ps1 -Verify` like the live profiles.
+
+- [ ] Add `fhd-100-rtl` (Arabic display language, from the language pack installed while setup still has network) for every frame surface
+- [ ] Add a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
+- [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
+  - Evidence for all three taskbar button modes on the second display is required before §8 closes
+- [ ] Commit: `"inventory: derived reference machines"`
+
+**Test checkpoint:** `ref-vm.ps1 -Verify -Profile all` reports the right-to-left, wide, tall and two-display profiles beside the live ones.
 
 ---
 
