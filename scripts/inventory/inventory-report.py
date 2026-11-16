@@ -35,7 +35,10 @@ array of rows {surface, state, profile, needs, fixture?, source?, reason?}.
 `needs` lists the evidence a row requires: "records" (a canonical record of the
 surface), "shot" (a PNG in shots.json for that surface, state and profile) and
 "recording" (a video entry there). A row whose `source` is "absent" is a
-documented absence: it needs a reason and no evidence. The campaign check also
+documented absence: it needs a reason and a `sibling` (surface/state of a
+captured row it is designed from) and no evidence. A row whose `source` is
+"stand-in" names in `standin` an entry of stand-ins.json (section 21) whose
+variant exists in standin/variants.json and whose proof screenshot is hashed. The campaign check also
 fails on every baseline row still pending or unmatched and on every element a
 capture left without a hand label (build/inventory/<surface>-unnamed.json
 whose record still carries the automatic fallback label).
@@ -57,6 +60,8 @@ INV_REL = pathlib.PurePosixPath("docs/design/inventory")
 COVERAGE = "COVERAGE.md"
 AUTHORING = "authoring.json"
 EXPECTED = "expected.json"
+STAND_INS = "stand-ins.json"
+STANDIN_VARIANTS_REL = pathlib.PurePosixPath("scripts/inventory/standin/variants.json")
 FIXTURES_REL = pathlib.PurePosixPath("scripts/inventory/fixtures")
 GIT_TIMEOUT = 120  # deadline: the staged todo/ and inventory are a few thousand small files
 OWNER_LINE = re.compile(r"^\*\*Inventory:\*\*(?P<rest>.*)$")
@@ -286,6 +291,21 @@ def render(records, ledger, owners, problems, summary, implemented, authoring):
 
 # --- the capture campaign -----------------------------------------------------------
 
+def standin_problem(sid, stand_ins, variants):
+    """Why the stand-in `sid` does not prove its row, or None when it does."""
+    if not isinstance(sid, str) or not sid:
+        return "the row names no standin"
+    entry = stand_ins.get(sid) if isinstance(stand_ins, dict) else None
+    if not isinstance(entry, dict):
+        return f"{sid} is not in {INV_REL / STAND_INS}"
+    if entry.get("variant") not in variants:
+        return f"{sid}: variant {entry.get('variant')!r} is not in {STANDIN_VARIANTS_REL}"
+    proof = entry.get("proof")
+    if not isinstance(proof, dict) or not proof.get("file") or not re.fullmatch(r"[0-9a-f]{64}", str(proof.get("sha256", ""))):
+        return f"{sid} has no proof screenshot (standin/prove.py records one)"
+    return None
+
+
 def campaign_problems(root, inv, records, summary):
     problems = []
     path = inv / EXPECTED
@@ -296,6 +316,11 @@ def campaign_problems(root, inv, records, summary):
         return [f"no capture matrix: {INV_REL / EXPECTED} holds no rows"]
     shots = load_json(inv / "shots.json", [])
     profiles = load_json(inv / "profiles.json", {})
+    stand_ins = load_json(inv / STAND_INS, {})
+    standin_variants = load_json(root / STANDIN_VARIANTS_REL, {})
+    # A sibling is a row someone captures: present in the matrix and not absent itself.
+    captured = {f"{r.get('surface')}/{r.get('state')}" for r in rows
+                if isinstance(r, dict) and r.get("source") != "absent"}
     have = {}
     for sh in shots:
         key = (sh.get("surface"), sh.get("state"), sh.get("profile"))
@@ -325,7 +350,13 @@ def campaign_problems(root, inv, records, summary):
             reason = row.get("reason")
             if not isinstance(reason, str) or not reason.strip():
                 problems.append(f"absent without a reason: {name}")
+            elif row.get("sibling") not in captured:
+                problems.append(f"absent without a sibling: {name} (sibling names the surface/state of a captured row)")
             continue
+        if source == "stand-in":
+            problem = standin_problem(row.get("standin"), stand_ins, standin_variants)
+            if problem:
+                problems.append(f"unproven stand-in: {name} ({problem})")
         if "records" in needs and row["surface"] not in surfaces:
             problems.append(f"no records: {name}")
         for kind in ("shot", "recording"):

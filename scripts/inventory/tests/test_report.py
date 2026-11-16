@@ -121,9 +121,14 @@ class Campaign(unittest.TestCase):
 
     PROFILES = {"fhd-100": {}, "fhd-150": {}}
 
-    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None, profiles=PROFILES, fixtures=None):
+    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None, profiles=PROFILES, fixtures=None,
+                     stand_ins=None, variants=None):
         inv = "docs/design/inventory/"
         files = {inv + "shots.json": json.dumps(shots), inv + "profiles.json": json.dumps(profiles)}
+        if stand_ins is not None:
+            files[inv + "stand-ins.json"] = json.dumps(stand_ins)
+        if variants is not None:
+            files["scripts/inventory/standin/variants.json"] = json.dumps(variants)
         for name, text in (fixtures or {}).items():
             files[f"scripts/inventory/fixtures/{name}.ps1"] = text
         if rows is not None:
@@ -151,7 +156,7 @@ class Campaign(unittest.TestCase):
         rows = [{"surface": "taskbar", "state": "rest", "profile": "fhd-100", "needs": ["records", "shot"]},
                 {"surface": "taskbar", "state": "peek", "profile": "fhd-100", "needs": ["recording"]},
                 {"surface": "battery", "state": "low", "profile": "fhd-100", "needs": ["records"], "source": "absent",
-                 "reason": "no stand-in; designed as ours"}]
+                 "reason": "no stand-in; designed as ours", "sibling": "taskbar/rest"}]
         shots = self.SHOTS + [{"surface": "taskbar", "state": "peek", "profile": "fhd-100", "file": "taskbar/peek.fhd-100.webm"}]
         out = self.run_campaign(rows=rows, shots=shots)
         self.assertEqual((out.returncode, out.stdout), (0, ""), out.stderr)
@@ -186,6 +191,36 @@ class Campaign(unittest.TestCase):
                    "reason": reason}
             out = self.run_campaign(rows=[row])
             self.assertEqual(out.stdout.splitlines(), ["absent without a reason: battery/low/fhd-100"], reason)
+
+    def test_absent_row_names_a_captured_sibling(self):
+        base = {"surface": "battery", "state": "low", "profile": "fhd-100", "needs": ["records"], "source": "absent",
+                "reason": "no stand-in"}
+        other_absent = dict(base, state="face", sibling="taskbar/rest")
+        for sibling in (None, "", "taskbar/nowhere", "battery/face"):
+            out = self.run_campaign(rows=[dict(base, sibling=sibling), other_absent])
+            self.assertEqual(out.stdout.splitlines(), [
+                "absent without a sibling: battery/low/fhd-100 (sibling names the surface/state of a captured row)",
+                "absent without a sibling: battery/face/fhd-100 (sibling names the surface/state of a captured row)"],
+                sibling)
+
+    def test_a_stand_in_row_needs_a_proven_stand_in(self):
+        row = {"surface": "taskbar", "state": "rest", "profile": "fhd-100", "needs": ["records", "shot"], "source": "stand-in"}
+        good = {"variant": "charging", "proof": {"file": "stand-ins/battery.png", "sha256": "a" * 64}}
+        variants = {"charging": {}}
+        cases = [
+            (None, {"battery": good}, "the row names no standin"),
+            ("lid", {"battery": good}, "lid is not in docs/design/inventory/stand-ins.json"),
+            ("battery", {"battery": dict(good, variant="flat")},
+             "battery: variant 'flat' is not in scripts/inventory/standin/variants.json"),
+            ("battery", {"battery": {"variant": "charging"}}, "battery has no proof screenshot (standin/prove.py records one)"),
+            ("battery", {"battery": dict(good, proof={"file": "x.png", "sha256": "not-a-hash"})},
+             "battery has no proof screenshot (standin/prove.py records one)"),
+        ]
+        for sid, stand_ins, why in cases:
+            out = self.run_campaign(rows=[dict(row, standin=sid)], stand_ins=stand_ins, variants=variants)
+            self.assertEqual(out.stdout.splitlines(), [f"unproven stand-in: taskbar/rest/fhd-100 ({why})"], sid)
+        proven = self.run_campaign(rows=[dict(row, standin="battery")], stand_ins={"battery": good}, variants=variants)
+        self.assertEqual((proven.returncode, proven.stdout), (0, ""), proven.stderr)
 
     def test_unlabelled_capture_is_named(self):
         rows = [{"surface": "taskbar", "state": "rest", "profile": "fhd-100", "needs": ["records", "shot"]}]

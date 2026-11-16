@@ -1,0 +1,84 @@
+{
+  "battery-charging": {
+    "variant": "charging",
+    "page": "ms-settings:batterysaver",
+    "expect": {
+      "power": {
+        "ac": 1,
+        "percent": 60,
+        "saver": 0
+      }
+    },
+    "shows": "Power & battery at 60 percent on AC, charging, with the time until fully charged",
+    "proof": {
+      "file": "stand-ins/battery-charging.png",
+      "sha256": "20610df71ece86cc0e0c8b203649245b60cb673070b9ebb097ae766337de8af2",
+      "size": 427336,
+      "date": "2026-11-16"
+    }
+  },
+  "battery-discharging": {
+    "variant": "discharging",
+    "page": "ms-settings:batterysaver",
+    "expect": {
+      "power": {
+        "ac": 0,
+        "percent": 60,
+        "saver": 0
+      }
+    },
+    "shows": "Power & battery at 60 percent on battery, with the time remaining",
+    "proof": {
+      "file": "stand-ins/battery-discharging.png",
+      "sha256": "9a19f98049100e6067b74b29092f796bb11b941f83adcb9b0477e7e1a8ebf58e",
+      "size": 426797,
+      "date": "2026-11-16"
+    }
+  },
+  "battery-saver": {
+    "variant": "saver",
+    "page": "ms-settings:batterysaver",
+    "expect": {
+      "power": {
+        "ac": 0,
+        "percent": 15,
+        "saver": 1
+      }
+    },
+    "shows": "Power & battery at 15 percent with Energy saver on",
+    "proof": {
+      "file": "stand-ins/battery-saver.png",
+      "sha256": "003a084c80c3e6e5a86a8574aaa0eb89d5a8b6142e6a2f737d503ece784378ca",
+      "size": 427011,
+      "date": "2026-11-16"
+    }
+  },
+  "lid-and-power-buttons": {
+    "variant": "charging",
+    "page": "ms-settings:batterysaver",
+    "expect": {
+      "device": "ACPI\\PNP0C0D\\*"
+    },
+    "shows": "Lid & power button controls on Power & battery, from the ACPI lid",
+    "proof": {
+      "file": "stand-ins/lid-and-power-buttons.png",
+      "sha256": "e3bc1256cf570967a34e245ec006c1b3322cb666e0d92780ecea1d2975c2af60",
+      "size": 340475,
+      "date": "2026-11-16"
+    }
+  },
+  "brightness": {
+    "variant": "charging",
+    "page": "ms-settings:display",
+    "expect": {
+      "brightness": true
+    },
+    "shows": "Brightness for the built-in display, from the panel's ACPI backlight methods",
+    "proof": {
+      "file": "stand-ins/brightness.png",
+      "sha256": "07f17de660885c5705f66136880fca57420aea850626b23ff76d30308bbda1be",
+      "size": 621407,
+      "date": "2026-11-16"
+    }
+  }
+}

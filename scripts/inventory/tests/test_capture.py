@@ -20,6 +20,7 @@ import io
 import json
 import subprocess
 import pathlib
+import re
 import shutil
 import struct
 import sys
@@ -976,6 +977,88 @@ class Fixtures(unittest.TestCase):
         self.assertEqual(verdict([{"folder": True, "files": []}] * 2, "lists:empty"), ("lists:empty: same state twice", True))
         (self.dir / "state2.json").unlink()
         self.assertEqual(run.verdict(self.dir, "lists:empty"), ("lists:empty: no state after round 2", False))
+
+
+class StandIn(unittest.TestCase):
+    """The stand-in machine (section 21): its ACPI devices, its runner and its proofs."""
+
+    runner = load("standin_run", INV / "standin" / "run.py")
+    prove = load("standin_prove", INV / "standin" / "prove.py")
+
+    def test_every_variant_fills_every_placeholder(self):
+        asl = (INV / "standin" / "standin.asl").read_text()
+        variants = json.loads((INV / "standin" / "variants.json").read_text())
+        for name, v in variants.items():
+            filled = self.runner.fill(asl, v)
+            # Only the comment's own "@NAME@" remains; every value is filled.
+            self.assertEqual(re.findall(r"@[A-Z_]+@", filled), ["@NAME@"], name)
+            self.assertIn(f"Return ({v['ac']})", filled, name)
+
+    def test_the_backlight_node_is_the_slot_the_display_is_pinned_to(self):
+        # QEMU names the device at PCI slot N "S" + hex(N * 8): slot 3 is S18.
+        cmd = " ".join(self.runner.qemu_cmd("o.qcow2", "v.fd", "a.aml", "j.img", {}, "q.sock"))
+        self.assertIn("VGA,xres=1920,yres=1080,edid=on,addr=0x3", cmd)
+        self.assertIn("External (\\_SB.PCI0.S18, DeviceObj)", (INV / "standin" / "standin.asl").read_text())
+        # Windows mounts a partitionless FAT volume only on removable media.
+        self.assertIn("usb-storage,drive=job,bus=xhci.0,removable=on", cmd)
+        self.assertIn("-no-reboot", cmd)
+
+    def test_the_command_job_runs_the_command_as_ref_run_does(self):
+        job = self.runner.COMMAND_JOB.format(command='python C:\\ios\\in\\a.py --x "y"'.replace('"', '""'))
+        self.assertIn('& cmd.exe /c "python C:\\ios\\in\\a.py --x ""y"" > C:\\ios\\out\\stdout.txt 2>&1"', job)
+        self.assertIn("Set-Location -LiteralPath 'C:\\ios'", job)
+
+    def test_a_proof_needs_every_expectation(self):
+        unmet = self.prove.unmet
+        power = {"power": {"ac": 0, "percent": 15, "saver": 1}}
+        self.assertEqual(unmet(power, {"power": {"ac": 0, "percent": 15, "saver": 1}}), [])
+        self.assertEqual(unmet(power, {"power": {"ac": 0, "percent": 15, "saver": 0}}), ["saver is 0, want 1"])
+        self.assertEqual(unmet(power, {}), ["ac is None, want 0", "percent is None, want 15", "saver is None, want 1"])
+        lid = {"device": "ACPI\\PNP0C0D\\*"}
+        self.assertEqual(unmet(lid, {"devices": ["ACPI\\PNP0C0D\\2&DABA3FF&0"]}), [])
+        self.assertEqual(unmet(lid, {"devices": ["ACPI\\PNP0C0A\\1"]}), ["no working device ACPI\\PNP0C0D\\*"])
+        self.assertEqual(unmet({"brightness": True}, {"brightness": False}), ["brightness reported is False, want True"])
+        self.assertEqual(unmet({"colour": 1}, {}), ["unknown expectation 'colour'"])
+
+    def test_one_page_stays_one_pair(self):
+        entries = {"a": {"page": "ms-settings:display"}}
+        job = self.prove.job_for(["a"], entries)
+        self.assertIn("$pages += ,@('a', 'ms-settings:display')", job)
+        self.assertNotIn("PAGES", job)
+
+    def test_the_registry_and_the_matrix_agree(self):
+        entries = json.loads((INV.parents[1] / "docs" / "design" / "inventory" / "stand-ins.json").read_text())
+        variants = json.loads((INV / "standin" / "variants.json").read_text())
+        rows = json.loads((INV.parents[1] / "docs" / "design" / "inventory" / "expected.json").read_text())
+        named = {r["standin"] for r in rows if r.get("source") == "stand-in"}
+        self.assertEqual(named, set(entries))
+        for sid, e in entries.items():
+            self.assertIn(e["variant"], variants, sid)
+            self.assertTrue(e["page"].startswith("ms-settings:"), sid)
+
+    def test_capture_routes_a_stand_in_capture_to_the_stand_in_machine(self):
+        seen = {}
+        real_ref, real_si = capture.ref_run, capture.standin_run
+        capture.ref_run = lambda *a, **k: self.fail("the reference VM ran")
+        capture.standin_run = lambda label, files, cmd, timeout, variant: seen.update(v=variant, cmd=cmd) or ("out", 0)
+        try:
+            capture.run_guest("notepad-smoke", "fhd-100", 60, standin="saver")
+        finally:
+            capture.ref_run, capture.standin_run = real_ref, real_si
+        self.assertEqual(seen["v"], "saver")
+        self.assertTrue(seen["cmd"].startswith("python C:\\ios\\in\\capture-ui.py"), seen["cmd"])
+
+    def test_an_unknown_stand_in_variant_is_refused_before_any_machine(self):
+        real = capture.run_guest
+        capture.run_guest = lambda *a: self.fail("the guest ran")
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ex:
+                capture.main(["--surface", "notepad-smoke", "--file", "x", "--standin", "flat", "--dry-run"])
+            self.assertEqual(ex.exception.code, 2)
+            self.assertIn("--standin 'flat' is not in scripts/inventory/standin/variants.json", err.getvalue())
+        finally:
+            capture.run_guest = real
 
 
 class Serial(unittest.TestCase):

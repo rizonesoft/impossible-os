@@ -29,6 +29,11 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
    each in docs/design/inventory/shots.json (surface, state, profile, size,
    SHA-256); writes build/inventory/<surface>-unnamed.json for hand labels.
 
+--standin VARIANT runs step 1 on the stand-in machine (standin/run.py: the
+clean disk under QEMU with a laptop's battery, lid, backlight and touch screen,
+section 21) instead of the reference VM, for the rows expected.json marks
+"stand-in".
+
 --verify-shots re-hashes the store against shots.json and names every missing or
 changed file. --dry-run does steps 1 to 4 and publishes nothing. --fixture also
 keeps the walked tree (tree.json in the raw output) for a test fixture; it costs
@@ -101,9 +106,10 @@ def verify_shots(manifest, store):
     return out
 
 
-def run_guest(surface, profile, timeout, fixture=False, prepare=None):
-    """Run capture-ui.py in the VM, after the fixture `prepare` (name:variant)
-    when one is named. Returns (output folder, exit code)."""
+def run_guest(surface, profile, timeout, fixture=False, prepare=None, standin=None):
+    """Run capture-ui.py in the VM (or on the stand-in machine in variant
+    `standin`), after the fixture `prepare` (name:variant) when one is named.
+    Returns (output folder, exit code)."""
     files = {"capture-ui.py": HERE / "capture-ui.py", "capture_core.py": HERE / "capture_core.py",
              f"surfaces/{surface}.py": HERE / "surfaces" / f"{surface}.py",
              "profiles.json": INVENTORY / "profiles.json",
@@ -119,7 +125,33 @@ def run_guest(surface, profile, timeout, fixture=False, prepare=None):
         files[f"fixtures/{name}.ps1"] = FIXTURES / f"{name}.ps1"
         run = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\ios\\in\\fixtures\\{name}.ps1"
         cmd = f"{run} -Variant {variant} && {cmd}" if variant else f"{run} && {cmd}"
+    if standin:
+        return standin_run(surface, files, cmd, timeout, standin)
     return ref_run(surface, files, cmd, timeout)
+
+
+def standin_run(label, files, cmd, timeout, variant):
+    """ref_run's contract on the stand-in machine: the same C:\\ios\\in layout and
+    command, run by standin/run.py; its exit codes are ref_run's (2 refused,
+    3 no result). The staging folder is always removed."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stage = WORK / f"{label}-{stamp}-in"
+    out = WORK / f"{label}-{stamp}"
+    try:
+        for rel, src in files.items():
+            (stage / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, stage / rel)
+        # run.py stops its own guest at --timeout; the margin covers boot and teardown.
+        r = subprocess.run([sys.executable, str(HERE / "standin" / "run.py"), "--variant", variant, "--in", str(stage),
+                            "--command", cmd, "--out", str(out), "--timeout", str(timeout)],
+                           capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
+    except subprocess.TimeoutExpired:
+        print(f"capture: standin/run.py did not finish within {timeout + RUN_MARGIN} s")
+        return out, 3
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    print((r.stdout + r.stderr).strip())
+    return out, r.returncode
 
 
 def ref_run(label, files, cmd, timeout, who="capture"):
@@ -394,6 +426,7 @@ def main(argv=None):
     ap.add_argument("--fixture", action="store_true", help="also keep the walked tree, for a test fixture")
     ap.add_argument("--verify-shots", action="store_true")
     ap.add_argument("--prepare", metavar="NAME[:VARIANT]", help="run this capture fixture before the walk")
+    ap.add_argument("--standin", metavar="VARIANT", help="capture on the stand-in machine in this variant")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args(argv)
     if args.verify_shots:
@@ -414,6 +447,11 @@ def main(argv=None):
         ap.error(f"--surface {args.surface!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
     if args.prepare and core.fixture_problem(FIXTURES, args.prepare):
         ap.error(f"--prepare: {core.fixture_problem(FIXTURES, args.prepare)}")
+    if args.standin is not None:
+        variants = json.loads((HERE / "standin" / "variants.json").read_text(encoding="utf-8"))
+        if args.standin not in variants:
+            ap.error(f"--standin {args.standin!r} is not in scripts/inventory/standin/variants.json "
+                     f"(there are: {', '.join(variants)})")
     if args.profile not in json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8")):
         ap.error(f"--profile {args.profile!r} is not in docs/design/inventory/profiles.json")
     if args.file.startswith("baseline"):
@@ -433,7 +471,7 @@ def main(argv=None):
 def capture_and_publish(args):
     if recover(JOURNAL):
         print("capture: rolled back a publication that was interrupted; the previous one is restored")
-    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare)
+    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare, args.standin)
     if rc == 2:
         return 2
     try:

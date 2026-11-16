@@ -98,6 +98,29 @@ powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
 
 The machine and the tools are kept after the inventory is captured, so anything missed can be captured later from the same build.
 
+## How are the hardware pages captured?
+
+Hyper-V shows no battery, lid, backlight or touch screen, so the Settings pages for them are captured on a stand-in machine: the `clean` disk booted under QEMU on the WSL host with a laptop's devices described in ACPI. No physical laptop is used.
+
+| Part | Value |
+| --- | --- |
+| Disk | `clean` merged into one VHDX by `standin/derive.ps1`, converted to qcow2 at `~/.local/share/ios-standin/standin.qcow2`; each run writes to a throwaway overlay |
+| Machine | QEMU q35 under KVM, OVMF without Secure Boot, AHCI, xHCI with a USB keyboard and tablet, the VGA display at 1920 by 1080 with EDID |
+| Devices | `standin/standin.asl`: an AC adapter, a 50 Wh battery, a lid, and backlight control on the display (`_BCL`, `_BCM`, `_BQC`); Windows binds its inbox drivers |
+| Variants | `standin/variants.json`: `charging` (60 percent on AC), `discharging` (60 percent on battery), `saver` (15 percent, below the 30 percent Energy saver threshold) |
+| Jobs | a logon task in `ref`'s session runs `ios-job\job.ps1` from a removable FAT volume labelled IOSJOB, writes its exit code, and shuts the guest down |
+
+```bash
+powershell.exe -File scripts\inventory\standin\derive.ps1 -Out R:\11\standin\standin.vhdx
+qemu-img convert -f vhdx -O qcow2 /mnt/r/11/standin/standin.vhdx ~/.local/share/ios-standin/standin.qcow2
+python3 scripts/inventory/standin/prove.py                        # proves every stand-in, records each proof
+python3 scripts/inventory/capture.py --surface settings --file battery --standin saver
+```
+
+`docs/design/inventory/stand-ins.json` lists each stand-in with its variant, the page that shows it and what the guest must report. `prove.py` checks that report (power status, a working device, or a monitor brightness reading) and keeps the page's screenshot in `R:\11\ref-shots\stand-ins\` with its SHA-256; a `stand-in` row of `expected.json` names its stand-in, and `inventory-report.py --campaign --check` refuses one without a proof. `capture.py --standin VARIANT` runs a capture on the stand-in machine exactly as `ref-run` runs it on the VM.
+
+Touch, pen, touchpad, rotation lock and tablet posture have no stand-in: QEMU's virtio multitouch device does not start under the virtio-win 0.1.302 input driver (code 10, `0xC000009A`), and no emulated pen digitizer, precision touchpad, orientation sensor or slate-mode indicator has a Windows driver. Those rows, with Wi-Fi, fingerprint and face enrolment, are `absent`: each names its reason and the captured sibling page it is designed from.
+
 ## Which records are not built as captured?
 
 The [inventory format](index.md#how-are-decisions-recorded) defines the four dispositions. These rules say which one a record gets.
