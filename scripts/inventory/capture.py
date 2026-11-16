@@ -61,6 +61,7 @@ core = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(core)
 
 INVENTORY = REPO / "docs" / "design" / "inventory"
+FIXTURES = HERE / "fixtures"
 SHOTS_MANIFEST = INVENTORY / "shots.json"
 STORE = pathlib.Path("/mnt/r/11/ref-shots")
 WORK = pathlib.Path("/mnt/r/11/captures")
@@ -100,8 +101,9 @@ def verify_shots(manifest, store):
     return out
 
 
-def run_guest(surface, profile, timeout, fixture=False):
-    """Run capture-ui.py in the VM. Returns (output folder, exit code)."""
+def run_guest(surface, profile, timeout, fixture=False, prepare=None):
+    """Run capture-ui.py in the VM, after the fixture `prepare` (name:variant)
+    when one is named. Returns (output folder, exit code)."""
     files = {"capture-ui.py": HERE / "capture-ui.py", "capture_core.py": HERE / "capture_core.py",
              f"surfaces/{surface}.py": HERE / "surfaces" / f"{surface}.py",
              "profiles.json": INVENTORY / "profiles.json",
@@ -110,6 +112,13 @@ def run_guest(surface, profile, timeout, fixture=False):
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:
         cmd += " --dump C:\\ios\\out\\tree.json"
+    if prepare:
+        # The fixture runs first, in the same session; a failed fixture stops the
+        # capture, since its records would describe the wrong state.
+        name, _, variant = prepare.partition(":")
+        files[f"fixtures/{name}.ps1"] = FIXTURES / f"{name}.ps1"
+        run = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\ios\\in\\fixtures\\{name}.ps1"
+        cmd = f"{run} -Variant {variant} && {cmd}" if variant else f"{run} && {cmd}"
     return ref_run(surface, files, cmd, timeout)
 
 
@@ -384,6 +393,7 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fixture", action="store_true", help="also keep the walked tree, for a test fixture")
     ap.add_argument("--verify-shots", action="store_true")
+    ap.add_argument("--prepare", metavar="NAME[:VARIANT]", help="run this capture fixture before the walk")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args(argv)
     if args.verify_shots:
@@ -402,6 +412,8 @@ def main(argv=None):
     if not (HERE / "surfaces" / f"{args.surface}.py").is_file():
         walkers = sorted(p.stem for p in (HERE / "surfaces").glob("*.py"))
         ap.error(f"--surface {args.surface!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
+    if args.prepare and core.fixture_problem(FIXTURES, args.prepare):
+        ap.error(f"--prepare: {core.fixture_problem(FIXTURES, args.prepare)}")
     if args.profile not in json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8")):
         ap.error(f"--profile {args.profile!r} is not in docs/design/inventory/profiles.json")
     if args.file.startswith("baseline"):
@@ -421,7 +433,7 @@ def main(argv=None):
 def capture_and_publish(args):
     if recover(JOURNAL):
         print("capture: rolled back a publication that was interrupted; the previous one is restored")
-    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture)
+    out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare)
     if rc == 2:
         return 2
     try:

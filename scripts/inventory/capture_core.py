@@ -78,6 +78,28 @@ def slug(text):
     return s[:60].strip("-")
 
 
+FIXTURE_VARIANTS = re.compile(r"^# Variants: (.+)$", re.M)
+
+
+def fixture_problem(fixtures_dir, spec):
+    """None when `spec` (``name`` or ``name:variant``) names a fixture script in
+    `fixtures_dir` and, with a variant, one its ``# Variants:`` line declares;
+    otherwise what is wrong, in one line."""
+    name, _, variant = str(spec).partition(":")
+    if name != slug(name):
+        return f"fixture {spec!r}: the name must be a slug"
+    path = pathlib.Path(fixtures_dir) / f"{name}.ps1"
+    if not path.is_file():
+        return f"fixture {spec!r}: no script {path.name} in scripts/inventory/fixtures/"
+    m = FIXTURE_VARIANTS.search(path.read_text(encoding="utf-8"))
+    declared = [v.strip() for v in m.group(1).split(",")] if m else []
+    if not variant:
+        return f"fixture {spec!r}: name one of its variants ({', '.join(declared)})" if declared else None
+    if variant not in declared:
+        return f"fixture {spec!r}: {name}.ps1 has no variant {variant!r} (it has: {', '.join(declared) or 'none'})"
+    return None
+
+
 def compare_profile(seen, want, name):
     """Messages for each value of profile `name` that does not hold, in the profile's order."""
     out = []

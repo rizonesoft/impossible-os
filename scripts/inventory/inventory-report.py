@@ -57,6 +57,7 @@ INV_REL = pathlib.PurePosixPath("docs/design/inventory")
 COVERAGE = "COVERAGE.md"
 AUTHORING = "authoring.json"
 EXPECTED = "expected.json"
+FIXTURES_REL = pathlib.PurePosixPath("scripts/inventory/fixtures")
 GIT_TIMEOUT = 120  # deadline: the staged todo/ and inventory are a few thousand small files
 OWNER_LINE = re.compile(r"^\*\*Inventory:\*\*(?P<rest>.*)$")
 TOKEN = re.compile(r"(?<![\w.:-])(win11(?:\.[a-z0-9-]+)+|ledger:[a-z0-9-]+)(?![\w.-])")
@@ -72,6 +73,11 @@ def _module(name, path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _capture_core():
+    """capture_core.py, which holds the fixture spec check capture.py uses."""
+    return _module("capture_core", HERE / "capture_core.py")
 
 
 def _inventory_checker():
@@ -309,6 +315,12 @@ def campaign_problems(root, inv, records, summary):
         if source is not None and source not in SOURCES:
             problems.append(f"bad row {i}: source is one of {', '.join(SOURCES)}")
             continue
+        fixture = row.get("fixture")
+        if fixture is not None:
+            # Rows stay open until their fixture exists, like rows without evidence.
+            problem = _capture_core().fixture_problem(root / FIXTURES_REL, fixture)
+            if problem:
+                problems.append(f"no fixture: {name} ({problem})")
         if source == "absent":
             reason = row.get("reason")
             if not isinstance(reason, str) or not reason.strip():

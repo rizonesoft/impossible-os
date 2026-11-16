@@ -910,6 +910,74 @@ class Arguments(unittest.TestCase):
             capture.run_guest = real
 
 
+class Fixtures(unittest.TestCase):
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        (self.dir / "lists.ps1").write_text("# Variants: empty, populated\n")
+        (self.dir / "plain.ps1").write_text("# no variants\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def test_a_spec_names_a_script_and_a_declared_variant(self):
+        p = lambda spec: core.fixture_problem(self.dir, spec)
+        self.assertIsNone(p("lists:empty"))
+        self.assertIsNone(p("plain"))
+        self.assertEqual(p("lists"), "fixture 'lists': name one of its variants (empty, populated)")
+        self.assertEqual(p("lists:huge"), "fixture 'lists:huge': lists.ps1 has no variant 'huge' (it has: empty, populated)")
+        self.assertEqual(p("nope:x"), "fixture 'nope:x': no script nope.ps1 in scripts/inventory/fixtures/")
+        self.assertEqual(p("../x:y"), "fixture '../x:y': the name must be a slug")
+
+    def test_every_real_fixture_declares_its_variants(self):
+        for path in sorted((INV / "fixtures").glob("*.ps1")):
+            m = core.FIXTURE_VARIANTS.search(path.read_text())
+            self.assertIsNotNone(m, path.name)
+            declared = [v.strip() for v in m.group(1).split(",")]
+            self.assertIn("[ValidateSet(%s)]" % ", ".join(f"'{v}'" for v in declared), path.read_text(), path.name)
+
+    def test_prepare_runs_the_fixture_before_the_walk(self):
+        seen = {}
+        real = capture.ref_run
+        capture.ref_run = lambda label, files, cmd, timeout: seen.update(files=files, cmd=cmd) or ("out", 0)
+        try:
+            capture.run_guest("notepad-smoke", "fhd-100", 60, prepare="lists:populated")
+        finally:
+            capture.ref_run = real
+        self.assertIn("fixtures/lists.ps1", seen["files"])
+        first, _, rest = seen["cmd"].partition(" && ")
+        self.assertTrue(first.endswith("C:\\ios\\in\\fixtures\\lists.ps1 -Variant populated"), first)
+        self.assertTrue(rest.startswith("python C:\\ios\\in\\capture-ui.py"), rest)
+
+    def test_an_unknown_fixture_is_refused_before_the_vm(self):
+        real = capture.run_guest
+        capture.run_guest = lambda *a: self.fail("the guest ran")
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ex:
+                capture.main(["--surface", "notepad-smoke", "--file", "x", "--prepare", "lists:huge", "--dry-run"])
+            self.assertEqual(ex.exception.code, 2)
+            self.assertIn("has no variant 'huge'", err.getvalue())
+        finally:
+            capture.run_guest = real
+
+    def test_the_runner_compares_both_states(self):
+        run = load("fixture_run", INV / "fixtures" / "run.py")
+        def verdict(states, spec="lists:populated"):
+            for i, st in enumerate(states, 1):
+                (self.dir / f"state{i}.json").write_text("\ufeff" + json.dumps(st), encoding="utf-8")
+            return run.verdict(self.dir, spec)
+        same = {"files": ["a"], "apps": []}
+        self.assertEqual(verdict([same, same]), ("lists:populated: same state twice", True))
+        self.assertEqual(verdict([same, {"files": ["a", "b"], "apps": []}]),
+                         ("lists:populated: the second run left a different state", False))
+        self.assertEqual(verdict([{"files": []}, {"files": []}]), ("lists:populated: the fixture left nothing", False))
+        # An empty variant still owns state (the empty folder); all-empty means it did nothing.
+        self.assertEqual(verdict([{"files": []}, {"files": []}], "lists:empty"), ("lists:empty: the fixture left nothing", False))
+        self.assertEqual(verdict([{"folder": True, "files": []}] * 2, "lists:empty"), ("lists:empty: same state twice", True))
+        (self.dir / "state2.json").unlink()
+        self.assertEqual(run.verdict(self.dir, "lists:empty"), ("lists:empty: no state after round 2", False))
+
+
 class Serial(unittest.TestCase):
     """One capture at a time, and a host deadline that never strands the VM."""
 

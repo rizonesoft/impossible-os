@@ -64,30 +64,31 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                 | Depends On        | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------- | ----------------- | :----: |
-| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --                |  [x]   |
-| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1                |  [x]   |
-| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4        |  [x]   |
-| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1                |  [x]   |
-| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4        |  [x]   |
-| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1                |  [x]   |
-| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6        |  [x]   |
-| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22 |  [ ]   |
-| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                |  [ ]   |
-| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21 |  [ ]   |
-| 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10               |  [ ]   |
-| 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9                |  [ ]   |
-| 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12               |  [ ]   |
-| 💎  |  14   | §14 Shortcut, Gesture, Metric, Motion and State Catalogues                                  | §8, §10, §12      |  [ ]   |
-| ⭐  |  15   | §15 Inventory-to-Roadmap Authoring                                                          | §6, §7, §14       |  [ ]   |
-| ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6        |  [ ]   |
-| ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14       |  [ ]   |
-| ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16          |  [ ]   |
-| 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5            |  [x]   |
-| 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19           |  [ ]   |
-| 💎  |  21   | §21 Device Stand-ins and Host Captures                                                      | §2, §5, §19       |  [ ]   |
-| 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19           |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                 | Depends On             | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------- | ---------------------- | :----: |
+| 💎  |   1   | §1 Inventory Schema and Checker                                                             | --                     |  [x]   |
+| 💎  |   2   | §2 Reference Build and Capture Profile                                                      | §1                     |  [x]   |
+| 💎  |   3   | §3 UIA Capture Tool                                                                         | §1, §2, §4             |  [x]   |
+| 💎  |   4   | §4 Microsoft-Free Rule                                                                      | §1                     |  [x]   |
+| 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4             |  [x]   |
+| ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1                     |  [x]   |
+| 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6             |  [x]   |
+| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22      |  [ ]   |
+| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                     |  [ ]   |
+| 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21, §23 |  [ ]   |
+| 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10                    |  [ ]   |
+| 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9                     |  [ ]   |
+| 💎  |  13   | §13 Control Panel, System Tools and Inbox Apps Inventory                                    | §12                    |  [ ]   |
+| 💎  |  14   | §14 Shortcut, Gesture, Metric, Motion and State Catalogues                                  | §8, §10, §12           |  [ ]   |
+| ⭐  |  15   | §15 Inventory-to-Roadmap Authoring                                                          | §6, §7, §14            |  [ ]   |
+| ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6             |  [ ]   |
+| ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14            |  [ ]   |
+| ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16               |  [ ]   |
+| 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5                 |  [x]   |
+| 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                |  [ ]   |
+| 💎  |  21   | §21 Device Stand-ins and Host Captures                                                      | §2, §5, §19            |  [ ]   |
+| 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                |  [ ]   |
+| 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20           |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -528,7 +529,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the power button menu on the sign-in screen and the accessibility flyout's list
   - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
-  - Record the setup frame from the `pre-oobe` checkpoint of §20: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
+  - Run this capture from §2's `pre-oobe` checkpoint (the replay `-Reclean` already drives), for the local-account branch and, with §23's network switch, the network branch
+  - Record the setup frame from the `pre-oobe` checkpoint of §2: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
   - Record each page in order as a `page` record with its controls: region, keyboard layout, second layout, network, device name, account, privacy choices, and the final preparing screen
   - Give every page tied to a Microsoft account, cloud backup, advertising or the assistant its disposition under §6
   - Record the keyboard path through setup and which pages can be skipped
@@ -1144,17 +1146,14 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 
 **Design:** n/a -- guest fixture scripts, it draws nothing
 
-The states a capture must reach without real user data: a replayable setup flow, fictional list payloads, controlled service states and deterministic notifications.
+The states a capture must reach without real user data: fictional list payloads and deterministic notifications, each a guest script that `capture.py --prepare` runs before the walk. The setup replay is §9's (from §2's `pre-oobe`); controlled service states are §23's.
 
-- [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
-- [ ] Add synthetic list fixtures: a script that fills the VM with made-up files, apps, devices, networks and accounts, so a list's row template, controls, bounds and states are captured while the payload stays fictional
-  - Capture each such list empty, populated and overflowing; `ENVIRONMENT_LISTS` of §3 then hides only real data, never the row layout
-- [ ] Add service-state fixtures with controlled connectivity: a local update source and a network switch that is toggled per checkpoint
-  - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
-- [ ] Add notification fixtures: a script that posts deterministic toasts in several groups, with long text and overflow, captured expanded, collapsed and at text size 150 percent
-- [ ] Commit: `"inventory: capture fixtures"`
+- [x] The fixture runner: `fixtures/<name>.ps1` with `-Variant` and `-State`, `capture.py --prepare`, `fixtures/run.py --twice`, and the campaign check naming a row whose fixture is missing
+- [x] Synthetic list fixtures (`lists`): files, apps, printers, VPNs and users, empty, populated and overflowing
+- [x] Notification fixtures (`notifications`): three senders, long text, `groups` and `overflow`
+- [x] Commit: `"inventory: capture fixtures"`
 
-**Test checkpoint:** each fixture script runs twice on a restored `clean` checkpoint and leaves the same state both times; every `expected.json` row naming a `fixture` names one that exists.
+**Test checkpoint:** `fixtures/run.py --twice` runs each fixture variant twice on a restored `clean` checkpoint and prints the same non-empty state both times; `inventory-report.py --campaign --check` names a row whose fixture has no script.
 
 ---
 
@@ -1194,6 +1193,22 @@ The profiles that a setting in `ref`'s session cannot reach: another display lan
 - [ ] Commit: `"inventory: derived reference machines"`
 
 **Test checkpoint:** `ref-vm.ps1 -Verify -Profile all` reports the right-to-left, wide, tall and two-display profiles beside the live ones.
+
+---
+
+## 23. Service-State Fixtures: Update Source and Network Switch
+
+> **Spawned-by:** section 20 (split)
+
+**Design:** n/a -- prepares the reference machine's service states, it draws nothing
+
+Windows Update and network pages show states the offline reference VM never reaches by itself. A controlled local update source and a network the host switches per checkpoint make each one reachable, through §20's fixture runner, without the VM reaching the internet.
+
+- [ ] Add service-state fixtures with controlled connectivity: a local update source and a network switch that is toggled per checkpoint
+  - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
+- [ ] Commit: `"inventory: service-state fixtures"`
+
+**Test checkpoint:** `fixtures/run.py --twice services:<variant>` leaves the same state twice for every variant; each `fixture: services` row of `expected.json` is reached by a dry-run capture.
 
 ---
 

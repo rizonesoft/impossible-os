@@ -121,9 +121,11 @@ class Campaign(unittest.TestCase):
 
     PROFILES = {"fhd-100": {}, "fhd-150": {}}
 
-    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None, profiles=PROFILES):
+    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None, profiles=PROFILES, fixtures=None):
         inv = "docs/design/inventory/"
         files = {inv + "shots.json": json.dumps(shots), inv + "profiles.json": json.dumps(profiles)}
+        for name, text in (fixtures or {}).items():
+            files[f"scripts/inventory/fixtures/{name}.ps1"] = text
         if rows is not None:
             files[inv + "expected.json"] = json.dumps(rows)
         if unnamed is not None:
@@ -168,6 +170,15 @@ class Campaign(unittest.TestCase):
         self.assertEqual(no_surface.stdout.splitlines(), ["no records: taskbar/rest/fhd-100"])
         no_state = self.run_campaign(rows=rows, shots=self.SHOTS)
         self.assertEqual(no_state.stdout.splitlines(), ["no shot: taskbar/rest/fhd-150"])
+
+    def test_a_row_waits_for_its_fixture_script_and_variant(self):
+        rows = [{"surface": "taskbar", "state": "rest", "profile": "fhd-100", "needs": ["records"], "fixture": f}
+                for f in ("lists:populated", "lists:huge", "services:update-failed")]
+        rows = [dict(r, state=f"rest{i}") for i, r in enumerate(rows)]
+        out = self.run_campaign(rows=rows, fixtures={"lists": "# Variants: empty, populated\n"})
+        self.assertEqual(out.stdout.splitlines(), [
+            "no fixture: taskbar/rest1/fhd-100 (fixture 'lists:huge': lists.ps1 has no variant 'huge' (it has: empty, populated))",
+            "no fixture: taskbar/rest2/fhd-100 (fixture 'services:update-failed': no script services.ps1 in scripts/inventory/fixtures/)"])
 
     def test_absent_reason_must_be_text(self):
         for reason in (None, "   ", 7, ["x"]):

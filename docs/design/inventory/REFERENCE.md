@@ -5,14 +5,14 @@ Every record in the inventory is read from one machine: a clean Hyper-V virtual 
 
 ## Which build is the reference?
 
-| Field | Value |
-| --- | --- |
-| Edition | Windows 11 Pro (`Professional`, image index 6 of the ISO) |
-| Version | 26H2 |
-| Build | 26300.9711 (`CurrentBuild`.`UBR`) |
-| Read from | the VM's Registry, `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, inside the signed-in session |
-| Read on | 2026-11-14 |
-| Installed from | `R:\11\win11.iso`, en-US, `install.esd` |
+| Field          | Value                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| Edition        | Windows 11 Pro (`Professional`, image index 6 of the ISO)                                            |
+| Version        | 26H2                                                                                                 |
+| Build          | 26300.9711 (`CurrentBuild`.`UBR`)                                                                    |
+| Read from      | the VM's Registry, `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, inside the signed-in session |
+| Read on        | 2026-11-14                                                                                           |
+| Installed from | `R:\11\win11.iso`, en-US, `install.esd`                                                              |
 
 The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` refuses to take or verify `clean`, and `ref-run.ps1` refuses to capture (exit 5), when the guest's edition, version or build differs from it. The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9711)` when the machine matches.
 
@@ -24,17 +24,17 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 
 `fhd-100` is the profile every canonical record is captured under:
 
-| Setting | Value |
-| --- | --- |
-| Resolution | 1920 by 1080, one monitor |
-| Scaling | 100 percent (96 DPI) |
-| Display language | en-US |
-| Regional format | en-US |
-| Theme | light for apps and system (the Windows default) |
-| Accent | the default, `FFD47800` (DWM `AccentColor`), not shown on Start and taskbar |
-| Taskbar | the default, centred |
-| Focus at capture start | the bare desktop: no Start, Search or app window open |
-| Session | `ref`'s interactive console session, never session 0 |
+| Setting                | Value                                                                       |
+| ---------------------- | --------------------------------------------------------------------------- |
+| Resolution             | 1920 by 1080, one monitor                                                   |
+| Scaling                | 100 percent (96 DPI)                                                        |
+| Display language       | en-US                                                                       |
+| Regional format        | en-US                                                                       |
+| Theme                  | light for apps and system (the Windows default)                             |
+| Accent                 | the default, `FFD47800` (DWM `AccentColor`), not shown on Start and taskbar |
+| Taskbar                | the default, centred                                                        |
+| Focus at capture start | the bare desktop: no Start, Search or app window open                       |
+| Session                | `ref`'s interactive console session, never session 0                        |
 
 `ref-vm.ps1 -Verify` reads every value in this table from inside that session (resolution, monitor count and DPI through a per-monitor DPI-aware process) and fails on any difference; `clean` is only taken when the same check passes.
 
@@ -42,16 +42,16 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 
 Every profile is an entry of `profiles.json`, the one place its values live; this table describes them. A profile lists every probed value, so a capture under it checks all of them.
 
-| Profile | Differs from `fhd-100` by | Kind |
-| --- | --- | --- |
-| `fhd-125`, `fhd-150`, `fhd-175` | scaling 125, 150 or 175 percent (120, 144 or 168 DPI) | live |
-| `fhd-100-dark` | dark mode for apps and system | live |
-| `fhd-100-aquatic`, `fhd-100-desert`, `fhd-100-dusk`, `fhd-100-nightsky` | the contrast theme of that Settings name | live |
-| `fhd-100-text150` | text size 150 percent | live |
-| `qhd-200` | 2560 by 1440 at 200 percent | machine |
-| `fhd-100-rtl` | display language `ar-SA`, right to left | machine |
-| `wide-100`, `tall-100` | a 2560 by 1080 or 1080 by 1920 display | machine |
-| `dual-100-150`, `dual-150-100` | two displays, the second at the other scale | machine |
+| Profile                                                                 | Differs from `fhd-100` by                             | Kind    |
+| ----------------------------------------------------------------------- | ----------------------------------------------------- | ------- |
+| `fhd-125`, `fhd-150`, `fhd-175`                                         | scaling 125, 150 or 175 percent (120, 144 or 168 DPI) | live    |
+| `fhd-100-dark`                                                          | dark mode for apps and system                         | live    |
+| `fhd-100-aquatic`, `fhd-100-desert`, `fhd-100-dusk`, `fhd-100-nightsky` | the contrast theme of that Settings name              | live    |
+| `fhd-100-text150`                                                       | text size 150 percent                                 | live    |
+| `qhd-200`                                                               | 2560 by 1440 at 200 percent                           | machine |
+| `fhd-100-rtl`                                                           | display language `ar-SA`, right to left               | machine |
+| `wide-100`, `tall-100`                                                  | a 2560 by 1080 or 1080 by 1920 display                | machine |
+| `dual-100-150`, `dual-150-100`                                          | two displays, the second at the other scale           | machine |
 
 **Live** profiles are applied in `ref`'s session from `clean` by `guest/set-profile.ps1`, each setting through the path Windows itself uses: scaling through the logical DPI override (Hyper-V's display refuses the per-display scale call), a contrast theme through its theme file, light and dark through the Personalize values, and text size through the Settings slider and its Apply button (the registry value alone changes no font). A contrast theme sets the light values itself, so those profiles do not list them. `ref-vm.ps1 -Verify -Profile live` applies and probes every live profile in turn; `capture.py --profile` applies its profile before it checks it.
 
@@ -60,6 +60,17 @@ Every profile is an entry of `profiles.json`, the one place its values live; thi
 Windows stores a contrast theme under its pre-Win11 name (Aquatic is `High Contrast #1`, Desert `High Contrast #2`, Dusk `High Contrast Black`, Night sky `High Contrast White`); the probe reports the Settings name.
 
 An observation captured under a profile other than `fhd-100` goes in a `<surface>/<file>.<profile>.json` file, as the [inventory format](index.md) describes.
+
+## Which fixtures prepare a capture?
+
+A fixture is a guest script in `scripts/inventory/fixtures/` that puts made-up content where a surface shows it, so a list's rows, a notification's card and their overflow are recorded while every payload is fictional. `capture.py --prepare <name>:<variant>` runs it in `ref`'s session before the walk, and an `expected.json` row names the fixture it needs. Each script removes everything it owns before it adds a variant's entries, so running it twice leaves the same state; `fixtures/run.py --twice all` proves that on a restored `clean` for every variant.
+
+| Fixture | Variants | What it adds |
+| --- | --- | --- |
+| `lists` | `empty`, `populated` (4), `overflowing` (40) | files in `Documents\Sample folder`, per-user uninstall entries (Installed apps), printers on the inbox PDF driver each on its own port (Printers & scanners), per-user VPN connections, local users in Users (Other users) |
+| `notifications` | `groups` (3 a sender), `overflow` (12 a sender) | toasts from three registered sample senders, with fixed tags and a fixed `displayTimestamp`, posted straight to the notification centre |
+
+`empty` removes only the fixture's own entries and keeps `Sample folder`, empty, for File Explorer to open; a list Windows fills itself (the inbox apps, Microsoft Print to PDF) still shows those. The clean checkpoint has Do not disturb on, which the notification centre shows at its top. The setup flow needs no fixture: the First-Run Setup capture takes it from the `pre-oobe` checkpoint, and the service states (update and network) are [Service-State Fixtures](../../graphics/win11-parity-inventory.md)' work.
 
 ## What is the machine?
 
@@ -101,4 +112,4 @@ The [inventory format](index.md#how-are-decisions-recorded) defines the four dis
 A row of a completeness baseline that the reference build lists but no surface shows (a setting gated off in this edition, a verb whose handler is not installed) is documented here, with the build the absence was checked on and the reason, instead of being matched by a captured record. `check-inventory.py` refuses a row listed here that a record also matches, a row that names nothing, and a row without a build or a reason. An absence checked on another build than the reference build counts nothing until it is checked again and its build updated.
 
 | Baseline | Row | Build | Reason |
-| --- | --- | --- | --- |
+| -------- | --- | ----- | ------ |
