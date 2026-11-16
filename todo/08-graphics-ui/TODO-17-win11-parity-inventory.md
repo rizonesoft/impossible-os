@@ -1177,7 +1177,7 @@ No physical laptop is used (operator decision 2026-11-14): a hardware-gated surf
   - Proven: battery charging, discharging and saver, brightness, lid; absent with a sibling: touch, pen, touchpad, rotation, tablet posture (virtio-win's multitouch driver fails with code 10; no emulated pen, precision touchpad, orientation sensor or slate indicator has a Windows driver)
 - [x] Commit: `"inventory: device stand-ins"`
 
-**Test checkpoint:** `inventory-report.py --campaign --check` names every `stand-in` row whose stand-in is unproven and every absent row without a sibling; each proof is a screenshot from `standin/prove.py` showing the surface with its stand-in device, taken after the guest reported that device.
+**Test checkpoint:** `inventory-report.py --campaign --check` names every `stand-in` row whose stand-in is unproven and every absent row without a sibling; each proof is a screenshot from `standin/prove.py`, taken once the page shows its marker element, and kept only when the device facts the guest reads afterwards meet the stand-in's expectations.
 ---
 
 ## 22. Derived Reference Machines: Right-to-Left, Viewports and Two Displays

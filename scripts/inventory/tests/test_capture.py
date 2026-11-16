@@ -1093,20 +1093,32 @@ class StandIn(unittest.TestCase):
         p.wait()
         self.runner.stop(p, grace=0.5)
 
+    @staticmethod
+    def _gone(pid):
+        try:
+            return pathlib.Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+        except FileNotFoundError:
+            return True
+
     def test_qemu_dies_with_a_killed_runner(self):
-        # The runner starts a child with _die_with_parent, prints its pid, then is SIGKILLed.
+        # The runner starts a child with _die_with_parent, prints its pid, then is
+        # SIGKILLed. The child ignores SIGTERM, as a hung QEMU can.
+        child_code = ("import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                      "print('ready', flush=True); time.sleep(30)")
         code = ("import importlib.util,subprocess,sys,time\n"
                 f"spec=importlib.util.spec_from_file_location('r', {str(INV / 'standin' / 'run.py')!r})\n"
                 "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
-                "c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],preexec_fn=m._die_with_parent)\n"
+                f"c=subprocess.Popen([sys.executable,'-c',{child_code!r}],preexec_fn=m._die_with_parent)\n"
                 "print(c.pid, flush=True); time.sleep(30)")
         runner = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, start_new_session=True)
-        child = int(runner.stdout.readline())
+        # Both write to one pipe: the child's pid, and its "ready" once SIGTERM is ignored.
+        lines = [runner.stdout.readline().strip() for _ in range(2)]
+        child = int(next(x for x in lines if x.isdigit()))
         try:
             runner.kill()
             runner.wait()
             for _ in range(50):
-                if not pathlib.Path(f"/proc/{child}").exists() or "Z" in pathlib.Path(f"/proc/{child}/stat").read_text().split()[2]:
+                if self._gone(child):
                     break
                 time.sleep(0.1)
             else:

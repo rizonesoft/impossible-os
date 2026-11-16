@@ -55,9 +55,11 @@ PR_SET_PDEATHSIG = 1
 
 
 def _die_with_parent():
-    """In the QEMU child before exec: the kernel sends it SIGTERM when run.py
-    dies, even by SIGKILL, so a killed runner never leaves a guest running."""
-    ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+    """In the QEMU child before exec: the kernel sends it SIGKILL when run.py
+    dies, even by SIGKILL, so a killed runner never leaves a guest running.
+    SIGKILL, because no runner is left to escalate a SIGTERM a hung QEMU ignores;
+    the graceful stop is stop()'s, while run.py lives."""
+    ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
 def stop(p, grace=STOP_GRACE):
