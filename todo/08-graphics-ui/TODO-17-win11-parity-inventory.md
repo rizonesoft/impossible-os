@@ -1202,6 +1202,9 @@ The profiles that a setting in `ref`'s session cannot reach: another display lan
 
 > **Test runner:** `python3 -m unittest test_capture test_check_inventory` in `scripts/inventory/tests` (the `Displays` class and the session refusals); `powershell.exe -File scripts\inventory\ref-vm.ps1 -Verify -Profile all` passes every profile (2026-11-16).
 
+> **Verified:** 2026-11-16 | commit `ce1aec017` | 4/4 items | 300 inventory tests OK; `ref-vm.ps1 -Verify -Profile all` passes the live profiles, `qhd-200`, `fhd-100-rtl`, `wide-100` and `tall-100` on their checkpoints and both two-display profiles on the stand-in (six of six repeat runs); `standin/prove.py` proves all five stand-ins on the rebuilt disk
+> **Quality reviewed:** 2026-11-16 | Codex 4x (round 2x, performance 1x, completion 1x) | 1M fixed, 2M rejected (a failed derive is discarded by the next restore; each dual profile is verified from a fresh boot as captured), 0 open | scope: N/A (host and guest tooling, no kernel surface)
+
 ---
 
 ## 23. Service-State Fixtures: Update Source and Network Switch
