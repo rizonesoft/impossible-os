@@ -263,13 +263,14 @@ class Capture:
         self.records = []
         self.unnamed = []
         self.ambiguous = []
-        self.skipped = {"offscreen": 0, "tooltip": 0, "prose": 0, "hosting": 0}
+        self.skipped = {"offscreen": 0, "tooltip": 0, "prose": 0, "hosting": 0, "elsewhere": 0}
         self.states = []
         self.measured = []            # records of unkept scenes (Scene.keep)
 
 
 def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
-         environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=()):
+         environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=(),
+         omit=()):
     """Capture one surface. Returns a Capture or raises Incomplete.
 
     session is the schema's session the capture ran in (session_type), written
@@ -288,6 +289,10 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
 
     labels are (spec, label) pairs: the label of an element with no usable name
     that the spec matches (an entry's icon), so it is not reported unnamed.
+
+    omit names elements another file of the surface records (the taskbar's own
+    buttons, inside the window the tray file walks): each is left out with its
+    subtree, counted as skipped "elsewhere".
     """
     for _, seg in identity:
         if seg != slug(seg) or not seg:
@@ -347,6 +352,9 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
             visits[0] += 1
             if visits[0] > MAX_VISITS:
                 raise Incomplete(f"more than {MAX_VISITS} elements read; the surface module must name a smaller root")
+            if any(matches(k, spec) for spec in omit):
+                cap.skipped["elsewhere"] += 1
+                continue
             if any(matches(k, spec) for spec in hosts):
                 if depth > MAX_DEPTH:
                     raise Incomplete(f"hosting panes nest deeper than {MAX_DEPTH} levels")
@@ -450,7 +458,7 @@ class Scene:
     """
 
     FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
-              "expand", "hosts", "labels")
+              "expand", "hosts", "labels", "omit")
 
     def __init__(self, mod, **spec):
         unknown = set(spec) - set(self.FIELDS)
@@ -471,6 +479,7 @@ class Scene:
         self.expand = bool(spec.get("expand", True))
         self.hosts = tuple(spec.get("hosts", getattr(mod, "HOSTS", ())))
         self.labels = tuple(spec.get("labels", getattr(mod, "LABELS", ())))
+        self.omit = tuple(spec.get("omit", getattr(mod, "OMIT", ())))
 
 
 def scenes_of(mod):
@@ -681,7 +690,7 @@ class _Budget:
             raise Incomplete(f"more than {MAX_RECORDS} elements to dump; the surface module must name a smaller root")
 
 
-def dump(el, depth=0, entry=False, environment_lists=(), budget=None, expand=True, hosts=()):
+def dump(el, depth=0, entry=False, environment_lists=(), budget=None, expand=True, hosts=(), omit=()):
     """The fixture form of a tree: structure only, the same fields the walk reads.
 
     It visits exactly what the walk visits: an element the walk excludes (offscreen,
@@ -707,8 +716,11 @@ def dump(el, depth=0, entry=False, environment_lists=(), budget=None, expand=Tru
         return d                       # rows are the machine's own data
     if el.control_type not in CONTENT:
         # A host is kept whatever it reports: the walk reads through it.
-        kids = [dump(k, depth + 1, environment_lists=environment_lists, budget=budget, expand=expand, hosts=hosts)
-                for k in el.children() if not excluded(k) or any(matches(k, spec) for spec in hosts)]
+        kids = [dump(k, depth + 1, environment_lists=environment_lists, budget=budget, expand=expand, hosts=hosts,
+                     omit=omit)
+                for k in el.children()
+                if not any(matches(k, spec) for spec in omit)
+                and (not excluded(k) or any(matches(k, spec) for spec in hosts))]
         if kids:
             d["children"] = kids
     if expand and el.can_expand and el.control_type in EXPANDABLE and not el.offscreen:

@@ -198,5 +198,95 @@
   "height": 65,
   "size": 4621,
   "sha256": "52e171516b5101b07d260123c35bfc91643a4f766c7048342c31d5445f0d761e"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "bar",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 48,
+  "size": 12963,
+  "sha256": "a9d1df81967f3ad45ed511562e92b270e8b1e4b93a98106644eaf3bf8fd0e72d"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "grouped-jump-list",
+  "profile": "fhd-100",
+  "width": 318,
+  "height": 354,
+  "size": 31956,
+  "sha256": "da68d9cbe19280b2b5c56780929ed9897037811aeca9f30c149c433b7d5e1fad"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "menu",
+  "profile": "fhd-100",
+  "width": 159,
+  "height": 73,
+  "size": 2976,
+  "sha256": "ec193c8c3640745bb614beffa0c7f8fad2f21fa1cb3014b82a79ccfac6309649"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "overflow",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2373792,
+  "sha256": "fa87e651b2545dd421320d46f38ea95c358cae7de8b966d26f85a9b9ba8a646c"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "overflow-button",
+  "profile": "fhd-100",
+  "width": 35,
+  "height": 48,
+  "size": 142,
+  "sha256": "e2fdcb35e554aabf408d566e4a3fa3e3bb822313fcc044b146eff2e8bd17d60c"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "pinned-jump-list",
+  "profile": "fhd-100",
+  "width": 318,
+  "height": 322,
+  "size": 31110,
+  "sha256": "bb344ef39ae95467884f24e6180ee634455e443a4c2b5f14643eac7435d9635c"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "running-jump-list",
+  "profile": "fhd-100",
+  "width": 318,
+  "height": 125,
+  "size": 31432,
+  "sha256": "a17942d313cd1c82dcf90ee806d75bc50e7ac74dab66044634a0f13d05fdeff8"
+ },
+ {
+  "surface": "taskbar",
+  "file": "secondary",
+  "state": "secondary",
+  "profile": "dual-100-150",
+  "width": 1920,
+  "height": 72,
+  "size": 22178,
+  "sha256": "a2677263865d81cc2d3041e95f0d5c1095c5287b62f936747cb1c112ac341729"
+ },
+ {
+  "surface": "taskbar",
+  "file": "taskbar",
+  "state": "thumbnail",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2365874,
+  "sha256": "f15c698840239fd9d5d50a50556a1eb4bb0f5447c52e4ecb036c93fc78a4b886"
  }
 ]

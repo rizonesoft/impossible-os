@@ -262,7 +262,7 @@ class NeverData(unittest.TestCase):
         cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="fhd-100", session="console", root_slug="r",
                         root_label="Root")
         self.assertEqual([r["label"] for r in cap.records[1:]], ["OK"])
-        self.assertEqual(cap.skipped, {"offscreen": 1, "tooltip": 2, "prose": 1, "hosting": 0})
+        self.assertEqual(cap.skipped, {"offscreen": 1, "tooltip": 2, "prose": 1, "hosting": 0, "elsewhere": 0})
         self.assertFalse([k for k in ("Help", "x" * 81) if k in json.dumps(cap.records)])
 
     def test_the_fixture_holds_no_help_text(self):
@@ -1201,6 +1201,24 @@ class StandIn(unittest.TestCase):
         self.assertIn("usb-storage,drive=job,bus=xhci.0,removable=on", cmd)
         self.assertIn("-no-reboot", cmd)
 
+    def test_the_guest_waits_for_room_before_it_boots(self):
+        free = iter([3000, 4000, 5200])
+        now = iter([0, 10, 20, 30])
+        got = self.runner.wait_for_memory(5120, 600, available=lambda: next(free), clock=lambda: next(now),
+                                          sleep=lambda s: None)
+        self.assertEqual(got, (5200, True))
+
+    def test_the_guest_is_not_booted_into_a_full_host(self):
+        now = iter([0, 300, 600])
+        got = self.runner.wait_for_memory(5120, 600, available=lambda: 3000, clock=lambda: next(now),
+                                          sleep=lambda s: None)
+        self.assertEqual(got, (3000, False))
+
+    def test_the_memory_wait_covers_the_guest_it_boots(self):
+        cmd = self.runner.qemu_cmd("o.qcow2", "v.fd", "a.aml", "j.img", {}, "q.sock")
+        self.assertEqual(cmd[cmd.index("-m") + 1], str(self.runner.GUEST_MB))
+        self.assertGreater(self.runner.available_mb(), 0)
+
     def test_the_command_job_runs_the_command_as_ref_run_does(self):
         job = self.runner.COMMAND_JOB.format(command='python C:\\ios\\in\\a.py --x "y"'.replace('"', '""'))
         self.assertIn('& cmd.exe /c "python C:\\ios\\in\\a.py --x ""y"" > C:\\ios\\out\\stdout.txt 2>&1"', job)
@@ -1612,6 +1630,18 @@ class Scenes(unittest.TestCase):
         self.assertNotIn("itemCount", flat.records[1])
         self.assertNotIn("expands", core.dump(core.FixtureElement(t), expand=False)["children"][0])
 
+    def test_an_omitted_element_is_left_out_with_its_subtree(self):
+        t = node("Taskbar", "Pane", bounds=(0, 0, 400, 48), children=[
+            node("", "Pane", aid="TaskbarFrame", bounds=(0, 0, 300, 48), children=[node("Start", "Button")]),
+            node("Show Hidden Icons", "Button", bounds=(300, 0, 32, 48))])
+        cap = core.walk(core.FixtureElement(t), surface="taskbar", build="26300.9974", profile="fhd-100",
+                        session="console", root_slug="tray", root_label="Tray", root_kind="region",
+                        omit=[{"automationId": "TaskbarFrame"}])
+        self.assertEqual([r["label"] for r in cap.records], ["Tray", "Show Hidden Icons"])
+        self.assertEqual(cap.skipped["elsewhere"], 1)
+        tree = core.dump(core.FixtureElement(t), omit=[{"automationId": "TaskbarFrame"}])
+        self.assertNotIn("TaskbarFrame", json.dumps(tree))
+
     def test_a_win32_entry_keeps_its_shortcut_out_of_its_name(self):
         t = node("", "Menu", bounds=(0, 0, 100, 60), children=[node("Undo Copy\tCtrl+Z", "MenuItem")])
         cap = core.walk(core.FixtureElement(t), surface="scenetest", build="26300.9974", profile="fhd-100",
@@ -1720,6 +1750,35 @@ class DesktopMetrics(unittest.TestCase):
     def test_hand_records_and_metrics_do_not_share_an_order(self):
         orders = [m["order"] for m in self.desk.METRICS(self.cells())] + [h["order"] for h in self.desk.HAND]
         self.assertEqual(len(orders), len(set(orders)))
+
+
+class GuestImports(unittest.TestCase):
+    def test_a_surface_module_imports_the_core_the_tool_loaded(self):
+        # The guest's embeddable Python leaves the script folder off sys.path; so
+        # does this test, so only the tool's own registration can satisfy the import.
+        inv = str(INV)
+        saved_path, saved_core = list(sys.path), sys.modules.pop("capture_core", None)
+        sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != inv]
+        try:
+            ui = load("capture_ui_isolated", INV / "capture-ui.py")
+            with tempfile.TemporaryDirectory() as tmp:
+                mod = pathlib.Path(tmp) / "m.py"
+                mod.write_text("import capture_core as core\nSEEN = core\n")
+                self.assertIs(load("surface_m", mod).SEEN, ui.core)
+        finally:
+            sys.path[:] = saved_path
+            if saved_core is not None:
+                sys.modules["capture_core"] = saved_core
+
+
+class FindWindow(unittest.TestCase):
+    def test_a_zero_timeout_looks_once(self):
+        win = types.SimpleNamespace(name="", automation_id="", class_name="Popup", control_type="Window", offscreen=False)
+        uia = types.SimpleNamespace(GetRootElement=lambda: "root", CreateTrueCondition=lambda: "all")
+        live = types.SimpleNamespace(uia=uia, children=lambda el, cond=None: [win])
+        self.assertIs(guest.Context(live).find_window(timeout=0, className="Popup"), win)
+        with self.assertRaises(guest.core.Incomplete):
+            guest.Context(live).find_window(timeout=0, className="Other")
 
 
 if __name__ == "__main__":

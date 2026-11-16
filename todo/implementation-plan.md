@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **989 of 2721 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **989 of 2722 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2136,6 +2136,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T10 §6`  | Jump Lists                                                              | none  |     8 |
 | [ ]  | `D08 T10 §7`  | Taskbar Auto-Hide                                                       | none  |     9 |
 | [ ]  | `D08 T10 §8`  | Taskbar Customization                                                   | none  |     5 |
+| [ ]  | `D08 T10 §9`  | Taskbar on Every Display                                                | none  |     5 |
 | [ ]  | `D08 T11 §1`  | Start Menu Data Loading                                                 | none  |     9 |
 | [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none  |     8 |
 | [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none  |     5 |

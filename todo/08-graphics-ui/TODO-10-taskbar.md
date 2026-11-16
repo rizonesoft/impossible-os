@@ -52,12 +52,15 @@ title: "TODO-10 -- Taskbar"
 | 💎  |   6   | §6 Jump lists -- recent files popup above context menu, `SYS_JUMPLIST_NOTIFY=53`                       | §2 context menu (jump list is shown above it); §5 pins (per-app Registry) |  [ ]   |
 | 💎  |   7   | §7 Auto-hide -- slide off/on with anim_mgr tween, mouse proximity trigger                              | §1–§6 stable; TODO-04 `anim_mgr_add()` must exist                         |  [ ]   |
 | 💎  |   8   | §8 Customization -- alignment, search/Task view visibility, pins, Settings page                        | §7 (auto-hide is a customization option too); TODO-09 §4 DPI              |  [ ]   |
+| 💎  |   9   | §9 Taskbar on every display -- a bar per display, three button modes                                   | §1 window list; §5 pins; §8 Settings page                                 |  [ ]   |
 
 ---
 
 ## 1. Taskbar Window List
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
+
+**Inventory:** `win11.taskbar.bar`, `win11.taskbar.overflow-button`, `win11.taskbar.overflow`
 
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §3`, which is superseded there so the shell has one implementation.
 
@@ -94,6 +97,8 @@ title: "TODO-10 -- Taskbar"
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
+**Inventory:** `win11.taskbar.menu`
+
 Right-click window button → `context_menu_show()`: Close, Restore/Maximize (toggle), Minimize, *(stretch)* "Move to Desktop ►" submenu (virtual desktops), *(stretch)* "Pin to taskbar".
 
 **Files:** `src/desktop/taskbar_winlist.c` (extend), `src/desktop/taskbar_ctxmenu.c` (new)
@@ -112,6 +117,8 @@ Right-click window button → `context_menu_show()`: Close, Restore/Maximize (to
 ## 3. Aero Peek
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
+
+**Inventory:** `win11.taskbar.thumbnail`
 
 Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the thumbnail preview flyout opens above it (one 200 x 120 thumbnail per window, title, close glyph); hover a thumbnail for `THEME_MOTION_PEEK_DELAY_MS` (500) → all other windows blitted at alpha=25 (10%), the previewed window stays at 255; leave → restore all (`docs/design/shell.md#taskbar`, Hover preview). "Show Desktop" strip (8 px at the far right, after the clock and bell, marked by a 1 px `stroke_divider` line): hover = peek all, click = toggle Win+D. Registry `EnablePeek` (default 1).
 
@@ -153,6 +160,8 @@ Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the 
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
+**Inventory:** `win11.taskbar.bar.appid-microsoft-microsoftofficehub-8wekyb3d8bbwe-microsoft-m`, `win11.taskbar.bar.appid-microsoft-windows-explorer`, `win11.taskbar.bar.appid-msedge`, `win11.taskbar.bar.appid-microsoft-windowsstore-8wekyb3d8bbwe-app`
+
 Load from `HKCU\Software\Impossible\Shell\TaskbarPins` (comma-separated paths) at boot. Pins come first in the app block of the centred group (after Task view), running windows follow. Running + pinned = combined button. Not-running = icon-only → click → `task_exec()`. Right-click pinned → "Unpin from taskbar".
 
 **Files:** `src/desktop/taskbar_pins.c` (new), `include/desktop/taskbar.h` (extend)
@@ -174,6 +183,8 @@ Load from `HKCU\Software\Impossible\Shell\TaskbarPins` (comma-separated paths) a
 ## 6. Jump Lists
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
+
+**Inventory:** `win11.taskbar.pinned-jump-list`, `win11.taskbar.running-jump-list`, `win11.taskbar.grouped-jump-list`
 
 Right-click pinned or window button → jump list popup above context menu showing recent files / frequent tasks. Read from `HKCU\Software\Impossible\Shell\JumpLists\{app_name}\Recent[]`. `SYS_JUMPLIST_NOTIFY=53` syscall for apps to register recent files.
 
@@ -221,17 +232,35 @@ The taskbar is always `THEME_SIZE_TASKBAR_HEIGHT` (48) tall and docked to the bo
 **Files:** `src/desktop/taskbar_config.c` (new), `include/desktop/taskbar.h` (extend)
 
 > [!NOTE]
-> `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarAl` (0 = left, 1 = centre, default 1) mirrors the Windows 11 key; `ShowTaskViewButton`, `SearchboxTaskbarMode` (0 hidden, 1 icon, 2 box) likewise. Left alignment places the group 12 px from the left edge instead of centring it; nothing else moves. `TASKBAR_HEIGHT = DPI_SCALE(THEME_SIZE_TASKBAR_HEIGHT)`. On setting change: re-layout the taskbar only.
+> `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarAl` (0 = left, 1 = centre, default 1) mirrors the Windows 11 key; `ShowTaskViewButton`, `SearchboxTaskbarMode` (0 hidden, 1 icon, 3 icon and label, 2 box; measured in `docs/design/inventory/taskbar/taskbar.json`) likewise. Left alignment places the group 12 px from the left edge instead of centring it; nothing else moves. `TASKBAR_HEIGHT = DPI_SCALE(THEME_SIZE_TASKBAR_HEIGHT)`. On setting change: re-layout the taskbar only.
 
 - [ ] `typedef enum { TB_ALIGN_LEFT=0, TB_ALIGN_CENTER=1 } taskbar_align_t;` + `g_taskbar_align` (default centre)
 - [ ] `void taskbar_config_init(void)`: read `TaskbarAl`, `ShowTaskViewButton`, `SearchboxTaskbarMode`; set globals
 - [ ] `void taskbar_config_set(taskbar_align_t align, int show_taskview, int search_mode)`: update globals; persist; re-layout the taskbar
 - [ ] Settings "Taskbar" page (settings rows per `docs/design/controls.md#cards-and-settings-rows`): alignment combo box (Left / Centre)
-  - search mode (Hidden / Icon / Search box)
+  - search mode (Hidden / Icon / Icon and label / Search box)
   - Task view toggle
   - auto-hide toggle
   - pin manager list with Remove buttons
 - [ ] Commit: `"taskbar: customization -- alignment, search/task view visibility, auto-hide, pins, Settings page"`
+
+---
+
+## 9. Taskbar on Every Display
+
+> **Spawned-by:** root
+
+**Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
+
+**Inventory:** `win11.taskbar.secondary`
+
+Every display gets its own taskbar, as in Windows 11 (filed when the parity inventory's second-display capture found no owner), measured on two displays in `docs/design/inventory/taskbar/secondary.json`. A second bar holds Start, search, Task view, widgets, its task buttons and a clock, with no tray. The button mode decides where a window's button shows: on all taskbars (the default), on the main taskbar and the one where the window is open, or only where the window is open. In the last two modes pinned apps show only on the main bar.
+
+- [ ] One bar per display, sized at that display's scale, with the clock and no tray
+- [ ] Button modes stored in `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\MMTaskbarEnabled` and `MMTaskbarMode` (0 all, 1 main and where open, 2 where open), re-laid out live
+- [ ] A window's button moves bars when the window moves displays
+- [ ] Settings "Taskbar behaviours" rows: show on all displays, and the button mode combo
+- [ ] Commit: `"taskbar: a bar on every display, three button modes"`
 
 ---
 

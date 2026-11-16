@@ -103,6 +103,8 @@ After dismiss: if `HKCU\Software\Impossible\Screensaver\RequirePassword=1` (defa
 
 **Design:** [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
+**Inventory:** `win11.taskbar.bar.widgets`
+
 `struct widget` (id, `wgt_fn` fn, rect, z_order, visible). Lifecycle: `WGT_INIT / WGT_RENDER / WGT_TICK / WGT_CLICK / WGT_CLOSE`. `widget_manager_tick()` from compositor loop. Drawn above wallpaper, below all windows. Draggable. `gfx_acrylic` background. Registry positions.
 
 **Files:** `src/desktop/widget_manager.c` (new), `include/desktop/widget_manager.h` (new)

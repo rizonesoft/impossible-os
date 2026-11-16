@@ -404,20 +404,13 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Owners: the window manager's Desktop Icons section, the desktop shell's Desktop Right-Click Menu section and the desktop icons' Icon Right-Click Context Menu section
 - [/] Wallpaper fit modes (Fill, Fit, Stretch, Tile, Center, Span) captured from the background page as records under `win11.desktop.desktop`
   - Blocked: the reference VM's Windows is not activated, so Settings disables personalization and the fit list never shows (seen 2026-11-16); capture it once the operator activates the reference machine
-- [ ] Taskbar: writes `docs/design/inventory/taskbar/taskbar.json`
-  - Capture the bar: height, icon size, button width and spacing, the active and running indicator sizes, at centre alignment and at left alignment, as `metric` records
-  - Capture each default item in order
-    - Start, Search (its four display modes: hidden, icon, icon and label, box), Task View, the widgets entry, pinned apps, running apps, the tray, the clock, the notification bell, the show-desktop edge
-  - Capture the taskbar context menu (empty area) and the app button context menu
-    - The jump list frame: pinned, recent, tasks, the app name, pin or unpin, close window, close all windows
-  - Capture the hover thumbnail: one window, several windows (the row of previews), the close button on a preview, the preview's title row, and the delay before it shows
-  - Record by hand the button states
-    - Not running, running, active, attention (flashing and steady), progress (normal, paused, error, indeterminate), badge, grouped windows
-  - Capture the overflow: what happens when buttons no longer fit (the overflow button and its flyout)
-  - Record by hand the behaviours
-    - Drag to reorder, drag a file over a button to switch, middle click for a new window, Shift-click, Ctrl-click cycling, Win and a digit, auto-hide and its reveal edge
-  - Capture the taskbar on a second display and its three button modes (all taskbars, main and where open, where open), on the topology of §19
-  - Done when: `check-inventory.py --surface taskbar` passes; the file holds a `metric` record for bar height, icon size and button width at both alignments, and one `state` record per button state listed above.
+- [x] Taskbar: writes `docs/design/inventory/taskbar/taskbar.json` and `taskbar/secondary.json`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/taskbar.py` and `taskbar-secondary.py`; the tray, clock, bell and show-desktop edge are the tray item's
+  - Metrics at both alignments: bar 48, button 44, pitch 44, icon 24 (from pixels; UIA exposes no icon), the four search modes, indicators (active 16 by 3, running 6 by 3), thumbnail 216 by 153 and its 0.55 s delay, jump list 318, a full bar's 32 px buttons and the overflow button and flyout
+  - Menus: the bar menu and the pinned, running and several-window jump lists; Recent and Tasks groups are hand records, since this machine fills neither
+  - The row of previews for several windows is not exposed to UIA, so it is a hand state with the button states and behaviours
+  - Second display on the two-display stand-in: its bar (72 px at 150 %) and the three button modes; pinned apps leave the second bar in the two "where open" modes
+  - Owners: the taskbar roadmap's sections 1, 2, 3, 5, 6 and the new section 9 (every display), and the widget framework
 - [ ] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
   - Capture the tray's fixed order
     - The hidden icons chevron, app icons, the input indicator, the pen and touch keyboard entries, the network, volume and battery group (one button), the clock, the notification bell

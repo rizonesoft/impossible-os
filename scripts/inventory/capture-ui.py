@@ -32,9 +32,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 def _load(name, path):
     # The embeddable Python's ._pth mode leaves the script's folder off sys.path,
-    # so the shared core is loaded by its path.
+    # so the shared core is loaded by its path, and registered under its name so
+    # a surface module's own "import capture_core" finds this same module.
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -64,6 +66,10 @@ TREE_ELEMENT, TREE_CHILDREN, TREE_DESCENDANTS = 1, 2, 4
 # A WinUI 3 menu opens in its own top-level PopupWindowSiteBridge (the desktop's
 # context menu and its submenus, seen 2026-11-16 on 26300.9974).
 POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Microsoft.UI.Content.PopupWindowSiteBridge"}
+# Windows find_window never brings forward: a popup closes when it loses the
+# foreground to itself, and so does a jump list (a CoreWindow) or a thumbnail
+# (the XAML island host); the taskbar is always on top already (2026-11-16).
+NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd"}
 PROP_CONTROL_TYPE = 30003
 PROP_PROCESS_ID = 30002
 PROP_IS_OFFSCREEN = 30022
@@ -166,6 +172,21 @@ def click(x, y, button="left"):
     if user32.SendInput(2, arr, ctypes.sizeof(INPUT)) != 2:
         raise core.Incomplete(f"SendInput refused a {button} click")
     time.sleep(0.3)
+
+
+HOVER_STEPS, HOVER_STEP_PX = 10, 20     # a hover arrives over 200 px
+MOVE = 0x0001                  # MOUSEEVENTF_MOVE: a relative move of dx, dy
+
+
+def move_to(x, y):
+    """Put the pointer on (x, y) with a real mouse-move event. SetCursorPos alone
+    moves it silently, and the taskbar shows no thumbnail for that (2026-11-16);
+    a one-pixel step and back after it is what a hover listener sees."""
+    if not user32.SetCursorPos(int(x) - 1, int(y)):
+        raise core.Incomplete(f"SetCursorPos refused ({x}, {y})")
+    arr = (INPUT * 1)(INPUT(type=0, mi=MOUSEINPUT(dx=1, dy=0, dwFlags=MOVE)))
+    if user32.SendInput(1, arr, ctypes.sizeof(INPUT)) != 1:
+        raise core.Incomplete("SendInput refused a mouse move")
 
 
 # ----------------------------------------------------------- screenshot --
@@ -425,6 +446,25 @@ class Context:
             raise core.Incomplete(f"{el.name or el.automation_id}: Invoke failed ({exc})") from None
         time.sleep(0.3)
 
+    def hover(self, el, settle=1.5):
+        """Rest the pointer on an element's centre (a thumbnail, a tooltip),
+        arriving from 200 px above in steps: the taskbar shows a thumbnail only
+        for a pointer that enters the button, not one that lands on it
+        (2026-11-16). Returns the time.monotonic() of the arrival."""
+        x, y, w, h = el.bounds
+        cx, cy = x + w // 2, y + h // 2
+        for step in range(HOVER_STEPS, -1, -1):
+            move_to(cx, max(0, cy - step * HOVER_STEP_PX))
+            time.sleep(0.05)
+        arrived = time.monotonic()
+        time.sleep(settle)
+        return arrived
+
+    def hover_point(self, x, y):
+        """Move the pointer to a point with a real mouse-move event (off a
+        surface, so it shows no hover state)."""
+        move_to(x, y)
+
     def click_at(self, x, y, button="left"):
         click(x, y, button)
 
@@ -481,18 +521,19 @@ class Context:
     def find_window(self, timeout=15, **spec):
         """The first top-level window matching spec (className, name, automationId)."""
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while True:                  # one look at least: timeout=0 is a single check
             # The raw view: a classic menu's #32768 window is not a control
             # element, so the control view leaves it out.
             for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition()):
                 if core.matches(w, spec) and not w.offscreen:
                     # A popup is never brought forward: a menu that loses the
                     # foreground to itself closes (2026-11-16, the classic menu).
-                    if w.class_name not in POPUP_WINDOWS:
+                    if w.class_name not in NO_FOREGROUND:
                         user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
                     return w
+            if time.monotonic() >= deadline:
+                raise core.Incomplete(f"no window matching {spec} within {timeout} s")
             time.sleep(0.5)
-        raise core.Incomplete(f"no window matching {spec} within {timeout} s")
 
 
 def load_surface(name):
@@ -569,7 +610,8 @@ def main(argv=None):
     def walk_args(sc):
         return dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=sc.slug,
                     root_label=sc.label, root_kind=sc.kind, environment_lists=sc.environment_lists,
-                    values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels)
+                    values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels,
+                    omit=sc.omit)
 
     def walk_scene(sc):
         # Each pass replaces this scene's screenshots from the pass before; an
@@ -584,7 +626,8 @@ def main(argv=None):
     def dump_scene(sc, cap):
         written.clear()               # settled: these screenshots stay
         if args.dump:
-            tree = core.dump(sc.root(ctx), environment_lists=sc.environment_lists, expand=sc.expand, hosts=sc.hosts)
+            tree = core.dump(sc.root(ctx), environment_lists=sc.environment_lists, expand=sc.expand, hosts=sc.hosts,
+                             omit=sc.omit)
             core.confirm_dump(tree, cap, **walk_args(sc))
             trees[sc.slug] = tree
 

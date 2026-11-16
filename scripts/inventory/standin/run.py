@@ -32,11 +32,15 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 # On the Linux disk: QEMU over the Windows drive share is slow. derive.ps1 writes
 # R:\11\standin\standin.vhdx; `qemu-img convert -O qcow2` puts it here.
 DISK = pathlib.Path.home() / ".local/share/ios-standin/standin.qcow2"
+GUEST_MB = 4096                    # the guest's memory
+MEMORY_MARGIN_MB = 1024            # left free for the host beside it
+MEMORY_WAIT = 600                  # seconds to wait for that much to be free
 OVMF_CODE = pathlib.Path("/usr/share/OVMF/OVMF_CODE_4M.fd")
 OVMF_VARS = pathlib.Path("/usr/share/OVMF/OVMF_VARS_4M.fd")
 JOB_MB = 512
@@ -124,10 +128,30 @@ def screendump(sock_path, png):
         return False  # fail-direction: the dump only helps diagnose a timeout
 
 
+def available_mb():
+    """MemAvailable from /proc/meminfo, in MB."""
+    for line in pathlib.Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) // 1024
+    raise RuntimeError("/proc/meminfo has no MemAvailable line")
+
+
+def wait_for_memory(need_mb, wait, available=available_mb, clock=time.monotonic, sleep=time.sleep):
+    """Wait until `need_mb` is free, at most `wait` seconds. Returns the free MB
+    and whether it was enough. Booting into a full host gets the guest stopped
+    by the host's out-of-memory guard partway through (earlyoom, 2026-11-17)."""
+    deadline = clock() + wait
+    while True:
+        free = available()
+        if free >= need_mb or clock() >= deadline:
+            return free, free >= need_mb
+        sleep(10)
+
+
 def qemu_cmd(overlay, vars_fd, aml, job_img, variant, qmp):
     accel = "kvm" if os.access("/dev/kvm", os.W_OK) else "tcg"
     cmd = ["qemu-system-x86_64", "-machine", f"q35,accel={accel}", "-cpu", "host" if accel == "kvm" else "max",
-           "-smp", "4", "-m", "4096", "-display", "none", "-no-reboot",
+           "-smp", "4", "-m", str(GUEST_MB), "-display", "none", "-no-reboot",
            "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={OVMF_CODE}",
            "-drive", f"if=pflash,format=raw,unit=1,file={vars_fd}",
            "-device", "ahci,id=ahci,addr=0x1", "-drive", f"if=none,id=sys,format=qcow2,file={overlay}",
@@ -196,6 +220,12 @@ def run(variant_name, job, files, out, *, disk=DISK, timeout=1200, variants=None
         overlay = disk.with_name(f"run-{os.getpid()}.qcow2")
         tool("qemu-img", "create", "-q", "-f", "qcow2", "-b", disk.name, "-F", "qcow2", str(overlay))
         qmp = t / "qmp.sock"
+        free, enough = wait_for_memory(GUEST_MB + MEMORY_MARGIN_MB, MEMORY_WAIT)
+        if not enough:
+            overlay.unlink(missing_ok=True)
+            print(f"standin: only {free} MB free after {MEMORY_WAIT} s; the {GUEST_MB} MB guest needs "
+                  f"{GUEST_MB + MEMORY_MARGIN_MB} MB, so it was not started")
+            return 3
         # A stop of run.py itself (SIGTERM) also ends the guest; installed before
         # QEMU starts so no stop can land between the two.
         previous = signal.signal(signal.SIGTERM, _interrupt)
@@ -225,7 +255,9 @@ def run(variant_name, job, files, out, *, disk=DISK, timeout=1200, variants=None
         done = subprocess.run(["mtype", "-i", str(job_img), "::/ios-job/done.txt"],
                               capture_output=True, text=True, timeout=TOOL_TIMEOUT)
         if done.returncode != 0:
-            print("standin: the job left no done.txt on its volume")
+            # QEMU's last line says why it ended early, such as a signal from the host.
+            last = (log or "").strip().splitlines()[-1:] or ["no QEMU output"]
+            print(f"standin: the job left no done.txt on its volume (QEMU exited {p.returncode}: {last[0]})")
             return 3
         got = subprocess.run(["mcopy", "-s", "-n", "-i", str(job_img), "::/ios-job/out/*", str(out)],
                              capture_output=True, text=True, timeout=TOOL_TIMEOUT)
