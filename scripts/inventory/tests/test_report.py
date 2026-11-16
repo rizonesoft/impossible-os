@@ -119,9 +119,11 @@ class Campaign(unittest.TestCase):
             {"surface": "battery", "state": "low", "profile": "fhd-100", "needs": ["records"], "source": "absent"}]
     SHOTS = [{"surface": "taskbar", "state": "rest", "profile": "fhd-100", "file": "taskbar/rest.fhd-100.png"}]
 
-    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None):
+    PROFILES = {"fhd-100": {}, "fhd-150": {}}
+
+    def run_campaign(self, rows=ROWS, shots=SHOTS, unnamed=None, records=None, profiles=PROFILES):
         inv = "docs/design/inventory/"
-        files = {inv + "shots.json": json.dumps(shots)}
+        files = {inv + "shots.json": json.dumps(shots), inv + "profiles.json": json.dumps(profiles)}
         if rows is not None:
             files[inv + "expected.json"] = json.dumps(rows)
         if unnamed is not None:
@@ -151,6 +153,21 @@ class Campaign(unittest.TestCase):
         shots = self.SHOTS + [{"surface": "taskbar", "state": "peek", "profile": "fhd-100", "file": "taskbar/peek.fhd-100.webm"}]
         out = self.run_campaign(rows=rows, shots=shots)
         self.assertEqual((out.returncode, out.stdout), (0, ""), out.stderr)
+
+    def test_unknown_profile_is_named(self):
+        out = self.run_campaign(rows=[{"surface": "taskbar", "state": "rest", "profile": "fhd-999", "needs": ["shot"]}])
+        self.assertEqual(out.stdout.splitlines(), ["unknown profile: taskbar/rest/fhd-999 (not in docs/design/inventory/profiles.json)"])
+
+    def test_checkpoint_deleting_a_surface_or_a_state_names_the_row(self):
+        rows = [{"surface": "taskbar", "state": "rest", "profile": "fhd-100", "needs": ["records", "shot"]},
+                {"surface": "taskbar", "state": "rest", "profile": "fhd-150", "needs": ["shot"]}]
+        shots = self.SHOTS + [{"surface": "taskbar", "state": "rest", "profile": "fhd-150", "file": "taskbar/rest.fhd-150.png"}]
+        whole = self.run_campaign(rows=rows, shots=shots)
+        self.assertEqual((whole.returncode, whole.stdout), (0, ""), whole.stderr)
+        no_surface = self.run_campaign(rows=rows, shots=shots, records=[rec("win11.start.a", surface="start")])
+        self.assertEqual(no_surface.stdout.splitlines(), ["no records: taskbar/rest/fhd-100"])
+        no_state = self.run_campaign(rows=rows, shots=self.SHOTS)
+        self.assertEqual(no_state.stdout.splitlines(), ["no shot: taskbar/rest/fhd-150"])
 
     def test_absent_reason_must_be_text(self):
         for reason in (None, "   ", 7, ["x"]):

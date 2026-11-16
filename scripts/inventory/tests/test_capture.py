@@ -18,6 +18,7 @@ import copy
 import importlib.util
 import io
 import json
+import subprocess
 import pathlib
 import shutil
 import struct
@@ -597,17 +598,65 @@ class Profile(unittest.TestCase):
         self.assertEqual(core.compare_profile(SEEN_OK, PROFILES["fhd-100"], "fhd-100"), [])
 
     def test_the_tool_exits_2_before_opening_anything(self):
-        real = guest.read_profile
+        real, real_apply = guest.read_profile, guest.apply_profile
         guest.read_profile = lambda: dict(SEEN_OK, dpi=120)
+        guest.apply_profile = lambda name, profiles: []
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = guest.main(["--surface", "no-such-surface", "--out", "x.json",
                                    "--profiles", str(INV.parents[1] / "docs/design/inventory/profiles.json")])
         finally:
-            guest.read_profile = real
+            guest.read_profile, guest.apply_profile = real, real_apply
         self.assertEqual(code, 2)
         self.assertEqual(out.getvalue().strip(), "profile fhd-100: scaling is 125, expected 100")
         self.assertIsNone(guest.user32)          # nothing was opened
+
+    def test_a_slow_profile_application_is_a_named_failure(self):
+        real = guest.subprocess.run
+        def slow(*a, **kw):
+            self.assertEqual(kw["timeout"], guest.APPLY_TIMEOUT_S)
+            raise guest.subprocess.TimeoutExpired(a[0], kw["timeout"])
+        guest.subprocess.run = slow
+        try:
+            self.assertEqual(guest.apply_profile("fhd-100-text150", "p.json"),
+                             [f"profile fhd-100-text150: set-profile did not finish within {guest.APPLY_TIMEOUT_S} s"])
+        finally:
+            guest.subprocess.run = real
+
+    def test_ref_vm_compares_every_profile_value(self):
+        shell = shutil.which("pwsh") or shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("no PowerShell on this host")
+        script = INV / "ref-vm.ps1"
+        if shell.endswith(".exe"):
+            script = subprocess.run(["wslpath", "-w", str(script)], capture_output=True, text=True, check=True).stdout.strip()
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Compare-RefProfile' }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text; "
+              "$id = [pscustomobject]@{ edition = 'Professional'; displayVersion = '26H2'; build = '1.1' }; "
+              "$want = [pscustomobject]@{ dpi = 144; textScale = 150; highContrast = 'Dusk' }; "
+              "$seen = [pscustomobject]@{ edition = 'Professional'; displayVersion = '26H2'; build = '1.1'; dpi = 96; textScale = 100; highContrast = 'none'; foreground = 'Progman'; session = 2 }; "
+              "Compare-RefProfile $seen $id $want @('Progman') | ForEach-Object { $_ }; 'ok-run'; "
+              "$seen.dpi = 144; $seen.textScale = 150; $seen.highContrast = 'Dusk'; "
+              "(@(Compare-RefProfile $seen $id $want @('Progman'))).Count") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["dpi is 96, want 144", "textScale is 100, want 150", "highContrast is none, want Dusk",
+                                 "ok-run", "0"], out.stderr)
+
+    def test_the_two_contrast_tables_agree(self):
+        import re
+        guest_dir = INV / "guest"
+        setter = (guest_dir / "set-profile.ps1").read_text()
+        probe = (guest_dir / "probe-profile.ps1").read_text()
+        set_pairs = {m.group(1): m.group(2) for m in re.finditer(r"'([^']+)' = @\('[^']+', '([^']+)'\)", setter)}
+        probe_pairs = {v: k for k, v in re.findall(r"'([^']+)' = '([^']+)'", probe.split("$ContrastNames", 1)[1].split("\n", 1)[0])}
+        self.assertEqual(len(set_pairs), 4)
+        self.assertEqual(set_pairs, probe_pairs)
+        profiles = json.loads((INV.parents[1] / "docs/design/inventory/profiles.json").read_text())
+        for name, p in profiles.items():
+            self.assertIn(p.get("highContrast", "none"), ["none", *set_pairs], name)
+            self.assertIn(round(p["dpi"] * 100 / 96), [100, 125, 150, 175, 200, 225, 250, 300], name)
 
     def test_ref_vm_reads_the_same_profile(self):
         text = (INV / "ref-vm.ps1").read_text()
@@ -842,6 +891,21 @@ class Arguments(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ex:
                     capture.main(["--surface", "notepad-smoke", "--file", bad, "--dry-run"])
                 self.assertEqual(ex.exception.code, 2)
+        finally:
+            capture.run_guest = real
+
+
+    def test_an_unknown_surface_or_profile_is_refused_by_name(self):
+        real = capture.run_guest
+        capture.run_guest = lambda *a: self.fail("the guest ran")
+        try:
+            for argv, said in ((["--surface", "no-such-walker", "--file", "x"], "has no walker"),
+                               (["--surface", "notepad-smoke", "--file", "x", "--profile", "fhd-999"], "is not in")):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ex:
+                    capture.main(argv + ["--dry-run"])
+                self.assertEqual(ex.exception.code, 2)
+                self.assertIn(said, err.getvalue())
         finally:
             capture.run_guest = real
 

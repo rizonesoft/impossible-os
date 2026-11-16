@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/08-graphics-ui/TODO-17-win11-parity-inventory.md sources=docs/design/tokens.json,docs/design/shell.md,docs/design/controls.md reviewed=2026-11-14 order=18 -->
+<!-- docs: covers=todo/08-graphics-ui/TODO-17-win11-parity-inventory.md sources=docs/design/tokens.json,docs/design/shell.md,docs/design/controls.md reviewed=2026-11-16 order=18 -->
 # Windows 11 Parity Inventory
 
 ## What is it?
@@ -39,7 +39,7 @@ The design inputs it corrects exist today: [`tokens.json`](../design/tokens.json
 
 ## What is not implemented yet?
 
-No surface is captured and nothing is built from the inventory yet. The schema and checker, the reference machine, the capture tool, the baselines, and the dispositions and ledger are done. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns the rest: the coverage report, the capture matrix and its fixtures, the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, the built-OS layout check, and the pixel comparison against reference screenshots that holds the build to a pixel-perfect standard (only replaced copyrighted regions may differ). The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `R:\11\ios-win11-ref\`.
+No surface is captured and nothing is built from the inventory yet. The schema and checker, the reference machine, the capture tool, the baselines, the dispositions and ledger, the coverage report, and the capture matrix with its live profiles (scaling to 175 percent, dark mode, the four contrast themes and text size, each applied and probed in the reference session) are done. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns the rest: the capture fixtures, the device stand-ins and host captures, the derived machines (right to left, 200 percent, wide and tall viewports, two displays), the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, the built-OS layout check, and the pixel comparison against reference screenshots that holds the build to a pixel-perfect standard (only replaced copyrighted regions may differ). The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `R:\11\ios-win11-ref\`.
 
 ## How does it compare with Windows 11 and Linux?
 

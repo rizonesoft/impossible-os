@@ -41,7 +41,14 @@ def _load(name, path):
 
 core = _load("capture_core", HERE / "capture_core.py")
 
-PROBE = r"C:\ios\probe\probe-profile.ps1"
+# Staged beside this tool by capture.py, so a capture reads the session with the
+# probe of this checkout, not the copy baked into the clean checkpoint.
+PROBE = HERE / "probe-profile.ps1"
+SET_PROFILE = HERE / "set-profile.ps1"
+# set-profile.ps1's own waits add up to at most about 230 s (scaling 3 x 3 s,
+# a theme 60 s, the text size slider 60 s plus 90 s plus its settling); this is
+# the same allowance ref-vm.ps1 -Verify gives it.
+APPLY_TIMEOUT_S = 300
 SETTLE_S = 10.0         # a flyout gets this long to open and stop changing
 MIN_POLLS = 3           # and is always looked at this often: a provider busy animating answers slowly
 POLL_S = 0.2
@@ -87,8 +94,22 @@ def win32():
     user32, gdi32 = u, g
 
 
+def apply_profile(name, profiles):
+    """Apply the live settings of profile `name` (set-profile.ps1). Returns the
+    lines to print and exit 2 with when the profile cannot be applied here."""
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SET_PROFILE),
+                            "-Profiles", str(profiles), "-Name", name], capture_output=True, text=True,
+                            timeout=APPLY_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return [f"profile {name}: set-profile did not finish within {APPLY_TIMEOUT_S} s"]
+    if r.returncode != 0:
+        return [line for line in (r.stdout + r.stderr).strip().splitlines() if line] or [f"set-profile exited {r.returncode}"]
+    return []
+
+
 def read_profile():
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PROBE],
+    r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE)],
                        capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         raise SystemExit(f"capture-ui: the profile probe failed: {r.stderr.strip()}")
@@ -397,8 +418,13 @@ def main(argv=None):
     if args.profile not in profiles:
         print(f"capture-ui: no profile {args.profile} in {args.profiles}")
         return 2
-    # Checked first, before anything opens: the probe runs in its own process
-    # in ref's desktop, so it reads the session's scaling, not this process's.
+    # Applied and then checked, before anything opens: the probe runs in its own
+    # process in ref's desktop, so it reads the session's scaling, not this process's.
+    refused = apply_profile(args.profile, args.profiles)
+    if refused:
+        for line in refused:
+            print(line)
+        return 2
     seen = read_profile()
     wrong = core.compare_profile(seen, profiles[args.profile], args.profile)
     if wrong:

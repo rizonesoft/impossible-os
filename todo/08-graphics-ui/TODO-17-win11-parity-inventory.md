@@ -1127,15 +1127,11 @@ The layout check proves every element is in the right place. This proves the pix
 
 Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and the profiles each entry is taken under; §22 adds the profiles that need a changed machine, §20 builds the fixtures that make each entry reachable, and §21 covers the hardware-gated entries.
 
-- [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
-  - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
-  - A hardware-gated row carries `source`: `stand-in`, `host` or `absent`
-  - The row shape is §7's (`scripts/inventory/inventory-report.py`); an `absent` row carries its `reason`
-- [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
-  - Each is applied live in `ref`'s session from `clean` and verified there; the profiles that change the machine are §22's
-- [ ] Commit: `"inventory: capture matrix and profile matrix"`
+- [x] `docs/design/inventory/expected.json`: the capture matrix, reconciled by `--campaign --check`, which also refuses an unknown profile
+- [x] The live profile matrix (scaling to 175, dark, four contrast themes, text 150) in `profiles.json` and `REFERENCE.md`, applied by `guest/set-profile.ps1` in `-Verify -Profile` and `capture.py --profile`
+- [x] Commit: `"inventory: capture matrix and profile matrix"`
 
-**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 -Verify -Profile all` reports every live profile of the matrix.
+**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 -Verify -Profile live` reports every live profile of the matrix.
 
 ---
 
@@ -1189,7 +1185,7 @@ No physical laptop is used (operator decision 2026-11-14): a hardware-gated surf
 The profiles that a setting in `ref`'s session cannot reach: another display language, another video mode and a second display. Each is a checkpoint derived from `clean`, checked by `ref-vm.ps1 -Verify` like the live profiles.
 
 - [ ] Add `fhd-100-rtl` (Arabic display language, from the language pack installed while setup still has network) for every frame surface
-- [ ] Add a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
+- [ ] Add a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts, and `qhd-200`: 2560 by 1440 at 200 percent, for every frame surface
 - [ ] Define the multi-display topology: two displays at different scales, then the primary swapped, captured through the session that provides them, with the session type recorded on each record
   - Evidence for all three taskbar button modes on the second display is required before §8 closes
 - [ ] Commit: `"inventory: derived reference machines"`

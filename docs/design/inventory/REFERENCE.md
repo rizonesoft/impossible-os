@@ -40,12 +40,26 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 
 ## Which other profiles exist?
 
-The further profiles are entries of the profile matrix that [Capture Matrix, Fixtures and Device Stand-ins](../../graphics/win11-parity-inventory.md) owns; their values and their `-Verify` checks are defined there, not here. The catalogues name two of them now:
+Every profile is an entry of `profiles.json`, the one place its values live; this table describes them. A profile lists every probed value, so a capture under it checks all of them.
 
-- `fhd-100-dark`: `fhd-100` with dark mode for apps and system.
-- `fhd-150`: `fhd-100` at 150 percent scaling (144 DPI).
+| Profile | Differs from `fhd-100` by | Kind |
+| --- | --- | --- |
+| `fhd-125`, `fhd-150`, `fhd-175` | scaling 125, 150 or 175 percent (120, 144 or 168 DPI) | live |
+| `fhd-100-dark` | dark mode for apps and system | live |
+| `fhd-100-aquatic`, `fhd-100-desert`, `fhd-100-dusk`, `fhd-100-nightsky` | the contrast theme of that Settings name | live |
+| `fhd-100-text150` | text size 150 percent | live |
+| `qhd-200` | 2560 by 1440 at 200 percent | machine |
+| `fhd-100-rtl` | display language `ar-SA`, right to left | machine |
+| `wide-100`, `tall-100` | a 2560 by 1080 or 1080 by 1920 display | machine |
+| `dual-100-150`, `dual-150-100` | two displays, the second at the other scale | machine |
 
-An observation captured under one of them goes in a `<surface>/<file>.<profile>.json` file, as the [inventory format](index.md) describes.
+**Live** profiles are applied in `ref`'s session from `clean` by `guest/set-profile.ps1`, each setting through the path Windows itself uses: scaling through the logical DPI override (Hyper-V's display refuses the per-display scale call), a contrast theme through its theme file, light and dark through the Personalize values, and text size through the Settings slider and its Apply button (the registry value alone changes no font). A contrast theme sets the light values itself, so those profiles do not list them. `ref-vm.ps1 -Verify -Profile live` applies and probes every live profile in turn; `capture.py --profile` applies its profile before it checks it.
+
+**Machine** profiles need a changed VM (another resolution, a second display or another display language) and are built as derived machines by [Derived Reference Machines](../../graphics/win11-parity-inventory.md); `-Verify` refuses one by name on the `fhd-100` machine. 200 percent is a machine profile because Windows offers at most 175 percent at 1920 by 1080 (measured 2026-11-16).
+
+Windows stores a contrast theme under its pre-Win11 name (Aquatic is `High Contrast #1`, Desert `High Contrast #2`, Dusk `High Contrast Black`, Night sky `High Contrast White`); the probe reports the Settings name.
+
+An observation captured under a profile other than `fhd-100` goes in a `<surface>/<file>.<profile>.json` file, as the [inventory format](index.md) describes.
 
 ## What is the machine?
 

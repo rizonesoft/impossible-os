@@ -104,7 +104,8 @@ def run_guest(surface, profile, timeout, fixture=False):
     """Run capture-ui.py in the VM. Returns (output folder, exit code)."""
     files = {"capture-ui.py": HERE / "capture-ui.py", "capture_core.py": HERE / "capture_core.py",
              f"surfaces/{surface}.py": HERE / "surfaces" / f"{surface}.py",
-             "profiles.json": INVENTORY / "profiles.json"}
+             "profiles.json": INVENTORY / "profiles.json",
+             "probe-profile.ps1": HERE / "guest" / "probe-profile.ps1", "set-profile.ps1": HERE / "guest" / "set-profile.ps1"}
     cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --profile {profile} --out C:\\ios\\out\\records.json "
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:
@@ -396,6 +397,13 @@ def main(argv=None):
     for flag, value in (("--surface", args.surface), ("--file", args.file)):
         if value != core.slug(value):
             ap.error(f"{flag} {value!r} must be a slug (lower-case letters, digits, single hyphens), not a path")
+    # Refused here, before the VM starts: a walker this checkout lacks, or a
+    # profile profiles.json does not define, cannot be captured.
+    if not (HERE / "surfaces" / f"{args.surface}.py").is_file():
+        walkers = sorted(p.stem for p in (HERE / "surfaces").glob("*.py"))
+        ap.error(f"--surface {args.surface!r} has no walker in scripts/inventory/surfaces/ (there are: {', '.join(walkers)})")
+    if args.profile not in json.loads((INVENTORY / "profiles.json").read_text(encoding="utf-8")):
+        ap.error(f"--profile {args.profile!r} is not in docs/design/inventory/profiles.json")
     if args.file.startswith("baseline"):
         # check-inventory.py reads a baseline* file as completeness rows and skips its records.
         ap.error(f"--file {args.file!r}: names starting with baseline are completeness baselines, not record files")

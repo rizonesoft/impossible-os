@@ -17,6 +17,13 @@ exits 0 only when every value holds, the bare desktop has focus and the capture
 runtime imports at the pinned versions. Prints
 "ref-vm: ios-win11-ref ok, profile fhd-100".
 
+-Verify -Profile <id>|live|all: the same, then applies each named live profile of
+profiles.json (scaling, light or dark, contrast theme, text size) in ref's
+session with guest\set-profile.ps1 and checks it with the same probe, printing
+"ref-vm: profile <id> ok" for each. "live" is every profile that differs from
+fhd-100 in live settings only, and "all" every profile; a profile that needs a changed machine
+(resolution, displays, display language) is refused by name.
+
 -Reclean: restores pre-oobe, completes setup again and replaces clean, without
 reinstalling Windows; then verifies. Use it when the profile or the probes change.
 
@@ -38,15 +45,32 @@ param(
     [int]$ImageIndex = 6,
     [switch]$Verify,
     [switch]$Rebuild,
-    [switch]$Reclean
+    [switch]$Reclean,
+    [Alias('Profile')][string]$ProfileId = 'fhd-100'
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
 
 # fhd-100: the profile every canonical record is captured under. Its values live
 # once, in docs/design/inventory/profiles.json, which the capture tool reads too.
-$FhdProfile = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\..\docs\design\inventory\profiles.json') | ConvertFrom-Json).'fhd-100'
+$ProfilesPath = Join-Path $PSScriptRoot '..\..\docs\design\inventory\profiles.json'
+$AllProfiles = Get-Content -Raw -LiteralPath $ProfilesPath | ConvertFrom-Json
+$FhdProfile = $AllProfiles.'fhd-100'
 if (-not $FhdProfile) { throw 'docs/design/inventory/profiles.json has no fhd-100 profile' }
+# The settings set-profile.ps1 applies in ref's session; any other difference
+# from fhd-100 needs a changed machine.
+$LiveKeys = 'dpi', 'appsLight', 'systemLight', 'highContrast', 'textScale'
+$GuestScripts = 'probe-profile.ps1', 'probe-notepad.ps1', 'set-profile.ps1'
+
+function Get-MachineKeys($Want) {
+    return @($Want.PSObject.Properties | Where-Object { $LiveKeys -notcontains $_.Name -and "$($_.Value)" -ne "$($FhdProfile.($_.Name))" } | ForEach-Object { $_.Name })
+}
+
+function Send-GuestScripts($Session) {
+    Invoke-Command -Session $Session -ScriptBlock { New-Item -ItemType Directory -Path 'C:\ios\probe' -Force | Out-Null }
+    foreach ($f in $GuestScripts) { Send-RefFile $Session (Join-Path $PSScriptRoot "guest\$f") "C:\ios\probe\$f" }
+    Send-RefFile $Session $ProfilesPath 'C:\ios\probe\profiles.json'
+}
 $GenericProKey = 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'  # Microsoft's published generic install key: installs Pro, activates nothing
 
 function New-AnswerIso([string]$Dir, [string]$IsoOut, [string]$Label) {
@@ -367,10 +391,7 @@ function Complete-Clean() {
                 if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Recurse -Force }
             }
         }
-        Invoke-Command -Session $s -ScriptBlock { New-Item -ItemType Directory -Path 'C:\ios\probe' -Force | Out-Null }
-        foreach ($f in 'probe-profile.ps1', 'probe-notepad.ps1') {
-            Send-RefFile $s (Join-Path $PSScriptRoot "guest\$f") "C:\ios\probe\$f"
-        }
+        Send-GuestScripts $s
         Install-RefRuntime $s
         # First sign-in opens Start on this build (seen 2026-11-14). Every capture
         # starts from clean, so clean must show the bare desktop with focus, and
@@ -409,8 +430,13 @@ function Invoke-Verify() {
         $s = $null
         try {
             $s = Start-RefFrom $Name $VmPath 'clean'
+            # This checkout's probes, not the copies baked into clean.
+            Send-GuestScripts $s
             $problems += @(Get-ProfileProblems $s)
             $problems += @(Get-RuntimeProblems $s)
+            $base = $script:Seen
+            if ($problems.Count -eq 0) { $problems += @(Test-LiveProfiles $s) }
+            $script:Seen = $base
         } finally { if ($s) { Remove-PSSession $s } }
     }
     if ($problems.Count) {
@@ -442,22 +468,53 @@ function Get-RuntimeProblems($Session) {
     return @()
 }
 
-function Get-ProfileProblems($Session) {
+# Apply each profile -ProfileId names in turn and check it. set-profile.ps1 sets
+# every live value absolutely, so one restore of clean serves them all.
+function Test-LiveProfiles($Session) {
+    if ($ProfileId -eq 'fhd-100') { return @() }
+    $others = @($AllProfiles.PSObject.Properties | Where-Object { $_.Name -ne 'fhd-100' })
+    if ($ProfileId -eq 'live') {
+        $ids = @($others | Where-Object { (Get-MachineKeys $_.Value).Count -eq 0 } | ForEach-Object { $_.Name })
+    } elseif ($ProfileId -eq 'all') {
+        $ids = @($others | ForEach-Object { $_.Name })
+    } else { $ids = @($ProfileId) }
+    $problems = @()
+    foreach ($id in $ids) {
+        $want = $AllProfiles.$id
+        if (-not $want) { $problems += "no profile $id in docs/design/inventory/profiles.json"; continue }
+        $machine = @(Get-MachineKeys $want)
+        if ($machine.Count) { $problems += "profile $id needs a changed machine ($($machine -join ', ')), not a live setting"; continue }
+        $r = Invoke-RefInteractive $Session "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\set-profile.ps1 -Profiles C:\ios\probe\profiles.json -Name $id" 300
+        if ($r.ExitCode -ne 0) { $problems += "profile $id not applied: $("$($r.Output)".Trim())"; continue }
+        $wrong = @(Get-ProfileProblems $Session $want)
+        if ($wrong.Count) { $problems += @($wrong | ForEach-Object { "profile ${id}: $_" }) } else { Write-Host "ref-vm: profile $id ok" }
+    }
+    # Back to fhd-100, so a later step in the same session sees the canonical profile.
+    if ($ids.Count) { [void](Invoke-RefInteractive $Session "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\set-profile.ps1 -Profiles C:\ios\probe\profiles.json -Name fhd-100" 300) }
+    return $problems
+}
+
+# The differences between what the probe saw and the build and profile it should
+# be. Pure, so tests/test_capture.py runs it; PowerShell names are case-blind, so
+# no local here may share a parameter's name.
+function Compare-RefProfile($Seen, $Identity, $Expected, $QuietForeground) {
+    $problems = @()
+    foreach ($k in 'edition', 'displayVersion', 'build') {
+        if ("$($Seen.$k)" -ne "$($Identity.$k)") { $problems += "$k is $($Seen.$k), docs/design/inventory/reference.json says $($Identity.$k)" }
+    }
+    foreach ($p in $Expected.PSObject.Properties) {
+        if ("$($Seen.($p.Name))" -ne "$($p.Value)") { $problems += "$($p.Name) is $($Seen.($p.Name)), want $($p.Value)" }
+    }
+    if ($QuietForeground -notcontains $Seen.foreground) { $problems += "the foreground is $($Seen.foreground), not the desktop" }
+    if ($Seen.session -eq 0) { $problems += 'the probe ran in session 0, not the desktop' }
+    return $problems
+}
+
+function Get-ProfileProblems($Session, $Expected = $FhdProfile) {
     $r = Invoke-RefInteractive $Session $script:ProfileProbe 300
     $script:SeenJson = $r.Output.Trim()
-    $seen = $script:SeenJson | ConvertFrom-Json
-    $script:Seen = $seen
-    $problems = @()
-    $want = Get-RefIdentity
-    foreach ($k in 'edition', 'displayVersion', 'build') {
-        if ("$($seen.$k)" -ne "$($want.$k)") { $problems += "$k is $($seen.$k), docs/design/inventory/reference.json says $($want.$k)" }
-    }
-    foreach ($p in $FhdProfile.PSObject.Properties) {
-        if ("$($seen.($p.Name))" -ne "$($p.Value)") { $problems += "$($p.Name) is $($seen.($p.Name)), want $($p.Value)" }
-    }
-    if ($script:QuietForeground -notcontains $seen.foreground) { $problems += "the foreground is $($seen.foreground), not the desktop" }
-    if ($seen.session -eq 0) { $problems += 'the probe ran in session 0, not the desktop' }
-    return $problems
+    $script:Seen = $script:SeenJson | ConvertFrom-Json
+    return @(Compare-RefProfile $script:Seen (Get-RefIdentity) $Expected $script:QuietForeground)
 }
 
 # Take clean again from pre-oobe: the same restore a replay of first-run setup

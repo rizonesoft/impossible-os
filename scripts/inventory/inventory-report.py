@@ -289,6 +289,7 @@ def campaign_problems(root, inv, records, summary):
     if not isinstance(rows, list) or not rows:
         return [f"no capture matrix: {INV_REL / EXPECTED} holds no rows"]
     shots = load_json(inv / "shots.json", [])
+    profiles = load_json(inv / "profiles.json", {})
     have = {}
     for sh in shots:
         key = (sh.get("surface"), sh.get("state"), sh.get("profile"))
@@ -300,6 +301,9 @@ def campaign_problems(root, inv, records, summary):
         needs = row.get("needs")
         if not all(isinstance(k, str) and k for k in key) or not isinstance(needs, list) or not set(needs) <= set(NEEDS):
             problems.append(f"bad row {i}: needs surface, state, profile and needs from {', '.join(NEEDS)}")
+            continue
+        if row["profile"] not in profiles:
+            problems.append(f"unknown profile: {name} (not in {INV_REL / 'profiles.json'})")
             continue
         source = row.get("source")
         if source is not None and source not in SOURCES:
