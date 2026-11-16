@@ -84,7 +84,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6        |  [ ]   |
 | ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14       |  [ ]   |
 | ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16          |  [ ]   |
-| 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5            |  [ ]   |
+| 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5            |  [x]   |
 | 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19           |  [ ]   |
 | 💎  |  21   | §21 Device Stand-ins and Host Captures                                                      | §2, §5, §19       |  [ ]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19           |  [ ]   |
@@ -1132,6 +1132,9 @@ Capture once only works if the campaign knows, before it starts, every surface, 
 - [x] Commit: `"inventory: capture matrix and profile matrix"`
 
 **Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 -Verify -Profile live` reports every live profile of the matrix.
+
+> **Verified:** 2026-11-16 | commit `58f2a3fe3` | 3/3 items | 85 capture and 17 report tests OK; `ref-vm.ps1 -Verify -Profile live` passes all nine live profiles then `fhd-100`; a Notepad capture under `fhd-100-dark` passes
+> **Quality reviewed:** 2026-11-16 | Codex 6x (round 2x, performance 2x, completion 2x) | 1H+1M fixed, 0 open | scope: N/A (host and guest tooling, no kernel surface)
 
 ---
 
