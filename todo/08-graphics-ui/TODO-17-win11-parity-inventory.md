@@ -89,7 +89,9 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [x]   |
 | 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [ ]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [x]   |
-| 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [ ]   |
+| 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [x]   |
+| 💎  |  25   | §25 Service-State Fixtures: Delivered Updates                                               | §2, §20, §23                |  [ ]   |
+| 💎  |  26   | §26 Service-State Fixtures: Network Switch and Page States                                  | §2, §20, §23                |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -1213,13 +1215,12 @@ The profiles that a setting in `ref`'s session cannot reach: another display lan
 
 **Design:** n/a -- prepares the reference machine's service states, it draws nothing
 
-Windows Update and network pages show states the offline reference VM never reaches by itself. A controlled local update source and a network the host switches per checkpoint make each one reachable, through §20's fixture runner, without the VM reaching the internet.
+Windows Update and network pages show states the offline reference VM never reaches by itself. This section makes the update source local and reaches the states a scan alone produces, through §20's fixture runner, without the VM reaching the internet and without any update being delivered. The states that need a delivered update are [§25](#25-service-state-fixtures-delivered-updates); the network and page states are [§26](#26-service-state-fixtures-network-switch-and-page-states).
 
-- [ ] Add service-state fixtures with controlled connectivity: a local update source and a network switch that is toggled per checkpoint
-  - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
-- [ ] Commit: `"inventory: service-state fixtures"`
+- [x] `fixtures/services.ps1` points Windows Update at a local port for one scan: a port that holds the connection open (`update-checking`) or one nothing listens on (`update-failed`), then removes the policy so the page shows no managed-by line
+- [x] Commit: `"inventory: service-state fixtures"`
 
-**Test checkpoint:** `fixtures/run.py --twice services:<variant>` leaves the same state twice for every variant; each `fixture: services` row of `expected.json` is reached by a dry-run capture.
+**Test checkpoint:** `fixtures/run.py --twice services:update-checking services:update-failed` leaves the same state twice; UI Automation and a screenshot of Settings > Windows Update show "Checking for updates..." and "Error encountered" with Retry. A Settings row is captured by its surface's walker, which the surface's own section adds.
 
 ---
 
@@ -1237,6 +1238,38 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Commit: `"inventory: host build and host captures"`
 
 **Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
+
+---
+
+## 25. Service-State Fixtures: Delivered Updates
+
+> **Spawned-by:** section 23 (split)
+
+**Design:** n/a -- prepares the reference machine's service states, it draws nothing
+
+Downloading, installing and restart required need an update Windows actually receives. The update comes from Microsoft over the temporary network §22's language derive uses, never from a local imitation of an update server, and each state is kept as a checkpoint so a capture restores it offline.
+
+- [ ] Derive checkpoints for `update-downloading`, `update-installing` and `update-restart-required` from a genuine Microsoft update received over the temporary network, removed before the checkpoint is taken
+- [ ] `services.ps1` names each variant and restores its checkpoint, so `expected.json`'s rows resolve
+- [ ] Commit: `"inventory: delivered update states"`
+
+**Test checkpoint:** `ref-vm.ps1 -Verify` restores each update checkpoint with no network adapter and Settings > Windows Update shows its state.
+
+---
+
+## 26. Service-State Fixtures: Network Switch and Page States
+
+> **Spawned-by:** section 23 (split)
+
+**Design:** n/a -- prepares the reference machine's service states, it draws nothing
+
+The network states need a network the host switches per checkpoint, with no route to the internet; the page states need a Settings page caught while it loads, times out, rejects a value or loses its network.
+
+- [ ] Add a host-only switch that `ref-run.ps1` connects per run, and the `network-on`, `network-authentication-failed` (802.1X required with no authenticator) and `network-discovery-failed` variants
+- [ ] Add the `page-loading`, `page-timeout`, `page-validation-error` and `page-disconnected` variants, each named by the Settings page it shows
+- [ ] Commit: `"inventory: network and page states"`
+
+**Test checkpoint:** `fixtures/run.py --twice` leaves the same state twice for every variant; a screenshot shows each state.
 
 ---
 

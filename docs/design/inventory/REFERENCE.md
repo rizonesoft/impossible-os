@@ -75,8 +75,9 @@ A fixture is a guest script in `scripts/inventory/fixtures/` that puts made-up c
 | --- | --- | --- |
 | `lists` | `empty`, `populated` (4), `overflowing` (40) | files in `Documents\Sample folder`, per-user uninstall entries (Installed apps), printers on the inbox PDF driver each on its own port (Printers & scanners), per-user VPN connections, local users in Users (Other users) |
 | `notifications` | `groups` (3 a sender), `overflow` (12 a sender) | toasts from three registered sample senders, with fixed tags and a fixed `displayTimestamp`, posted straight to the notification centre |
+| `services` | `update-checking`, `update-failed` | Windows Update pointed at a local port for one scan: one that holds the connection open and never answers, or one nothing listens on; the policy is removed after the scan, so the page shows no managed-by line, and no update is ever delivered |
 
-`empty` removes only the fixture's own entries and keeps `Sample folder`, empty, for File Explorer to open; a list Windows fills itself (the inbox apps, Microsoft Print to PDF) still shows those. The clean checkpoint has Do not disturb on, which the notification centre shows at its top. The setup flow needs no fixture: the First-Run Setup capture takes it from the `pre-oobe` checkpoint, and the service states (update and network) are [Service-State Fixtures](../../graphics/win11-parity-inventory.md)' work.
+`empty` removes only the fixture's own entries and keeps `Sample folder`, empty, for File Explorer to open; a list Windows fills itself (the inbox apps, Microsoft Print to PDF) still shows those. The clean checkpoint has Do not disturb on, which the notification centre shows at its top. The setup flow needs no fixture: the First-Run Setup capture takes it from the `pre-oobe` checkpoint, the update states that need a delivered update and the network and page states are the parity inventory's sections 25 and 26 ([the roadmap page](../../graphics/win11-parity-inventory.md)).
 
 ## What is the machine?
 

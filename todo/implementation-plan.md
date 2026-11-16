@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **987 of 2718 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **987 of 2720 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -49,7 +49,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §20` | Capture Fixtures                                                                                                      | none     |     4 |
 | [x]  | `D08 T17 §21` | Device Stand-ins                                                                                                      | none     |     4 |
 | [x]  | `D08 T17 §22` | Derived Reference Machines: Right-to-Left, Viewports and Two Displays                                                 | none     |     4 |
-| [ ]  | `D08 T17 §23` | Service-State Fixtures: Update Source and Network Switch                                                              | none     |     2 |
+| [/]  | `D08 T17 §23` | Service-State Fixtures: Update Source and Network Switch                                                              | none     |     2 |
 | [ ]  | `D08 T17 §24` | Host Build and Host Captures                                                                                          | none     |     3 |
 | [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | none     |     8 |
 | [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none     |     7 |
@@ -2104,6 +2104,8 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
 | [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
 | [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |    11 |
+| [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none  |     3 |
+| [ ]  | `D08 T17 §26` | Service-State Fixtures: Network Switch and Page States                  | none  |     3 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none  |     6 |
