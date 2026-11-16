@@ -708,6 +708,22 @@ class Profile(unittest.TestCase):
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines, ["none=False", "unwritten=False", "written=True", "otherpackage=False", "truncated=False"], out.stderr)
 
+    def test_update_iso_reads_the_pvd_label_not_the_diagnostic(self):
+        # With xorriso's stderr folded in, the quoted diagnostic line came
+        # first and became the label (review 2026-11-16). Lines as xorriso 1.5.6
+        # prints them for win11.iso, and a 32-character label.
+        shell, script = self._powershell(INV / "update-iso.ps1")
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "Invoke-Expression ($a.FindAll({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'Get-PvdLabel' }, $true) | Select-Object -First 1).Extent.Text; "
+              "$l32 = 'A' * 32; "
+              "'esd=' + (Get-PvdLabel @(\"xorriso 1.5.6 : RockRidge filesystem manipulator\", \"Volume id    : 'ESD_ISO'\", 'Drive current: -indev x', 'Volume Id    : ESD_ISO', 'Volume Set Id: ')); "
+              "'long=' + (Get-PvdLabel @(\"Volume id    : '$l32'\", \"Volume Id    : $l32\")).Length; "
+              "'none=' + ($null -eq (Get-PvdLabel @(\"Volume id    : 'ESD_ISO'\"))); "
+              "'twice=' + ($null -eq (Get-PvdLabel @('Volume Id    : A', 'Volume Id    : B')))") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["esd=ESD_ISO", "long=32", "none=True", "twice=True"], out.stderr)
+
     def test_a_second_update_iso_run_touches_nothing(self):
         # A rejected second run deleted the first run's staging before it took
         # the lock (review 2026-11-16). The lock is held here; the real script

@@ -70,6 +70,16 @@ function Test-UpdateParts([string]$Parts, $Key) {
     return $true
 }
 
+# The volume label from xorriso -pvd_info output. With stderr folded in, the
+# output also holds the diagnostic "Volume id : 'LABEL'" (quoted, lower-case
+# id) ahead of the PVD's "Volume Id : LABEL": only the PVD field counts, matched
+# case-sensitively and exactly once. $null when it is missing or repeated.
+function Get-PvdLabel([string[]]$Lines) {
+    $hits = @($Lines | Select-String -CaseSensitive -Pattern '^Volume Id\s*:\s*(\S.*?)\s*$')
+    if ($hits.Count -ne 1) { return $null }
+    return $hits[0].Matches[0].Groups[1].Value
+}
+
 # Records the parts in $Parts as the servicing of $Key, through a temporary
 # file renamed into place, so parts.json exists only once every part does.
 function Write-UpdateParts([string]$Parts, $Key, [string]$Info) {
@@ -181,6 +191,9 @@ try {
             foreach ($f in Invoke-Command -Session $s { Get-ChildItem C:\update-iso\out | ForEach-Object Name }) {
                 Copy-Item -FromSession $s -LiteralPath "C:\update-iso\out\$f" -Destination (Join-Path $parts $f)
             }
+            # Recorded before the shutdown: a teardown that fails must not cost
+            # the next run a servicing whose parts are already here.
+            Write-UpdateParts $parts $key $info
             # A turned-off guest mid-write left the unsaved state unbootable (2026-11-16):
             # shut it down and wait. The session drops as the guest goes down, so its
             # error is expected; Wait-Until is what proves the shutdown.
@@ -190,7 +203,6 @@ try {
             if ($s) { Remove-PSSession $s -ErrorAction SilentlyContinue }
             if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
         }
-        Write-UpdateParts $parts $key $info
     }
 } finally { Dismount-DiskImage -ImagePath $isoFile.FullName | Out-Null }
 $info = (Get-Content -LiteralPath (Join-Path $parts 'parts.json') -Raw | ConvertFrom-Json).info
@@ -201,7 +213,7 @@ $info = (Get-Content -LiteralPath (Join-Path $parts 'parts.json') -Raw | Convert
 # terminating error under ErrorActionPreference Stop: stderr is folded into
 # stdout inside WSL, so PowerShell reads one stream and the exit code decides.
 function Invoke-Xorriso { $o = & wsl.exe -e sh -c 'xorriso "$@" 2>&1' xorriso @args; if ($LASTEXITCODE -ne 0) { throw "xorriso exited ${LASTEXITCODE}: $(($o | Select-Object -Last 3) -join ' ')" }; $o }
-$label = (Invoke-Xorriso -indev (& wsl.exe -e wslpath -a $isoFile.FullName).Trim() -pvd_info | Select-String 'Volume Id\s*:\s*(\S+)').Matches.Groups[1].Value
+$label = Get-PvdLabel (Invoke-Xorriso -indev (& wsl.exe -e wslpath -a $isoFile.FullName).Trim() -pvd_info)
 if (-not $label) { throw "could not read the volume id of $Iso" }
 $graft = @("/=$((& wsl.exe -e wslpath -a $src).Trim())")
 foreach ($f in Get-ChildItem -LiteralPath $parts -Filter '*.swm') { $graft += "/sources/$($f.Name)=$((& wsl.exe -e wslpath -a $f.FullName).Trim())" }
