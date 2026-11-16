@@ -679,6 +679,55 @@ class Profile(unittest.TestCase):
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines, ["vm=1", "disks=False", "snapshots=False", "data=True"], out.stderr)
 
+    def _powershell(self, path, windows=False):
+        # windows: the test starts a Windows child and shares a Windows mutex
+        # with it, so Linux pwsh will not do.
+        shell = shutil.which("powershell.exe") if windows else (shutil.which("pwsh") or shutil.which("powershell.exe"))
+        if not shell:
+            self.skipTest("no PowerShell on this host")
+        if shell.endswith(".exe"):
+            path = subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, check=True).stdout.strip()
+        return shell, str(path)
+
+    def test_update_iso_reuses_only_a_finished_servicing(self):
+        # A packaging failure after the parts came out redid the whole
+        # servicing on the retry (review 2026-11-16). Real files, no VM.
+        shell, script = self._powershell(INV / "update-iso.ps1")
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "foreach ($n in 'Test-UpdateParts', 'Write-UpdateParts') { Invoke-Expression ($a.FindAll({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $n }, $true) | Select-Object -First 1).Extent.Text }; "
+              "$d = Join-Path ([IO.Path]::GetTempPath()) ('ios-parts-' + [Guid]::NewGuid().ToString('N')); New-Item -ItemType Directory $d | Out-Null; "
+              "$key = [ordered]@{ iso = 'R:\\x.iso'; isoSize = 5; index = 6; package = 'AB' }; "
+              "'none=' + (Test-UpdateParts $d $key); "
+              "Set-Content -LiteralPath (Join-Path $d 'install.swm') -Value 'aaaa'; Set-Content -LiteralPath (Join-Path $d 'install2.swm') -Value 'bb'; "
+              "'unwritten=' + (Test-UpdateParts $d $key); "
+              "Write-UpdateParts $d $key 'build 1'; 'written=' + (Test-UpdateParts $d $key); "
+              "$other = [ordered]@{ iso = 'R:\\x.iso'; isoSize = 5; index = 6; package = 'CD' }; 'otherpackage=' + (Test-UpdateParts $d $other); "
+              "Set-Content -LiteralPath (Join-Path $d 'install2.swm') -Value 'b'; 'truncated=' + (Test-UpdateParts $d $key); "
+              "Remove-Item -LiteralPath $d -Recurse -Force") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["none=False", "unwritten=False", "written=True", "otherpackage=False", "truncated=False"], out.stderr)
+
+    def test_a_second_update_iso_run_touches_nothing(self):
+        # A rejected second run deleted the first run's staging before it took
+        # the lock (review 2026-11-16). The lock is held here; the real script
+        # must exit 4 with -Work as it found it.
+        shell, script = self._powershell(INV / "update-iso.ps1", windows=True)
+        ps = ("$w = Join-Path ([IO.Path]::GetTempPath()) ('ios-uiso-' + [Guid]::NewGuid().ToString('N')); "
+              "New-Item -ItemType Directory (Join-Path $w 'iso'), (Join-Path $w 'parts') | Out-Null; "
+              "Set-Content -LiteralPath (Join-Path $w 'parts\\install.swm') -Value keep; "
+              "$pkgDir = Join-Path $w 'pkg'; New-Item -ItemType Directory $pkgDir | Out-Null; $tmp = Join-Path $pkgDir 'p'; Set-Content -LiteralPath $tmp -Value x; "
+              "$pkg = Join-Path $pkgDir ('windows11.0-kb1-x64_' + (Get-FileHash -Algorithm SHA1 -LiteralPath $tmp).Hash.ToLower() + '.msu'); Move-Item $tmp $pkg; "
+              "$full = [IO.Path]::GetFullPath($w).TrimEnd('\\'); "
+              "$k = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($full.ToLowerInvariant()))).Replace('-', '').Substring(0, 16); "
+              "$m = New-Object Threading.Mutex($true, \"Global\\ios-update-iso-$k\"); "
+              "$p = Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '%s', '-Package', $pkg, '-Out', (Join-Path $w 'out.iso'), '-Work', $w, '-Iso', (Join-Path $w 'none.iso'), '-Name', 'ios-test-none' -Wait -PassThru -NoNewWindow; "
+              "$m.ReleaseMutex(); 'exit=' + $p.ExitCode; 'iso=' + (Test-Path (Join-Path $w 'iso')); 'part=' + (Test-Path (Join-Path $w 'parts\\install.swm')); "
+              "Remove-Item -LiteralPath $w -Recurse -Force") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("update-iso:")]
+        self.assertEqual(lines, ["exit=4", "iso=True", "part=True"], out.stdout + out.stderr)
+
     def test_the_two_contrast_tables_agree(self):
         import re
         guest_dir = INV / "guest"
