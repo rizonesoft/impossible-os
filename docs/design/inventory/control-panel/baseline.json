@@ -1,4 +1,4 @@
-{"baseline": "control-panel", "owner": "control-panel", "source": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ControlPanel\\NameSpace; C:\\WINDOWS\\System32\\*.cpl", "build": "26300.9711"}
+{"baseline": "control-panel", "owner": "control-panel", "source": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ControlPanel\\NameSpace; C:\\WINDOWS\\System32\\*.cpl", "build": "26300.9974"}
 {"id": "clsid:{025a5937-a6be-4686-a844-36fe4bec8b6d}", "kind": "namespace", "name": "Microsoft.PowerOptions"}
 {"id": "clsid:{0df44eaa-ff21-4412-828e-260a8728e7f1}", "kind": "namespace", "name": "Microsoft.Taskbar"}
 {"id": "clsid:{1206f5f1-0569-412c-8fec-3204630dfb70}", "kind": "namespace", "name": "Microsoft.CredentialManager"}

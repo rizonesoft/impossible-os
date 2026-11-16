@@ -1,24 +1,33 @@
-<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-14 -->
+<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-16 -->
 # Windows 11 Reference Machine
 
 Every record in the inventory is read from one machine: a clean Hyper-V virtual machine running one pinned Windows 11 build under one capture profile. A position or a size only means something against that machine, so this page names it, and a capture from anything else is refused until it is recorded here first. What a capture may take from it, facts and never Microsoft's text, images or files, is the rule in [the inventory format](index.md#what-does-it-never-hold).
 
 ## Which build is the reference?
 
-| Field          | Value                                                                                                |
-| -------------- | ---------------------------------------------------------------------------------------------------- |
-| Edition        | Windows 11 Pro (`Professional`, image index 6 of the ISO)                                            |
-| Version        | 26H2                                                                                                 |
-| Build          | 26300.9711 (`CurrentBuild`.`UBR`)                                                                    |
-| Read from      | the VM's Registry, `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, inside the signed-in session |
-| Read on        | 2026-11-14                                                                                           |
-| Installed from | `R:\11\win11.iso`, en-US, `install.esd`                                                              |
+| Field          | Value                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------ |
+| Edition        | Windows 11 Pro (`Professional`, image index 6 of `win11.iso`, the only image of the updated ISO)             |
+| Version        | 26H2                                                                                                         |
+| Build          | 26300.9974 (`CurrentBuild`.`UBR`), the operator's host build                                                 |
+| Read from      | the VM's Registry, `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, inside the signed-in session         |
+| Read on        | 2026-11-16                                                                                                   |
+| Installed from | `R:\11\win11-26300.9974.iso`: `R:\11\win11.iso` (en-US, 26300.9711) with KB5132061 added by `update-iso.ps1` |
 
-The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` refuses to take or verify `clean`, and `ref-run.ps1` refuses to capture (exit 5), when the guest's edition, version or build differs from it. The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9711)` when the machine matches.
+The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` refuses to take or verify `clean`, and `ref-run.ps1` refuses to capture (exit 5), when the guest's edition, version or build differs from it. The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9974)` when the machine matches.
 
 ## What is the rule for a new build?
 
-Every captured record carries the build it was read from in `capturedFrom`, as `26300.9711`. A capture from any other build is a new reference: build the machine from the new image (`-Rebuild` installs it and stops before `clean`, because the build differs), record the new build in `reference.json` and on this page, run `-Reclean`, and only then capture. Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
+Every captured record carries the build it was read from in `capturedFrom`, as `26300.9974`. A capture from any other build is a new reference. The reference follows the operator's host build, because the host captures (Bluetooth, camera, graphics) must share it with the VM's.
+
+A new build goes into the install image, never into a running machine, so `pre-oobe` and every setup page are the new build too:
+
+1. Download the build's cumulative update from the Microsoft Update Catalog; the file name carries its SHA-1. Only the cumulative update: the catalog also lists the 24H2 checkpoint update (KB5043080), which a 26300 image refuses with `0x80070228`.
+2. `update-iso.ps1 -Package <msu> -Out R:\11\win11-<build>.iso` services image 6 inside the reference VM (DISM needs elevation, which the guest has and the host shell does not), splits it into `install.swm` parts and builds the ISO with `xorriso` in WSL. About two and a half hours, most of it DISM.
+3. Record the new build in `reference.json` and on this page, then build the machine from the new ISO with `-ImageIndex 1`. To keep the old machine until the new one verifies, build it beside it (`-Name ios-win11-ref-next -VmPath R:\11\ios-win11-ref-next`), then remove the old VM, `Rename-VM` the new one and `Move-VMStorage` it to `R:\11\ios-win11-ref`.
+4. `-Derive -Profile machine`, rebuild the stand-in disk (`standin/derive.ps1`), regenerate `ms-hashes.txt` (`make-ms-hashes.ps1`) and read the baselines again (`baselines.py`); only then capture.
+
+Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
 
 ## What is the capture profile?
 

@@ -1,4 +1,4 @@
-{"baseline": "shell-commands", "owner": "explorer", "source": "shell: names of the known folders; HKCR\\*\\shell, HKCR\\Directory\\shell, HKCR\\Directory\\Background\\shell, HKCR\\Drive\\shell", "build": "26300.9711"}
+{"baseline": "shell-commands", "owner": "explorer", "source": "shell: names of the known folders; HKCR\\*\\shell, HKCR\\Directory\\shell, HKCR\\Directory\\Background\\shell, HKCR\\Drive\\shell", "build": "26300.9974"}
 {"id": "folder:3D Objects", "kind": "folder", "name": "3D Objects"}
 {"id": "folder:AccountPictures", "kind": "folder", "name": "AccountPictures"}
 {"id": "folder:AddNewProgramsFolder", "kind": "folder", "name": "AddNewProgramsFolder"}

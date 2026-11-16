@@ -87,7 +87,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  19   | §19 Capture Matrix and Profile Matrix                                                       | §2, §5                      |  [x]   |
 | 💎  |  20   | §20 Capture Fixtures                                                                        | §2, §19                     |  [x]   |
 | 💎  |  21   | §21 Device Stand-ins                                                                        | §2, §19                     |  [x]   |
-| 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [ ]   |
+| 💎  |  24   | §24 Host Build and Host Captures                                                            | §2, §5, §19                 |  [/]   |
 | 💎  |  22   | §22 Derived Reference Machines: Right-to-Left, Viewports and Two Displays                   | §2, §19                     |  [x]   |
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [x]   |
 | 💎  |  25   | §25 Service-State Fixtures: Delivered Updates                                               | §2, §20, §23                |  [ ]   |
@@ -1231,12 +1231,16 @@ Windows Update and network pages show states the offline reference VM never reac
 
 > **Spawned-by:** section 21 (split)
 
+**Needs:** operator
+
 **Design:** n/a -- prepares hardware-gated captures, it draws nothing
 
 What the VM cannot show and the operator's Windows host has, captured on the host at the reference build.
 
-- [ ] Move the reference VM to the host's build (26300.9818) before any host capture: re-pin §2's `reference.json` and re-run §5's baselines, so host and VM records share one build
-- [ ] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
+- [x] Move the reference VM to the host's build, 26300.9974 (KB5132061, which the host applies at its pending restart), before any host capture
+  - `update-iso.ps1` puts the update into the install image and the VM is rebuilt from it; §2's `reference.json`, the derived profiles, the stand-in disk, §4's `ms-hashes.txt` and §5's baselines are taken again on it
+- [/] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
+  - Waits for the operator's restart of the host: until then the host runs 26300.9818 with KB5132061 pending, and a capture there would not match `reference.json`
   - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
 - [ ] Commit: `"inventory: host build and host captures"`
 

@@ -526,3 +526,16 @@ The section text has the Arabic pack "installed while setup still has network", 
 - **OneDrive:** `clean` has OneDrive not installed with its first-run setup pending at the next sign-in. A derived machine signs in again, so the pending entry is removed first and it keeps `clean`'s software (the stand-in disk the same). Reversal: delete one registry call.
 
 A: (run decision, 2026-11-16) as listed.
+
+## Q46 (08-graphics-ui/TODO-17 §24): which build does the reference move to, and how?
+
+The section text pinned the host's build as 26300.9818. That was the host's running build on 2026-11-16, but the host had installed KB5132061 on 2026-11-14 with a restart pending (`RebootPending` and `RebootRequired` set), and the catalog lists KB5132061 as 26300.9974. The host becomes 26300.9974 at its next restart, so a VM pinned at 9818 would have been one update behind the host captures.
+
+- **Target:** 26300.9974. The VM is pinned there now; the host captures wait for the operator's restart, which this session does not make for them.
+- **Route:** the update goes into the install image (`update-iso.ps1`), not into a running machine, so `pre-oobe` and the setup pages are the new build as well. DISM needs elevation, so the image is serviced inside the reference VM; the ISO is built with `xorriso` in WSL (no ADK on the host), with the image split into `install.swm` parts under 4 GiB.
+- **Package:** only the cumulative update. The catalog also offers KB5043080, the 24H2 checkpoint update, which a 26300 system refuses (`0x80070228`, measured 2026-11-16).
+- **Swap:** the new VM was built beside the old one and replaced it only after `-Verify` passed.
+
+Reversing costs a rebuild from `R:\11\win11.iso` (about 15 minutes) plus the derives (about 30 minutes).
+
+A: (run decision, 2026-11-16) as listed.

@@ -1,4 +1,4 @@
-{"baseline": "known-folders", "owner": "explorer", "source": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FolderDescriptions", "build": "26300.9711"}
+{"baseline": "known-folders", "owner": "explorer", "source": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FolderDescriptions", "build": "26300.9974"}
 {"id": "{008ca0b1-55b4-4c56-b8a8-4de4b299d3be}", "name": "AccountPictures", "category": 4, "relativePath": "Microsoft\\Windows\\AccountPictures", "parent": "{3eb685db-65f9-4cf6-a03a-e3ef65729f3d}"}
 {"id": "{00bcfc5a-ed94-4e48-96a1-3f6217f21990}", "name": "Roaming Tiles", "category": 4, "relativePath": "Microsoft\\Windows\\RoamingTiles", "parent": "{f1b32785-6fba-4fcf-9d55-7b8e7f157091}"}
 {"id": "{0139d44e-6afe-49f2-8690-3dafcae6ffb8}", "name": "Common Programs", "category": 3, "relativePath": "Programs", "parent": "{a4115719-d62e-491d-aa7c-e74b8be3b067}"}

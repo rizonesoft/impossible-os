@@ -1,4 +1,4 @@
-{"baseline": "start-apps", "owner": "start", "source": "Get-StartApps", "build": "26300.9711"}
+{"baseline": "start-apps", "owner": "start", "source": "Get-StartApps", "build": "26300.9974"}
 {"id": "Clipchamp.Clipchamp_yxz26nhyzhsrt!App", "name": "Microsoft Clipchamp", "kind": "packaged"}
 {"id": "MSEdge", "name": "Microsoft Edge", "kind": "desktop"}
 {"id": "MSTeams_8wekyb3d8bbwe!MSTeams", "name": "Microsoft Teams", "kind": "packaged"}
@@ -50,8 +50,8 @@
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\MdSched.exe", "name": "Windows Memory Diagnostic", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\RecoveryDrive.exe", "name": "Recovery Drive", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WF.msc", "name": "Windows Defender Firewall with Advanced Security", "kind": "desktop"}
-{"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe", "name": "Windows PowerShell ISE", "kind": "desktop"}
-{"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe", "name": "Windows PowerShell", "kind": "desktop"}
+{"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe", "name": "Windows PowerShell ISE 5.1", "kind": "desktop"}
+{"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe", "name": "Windows PowerShell 5.1", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\charmap.exe", "name": "Character Map", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\cleanmgr.exe", "name": "Disk Cleanup", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\cmd.exe", "name": "Command Prompt", "kind": "desktop"}
@@ -68,7 +68,7 @@
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\psr.exe", "name": "Steps Recorder", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\services.msc", "name": "Services", "kind": "desktop"}
 {"id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\voiceaccess.exe", "name": "Voice access", "kind": "desktop"}
-{"id": "{D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27}\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe", "name": "Windows PowerShell ISE (x86)", "kind": "desktop"}
-{"id": "{D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27}\\WindowsPowerShell\\v1.0\\powershell.exe", "name": "Windows PowerShell (x86)", "kind": "desktop"}
+{"id": "{D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27}\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe", "name": "Windows PowerShell ISE 5.1 (x86)", "kind": "desktop"}
+{"id": "{D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27}\\WindowsPowerShell\\v1.0\\powershell.exe", "name": "Windows PowerShell 5.1 (x86)", "kind": "desktop"}
 {"id": "{D65231B0-B2F1-4857-A4CE-A8E7C6EA7D27}\\odbcad32.exe", "name": "ODBC Data Sources (32-bit)", "kind": "desktop"}
 {"id": "{F38BF404-1D43-42F2-9305-67DE0B28FC23}\\regedit.exe", "name": "Registry Editor", "kind": "desktop"}

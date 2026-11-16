@@ -648,6 +648,37 @@ class Profile(unittest.TestCase):
         self.assertEqual(lines, ["dpi is 96, want 144", "textScale is 100, want 150", "highContrast is none, want Dusk",
                                  "ok-run", "0"], out.stderr)
 
+    def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
+        # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
+        # Disks"; the cleanup removed only disk.vhdx and left them (2026-11-16).
+        # Hyper-V cmdlets are stubs; the disk files are real.
+        shell = shutil.which("pwsh") or shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("no PowerShell on this host")
+        script = INV / "ref-common.ps1"
+        if shell.endswith(".exe"):
+            script = subprocess.run(["wslpath", "-w", str(script)], capture_output=True, text=True, check=True).stdout.strip()
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Remove-RefVm' }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text; "
+              "$root = Join-Path ([IO.Path]::GetTempPath()) ('ios-rm-' + [Guid]::NewGuid().ToString('N')); "
+              "$vm = Join-Path $root 'vm'; $vhd = Join-Path $vm 'Virtual Hard Disks'; "
+              "New-Item -ItemType Directory -Force $vhd, (Join-Path $vm 'Snapshots') | Out-Null; "
+              "$base = Join-Path $vhd 'base.vhdx'; $cur = Join-Path $vhd 'cur.avhdx'; $snap = Join-Path $vhd 'snap.avhdx'; $data = Join-Path $root 'data.vhdx'; "
+              "foreach ($p in $base, $cur, $snap, $data) { Set-Content -LiteralPath $p -Value x }; "
+              "$parent = @{ $cur = $base; $snap = $base; $base = $null; $data = $null }; "
+              "function Get-VM { [pscustomobject]@{ State = 'Off' } }; function Stop-VM { throw 'stopped an Off VM' }; "
+              "function Get-VMHardDiskDrive { [pscustomobject]@{ Path = $cur }, [pscustomobject]@{ Path = $data } }; "
+              "function Get-VMSnapshot { [pscustomobject]@{ HardDrives = @([pscustomobject]@{ Path = $snap }) } }; "
+              "function Get-VHD([string]$Path) { [pscustomobject]@{ ParentPath = $parent[$Path] } }; "
+              "$script:removed = 0; function Remove-VM { $script:removed++ }; "
+              "Remove-RefVm 'ios-test' $vm; "
+              "'vm=' + $script:removed; 'disks=' + (Test-Path $vhd); 'snapshots=' + (Test-Path (Join-Path $vm 'Snapshots')); 'data=' + (Test-Path $data); "
+              "Remove-Item -LiteralPath $root -Recurse -Force") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["vm=1", "disks=False", "snapshots=False", "data=True"], out.stderr)
+
     def test_the_two_contrast_tables_agree(self):
         import re
         guest_dir = INV / "guest"

@@ -1,4 +1,4 @@
-{"baseline": "classic-controls", "owner": "system", "source": "comctl32 6.0.26100.9711 (amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.9711_none_3e07b8b0e334e825)", "build": "26300.9711"}
+{"baseline": "classic-controls", "owner": "system", "source": "comctl32 6.0.26100.9818 (amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.9818_none_3e071914e3359bdd)", "build": "26300.9974"}
 {"id": "Button"}
 {"id": "ComboBoxEx32"}
 {"id": "ComboLBox"}

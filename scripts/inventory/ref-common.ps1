@@ -329,6 +329,28 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     if ((Get-VM -Name $Name).State -ne 'Running') { Start-VM -Name $Name }
 }
 
+# Removes the VM and every disk it and its checkpoints use, with each disk's
+# parent chain, plus the folders Build makes. A VM moved with Move-VMStorage
+# keeps its disks under "Virtual Hard Disks", not at disk.vhdx, so a fixed list
+# of names would leave them behind. Only files inside -VmPath go: a data disk a
+# run attached (update-iso.ps1's package disk) lives elsewhere and stays.
+function Remove-RefVm([string]$Name, [string]$VmPath) {
+    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    $disks = @(Get-VMHardDiskDrive -VMName $Name | ForEach-Object Path) +
+        @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.HardDrives.Path })
+    $chain = @()
+    foreach ($d in $disks) {
+        while ($d -and $chain -notcontains $d) { $chain += $d; $d = (Get-VHD -Path $d).ParentPath }
+    }
+    Remove-VM -Name $Name -Force
+    $own = (Resolve-Path -LiteralPath $VmPath).Path.TrimEnd('\') + '\'
+    foreach ($d in $chain) { if ($d.StartsWith($own, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Force } }
+    foreach ($p in 'disk.vhdx', 'Virtual Hard Disks', 'Virtual Machines', 'Snapshots') {
+        $full = Join-Path $VmPath $p
+        if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+    }
+}
+
 function Start-RefFrom([string]$Name, [string]$VmPath, [string]$Checkpoint) {
     Get-RefCredential $VmPath | Out-Null   # fails before the restore, not after
     Restore-RefCheckpoint $Name $Checkpoint $VmPath

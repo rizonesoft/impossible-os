@@ -230,12 +230,7 @@ function Invoke-Build() {
         if (-not (Test-Path -LiteralPath $IsoPath -PathType Leaf)) { Write-Host "ref-vm: no ISO at $IsoPath; $Name is left as it was"; $script:Refused = 2; return }
         $script:RefTouched = $true
         Write-Ref "removing the existing $Name"
-        if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-        Remove-VM -Name $Name -Force
-        foreach ($p in 'disk.vhdx', 'Virtual Machines', 'Snapshots') {
-            $full = Join-Path $VmPath $p
-            if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
-        }
+        Remove-RefVm $Name $VmPath
     }
     if (-not (Test-Path -LiteralPath $IsoPath)) { throw "no ISO at $IsoPath" }
     New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
