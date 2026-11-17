@@ -637,14 +637,23 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 - [x] `build/generated/shim_ca.h` is a make rule running `scripts/extract-shim-ca.sh` every make (it writes only on change), in `GENERATED_HDRS`; build.sh no longer runs the script itself
 - [x] `build/tools/BOOTX64.UKI.efi` is a make rule packing through `scripts/uki-pack.sh` from the stub, `kernel.exe`, `boot.conf` and the staged payloads; build.sh's UKI step calls that target
   - No objcopy on the host fails the rule with a message naming the tool: signing already needs the UKI, so a skipped pack only moved the failure to a generic "No rule"
-  - `build/.uki-payloads.manifest` (each payload present or absent, with its hash, written on change) is a prerequisite, so removing a staged payload repacks the image too
+  - `build/.uki-payloads.manifest` (each payload present or absent; a present one by size, nanosecond mtime and ctime, inode and device through `stat -L`; written on change) is a prerequisite, so removing a staged payload repacks the image too
   - build.sh's embedded-kernel check now runs on every build; it was keyed to the old block's exit code
 - [x] `scripts/test-raw-make.sh`: in a throwaway copy of the tracked tree, `make all` succeeds twice and the second build leaves the loader, `shim_ca.h` and `uefi_runtime.o` alone, with the UKI's `.sbat` intact
   - A dry run cannot stand in: the loader is a recursive make, and under `-n` the headers it reads are never created
   - Runs in CI as its own `build.yml` step, so the graph cannot regress unseen
 - [x] Commit: `"build: make owns the shim CA header and the UKI pack"`
 
-**Test checkpoint:** before the fix `bash scripts/test-raw-make.sh` fails on `No rule to make target 'build/tools/BOOTX64.UKI.efi'`; after it, the script passes, `bash scripts/build.sh clean` and a second `bash scripts/build.sh` both end `=== BUILD OK ===` with `[sbat] OK`, and the second leaves `BOOTX64.signed.efi` unchanged.
+**Test checkpoint:** before the fix `bash scripts/test-raw-make.sh` fails on `No rule to make target 'build/tools/BOOTX64.UKI.efi'`; after it, the script passes, `bash scripts/build.sh clean` and a second `bash scripts/build.sh` both end `=== BUILD OK ===` with `[sbat] OK`, and the second leaves the unsigned `BOOTX64.EFI` byte-identical with both UKIs embedding the final `kernel.exe`. The signed copies are re-signed on every build (see Notes), so byte-stable signed artifacts are not a guarantee of this section.
+
+> **Test runner:** `bash scripts/test-raw-make.sh` (CI step "Raw make builds a fresh tree" in `build.yml`) | PASS in about 70 s on 8 cores
+> **Notes:**
+> - Shipped: the `shim_ca.h`, `uki` and payload-manifest rules in the `Makefile`, the build.sh step that calls `make uki`, `scripts/test-raw-make.sh` and its CI step; docs in `development-tooling.md` and `secure-boot-keys.md`.
+> - Controls: before the fix the script failed on the UKI rule; without the header rule it failed on `shim_ca.h`; with the earlier manifest it failed on a payload changed through its link.
+> - Idempotency: a second `bash scripts/build.sh` leaves `BOOTX64.EFI` byte-identical and recompiles only the build-number readers. The signed copies are re-signed because every build bumps the build number (new kernel, new UKI) and one stamp signs both, as before this section.
+
+> **Verified:** 2026-11-17 | commit `c50d9f9e9` | 4/4 items | `test-raw-make.sh` PASS, `build.sh clean` and incremental `=== BUILD OK ===` with `[sbat] OK` and both UKIs checked against `kernel.exe`, 38220 kernel + 17 user-mode tests PASS, smoke PASS
+> **Quality reviewed:** 2026-11-17 | Codex 12x (plan, round 4x, performance 4x, completion 2x, reconciliation) | 0H+6M+1L fixed, 0 open | scope: N/A (host build tooling, no kernel or boot code)
 
 ---
 
