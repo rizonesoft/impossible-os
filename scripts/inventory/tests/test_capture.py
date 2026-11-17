@@ -413,9 +413,9 @@ class Identity(unittest.TestCase):
         return node("Root", "Window", children=[node(n, "Button", "Twin") if n else node("", "Button", cls="Btn")
                                                   for n in names])
 
-    def run_walk(self, t, identity=()):
+    def run_walk(self, t, identity=(), kinds=()):
         return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r",
-                         root_label="R", identity=identity)
+                         root_label="R", identity=identity, kinds=kinds)
 
     def test_siblings_sharing_a_segment_are_ambiguous(self):
         cap = self.run_walk(self.twins("", ""))
@@ -464,6 +464,22 @@ class Identity(unittest.TestCase):
                         identity=[({"namePrefix": "Volume"}, "volume"), ({"namePrefix": "Notifications"}, "bell")])
         self.assertEqual([r["id"] for r in cap.records[1:]], ["win11.s.r.volume", "win11.s.r.bell"])
         self.assertNotIn("audio", json.dumps(cap.records))
+
+    def test_a_class_prefix_matches_whole_leading_words(self):
+        # Search's best match row gains state classes under the pointer; the
+        # prefix is whole words, so "suggestion" never matches "suggestions".
+        row = core.FixtureElement(node("x", "ListItem", cls="suggestion cf selectable sa_hv selected"))
+        self.assertTrue(core.matches(row, {"classPrefix": "suggestion cf"}))
+        self.assertFalse(core.matches(row, {"classPrefix": "suggestion selectable"}))
+        self.assertFalse(core.matches(core.FixtureElement(node("x", "List", cls="suggestions")),
+                                      {"classPrefix": "suggestion"}))
+        self.assertFalse(core.matches(core.FixtureElement(node("x", "List")), {"classPrefix": "suggestion"}))
+
+    def test_kinds_set_the_record_kind_a_control_type_would_get_wrong(self):
+        t = node("Actions", "List", children=[node("Open", "ListItem", "pp_S_Open"), node("Copy path", "ListItem")])
+        cap = self.run_walk(t, kinds=[({"automationId": "pp_S_Open"}, "menuItem")])
+        self.assertEqual([r["kind"] for r in cap.records[1:]], ["menuItem", "control"])
+        self.assertEqual([r["kind"] for r in self.run_walk(t).records[1:]], ["control", "control"])
 
 
 class RestartExplorer(unittest.TestCase):
@@ -1860,6 +1876,18 @@ class FindWindow(unittest.TestCase):
         self.assertIs(guest.Context(live).find_window(timeout=0, className="Popup"), win)
         with self.assertRaises(guest.core.Incomplete):
             guest.Context(live).find_window(timeout=0, className="Other")
+
+    def test_a_missing_window_names_what_is_on_screen(self):
+        # A window that went missing mid-capture is explained by what took its
+        # place; offscreen windows are not named.
+        shown = types.SimpleNamespace(name="Taskbar", automation_id="", class_name="Shell_TrayWnd", control_type="Pane",
+                                      offscreen=False)
+        hidden = types.SimpleNamespace(name="Gone", automation_id="", class_name="Hidden", control_type="Pane",
+                                       offscreen=True)
+        uia = types.SimpleNamespace(GetRootElement=lambda: "root", CreateTrueCondition=lambda: "all")
+        live = types.SimpleNamespace(uia=uia, children=lambda el, cond=None: [shown, hidden], COMError=OSError)
+        with self.assertRaisesRegex(guest.core.Incomplete, r"on screen: Shell_TrayWnd:'Taskbar'$"):
+            guest.Context(live).find_window(timeout=0, className="Search")
 
     def test_a_light_dismissed_flyout_is_never_brought_forward(self):
         raised = []

@@ -175,10 +175,21 @@ def standin_variant(name, profile, variants, requested=None):
 def matches(element, spec):
     """True when every field the spec names equals the element's. `namePrefix`
     matches the start of the name, for an element whose name is a fixed word
-    followed by a live value (the tray's "Volume No audio device is installed")."""
+    followed by a live value (the tray's "Volume No audio device is installed").
+    `classPrefix` matches the first word of the class, for a web page's element
+    whose class list grows with its state (search's best match row adds
+    "selected" and "sa_hv" under the pointer, 2026-11-17)."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
               "className": element.class_name, "name": name_of(element)}
-    return all(fields["name"].startswith(v) if k == "namePrefix" else fields[k] == v for k, v in spec.items())
+
+    def one(k, v):
+        if k == "namePrefix":
+            return fields["name"].startswith(v)
+        if k == "classPrefix":
+            words, want = (fields["className"] or "").split(), v.split()
+            return words[:len(want)] == want
+        return fields[k] == v
+    return all(one(k, v) for k, v in spec.items())
 
 
 def _segment(el, identity=(), values=()):
@@ -273,7 +284,7 @@ class Capture:
 
 def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
          environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=(),
-         omit=(), count=None):
+         omit=(), count=None, kinds=()):
     """Capture one surface. Returns a Capture or raises Incomplete.
 
     session is the schema's session the capture ran in (session_type), written
@@ -292,6 +303,10 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
 
     labels are (spec, label) pairs: the label of an element with no usable name
     that the spec matches (an entry's icon), so it is not reported unnamed.
+
+    kinds are (spec, kind) pairs: the record kind of an element the spec
+    matches, where its control type names the wrong one (search's action lists
+    are web ListItems that act as menu entries, 2026-11-17).
 
     omit names elements another file of the surface records (the taskbar's own
     buttons, inside the window the tray file walks): each is left out with its
@@ -416,7 +431,7 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
         if depth > MAX_DEPTH:
             raise Incomplete(f"{rid}: deeper than {MAX_DEPTH} levels")
         env = is_environment(el)
-        kind = KIND_BY_TYPE.get(el.control_type, "control")
+        kind = next((k for spec, k in kinds if matches(el, spec)), None) or KIND_BY_TYPE.get(el.control_type, "control")
         if env:
             r = emit(el, rid, parent, order, kind)
             r["controlType"] = "list"       # rows are the machine's own data; never recorded
@@ -470,7 +485,7 @@ class Scene:
     """
 
     FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
-              "expand", "hosts", "labels", "omit", "count")
+              "expand", "hosts", "labels", "omit", "count", "kinds")
 
     def __init__(self, mod, **spec):
         unknown = set(spec) - set(self.FIELDS)
@@ -493,6 +508,7 @@ class Scene:
         self.labels = tuple(spec.get("labels", getattr(mod, "LABELS", ())))
         self.omit = tuple(spec.get("omit", getattr(mod, "OMIT", ())))
         self.count = spec.get("count")          # None: count a menu or context menu root's entries
+        self.kinds = tuple(spec.get("kinds", getattr(mod, "KINDS", ())))
 
 
 def scenes_of(mod):

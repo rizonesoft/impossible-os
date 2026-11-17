@@ -211,6 +211,16 @@
  },
  {
   "surface": "start",
+  "file": "search",
+  "state": "app-actions",
+  "profile": "fhd-100",
+  "width": 386,
+  "height": 254,
+  "size": 8773,
+  "sha256": "72d68faa2bebff8cb51b4fb622ae7125be1482e21f3e58d24cd9458b9251f5cc"
+ },
+ {
+  "surface": "start",
   "file": "start",
   "state": "bottom-bar",
   "profile": "fhd-100",
@@ -221,6 +231,36 @@
  },
  {
   "surface": "start",
+  "file": "search",
+  "state": "file-actions",
+  "profile": "fhd-100",
+  "width": 386,
+  "height": 126,
+  "size": 4027,
+  "sha256": "c1bc42f8a6fd14d404772a70307f7e4800f7e146005c896245062f3ffb061b57"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "folder-actions",
+  "profile": "fhd-100",
+  "width": 386,
+  "height": 94,
+  "size": 3195,
+  "sha256": "42c7aafcdf5bee54d10d29024575c2af5efb288670d745e236e21f31851ad581"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "home",
+  "profile": "fhd-100",
+  "width": 830,
+  "height": 506,
+  "size": 41263,
+  "sha256": "83d34441a155037304688f323f9d9ed010e1910abdf5be0b068fe026c3e4e29a"
+ },
+ {
+  "surface": "start",
   "file": "start",
   "state": "letter-jump",
   "profile": "fhd-100",
@@ -228,6 +268,26 @@
   "height": 736,
   "size": 8407,
   "sha256": "61f0dbf12aa6ad85d195e8b07e15f6f73c8f40f401f9ba371e0a1434ea6823c0"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "no-results",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 12994,
+  "sha256": "ef0ece887d5c103b1e047e0e8804d0c99adcd98fd57e936451bbcd35e8db4db2"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "options-menu",
+  "profile": "fhd-100",
+  "width": 240,
+  "height": 227,
+  "size": 8849,
+  "sha256": "0175f57b7175a38f616ad8f7f4b1afce2b8cb7b069ccafcd719366e026ee63b2"
  },
  {
   "surface": "start",
@@ -258,6 +318,66 @@
   "height": 172,
   "size": 3819,
   "sha256": "a31dfe96b99a1979a24bd51bbe31da508befb8eea094e38276a3aaf9cdd30201"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "results-app",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 30134,
+  "sha256": "d3afe79d485747c706ab0c824bbafdb03187c83ccae09cf7ed76594d0bad6456"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "results-file",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 32349,
+  "sha256": "46bf3d53fb37677f6d7db91bc52b0be62e1b81ccd8316a495aac38f2b72a6f89"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "results-folder",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 32345,
+  "sha256": "205f7367701c9904f4aea223e4607b0d7bd75d0ea27b036ae0c6a639a63b8add"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "results-setting",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 30715,
+  "sha256": "3da9c7fd51e6c1b45ba46c781245e6441e7120f882f53a55213f768a1a93e456"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "search",
+  "profile": "fhd-100",
+  "width": 858,
+  "height": 938,
+  "size": 182924,
+  "sha256": "e5d793c9029e9eddab113c6c3aec9617b2d4d972496346ef7f43cf79fbe5cffa"
+ },
+ {
+  "surface": "start",
+  "file": "search",
+  "state": "setting-actions",
+  "profile": "fhd-100",
+  "width": 386,
+  "height": 30,
+  "size": 869,
+  "sha256": "bfbfcfd14eda6edf1756b80900dc21bc2d32ceea950e27a6ceab27f4a33d62b9"
  },
  {
   "surface": "start",

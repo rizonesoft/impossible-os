@@ -423,7 +423,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The bottom bar with all nine folder shortcuts in their order, the account card (`itemCount` 5) and the power menu (Lock, Shut down, Restart; `itemCount` 3), and the menus of a pinned tile, a recommended entry and the view button
   - Drag, type-to-search, keyboard regions and closing are hand records
   - `start-apps`: 38 rows matched by Start; OneDrive installs at first sign-in, after the baseline is read, so it carries `baselineMissing`; the other 35 rows are not in Start's list on this build and are matched by the Windows Tools item in section 13
-- [ ] Search Flyout: writes `docs/design/inventory/start/search.json`
+- [x] Search Flyout: writes `docs/design/inventory/start/search.json` (113 records; owners in `TODO-11-startmenu-tray-notifications.md` §3 and §8)
   - Capture the search surface before typing: the box, the filter row, recent searches as a frame, and the suggested apps row as a frame
     - Filter row: All, Apps, Documents, Web, Settings, Folders, Photos and the "more" list
   - Capture the results layout: the best match row, the category groups and their order, and the detail pane on the right with its action list for an app, a file, a folder and a setting

@@ -49,11 +49,12 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 | --- | :---: | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Start Menu data + Windows 11 layout -- pins grid, all apps, recommended                    | `vfs_readdir`, `icon_get`, `task_exec` (all exist)                     |  [ ]   |
 | 💎  |   2   | §2 Start Menu interaction -- toggle, launch, All apps view, power + user menus                | §1 data (must exist before wiring clicks); TODO-04 `anim_mgr`          |  [ ]   |
-| 💎  |   3   | §3 Search filtering -- substring match, accent highlight, arrow-nav, no-results state         | §2 (search bar is part of the open menu interaction)                   |  [ ]   |
+| 💎  |   3   | §3 Search -- home page, word-start results by kind, preview header, local answers, no results | §2 (search bar is part of the open menu interaction)                   |  [ ]   |
 | 💎  |   4   | §4 System tray -- overflow chevron, system cluster → quick settings, glyphs                   | §3 (Start Menu stable); TODO-10 §1 taskbar draw loop stable            |  [ ]   |
 | ⭐  |   5   | §5 Toast notifications -- `notify_send()` queue, slide-in/out, stacking, `SYS_NOTIFY_SEND=54` | §4 (tray bell icon; DND mode from TODO-09 §7)                          |  [ ]   |
 | 💎  |   6   | §6 Notification center -- shared flyout, history, dismiss/clear, 100-entry log                | §5 (history comes from toast queue); §4 (bell icon is the entry point) |  [ ]   |
 | 💎  |   7   | §7 Notification settings -- per-app Registry toggle + sound, Settings page                    | §6 (notification center lists registered apps; settings wires to that) |  [ ]   |
+| 💎  |   8   | §8 Search filters, per-kind result actions, options menu, opt-in online results               | §3 (the search panel and its results)                                  |  [ ]   |
 
 ---
 
@@ -112,20 +113,24 @@ Win key / Start button → toggle open/close. Click a pinned tile → `task_exec
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
+**Inventory:** `win11.start.search`, `win11.start.home`, `win11.start.results-app`, `win11.start.results-file`, `win11.start.results-folder`, `win11.start.results-setting`, `win11.start.no-results`
+
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §4`, which is superseded there so the shell has one implementation.
 
-Typing with the menu open (or clicking the search box) filters apps, settings pages and recent files by case-insensitive substring. Results replace the Pinned and Recommended regions below the search box: a "Best match" card on the left (large icon, name, type, Open action) and the remaining matches grouped by type (Apps, Settings, Documents). Down arrow moves into the results; Enter launches the selection; no results shows "No results for "<query>"".
+Typing in Start's search box, or clicking the taskbar's search button, opens search: one panel over the taskbar that holds the search box. Empty, it shows a home page (Suggested on the left; Quick searches and Top apps on the right). Typing replaces it with results: a Best match row, then one group per kind (Apps, Settings, Documents, Folders), each under a heading that opens that kind's filter, and on the right a preview pane for the selected result with its header and, for a file or a folder, its Location and Last modified facts. Every result's sizes and order are the measured records in `docs/design/inventory/start/search.json`. Matching is by word start (`notep` finds Notepad, `mouse` finds "Change the mouse pointer display or speed"), updated on each key. No match shows a no-results line. An arithmetic or unit expression gets a local answer card, which the reference leaves to its online service and answers nothing offline. The filter bar, the preview pane's actions and the Options menu are section 8.
 
-**Files:** `src/desktop/startmenu.c` (extend), `include/desktop/startmenu.h` (extend)
+**Files:** `src/desktop/startmenu_search.c` (new), `src/desktop/startmenu.c` (extend), `include/desktop/startmenu.h` (extend)
 
 > [!NOTE]
-> `g_sm_search_buf[64]`; on each change `startmenu_filter()` rebuilds `g_sm_filtered[]` (up to 20) from `g_allapps[]`, `g_pins[]`, `g_recent[]` and the settings page index using `kstrcasestr()`. The matched substring renders in the accent colour, the rest in `text_primary`. The first result is the best match. Backspace to empty returns to the Pinned view. Escape clears an active search first, then closes the menu.
+> `startmenu_filter()` ranks app names, the settings page index and the file index (`09-desktop-shell/TODO-05 §4`) by word-start match, best match first, at most 20 results. Backspace to empty, or the filter bar's Back, returns to the home page. Escape closes search; it opens again on its home page.
 
-- [ ] `char g_sm_search_buf[64]`, `int g_sm_search_len`, `app_entry_t g_sm_filtered[20]`, `int g_sm_filtered_count`, `int g_sm_selected_idx`
-- [ ] `void startmenu_filter(const char *query)`: iterate all sources; collect matches; cap at 20; best match first
-- [ ] Key handling while open: printable → append + filter; Backspace → trim; Up/Down → move selection; Enter → launch; Escape → clear search, else close
-- [ ] Draw results below the search box: best-match card left, grouped list right; accent highlight on the matched substring; empty state text
-- [ ] Commit: `"startmenu: search -- live filter across apps, settings and files, best match, keyboard navigation"`
+- [ ] `void startmenu_filter(const char *query)`: word-start match across apps, settings pages and the file index; best match first; groups by kind; at most 20
+  - -> XREF: `09-desktop-shell/TODO-05-file-search.md §4` (item: "Start Menu integration") feeds the Documents and Folders groups
+- [ ] Home page: Suggested, Quick searches, Top apps and a recent searches row, from the pin, recent-items, launch-count and query stores
+- [ ] Draw the results page and the preview pane header and file facts to the `start/search.json` metrics (best match 66 px for an app, 84 px for a file)
+- [ ] Local answer card for arithmetic and unit expressions (`12*7`, `5 km in miles`), with no network
+- [ ] Keys: printable appends and filters; Backspace trims; Up/Down move through results; Enter opens the best match or the selection; Escape closes
+- [ ] Commit: `"startmenu: search -- home page, word-start results across apps, settings and files, preview header, local answers"`
 
 ## 4. System Tray Icons
 
@@ -229,6 +234,25 @@ The bell beside the clock (and a clock click) opens the shared notifications-and
 - [ ] `void notify_play_sound(int enabled)`: if `enabled` and audio system live: play `C:\Impossible\Media\notify.wav`; else: serial log
 - [ ] Global toggle: `RegSetValueEx("HKCU\\...\\Notifications\\Enabled", 0/1)`; `notify_is_allowed()` always returns 0 when global disabled
 - [ ] Commit: `"notify_settings: per-app Registry toggle + sound, Settings page CTRL_LISTVIEW, global suppress"`
+
+## 8. Search Filters, Result Actions and Options
+
+> **Spawned-by:** §3 (split)
+
+**Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+
+**Inventory:** `win11.start.results-app.scopes-list`, `win11.start.app-actions`, `win11.start.file-actions`, `win11.start.folder-actions`, `win11.start.setting-actions`, `win11.start.options-menu`, `win11.start.search.typed-filter`, `win11.start.search.right-arrow`, `win11.start.search.ctrl-shift-enter`, `win11.start.search.group-header`, `win11.start.search.web-filter`, `win11.start.search.web-results`, `win11.start.search.highlights`, `win11.start.search.account-results`
+
+The parts of the search panel (section 3) that act on a result: the filter bar over the results, the action list in the preview pane, and the Options menu. The entries, their order and their sizes are the measured records in `docs/design/inventory/start/search.json`; the online parts of the reference (web results, highlights, account results) become our own counterparts, off until the user turns one on, so search works whole with no network.
+
+**Files:** `src/desktop/startmenu_search.c` (extend), `include/desktop/startmenu.h` (extend)
+
+- [ ] Filter bar: Back, All, Apps, Documents, Settings, Folders, Photos, the selected one pilled; a group heading's Enter and a typed `apps:` prefix select that filter
+- [ ] Preview actions by kind: an app's eight (Open to Uninstall), a file's four, a folder's three, a setting's Open; Right moves into them, Ctrl+Shift+Enter runs an app as administrator
+  - "Rate and review" opens the app's page in our package catalog; "App settings" opens its Settings page
+- [ ] Options menu: Search settings and Indexing options open their Settings pages; the two account entries open the account page (`09-desktop-shell/TODO-06 §9`); Feedback is left out
+- [ ] Online results: a provider the user picks in Search settings, off by default, adds the web filter and web result group; offline the bar ends at Photos as the reference does
+- [ ] Commit: `"startmenu: search filters, per-kind result actions, options menu, opt-in online results"`
 
 ---
 

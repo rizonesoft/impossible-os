@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **991 of 2723 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **991 of 2724 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2140,11 +2140,12 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T10 §9`  | Taskbar on Every Display                                                | none  |     5 |
 | [ ]  | `D08 T11 §1`  | Start Menu Data Loading                                                 | none  |     9 |
 | [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none  |     8 |
-| [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none  |     5 |
+| [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none  |     6 |
 | [ ]  | `D08 T11 §4`  | System Tray Icons                                                       | none  |    10 |
 | [ ]  | `D08 T11 §5`  | Toast Notifications                                                     | none  |    11 |
 | [ ]  | `D08 T11 §6`  | Notification Center                                                     | none  |    11 |
 | [ ]  | `D08 T11 §7`  | Notification Settings                                                   | none  |     8 |
+| [ ]  | `D08 T11 §8`  | Search Filters, Result Actions and Options                              | none  |     5 |
 | [ ]  | `D08 T12 §1`  | Kernel Time API                                                         | none  |    13 |
 | [ ]  | `D08 T12 §2`  | Time Formatting                                                         | none  |     6 |
 | [ ]  | `D08 T12 §5`  | Timezone Database                                                       | none  |     8 |

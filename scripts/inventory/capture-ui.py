@@ -70,6 +70,7 @@ POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Mic
 # foreground to itself, and so does a jump list (a CoreWindow) or a thumbnail
 # (the XAML island host); the taskbar is always on top already (2026-11-16).
 # The input indicator's flyout is light-dismissed the same way (2026-11-17).
+ON_SCREEN_MAX = 8                  # windows a failure message names
 NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd",
                                  "Shell_InputSwitchTopLevelWindow"}
 PROP_CONTROL_TYPE = 30003
@@ -129,7 +130,7 @@ def read_profile():
 
 # ---------------------------------------------------------------- input --
 VK = {"alt": 0x12, "ctrl": 0x11, "shift": 0x10, "win": 0x5B, "esc": 0x1B, "enter": 0x0D, "tab": 0x09,
-      "space": 0x20, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
+      "space": 0x20, "semicolon": 0xBA, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
       **{f"f{n}": 0x6F + n for n in range(1, 13)}}
 
 
@@ -534,8 +535,18 @@ class Context:
                         user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
                     return w
             if time.monotonic() >= deadline:
-                raise core.Incomplete(f"no window matching {spec} within {timeout} s")
+                raise core.Incomplete(f"no window matching {spec} within {timeout} s; on screen: {self.on_screen()}")
             time.sleep(0.5)
+
+    def on_screen(self):
+        """The top-level windows on screen, class and name, for a failure message:
+        a window that went missing is explained by what took its place."""
+        try:
+            shown = [w for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition())
+                     if not w.offscreen]
+        except self.live.COMError:
+            return "(unreadable)"
+        return ", ".join(f"{w.class_name}:{w.name[:30]!r}" for w in shown[:ON_SCREEN_MAX]) or "(none)"
 
 
 def load_surface(name):
@@ -613,7 +624,7 @@ def main(argv=None):
         return dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=sc.slug,
                     root_label=sc.label, root_kind=sc.kind, environment_lists=sc.environment_lists,
                     values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels,
-                    omit=sc.omit, count=sc.count)
+                    omit=sc.omit, count=sc.count, kinds=sc.kinds)
 
     def walk_scene(sc):
         # Each pass replaces this scene's screenshots from the pass before; an
