@@ -545,8 +545,8 @@ A: (run decision, 2026-11-16) as listed.
 
 The walk this section wanted to replace lost its only caller when the build-offload gate was deleted on 2026-11-09. Measured on 17,428 real commands: tree-sitter-bash misses 62 that bash accepts (the repo's `git commit -F - <<'EOF' 2>&1 | ...` shape among them) and is a compiled dependency; bashlex cannot parse quoted heredocs or `case`.
 
-- **A:** delete the dead walk and vendor no parser; a future segmenting gate starts from the existing `_BashLexer` or `bash -n`.
+- **A:** delete the dead walk and vendor no parser; the live safety guards keep the token segmenter, which now reads the command behind shell grammar (`guard_argv`).
 - **B:** vendor tree-sitter-bash and keep the walk as its fallback.
 
-A: (run decision, 2026-11-17) A. Nothing consumes segmentation today, and neither parser handles the shapes this repo issues most. Reversal cost: restore the walk from `5b26c6b3a` (one file) and vendor the wheel.
+A: (run decision, 2026-11-17) A. Nothing consumed the deleted walk, the two safety guards are served by the token segmenter, and neither parser handles the shapes this repo issues most. Reversal cost: restore the walk from `5b26c6b3a` (one file) and vendor the wheel.
 

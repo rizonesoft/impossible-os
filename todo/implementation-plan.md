@@ -298,7 +298,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §29` | Standardize PreToolUse Prefix-Allowlist Across Gates                                                                  | none     |     7 |
 | [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none     |     9 |
 | [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none     |     5 |
-| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     3 |
+| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
 | [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     8 |
 | [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
 | [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |
