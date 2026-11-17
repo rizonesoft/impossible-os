@@ -22,13 +22,19 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 HELPER = REPO / ".githooks/lib/staged-tree.sh"
 
 HOOK = f"""#!/usr/bin/env bash
+export FIXTURE_HOOK_PID=$$
 . "{HELPER}"
 run_on_staged_tree suite.sh
 """
 # The suite reads the tree it runs in, and asks git about history the way the
 # runner's git-oracle tests do.
 SUITE = """set -e
-if [ -f hang ]; then echo $$ > "$(cat hang)"; sleep 60; fi
+if [ -f hang ]; then
+  [ -f stubborn ] && trap '' TERM
+  setsid sleep 60 &
+  echo "$$ $FIXTURE_HOOK_PID $!" > "$(cat hang)"
+  sleep 60
+fi
 grep -qx fixed marker.txt
 grep -qx ok dep.txt
 git log -1 --format=%s >/dev/null
@@ -111,39 +117,86 @@ def test_a_path_limited_commit_is_judged_by_its_own_index():
         assert _git(root, "log", "-1", "--format=%s").stdout.strip() == "path"
 
 
+def _hang(d: pathlib.Path, *, stubborn=False, **extra):
+    """Start a commit whose suite hangs; returns (process, tmp, suite, hook, grandchild).
+
+    The suite reports itself, the hook that started it, and a grandchild in a
+    session of its own, which a signal to the suite's process group misses."""
+    tmp = d / "tmp"
+    tmp.mkdir()
+    root = _fixture(d)
+    pidfile = d / "suite.pid"
+    (root / "hang").write_text(str(pidfile))
+    _git(root, "add", "hang")
+    if stubborn:
+        (root / "stubborn").write_text("")
+        _git(root, "add", "stubborn")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(TMPDIR=str(tmp), **extra)
+    p = subprocess.Popen(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                          "commit", "-q", "-m", "hang"], cwd=str(root), env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    deadline = time.monotonic() + 30
+    while not pidfile.exists() or len(pidfile.read_text().split()) < 3:
+        if time.monotonic() > deadline or p.poll() is not None:
+            _reap(p)
+            raise AssertionError("the suite never started")
+        time.sleep(0.1)
+    suite, hook, grandchild = map(int, pidfile.read_text().split())
+    return p, tmp, (suite, hook, grandchild)
+
+
+def _reap(p):
+    """Wait for the commit; KILL its group only if it is still there after 30 s
+    (a KILL at once would beat the hook's own trap, which is what is tested)."""
+    try:
+        p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait(timeout=30)
+
+
+def _all_gone(tmp, pids, within=30):
+    deadline = time.monotonic() + within
+    while (any(map(_alive, pids)) or list(tmp.iterdir())) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    alive = [pid for pid in pids if _alive(pid)]
+    for pid in alive:  # never leave a fixture process behind, even on failure
+        os.kill(pid, signal.SIGKILL)
+    assert not alive, f"outlived the commit: {alive}"
+    assert list(tmp.iterdir()) == [], list(tmp.iterdir())
+
+
 def test_an_interrupted_commit_leaves_no_tree_and_no_suite():
+    """Ctrl-C at a terminal: the whole foreground group gets the signal."""
     with tempfile.TemporaryDirectory() as d:
-        tmp = pathlib.Path(d) / "tmp"
-        tmp.mkdir()
-        root = _fixture(pathlib.Path(d))
-        pidfile = pathlib.Path(d) / "suite.pid"
-        (root / "hang").write_text(str(pidfile))
-        _git(root, "add", "hang")
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        env["TMPDIR"] = str(tmp)
-        p = subprocess.Popen(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                              "commit", "-q", "-m", "hang"], cwd=str(root), env=env,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        p, tmp, (suite, _, grandchild) = _hang(pathlib.Path(d))
         try:
-            deadline = time.monotonic() + 30
-            while not pidfile.exists() or not pidfile.read_text().strip():
-                assert time.monotonic() < deadline and p.poll() is None, "the suite never started"
-                time.sleep(0.1)
-            suite = int(pidfile.read_text())
             os.killpg(p.pid, signal.SIGTERM)
-            p.wait(timeout=30)
         finally:
-            if p.poll() is None:
-                os.killpg(p.pid, signal.SIGKILL)
-                p.wait(timeout=30)
-        deadline = time.monotonic() + 10
-        while _alive(suite) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert not _alive(suite), "the suite outlived the interrupted commit"
-        # git does not wait for its hook on SIGTERM, so the hook may still be removing it.
-        while list(tmp.iterdir()) and time.monotonic() < deadline + 10:
-            time.sleep(0.1)
-        assert list(tmp.iterdir()) == [], list(tmp.iterdir())
+            _reap(p)
+        _all_gone(tmp, (suite, grandchild))
+
+
+def test_a_signal_to_the_hook_alone_stops_the_suite():
+    with tempfile.TemporaryDirectory() as d:
+        p, tmp, (suite, hook, grandchild) = _hang(pathlib.Path(d))
+        try:
+            os.kill(hook, signal.SIGTERM)
+            _all_gone(tmp, (suite, grandchild))
+        finally:
+            _reap(p)
+
+
+def test_a_suite_past_its_deadline_is_stopped_even_if_it_ignores_term():
+    with tempfile.TemporaryDirectory() as d:
+        p, tmp, (suite, _, grandchild) = _hang(pathlib.Path(d), stubborn=True,
+                                               STAGED_TREE_TIMEOUT="3", STAGED_TREE_GRACE="1")
+        try:
+            assert p.wait(timeout=60) != 0, "a suite past its deadline let the commit land"
+        finally:
+            _reap(p)
+        _all_gone(tmp, (suite, grandchild))
 
 
 def _alive(pid: int) -> bool:
@@ -176,5 +229,7 @@ if __name__ == "__main__":
     test_a_correct_commit_with_a_broken_working_tree_lands()
     test_a_path_limited_commit_is_judged_by_its_own_index()
     test_an_interrupted_commit_leaves_no_tree_and_no_suite()
+    test_a_signal_to_the_hook_alone_stops_the_suite()
+    test_a_suite_past_its_deadline_is_stopped_even_if_it_ignores_term()
     test_the_scratch_tree_is_removed()
     print("PASS: staged-tree gate")
