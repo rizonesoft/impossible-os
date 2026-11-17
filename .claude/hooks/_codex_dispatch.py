@@ -348,6 +348,52 @@ def _strip_env_and_wrappers(out):
     return out
 
 
+# Words bash reads as grammar in front of a simple command, so the command a
+# safety guard must judge comes after them (2026-11-17: `if true; then git reset
+# --hard; fi` was read as the command `then` and allowed).
+_GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"})
+
+
+def guard_argv(seg):
+    """The argv bash runs for segment `seg`, for the Bash safety guards.
+
+    Strips what `_strip_env_and_wrappers` strips, plus reserved words, `time -p`,
+    a `case WORD in PATTERN)` lead or a later arm's `PATTERN)`, and subshell
+    parens (`(cmd` and a trailing `)`). Returns [] when the segment holds no
+    command (a `case` lead with no pattern yet, a lone `}`). The Codex dispatch
+    recogniser does not use this: its prompt arguments must stay byte-exact.
+    """
+    out = _strip_env_and_wrappers(list(seg))
+    while out:
+        tok = out[0]
+        if tok in _GRAMMAR_HEADS:
+            out.pop(0)
+            if tok == "time":
+                while out and out[0] in ("-p", "--"):
+                    out.pop(0)
+        elif tok == "case":
+            if "in" not in out:
+                return []
+            out = out[out.index("in") + 1:]
+            ends = [i for i, t in enumerate(out) if t.endswith(")")]
+            if not ends:
+                return []
+            out = out[ends[0] + 1:]
+        elif tok.startswith("("):
+            rest = tok.lstrip("(")
+            out = ([rest] if rest else []) + out[1:]
+        elif tok.endswith(")") and len(out) > 1:
+            out.pop(0)  # a later case arm's PATTERN)
+        else:
+            break
+        _strip_env_and_wrappers(out)
+    if out and out[-1].endswith(")") and out[-1] != ")":
+        out[-1] = out[-1].rstrip(")")
+    elif out and out[-1] == ")":
+        out.pop()
+    return out
+
+
 def _walk_codex_global_options(out, start=1):
     """For a `codex` head token, walk past Codex CLI global options
     (-c, --config, --enable, etc.) returning the index of the real

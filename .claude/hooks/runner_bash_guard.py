@@ -237,7 +237,7 @@ def _scan_command(cmd: str, depth: int = 0) -> str:
                     return f"git behavior-injection env var ({key})"
             if _base(tok.split("=", 1)[-1] if "=" in tok else tok) in _CODEX_BASENAMES:
                 return "codex surface"
-        seg = _cd._strip_env_and_wrappers(list(seg))
+        seg = _cd.guard_argv(seg)
         if not seg:
             continue
         head = _base(seg[0])

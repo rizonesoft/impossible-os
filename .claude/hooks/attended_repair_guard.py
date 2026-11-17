@@ -218,7 +218,7 @@ def _scan(cmd: str, depth: int = 0) -> str:
         for tok in seg:
             if tok == "ATTENDED_REPAIR_OVERRIDE=1":
                 return ""
-        seg = _cd._strip_env_and_wrappers(list(seg))
+        seg = _cd.guard_argv(seg)
         if not seg:
             continue
         head = _base(seg[0])
