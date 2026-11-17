@@ -360,7 +360,7 @@ _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until"
 # the operator, the next word is its target. Bash removes both from the argv,
 # wherever they stand (`>/dev/null git reset --hard`, `git 2>/dev/null reset`).
 # Longer operators first, so `>&` is not read as `>` with target `&`.
-_REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>|>&|>\||<<<|<>|<&|>|<)(.*)\Z", re.S)
+_REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>|>&|>\||<<<|<<-|<<|<>|<&|>|<)(.*)\Z", re.S)
 _REDIRECT_CHARS = frozenset("<>")
 
 
