@@ -684,8 +684,14 @@ def merge(old, new, ambiguous):
             raise ValueError(f"{r['id']}: its hand-written fields cannot be carried, the id is ambiguous "
                              "(siblings share a name); give the element a name in the surface module's IDENTITY")
         # A field the capture wrote itself (a module's hand record, an app's
-        # baseline link) has its author here: only what a person added is carried.
-        out.append({**r, **{k: v for k, v in hand.items() if k not in r}})
+        # baseline link) has its author here: only what a person added is
+        # carried. None is the capture owning a field that has no value this
+        # time (an app out of its folder has no folder text): it is removed, not
+        # refilled from the old copy. A capture's match also replaces a carried
+        # "no row lists it", since the two cannot both stand.
+        carried = {k: v for k, v in hand.items() if k not in r
+                   and not (k == "baselineMissing" and r.get("baselineId"))}
+        out.append({k: v for k, v in {**r, **carried}.items() if not (k in HAND_FIELDS and v is None)})
     seen = {r["id"] for r in new}
     dropped = [r["id"] for r in old if r["id"] not in seen and any(k in r for k in HAND_FIELDS)]
     return out, dropped

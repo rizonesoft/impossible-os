@@ -297,15 +297,20 @@ def build_file(target, new, meta, do_merge):
         print(f"capture: {target} exists; pass --merge to refresh it and keep its hand-written fields")
         raise SystemExit(2)
     old = core.read_records(target) if target.exists() else []
+    live = baseline_rows()
+    unbound = []
+    if live is not None:
+        # The capture's own matches first: one to a row the baseline lacks is
+        # no match, so it must not displace a carried "no row lists it".
+        new, unbound = core.unbind(new, live)
     try:
         records, dropped = core.merge(old, new, meta.get("ambiguous", []))
     except ValueError as exc:
         print(f"capture: {exc}")
         raise SystemExit(1) from None
-    live = baseline_rows()
     if live is not None:
-        records, unbound = core.unbind(records, live)
-        for rid in unbound:
+        records, carried = core.unbind(records, live)
+        for rid in unbound + carried:
             print(f"capture: {rid} matched a baseline row this build no longer has; its match is removed")
     for rid in dropped:
         print(f"capture: dropped {rid}, which the capture no longer sees, with its hand-written fields")

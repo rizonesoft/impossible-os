@@ -620,6 +620,13 @@ class StartApps(unittest.TestCase):
             self.assertNotEqual(ids[a[0]], ids[b[0]])
             self.assertEqual(self.ids([a])[a[0]], ids[a[0]])
 
+    def test_an_app_moved_out_of_its_folder_loses_the_folder_text(self):
+        self.start._apps[:] = [("P~Vendor.Clock!App", "Clock", "Tools")]
+        old = [r for r in self.start.app_records() if "uiaId" in r]
+        self.start._apps[:] = [("P~Vendor.Clock!App", "Clock", None)]
+        out, _ = core.merge(old, [r for r in self.start.app_records() if "uiaId" in r], [])
+        self.assertNotIn("behaviour", out[0])
+
     def test_an_app_replaced_by_one_of_the_same_name_gets_a_new_id(self):
         # Otherwise merge carries the old app's baseline link onto the new one.
         self.assertNotEqual(self.ids([self.A])[self.A[0]], self.ids([self.B])[self.B[0]])
@@ -648,6 +655,13 @@ class Merge(unittest.TestCase):
         out, _ = core.merge(old, new, [])
         self.assertEqual(out, [{"id": "a.b", "behaviour": "New text.", "baselineId": "start-apps:New",
                                 "disposition": "build"}])
+
+    def test_a_field_the_capture_owns_without_a_value_is_removed(self):
+        # Round review 2026-11-17: an app that leaves its folder has no folder
+        # text; absence alone would bring the old text back.
+        old = [{"id": "a.b", "behaviour": "In the Tools folder.", "disposition": "build"}]
+        out, _ = core.merge(old, [{"id": "a.b", "behaviour": None}], [])
+        self.assertEqual(out, [{"id": "a.b", "disposition": "build"}])
 
     def test_a_tiles_states_survive_a_recapture(self):
         # Quick Settings' tile states are measured by clicking, not walked (2026-11-17).
@@ -688,6 +702,28 @@ class Merge(unittest.TestCase):
             out = capture.build_file(inv / "taskbar" / "bar.json", [{"id": "a.b", "label": "B"}, {"id": "a.c", "label": "C"}],
                                      {"complete": True}, True)
         self.assertEqual(out, [{"id": "a.b", "label": "B", "baselineId": "settings:S1"}, {"id": "a.c", "label": "C"}])
+
+    def _bound(self, old, new):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(capture, "INVENTORY", pathlib.Path(d)):
+            inv = pathlib.Path(d)
+            (inv / "controls").mkdir()
+            (inv / "controls" / "baseline.json").write_text('{"baseline": "controls"}\n{"id": "Button"}\n')
+            (inv / "taskbar").mkdir()
+            core.write_records(inv / "taskbar" / "bar.json", old)
+            return capture.build_file(inv / "taskbar" / "bar.json", new, {"complete": True}, True)
+
+    def test_a_capture_match_to_a_new_row_replaces_a_missing_flag(self):
+        # Round review 2026-11-17: once the baseline gains the row, the
+        # capture's match and the carried flag would both stand, and the
+        # checker refuses that pair.
+        out = self._bound([{"id": "a.b", "label": "B", "baselineMissing": True}],
+                          [{"id": "a.b", "label": "B", "baselineId": "controls:Button"}])
+        self.assertEqual(out, [{"id": "a.b", "label": "B", "baselineId": "controls:Button"}])
+
+    def test_a_capture_match_to_an_absent_row_keeps_the_missing_flag(self):
+        out = self._bound([{"id": "a.b", "label": "B", "baselineMissing": True}],
+                          [{"id": "a.b", "label": "B", "baselineId": "controls:Gone"}])
+        self.assertEqual(out, [{"id": "a.b", "label": "B", "baselineMissing": True}])
 
     def test_a_note_never_lands_on_an_ambiguous_id(self):
         # An inserted twin shifts the positional suffix: the old note on btn-2 would

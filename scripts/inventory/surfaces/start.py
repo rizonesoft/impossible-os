@@ -540,7 +540,9 @@ def app_records():
         slug = f"{core.slug(aid[2:]) or core.slug(label) or 'app'}-{hashlib.sha1(aid[2:].encode()).hexdigest()[:8]}"
         out.append({"id": f"{ROOT}.all-apps.{slug}", "parent": f"{ROOT}.all-apps", "kind": "control", "label": label,
                     "order": i, "uiaId": aid, "baselineId": f"start-apps:{aid[2:]}",
-                    **({"behaviour": f"In the {folder} folder."} if folder else {})})
+                    # None: the folder text is this module's, and an app out of
+                    # every folder has none (merge removes an old copy).
+                    "behaviour": f"In the {folder} folder." if folder else None})
     return out
 
 
