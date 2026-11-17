@@ -67,6 +67,8 @@ _staged_tree_stage() {
     fi
     export STAGED_TREE_RUN="${STAGED_TREE_RUN:-:}$mark:"
     cd "$dir" || exit 1
+    # LIFECYCLE-WAIVER: a gate stage in its own group so the hook can stop it as
+    # one; the hook supervises and reaps it, nothing outlives the commit.
     if command -v setsid >/dev/null 2>&1; then exec setsid "$@"; fi
     exec "$@"
   ) &

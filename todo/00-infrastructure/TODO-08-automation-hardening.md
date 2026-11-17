@@ -1455,6 +1455,7 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 
 - [x] Run the suite over the staged tree (a `git checkout-index` copy of the index, with the real repository for the git-oracle tests). Done when a fixture commit with a broken staged file and a fixed unstaged copy is refused, and the reverse passes.
 - [x] A gate that is interrupted, signalled alone or runs past `STAGED_TREE_TIMEOUT` stops every process the suite started, its own sessions included, and removes the tree (round and performance passes)
+- [x] The staged-tree helper and the git isolation it sources are in the control-plane manifest, so a change to them alone runs their tests (completion pass)
 - [x] Commit: `"hooks: the control-plane gate tests the staged commit"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes, and the two fixture commits above get the opposite verdicts they get today.

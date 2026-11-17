@@ -307,6 +307,16 @@ def test_a_nested_stage_is_stopped_with_the_outer_one():
             _reap(p)
 
 
+def test_the_helper_is_in_the_control_plane():
+    """A change to the helper alone must run the suite that tests it."""
+    repo = pathlib.Path(__file__).resolve().parents[3]
+    for rel in (".githooks/lib/staged-tree.sh", ".githooks/lib/isolate-git-env.sh"):
+        assert (repo / rel).is_file(), rel
+        r = subprocess.run(["bash", str(repo / "scripts/overnight/control-plane-match.sh")], input=rel + "\n",
+                           capture_output=True, text=True, timeout=30, cwd=str(repo))
+        assert r.returncode == 0, f"{rel} is not in the control-plane manifest"
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -342,5 +352,6 @@ if __name__ == "__main__":
     test_a_detached_child_that_ignores_term_is_stopped_under_set_e()
     test_a_stalled_export_is_bounded_by_the_deadline()
     test_a_nested_stage_is_stopped_with_the_outer_one()
+    test_the_helper_is_in_the_control_plane()
     test_the_scratch_tree_is_removed()
     print("PASS: staged-tree gate")

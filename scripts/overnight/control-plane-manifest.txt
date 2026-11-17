@@ -54,6 +54,13 @@ scripts/overnight/
 # Commit-time gate the runner's own section commits must pass
 .claude/hooks/section_commit_gate.py
 
+# The machinery that runs this suite at commit (2026-11-17): the staged-tree
+# helper exports the commit's index, isolates git and stops every process the
+# suite starts. Outside the manifest, a change to it alone never ran the tests
+# that exercise it (test_staged_tree.py, test_hook_git_env.py).
+.githooks/lib/staged-tree.sh
+.githooks/lib/isolate-git-env.sh
+
 # SHARED GATE MACHINERY (2026-07-28). The manifest listed the gate FILES but
 # not the helpers that decide whether a gate applies, so a one-line change here
 # could alter the effective behaviour of every gate importing it with the suite
