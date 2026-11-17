@@ -432,20 +432,29 @@ def guard_argv(seg):
     Skips what `_strip_env_and_wrappers` strips, plus reserved words, `time -p`,
     a `case WORD in PATTERN)` lead, a later arm's `PATTERN)` (also written
     compactly, `x)git`), and subshell parens: a leading `(` and a trailing `)` on
-    any argument, so `(git reset --hard) 2>/dev/null` still reads `--hard`.
+    any argument, so `(git reset --hard) 2>/dev/null` still reads `--hard`, and
+    every redirection wherever it stands.
     Returns [] when the segment holds no command. One forward pass over the
     tokens: each is examined a bounded number of times. The Codex dispatch
     recogniser does not use this: its prompt arguments must stay byte-exact.
     """
-    out, redir = _split_attached_redirects(seg)
+    # Bash removes every redirection (and its target) before it builds the
+    # argv, so they go first: `timeout 2>/dev/null 5 git reset --hard` is
+    # `timeout 5 git reset --hard`, and the walk below never meets one.
+    words, redir = _split_attached_redirects(seg)
+    out, j = [], 0
+    while j < len(words):
+        width = _redirect_width(words, redir, j)
+        if width:
+            j += width
+        else:
+            out.append(words[j])
+            j += 1
     n = len(out)
     i = _skip_env_and_wrappers(out, 0)
     while i < n:
         tok = out[i]
-        width = _redirect_width(out, redir, i)
-        if width:
-            i += width
-        elif tok in _GRAMMAR_HEADS:
+        if tok in _GRAMMAR_HEADS:
             i += 1
             if tok == "time":
                 while i < n and out[i] in ("-p", "--"):
@@ -479,13 +488,7 @@ def guard_argv(seg):
         # every rewrite above can expose `env`, `sudo` or `FOO=1` as the next head
         i = _skip_env_and_wrappers(out, i)
     argv = []
-    while i < n:
-        width = _redirect_width(out, redir, i)
-        if width:
-            i += width
-            continue
-        tok = out[i]
-        i += 1
+    for tok in out[i:]:
         if tok.endswith(")"):
             tok = tok.rstrip(")")
             if not tok:
