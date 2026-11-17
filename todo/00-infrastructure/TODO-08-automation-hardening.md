@@ -1145,7 +1145,7 @@ The build-offload gate (`build_offload_reminder.py`) decided its exemptions with
 - [x] The Bash safety guards judge the command behind shell grammar and redirections (`guard_argv`), so `if true; then git reset --hard; fi` and `git 2>"a b" reset --hard` are refused
 - [x] Commit: `"hooks: delete the shell walk the deleted offload gate used"`
 
-**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 54 compound and redirect shapes in both guards, allows 13 harmless commands of the same shapes, checks the quote masks, and bounds two 220 to 420 KB inputs at 2.5 s.
+**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 56 compound and redirect shapes in both guards, allows 15 harmless commands of the same shapes, checks the quote masks, and bounds two 220 to 420 KB inputs at 2.5 s.
 
 > **Test runner:** N/A (host tooling) | validation: `python3 scripts/overnight/tests/test_guard_compound.py`, `python3 scripts/overnight/tests/test_dispatch_recognition.py`, `python3 scripts/overnight/tests/test_review_gate.py`, `bash scripts/overnight/tests/run-all.sh`
 
