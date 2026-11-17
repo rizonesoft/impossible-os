@@ -97,7 +97,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  29   |   §29   | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)                | §3, §4, §17, §20, §23      |  [x]   |
 | ⭐  |  30   |   §30   | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)           | §25                        |  [x]   |
 | 💎  |  31   |   §31   | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)            | --                         |  [x]   |
-| ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
+| ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [x]   |
 | 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [x]   |
 | 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [x]   |
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [/]   |
@@ -1138,51 +1138,20 @@ The Claude Code post-commit hook fires `bash scripts/build.sh` (and conditionall
 
 ## 32. Grammar-Accurate Shell Segmentation for the Gate Exemptions
 
-The PreToolUse gates decide their exemptions by hand-scanning command text. [`.claude/hooks/_codex_dispatch.py`](../../.claude/hooks/_codex_dispatch.py) `command_segments()` splits a command into raw segments, lifts command and process substitutions out as their own segments, and strips heredoc bodies -- all with a character walk that tracks quoting but not shell GRAMMAR. Six adversarial rounds against that walk during D00 T04 section 34 each produced a fresh valid-shell shape it mis-modelled: a backtick body containing `)` inside a `$( )`, a `case` pattern's unmatched `)`, `<<` as a left shift inside `$(( ))`, a `<<WORD` inside a `#` comment, and a `bash -c` body whose trailing positional arguments claimed the wrapper exemption. Each was closed, but the shapes were not running out, and the reviewer's recommendation converged on the same answer every round: parse with a real shell grammar instead of balancing characters.
+The build-offload gate (`build_offload_reminder.py`) decided its exemptions with a hand-rolled shell walk, `command_segments()` and its helpers in `.claude/hooks/_codex_dispatch.py`, which failed closed on `case`/`esac`, comments and arithmetic. This section was filed to replace that walk with a grammar-accurate parser. The gate was deleted with the process gates on 2026-11-09 (`71f25965a`), and nothing else called the walk, so it is deleted instead of re-parsed.
 
-> [!NOTE]
-> Filed from the D00 T04 section 34 adversarial rounds (2026-07-30). The gate is a COST control -- it stops the unattended run flooding its own context with bare build/test output -- not a safety or security boundary, and the exploiting shapes all have to be written deliberately. That is why this is a tracked follow-up rather than a section-34 blocker. The interim position is already fail-closed in both directions: an unsplittable command that names a suite BLOCKS, and any command using grammar the walk does not model (`#`, `$((`, `case`/`esac`) is declared unsplittable rather than answered wrongly. A wrong split is worse than no split, because it hands the caller confident segments that hide a bare suite inside a fragment it then exempts.
+- [x] Delete the walk (`command_segments`, `_has_unmodelled_grammar`, `_split_raw_segments`, `_scan_raw`, `_take_substitution`, `_strip_heredoc_bodies` and the quoting helpers), which no live code calls
+- [x] Record the parser evaluation for any future segmenting gate (answer Q47)
+- [x] Commit: `"hooks: delete the shell walk the deleted offload gate used"`
 
-- [/] operator-gated: Replace the hand-rolled walk in `command_segments()` with a grammar-accurate parse, so segmentation is correct rather than fail-closed for `case`/`esac`, comments, arithmetic, and nested substitutions
-      Covers `_split_raw_segments()` and `_take_substitution()` alongside it. Prefer a vendored pure-python shell parser (`bashlex` or equivalent) over hand-extending the walk: the walk is at the point where each new construct costs another special case and the special cases interact. Keep the fail-closed fallback for anything the parser itself rejects. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §34 (item: "Detect a live orphan before touching any shared boot state, and refuse the run naming the pid rather than interleaving with it")
-- [/] operator-gated: Retire `_has_unmodelled_grammar()` once the parser lands, converting its four constructs from "refuse to answer" into asserted-correct segmentations
-      The regressions added in section 34 (the `build_offload_grammar` cases) assert BLOCK today because the splitter declines to model them; with a real parser they should assert the precise segment set instead, and the legitimate-prompt cases beside them must keep passing unchanged.
-- [/] operator-gated: Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable
-      `_RUN_ARTIFACT_RE` in [`.claude/hooks/build_offload_reminder.py`](../../.claude/hooks/build_offload_reminder.py) is anchored to the segment start and rejects `-c`, which closes the known shapes, but it is still a regex over text rather than a check on the command being run.
-> **Tactical predecessor shipped 2026-08-05** (`9feb1062`, `57e44841`, and the v08 close-out `fe819e4d`). Five separate v08 runner findings turned out to be ONE root cause -- a hook reading a command line as a STRING where it needed an ARGV -- and were fixed point-by-point in exactly the code this section wants replaced wholesale:
-> - `build_offload_reminder._tokens_invocation` now treats `-n`/`--noexec` (incl. clusters) as non-executing, so `bash -n <script>` is not a suite run. Filed THREE times in v08.
-> - `build_offload_reminder._substitution_bodies` is quote- and escape-aware, so markdown code-quotes in a commit message are not command substitution -- while an UNESCAPED backtick in double quotes still is.
-> - `_RUN_ARTIFACT_RE` now tolerates leading shell keywords (`do`/`then`/...), so a correctly-wrapped route inside a `for` body keeps its exemption. **This is the third bullet's exact complaint** -- it is now anchored more permissively, NOT on parsed argv, so that bullet still stands.
-> - `_codex_dispatch.extract_dispatch_prompts` + `_review_kind.detect_review_kinds_from_cmd` return EVERY dispatch in a command rather than the first, fixing step-attribution for bundled dispatches.
-> - `run_phase_guard._strip_git_message_bodies` keeps `[SEQ-TEARDOWN]` out of git `-m`/`-F` message bodies (git-only, so an executable heredoc still blocks).
->
-> **What this section still owes, unchanged:** all of the above are hand-rolled special cases on top of the same hand-rolled walk. They make the CURRENT false positives stop; they do not make segmentation grammar-correct, and each one is another special case of the kind this section exists to retire. `_has_unmodelled_grammar()` is still the fail-closed backstop for `case`/`esac` and friends.
+**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass.
 
-- [/] operator-gated: Commit: `"hooks: parse shell with a real grammar for the gate exemptions"`
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/overnight/tests/test_dispatch_recognition.py`, `python3 scripts/overnight/tests/test_review_gate.py`, `bash scripts/overnight/tests/run-all.sh`
 
-**Test checkpoint:** every `build_offload_*` case in `scripts/test-tooling.sh` still passes; the four `build_offload_grammar` shapes assert a correct segmentation rather than a fail-closed block; a bare suite invocation cannot be hidden in any shape the parser accepts. Test on: host tooling only (no QEMU dependency).
-
----
-
-> [!WARNING]
-> **bashlex was EVALUATED and REJECTED on measurement, 2026-08-05. Do not re-attempt it.** This section's plan says "prefer a vendored pure-python shell parser (`bashlex` or equivalent) over hand-extending the walk". The named candidate is strictly WORSE than the walk it would replace, on the shapes this repo actually issues:
->
-> | shape | current hand-rolled walk | bashlex 0.18 |
-> |---|---|---|
-> | `<<'PY'` quoted heredoc | 1 segment, handled | `ParsingError` |
-> | `git commit -F -` heredoc | 1 segment, handled | `ParsingError` |
-> | heredoc into a pipe | 2 segments, handled | `ParsingError` |
-> | `case`/`esac` | refuses, fail-closed | `NotImplementedError` |
->
-> Two of those are disqualifying on their own. bashlex parses only UNQUOTED heredoc delimiters (`<<PY`), and the QUOTED form is the one this repo's own doctrine requires -- 3 unquoted heredocs were converted to quoted on 2026-08-05 precisely because the unquoted form silently corrupts its own body. And `case` raising `NotImplementedError` means bashlex cannot deliver this section's SECOND item at all: it refuses the same construct `_has_unmodelled_grammar()` refuses, so there is nothing to retire.
->
-> Weight, so this is not dismissed on synthetic cases: **2,562 of 31,528 recorded tool-history commands (8.1%) contain `<<`**. A parser that fails on those would fail-open or fail-closed on roughly one command in twelve.
->
-> Cost was never the problem -- bashlex parses in 0.179 ms, comfortably inside a PreToolUse budget. Capability was.
->
-> **What this leaves.** The first item stands but its prescribed MEANS does not: "or equivalent" now has to name a parser that handles quoted heredocs and `case`, or the item becomes a deliberate hand-rolled tokenizer with the plan rewritten to say so. That is an operator design call, and it is the reason this section stays parked rather than being attempted again.
-
-> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
+> **Notes:**
+> - What shipped: 362 lines of dead shell walk removed from `_codex_dispatch.py`; the dispatch recogniser (`_tokenize`, `_segment_by_separators`) and the commit gate's `_BashLexer` are untouched.
+> - Parser evaluation, 2026-11-17, over 17,428 distinct Bash commands from this project's transcripts: tree-sitter-bash 0.25.1 (MIT) failed 62 that `bash -n` accepts, nearly all heredocs, including `git commit -F - <<'EOF' 2>&1 | tail` and two heredocs on one line, and it is a compiled extension every hook would load. bashlex 0.18 was rejected on 2026-08-05 (no quoted heredocs, no `case`).
+> - Scope boundary: a future gate that must segment shell starts from `_BashLexer` or `bash -n`, not a new walk (Q47).
 
 ## 33. Section-commit gate reads an untokenizable commit line as a commit
 
@@ -1208,7 +1177,7 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 > - How it integrates: the PreToolUse gate judges each Bash call; git's own hook is the backstop for any spelling the reader misses.
 > - Downstream effects: 160 of 575 recorded commands the old shlex reader called no commit are now read; the reader is linear and budgeted, so it cannot time the hook out.
 > - Canonical doc: [Automation Hardening](../../docs/infrastructure/automation-hardening.md) and the Host Bootstrap Contract (pytest sentinel).
-> - Scope boundary: grammar-accurate segmentation for the gate exemptions stays with section 32.
+> - Scope boundary: the gate-exemption shell walk was deleted with its gate (section 32).
 
 > **Verified:** 2026-11-12 | commit `1bd151153` | 8/8 items | build N/A (hooks-only) | run-all.sh 90/90 PASS | 575-command replay: 0 changed verdicts | lint exit 0
 > **Quality reviewed:** 2026-11-12 | Codex passes: plan, rounds to the 55 cap, performance x12, completion x12; final performance and completion approve on `1bd151153` | every P2 fixed with a test failing on its prior candidate | scope: N/A (host tooling, no kernel/boot surface)

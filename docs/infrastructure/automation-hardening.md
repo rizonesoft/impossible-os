@@ -56,7 +56,6 @@ Both outputs were measured on 2026-09-28, when `.claude/hooks/` held 91 Python f
 - **Codex MCP in non-interactive runs.** The servers are configured for Codex, but every MCP call from a non-interactive Codex path is cancelled by an upstream Codex bug: [Codex MCP Wiring](../../todo/00-infrastructure/TODO-08-automation-hardening.md#1-codex-mcp-wiring--cross-config-drift-validator).
 - **Stronger review binding.** The reception gate expires on a one-hour timer rather than on a HEAD or tree change, and findings are not parsed into structured records: [receiving-code-review Hard Gate](../../todo/00-infrastructure/TODO-08-automation-hardening.md#3-receiving-code-review-hard-gate-state-file--post-codex-hook-block).
 - **Per-section review state.** Review records are keyed per file, not per section, pending an operator decision: [Four-Dispatch Enforcement](../../todo/00-infrastructure/TODO-08-automation-hardening.md#5-review-todo-section-four-dispatch-enforcement).
-- **Shell grammar.** Gate exemptions split commands with a hand-written walk that fails closed on some constructs; replacing it with a real shell grammar is operator-gated: [Grammar-Accurate Shell Segmentation](../../todo/00-infrastructure/TODO-08-automation-hardening.md#32-grammar-accurate-shell-segmentation-for-the-gate-exemptions).
 
 ## How does it compare with Windows 11 and Linux?
 
