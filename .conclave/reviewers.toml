@@ -23,6 +23,9 @@
 # items and spend no further passes. A [[schedule.conditional]] entry adds its lenses to the named passes only
 # when the section's changed files fall under one of its paths.
 # A section keeps the schedule it started under, so sections already under review finish on the earlier rules.
+# Operator decision 2026-11-17: GPT-6.2 Astra was released and replaces GPT-6 Astra (`gpt-6.2-astra` through the
+# Codex CLI). The dispatcher holds every pass to the model in ~/.codex/config.toml, so sections already under review
+# continue on GPT-6.2 Astra.
 #
 # `model` is a declaration, never a flag: the dispatcher refuses when ~/.codex/config.toml names a different model.
 # There is no `effort` key here. Reasoning effort is the operator's dial in the Codex config.
@@ -31,7 +34,7 @@ schema_version = 1
 
 [reviewers.astra]
 cli = "codex"
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 
 [routes]
 claude = ["astra"]

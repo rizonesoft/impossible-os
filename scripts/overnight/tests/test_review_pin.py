@@ -18,7 +18,7 @@ def _pin(text=GOOD):
 
 def test_the_repository_pin_holds():
     pin = _pin()
-    assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6-astra")
+    assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6.2-astra")
     assert (pin["pass_cap"], pin["no_progress_cap"]) == (55, 5)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
@@ -34,7 +34,7 @@ def test_the_repository_pin_holds():
     ('claude = ["astra"]', 'claude = ["astra"]\ncodex = ["astra"]'),
     ('claude = ["astra"]', 'claude = ["nobody"]'),
     ('cli = "codex"', 'cli = "agy"'),
-    ('model = "gpt-6-astra"', 'model = "gpt-6-astra"\neffort = "high"'),
+    ('model = "gpt-6.2-astra"', 'model = "gpt-6.2-astra"\neffort = "high"'),
     ('policy = "four-pass"', 'policy = "three-pass"'),
     ("pass_cap = 55", "pass_cap = 3"),
     ('[schedule.performance]\nlenses = ["optimization"]\n', ""),
@@ -92,8 +92,12 @@ def test_a_round_owes_one_verdict_per_lens():
 
 def test_the_codex_config_must_name_the_pinned_model(tmp_path):
     pin, config = _pin(), tmp_path / "config.toml"
-    config.write_text('model = "gpt-6-astra"\nmodel_reasoning_effort = "low"\n')
+    config.write_text('model = "gpt-6.2-astra"\nmodel_reasoning_effort = "low"\n')
     rp.check_codex_model(pin, config)
+    for other in ("gpt-6-astra", "another-model"):
+        config.write_text(f'model = "{other}"\n')
+        with pytest.raises(rp.Refused, match="change the config, not the call"):
+            rp.check_codex_model(pin, config)
     config.write_text('model = "another-model"\n')
     with pytest.raises(rp.Refused, match="change the config, not the call"):
         rp.check_codex_model(pin, config)

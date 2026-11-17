@@ -37,4 +37,4 @@
 #   is doctrine prose for human readers.
 # ============================================================================
 
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
