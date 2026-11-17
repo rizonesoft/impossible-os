@@ -68,6 +68,9 @@ SHAPES = [
     "git>/dev/null reset --hard",
     "git reset>/dev/null --hard",
     "git reset --hard>/dev/null",
+    "git reset&>/dev/null --hard",
+    "git reset --hard&>/dev/null",
+    "git&>>log reset --hard",
 ]
 REFUSED = "git reset --hard"
 

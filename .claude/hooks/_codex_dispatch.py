@@ -361,7 +361,7 @@ _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until"
 # wherever they stand (`>/dev/null git reset --hard`, `git 2>/dev/null reset`).
 # Longer operators first, so `>&` is not read as `>` with target `&`.
 _REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>|>&|>\||<<<|<>|<&|>|<)(.*)\Z", re.S)
-_REDIRECT_CHARS = re.compile(r"[<>]")
+_REDIRECT_CHARS = re.compile(r"&?[<>]")  # `&>` and `&>>` keep their `&`
 
 
 def _split_attached_redirects(out):
