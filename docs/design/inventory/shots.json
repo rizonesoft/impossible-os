@@ -56,8 +56,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 5493861,
-  "sha256": "9f2e86fd1ec310c7b26c8f773935207fd963300cfbd6fe03cb4bccf55c0e17a7"
+  "size": 5491751,
+  "sha256": "acc3abd29e9abd961263de0728f5f4f514fde169c8fb6496257d5210085715ed"
  },
  {
   "surface": "desktop",
@@ -66,8 +66,8 @@
   "profile": "fhd-100",
   "width": 328,
   "height": 401,
-  "size": 13052,
-  "sha256": "71c00ad018584def8dd922bb4624db9099a519d7629391a6ba24ca2c6dc49174"
+  "size": 13112,
+  "sha256": "e9f9ec03791876f4c5e7542f40c9e9554520f4fba1832ea690150ba48827d55a"
  },
  {
   "surface": "desktop",
@@ -76,8 +76,8 @@
   "profile": "fhd-100",
   "width": 533,
   "height": 97,
-  "size": 7250,
-  "sha256": "84cee9209a85f94095d35bab8c1df311fa9057a797d22e4df9642484bbcec926"
+  "size": 7244,
+  "sha256": "9195f232d15a3f9e115ff9e78d47e638949a435df3f461294dd4d13317e81d6d"
  },
  {
   "surface": "desktop",
@@ -87,7 +87,7 @@
   "width": 456,
   "height": 129,
   "size": 7408,
-  "sha256": "5d3218e09c206f5fa4af206bee96e7ce1b8f390c272c9d440ca2f86e7548045d"
+  "sha256": "c1f5656ee27447817972c68aeaab7dfda756c2d76fe74f7801ff95729dd09336"
  },
  {
   "surface": "desktop",
@@ -96,8 +96,8 @@
   "profile": "fhd-100",
   "width": 453,
   "height": 65,
-  "size": 4631,
-  "sha256": "c682a73b1b43d4a9828a80a741b92a1ca5025c374550f204b2a3b96840f97f4b"
+  "size": 4632,
+  "sha256": "519f9bbf4d8b09521eaab36326eee13bb67cdf2fb582f466f5e0a7fa4920c953"
  },
  {
   "surface": "desktop",
@@ -481,6 +481,16 @@
  },
  {
   "surface": "start",
+  "file": "start",
+  "state": "folder-menu",
+  "profile": "fhd-100",
+  "width": 146,
+  "height": 102,
+  "size": 1766,
+  "sha256": "a8b51fc280d313e78b79962a85a2f39e87ef487255efac6f05ddbfa2c65024e7"
+ },
+ {
+  "surface": "start",
   "file": "search",
   "state": "home",
   "profile": "fhd-100",
@@ -626,8 +636,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1032,
-  "size": 3382941,
-  "sha256": "654cbf1d4490cf7ed7c50274a497bdcd89a2df051241563d27aeeeed84ca76d0"
+  "size": 3382901,
+  "sha256": "c376d56d2023e4c7c922ec43162345ba54a7389d2e5a1f08eff159ad6f72c6c0"
  },
  {
   "surface": "start",

@@ -31,10 +31,13 @@ LABELS = [({"controlType": "Image", "name": ""}, "Icon")]
 BRIDGE = "Microsoft.UI.Content.PopupWindowSiteBridge"
 # Icon names the fixture gives (file extensions are hidden by default).
 FOLDER, FILE, SHORTCUT, BIN = "Folder", "Text", "Shortcut", "Recycle Bin"
+# A name long enough to wrap past the two lines an unselected label shows.
+LONG = "Quarterly planning notes for the whole design team"
 FIXTURE = r"""
 $d = [Environment]::GetFolderPath('Desktop')
 New-Item -ItemType Directory -Force (Join-Path $d 'Folder') | Out-Null
 Set-Content -LiteralPath (Join-Path $d 'Text.txt') -Value 'x'
+Set-Content -LiteralPath (Join-Path $d 'Quarterly planning notes for the whole design team.txt') -Value 'x'
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Shortcut.lnk'))
 $s.TargetPath = "$env:WINDIR\notepad.exe"; $s.Save()
 (New-Object -ComObject Shell.Application).ToggleDesktop()
@@ -198,6 +201,36 @@ def read_cell(ctx, size):
     time.sleep(1)
     MEASURED["selected"] = extent(changed(plain, ctx.pixels(*box), "the selected icon"))
     ctx.click_at(*empty_point(ctx))         # nothing selected for later scenes
+    read_long(ctx)
+
+
+def read_long(ctx):
+    """A long name's label at medium size: how wide it wraps, and how tall its
+    cell and its selection rectangle grow (the lines shown unselected and
+    selected); the Recycle Bin's caption is too short to show either."""
+    x, y, w, h = (int(v) for v in icon(ctx, LONG).bounds)
+    # Selected, the whole name shows below the cell: read well past its foot.
+    box = (x - PAD, y - PAD, w + 2 * PAD, h + 2 * PAD + 12 * 15)
+    inner = (x + FOCUS_EDGE, y + FOCUS_EDGE, w - 2 * FOCUS_EDGE, h - 2 * FOCUS_EDGE)
+    ctx.hover_point(*empty_point(ctx))
+    time.sleep(1)
+    plain, plain_inner = ctx.pixels(*box), ctx.pixels(*inner)
+    toggle_icons(ctx)
+    try:
+        bare = ctx.pixels(*inner)
+    finally:
+        toggle_icons(ctx)
+        icon(ctx, LONG)
+    parts = blocks(changed(plain_inner, bare, "the long-named icon"))
+    if len(parts) < 2:
+        raise core.Incomplete("the long-named icon showed no gap between its artwork and its label")
+    ctx.click(icon(ctx, LONG))
+    ctx.hover_point(*empty_point(ctx))
+    time.sleep(1)
+    selected = extent(changed(plain, ctx.pixels(*box), "the selected long-named icon"))
+    ctx.click_at(*empty_point(ctx))
+    MEASURED["long"] = {"wrap": extent([r for part in parts[1:] for r in part])[0], "height": h,
+                        "selected": selected[1]}
 
 
 def icon_size(chord, size):
@@ -298,17 +331,30 @@ def METRICS(records):
         (aw, ah), (lw, lh) = MEASURED[size]["art"], MEASURED[size]["label"]
         out += [(f"art-width-{size}", f"Icon artwork width, {size} icons", aw),
                 (f"art-height-{size}", f"Icon artwork height, {size} icons", ah),
-                (f"label-width-{size}", f"Label width, {size} icons", lw)]
+                (f"label-width-{size}", f"Recycle Bin caption ink width, {size} icons", lw)]
     for state, label in (("hover", "Hover rectangle"), ("selected", "Selection rectangle")):
         if state not in MEASURED:
             raise ValueError(f"the icon's {state} rectangle was not read")
         out += [(f"{state}-width", f"{label} width", MEASURED[state][0]),
                 (f"{state}-height", f"{label} height", MEASURED[state][1])]
+    if "long" not in MEASURED:
+        raise ValueError("the long-named icon's label was not read")
+    lines = {slug: v for slug, _, v in out}
+    one, step = lines["cell-height-one-line"], lines["label-line-height"]
+    lng = MEASURED["long"]
+    if not step or (lng["height"] - one) % step or (lng["selected"] - one) % step:
+        raise ValueError(f"the long label's heights {lng['height']} and {lng['selected']} are not whole lines of "
+                         f"{step} over {one}")
+    out += [("label-wrap-width", "Label wrap width (a long name's widest line)", lng["wrap"]),
+            ("label-lines", "Label lines shown unselected", (lng["height"] - one) // step + 1),
+            ("label-lines-selected", "Label lines shown selected (the long name)", (lng["selected"] - one) // step + 1)]
     missing = [slug for slug, _, v in out if v is None]
     if missing:
         raise ValueError(f"the grid could not be measured: {', '.join(missing)}")
+    counts = {"label-lines", "label-lines-selected"}
     return [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "metric", "label": label, "order": i,
-             "measure": {"value": v, "unit": "px", "scaling": "scales"}} for i, (slug, label, v) in enumerate(out)]
+             "measure": {"value": v, "unit": "count", "scaling": "fixed"} if slug in counts
+             else {"value": v, "unit": "px", "scaling": "scales"}} for i, (slug, label, v) in enumerate(out)]
 
 
 def _hand(start):

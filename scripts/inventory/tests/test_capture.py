@@ -1913,7 +1913,8 @@ class DesktopMetrics(unittest.TestCase):
         self.desk.MEASURED.update({"large": {"art": (72, 84), "label": (60, 12)},
                                    "medium": {"art": (36, 42), "label": (62, 12)},
                                    "small": {"art": (24, 28), "label": (62, 12)},
-                                   "hover": (76, 70), "selected": (76, 70)})
+                                   "hover": (76, 70), "selected": (76, 70),
+                                   "long": {"wrap": 70, "height": 85, "selected": 160}})
 
     def cells(self):
         def cell(name, y, h):
@@ -1935,6 +1936,17 @@ class DesktopMetrics(unittest.TestCase):
         self.assertEqual((got["desktop.art-width-large"], got["desktop.art-height-small"],
                           got["desktop.label-width-medium"], got["desktop.selected-width"],
                           got["desktop.hover-height"]), (72, 28, 62, 76, 70))
+
+    def test_a_long_label_gives_its_wrap_width_and_line_counts(self):
+        got = {m["id"]: m["measure"] for m in self.desk.METRICS(self.cells())}
+        self.assertEqual(got["desktop.label-wrap-width"]["value"], 70)
+        self.assertEqual(got["desktop.label-lines"], {"value": 2, "unit": "count", "scaling": "fixed"})
+        self.assertEqual(got["desktop.label-lines-selected"]["value"], 7)     # (160 - 70) / 15 + 1
+
+    def test_a_long_label_that_is_not_whole_lines_fails_the_capture(self):
+        self.desk.MEASURED["long"]["selected"] = 161
+        with self.assertRaises(ValueError):
+            self.desk.METRICS(self.cells())
 
     def test_a_missing_pixel_read_fails_the_capture(self):
         del self.desk.MEASURED["hover"]

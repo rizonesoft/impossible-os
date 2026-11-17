@@ -396,9 +396,10 @@ The report is the measure of progress, and the ownership check is the proof that
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
 - [x] Desktop Surface: writes `docs/design/inventory/desktop/desktop.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/desktop.py` (300 records, 21 screenshots); the default icons on this build are the Recycle Bin, Microsoft Edge and the Spotlight "Learn about this picture" icon, the last two `equivalent`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/desktop.py` (304 records, 21 screenshots); the default icons on this build are the Recycle Bin, Microsoft Edge and the Spotlight "Learn about this picture" icon, the last two `equivalent`
   - Icon grid as `metric` records measured from the captured cells: cell 76 px wide, 70 px tall with one label line and 15 px per further line, row pitch 100, and the cell at large (106 by 118), medium (76 by 70) and small (76 by 54) icons
-  - Read from screen pixels (UIA exposes none of it): artwork 72 by 84, 36 by 42 and 24 by 28 at the three sizes, label width about 62, and hover and selection rectangles equal to the 76 by 70 cell
+  - Read from screen pixels (UIA exposes none of it): artwork 72 by 84, 36 by 42 and 24 by 28 at the three sizes, the Recycle Bin caption's ink 62 wide, and hover and selection rectangles equal to the 76 by 70 cell
+  - A long-named fixture file gives the label layout: it wraps within 67 px, shows 2 lines unselected and the whole name (5 lines) selected
   - Modern menus for the empty area, a file, a folder, a shortcut and the Recycle Bin, each with its icon row and every submenu's entries (View, Sort by, New, Open with, Share with, Compress to); Paste, Paste shortcut and Undo come from an Explorer copy and paste before the capture
   - Classic menus behind "Show more options" for the same five triggers, as `contextMenu` records `replaced` under the `context-menus` ledger entry; their submenus do not open under UI Automation, and the same submenus are recorded from the modern menus
   - Behaviours by hand: rubber-band selection, drag to move, Ctrl-drag copy, Alt-drag shortcut, Ctrl and wheel icon size, double-click to open, F2 rename, and the three drop tips ("Move to", "Copy to", "Create link in") as `cursor` records; auto arrange, align to grid and show desktop icons are the captured View entries
@@ -418,13 +419,14 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Icon states, privacy indicators, the clock's lines and date forms, and the drag between flyout and bar are hand records: the VM has no microphone, location or capture source
   - Owners: the tray icons, notification centre, taskbar clock, layout switching, Aero Peek and on-screen keyboard sections
 - [x] Start Menu: writes `docs/design/inventory/start/start.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/start.py` (140 records): the panel is 858 x 890 standing on the taskbar, at x 531 centred and x 0 aligned left; one scrolling list holds Pinned (8 x 2 tiles of 96 x 84, Show all grows it in place), Recommended (56 px rows) and All
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/start.py` (145 records): the panel is 858 x 890 standing on the taskbar, at x 531 centred and x 0 aligned left; one scrolling list holds Pinned (8 x 2 tiles of 96 x 84, Show all grows it in place), Recommended (56 px rows) and All
   - This build has no pinned page dots and no layout choice in Start; its layout and recommendation switches are Settings pages, inventoried with Settings
   - All apps: the category, grid and list views (40 px rows, 53 px letter headings), the letter jump grid and its Back, and every app listed, folders opened (39 entries)
   - The bottom bar with all nine folder shortcuts in their order, the account card (`itemCount` 5) and the power menu (Lock, Shut down, Restart; `itemCount` 3), and the menus of a pinned tile, an all-apps entry, a recommended entry and the view button
   - Sleep is an `absent` row of `expected.json` (S3 is unusable on both machines); the update variants are section 25's `power-menu-update`; the corner radius is section 9's pixel read
   - Letter grid: 48 x 48 cells in 4 columns; grid columns and rows are `count` metrics
-  - A folder made with the tile menu's Create a new app folder, opened: a 4 by 3 grid; with every switch off Recommended still holds Get Started, so it has no empty state
+  - A folder made with the tile menu's Create a new app folder, opened: a panel titled Folder over a 4 by 3 grid; clicking the title renames it (an edit box UIA does not expose); the folder tile's menu holds only Move to front, Move left and Move right
+  - With every switch off Recommended still holds Get Started, so it has no empty state
   - Drag (reorder, onto a tile, to the taskbar, out of the grid), type-to-search, keyboard regions and closing are hand records
   - `start-apps`: 38 rows matched by Start; OneDrive installs at first sign-in, after the baseline is read, so it carries `baselineMissing`; the other 35 rows are not in Start's list on this build and stay unmatched until the Windows Tools item in section 13 captures them
 - [x] Search Flyout: writes `docs/design/inventory/start/search.json` (113 records; owners in `TODO-11-startmenu-tray-notifications.md` §3 and §8)

@@ -139,6 +139,14 @@ def folder_modal(ctx):
     return ctx.find(within=start(ctx), className="StartMenu.FolderModal", depth=3, timeout=10)
 
 
+def open_folder_menu(ctx):
+    """The folder tile's own menu: only the Move entries (26300.9974)."""
+    open_start(ctx)
+    ctx.click(within_start(ctx, className="GridViewItem", namePrefix="Folder with"), button="right")
+    flyout_menu(ctx)
+    time.sleep(SETTLE)
+
+
 def close_folder(ctx):
     ctx.keys("esc")
     _modal_gone(ctx)
@@ -424,6 +432,8 @@ SCENES = [
     # Last: the folder stays in the pinned grid for the rest of the run.
     dict(slug="pinned-folder", label="Pinned folder", kind="region", open=open_folder, root=folder_modal,
          close=close_folder),
+    dict(slug="folder-menu", label="Pinned folder menu", kind="contextMenu", open=open_folder_menu, root=flyout_menu,
+         close=close_menu),
 ]
 
 
@@ -534,8 +544,8 @@ def app_records():
 BEHAVIOURS = [
     ("type-to-search", "Type to search", "Typing with Start open moves the text into the search box and opens search."),
     ("drag-reorder", "Drag to reorder", "Dragging a pinned tile moves it; the others close up around it."),
-    ("drag-folder", "Drag onto a tile", "Dropping a pinned tile on another makes a folder of the two; a folder opens "
-                                         "in place with its own grid and a name box."),
+    ("drag-folder", "Drag onto a tile", "Dropping a pinned tile on another makes a folder of the two, which opens "
+                                         "as Making a folder describes."),
     ("drag-to-taskbar", "Drag to the taskbar", "Dragging a pinned tile onto the taskbar pins it there as well."),
     ("keyboard-regions", "Keyboard between regions", "Tab moves between the search box, the pinned grid, "
                                                       "recommended, all apps and the bottom bar; arrows move within one."),
@@ -545,8 +555,12 @@ BEHAVIOURS = [
                                                                "restarted, the region still holds Get Started: this "
                                                                "build has no empty Recommended state."),
     ("folder-made", "Making a folder", "Create a new app folder on a tile's menu turns that tile into a folder "
-                                       "named after it (\"Folder with Settings\"); a click opens it over Start, its own grid of 4 by 3 "
-                                       "tiles; UI Automation exposes no name box for the folder on this build."),
+                                       "UI Automation names after it (\"Folder with Settings\"); a click opens it over Start as a "
+                                       "panel of about 448 by 377 titled Folder above its own grid of 4 by 3 tiles (the "
+                                       "pinned-folder screenshot)."),
+    ("folder-rename", "Renaming a folder", "Clicking the open folder's title turns it into an edit box of about 320 by 40 with "
+                                           "an accent underline (F2 does nothing); UI Automation exposes neither the "
+                                           "title nor the box on this build, so both are read from the screen."),
     ("close-keys", "Closing", "Esc, the Windows key, or a click outside closes Start."),
     ("letter-back", "Back from the letter grid", "Back, or choosing a letter, returns from the letter grid to the "
                                                   "list at that letter; letters with no apps are dimmed."),
