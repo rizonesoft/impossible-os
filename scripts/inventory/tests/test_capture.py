@@ -495,6 +495,31 @@ class RestartExplorer(unittest.TestCase):
             core.restart_explorer(self.Ctx(fails=99), clock=lambda: next(now))
 
 
+class ClockSeconds(unittest.TestCase):
+    """The seconds scene checks the time for its seconds, never the clock's width,
+    which follows whichever line is wider (2026-11-17)."""
+
+    def setUp(self):
+        sys.modules.setdefault("capture_core", core)
+        self.tray = load("surface_tray", INV / "surfaces" / "tray.py")
+        self.names = []
+        self.tray.entry = lambda ctx, word: types.SimpleNamespace(name=self.names.pop(0) if len(self.names) > 1
+                                                                  else self.names[0], bounds=(0, 0, 70, 48))
+        self.tray.core = types.SimpleNamespace(restart_explorer=lambda ctx: None, Incomplete=core.Incomplete)
+        self.tray.time = types.SimpleNamespace(sleep=lambda s: None, monotonic=time.monotonic)
+        self.ctx = types.SimpleNamespace(powershell=lambda script: None)
+
+    def test_seconds_in_the_time_pass_at_the_same_width(self):
+        self.names = ["Clock 1:11 AM 11/17/2026", "Clock 1:11:52 AM 11/17/2026"]
+        self.tray.open_seconds(self.ctx, clock=lambda: 0)
+
+    def test_a_time_without_seconds_is_incomplete(self):
+        self.names = ["Clock 1:11 AM 11/17/2026"]
+        now = iter([0, 10, 40])
+        with self.assertRaisesRegex(core.Incomplete, "showed no seconds"):
+            self.tray.open_seconds(self.ctx, clock=lambda: next(now))
+
+
 class Incomplete(unittest.TestCase):
     def test_a_flyout_that_never_settles_fails_the_capture(self):
         t = tree()

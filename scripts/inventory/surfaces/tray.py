@@ -14,6 +14,7 @@ only when turned on (a second input language, the touch keyboard setting); the
 pen entry needs pen hardware and never shows in the VM. The hidden icons flyout
 is its own top-level window. The clock's seconds apply only at Explorer's start.
 """
+import re
 import time
 
 import capture_core as core
@@ -64,8 +65,13 @@ def nothing(ctx):
     pass
 
 
+SECONDS_OFF = f"Set-ItemProperty -LiteralPath '{ADVANCED}' -Name ShowSecondsInSystemClock -Value 0 -Type DWord"
+
+
 def open_tray(ctx):
-    ctx.powershell(EXTRAS)
+    # The clock starts without seconds whatever an earlier run left (2026-11-17:
+    # a run that never restored it made the plain clock as wide as with seconds).
+    ctx.powershell(EXTRAS + "; " + SECONDS_OFF)
     core.restart_explorer(ctx)
     entry(ctx, "Tray Input Indicator")
     entry(ctx, "Touch Keyboard")
@@ -177,10 +183,30 @@ def close_tooltip(ctx):
     time.sleep(1)
 
 
-def open_seconds(ctx):
+SECONDS_WAIT = 30
+
+
+# The time in the clock's name with seconds (the name is "Clock", the time and the date).
+WITH_SECONDS = re.compile(r"\d:\d\d:\d\d")
+
+
+def open_seconds(ctx, clock=time.monotonic):
+    """The clock with seconds, checked by what the setting does: the time gains
+    its seconds. Its width is no check (2026-11-17): the clock is as wide as its
+    widest line, and at 1:11:52 AM that was still the date, 70 px either way."""
     ctx.powershell(f"Set-ItemProperty -LiteralPath '{ADVANCED}' -Name ShowSecondsInSystemClock -Value 1 -Type DWord")
     core.restart_explorer(ctx)
+    deadline = clock() + SECONDS_WAIT
+    while not WITH_SECONDS.search(entry(ctx, "Clock").name):
+        if clock() >= deadline:
+            raise core.Incomplete(f"the clock showed no seconds within {SECONDS_WAIT} s of turning them on")
+        time.sleep(0.5)
     time.sleep(SETTLE)
+
+
+def close_seconds(ctx):
+    ctx.powershell(SECONDS_OFF)
+    core.restart_explorer(ctx)
 
 
 SCENES = [
@@ -201,7 +227,8 @@ SCENES = [
     dict(slug="clock-tooltip", label="Clock tooltip", kind="region", open=open_tooltip, root=tooltip,
          close=close_tooltip, values=VALUES + [{"className": "TextBlock"}]),
     # Last: it restarts the shell with the clock's seconds on.
-    dict(slug="clock-seconds", label="Clock with seconds", kind="state", open=open_seconds, root=tray, close=nothing,
+    dict(slug="clock-seconds", label="Clock with seconds", kind="state", open=open_seconds, root=tray,
+         close=close_seconds,
          keep=False),
 ]
 
@@ -230,14 +257,11 @@ def METRICS(records):
              "order": 20, "measure": {"value": cell["width"], "unit": "px", "scaling": "scales"}},
             {"id": f"{ROOT}.flyout-padding", "parent": ROOT, "kind": "metric", "label": "Hidden icons flyout padding",
              "order": 21, "measure": {"value": (box["width"] - cell["width"]) // 2, "unit": "px", "scaling": "scales"}}]
-    seconds = [r for r in records if r["id"] == p + "clock-seconds.clock"]
-    if not seconds:
+    if not any(r["id"] == p + "clock-seconds.clock" for r in records):
         raise ValueError("the clock with seconds was not measured")
-    plain = width(f"{ROOT}.clock")
-    if seconds[0]["bounds"]["width"] <= plain:
-        raise ValueError("the clock is no wider with seconds; the setting was not applied")
-    out.append({"id": f"{ROOT}.clock-seconds-width", "parent": ROOT, "kind": "metric", "label": "Clock width with seconds",
-                "order": 22, "measure": {"value": seconds[0]["bounds"]["width"], "unit": "px", "scaling": "scales"}})
+    out.append({"id": f"{ROOT}.clock-seconds", "parent": ROOT, "kind": "state", "label": "Clock with seconds",
+                "order": 22, "behaviour": "With seconds on, the time reads h:mm:ss; the clock is as wide as its "
+                                          "wider line, so it grows only when the time is wider than the date."})
     return out
 
 

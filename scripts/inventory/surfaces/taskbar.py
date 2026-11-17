@@ -130,6 +130,10 @@ SETTLE = 2.5                       # the indicator grows into place after a wind
 
 
 def open_bar(ctx):
+    # The default combine setting whatever an earlier run left (2026-11-17: the
+    # overflow scenes set never-combine and nothing set it back).
+    set_value(ctx, ADVANCED, "TaskbarGlomLevel", GLOM_DEFAULT)
+    restart_shell(ctx)
     ctx.launch("notepad.exe")
     button(ctx, NOTEPAD, "running")
     away(ctx)
@@ -354,6 +358,9 @@ def overflow_button(ctx):
     return ctx.find(within=frame(ctx), automationId="OverflowButton", depth=2, timeout=60)
 
 
+GLOM_DEFAULT = 0                   # TaskbarGlomLevel: always combine, the Windows 11 default
+
+
 def open_overflow_bar(ctx):
     set_value(ctx, ADVANCED, "TaskbarGlomLevel", 2)        # never combine: one button per window
     restart_shell(ctx)
@@ -375,12 +382,16 @@ def open_overflow(ctx):
 
 
 def close_overflow(ctx):
+    """Close the flyout, then put the combine setting back; the restart also
+    closes the overflow scene's Explorer windows."""
     ctx.keys("esc")
     deadline = time.monotonic() + 10
     while preview(ctx):
         if time.monotonic() > deadline:
             raise core.Incomplete("the overflow flyout stayed open")
         time.sleep(0.3)
+    set_value(ctx, ADVANCED, "TaskbarGlomLevel", GLOM_DEFAULT)
+    restart_shell(ctx)
 
 
 SCENES = [

@@ -296,8 +296,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 48,
-  "size": 12963,
-  "sha256": "a9d1df81967f3ad45ed511562e92b270e8b1e4b93a98106644eaf3bf8fd0e72d"
+  "size": 12577,
+  "sha256": "30630eae23b3a9e37be8ebf9049f0809b126cbd3a4dc6adf2c2c167bbb6859ff"
  },
  {
   "surface": "taskbar",
@@ -316,8 +316,8 @@
   "profile": "fhd-100",
   "width": 175,
   "height": 64,
-  "size": 3040,
-  "sha256": "a7e1b0e4f064850a10ed4e21566aae2ce97a801271a8e7c47bec77b84379710e"
+  "size": 2956,
+  "sha256": "3c745d3f378c89a5b9f1703f3727d2e21bde4487157c6f0c8dadf9ad9490d93e"
  },
  {
   "surface": "taskbar",
@@ -326,8 +326,8 @@
   "profile": "fhd-100",
   "width": 318,
   "height": 354,
-  "size": 31956,
-  "sha256": "da68d9cbe19280b2b5c56780929ed9897037811aeca9f30c149c433b7d5e1fad"
+  "size": 25551,
+  "sha256": "324096052ccfe5522e580a081bfd42082c025210e7d35940e359fbd24aa58bbd"
  },
  {
   "surface": "taskbar",
@@ -356,8 +356,8 @@
   "profile": "fhd-100",
   "width": 159,
   "height": 73,
-  "size": 2976,
-  "sha256": "ec193c8c3640745bb614beffa0c7f8fad2f21fa1cb3014b82a79ccfac6309649"
+  "size": 2968,
+  "sha256": "e7abb5953dde6f51fbb07295c50749b1c94aac9bf8aa6e451301fd7147a1ffb4"
  },
  {
   "surface": "taskbar",
@@ -376,8 +376,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2373792,
-  "sha256": "fa87e651b2545dd421320d46f38ea95c358cae7de8b966d26f85a9b9ba8a646c"
+  "size": 2395937,
+  "sha256": "81dd5b78791f56ee9f7a73ce24ba10416a690475f1598677ddc0e90e0e4ed130"
  },
  {
   "surface": "taskbar",
@@ -396,8 +396,8 @@
   "profile": "fhd-100",
   "width": 318,
   "height": 322,
-  "size": 31110,
-  "sha256": "bb344ef39ae95467884f24e6180ee634455e443a4c2b5f14643eac7435d9635c"
+  "size": 24168,
+  "sha256": "4871277b34519e19f51becd9f4c6812747131cef4ce8588509a99dbf0fbface5"
  },
  {
   "surface": "taskbar",
@@ -406,8 +406,8 @@
   "profile": "fhd-100",
   "width": 318,
   "height": 125,
-  "size": 31432,
-  "sha256": "a17942d313cd1c82dcf90ee806d75bc50e7ac74dab66044634a0f13d05fdeff8"
+  "size": 17456,
+  "sha256": "a014fd587471a6328ec130020887b17876d958f0c05b0bab16aa7f31199ba409"
  },
  {
   "surface": "taskbar",
@@ -416,8 +416,8 @@
   "profile": "dual-100-150",
   "width": 1920,
   "height": 72,
-  "size": 22178,
-  "sha256": "a2677263865d81cc2d3041e95f0d5c1095c5287b62f936747cb1c112ac341729"
+  "size": 22396,
+  "sha256": "6269d4fe035f65ad5aee7efe861965d8e2112b647616386447fb8f08648bde61"
  },
  {
   "surface": "taskbar",
@@ -426,8 +426,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2365874,
-  "sha256": "f15c698840239fd9d5d50a50556a1eb4bb0f5447c52e4ecb036c93fc78a4b886"
+  "size": 2451621,
+  "sha256": "f490352f9c818bd450f4dd1435e9d80d464d41d9071ef1b0693a735da1c428eb"
  },
  {
   "surface": "taskbar",
@@ -436,8 +436,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 48,
-  "size": 11873,
-  "sha256": "88ec311d5e3e8afb9ad46e8192227c9f9a75276ddfc35208173275bf0244807b"
+  "size": 11792,
+  "sha256": "f48a59e795097d8b588dbd48dc8469beccfdb90ca0ccdb0a1e802039c2c2631a"
  },
  {
   "surface": "taskbar",

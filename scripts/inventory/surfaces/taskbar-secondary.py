@@ -38,6 +38,7 @@ ADVANCED = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 MODES = [("all-taskbars", 0, "All taskbars"), ("main-and-where-open", 1, "Main taskbar and taskbar where window is open"),
          ("where-open", 2, "Taskbar where window is open")]
 SETTLE = 2.5
+NOTEPAD_WAIT = 60                 # a first start on the stand-in
 
 
 def bar(ctx):
@@ -60,7 +61,9 @@ def restart_shell(ctx):
 
 def open_secondary(ctx):
     ctx.launch("notepad.exe")             # a window on the first display, to see where its button goes
-    ctx.find_window(className="Notepad")
+    t0 = time.monotonic()
+    ctx.find_window(className="Notepad", timeout=NOTEPAD_WAIT)
+    print(f"secondary: Notepad opened in {time.monotonic() - t0:.0f} s", flush=True)
     ctx.find(within=ctx.find_window(className="Shell_TrayWnd"), automationId=NOTEPAD, depth=4, timeout=30)
     time.sleep(SETTLE)
 

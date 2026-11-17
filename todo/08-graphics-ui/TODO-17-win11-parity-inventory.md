@@ -412,8 +412,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Second display on the two-display stand-in: its bar (72 px at 150 %) and the three button modes; pinned apps leave the second bar in the two "where open" modes
   - Owners: the taskbar roadmap's sections 1, 2, 3, 5, 6 and the new section 9 (every display), and the widget framework
 - [x] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/tray.py` (75 records): the order is the chevron, touch keyboard, input indicator, network, volume, clock, bell and show-desktop edge, each width a `metric`; the pen entry needs pen hardware and shows nothing in the VM
-  - The hidden icons flyout (cell 40, padding 17), the input indicator flyout, the clock tooltip, the clock, network and volume menus (the bell shares the clock's), an app icon's menu as frame only, and the clock's width with seconds (73 against 70)
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/tray.py` (66 records): the order is the chevron, touch keyboard, input indicator, network, volume, clock, bell and show-desktop edge, each width a `metric`; the pen entry needs pen hardware and shows nothing in the VM
+  - The hidden icons flyout (cell 40, padding 17), the input indicator flyout, the clock tooltip, the clock, network and volume menus (the bell shares the clock's), an app icon's menu as frame only, and the clock with seconds (as wide as its wider line, so it grows only when the time outgrows the date)
   - Icon states, privacy indicators, the clock's lines and date forms, and the drag between flyout and bar are hand records: the VM has no microphone, location or capture source
   - Owners: the tray icons, notification centre, taskbar clock, layout switching, Aero Peek and on-screen keyboard sections
 - [x] Start Menu: writes `docs/design/inventory/start/start.json`
