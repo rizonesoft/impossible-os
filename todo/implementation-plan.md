@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **990 of 2723 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **991 of 2723 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -298,7 +298,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §29` | Standardize PreToolUse Prefix-Allowlist Across Gates                                                                  | none     |     7 |
 | [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none     |     9 |
 | [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none     |     5 |
-| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
+| [x]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
 | [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     8 |
 | [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
 | [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |

@@ -1158,6 +1158,9 @@ The build-offload gate (`build_offload_reminder.py`) decided its exemptions with
 > - Rejected (round 4): an escaped `)` inside a `case` pattern (`case "a)b" in a\)b ) ...`) hides the arm's command; deliberate shell, outside the accidental-verb threat model.
 > - Scope boundary: segmentation for a new gate builds on `_tokenize`, `_segment_by_separators` and `guard_argv` (or the commit gate's `_BashLexer`), not a new walk (Q47).
 
+> **Verified:** 2026-11-17 at 391d23a0c (code at 5a524d46f): control-plane suite 95 passed, 0 failed; `test_guard_compound.py`, `test_dispatch_recognition.py`, `test_review_gate.py` and `test_attended_repair_worktree.py` pass; each fix's control fails with that fix reverted; every one of 16,527 recorded commands gets a quote mask.
+> **Quality reviewed:** 2026-11-17 | Codex 41x (plan, round 15x, performance 15x, completion 10x) | 9H+13M+2L fixed or filed (grammar families to section 47), 1 rejected, 0 open | scope: N/A (host tooling, no kernel surface)
+
 
 ## 33. Section-commit gate reads an untokenizable commit line as a commit
 
