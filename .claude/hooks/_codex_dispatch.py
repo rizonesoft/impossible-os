@@ -359,7 +359,22 @@ _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until"
 # A redirection word (`>/dev/null`, `2>&1`, `<in`, `&>log`); with nothing after
 # the operator, the next word is its target. Bash removes both from the argv,
 # wherever they stand (`>/dev/null git reset --hard`, `git 2>/dev/null reset`).
-_REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>?|<<<|<>|<|>&|<&|>\|)(.*)\Z", re.S)
+# Longer operators first, so `>&` is not read as `>` with target `&`.
+_REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>|>&|>\||<<<|<>|<&|>|<)(.*)\Z", re.S)
+_REDIRECT_CHARS = re.compile(r"[<>]")
+
+
+def _split_attached_redirects(out):
+    """`git>/dev/null` is the word `git` and the redirection `>/dev/null`."""
+    split = []
+    for tok in out:
+        m = _REDIRECT_CHARS.search(tok)
+        if m and m.start() > 0 and not tok[:m.start()].isdigit() and tok[:m.start()] != "&":
+            split.append(tok[:m.start()])
+            split.append(tok[m.start():])
+        else:
+            split.append(tok)
+    return split
 
 
 def _redirect_width(out, i):
@@ -381,7 +396,7 @@ def guard_argv(seg):
     tokens: each is examined a bounded number of times. The Codex dispatch
     recogniser does not use this: its prompt arguments must stay byte-exact.
     """
-    out = list(seg)
+    out = _split_attached_redirects(seg)
     n = len(out)
     i = _skip_env_and_wrappers(out, 0)
     while i < n:

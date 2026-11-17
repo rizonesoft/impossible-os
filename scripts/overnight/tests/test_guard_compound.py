@@ -62,6 +62,12 @@ SHAPES = [
     "> /dev/null {c}",
     "git 2>/dev/null reset --hard",
     "git > /dev/null reset --hard",
+    ">& 2 {c}",
+    "git >& 2 reset --hard",
+    "<& 0 {c}",
+    "git>/dev/null reset --hard",
+    "git reset>/dev/null --hard",
+    "git reset --hard>/dev/null",
 ]
 REFUSED = "git reset --hard"
 
