@@ -163,6 +163,8 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Design:** [`controls.md#button`](../../docs/design/controls.md#button), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
+**Inventory:** `win11.taskbar.tray.touch-keyboard`
+
 **Source file:** `src/apps/osk/osk.c`; binary: `osk.exe`
 
 - [ ] **Non-focusable window**: `wm_create_window("On-Screen Keyboard", x, y, 780, 200, WM_FLAG_NO_FOCUS | WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_NO_TASKBAR)` -- clicking any key does not steal focus from target window
@@ -183,6 +185,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 - [ ] **Win+Ctrl+O hotkey**: `hotkey_table[N] = { MOD_WIN|MOD_CTRL, KEY_O, osk_toggle }` -- toggle show/hide
 - [ ] **Auto-show in touch mode** (stretch): `wm_set_touch_mode_osk_callback(osk_show)` -- called when any `CTRL_TEXTBOX` gains focus in touch mode (requires WM touch-mode flag)
 - [ ] **Position persistence**: `HKCU\Software\Impossible\OSK\{X,Y}` saved on window move; restored on launch
+- [ ] Tray button: shown when the touch keyboard setting is on, opens this keyboard (one on-screen keyboard where Windows ships two)
 
 ---
 

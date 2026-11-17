@@ -411,18 +411,11 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The row of previews for several windows is not exposed to UIA, so it is a hand state with the button states and behaviours
   - Second display on the two-display stand-in: its bar (72 px at 150 %) and the three button modes; pinned apps leave the second bar in the two "where open" modes
   - Owners: the taskbar roadmap's sections 1, 2, 3, 5, 6 and the new section 9 (every display), and the widget framework
-- [ ] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
-  - Capture the tray's fixed order
-    - The hidden icons chevron, app icons, the input indicator, the pen and touch keyboard entries, the network, volume and battery group (one button), the clock, the notification bell
-  - Capture the hidden icons flyout: its grid, cell size and the drag between the flyout and the bar
-  - Capture the clock: its two lines, the seconds option, the short and long date forms, and its tooltip's shape (label only)
-  - Capture the context menu of the clock, of the network, volume and battery group, and of an app icon as the frame only
-  - Record by hand the icon states as `state` records naming the role, never the artwork
-    - Network: wired, wireless by strength, no internet, disconnected, airplane
-    - Volume: four levels and muted. Battery: levels, charging, saver
-  - Capture the privacy indicators: microphone in use, location in use, and the screen sharing or recording indicator
-  - Capture the input indicator flyout (the language list frame) and the touch keyboard button
-  - Done when: `check-inventory.py --surface taskbar` passes with `tray.json` present; every tray item has an `order` and the three status icons have their `state` records.
+- [x] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/tray.py` (75 records): the order is the chevron, touch keyboard, input indicator, network, volume, clock, bell and show-desktop edge, each width a `metric`; the pen entry needs pen hardware and shows nothing in the VM
+  - The hidden icons flyout (cell 40, padding 17), the input indicator flyout, the clock tooltip, the clock, network and volume menus (the bell shares the clock's), an app icon's menu as frame only, and the clock's width with seconds (73 against 70)
+  - Icon states, privacy indicators, the clock's lines and date forms, and the drag between flyout and bar are hand records: the VM has no microphone, location or capture source
+  - Owners: the tray icons, notification centre, taskbar clock, layout switching, Aero Peek and on-screen keyboard sections
 - [ ] Start Menu: writes `docs/design/inventory/start/start.json`
   - Capture the Start surface: its size, corner radius, position against the taskbar at centre and left alignment, and each region
     - Regions: search box, pinned, the all-apps entry, recommended, the bottom bar

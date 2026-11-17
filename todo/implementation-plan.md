@@ -2593,7 +2593,7 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T13 §1`  | Calendar App (Recurring Events + ICS Export)       | none        |     3 |
 | [ ]  | `D11 T13 §2`  | Sticky Notes                                       | none        |     7 |
 | [ ]  | `D11 T13 §3`  | System Information (`sysinfo.exe`)                 | none        |     3 |
-| [ ]  | `D11 T13 §4`  | On-Screen Keyboard                                 | none        |     8 |
+| [ ]  | `D11 T13 §4`  | On-Screen Keyboard                                 | none        |     9 |
 | [ ]  | `D11 T13 §5`  | Color Picker                                       | none        |     6 |
 | [ ]  | `D11 T13 §6`  | Font Manager (OS/2 + Unicode Coverage)             | none        |     4 |
 | [ ]  | `D11 T13 §7`  | Shared Help / About Dialog                         | none        |     3 |

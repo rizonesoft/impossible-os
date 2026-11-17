@@ -201,6 +201,16 @@
  },
  {
   "surface": "taskbar",
+  "file": "tray",
+  "state": "app-icon-menu",
+  "profile": "fhd-100",
+  "width": 267,
+  "height": 146,
+  "size": 2053,
+  "sha256": "9c028ff48e66c70b0fce6285ce4b44692617969315a32914ab1c320a3680903e"
+ },
+ {
+  "surface": "taskbar",
   "file": "taskbar",
   "state": "bar",
   "profile": "fhd-100",
@@ -208,6 +218,26 @@
   "height": 48,
   "size": 12963,
   "sha256": "a9d1df81967f3ad45ed511562e92b270e8b1e4b93a98106644eaf3bf8fd0e72d"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "clock-menu",
+  "profile": "fhd-100",
+  "width": 191,
+  "height": 70,
+  "size": 3479,
+  "sha256": "380f23ed2cf989019e307167de8ba3bf604709adb65edf6d8f59dfd06db1f81d"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "clock-tooltip",
+  "profile": "fhd-100",
+  "width": 175,
+  "height": 64,
+  "size": 3040,
+  "sha256": "a7e1b0e4f064850a10ed4e21566aae2ce97a801271a8e7c47bec77b84379710e"
  },
  {
   "surface": "taskbar",
@@ -221,6 +251,26 @@
  },
  {
   "surface": "taskbar",
+  "file": "tray",
+  "state": "hidden-icons-flyout",
+  "profile": "fhd-100",
+  "width": 74,
+  "height": 74,
+  "size": 8474,
+  "sha256": "6f24dbe20f7b577c57584e4063a7f0f751cab4529391d4ebbedc1b056e003e2d"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "input-switcher",
+  "profile": "fhd-100",
+  "width": 384,
+  "height": 235,
+  "size": 45070,
+  "sha256": "4eafd2f3e12c1930dadcd710c5ba61b2794f84fcdb485565c3a1295a00ed9fdc"
+ },
+ {
+  "surface": "taskbar",
   "file": "taskbar",
   "state": "menu",
   "profile": "fhd-100",
@@ -228,6 +278,16 @@
   "height": 73,
   "size": 2976,
   "sha256": "ec193c8c3640745bb614beffa0c7f8fad2f21fa1cb3014b82a79ccfac6309649"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "network-menu",
+  "profile": "fhd-100",
+  "width": 245,
+  "height": 73,
+  "size": 4392,
+  "sha256": "a20c7d56fc352f8a0c4a5829bce1e04061f3633e4cf91af501c9044a02dd2522"
  },
  {
   "surface": "taskbar",
@@ -288,5 +348,25 @@
   "height": 1080,
   "size": 2365874,
   "sha256": "f15c698840239fd9d5d50a50556a1eb4bb0f5447c52e4ecb036c93fc78a4b886"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "tray",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 48,
+  "size": 11873,
+  "sha256": "88ec311d5e3e8afb9ad46e8192227c9f9a75276ddfc35208173275bf0244807b"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray",
+  "state": "volume-menu",
+  "profile": "fhd-100",
+  "width": 246,
+  "height": 105,
+  "size": 4676,
+  "sha256": "1163860a3d4b55d89c9ea4cd557abb0e3faa9d314d9b2f640e76f6ac3e7ead80"
  }
 ]

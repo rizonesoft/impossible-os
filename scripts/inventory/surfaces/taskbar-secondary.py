@@ -52,16 +52,9 @@ def frame(ctx):
 
 
 def restart_shell(ctx):
-    ctx.powershell("Stop-Process -Name explorer -Force; Start-Sleep -Seconds 3; "
-                   "if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }")
-    deadline = time.monotonic() + 90
-    while True:
-        try:
-            ctx.find(within=bar(ctx), automationId="StartButton", depth=4, timeout=5)
-            break
-        except core.Incomplete:
-            if time.monotonic() > deadline:
-                raise
+    """Restart Explorer and let the bar settle: the settings these scenes change
+    apply only at Explorer's start (TaskbarGlomLevel set live changed nothing, 2026-11-16)."""
+    core.restart_explorer(ctx, "Shell_SecondaryTrayWnd")
     time.sleep(SETTLE)
 
 

@@ -30,6 +30,7 @@ import os
 import pathlib
 import re
 import struct
+import time
 import zlib
 
 # UIA control type ids (UIAutomationClient.h), so a fixture and a live tree name
@@ -172,10 +173,12 @@ def standin_variant(name, profile, variants, requested=None):
 
 
 def matches(element, spec):
-    """True when every field the spec names equals the element's."""
+    """True when every field the spec names equals the element's. `namePrefix`
+    matches the start of the name, for an element whose name is a fixed word
+    followed by a live value (the tray's "Volume No audio device is installed")."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
               "className": element.class_name, "name": name_of(element)}
-    return all(fields[k] == v for k, v in spec.items())
+    return all(fields["name"].startswith(v) if k == "namePrefix" else fields[k] == v for k, v in spec.items())
 
 
 def _segment(el, identity=(), values=()):
@@ -497,6 +500,26 @@ def scenes_of(mod):
             raise ValueError(f"two scenes share the slug {sc.slug!r}")
         seen.add(sc.slug)
     return scenes
+
+
+RESTART_EXPLORER = ("Stop-Process -Name explorer -Force; Start-Sleep -Seconds 3; "
+                    # Explorer usually restarts itself; start it when it has not.
+                    "if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }")
+
+
+def restart_explorer(ctx, bar="Shell_TrayWnd", wait=90, clock=time.monotonic):
+    """Restart Explorer, which reads several taskbar settings only when it
+    starts (the combine and multi-display modes, the clock's seconds), and wait
+    until the bar in window class `bar` holds its Start button again."""
+    ctx.powershell(RESTART_EXPLORER)
+    deadline = clock() + wait
+    while True:
+        try:
+            ctx.find(within=ctx.find_window(className=bar, timeout=5), automationId="StartButton", depth=4, timeout=5)
+            return
+        except Incomplete:
+            if clock() > deadline:
+                raise Incomplete(f"the {bar} bar did not come back within {wait} s of restarting Explorer")
 
 
 def run_scenes(scenes, ctx, walk_scene, on_open=None):

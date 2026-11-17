@@ -127,6 +127,8 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
+**Inventory:** `win11.taskbar.tray`, `win11.taskbar.hidden-icons-flyout`, `win11.taskbar.network-menu`, `win11.taskbar.volume-menu`, `win11.taskbar.app-icon-menu`
+
 `src/desktop/systray.c`. The right side of the taskbar is, left to right: an overflow chevron (28 x 40) that opens hidden tray icons, the system cluster (network, volume and battery glyphs in ONE 40 px tall button), then the clock and notification bell (`08-graphics-ui/TODO-12 §3`). Clicking the system cluster opens the single quick settings flyout owned by `08-graphics-ui/TODO-09 §8`, which holds Wi-Fi, Bluetooth, volume and brightness; there are no separate volume or network popups. App tray icons (`tray_register`) live in the overflow flyout unless the user promotes them.
 
 **Files:** `src/desktop/systray.c` (new), `include/desktop/systray.h` (new)
@@ -181,6 +183,8 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
 ## 6. Notification Center
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
+
+**Inventory:** `win11.taskbar.tray.notifications`
 
 The bell beside the clock (and a clock click) opens the shared notifications-and-calendar flyout: 360 px wide (`THEME_SIZE_FLYOUT_WIDTH`), anchored 12 px from the right edge and 12 px above the taskbar, flyout acrylic, radius 8; it fades and rises 12 px over `THEME_MOTION_NORMAL_MS`. The notification list sits above the calendar owned by `08-graphics-ui/TODO-12 §3`. Notification history grouped by source app (icon + app name header, entries with title + body + relative timestamp). Dismiss individual (× button) or "Clear all". Store last 100 in `HKLM\SYSTEM\Shell\NotifyHistory`.
 

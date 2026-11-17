@@ -438,6 +438,45 @@ class Identity(unittest.TestCase):
         self.assertEqual([r["id"] for r in cap.records[1:]], ["win11.s.r.first", "win11.s.r.second"])
         self.assertEqual(cap.ambiguous, [])
 
+    def test_a_name_prefix_tells_apart_buttons_with_live_names(self):
+        # The tray's volume and bell share a class; only their names' first word is fixed.
+        t = node("Root", "Window", children=[node("Volume No audio device is installed", "Button", "Icon", "Omni"),
+                                             node("Notifications No new notifications", "Button", "Icon", "Omni")])
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", session="console", root_slug="r",
+                        root_label="R", values=[{"className": "Omni"}],
+                        identity=[({"namePrefix": "Volume"}, "volume"), ({"namePrefix": "Notifications"}, "bell")])
+        self.assertEqual([r["id"] for r in cap.records[1:]], ["win11.s.r.volume", "win11.s.r.bell"])
+        self.assertNotIn("audio", json.dumps(cap.records))
+
+
+class RestartExplorer(unittest.TestCase):
+    class Ctx:
+        def __init__(self, fails):
+            self.fails, self.scripts = fails, []
+
+        def powershell(self, script):
+            self.scripts.append(script)
+
+        def find_window(self, className, timeout):
+            return className
+
+        def find(self, within, **spec):
+            if self.fails:
+                self.fails -= 1
+                raise core.Incomplete("not yet")
+            return (within, spec["automationId"])
+
+    def test_it_waits_for_the_bar_to_come_back(self):
+        ctx = self.Ctx(fails=2)
+        core.restart_explorer(ctx, "Shell_SecondaryTrayWnd", clock=lambda: 0)
+        self.assertEqual(ctx.fails, 0)
+        self.assertIn("Stop-Process -Name explorer", ctx.scripts[0])
+
+    def test_a_bar_that_never_returns_is_incomplete(self):
+        now = iter([0, 50, 100])
+        with self.assertRaisesRegex(core.Incomplete, "did not come back within 90 s"):
+            core.restart_explorer(self.Ctx(fails=99), clock=lambda: next(now))
+
 
 class Incomplete(unittest.TestCase):
     def test_a_flyout_that_never_settles_fails_the_capture(self):
@@ -1779,6 +1818,23 @@ class FindWindow(unittest.TestCase):
         self.assertIs(guest.Context(live).find_window(timeout=0, className="Popup"), win)
         with self.assertRaises(guest.core.Incomplete):
             guest.Context(live).find_window(timeout=0, className="Other")
+
+    def test_a_light_dismissed_flyout_is_never_brought_forward(self):
+        raised = []
+        fake = types.SimpleNamespace(SetForegroundWindow=raised.append)
+        el = types.SimpleNamespace(CurrentNativeWindowHandle=7)
+        uia = types.SimpleNamespace(GetRootElement=lambda: "root", CreateTrueCondition=lambda: "all")
+        real = guest.user32
+        guest.user32 = fake
+        try:
+            for cls in ("Shell_InputSwitchTopLevelWindow", "Notepad"):
+                win = types.SimpleNamespace(name="", automation_id="", class_name=cls, control_type="Window",
+                                            offscreen=False, el=el)
+                live = types.SimpleNamespace(uia=uia, children=lambda e, cond=None, w=win: [w])
+                guest.Context(live).find_window(timeout=0, className=cls)
+        finally:
+            guest.user32 = real
+        self.assertEqual(raised, [7])          # Notepad only: the switcher would close
 
 
 if __name__ == "__main__":

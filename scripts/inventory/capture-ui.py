@@ -69,7 +69,9 @@ POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Mic
 # Windows find_window never brings forward: a popup closes when it loses the
 # foreground to itself, and so does a jump list (a CoreWindow) or a thumbnail
 # (the XAML island host); the taskbar is always on top already (2026-11-16).
-NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd"}
+# The input indicator's flyout is light-dismissed the same way (2026-11-17).
+NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd",
+                                 "Shell_InputSwitchTopLevelWindow"}
 PROP_CONTROL_TYPE = 30003
 PROP_PROCESS_ID = 30002
 PROP_IS_OFFSCREEN = 30022

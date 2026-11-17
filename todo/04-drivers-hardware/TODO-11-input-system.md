@@ -185,6 +185,8 @@ Apply a configurable 16.16 fixed-point polynomial acceleration curve to relative
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#context-menus`](../../docs/design/shell.md#context-menus)
 
+**Inventory:** `win11.taskbar.tray.input-indicator`, `win11.taskbar.input-switcher`
+
 Win+Space cycles through installed layouts. The taskbar layout button (three-letter code such as `ENG`, shown only when more than one layout is installed, `docs/design/shell.md#taskbar`) updates immediately. Clicking it opens a menu of layouts (`docs/design/shell.md#context-menus`).
 
 **Files:** `src/kernel/drivers/keyboard.c`, `src/desktop/` (tray indicator component)

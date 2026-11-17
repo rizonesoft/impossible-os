@@ -118,7 +118,7 @@ Right-click window button → `context_menu_show()`: Close, Restore/Maximize (to
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar)
 
-**Inventory:** `win11.taskbar.thumbnail`
+**Inventory:** `win11.taskbar.thumbnail`, `win11.taskbar.tray.show-desktop`
 
 Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the thumbnail preview flyout opens above it (one 200 x 120 thumbnail per window, title, close glyph); hover a thumbnail for `THEME_MOTION_PEEK_DELAY_MS` (500) → all other windows blitted at alpha=25 (10%), the previewed window stays at 255; leave → restore all (`docs/design/shell.md#taskbar`, Hover preview). "Show Desktop" strip (8 px at the far right, after the clock and bell, marked by a 1 px `stroke_divider` line): hover = peek all, click = toggle Win+D. Registry `EnablePeek` (default 1).
 
