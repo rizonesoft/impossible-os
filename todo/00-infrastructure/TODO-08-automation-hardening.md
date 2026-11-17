@@ -1460,6 +1460,17 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes, and the two fixture commits above get the opposite verdicts they get today.
 
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/overnight/tests/test_staged_tree.py`, `bash scripts/overnight/tests/run-all.sh`
+
+> **Notes:**
+> - What shipped: `.githooks/lib/staged-tree.sh` exports the commit's index to a scratch tree and runs the control-plane suite there; `run-all.sh` sets `CLAUDE_PROJECT_DIR` to the tree it runs in.
+> - The helper runs in the hook process with EXIT, INT and TERM traps; export and suite are supervised stages under one `STAGED_TREE_TIMEOUT` deadline (1200 s), stopped by process group and by the `STAGED_TREE_RUN` ancestry marker, TERM then KILL after `STAGED_TREE_GRACE`.
+> - Kept out of the manifest by decision: `.githooks/pre-commit` itself, whose wiring `test_hook_git_env.py` asserts; listing it would run the 4-minute suite on every lint edit.
+> - Scope boundary: a process that rewrites its own environment escapes the marker; a nested supervisor KILLed after the outer grace may leave its own scratch tree.
+
+> **Verified:** 2026-11-17 at fecf320de: control-plane suite 94 passed, 0 failed, run by the commit's own gate over its staged tree; `test_staged_tree.py` passes (broken-staged refused, broken-disk lands, path-limited indexes, interrupt, hook-only signal, deadline, set -e cleanup, stalled export, nested stage, manifest); each property's control fails with its fix removed.
+> **Quality reviewed:** 2026-11-17 | Codex 12x (plan, round 5x, performance 4x, completion, reconciliation) | 0H+8M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface)
+
 ## 44. A second reviewer reads kernel, boot, security and ABI sections
 
 > **Spawned-by:** root
