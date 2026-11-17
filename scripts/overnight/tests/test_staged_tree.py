@@ -32,7 +32,12 @@ run_on_staged_tree suite.sh
 """
 # The suite reads the tree it runs in, and asks git about history the way the
 # runner's git-oracle tests do.
-SUITE = """set -e
+SUITE = f"""set -e
+if [ -f nested ]; then
+  # A nested supervisor, as this helper's own tests start one inside the gate.
+  # Its own TMPDIR: KILLed after the outer grace, it may leave its tree there.
+  TMPDIR="$(cat nested)" STAGED_TREE_GRACE=5 bash -c ". '{HELPER}'; run_on_staged_tree inner.sh"
+fi
 if [ -f hang ]; then
   if [ -f stubborn ]; then trap '' TERM; fi
   if [ -f stubborn-child ]; then setsid bash -c "trap '' TERM; sleep 60" & else setsid sleep 60 & fi
@@ -263,6 +268,45 @@ def test_a_stalled_export_is_bounded_by_the_deadline():
         _all_gone(tmp, (exporter,))
 
 
+# The nested stage: a child that ignores TERM, in a session of its own.
+INNER = """setsid bash -c "trap '' TERM; sleep 60" &
+echo "$$ $! $FIXTURE_HOOK_PID" > "$INNER_PIDFILE"
+sleep 60
+"""
+
+
+def test_a_nested_stage_is_stopped_with_the_outer_one():
+    """The outer grace (1 s) is shorter than the inner one (5 s): the outer
+    cleanup reaches the inner supervisor first, so it must see the inner stage's
+    processes itself."""
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        tmp = d / "tmp"
+        tmp.mkdir()
+        root = _fixture(d)
+        inner_tmp = d / "inner-tmp"
+        inner_tmp.mkdir()
+        for name, text in (("nested", str(inner_tmp)), ("inner.sh", INNER)):
+            (root / name).write_text(text)
+            _git(root, "add", name)
+        pidfile = d / "inner.pid"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(TMPDIR=str(tmp), INNER_PIDFILE=str(pidfile), STAGED_TREE_GRACE="1")
+        p = subprocess.Popen(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                              "commit", "-q", "-m", "nested"], cwd=str(root), env=env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 60
+            while not pidfile.exists() or len(pidfile.read_text().split()) < 3:
+                assert time.monotonic() < deadline and p.poll() is None, "the nested stage never started"
+                time.sleep(0.1)
+            inner, child, hook = map(int, pidfile.read_text().split())
+            os.kill(hook, signal.SIGTERM)
+            _all_gone(tmp, (inner, child))
+        finally:
+            _reap(p)
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -297,5 +341,6 @@ if __name__ == "__main__":
     test_a_suite_past_its_deadline_is_stopped_even_if_it_ignores_term()
     test_a_detached_child_that_ignores_term_is_stopped_under_set_e()
     test_a_stalled_export_is_bounded_by_the_deadline()
+    test_a_nested_stage_is_stopped_with_the_outer_one()
     test_the_scratch_tree_is_removed()
     print("PASS: staged-tree gate")

@@ -25,8 +25,15 @@ _STAGED_TREE_LEADER=""
 # The pids of every process carrying STAGED_TREE_RUN=$1, this shell excluded.
 # One grep over every environ file (-z: NUL-separated entries); unreadable ones
 # belong to other users and are skipped. Prints nothing and succeeds when none.
+#
+# STAGED_TREE_RUN lists every enclosing run, `:<tree>:<tree>:`, so a stage whose
+# suite starts a nested supervisor (this helper's own tests do) still owns the
+# nested stage's processes: overwriting the marker hid them from the outer
+# cleanup, and a TERM-resistant inner child outlived it (2026-11-17).
 _staged_tree_pids() {
-  { grep -lzxF "STAGED_TREE_RUN=$1" /proc/[0-9]*/environ 2>/dev/null || true; } |
+  local pattern
+  pattern="^STAGED_TREE_RUN=.*:$(printf '%s' "$1" | sed 's/[][\.*^$/]/\\&/g'):"
+  { grep -lz -- "$pattern" /proc/[0-9]*/environ 2>/dev/null || true; } |
     { sed -n 's|^/proc/\([0-9]*\)/environ$|\1|p' || true; } | { grep -vx "$$" || true; }
 }
 
@@ -58,7 +65,7 @@ _staged_tree_stage() {
       . "$_STAGED_TREE_LIB/isolate-git-env.sh"
       isolate_git_env
     fi
-    export STAGED_TREE_RUN="$mark"
+    export STAGED_TREE_RUN="${STAGED_TREE_RUN:-:}$mark:"
     cd "$dir" || exit 1
     if command -v setsid >/dev/null 2>&1; then exec setsid "$@"; fi
     exec "$@"
