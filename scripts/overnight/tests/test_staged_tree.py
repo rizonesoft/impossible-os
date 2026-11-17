@@ -21,8 +21,12 @@ import time
 REPO = pathlib.Path(__file__).resolve().parents[3]
 HELPER = REPO / ".githooks/lib/staged-tree.sh"
 
+# The production hooks run under these options; cleanup must complete under them.
 HOOK = f"""#!/usr/bin/env bash
+set -euo pipefail
 export FIXTURE_HOOK_PID=$$
+# git puts its exec path first for a hook; a test's git shim goes ahead of it.
+if [ -n "${{FIXTURE_SHIM:-}}" ]; then PATH="$FIXTURE_SHIM:$PATH"; fi
 . "{HELPER}"
 run_on_staged_tree suite.sh
 """
@@ -30,8 +34,8 @@ run_on_staged_tree suite.sh
 # runner's git-oracle tests do.
 SUITE = """set -e
 if [ -f hang ]; then
-  [ -f stubborn ] && trap '' TERM
-  setsid sleep 60 &
+  if [ -f stubborn ]; then trap '' TERM; fi
+  if [ -f stubborn-child ]; then setsid bash -c "trap '' TERM; sleep 60" & else setsid sleep 60 & fi
   echo "$$ $FIXTURE_HOOK_PID $!" > "$(cat hang)"
   sleep 60
 fi
@@ -117,7 +121,7 @@ def test_a_path_limited_commit_is_judged_by_its_own_index():
         assert _git(root, "log", "-1", "--format=%s").stdout.strip() == "path"
 
 
-def _hang(d: pathlib.Path, *, stubborn=False, **extra):
+def _hang(d: pathlib.Path, *, stubborn=False, stubborn_child=False, **extra):
     """Start a commit whose suite hangs; returns (process, tmp, suite, hook, grandchild).
 
     The suite reports itself, the hook that started it, and a grandchild in a
@@ -128,9 +132,10 @@ def _hang(d: pathlib.Path, *, stubborn=False, **extra):
     pidfile = d / "suite.pid"
     (root / "hang").write_text(str(pidfile))
     _git(root, "add", "hang")
-    if stubborn:
-        (root / "stubborn").write_text("")
-        _git(root, "add", "stubborn")
+    for name, on in (("stubborn", stubborn), ("stubborn-child", stubborn_child)):
+        if on:
+            (root / name).write_text("")
+            _git(root, "add", name)
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(TMPDIR=str(tmp), **extra)
     p = subprocess.Popen(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
@@ -199,6 +204,65 @@ def test_a_suite_past_its_deadline_is_stopped_even_if_it_ignores_term():
         _all_gone(tmp, (suite, grandchild))
 
 
+def test_a_detached_child_that_ignores_term_is_stopped_under_set_e():
+    """The leader dies on TERM, so its group is gone when the tagged child is
+    reached: a cleanup aborted by `set -e` at that point left the child alive."""
+    with tempfile.TemporaryDirectory() as d:
+        p, tmp, (suite, hook, grandchild) = _hang(pathlib.Path(d), stubborn_child=True, STAGED_TREE_GRACE="1")
+        try:
+            os.kill(hook, signal.SIGTERM)
+            _all_gone(tmp, (suite, grandchild))
+        finally:
+            _reap(p)
+
+
+# A git that stalls on checkout-index: the export is the stage being tested.
+STALL = """#!/usr/bin/env bash
+if [ "${1:-}" = checkout-index ]; then echo $$ > "$STALL_PIDFILE"; sleep 60; fi
+exec "$REAL_GIT" "$@"
+"""
+
+
+def _stalled_export(d: pathlib.Path, **extra):
+    tmp = d / "tmp"
+    tmp.mkdir()
+    root = _fixture(d)
+    shim = d / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(STALL)
+    (shim / "git").chmod(0o755)
+    pidfile = d / "export.pid"
+    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(TMPDIR=str(tmp), REAL_GIT=real, STALL_PIDFILE=str(pidfile),
+               FIXTURE_SHIM=str(shim), **extra)
+    p = subprocess.Popen([real, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                          "commit", "-q", "--allow-empty", "-m", "stall"], cwd=str(root), env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    deadline = time.monotonic() + 30
+    while not pidfile.exists() or not pidfile.read_text().strip():
+        if time.monotonic() > deadline or p.poll() is not None:
+            _reap(p)
+            raise AssertionError("the export never started")
+        time.sleep(0.1)
+    return p, tmp, int(pidfile.read_text())
+
+
+def test_a_stalled_export_is_bounded_by_the_deadline():
+    with tempfile.TemporaryDirectory() as d:
+        p, tmp, exporter = _stalled_export(pathlib.Path(d), STAGED_TREE_TIMEOUT="3", STAGED_TREE_GRACE="1")
+        try:
+            # Deadline 3 s plus grace 1 s; the stalled export alone sleeps 60 s.
+            try:
+                rc = p.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                raise AssertionError("a stalled export outlived the deadline") from None
+            assert rc != 0, "a stalled export let the commit land"
+        finally:
+            _reap(p)
+        _all_gone(tmp, (exporter,))
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -231,5 +295,7 @@ if __name__ == "__main__":
     test_an_interrupted_commit_leaves_no_tree_and_no_suite()
     test_a_signal_to_the_hook_alone_stops_the_suite()
     test_a_suite_past_its_deadline_is_stopped_even_if_it_ignores_term()
+    test_a_detached_child_that_ignores_term_is_stopped_under_set_e()
+    test_a_stalled_export_is_bounded_by_the_deadline()
     test_the_scratch_tree_is_removed()
     print("PASS: staged-tree gate")
