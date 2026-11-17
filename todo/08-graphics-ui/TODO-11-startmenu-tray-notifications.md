@@ -61,6 +61,8 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
+**Inventory:** `win11.start.start`
+
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §4`, which is superseded there so the shell has one implementation.
 
 Replace the current two-column Start menu in `src/desktop/desktop.c` with the Windows 11 layout: a single column with the search box on top, a Pinned grid of `THEME_SIZE_START_PINNED_COLS` x `THEME_SIZE_START_PINNED_ROWS` (6 x 3) tiles with an "All" pill, a Recommended list of up to six recent items in two columns, and a footer with the user and the power button. This section loads the data those regions show. `HKCU\Software\Impossible\Shell\PinnedApps` (CSV paths) → Pinned tiles; a VFS scan of `C:\Impossible\Bin\` + `C:\Program Files\` → the alphabetical "All apps" list behind the All pill; the recent-items store → Recommended.
@@ -85,6 +87,8 @@ Replace the current two-column Start menu in `src/desktop/desktop.c` with the Wi
 ## 2. Start Menu Interaction
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
+
+**Inventory:** `win11.start.power-menu`, `win11.start.account-menu`, `win11.start.view-menu`, `win11.start.pinned-menu`, `win11.start.recommended-menu`, `win11.start.letter-jump`, `win11.start.bottom-bar`
 
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §4, §5`, which is superseded there so the shell has one implementation.
 

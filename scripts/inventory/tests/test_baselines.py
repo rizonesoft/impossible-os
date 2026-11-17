@@ -327,11 +327,25 @@ class Assemble(unittest.TestCase):
         self.assertNotIn("build", head)
         self.assertEqual(head["upstream"]["commit"], core.GALLERY["commit"])
 
+    def current_rows(self, name):
+        lines = (baselines.INVENTORY / name / "baseline.json").read_text(encoding="utf-8").splitlines()[1:]
+        return [json.loads(line) for line in lines if line.strip()]
+
     def test_the_assembled_set_passes_the_checker(self):
-        vm = {n: {"source": "s", "rows": [{"id": "r"}]} for n in core.VM_BASELINES}
-        code, report = baselines.capture.check_scratch(baselines.assemble(vm, json.loads(
-            (baselines.INVENTORY / "reference.json").read_text())["build"], [{"id": "Button"}]))
+        # A read of the same build gives the rows on disk, which records already
+        # match (Start's app entries, 2026-11-17).
+        vm = {n: {"source": "s", "rows": self.current_rows(n)} for n in core.VM_BASELINES}
+        build = json.loads((baselines.INVENTORY / "reference.json").read_text())["build"]
+        code, report = baselines.capture.check_scratch(baselines.assemble(vm, build, self.current_rows("controls")))
         self.assertEqual(code, 0, report)
+
+    def test_a_read_that_lost_a_matched_row_is_refused(self):
+        vm = {n: {"source": "s", "rows": self.current_rows(n)} for n in core.VM_BASELINES}
+        vm["start-apps"]["rows"] = [r for r in vm["start-apps"]["rows"] if r["id"] != "MSEdge"]
+        build = json.loads((baselines.INVENTORY / "reference.json").read_text())["build"]
+        code, report = baselines.capture.check_scratch(baselines.assemble(vm, build, self.current_rows("controls")))
+        self.assertNotEqual(code, 0)
+        self.assertIn("start-apps:MSEdge names no baseline row", report)
 
 
 class Publish(unittest.TestCase):

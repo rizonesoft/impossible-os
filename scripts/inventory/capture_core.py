@@ -266,14 +266,14 @@ class Capture:
         self.records = []
         self.unnamed = []
         self.ambiguous = []
-        self.skipped = {"offscreen": 0, "tooltip": 0, "prose": 0, "hosting": 0, "elsewhere": 0}
+        self.skipped = {"offscreen": 0, "tooltip": 0, "prose": 0, "hosting": 0, "elsewhere": 0, "caption": 0}
         self.states = []
         self.measured = []            # records of unkept scenes (Scene.keep)
 
 
 def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
          environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=(),
-         omit=()):
+         omit=(), count=None):
     """Capture one surface. Returns a Capture or raises Incomplete.
 
     session is the schema's session the capture ran in (session_type), written
@@ -366,6 +366,11 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
                 continue
             if not keep(k):
                 continue
+            # A text that repeats its parent's name is the parent's own caption (a
+            # WinUI menu item's TextBlock, 2026-11-17), recorded with the parent.
+            if k.control_type == "Text" and el.name and k.name == el.name:
+                cap.skipped["caption"] += 1
+                continue
             if is_hosting(k) and not is_environment(k):   # a marked list is never flattened open
                 if depth > MAX_DEPTH:
                     raise Incomplete(f"hosting panes nest deeper than {MAX_DEPTH} levels")
@@ -447,6 +452,10 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
     root_record = cap.records[0]
     root_record["kind"] = root_kind
     root_record["label"] = root_label
+    # A menu that is the scene's root has its entries counted as an opened one
+    # does; count=True does the same for another root of entries (a flyout card).
+    if count if count is not None else root_kind in ("menu", "contextMenu"):
+        root_record["itemCount"] = sum(1 for r in cap.records if r.get("parent") == root_record["id"])
     cap.unnamed = [u for u in cap.unnamed if u["id"] != root_record["id"]]
     return cap
 
@@ -461,7 +470,7 @@ class Scene:
     """
 
     FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
-              "expand", "hosts", "labels", "omit")
+              "expand", "hosts", "labels", "omit", "count")
 
     def __init__(self, mod, **spec):
         unknown = set(spec) - set(self.FIELDS)
@@ -483,6 +492,7 @@ class Scene:
         self.hosts = tuple(spec.get("hosts", getattr(mod, "HOSTS", ())))
         self.labels = tuple(spec.get("labels", getattr(mod, "LABELS", ())))
         self.omit = tuple(spec.get("omit", getattr(mod, "OMIT", ())))
+        self.count = spec.get("count")          # None: count a menu or context menu root's entries
 
 
 def scenes_of(mod):
@@ -555,8 +565,10 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None):
 
 
 # Fields an authored record may carry beyond the ones authored() writes.
+# baselineId: a record a module builds from what it read (Start's app list,
+# scrolled through, 2026-11-17) names its baseline row like a walked one.
 AUTHORED_FIELDS = ("kind", "label", "order", "behaviour", "openedBy", "shortcut", "shortcutScope", "overridable",
-                   "measure", "motion", "state", "enabled", "itemCount", "controlType")
+                   "measure", "motion", "state", "enabled", "itemCount", "controlType", "uiaId", "baselineId")
 
 
 def authored(items, *, surface, build, source, profile=None, session=None):

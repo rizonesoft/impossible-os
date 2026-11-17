@@ -262,8 +262,25 @@ class NeverData(unittest.TestCase):
         cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="fhd-100", session="console", root_slug="r",
                         root_label="Root")
         self.assertEqual([r["label"] for r in cap.records[1:]], ["OK"])
-        self.assertEqual(cap.skipped, {"offscreen": 1, "tooltip": 2, "prose": 1, "hosting": 0, "elsewhere": 0})
+        self.assertEqual(cap.skipped, {"offscreen": 1, "tooltip": 2, "prose": 1, "hosting": 0, "elsewhere": 0, "caption": 0})
         self.assertFalse([k for k in ("Help", "x" * 81) if k in json.dumps(cap.records)])
+
+    def test_a_text_repeating_its_parents_name_is_the_parents_caption(self):
+        t = node("Root", "Window", bounds=(0, 0, 500, 500), children=[
+            node("Lock", "MenuItem", children=[node("Lock", "Text")]),
+            node("Sign out", "Button", children=[node("Signed in", "Text")])])
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="fhd-100", session="console", root_slug="r",
+                        root_label="Root")
+        self.assertEqual([r["label"] for r in cap.records[1:]], ["Lock", "Sign out", "Signed in"])
+        self.assertEqual(cap.skipped["caption"], 1)
+
+    def test_a_menu_root_counts_its_entries(self):
+        t = node("Power options", "Menu", bounds=(0, 0, 100, 100), children=[
+            node("Lock", "MenuItem"), node("Shut down", "MenuItem"), node("Restart", "MenuItem")])
+        args = dict(surface="s", build="1.2", profile="fhd-100", session="console", root_slug="m", root_label="Menu")
+        self.assertEqual(core.walk(core.FixtureElement(t), root_kind="menu", **args).records[0]["itemCount"], 3)
+        self.assertNotIn("itemCount", core.walk(core.FixtureElement(t), root_kind="region", **args).records[0])
+        self.assertEqual(core.walk(core.FixtureElement(t), root_kind="region", count=True, **args).records[0]["itemCount"], 3)
 
     def test_the_fixture_holds_no_help_text(self):
         names = [k.get("name", "") for k in flat(tree())]

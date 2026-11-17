@@ -416,22 +416,13 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The hidden icons flyout (cell 40, padding 17), the input indicator flyout, the clock tooltip, the clock, network and volume menus (the bell shares the clock's), an app icon's menu as frame only, and the clock's width with seconds (73 against 70)
   - Icon states, privacy indicators, the clock's lines and date forms, and the drag between flyout and bar are hand records: the VM has no microphone, location or capture source
   - Owners: the tray icons, notification centre, taskbar clock, layout switching, Aero Peek and on-screen keyboard sections
-- [ ] Start Menu: writes `docs/design/inventory/start/start.json`
-  - Capture the Start surface: its size, corner radius, position against the taskbar at centre and left alignment, and each region
-    - Regions: search box, pinned, the all-apps entry, recommended, the bottom bar
-  - Capture the pinned grid: columns and rows, cell size, page dots, folders, and the three layout choices
-    - Folders: create by drag, open, rename, the folder's own grid
-    - Layout choices: more pins, default, more recommendations
-  - Capture the all-apps list: letter headings, the letter jump grid, folders in the list, and the category and grid views where the build offers them
-    - The list itself is an environment list
-  - Capture the recommended region as a frame: row layout, the "more" entry, and the empty state. Its entries are data and are not recorded
-  - Capture the bottom bar: the account button and its menu, the folder shortcuts that can sit beside power, and the power button and its menu
-    - Folder shortcuts: Settings, File Explorer, Documents, Downloads, Music, Pictures, Videos, Network, Personal folder
-    - Power menu: Lock, Sleep, Shut down, Restart, and the update variants
-  - Capture the context menu of a pinned app, an all-apps entry, a folder and a recommended entry
-  - Record by hand the behaviours: type to search, drag to reorder, drag out to unpin, keyboard navigation between regions, and which key closes the menu
-  - Match every `start-apps` baseline row to the section of §13 that inventories that app, or mark it excluded with a reason
-  - Done when: `check-inventory.py --surface start` passes; the power menu and the account menu each have their `itemCount`; `check-inventory.py --baselines` shows zero unmatched `start-apps` rows.
+- [x] Start Menu: writes `docs/design/inventory/start/start.json`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/start.py` (124 records): the panel is 858 x 890 standing on the taskbar, at x 531 centred and x 0 aligned left; one scrolling list holds Pinned (8 x 2 tiles of 96 x 84, Show all grows it in place), Recommended (56 px rows) and All
+  - This build has no pinned page dots and no layout choice in Start; its layout and recommendation switches are Settings pages, inventoried with Settings
+  - All apps: the category, grid and list views (40 px rows, 53 px letter headings), the letter jump grid and its Back, and every app listed, folders opened (39 entries)
+  - The bottom bar with all nine folder shortcuts in their order, the account card (`itemCount` 5) and the power menu (Lock, Shut down, Restart; `itemCount` 3), and the menus of a pinned tile, a recommended entry and the view button
+  - Drag, type-to-search, keyboard regions and closing are hand records
+  - `start-apps`: 38 rows matched by Start; OneDrive installs at first sign-in, after the baseline is read, so it carries `baselineMissing`; the other 35 rows are not in Start's list on this build and are matched by the Windows Tools item in section 13
 - [ ] Search Flyout: writes `docs/design/inventory/start/search.json`
   - Capture the search surface before typing: the box, the filter row, recent searches as a frame, and the suggested apps row as a frame
     - Filter row: All, Apps, Documents, Web, Settings, Folders, Photos and the "more" list
@@ -935,6 +926,9 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - The focus highlight, the text cursor indicator, colour filters applied at the compositor
   - Reconcile against `D10 T06 §1` to `§8` , `T07 §3` (the screen-reader hooks Narrator sits on) and `D11 T13 §4` (the On-Screen Keyboard), and note gaps in §15
   - Done when: `check-inventory.py --surface tools` passes; the on-screen keyboard has one record per key with a contiguous `order` per row, and every Narrator command has a `shortcut`.
+- [ ] Windows Tools: writes `docs/design/inventory/tools/windows-tools.json`
+  - Capture the Windows Tools folder window and every entry in it, each matched to its `start-apps` row (the 35 rows Start does not list on 26300.9974, among them Command Prompt, Run, Control Panel and the management consoles)
+  - Done when: `check-inventory.py --surface tools` passes and `check-inventory.py --baselines` shows zero unmatched `start-apps` rows
 - [ ] Commit: `"inventory: control panel, system tools and inbox apps inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.

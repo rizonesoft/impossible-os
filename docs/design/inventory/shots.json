@@ -200,6 +200,86 @@
   "sha256": "52e171516b5101b07d260123c35bfc91643a4f766c7048342c31d5445f0d761e"
  },
  {
+  "surface": "start",
+  "file": "start",
+  "state": "account-menu",
+  "profile": "fhd-100",
+  "width": 362,
+  "height": 128,
+  "size": 3683,
+  "sha256": "d3874d263ea2fb7208b6951162a0df3e711912ee02a57378c2c09b515b877988"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "bottom-bar",
+  "profile": "fhd-100",
+  "width": 728,
+  "height": 40,
+  "size": 2201,
+  "sha256": "b707ca3d2e9fbe1342059ffdbf32f9f567ca7653820c01eb49c1b73a04dab28f"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "letter-jump",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 736,
+  "size": 8407,
+  "sha256": "61f0dbf12aa6ad85d195e8b07e15f6f73c8f40f401f9ba371e0a1434ea6823c0"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "pinned-menu",
+  "profile": "fhd-100",
+  "width": 208,
+  "height": 233,
+  "size": 4642,
+  "sha256": "02b8ca573e45c17e5568430e33befcc662de38edc4c81aa2c946e7d53029d170"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "power-menu",
+  "profile": "fhd-100",
+  "width": 127,
+  "height": 102,
+  "size": 1791,
+  "sha256": "834c28b111ce032d06e9153c6694611a76e1db806d9ec2ce2b350d7087f15cae"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "recommended-menu",
+  "profile": "fhd-100",
+  "width": 249,
+  "height": 172,
+  "size": 3819,
+  "sha256": "a31dfe96b99a1979a24bd51bbe31da508befb8eea094e38276a3aaf9cdd30201"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "start",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1032,
+  "size": 3382901,
+  "sha256": "c376d56d2023e4c7c922ec43162345ba54a7389d2e5a1f08eff159ad6f72c6c0"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "view-menu",
+  "profile": "fhd-100",
+  "width": 116,
+  "height": 102,
+  "size": 1371,
+  "sha256": "3c5fc212d0ffeef8d00aca600e650a3b295f44fa0fb00bfcfd307aba1cf7b7d3"
+ },
+ {
   "surface": "taskbar",
   "file": "tray",
   "state": "app-icon-menu",

@@ -613,7 +613,7 @@ def main(argv=None):
         return dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=sc.slug,
                     root_label=sc.label, root_kind=sc.kind, environment_lists=sc.environment_lists,
                     values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels,
-                    omit=sc.omit)
+                    omit=sc.omit, count=sc.count)
 
     def walk_scene(sc):
         # Each pass replaces this scene's screenshots from the pass before; an
