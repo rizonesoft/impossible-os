@@ -57,6 +57,11 @@ SHAPES = [
     "case x in x)env {c};; esac",
     "case x in (x)FOO=1 {c};; esac",
     "if true; then (sudo {c}); fi",
+    "if true; then >/dev/null {c}; fi",
+    "2>/dev/null {c}",
+    "> /dev/null {c}",
+    "git 2>/dev/null reset --hard",
+    "git > /dev/null reset --hard",
 ]
 REFUSED = "git reset --hard"
 
@@ -76,7 +81,8 @@ def test_runner_guard_sees_through_shell_grammar():
 def test_harmless_compounds_stay_allowed():
     for cmd in ("if true; then git status; fi", "case x in x) echo git reset --hard;; esac",
                 "while :; do git log -1; done", "(git diff --stat)", "time git status",
-                "if git diff --quiet; then echo clean; fi"):
+                "if git diff --quiet; then echo clean; fi", "git status 2>/dev/null",
+                ">/dev/null git log -1"):
         assert not ATTENDED._scan(cmd), f"attended_repair_guard refused {cmd!r}"
         assert not RUNNER._scan_command(cmd), f"runner_bash_guard refused {cmd!r}"
 

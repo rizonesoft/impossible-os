@@ -356,6 +356,18 @@ def _strip_env_and_wrappers(out):
 # safety guard must judge comes after them (2026-11-17: `if true; then git reset
 # --hard; fi` was read as the command `then` and allowed).
 _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"})
+# A redirection word (`>/dev/null`, `2>&1`, `<in`, `&>log`); with nothing after
+# the operator, the next word is its target. Bash removes both from the argv,
+# wherever they stand (`>/dev/null git reset --hard`, `git 2>/dev/null reset`).
+_REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>?|<<<|<>|<|>&|<&|>\|)(.*)\Z", re.S)
+
+
+def _redirect_width(out, i):
+    """How many words starting at out[i] are one redirection (0 when none)."""
+    m = _REDIRECT_RE.match(out[i])
+    if not m:
+        return 0
+    return 1 if m.group(1) or i + 1 >= len(out) else 2
 
 
 def guard_argv(seg):
@@ -374,7 +386,10 @@ def guard_argv(seg):
     i = _skip_env_and_wrappers(out, 0)
     while i < n:
         tok = out[i]
-        if tok in _GRAMMAR_HEADS:
+        width = _redirect_width(out, i)
+        if width:
+            i += width
+        elif tok in _GRAMMAR_HEADS:
             i += 1
             if tok == "time":
                 while i < n and out[i] in ("-p", "--"):
@@ -408,7 +423,13 @@ def guard_argv(seg):
         # every rewrite above can expose `env`, `sudo` or `FOO=1` as the next head
         i = _skip_env_and_wrappers(out, i)
     argv = []
-    for tok in out[i:]:
+    while i < n:
+        width = _redirect_width(out, i)
+        if width:
+            i += width
+            continue
+        tok = out[i]
+        i += 1
         if tok.endswith(")"):
             tok = tok.rstrip(")")
             if not tok:
