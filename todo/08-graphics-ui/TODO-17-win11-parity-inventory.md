@@ -445,6 +445,9 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+> **Verified:** 2026-11-17 | commit `c494e2b70` | 9/9 items | 384 tests OK, `check-inventory.py` 0 errors over 1176 records, `inventory-report.py --check` and `--owners --check` exit 0, the 11 files at 304, 103, 17, 67, 9, 145, 113, 95, 78, 187 and 58 records, Start and desktop recaptured live on 26300.9974
+> **Quality reviewed:** 2026-11-17 | Codex 22x (plan, round 7x, performance 7x, completion, reconciliation 6x) | 0H+25M fixed (corner radius filed to §9, update power variants to §25, Sleep an absent row), 0 open | scope: N/A (host tooling, no kernel surface)
+
 ---
 
 ## 9. Shell Surfaces Inventory: Windows, Session Screens and Overlays
