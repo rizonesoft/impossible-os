@@ -1142,17 +1142,18 @@ The build-offload gate (`build_offload_reminder.py`) decided its exemptions with
 
 - [x] Delete the walk (`command_segments`, `_has_unmodelled_grammar`, `_split_raw_segments`, `_scan_raw`, `_take_substitution`, `_strip_heredoc_bodies` and the quoting helpers), which no live code calls
 - [x] Record the parser evaluation for any future segmenting gate (answer Q47)
-- [x] The Bash safety guards (`attended_repair_guard.py`, `runner_bash_guard.py`) judge the command behind reserved words, `case` arms and subshell parens (`guard_argv`), so `if true; then git reset --hard; fi` is refused (plan pass)
+- [x] The Bash safety guards judge the command behind shell grammar and redirections (`guard_argv`), so `if true; then git reset --hard; fi` and `git 2>"a b" reset --hard` are refused
 - [x] Commit: `"hooks: delete the shell walk the deleted offload gate used"`
 
-**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 19 compound shapes in both guards and allows their harmless twins.
+**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 51 compound and redirect shapes in both guards, allows 12 harmless commands of the same shapes, checks the quote masks, and bounds two 220 to 420 KB inputs at 2.5 s.
 
 > **Test runner:** N/A (host tooling) | validation: `python3 scripts/overnight/tests/test_guard_compound.py`, `python3 scripts/overnight/tests/test_dispatch_recognition.py`, `python3 scripts/overnight/tests/test_review_gate.py`, `bash scripts/overnight/tests/run-all.sh`
 
 > **Notes:**
 > - What shipped: 362 lines of dead shell walk removed from `_codex_dispatch.py`; the dispatch recogniser (`_tokenize`, `_segment_by_separators`) and the commit gate's `_BashLexer` are untouched.
 > - Parser evaluation, 2026-11-17, over 17,428 distinct Bash commands from this project's transcripts: tree-sitter-bash 0.25.1 (MIT) failed 62 that `bash -n` accepts, nearly all heredocs, including `git commit -F - <<'EOF' 2>&1 | tail` and two heredocs on one line, and it is a compiled extension every hook would load. bashlex 0.18 was rejected on 2026-08-05 (no quoted heredocs, no `case`).
-> - The two Bash safety guards still segment shell with the token-based `_segment_by_separators`; `guard_argv` makes them read the command behind shell grammar.
+> - The two Bash safety guards still segment shell with the token-based `_segment_by_separators`; `guard_argv` makes them read the command behind shell grammar and redirections, splitting a word only at an unquoted `<` or `>` (each token carries the quote mask `_with_quote_masks` builds; a word without one reads as unquoted, and over 16,527 recorded commands none lacked one).
+> - Rejected (round 4): an escaped `)` inside a `case` pattern (`case "a)b" in a\)b ) ...`) hides the arm's command; deliberate shell, outside the accidental-verb threat model.
 > - Scope boundary: segmentation for a new gate builds on `_tokenize`, `_segment_by_separators` and `guard_argv` (or the commit gate's `_BashLexer`), not a new walk (Q47).
 
 
