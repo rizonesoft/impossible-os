@@ -329,14 +329,14 @@ When a UKI is invoked (`boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`), the bootl
 
 ### Build pipeline
 
-`scripts/build.sh` runs the UKI pack step between `EFI Boot` and `EFI Signing` by calling [`scripts/uki-pack.sh`](../../scripts/uki-pack.sh), the one implementation of the pack. The smoke harness calls the same script to build its UKI fixtures, so the image a test boots is packed exactly the way the shipped one is:
+The Makefile's `uki` target packs the image by calling [`scripts/uki-pack.sh`](../../scripts/uki-pack.sh), the one implementation of the pack; `scripts/build.sh` runs it between `EFI Boot` and `EFI Signing`, and `make all` reaches it through the signing stamp. It repacks only when the stub, `kernel.exe`, `boot.conf` or the set of staged payloads changed (a manifest of which payloads are present and their hashes, so a removed payload repacks too). The smoke harness calls the same script to build its UKI fixtures, so the image a test boots is packed exactly the way the shipped one is:
 
 ```
 bash scripts/uki-pack.sh <stub.efi> <kernel.exe> <cmdline-file> <payload-dir> <out.efi>
-# build.sh: build/tools/BOOTX64.EFI build/kernel.exe build/uki-cmdline.txt build/uki-payloads build/tools/BOOTX64.UKI.efi
+# make uki: build/tools/BOOTX64.EFI build/kernel.exe build/uki-cmdline.txt build/uki-payloads build/tools/BOOTX64.UKI.efi
 ```
 
-The script writes the `.osrel` text to a private temporary file (never a path derived from an argument, which could alias an input), refuses an output that resolves to one of its inputs, and runs `llvm-objcopy-19` (falling back to `llvm-objcopy`, then `objcopy`) with one `--add-section` / `--set-section-flags ...=alloc,readonly,data` pair per section. Optional payload sections are appended only when the corresponding file exists at `<payload-dir>/{initrd.img,recovery.img,modules.cpio}`. Argument order pins on-disk section ordering (`llvm-objcopy --add-section` preserves it), so a missing payload does not shift the offsets of present ones. Exit status 3 (no objcopy on the host) skips the UKI; any other failure fails the build.
+The script writes the `.osrel` text to a private temporary file (never a path derived from an argument, which could alias an input), refuses an output that resolves to one of its inputs, and runs `llvm-objcopy-19` (falling back to `llvm-objcopy`, then `objcopy`) with one `--add-section` / `--set-section-flags ...=alloc,readonly,data` pair per section. Optional payload sections are appended only when the corresponding file exists at `<payload-dir>/{initrd.img,recovery.img,modules.cpio}`. Argument order pins on-disk section ordering (`llvm-objcopy --add-section` preserves it), so a missing payload does not shift the offsets of present ones. Exit status 3 means no objcopy on the host; the `uki` target fails on it with a message naming the tool, because signing needs the image. Any other failure fails the build too.
 
 After the system disk is built, `build.sh` extracts `.linux` from both `BOOTX64.UKI.efi` and `BOOTX64.UKI.signed.efi` and byte-compares it with `build/kernel.exe`, failing the build on a difference. Until 2026-11-08 the kernel was relinked after the UKI was packed (a build-number bump and the logo/font generators each triggered a second link), so the shipped UKI carried an older kernel than the split path. The kernel now links once per build (`_increment_build` runs before the kernel target, the generated assets are order-only prerequisites, and `SOURCE_DATE_EPOCH` pins the embedded build time for the whole run).
 

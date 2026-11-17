@@ -396,12 +396,9 @@ if $DO_CLEAN; then
     echo "" > "$LOG"
 fi
 
-# Generated headers: extract MS UEFI CA generation from the pinned
-# shim binary so uefi_runtime.c can publish HKLM\SYSTEM\SecureBoot\ShimCA
-# at boot. Idempotent; runs every build (cheap; ~10 ms).
-bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || { \
-    echo "[shim-ca] FATAL: extract-shim-ca.sh failed; refusing to ship stale generated header" >> "$LOG"; \
-    print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+# Generated headers: build/generated/shim_ca.h (the pinned shim's MS UEFI CA
+# generation) is a make rule since 2026-11-17, generated ahead of the first
+# compile, so `make all` and this script build the same graph.
 
 # ── Generated-ABI drift gate ────────────────────────────────────────────────
 # `make all` USED TO list check-abi as a prerequisite, but THIS script -- the
@@ -493,52 +490,14 @@ STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # Pack BOOTX64.UKI.efi -- Unified Kernel Image per UAPI Group spec
-# (https://uapi-group.org/specifications/specs/unified_kernel_image/).
-# Bundles the BOOTX64.EFI stub + kernel.exe (.linux section) + boot.conf
-# (.cmdline section) + os-release info (.osrel section) into a single
-# signable PE. UEFI firmware can invoke the UKI directly via direct-
-# firmware-invoke, getting whole-chain Secure Boot signature coverage
-# (kernel + cmdline are inside the firmware-verified PE blob, so per-
-# file split-path signing is no longer required).
-#
-# The pack itself lives in scripts/uki-pack.sh, the one implementation that
-# the UKI-direct smoke legs (scripts/test-smoke.sh SMOKE_UKI=) also use, so a
-# test boots an image packed exactly the way this one is. Optional signed
-# payloads are staged at build/uki-payloads/{initrd.img,recovery.img,
-# modules.cpio}.
-#
-# No `set -e` here. Inside a `{ ...; } || { ...; }` list bash ignores errexit
-# for the block's own commands, so it never guarded this block; its only effect
-# was to switch errexit on for the REST of the script (braces are not a
-# subshell), where print_errors' grep returning 1 on "no compiler error lines"
-# ended the script before the === BUILD FAILED === sentinel was written.
-# Failures here are explicit instead.
-{
-    UKI_OUT="build/tools/BOOTX64.UKI.efi"
-    UKI_STUB="build/tools/BOOTX64.EFI"
-    UKI_KERNEL="build/kernel.exe"
-    UKI_CMDLINE="build/uki-cmdline.txt"
-    if [ -f "$UKI_STUB" ] && [ -f "$UKI_KERNEL" ]; then
-        # Source boot.conf into .cmdline so the bootloader's UKI path
-        # parses the same shape it would have read from disk under the
-        # split path.
-        if [ -f "resources/boot/boot.conf" ]; then
-            cp "resources/boot/boot.conf" "$UKI_CMDLINE"
-        else
-            : > "$UKI_CMDLINE"
-        fi || { echo "[uki] FATAL: cannot write $UKI_CMDLINE" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
-        UKI_RC=0
-        bash scripts/uki-pack.sh "$UKI_STUB" "$UKI_KERNEL" "$UKI_CMDLINE" \
-            build/uki-payloads "$UKI_OUT" >> "$LOG" 2>&1 || UKI_RC=$?
-        # 3 = no objcopy on this host: the UKI is optional, the split-path
-        # loader still ships (the WARN is already in the log).
-        if [ "$UKI_RC" -ne 0 ] && [ "$UKI_RC" -ne 3 ]; then
-            print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
-        fi
-    else
-        echo "[uki] skip: missing stub or kernel ($UKI_STUB / $UKI_KERNEL)" >> "$LOG"
-    fi
-} || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+# (https://uapi-group.org/specifications/specs/unified_kernel_image/): the
+# BOOTX64.EFI stub + kernel.exe (.linux) + boot.conf (.cmdline) + os-release
+# (.osrel) + the optional payloads staged at build/uki-payloads/, one signable
+# PE that firmware can invoke directly with whole-chain Secure Boot coverage.
+# The Makefile's `uki` target owns it (scripts/uki-pack.sh, the packer the
+# UKI-direct smoke legs use too) and repacks only when an input changed; a host
+# without objcopy fails here, since signing needs the image.
+make $MAKE_FLAGS uki >> "$LOG" 2>&1 || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # EFI Signing (skipped silently if keys/MOK.key is absent)
 STEP=$((STEP + 1))
@@ -576,7 +535,7 @@ run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUIL
     [ "$sbat_gen" -ge 1 ] || sbat_fail "impossibleos generation must be >= 1 (got $sbat_gen)"
     # Stage 2: per-artifact byte-compare of the embedded .sbat against the source.
     for sbat_art in build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi; do
-        [ -f "$sbat_art" ] || continue   # UKI is skipped when stub/kernel are absent
+        [ -f "$sbat_art" ] || sbat_fail "$sbat_art missing"   # both are build outputs since the uki step
         sbat_tmp=$(mktemp)
         objcopy -O binary --only-section=.sbat "$sbat_art" "$sbat_tmp" 2>>"$LOG" || { rm -f "$sbat_tmp"; sbat_fail "cannot dump .sbat from $sbat_art"; }
         cmp -s "$sbat_tmp" "$SBAT_SRC" || { rm -f "$sbat_tmp"; sbat_fail "$sbat_art .sbat does not match $SBAT_SRC (missing/empty/stale)"; }
@@ -609,20 +568,19 @@ run_step $STEP $TOTAL "System Disk" "system-disk" || { print_errors; echo "=== B
 # always out of date), so the UKI and the disk shipped DIFFERENT kernels from
 # one build and nothing noticed. Each packed UKI must embed exactly the
 # kernel.exe the disk carries.
-# Runs only when THIS run packed the UKI (UKI_RC=0); a host without objcopy
-# (UKI_RC=3) or without a stub packed nothing, and an old artifact on disk is
-# not this build's output.
-if [ "${UKI_RC:-skip}" = "0" ]; then
+# Runs on every build: the `uki` step above either packed the image or found
+# it current against this kernel, and a build without it has already failed.
+{
     UKI_OBJCOPY=""
     for cand in llvm-objcopy-19 llvm-objcopy objcopy; do
         command -v "$cand" >/dev/null 2>&1 && { UKI_OBJCOPY="$cand"; break; }
     done
     for uki in build/tools/BOOTX64.UKI.efi build/tools/BOOTX64.UKI.signed.efi; do
         if [ ! -f "$uki" ]; then
-            # The pack just reported success, so a missing unsigned UKI is a
-            # failure. The signed copy exists only where sign-efi.sh had a key.
+            # The uki step succeeded, so a missing unsigned UKI is a failure.
+            # The signed copy exists only where sign-efi.sh had a key.
             [ "$uki" = build/tools/BOOTX64.UKI.signed.efi ] && continue
-            echo "[uki] FATAL: $uki missing although the UKI pack reported success" >> "$LOG"
+            echo "[uki] FATAL: $uki missing although the uki step succeeded" >> "$LOG"
             print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
         fi
         UKI_DUMP="$(mktemp)"
@@ -639,7 +597,7 @@ if [ "${UKI_RC:-skip}" = "0" ]; then
         rm -f "$UKI_DUMP" "$UKI_DUMP.pe"
         echo "[uki] $uki embeds build/kernel.exe byte-for-byte" >> "$LOG"
     done
-fi
+}
 
 # Summary
 TOTAL_SECS=$(elapsed "$BUILD_START")

@@ -125,8 +125,8 @@ UKI_BIN="${UKI_BIN:-$REPO_ROOT/build/tools/BOOTX64.UKI.efi}"
 EFI_SIGNED="${EFI_SIGNED:-${EFI_BIN%.*}.signed.efi}"
 UKI_SIGNED="${UKI_SIGNED:-${UKI_BIN%.*}.signed.efi}"
 
-# Both artifacts MUST exist when the UKI pipeline ran -- the build
-# script's `Pack BOOTX64.UKI.efi` step produces both before we sign.
+# Both artifacts MUST exist: the Makefile's uefi-boot and uki targets
+# produce them, and the signing stamp depends on both.
 # A missing UKI here is a build pipeline failure, not a soft skip,
 # so we fail closed.
 if [ ! -f "$EFI_BIN" ]; then
@@ -136,7 +136,7 @@ if [ ! -f "$EFI_BIN" ]; then
 fi
 if [ ! -f "$UKI_BIN" ]; then
     echo "[ERROR] UKI binary not found: $UKI_BIN" >&2
-    echo "        Run: bash scripts/build.sh (Pack BOOTX64.UKI.efi step)" >&2
+    echo "        Run: bash scripts/build.sh (or make uki)" >&2
     exit 1
 fi
 

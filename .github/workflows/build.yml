@@ -137,6 +137,11 @@ jobs:
       - name: Build OS (clean)
         run: bash scripts/build.sh clean
 
+      # The make graph must stand on its own: raw `make all` in a copy of the
+      # tracked tree with no build/, twice (scripts/test-raw-make.sh says why).
+      - name: Raw make builds a fresh tree
+        run: bash scripts/test-raw-make.sh
+
       - name: Compile cache statistics
         if: always()
         run: ccache --show-stats

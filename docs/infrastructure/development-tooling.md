@@ -426,6 +426,8 @@ fingerprint and a validate-not-recompute receipt) is tracked by
 
 All builds go through `scripts/build.sh` -- never raw `make` commands.
 
+The make graph is still complete on its own: `make all` on a tree with no `build/` builds every artifact, because every generated input (`build/generated/shim_ca.h`, `build/tools/BOOTX64.UKI.efi`) is a make rule that `scripts/build.sh` calls rather than a step only the script runs. What raw make lacks is the script's gates (ABI drift first, the BSS and firmware-floor checks, the SBAT and embedded-kernel checks, the build receipt). `bash scripts/test-raw-make.sh` proves the graph in a throwaway copy of the tracked tree, and CI runs it.
+
 | Command                           | Description         |
 | --------------------------------- | ------------------- |
 | `bash scripts/build.sh`           | Incremental build   |

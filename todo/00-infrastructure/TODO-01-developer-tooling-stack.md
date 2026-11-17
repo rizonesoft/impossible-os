@@ -83,7 +83,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
 | ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [x]   |
 | ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [x]   |
-| 💎  |  19   | Raw `make all` builds the whole graph                    | §3, §13        |  [ ]   |
+| 💎  |  19   | Raw `make all` builds the whole graph                    | §3, §13        |  [x]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -634,14 +634,17 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 
 `bash scripts/build.sh` is the entry point (§3), and it drives make target by target. Two artifacts the make graph consumes were produced only by build.sh, so `make all` on a tree with no `build/` failed (measured 2026-11-17): `No rule to make target 'build/tools/BOOTX64.UKI.efi'` (a prerequisite of the signing stamp) and `fatal error: 'shim_ca.h' file not found` in `uefi_runtime.c`. Decision (operator option a, `todo/answers.md` Q49): make owns both rules and build.sh calls them, so the two paths cannot drift.
 
-- [ ] `build/generated/shim_ca.h` is a make rule running `scripts/extract-shim-ca.sh` every make (it writes only on change), in `GENERATED_HDRS`; build.sh no longer runs the script itself
-- [ ] `build/tools/BOOTX64.UKI.efi` is a make rule packing through `scripts/uki-pack.sh` from the stub, `kernel.exe`, `boot.conf` and the staged payloads; build.sh's UKI step calls that target
+- [x] `build/generated/shim_ca.h` is a make rule running `scripts/extract-shim-ca.sh` every make (it writes only on change), in `GENERATED_HDRS`; build.sh no longer runs the script itself
+- [x] `build/tools/BOOTX64.UKI.efi` is a make rule packing through `scripts/uki-pack.sh` from the stub, `kernel.exe`, `boot.conf` and the staged payloads; build.sh's UKI step calls that target
   - No objcopy on the host fails the rule with a message naming the tool: signing already needs the UKI, so a skipped pack only moved the failure to a generic "No rule"
-- [ ] `scripts/test-raw-make.sh`: in a throwaway copy of the tracked tree, `make -n all` names no missing rule and generates `shim_ca.h` before the first compile; `--full` builds there and checks a second build leaves every signed artifact unchanged
-  - The dry run runs in `scripts/test-tooling.sh`; `--full` is the section's proof, run once with `bash scripts/build.sh clean`
-- [ ] Commit: `"build: make owns the shim CA header and the UKI pack"`
+  - `build/.uki-payloads.manifest` (each payload present or absent, with its hash, written on change) is a prerequisite, so removing a staged payload repacks the image too
+  - build.sh's embedded-kernel check now runs on every build; it was keyed to the old block's exit code
+- [x] `scripts/test-raw-make.sh`: in a throwaway copy of the tracked tree, `make all` succeeds twice and the second build leaves the loader, `shim_ca.h` and `uefi_runtime.o` alone, with the UKI's `.sbat` intact
+  - A dry run cannot stand in: the loader is a recursive make, and under `-n` the headers it reads are never created
+  - Runs in CI as its own `build.yml` step, so the graph cannot regress unseen
+- [x] Commit: `"build: make owns the shim CA header and the UKI pack"`
 
-**Test checkpoint:** before the fix `bash scripts/test-raw-make.sh` fails on the missing rule; after it, the dry run passes, `--full` reaches a clean `make all` and an idempotent second build, and `bash scripts/build.sh clean` ends `=== BUILD OK ===`.
+**Test checkpoint:** before the fix `bash scripts/test-raw-make.sh` fails on `No rule to make target 'build/tools/BOOTX64.UKI.efi'`; after it, the script passes, `bash scripts/build.sh clean` and a second `bash scripts/build.sh` both end `=== BUILD OK ===` with `[sbat] OK`, and the second leaves `BOOTX64.signed.efi` unchanged.
 
 ---
 
