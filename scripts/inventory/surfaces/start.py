@@ -238,11 +238,36 @@ def panel(ctx):
     return ctx.find(within=start(ctx), className="Windows.UI.Core.CoreWindow", name="Search", depth=2)
 
 
+# The panel's screen bounds by taskbar alignment, read by the openers: a walk
+# measures every bound from its scene's root, so a scene rooted at the panel
+# always puts it at 0 (round review 2026-11-17). Published by METRICS.
+PANEL_AT = {}
+
+
+def _panel_at(ctx, alignment):
+    PANEL_AT[alignment] = tuple(int(v) for v in panel(ctx).bounds)
+
+
+def open_centre(ctx):
+    """Start as it opens by default, with its panel's place on screen read."""
+    open_start(ctx)
+    _panel_at(ctx, "centre")
+
+
 def open_left(ctx):
     """Start with the taskbar aligned left (TaskbarAl applies live, 2026-11-16)."""
     ctx.powershell(f"Set-ItemProperty -LiteralPath '{ADVANCED}' -Name TaskbarAl -Value 0 -Type DWord")
     time.sleep(4)
     open_start(ctx)
+    _panel_at(ctx, "left")
+
+
+def panel_edges():
+    """The panel's left edge on screen with the taskbar centred and aligned left."""
+    missing = [a for a in ("centre", "left") if a not in PANEL_AT]
+    if missing:
+        raise ValueError(f"the Start panel's place on screen was not read: {', '.join(missing)}")
+    return PANEL_AT["centre"][0], PANEL_AT["left"][0]
 
 
 def close_left(ctx):
@@ -412,7 +437,7 @@ def _walk_rows(ctx, el, depth=0):
 SCENES = [
     # Not expanded: the view dropdown opens its own menu (the view-menu scene), and
     # expanding it during the walk closed Start (2026-11-17).
-    dict(slug=ROOT, label="Start", kind="surface", open=open_start, root=start, close=close_start, expand=False),
+    dict(slug=ROOT, label="Start", kind="surface", open=open_centre, root=start, close=close_start, expand=False),
     dict(slug="power-menu", label="Power menu", kind="menu", open=menu_from({"automationId": "PowerButton"}),
          root=flyout_menu, close=close_menu),
     # The account's name and type are this machine's data.
@@ -482,8 +507,9 @@ def METRICS(records):
     metric("panel-width", "Panel width", centre["width"], 0)
     metric("panel-height", "Panel height", centre["height"], 1)
     metric("panel-gap", "Gap between the panel and the taskbar", screen["height"] - centre["y"] - centre["height"], 2)
-    metric("panel-x-centre", "Panel left edge, taskbar centred", centre["x"], 3)
-    metric("panel-x-left", "Panel left edge, taskbar aligned left", left["x"], 4)
+    x_centre, x_left = panel_edges()
+    metric("panel-x-centre", "Panel left edge, taskbar centred", x_centre, 3)
+    metric("panel-x-left", "Panel left edge, taskbar aligned left", x_left, 4)
 
     # A letter group is its heading and its apps: one row of tiles in the grid
     # view, one row per app in the list view.

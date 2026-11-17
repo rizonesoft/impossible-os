@@ -651,6 +651,24 @@ class StartApps(unittest.TestCase):
         with self.assertRaises(self.start.core.Incomplete):
             self._folder([[("P~A!App", False), ("P~B!App", True)]], [0.0])
 
+    def test_the_panel_edges_come_from_the_screen_not_the_scene_root(self):
+        # Round review 2026-11-17: the left scene is rooted at the panel, and a
+        # walk measures from its root, so its x was always 0.
+        self.start.PANEL_AT.clear()
+        ctx = types.SimpleNamespace(powershell=lambda *a, **k: None)
+        bounds = iter([(531, 142, 858, 890), (24, 142, 858, 890)])
+        with mock.patch.object(self.start, "open_start", lambda c: None), \
+                mock.patch.object(self.start, "panel", lambda c: types.SimpleNamespace(bounds=next(bounds))), \
+                mock.patch.object(self.start.time, "sleep", lambda s: None):
+            self.start.open_centre(ctx)
+            self.start.open_left(ctx)
+        self.assertEqual(self.start.panel_edges(), (531, 24))
+
+    def test_an_unread_panel_edge_fails_the_capture(self):
+        self.start.PANEL_AT.clear()
+        with self.assertRaises(ValueError):
+            self.start.panel_edges()
+
     def test_an_app_moved_out_of_its_folder_loses_the_folder_text(self):
         self.start._apps[:] = [("P~Vendor.Clock!App", "Clock", "Tools")]
         old = [r for r in self.start.app_records() if "uiaId" in r]
