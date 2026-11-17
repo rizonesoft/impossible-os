@@ -705,7 +705,8 @@ $(UKI_CMDLINE): resources/boot/boot.conf
 # Which payloads are staged. The packer embeds a payload by its presence, so
 # membership is an input: a removed payload must repack the image, and a
 # mtime-only prerequisite list cannot see a file that is gone. Each present
-# payload is identified by size, mtime, ctime and inode, not by a hash: every
+# payload is identified by the file the packer reads (stat -L follows a link)
+# by size, nanosecond mtime and ctime, inode and device, not by a hash: every
 # make call build.sh issues reaches this rule, and ctime changes on any write
 # or rename and cannot be set back, so a replaced payload is caught at no read
 # cost. Written only when it changed, so an unchanged run repacks nothing.
@@ -713,7 +714,7 @@ $(UKI_PAYLOAD_MANIFEST): .FORCE
 	@mkdir -p $(dir $@)
 	@for p in $(UKI_PAYLOADS); do \
 		if [ -f "$(UKI_PAYLOAD_DIR)/$$p" ]; then \
-			printf '%s %s\n' "$$p" "$$(stat -c '%s %Y %Z %i' "$(UKI_PAYLOAD_DIR)/$$p")"; \
+			printf '%s %s\n' "$$p" "$$(stat -L -c '%s %.9Y %.9Z %i %d' "$(UKI_PAYLOAD_DIR)/$$p")"; \
 		else \
 			printf '%s absent\n' "$$p"; \
 		fi; \

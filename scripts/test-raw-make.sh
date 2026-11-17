@@ -93,4 +93,33 @@ loader_after=$(sha256sum "$TREE/build/tools/BOOTX64.EFI" | cut -d' ' -f1)
 sbat="$WORK/uki.sbat"
 objcopy -O binary --only-section=.sbat "$TREE/build/tools/BOOTX64.UKI.efi" "$sbat"
 cmp -s "$sbat" "$TREE/src/boot/uefi/sbat.csv" || fail "the repacked UKI's .sbat no longer equals src/boot/uefi/sbat.csv"
-echo "[raw-make] OK: make all built a tree with no build/, twice; the loader, shim_ca.h and uefi_runtime.o were left alone and the UKI's .sbat is intact"
+# Staged payloads: the packer embeds each one by presence, so adding one (by
+# a link), changing it through the link, rewriting it in place at the same
+# size and removing it must each repack the UKI with the bytes on disk.
+uki() {
+    ( cd "$TREE" && timeout --kill-after=10 300 make -s uki ) > "$WORK/uki.log" 2>&1 ||
+        { cat "$WORK/uki.log" >&2; fail "make uki failed ($1)"; }
+}
+embedded() {
+    local img="$TREE/build/tools/BOOTX64.UKI.efi"
+    objdump -h "$img" > "$WORK/sections.txt" || fail "cannot list the UKI's sections"
+    grep -q ' \.initrd ' "$WORK/sections.txt" || return 0      # no payload embedded
+    objcopy -O binary --only-section=.initrd "$img" "$WORK/initrd.out" || fail "cannot dump the UKI's .initrd"
+    cat "$WORK/initrd.out"
+}
+mkdir -p "$TREE/build/uki-payloads"
+printf 'first payload\n' > "$WORK/payload"
+ln -s "$WORK/payload" "$TREE/build/uki-payloads/initrd.img"
+uki "payload added"
+[ "$(embedded)" = "first payload" ] || fail "a staged payload was not embedded"
+printf 'other payload\n' > "$WORK/payload"
+uki "payload changed through its link"
+[ "$(embedded)" = "other payload" ] || fail "a payload changed through its link left the old bytes embedded"
+printf 'third payload\n' > "$WORK/payload"
+uki "payload rewritten at the same size"
+[ "$(embedded)" = "third payload" ] || fail "a same-size rewrite left the old bytes embedded"
+rm "$TREE/build/uki-payloads/initrd.img"
+uki "payload removed"
+[ -z "$(embedded)" ] || fail "a removed payload is still embedded"
+
+echo "[raw-make] OK: make all built a tree with no build/, twice; the loader, shim_ca.h and uefi_runtime.o were left alone, the UKI's .sbat is intact and the UKI follows every payload change"
