@@ -620,6 +620,37 @@ class StartApps(unittest.TestCase):
             self.assertNotEqual(ids[a[0]], ids[b[0]])
             self.assertEqual(self.ids([a])[a[0]], ids[a[0]])
 
+    def _folder(self, pages, percents, steps=5):
+        # pages[i]: the folder's rows while the grid shows page i.
+        at = [0]
+
+        class Scroll:
+            CurrentVerticallyScrollable = True
+            CurrentVerticalScrollPercent = property(lambda self: percents[at[0]])
+
+            def Scroll(self, h, v):
+                at[0] = min(at[0] + 1, len(pages) - 1)
+        sc = Scroll()
+        ctx = types.SimpleNamespace(find=lambda **kw: "grid")
+        row = lambda aid, off: types.SimpleNamespace(automation_id=aid, name=aid, offscreen=off,
+                                                     control_type="ListItem")
+        self.start._apps.clear()
+        with mock.patch.object(self.start, "_walk_rows", lambda c, m: [row(*r) for r in pages[at[0]]]), \
+                mock.patch.object(self.start, "_scroll", lambda c, g: sc), \
+                mock.patch.object(self.start, "SCAN_STEPS", steps), mock.patch.object(self.start.time, "sleep", lambda s: None):
+            self.start._read_folder(ctx, "modal", set(), {}, "Tools")
+        return [a for a, _, _ in self.start._apps]
+
+    def test_a_folder_longer_than_its_grid_is_read_to_its_end(self):
+        # Round review 2026-11-17: a folder was read once, so apps below its
+        # fold were left out without a word.
+        pages = [[("P~A!App", False), ("P~B!App", True)], [("P~A!App", True), ("P~B!App", False)]]
+        self.assertEqual(self._folder(pages, [0.0, 100.0]), ["P~A!App", "P~B!App"])
+
+    def test_a_folder_that_never_reaches_its_end_fails_the_capture(self):
+        with self.assertRaises(self.start.core.Incomplete):
+            self._folder([[("P~A!App", False), ("P~B!App", True)]], [0.0])
+
     def test_an_app_moved_out_of_its_folder_loses_the_folder_text(self):
         self.start._apps[:] = [("P~Vendor.Clock!App", "Clock", "Tools")]
         old = [r for r in self.start.app_records() if "uiaId" in r]
@@ -719,6 +750,13 @@ class Merge(unittest.TestCase):
         out = self._bound([{"id": "a.b", "label": "B", "baselineMissing": True}],
                           [{"id": "a.b", "label": "B", "baselineId": "controls:Button"}])
         self.assertEqual(out, [{"id": "a.b", "label": "B", "baselineId": "controls:Button"}])
+
+    def test_a_capture_match_to_an_absent_row_does_not_bring_back_the_old_match(self):
+        # Round review 2026-11-17: the capture's match was removed before merge,
+        # so merge refilled the old, superseded one.
+        out = self._bound([{"id": "a.b", "label": "B", "baselineId": "controls:Button"}],
+                          [{"id": "a.b", "label": "B", "baselineId": "controls:Gone"}])
+        self.assertEqual(out, [{"id": "a.b", "label": "B"}])
 
     def test_a_capture_match_to_an_absent_row_keeps_the_missing_flag(self):
         out = self._bound([{"id": "a.b", "label": "B", "baselineMissing": True}],
@@ -2006,6 +2044,21 @@ class DesktopMetrics(unittest.TestCase):
         self.desk.MEASURED["long"]["selected"] = 161
         with self.assertRaises(ValueError):
             self.desk.METRICS(self.cells())
+
+    def test_a_hung_explorer_fails_the_icon_toggle_instead_of_waiting(self):
+        sent = []
+
+        def send(*args):
+            sent.append(args)
+            return 0                                 # timed out, or the window is hung
+        fake = types.SimpleNamespace(FindWindowExW=lambda *a: 7, SendMessageTimeoutW=send)
+        ctx = types.SimpleNamespace()
+        with mock.patch.object(self.desk, "user32", fake), \
+                mock.patch.object(self.desk, "desktop", lambda c: types.SimpleNamespace(
+                    el=types.SimpleNamespace(CurrentNativeWindowHandle=1))):
+            with self.assertRaises(self.desk.core.Incomplete):
+                self.desk.toggle_icons(ctx)
+        self.assertEqual(sent[0][4:6], (self.desk.SMTO_ABORTIFHUNG, self.desk.SEND_TIMEOUT_MS))
 
     def test_a_missing_pixel_read_fails_the_capture(self):
         del self.desk.MEASURED["hover"]

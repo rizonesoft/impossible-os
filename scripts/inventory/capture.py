@@ -302,7 +302,7 @@ def build_file(target, new, meta, do_merge):
     if live is not None:
         # The capture's own matches first: one to a row the baseline lacks is
         # no match, so it must not displace a carried "no row lists it".
-        new, unbound = core.unbind(new, live)
+        new, unbound = core.unbind(new, live, owned=True)
     try:
         records, dropped = core.merge(old, new, meta.get("ambiguous", []))
     except ValueError as exc:

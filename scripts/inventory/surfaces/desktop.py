@@ -126,6 +126,8 @@ def open_empty_menu(ctx):
 user32 = getattr(ctypes, "windll", None) and ctypes.windll.user32
 WM_COMMAND = 0x0111
 TOGGLE_ICONS = 0x7402              # the desktop view's Show desktop icons command
+SMTO_ABORTIFHUNG = 0x0002          # SendMessageTimeoutW: give up at once on a hung window
+SEND_TIMEOUT_MS = 5000
 COLOUR_STEP = 60                   # a channel sum this far from the other state is a change
 PAD = 8                            # read this far outside the cell: a highlight may overhang it
 FOCUS_EDGE = 2                     # the focus rectangle's band inside the cell's edge
@@ -165,7 +167,12 @@ def toggle_icons(ctx):
     view = user32.FindWindowExW(desktop(ctx).el.CurrentNativeWindowHandle, 0, "SHELLDLL_DefView", None)
     if not view:
         raise core.Incomplete("the desktop's view window was not found")
-    user32.SendMessageW(view, WM_COMMAND, TOGGLE_ICONS, 0)
+    # Bounded: a send to a hung Explorer would otherwise wait out the whole
+    # capture (performance review 2026-11-17).
+    answered = ctypes.c_size_t()
+    if not user32.SendMessageTimeoutW(view, WM_COMMAND, TOGGLE_ICONS, 0, SMTO_ABORTIFHUNG, SEND_TIMEOUT_MS,
+                                      ctypes.byref(answered)):
+        raise core.Incomplete(f"Explorer did not answer the desktop icon toggle within {SEND_TIMEOUT_MS} ms")
     time.sleep(1.5)
 
 

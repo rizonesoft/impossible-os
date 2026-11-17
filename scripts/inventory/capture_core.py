@@ -697,7 +697,7 @@ def merge(old, new, ambiguous):
     return out, dropped
 
 
-def unbind(records, live):
+def unbind(records, live, owned=False):
     """Drop each baselineId whose baseline is in `live` ({name: set of row ids})
     and no longer holds the row.
 
@@ -708,9 +708,11 @@ def unbind(records, live):
     build that dropped its rows, and check-inventory.py refuses the orphan."""
     out, unbound = [], []
     for r in records:
-        name, _, row = r.get("baselineId", "").partition(":")
+        name, _, row = (r.get("baselineId") or "").partition(":")
         if name in live and row not in live[name]:
-            r = {k: v for k, v in r.items() if k != "baselineId"}
+            # owned: the capture's own match, kept as None (no value, still the
+            # capture's) so merge cannot refill the superseded old match.
+            r = {**r, "baselineId": None} if owned else {k: v for k, v in r.items() if k != "baselineId"}
             unbound.append(r["id"])
         out.append(r)
     return out, unbound

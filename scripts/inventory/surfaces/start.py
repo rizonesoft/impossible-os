@@ -352,11 +352,25 @@ def open_apps(ctx):
         ctx.click(row)
         modal = ctx.find(within=start(ctx), className="StartMenu.FolderModal", depth=2, timeout=10)
         time.sleep(1)
-        _read_rows(ctx, [k for k in _walk_rows(ctx, modal)], seen, folders, folder=name.split(" folder")[0])
+        _read_folder(ctx, modal, seen, folders, name.split(" folder")[0])
         ctx.keys("esc")
         _modal_gone(ctx)
     if not _apps:
         raise core.Incomplete("the All list showed no apps")
+
+
+def _read_folder(ctx, modal, seen, folders, folder):
+    """A folder's apps, its grid scrolled a page at a time: a folder longer than
+    its grid holds rows below the fold, and _read_rows reads only on-screen ones."""
+    grid = ctx.find(within=modal, className="GridView", depth=4, timeout=5)
+    for _ in range(SCAN_STEPS):
+        _read_rows(ctx, list(_walk_rows(ctx, modal)), seen, folders, folder=folder)
+        sc = _scroll(ctx, grid)
+        if not sc.CurrentVerticallyScrollable or sc.CurrentVerticalScrollPercent >= 99.9:
+            return
+        sc.Scroll(2, 3)          # ScrollAmount NoAmount across, LargeIncrement down
+        time.sleep(0.8)
+    raise core.Incomplete(f"the {folder} folder did not reach its end in {SCAN_STEPS} pages")
 
 
 def _modal_gone(ctx, wait=10):
