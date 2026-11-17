@@ -672,8 +672,9 @@ def _unquoted_newlines_to_sep(cmd):
             # `quote` is set.
             prev = cmd[i - 1] if i > 0 else ""
             nxt = cmd[i + 1] if i + 1 < n else ""
-            if c == "&" and (prev in (">", "<") or nxt == ">"):
-                # Part of a redirect (`2>&1`, `&>log`), not a control operator.
+            if (c == "&" and (prev in (">", "<") or nxt == ">")) or (c == "|" and prev == ">"):
+                # Part of a redirect (`2>&1`, `&>log`, the noclobber override
+                # `>|`), not a control operator.
                 out.append(c)
             elif c in ("&", "|") and nxt == c:
                 out.append(" " + c + c + " ")   # && / ||
