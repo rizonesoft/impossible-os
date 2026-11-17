@@ -520,16 +520,11 @@ def app_records():
     out = [{"id": f"{ROOT}.all-apps", "parent": ROOT, "kind": "region", "label": "All apps", "order": 30,
             "behaviour": "Every app Start lists, in the list view's order; a folder's apps follow it."}]
     labels = [name.split(", ")[0] for _, name, _ in _apps]    # the name and a status ("Calculator, New")
-    counts = {}
-    for label in labels:
-        counts[core.slug(label) or "app"] = counts.get(core.slug(label) or "app", 0) + 1
     for i, ((aid, _, folder), label) in enumerate(zip(_apps, labels)):
-        # An app's name is its id while no other app shares it; apps that share
-        # a name are told apart by their AppID, never by their order in the list,
-        # so a reordered list keeps every note on its own app.
-        slug = core.slug(label) or "app"
-        if counts[slug] > 1:
-            slug = core.slug(aid[2:]) or slug
+        # The id is the AppID, never the name or the list position: a second
+        # app taking the name, a reordered list or an app replaced by another
+        # of the same name moves no note onto the wrong app.
+        slug = core.slug(aid[2:]) or core.slug(label) or "app"
         out.append({"id": f"{ROOT}.all-apps.{slug}", "parent": f"{ROOT}.all-apps", "kind": "control", "label": label,
                     "order": i, "uiaId": aid, "baselineId": f"start-apps:{aid[2:]}",
                     **({"behaviour": f"In the {folder} folder."} if folder else {})})

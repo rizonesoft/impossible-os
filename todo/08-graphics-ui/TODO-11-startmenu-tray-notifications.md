@@ -91,7 +91,7 @@ Replace the current two-column Start menu in `src/desktop/desktop.c` with the Wi
 
 **Design:** [`shell.md#start-menu`](../../docs/design/shell.md#start-menu)
 
-**Inventory:** `win11.start.power-menu`, `win11.start.account-menu`, `win11.start.view-menu`, `win11.start.pinned-menu`, `win11.start.recommended-menu`, `win11.start.letter-jump`, `win11.start.bottom-bar`
+**Inventory:** `win11.start.power-menu`, `win11.start.account-menu`, `win11.start.view-menu`, `win11.start.pinned-menu`, `win11.start.recommended-menu`, `win11.start.letter-jump`, `win11.start.bottom-bar`, `win11.start.entry-menu`, `win11.start.pinned-folder`
 
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §4, §5`, which is superseded there so the shell has one implementation.
 
@@ -106,8 +106,10 @@ Win key / Start button → toggle open/close. Click a pinned tile → `task_exec
 - [ ] `void startmenu_close(void)`: reverse tweens with the accelerate curve over 167 ms; `on_complete` → `g_startmenu_open=0`
 - [ ] `void startmenu_toggle(void)` + Win key intercept in `desktop_handle_key()` (`KEY_LWIN || KEY_RWIN` on key-up)
 - [ ] Pinned tile click: `startmenu_launch(pin->path)`; close menu; `startmenu_launch(path)` logs `[startmenu] launched: %s`
-- [ ] "All" pill → `SM_VIEW_ALLAPPS` (cross-fade); "Back" pill → `SM_VIEW_PINNED`; letter heading click → 5 x 6 letter jump grid; letter → scroll to its group
+- [ ] "All" pill → `SM_VIEW_ALLAPPS` (cross-fade); "Back" pill → `SM_VIEW_PINNED`; letter heading click → letter jump grid of 48 x 48 cells in 4 columns; letter → scroll to its group
 - [ ] Recommended item → open via the file association; "More" pill → `SM_VIEW_RECENT`
+- [ ] All apps entry right-click → menu: Pin to Start, Pin to taskbar, App settings, Uninstall (`win11.start.entry-menu`)
+- [ ] Pinned folders: the tile menu's Create a new app folder; a click opens the folder's 4 x 3 grid over Start (`win11.start.pinned-folder`)
 - [ ] Footer: user button → context menu (Change account settings, Lock, Sign out, Switch user; account actions owned by `09-desktop-shell/TODO-06 §9`); power button → context menu (Sleep, Shut down, Restart)
 - [ ] Commit: `"startmenu: interaction -- toggle, launch, All apps view, recommended, power and user menus"`
 
@@ -138,7 +140,7 @@ Typing in Start's search box, or clicking the taskbar's search button, opens sea
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
-**Inventory:** `win11.taskbar.tray`, `win11.taskbar.hidden-icons-flyout`, `win11.taskbar.network-menu`, `win11.taskbar.volume-menu`, `win11.taskbar.app-icon-menu`
+**Inventory:** `win11.taskbar.tray`, `win11.taskbar.tray-laptop`, `win11.taskbar.hidden-icons-flyout`, `win11.taskbar.network-menu`, `win11.taskbar.volume-menu`, `win11.taskbar.app-icon-menu`
 
 `src/desktop/systray.c`. The right side of the taskbar is, left to right: an overflow chevron (28 x 40) that opens hidden tray icons, the system cluster (network, volume and battery glyphs in ONE 40 px tall button), then the clock and notification bell (`08-graphics-ui/TODO-12 §3`). Clicking the system cluster opens the single quick settings flyout owned by `08-graphics-ui/TODO-09 §8`, which holds Wi-Fi, Bluetooth, volume and brightness; there are no separate volume or network popups. App tray icons (`tray_register`) live in the overflow flyout unless the user promotes them.
 

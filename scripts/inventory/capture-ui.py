@@ -516,7 +516,6 @@ class Context:
         Offscreen containers are searched too: a WinUI menu's popup window
         reports offscreen while its entries are on screen."""
         deadline = time.monotonic() + timeout
-        first = True
         while True:
             level = [within] if within is not None else None
             try:
@@ -526,10 +525,10 @@ class Context:
                     for el in level:
                         if el is not within and core.matches(el, spec):
                             return el
-                        # The first pass is the one look a short timeout promises
-                        # and always runs whole; a later pass stops at the
-                        # deadline, so a wait on a big tree ends near its bound.
-                        if not first and time.monotonic() >= deadline:
+                        # A positive timeout holds inside every pass, the first
+                        # included: reading children is what costs time on a
+                        # broad tree. Zero is the one whole look.
+                        if timeout > 0 and time.monotonic() >= deadline:
                             raise core.Incomplete(f"no element matching {spec} within {timeout} s")
                         if d + 1 < depth:    # the last level's children are never searched
                             nxt.extend(el.children())
@@ -538,7 +537,6 @@ class Context:
                         break
             except self.live.COMError:
                 pass                 # a window closed mid-search; look again
-            first = False
             if time.monotonic() >= deadline:
                 raise core.Incomplete(f"no element matching {spec} within {timeout} s")
             time.sleep(0.5)

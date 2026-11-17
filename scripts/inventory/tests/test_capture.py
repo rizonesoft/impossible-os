@@ -593,14 +593,25 @@ class StartApps(unittest.TestCase):
         self.start._apps[:] = apps
         return {r["uiaId"]: r["id"] for r in self.start.app_records() if "uiaId" in r}
 
+    A, B, C = ("P~Vendor.EditorA!App", "Editor", None), ("P~Vendor.EditorB!App", "Editor, New", None), \
+        ("P~Vendor.Clock!App", "Clock", None)
+
     def test_apps_sharing_a_name_keep_their_ids_when_the_list_is_reordered(self):
-        a, b, c = ("P~Vendor.EditorA!App", "Editor", None), ("P~Vendor.EditorB!App", "Editor, New", None), \
-            ("P~Vendor.Clock!App", "Clock", None)
-        first, second = self.ids([a, b, c]), self.ids([c, b, a])
+        first, second = self.ids([self.A, self.B, self.C]), self.ids([self.C, self.B, self.A])
         self.assertEqual(first, second)
-        self.assertEqual(first[c[0]], "start.all-apps.clock")
-        self.assertNotEqual(first[a[0]], first[b[0]])
+        self.assertNotEqual(first[self.A[0]], first[self.B[0]])
         self.assertNotIn("--", "".join(first.values()))
+
+    def test_a_new_sibling_with_the_same_name_moves_no_id(self):
+        # Round review 2026-11-17: a name-keyed id switched to the AppID only
+        # once a second app took the name, dropping the first app's notes.
+        alone, shared = self.ids([self.A, self.C]), self.ids([self.A, self.B, self.C])
+        self.assertEqual(alone[self.A[0]], shared[self.A[0]])
+        self.assertEqual(alone[self.C[0]], shared[self.C[0]])
+
+    def test_an_app_replaced_by_one_of_the_same_name_gets_a_new_id(self):
+        # Otherwise merge carries the old app's baseline link onto the new one.
+        self.assertNotEqual(self.ids([self.A])[self.A[0]], self.ids([self.B])[self.B[0]])
 
 
 class Merge(unittest.TestCase):
@@ -2023,21 +2034,23 @@ class Find(unittest.TestCase):
             self.context().find(within=root, timeout=0, depth=2, name="nothing")
         self.assertEqual(log, ["root"])          # mid is the last level searched: matched, never opened
 
-    def test_a_later_pass_stops_at_the_deadline(self):
-        log = []
-        root = self.El("root", [self.El(f"k{i}", log=log) for i in range(50)], log)
-        now = [0.0]
+    def test_a_slow_first_pass_stops_at_the_deadline(self):
+        # Reading children is what costs time on a broad UIA tree, so the clock
+        # moves inside the first pass and the deadline must hold there too
+        # (round and performance reviews 2026-11-17: 30 one-second reads ran 31 s
+        # under timeout=1).
+        log, now = [], [0.0]
 
-        def clock():
-            now[0] += 0.1                           # every read of the clock costs 0.1 s
-            return now[0]
-        with mock.patch.object(guest.time, "monotonic", clock), mock.patch.object(guest.time, "sleep", lambda s: None):
+        class Slow(self.El):
+            def children(self):
+                now[0] += 1.0
+                return super().children()
+        root = Slow("root", [Slow(f"k{i}", [Slow("x", log=log)], log) for i in range(30)], log)
+        with mock.patch.object(guest.time, "monotonic", lambda: now[0]), \
+                mock.patch.object(guest.time, "sleep", lambda s: None):
             with self.assertRaises(guest.core.Incomplete):
                 self.context().find(within=root, timeout=1, depth=3, name="nothing")
-        # The first pass reads all 51 elements; the second stops at the deadline
-        # instead of reading all 51 again.
-        self.assertEqual(log.count("root"), 2)
-        self.assertLess(len(log), 51 * 2)
+        self.assertLessEqual(len(log), 2)          # root and one child read, then the deadline
 
     def test_a_zero_timeout_still_searches_the_whole_tree_once(self):
         log = []

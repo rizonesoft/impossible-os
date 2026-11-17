@@ -2140,7 +2140,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T10 §8`  | Taskbar Customization                                                   | none  |     5 |
 | [ ]  | `D08 T10 §9`  | Taskbar on Every Display                                                | none  |     5 |
 | [ ]  | `D08 T11 §1`  | Start Menu Data Loading                                                 | none  |     9 |
-| [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none  |     8 |
+| [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none  |    10 |
 | [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none  |     6 |
 | [ ]  | `D08 T11 §4`  | System Tray Icons                                                       | none  |    10 |
 | [ ]  | `D08 T11 §5`  | Toast Notifications                                                     | none  |    11 |

@@ -350,7 +350,8 @@ FRAMES = [
                                    "group is absent."),
     ("highlights", "Search highlights", "The home page's daily highlights panel comes from the online service; "
                                         "offline it is absent."),
-    ("calculation", "Calculation and unit answers", "Offline, \"12*7\" returns No results on this build: the answer "
+    ("calculation", "Calculation and unit answers", "Offline, \"12*7\" and \"10 km in miles\" each return No "
+                                                    "results on this build (both measured every run): the answer "
                                                     "card comes from the online service."),
     ("account-results", "Account results", "Results from a Microsoft account or a work or school account, offered "
                                            "by the Options menu's first two entries."),
