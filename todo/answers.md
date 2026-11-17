@@ -550,3 +550,23 @@ The walk this section wanted to replace lost its only caller when the build-offl
 
 A: (run decision, 2026-11-17) A. Nothing consumed the deleted walk, the two safety guards are served by the token segmenter, and neither parser handles the shapes this repo issues most. Reversal cost: restore the walk from `5b26c6b3a` (one file) and vendor the wheel.
 
+
+
+## Q48 (08-graphics-ui/TODO-17 §9): how are the screens UI Automation cannot reach captured, and who captures the states §9 cannot reach?
+
+The secure desktop, setup and the boot screens are outside the session the capture tool runs in. Hyper-V's only host path is the thumbnail, which `ref-common.ps1` asked for at 640 by 360. The setup network branch needs §26's switch and the working-on-updates screens need §25's delivered update.
+
+- **A:** host thumbnail at the framebuffer's own 1920 by 1080 in 16-bit colour, each shot recording its depth (geometry exact, colour as roles), proven against a guest screenshot; move the network branch to §26 and the update screens to §25, which own those states.
+- **B:** a SYSTEM grabber in the guest's console session for the secure desktop and setup at full colour, and build §25 and §26 inside §9.
+
+A: (run decision, 2026-11-17) A. Every inventory record names colours as roles, so 16-bit colour loses nothing a record holds; one host path serves all three surfaces; the fixture sections already own the states. Reversal cost: a guest-side grabber (one script, SYSTEM token in session 1) and re-taking the secure and setup shots.
+
+
+## Q49 (00-infrastructure/TODO-01 §19): raw `make all` fails on a tree without build/; make owns the graph, or make refuses?
+
+`build/generated/shim_ca.h` and `build/tools/BOOTX64.UKI.efi` were produced only by `scripts/build.sh`, while the make graph consumes both.
+
+- **A:** make owns both rules (calling `scripts/extract-shim-ca.sh` and `scripts/uki-pack.sh`, the one implementation each) and build.sh calls the targets.
+- **B:** make refuses those targets with a message naming `bash scripts/build.sh`.
+
+A: (operator choice, 2026-11-17) A. The design notes give no reason against it: build.sh already drives make for every other artifact, both generators are idempotent single implementations, and the Makefile already owns generated headers by the same write-if-changed pattern (`include/build_info.h`). Reversal cost: two refusing rules and the old build.sh blocks restored from git.

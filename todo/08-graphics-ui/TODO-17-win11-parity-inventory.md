@@ -485,7 +485,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record by hand the desktop switching keys and the four-finger gesture, and what happens to windows when a desktop closes
   - Done when: `check-inventory.py --surface window` passes; every snap layout has its zones recorded as four numbers that sum to the whole screen, and the arrow key table has no unlisted transition.
 - [ ] Lock, Sign-In and Secure Screens: writes `docs/design/inventory/session/secure.json`
-  - Note: UI Automation does not reach the secure desktop. These records are `hand:` records, measured from screenshots kept in the scratch directory.
+  - Note: UI Automation does not reach the secure desktop. These records are `hand:` records, measured from host screenshots taken the way the boot item below describes.
   - Record the lock screen: the clock and date position and size, the status row, the network and accessibility buttons, and how it dismisses (key, click, swipe)
   - Record the sign-in screen
     - The account picture, name, the credential box and its reveal and submit buttons, the other users list
@@ -497,7 +497,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the power button menu on the sign-in screen and the accessibility flyout's list
   - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
-  - Run this capture from §2's `pre-oobe` checkpoint (the replay `-Reclean` already drives), for the local-account branch and, with §23's network switch, the network branch
+  - Run this capture from §2's `pre-oobe` checkpoint (the replay `-Reclean` already drives) for the local-account branch; §26 captures the network branch once its switch exists
   - Record the setup frame from the `pre-oobe` checkpoint of §2: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
   - Record each page in order as a `page` record with its controls: region, keyboard layout, second layout, network, device name, account, privacy choices, and the final preparing screen
   - Give every page tied to a Microsoft account, cloud backup, advertising or the assistant its disposition under §6
@@ -507,7 +507,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Done when: `check-inventory.py --surface session` passes; `setup.json` lists the pages in order with no gap in `order`, and each cloud-tied page has `disposition` other than `build`.
 - [ ] Boot, Update, Stop and Recovery Screens: writes `docs/design/inventory/session/boot.json`
   - Captured from the host side (Hyper-V screenshot of the VM framebuffer), because UIA does not run there; every record is `hand:<build>` with a shot
-  - The boot logo and spinner, the boot manager menu, the "working on updates" screens before and after restart, and the Safe mode desktop's marks
+  - The host path is Hyper-V's thumbnail taken at the framebuffer's own 1920 by 1080, 16-bit colour: each shot records that depth and gives geometry, with colour only as roles; a guest screenshot of the same desktop proves the geometry matches
+  - The boot logo and spinner, the boot manager menu and the Safe mode desktop's marks; the "working on updates" screens need a delivered update, so §25 captures them
   - The stop error screen, raised by a host NMI (`Debug-VM -InjectNonMaskableInterrupt` with `NMICrashDump` set), including its progress and restart
   - The recovery environment: automatic repair, the troubleshoot menu, startup settings and the reset path, each page as a `page` with its choices; a checkpoint is taken before each so the VM returns clean
   - Reconcile each screen against its owner in `D01 T15`, `D01 T14` and `D01 T22`, and note gaps in §15
@@ -1227,6 +1228,7 @@ Downloading, installing and restart required need an update Windows actually rec
 - [ ] Derive checkpoints for `update-downloading`, `update-installing` and `update-restart-required` from a genuine Microsoft update received over the temporary network, removed before the checkpoint is taken
 - [ ] `services.ps1` names each variant and restores its checkpoint, so `expected.json`'s rows resolve
 - [ ] Capture Start's power menu in `update-restart-required` (`start/power-menu-update`): section 8 recorded Lock, Shut down and Restart only, with no update pending
+- [ ] Capture the "working on updates" screens before and after the restart from `update-restart-required` into `session/boot.json` (moved from §9, which records the other boot screens)
 - [ ] Commit: `"inventory: delivered update states"`
 
 **Test checkpoint:** `ref-vm.ps1 -Verify` restores each update checkpoint with no network adapter and Settings > Windows Update shows its state.
@@ -1243,6 +1245,7 @@ The network states need a network the host switches per checkpoint, with no rout
 
 - [ ] Add a host-only switch that `ref-run.ps1` connects per run, and the `network-on`, `network-authentication-failed` (802.1X required with no authenticator) and `network-discovery-failed` variants
 - [ ] Add the `page-loading`, `page-timeout`, `page-validation-error` and `page-disconnected` variants, each named by the Settings page it shows
+- [ ] Capture First-Run Setup's network branch from `pre-oobe` with `network-on` into `session/setup.json` (moved from §9, which records the local-account branch)
 - [ ] Commit: `"inventory: network and page states"`
 
 **Test checkpoint:** `fixtures/run.py --twice` leaves the same state twice for every variant; a screenshot shows each state.

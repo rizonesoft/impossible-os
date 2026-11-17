@@ -83,6 +83,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
 | ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [x]   |
 | ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [x]   |
+| 💎  |  19   | Raw `make all` builds the whole graph                    | §3, §13        |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -622,6 +623,25 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 
 > **Verified:** 2026-11-11 | commit `acb831b3c` + post-ship fixes | all items | build OK | todo_plan 18/18, triage plan order 12/12, advance-work PASS, runner suite 82/82, `--check` 0
 > **Quality reviewed:** 2026-11-11 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 4H+12M fixed, 0 open | scope: N/A (host tooling, no kernel or boot code)
+
+---
+
+## 19. Raw `make all` Builds the Whole Graph
+
+> **Spawned-by:** root
+
+**Design:** n/a -- build tooling, draws nothing
+
+`bash scripts/build.sh` is the entry point (§3), and it drives make target by target. Two artifacts the make graph consumes were produced only by build.sh, so `make all` on a tree with no `build/` failed (measured 2026-11-17): `No rule to make target 'build/tools/BOOTX64.UKI.efi'` (a prerequisite of the signing stamp) and `fatal error: 'shim_ca.h' file not found` in `uefi_runtime.c`. Decision (operator option a, `todo/answers.md` Q49): make owns both rules and build.sh calls them, so the two paths cannot drift.
+
+- [ ] `build/generated/shim_ca.h` is a make rule running `scripts/extract-shim-ca.sh` every make (it writes only on change), in `GENERATED_HDRS`; build.sh no longer runs the script itself
+- [ ] `build/tools/BOOTX64.UKI.efi` is a make rule packing through `scripts/uki-pack.sh` from the stub, `kernel.exe`, `boot.conf` and the staged payloads; build.sh's UKI step calls that target
+  - No objcopy on the host fails the rule with a message naming the tool: signing already needs the UKI, so a skipped pack only moved the failure to a generic "No rule"
+- [ ] `scripts/test-raw-make.sh`: in a throwaway copy of the tracked tree, `make -n all` names no missing rule and generates `shim_ca.h` before the first compile; `--full` builds there and checks a second build leaves every signed artifact unchanged
+  - The dry run runs in `scripts/test-tooling.sh`; `--full` is the section's proof, run once with `bash scripts/build.sh clean`
+- [ ] Commit: `"build: make owns the shim CA header and the UKI pack"`
+
+**Test checkpoint:** before the fix `bash scripts/test-raw-make.sh` fails on the missing rule; after it, the dry run passes, `--full` reaches a clean `make all` and an idempotent second build, and `bash scripts/build.sh clean` ends `=== BUILD OK ===`.
 
 ---
 
