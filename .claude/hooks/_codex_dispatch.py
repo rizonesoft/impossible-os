@@ -387,21 +387,25 @@ def guard_argv(seg):
                 i += 1
             if i >= n:
                 return []
-            continue  # the token holding `)` is handled below
-        elif tok.startswith("("):
-            out[i] = tok.lstrip("(")
+            # the token holding `)` is cut below, then prefixes are skipped
+            out[i] = out[i].rpartition(")")[2]
             if not out[i]:
                 i += 1
-            continue
+        elif tok.startswith("("):
+            # a subshell, or `(PATTERN)` / `(PATTERN)cmd` in a case arm
+            body = tok.lstrip("(")
+            out[i] = body.rpartition(")")[2] if ")" in body else body
+            if not out[i]:
+                i += 1
         elif ")" in tok:
-            # a case PATTERN) (an unquoted `)` ends a pattern, never a command name)
-            rest = tok[tok.index(")") + 1:]
-            if rest:
-                out[i] = rest
-                continue
-            i += 1
+            # a later case arm's PATTERN) or PATTERN)cmd: an unquoted `)` ends a
+            # pattern and is never part of a command name; cut at the last one
+            out[i] = tok.rpartition(")")[2]
+            if not out[i]:
+                i += 1
         else:
             break
+        # every rewrite above can expose `env`, `sudo` or `FOO=1` as the next head
         i = _skip_env_and_wrappers(out, i)
     argv = []
     for tok in out[i:]:
