@@ -304,47 +304,51 @@ def _is_duration(tok):
     return False
 
 
+def _is_assignment(tok):
+    if "=" not in tok or tok.startswith("="):
+        return False
+    head = tok.split("=", 1)[0]
+    return bool(head) and (head[0].isalpha() or head[0] == "_") and all(
+        c.isalnum() or c == "_" for c in head)
+
+
+def _skip_env_and_wrappers(out, i=0):
+    """Index of the first token of `out[i:]` past env-prefix assignments and
+    wrapper-command prefixes (sudo, env, timeout, ...). Reads, never copies."""
+    n = len(out)
+    while i < n and _is_assignment(out[i]):
+        i += 1
+    while i < n and out[i] in _CODEX_WRAPPER_TOKENS:
+        wrapper = out[i]
+        i += 1
+        value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper, frozenset())
+        while i < n and out[i].startswith("-"):
+            flag = out[i]
+            i += 1
+            if "=" in flag:
+                continue
+            if flag in value_flags and i < n:
+                i += 1
+        # Wrapper-specific positional args before the real command.
+        if wrapper == "timeout" and i < n and _is_duration(out[i]):
+            i += 1
+        elif wrapper == "env":
+            while i < n and _is_assignment(out[i]):
+                i += 1
+        elif wrapper == "nice" and i < n and out[i].lstrip("-").isdigit():
+            i += 1
+        elif wrapper == "chrt" and i < n and out[i].isdigit():
+            i += 1
+    return i
+
+
 def _strip_env_and_wrappers(out):
     """Mutate `out` (a list of tokens) by stripping leading env-prefix
     assignments + wrapper-command prefixes (sudo, env, timeout, ...).
     Returns the mutated list. Same shape as the prior
     codex_review_completed.py inline implementation.
     """
-    # Strip leading env-assignments.
-    while out and "=" in out[0] and not out[0].startswith("="):
-        head = out[0].split("=", 1)[0]
-        if head and (head[0].isalpha() or head[0] == "_") and all(
-            c.isalnum() or c == "_" for c in head
-        ):
-            out.pop(0)
-        else:
-            break
-    # Walk wrappers.
-    while out and out[0] in _CODEX_WRAPPER_TOKENS:
-        wrapper = out.pop(0)
-        value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper, frozenset())
-        while out and out[0].startswith("-"):
-            flag = out.pop(0)
-            if "=" in flag:
-                continue
-            if flag in value_flags and out:
-                out.pop(0)
-        # Wrapper-specific positional args before the real command.
-        if wrapper == "timeout" and out and _is_duration(out[0]):
-            out.pop(0)
-        elif wrapper == "env":
-            while out and "=" in out[0] and not out[0].startswith("="):
-                head_a = out[0].split("=", 1)[0]
-                if head_a and (head_a[0].isalpha() or head_a[0] == "_") and all(
-                    c.isalnum() or c == "_" for c in head_a
-                ):
-                    out.pop(0)
-                else:
-                    break
-        elif wrapper == "nice" and out and out[0].lstrip("-").isdigit():
-            out.pop(0)
-        elif wrapper == "chrt" and out and out[0].isdigit():
-            out.pop(0)
+    del out[:_skip_env_and_wrappers(out)]
     return out
 
 
@@ -357,41 +361,56 @@ _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until"
 def guard_argv(seg):
     """The argv bash runs for segment `seg`, for the Bash safety guards.
 
-    Strips what `_strip_env_and_wrappers` strips, plus reserved words, `time -p`,
-    a `case WORD in PATTERN)` lead or a later arm's `PATTERN)`, and subshell
-    parens (`(cmd` and a trailing `)`). Returns [] when the segment holds no
-    command (a `case` lead with no pattern yet, a lone `}`). The Codex dispatch
+    Skips what `_strip_env_and_wrappers` strips, plus reserved words, `time -p`,
+    a `case WORD in PATTERN)` lead, a later arm's `PATTERN)` (also written
+    compactly, `x)git`), and subshell parens: a leading `(` and a trailing `)` on
+    any argument, so `(git reset --hard) 2>/dev/null` still reads `--hard`.
+    Returns [] when the segment holds no command. One forward pass over the
+    tokens: each is examined a bounded number of times. The Codex dispatch
     recogniser does not use this: its prompt arguments must stay byte-exact.
     """
-    out = _strip_env_and_wrappers(list(seg))
-    while out:
-        tok = out[0]
+    out = list(seg)
+    n = len(out)
+    i = _skip_env_and_wrappers(out, 0)
+    while i < n:
+        tok = out[i]
         if tok in _GRAMMAR_HEADS:
-            out.pop(0)
+            i += 1
             if tok == "time":
-                while out and out[0] in ("-p", "--"):
-                    out.pop(0)
+                while i < n and out[i] in ("-p", "--"):
+                    i += 1
         elif tok == "case":
-            if "in" not in out:
+            while i < n and out[i] != "in":
+                i += 1
+            i += 1
+            while i < n and ")" not in out[i]:
+                i += 1
+            if i >= n:
                 return []
-            out = out[out.index("in") + 1:]
-            ends = [i for i, t in enumerate(out) if t.endswith(")")]
-            if not ends:
-                return []
-            out = out[ends[0] + 1:]
+            continue  # the token holding `)` is handled below
         elif tok.startswith("("):
-            rest = tok.lstrip("(")
-            out = ([rest] if rest else []) + out[1:]
-        elif tok.endswith(")") and len(out) > 1:
-            out.pop(0)  # a later case arm's PATTERN)
+            out[i] = tok.lstrip("(")
+            if not out[i]:
+                i += 1
+            continue
+        elif ")" in tok:
+            # a case PATTERN) (an unquoted `)` ends a pattern, never a command name)
+            rest = tok[tok.index(")") + 1:]
+            if rest:
+                out[i] = rest
+                continue
+            i += 1
         else:
             break
-        _strip_env_and_wrappers(out)
-    if out and out[-1].endswith(")") and out[-1] != ")":
-        out[-1] = out[-1].rstrip(")")
-    elif out and out[-1] == ")":
-        out.pop()
-    return out
+        i = _skip_env_and_wrappers(out, i)
+    argv = []
+    for tok in out[i:]:
+        if tok.endswith(")"):
+            tok = tok.rstrip(")")
+            if not tok:
+                continue
+        argv.append(tok)
+    return argv
 
 
 def _walk_codex_global_options(out, start=1):

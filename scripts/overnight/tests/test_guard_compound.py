@@ -46,6 +46,11 @@ SHAPES = [
     "case x in y|x) {c};; esac",
     "if true; then FOO=1 {c}; fi",
     "if true; then timeout 5 {c}; fi",
+    "case x in x){c};; esac",
+    "case x in y) :;; x){c};; esac",
+    "case x in (x){c};; esac",
+    "({c}) 2>/dev/null",
+    "({c}) >/dev/null 2>&1",
 ]
 REFUSED = "git reset --hard"
 
@@ -70,8 +75,21 @@ def test_harmless_compounds_stay_allowed():
         assert not RUNNER._scan_command(cmd), f"runner_bash_guard refused {cmd!r}"
 
 
+def test_nested_cases_scale_linearly():
+    """A 420 KB nested-case command took 6.4 s (the hook timeout is 5 s) when each
+    case rescanned and copied the rest of the tokens."""
+    import time
+    cmd = "case x in x) " * 1000 + "echo " + "x " * 200000 + ";; esac" * 1000
+    t0 = time.monotonic()
+    ATTENDED._scan(cmd)
+    RUNNER._scan_command(cmd)
+    took = time.monotonic() - t0
+    assert took < 2.5, f"two guard scans of a 420 KB nested case took {took:.2f} s"
+
+
 if __name__ == "__main__":
     test_attended_guard_sees_through_shell_grammar()
     test_runner_guard_sees_through_shell_grammar()
     test_harmless_compounds_stay_allowed()
+    test_nested_cases_scale_linearly()
     print("PASS: guards see through shell grammar")
