@@ -27,7 +27,25 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/raw-make.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+BUILD_PGID=""
+
+# The build runs in its own session (setsid), so its process group is exactly
+# the build: on any exit, cancellation included, the whole group is stopped
+# (TERM, then KILL after a bounded grace) and reaped before the copy is removed.
+stop_build() {
+    [ -n "$BUILD_PGID" ] || return 0
+    kill -TERM -- "-$BUILD_PGID" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+        kill -0 -- "-$BUILD_PGID" 2>/dev/null || break
+        sleep 0.5
+    done
+    kill -KILL -- "-$BUILD_PGID" 2>/dev/null || true
+    wait "$BUILD_PGID" 2>/dev/null || true
+    BUILD_PGID=""
+}
+trap 'stop_build; rm -rf "$WORK"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 TREE="$WORK/tree"
 mkdir -p "$TREE"
 
@@ -39,13 +57,18 @@ fail() { echo "[raw-make] FAIL: $*" >&2; exit 1; }
     ( cd "$REPO" && tar --null -T - -cf - ) | ( cd "$TREE" && tar -xf - )
 [ ! -e "$TREE/build" ] || fail "the copy already holds build/"
 
-# The real build runs under one deadline; `timeout` without --foreground signals
-# the whole process group it started, so no compiler outlives the test.
+# The real build runs under one deadline as well; `timeout` without --foreground
+# signals the process group it leads, so no compiler outlives the deadline.
 DEADLINE="${RAW_MAKE_TIMEOUT:-1800}"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 
 build() {
-    ( cd "$TREE" && timeout --kill-after=10 "$DEADLINE" make -j"$JOBS" all ) > "$WORK/$1.log" 2>&1 ||
+    local rc=0
+    ( cd "$TREE" && exec setsid timeout --kill-after=10 "$DEADLINE" make -j"$JOBS" all ) > "$WORK/$1.log" 2>&1 &
+    BUILD_PGID=$!
+    wait "$BUILD_PGID" || rc=$?
+    BUILD_PGID=""
+    [ "$rc" -eq 0 ] ||
         { grep -E "\*\*\*|error:|No rule" "$WORK/$1.log" | head -20 >&2; fail "make all ($1) failed"; }
 }
 
