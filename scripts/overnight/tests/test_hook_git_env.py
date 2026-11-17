@@ -78,9 +78,11 @@ def test_both_hooks_isolate_before_their_suites():
     for suite in ("scripts/test-tooling.sh", "scripts/overnight/tests/run-all.sh",
                   "identity-gate.sh", "scripts/test.sh"):
         assert push.index(suite, at) > at, suite
+    # pre-commit runs the suite over the staged tree; the helper isolates it.
     commit = (REPO / ".githooks/pre-commit").read_text()
-    run_all = commit.index('bash "$REPO_ROOT/scripts/overnight/tests/run-all.sh"')
-    assert "isolate_git_env" in commit[run_all - 200:run_all], "pre-commit runs run-all.sh unisolated"
+    assert "run_on_staged_tree scripts/overnight/tests/run-all.sh" in commit, "pre-commit runs run-all.sh directly"
+    staged = (REPO / ".githooks/lib/staged-tree.sh").read_text()
+    assert staged.index("isolate_git_env\n") < staged.index('bash "$tree/$script"'), "the staged tree runs unisolated"
 
 
 def _toplevel_seen_from_a_subdirectory(d: pathlib.Path, anchor: bool) -> tuple[str, str]:

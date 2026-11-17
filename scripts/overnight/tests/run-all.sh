@@ -63,6 +63,14 @@ unset _ra_var
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 
+# The project every hook under test sees is the tree this suite is in, never
+# the caller's: a session exports CLAUDE_PROJECT_DIR naming its own checkout,
+# and run from a copy of the staged tree (the pre-commit gate, 2026-11-17) the
+# hooks resolved paths against that other checkout, so test_content_lint and
+# test_step19_scope failed in the copy while passing in the primary tree.
+export CLAUDE_PROJECT_DIR="$REPO"
+cd "$REPO" || exit 1
+
 # SAME CLASS AS THE GIT-ENV BLOCK ABOVE: a property of how the suite is
 # invoked, not of the code under test. `test_stub_lint_coverage` exercises
 # lint's stub-behind-stamp COVERAGE line, which needs `build/todo-cache.json`;
