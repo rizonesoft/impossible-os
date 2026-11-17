@@ -652,7 +652,9 @@ def confirm_dump(tree, cap, **walk_args):
 
 
 # What a person (or a later matching pass) adds to a captured record and the walk
-# never produces: a re-capture carries these and refreshes everything else.
+# never produces: a re-capture carries these and refreshes everything else. Where
+# the capture itself writes one of them (a surface module's HAND text, an app's
+# baseline link), the capture's value wins: the module is that field's author.
 HAND_FIELDS = ("behaviour", "disposition", "inconsistency", "reason", "mergedInto", "placedUnder", "baselineId", "baselineMissing",
                "toggleStates")
 
@@ -681,7 +683,9 @@ def merge(old, new, ambiguous):
         if hand and under_ambiguous(r["id"]):
             raise ValueError(f"{r['id']}: its hand-written fields cannot be carried, the id is ambiguous "
                              "(siblings share a name); give the element a name in the surface module's IDENTITY")
-        out.append({**r, **hand})
+        # A field the capture wrote itself (a module's hand record, an app's
+        # baseline link) has its author here: only what a person added is carried.
+        out.append({**r, **{k: v for k, v in hand.items() if k not in r}})
     seen = {r["id"] for r in new}
     dropped = [r["id"] for r in old if r["id"] not in seen and any(k in r for k in HAND_FIELDS)]
     return out, dropped

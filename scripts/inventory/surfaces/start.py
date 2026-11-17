@@ -14,6 +14,7 @@ and power buttons. The search box hosts a web view, the search flyout's
 machine's data. Every menu is a MenuFlyout in a PopupHost inside Start; the
 account card is a Flyout pane there.
 """
+import hashlib
 import time
 
 import capture_core as core
@@ -534,7 +535,9 @@ def app_records():
         # The id is the AppID, never the name or the list position: a second
         # app taking the name, a reordered list or an app replaced by another
         # of the same name moves no note onto the wrong app.
-        slug = core.slug(aid[2:]) or core.slug(label) or "app"
+        # The slug keeps it readable; the digest of the whole AppID keeps two
+        # AppIDs the slug would merge (punctuation, the 60-character cut) apart.
+        slug = f"{core.slug(aid[2:]) or core.slug(label) or 'app'}-{hashlib.sha1(aid[2:].encode()).hexdigest()[:8]}"
         out.append({"id": f"{ROOT}.all-apps.{slug}", "parent": f"{ROOT}.all-apps", "kind": "control", "label": label,
                     "order": i, "uiaId": aid, "baselineId": f"start-apps:{aid[2:]}",
                     **({"behaviour": f"In the {folder} folder."} if folder else {})})

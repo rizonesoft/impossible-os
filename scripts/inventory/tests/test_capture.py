@@ -609,6 +609,17 @@ class StartApps(unittest.TestCase):
         self.assertEqual(alone[self.A[0]], shared[self.A[0]])
         self.assertEqual(alone[self.C[0]], shared[self.C[0]])
 
+    def test_appids_a_slug_would_merge_keep_their_own_ids(self):
+        # Round review 2026-11-17: the slug drops punctuation and cuts at 60
+        # characters, so these pairs shared an id.
+        long = "P~{6D809377-6AF0-444B-8957-A3773F02200E}\\Windows Kits\\10\\Debuggers\\x64\\"
+        pairs = [(("P~Vendor.Editor!App", "Editor", None), ("P~Vendor-Editor!App", "Editor", None)),
+                 ((long + "windbg.exe", "WinDbg", None), (long + "cdb.exe", "Cdb", None))]
+        for a, b in pairs:
+            ids = self.ids([a, b])
+            self.assertNotEqual(ids[a[0]], ids[b[0]])
+            self.assertEqual(self.ids([a])[a[0]], ids[a[0]])
+
     def test_an_app_replaced_by_one_of_the_same_name_gets_a_new_id(self):
         # Otherwise merge carries the old app's baseline link onto the new one.
         self.assertNotEqual(self.ids([self.A])[self.A[0]], self.ids([self.B])[self.B[0]])
@@ -625,6 +636,18 @@ class Merge(unittest.TestCase):
         self.assertEqual(out, [{"id": "a.b", "label": "New", "order": 3, "behaviour": "Opens the file.",
                                 "disposition": "ship"}])
         self.assertEqual(dropped, ["a.gone"])
+
+    def test_what_the_module_writes_wins_over_the_published_copy(self):
+        # A surface module that writes a field (a hand record's behaviour, an
+        # app's baseline link) is its author: the published copy of that field
+        # is replaced, while fields only a person adds are still carried.
+        # Reviews 2026-11-17: edited behaviour text never reached the published
+        # file, and an app replaced by another kept the old app's baseline link.
+        old = [{"id": "a.b", "behaviour": "Old text.", "baselineId": "start-apps:Old", "disposition": "build"}]
+        new = [{"id": "a.b", "behaviour": "New text.", "baselineId": "start-apps:New"}]
+        out, _ = core.merge(old, new, [])
+        self.assertEqual(out, [{"id": "a.b", "behaviour": "New text.", "baselineId": "start-apps:New",
+                                "disposition": "build"}])
 
     def test_a_tiles_states_survive_a_recapture(self):
         # Quick Settings' tile states are measured by clicking, not walked (2026-11-17).
