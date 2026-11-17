@@ -112,6 +112,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [x]   |
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [x]   |
 | ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [x]   |
+| ⭐  |  47   |   §47   | The Bash safety guards read commands with a shell grammar                                        | §32                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1145,7 +1146,7 @@ The build-offload gate (`build_offload_reminder.py`) decided its exemptions with
 - [x] The Bash safety guards judge the command behind shell grammar and redirections (`guard_argv`), so `if true; then git reset --hard; fi` and `git 2>"a b" reset --hard` are refused
 - [x] Commit: `"hooks: delete the shell walk the deleted offload gate used"`
 
-**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 66 compound and redirect shapes in both guards, allows 18 harmless commands of the same shapes, checks the quote masks, and bounds two 220 to 420 KB inputs at 2.5 s.
+**Test checkpoint:** `git grep` finds no caller of the deleted names; `test_dispatch_recognition.py` and `test_review_gate.py` pass; `test_guard_compound.py` refuses 72 compound and redirect shapes in both guards, allows 18 harmless commands of the same shapes, checks the quote masks, and bounds two 220 to 420 KB inputs at 2.5 s.
 
 > **Test runner:** N/A (host tooling) | validation: `python3 scripts/overnight/tests/test_guard_compound.py`, `python3 scripts/overnight/tests/test_dispatch_recognition.py`, `python3 scripts/overnight/tests/test_review_gate.py`, `bash scripts/overnight/tests/run-all.sh`
 
@@ -1153,6 +1154,7 @@ The build-offload gate (`build_offload_reminder.py`) decided its exemptions with
 > - What shipped: 362 lines of dead shell walk removed from `_codex_dispatch.py`; `_segment_by_separators` and the commit gate's `_BashLexer` are untouched; `_tokenize` now also gives each token its quote mask.
 > - Parser evaluation, 2026-11-17, over 17,428 distinct Bash commands from this project's transcripts: tree-sitter-bash 0.25.1 (MIT) failed 62 that `bash -n` accepts, nearly all heredocs, including `git commit -F - <<'EOF' 2>&1 | tail` and two heredocs on one line, and it is a compiled extension every hook would load. bashlex 0.18 was rejected on 2026-08-05 (no quoted heredocs, no `case`).
 > - The two Bash safety guards still segment shell with the token-based `_segment_by_separators`; `guard_argv` makes them read the command behind shell grammar and redirections, splitting a word at every unquoted `<` or `>` operator (each token carries the quote mask `_with_quote_masks` builds; a word without one reads as unquoted, and over 16,527 recorded commands none lacked one).
+> - Residue filed as section 47 (item: "Choose the guards' parser"): separators inside a substitution, commands after a heredoc or substitution, substitution bodies, named fds, quoted separator targets, `$(...)` targets, empty quoted targets and heredoc text that breaks shlex need the shell grammar, not more token rules.
 > - Rejected (round 4): an escaped `)` inside a `case` pattern (`case "a)b" in a\)b ) ...`) hides the arm's command; deliberate shell, outside the accidental-verb threat model.
 > - Scope boundary: segmentation for a new gate builds on `_tokenize`, `_segment_by_separators` and `guard_argv` (or the commit gate's `_BashLexer`), not a new walk (Q47).
 
@@ -1558,6 +1560,27 @@ Operator direction 2026-11-15: the second reviewer (Gemini 4 Carbon through `agy
 
 > **Verified:** 2026-11-15 at 72883c876: control-plane suite 93 passed, 0 failed; `review_pin.py --check` ok; the second-reviewer grep outside todo/ and docs/plans/ is empty; the pin-load control fails with the check removed.
 > **Quality reviewed:** 2026-11-15 | Codex 5x (plan 1 P2 fixed; working-tree round, round, performance, completion clean)
+
+
+## 47. The Bash safety guards read commands with a shell grammar
+
+> **Spawned-by:** section 32 (review)
+> **User impact:** a destructive `git` or `gh` verb written inside a process substitution, after a heredoc, or behind a named fd still passes the attended-repair and runner guards during a live run.
+
+Section 32 made the guards read the command behind reserved words, case arms, subshells and redirections with token rules over shlex output. Its eighth completion pass listed shapes that need the shell grammar itself, all reproduced against bash; most predate section 32. They are built here as a parser decision, not as more token rules.
+
+- [ ] Choose the guards' parser: a measured comparison of the commit gate's `_BashLexer`, a vendored grammar and extended token rules on the recorded-command corpus, with the choice and its reversal cost in `todo/answers.md`
+- [ ] A separator inside a process substitution (`git > >(tee x | cat) reset --hard`) stays inside its target
+- [ ] A command after a heredoc body or a process substitution (`cat <<EOF` ... `EOF` then `git reset --hard`) is segmented and judged; heredoc text never reaches shell tokenization
+- [ ] The body of a command or process substitution (`cat > >(git reset --hard)`, `cat >"$(git reset --hard)"`) is judged as a command
+- [ ] A named descriptor (`{fd}>/dev/null`), an empty quoted target (`<<<""`) and a `$(...)` or arithmetic target are removed as redirections
+- [ ] A quoted separator target (`git > "|" reset --hard`) stays one word through segmentation
+- [ ] Every shape above has a refusal case for both guards, a `gh` case and a harmless twin in `test_guard_compound.py`
+- [ ] Commit: `"hooks: the Bash safety guards read commands with a shell grammar"`
+
+**Test checkpoint:** `test_guard_compound.py` refuses every shape listed above in both guards and allows its harmless twin; `run-all.sh` passes.
+
+-> XREF: section 32 (item: "The Bash safety guards judge the command behind shell grammar and redirections")
 
 
 ## Format Quick Reference
