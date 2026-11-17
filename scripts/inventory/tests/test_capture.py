@@ -565,6 +565,44 @@ class Incomplete(unittest.TestCase):
             core.walk(core.FixtureElement(deep), surface="s", build="1.2", profile="p", session="console", root_slug="r", root_label="R")
 
 
+class PublishedRoundTrip(unittest.TestCase):
+    """A published file merges onto an unchanged recapture of itself: a hand
+    field on a positional id would refuse every later recapture (Start's account
+    texts, 2026-11-17)."""
+
+    def test_every_published_file_merges_with_itself(self):
+        for path in sorted((INV.parents[1] / "docs" / "design" / "inventory").rglob("*.json")):
+            lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            try:
+                recs = [json.loads(ln) for ln in lines]
+            except ValueError:
+                continue                    # a whole-file JSON document, not a record file
+            if not recs or not all(isinstance(r, dict) and str(r.get("id", "")).startswith("win11.") for r in recs):
+                continue
+            with self.subTest(file=str(path.relative_to(INV.parents[1]))):
+                out, dropped = core.merge(recs, copy.deepcopy(recs), [])
+                self.assertEqual(dropped, [])
+                self.assertEqual(out, recs)
+
+
+class StartApps(unittest.TestCase):
+    def setUp(self):
+        self.start = load("surface_start", INV / "surfaces" / "start.py")
+
+    def ids(self, apps):
+        self.start._apps[:] = apps
+        return {r["uiaId"]: r["id"] for r in self.start.app_records() if "uiaId" in r}
+
+    def test_apps_sharing_a_name_keep_their_ids_when_the_list_is_reordered(self):
+        a, b, c = ("P~Vendor.EditorA!App", "Editor", None), ("P~Vendor.EditorB!App", "Editor, New", None), \
+            ("P~Vendor.Clock!App", "Clock", None)
+        first, second = self.ids([a, b, c]), self.ids([c, b, a])
+        self.assertEqual(first, second)
+        self.assertEqual(first[c[0]], "start.all-apps.clock")
+        self.assertNotEqual(first[a[0]], first[b[0]])
+        self.assertNotIn("--", "".join(first.values()))
+
+
 class Merge(unittest.TestCase):
     OLD = [{"id": "a.b", "label": "Old", "behaviour": "Opens the file.", "disposition": "ship"},
            {"id": "a.gone", "label": "Gone", "behaviour": "Was here."},
@@ -1860,6 +1898,11 @@ class Modules(unittest.TestCase):
 class DesktopMetrics(unittest.TestCase):
     def setUp(self):
         self.desk = load("surface_desktop", INV / "surfaces" / "desktop.py")
+        # What the icon-size openers read from the screen (26300.9974).
+        self.desk.MEASURED.update({"large": {"art": (72, 84), "label": (60, 12)},
+                                   "medium": {"art": (36, 42), "label": (62, 12)},
+                                   "small": {"art": (24, 28), "label": (62, 12)},
+                                   "hover": (76, 70), "selected": (76, 70)})
 
     def cells(self):
         def cell(name, y, h):
@@ -1875,6 +1918,17 @@ class DesktopMetrics(unittest.TestCase):
         self.assertEqual((got["desktop.cell-width"], got["desktop.cell-height-one-line"], got["desktop.label-line-height"],
                           got["desktop.row-pitch"], got["desktop.margin-top"], got["desktop.cell-height-small"]),
                          (76, 70, 15, 100, 5, 54))
+
+    def test_the_pixel_reads_are_published(self):
+        got = {m["id"]: m["measure"]["value"] for m in self.desk.METRICS(self.cells())}
+        self.assertEqual((got["desktop.art-width-large"], got["desktop.art-height-small"],
+                          got["desktop.label-width-medium"], got["desktop.selected-width"],
+                          got["desktop.hover-height"]), (72, 28, 62, 76, 70))
+
+    def test_a_missing_pixel_read_fails_the_capture(self):
+        del self.desk.MEASURED["hover"]
+        with self.assertRaises(ValueError):
+            self.desk.METRICS(self.cells())
 
     def test_a_missing_measuring_scene_fails_the_capture(self):
         with self.assertRaises(ValueError):
@@ -1914,6 +1968,83 @@ class GuestOutput(unittest.TestCase):
         r = subprocess.run([sys.executable, "-c", code], capture_output=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr.decode(errors="replace"))
         self.assertEqual(r.stdout.decode("utf-8").strip(), "\u200eNovember\u200e 2026")
+
+
+class DesktopPixels(unittest.TestCase):
+    """The desktop's pixel reads: an icon's artwork and label are the two runs of
+    rows that change when the icons are hidden."""
+
+    def setUp(self):
+        self.desktop = load("surface_desktop", INV / "surfaces" / "desktop.py")
+
+    def test_artwork_and_label_are_told_apart_by_the_gap_between_them(self):
+        bg, ink = (10, 60, 20), (240, 240, 240)
+        a = [[bg] * 20 for _ in range(12)]
+        b = copy.deepcopy(a)
+        for r in range(1, 5):                   # artwork: rows 1-4, columns 6-13
+            for c in range(6, 14):
+                a[r][c] = ink
+        for r in (7, 8):                        # label: rows 7-8, columns 2-17
+            for c in range(2, 18):
+                a[r][c] = ink
+        parts = self.desktop.blocks(self.desktop.changed(a, b, "test"))
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(self.desktop.extent(parts[0]), (8, 4))
+        self.assertEqual(self.desktop.extent(parts[1]), (16, 2))
+
+    def test_a_small_colour_difference_is_not_a_change(self):
+        a = [[(10, 10, 10)] * 4]
+        with self.assertRaises(self.desktop.core.Incomplete):
+            self.desktop.changed(a, [[(30, 30, 30)] * 4], "noise")
+
+
+class Find(unittest.TestCase):
+    """Context.find reads no level it will not search and keeps its deadline on
+    a tree that is slow to read (performance review 2026-11-17)."""
+
+    class El:
+        def __init__(self, name, kids=(), log=None):
+            self.name, self.automation_id, self.class_name, self.control_type = name, "", "", "Pane"
+            self.kids, self.log = list(kids), log
+
+        def children(self):
+            self.log.append(self.name)
+            return self.kids
+
+    def context(self):
+        uia = types.SimpleNamespace(GetRootElement=lambda: "root")
+        return guest.Context(types.SimpleNamespace(uia=uia, COMError=OSError))
+
+    def test_the_last_level_is_not_read(self):
+        log = []
+        leaf = self.El("leaf", log=log)
+        root = self.El("root", [self.El("mid", [leaf], log)], log)
+        with self.assertRaises(guest.core.Incomplete):
+            self.context().find(within=root, timeout=0, depth=2, name="nothing")
+        self.assertEqual(log, ["root"])          # mid is the last level searched: matched, never opened
+
+    def test_a_later_pass_stops_at_the_deadline(self):
+        log = []
+        root = self.El("root", [self.El(f"k{i}", log=log) for i in range(50)], log)
+        now = [0.0]
+
+        def clock():
+            now[0] += 0.1                           # every read of the clock costs 0.1 s
+            return now[0]
+        with mock.patch.object(guest.time, "monotonic", clock), mock.patch.object(guest.time, "sleep", lambda s: None):
+            with self.assertRaises(guest.core.Incomplete):
+                self.context().find(within=root, timeout=1, depth=3, name="nothing")
+        # The first pass reads all 51 elements; the second stops at the deadline
+        # instead of reading all 51 again.
+        self.assertEqual(log.count("root"), 2)
+        self.assertLess(len(log), 51 * 2)
+
+    def test_a_zero_timeout_still_searches_the_whole_tree_once(self):
+        log = []
+        target = self.El("target", log=log)
+        root = self.El("root", [self.El("a", [self.El("b", [target], log)], log)], log)
+        found = self.context().find(within=root, timeout=0, depth=4, name="target")
+        self.assertIs(found, target)
 
 
 class FindWindow(unittest.TestCase):

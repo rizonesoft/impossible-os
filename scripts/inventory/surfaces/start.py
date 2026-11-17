@@ -27,7 +27,13 @@ ENVIRONMENT_LISTS = [{"automationId": "PinnedList"}, {"automationId": "Recommend
                      {"automationId": "ZoomedOutListView"}]
 # The user tile is named for the account; the view button names the view chosen.
 VALUES = [{"automationId": "UserTileButton"}, {"automationId": "ViewSelectionButton"}]
-IDENTITY = [({"automationId": "UserTileButton"}, "account"), ({"automationId": "ViewSelectionButton"}, "view")]
+# The account menu's three texts are told apart by what the reference machine's
+# one local account shows (REFERENCE.md: the local administrator ref); their
+# names stay withheld as this machine's data.
+ACCOUNT_TEXTS = [("Microsoft", "provider", "Account provider"), ("ref", "account-name", "Account name"),
+                 ("Local account", "account-type", "Account type")]
+IDENTITY = ([({"automationId": "UserTileButton"}, "account"), ({"automationId": "ViewSelectionButton"}, "view")]
+            + [({"className": "TextBlock", "name": name}, seg) for name, seg, _ in ACCOUNT_TEXTS])
 HOSTS = []
 LABELS = [({"controlType": "Image", "name": ""}, "Icon"),
           ({"automationId": "UserTileButton"}, "Account"),
@@ -36,6 +42,8 @@ LABELS = [({"controlType": "Image", "name": ""}, "Icon"),
           ({"automationId": "AppsList"}, "Start list"),
           ({"automationId": "StartMenuPinnedList"}, "Pinned grid"),
           ({"automationId": "ZoomedOutListView"}, "Letters"),
+          ({"automationId": "LevelOneGridView"}, "Folder grid"),
+          *[({"className": "TextBlock", "name": name}, label) for name, _, label in ACCOUNT_TEXTS],
           ({"className": "TextBlock"}, "Account text")]
 # The search box's web view is the search flyout's; an all-apps category tile is
 # named by the apps in it (this machine's data).
@@ -98,6 +106,51 @@ def menu_from(button_spec, button="left", root=flyout_menu):
     return opener
 
 
+def open_entry_menu(ctx):
+    """The menu of an all-apps entry: the list view's first app, right-clicked."""
+    open_start(ctx)
+    set_view(ctx, "List")
+    for g in _kids(ctx, apps_list(ctx)):
+        if g.class_name == "GridViewHeaderItem":
+            for it in _kids(ctx, g):
+                if it.automation_id.startswith(APP_PREFIXES) and not it.offscreen:
+                    ctx.click(it, button="right")
+                    flyout_menu(ctx)
+                    time.sleep(1)
+                    return
+    raise core.Incomplete("the list view showed no app to open a menu on")
+
+
+def open_folder(ctx):
+    """A folder made from the Settings tile (the menu's Create a new app folder;
+    a synthesized click on the entry is ignored, Invoke reaches it, 2026-11-17),
+    then opened: its own grid and its name."""
+    open_start(ctx)
+    ctx.click(within_start(ctx, className="GridViewItem", name="Settings"), button="right")
+    ctx.invoke(ctx.find(within=flyout_menu(ctx), name="Create a new app folder", depth=3))
+    folder = within_start(ctx, className="GridViewItem", namePrefix="Folder with")
+    time.sleep(1)
+    ctx.click(folder)
+    folder_modal(ctx)
+    time.sleep(SETTLE)
+
+
+def folder_modal(ctx):
+    return ctx.find(within=start(ctx), className="StartMenu.FolderModal", depth=3, timeout=10)
+
+
+def close_folder(ctx):
+    ctx.keys("esc")
+    _modal_gone(ctx)
+    close_start(ctx)
+
+
+def close_entry_menu(ctx):
+    ctx.keys("esc")
+    time.sleep(1)
+    close_view(ctx)
+
+
 def close_menu(ctx):
     ctx.keys("esc")
     time.sleep(1)
@@ -149,8 +202,17 @@ def open_letters(ctx):
     open_start(ctx)
     set_view(ctx, "List")
     ctx.click(ctx.find(within=apps_list(ctx), className="GridViewHeaderItem", depth=2))
-    within_start(ctx, automationId="ZoomedOutListView")
+    grid = within_start(ctx, automationId="ZoomedOutListView")
     time.sleep(1)
+    # The letter cells are omitted from the records (an unnamed GridViewItem is
+    # a category tile's shape); their size and columns are read here.
+    _letter_cells[:] = [k.bounds for k in _kids(ctx, grid) if k.control_type == "ListItem" and not k.offscreen]
+    if not _letter_cells:
+        raise core.Incomplete("the letter grid showed no letters")
+
+
+# Read by open_letters, published by METRICS: each letter cell's bounds (x, y, w, h).
+_letter_cells = []
 
 
 def letters(ctx):
@@ -341,6 +403,8 @@ SCENES = [
          close=close_menu),
     dict(slug="recommended-menu", label="Recommended entry menu", kind="contextMenu",
          open=menu_from({"automationId": "RecommendedItemRoot0"}, "right"), root=flyout_menu, close=close_menu),
+    dict(slug="entry-menu", label="All apps entry menu", kind="contextMenu", open=open_entry_menu, root=flyout_menu,
+         close=close_entry_menu),
     dict(slug="letter-jump", label="Letter jump grid", kind="region", open=open_letters, root=letters,
          close=close_letters, expand=False),
     dict(slug="bottom-bar", label="Bottom bar with every folder", kind="region", open=open_places, root=bottom_bar,
@@ -357,6 +421,9 @@ SCENES = [
          close=close_start, keep=False, expand=False),
     dict(slug="all-apps", label="All apps", kind="state", open=open_apps, root=apps_list, close=close_view,
          keep=False, expand=False),
+    # Last: the folder stays in the pinned grid for the rest of the run.
+    dict(slug="pinned-folder", label="Pinned folder", kind="region", open=open_folder, root=folder_modal,
+         close=close_folder),
 ]
 
 
@@ -377,9 +444,10 @@ def METRICS(records):
 
     out = []
 
-    def metric(slug, label, value, order):
+    def metric(slug, label, value, order, unit="px"):
+        # A length scales with the display; a count of columns or rows does not.
         out.append({"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "metric", "label": label, "order": order,
-                    "measure": {"value": value, "unit": "px", "scaling": "scales"}})
+                    "measure": {"value": value, "unit": unit, "scaling": "scales" if unit == "px" else "fixed"}})
 
     screen = box(ROOT, "Start")
     centre = box(f"{ROOT}.search", "the Start panel")
@@ -411,12 +479,23 @@ def METRICS(records):
     grid = box(f"{ROOT}.toplevelroot.appslist.startmenupinnedlist.pinnedlist", "the pinned grid")
     metric("tile-width", "App tile width (pinned and grid view)", tile["width"], 10)
     metric("tile-height", "App tile height", tile["height"], 11)
-    metric("pinned-columns", "Pinned grid columns", grid["width"] // tile["width"], 12)
-    metric("pinned-rows", "Pinned grid rows before Show all", grid["height"] // tile["height"], 13)
+    metric("pinned-columns", "Pinned grid columns", grid["width"] // tile["width"], 12, unit="count")
+    metric("pinned-rows", "Pinned grid rows before Show all", grid["height"] // tile["height"], 13, unit="count")
     metric("list-row-height", "List view row height", row, 14)
     metric("group-heading-height", "Letter group heading height", heading, 15)
     rec = box(f"{ROOT}.toplevelroot.appslist.recommendedlist", "the recommended list")
     metric("recommended-row-height", "Recommended row height", rec["height"], 16)
+
+    if not _letter_cells:
+        raise ValueError("the letter grid's cells were not read")
+    x0, y0, cw, ch = _letter_cells[0]
+    metric("letter-cell-width", "Letter cell width", cw, 17)
+    metric("letter-cell-height", "Letter cell height", ch, 18)
+    metric("letter-columns", "Letter grid columns", sum(1 for b in _letter_cells if b[1] == y0), 19, unit="count")
+
+    fgrid = box("pinned-folder.levelonegridview", "the folder's grid")
+    metric("folder-columns", "Folder grid columns", fgrid["width"] // tile["width"], 26, unit="count")
+    metric("folder-rows", "Folder grid rows", fgrid["height"] // tile["height"], 27, unit="count")
 
     whole = box("all-pinned", "the pinned grid shown whole")
     if whole["height"] <= grid["height"]:
@@ -440,13 +519,17 @@ def app_records():
     (the row id is the AppID the entry's automation id carries)."""
     out = [{"id": f"{ROOT}.all-apps", "parent": ROOT, "kind": "region", "label": "All apps", "order": 30,
             "behaviour": "Every app Start lists, in the list view's order; a folder's apps follow it."}]
-    used = {}
-    for i, (aid, name, folder) in enumerate(_apps):
-        label = name.split(", ")[0]            # the name and a status ("Calculator, New")
+    labels = [name.split(", ")[0] for _, name, _ in _apps]    # the name and a status ("Calculator, New")
+    counts = {}
+    for label in labels:
+        counts[core.slug(label) or "app"] = counts.get(core.slug(label) or "app", 0) + 1
+    for i, ((aid, _, folder), label) in enumerate(zip(_apps, labels)):
+        # An app's name is its id while no other app shares it; apps that share
+        # a name are told apart by their AppID, never by their order in the list,
+        # so a reordered list keeps every note on its own app.
         slug = core.slug(label) or "app"
-        used[slug] = used.get(slug, 0) + 1
-        if used[slug] > 1:
-            slug = f"{slug}-{used[slug]}"
+        if counts[slug] > 1:
+            slug = core.slug(aid[2:]) or slug
         out.append({"id": f"{ROOT}.all-apps.{slug}", "parent": f"{ROOT}.all-apps", "kind": "control", "label": label,
                     "order": i, "uiaId": aid, "baselineId": f"start-apps:{aid[2:]}",
                     **({"behaviour": f"In the {folder} folder."} if folder else {})})
@@ -461,6 +544,14 @@ BEHAVIOURS = [
     ("drag-to-taskbar", "Drag to the taskbar", "Dragging a pinned tile onto the taskbar pins it there as well."),
     ("keyboard-regions", "Keyboard between regions", "Tab moves between the search box, the pinned grid, "
                                                       "recommended, all apps and the bottom bar; arrows move within one."),
+    ("drag-out", "Drag out to unpin", "No drag unpins a tile: a tile dragged out of the grid returns to its "
+                                      "place, and Unpin from Start is the tile menu's entry."),
+    ("recommended-empty", "Recommended with nothing to show", "With every Recommended switch off and Start "
+                                                               "restarted, the region still holds Get Started: this "
+                                                               "build has no empty Recommended state."),
+    ("folder-made", "Making a folder", "Create a new app folder on a tile's menu turns that tile into a folder "
+                                       "named after it (\"Folder with Settings\"); a click opens it over Start, its own grid of 4 by 3 "
+                                       "tiles; UI Automation exposes no name box for the folder on this build."),
     ("close-keys", "Closing", "Esc, the Windows key, or a click outside closes Start."),
     ("letter-back", "Back from the letter grid", "Back, or choosing a letter, returns from the letter grid to the "
                                                   "list at that letter; letters with no apps are dimmed."),

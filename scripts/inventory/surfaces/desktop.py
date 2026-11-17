@@ -12,6 +12,11 @@ SysListView32 "FolderView" under Progman, its menus are WinUI menus in their
 own PopupWindowSiteBridge windows, and "Show more options" opens a classic
 #32768 menu.
 """
+import ctypes
+import time
+
+import capture_core as core
+
 SURFACE = "desktop"
 ENVIRONMENT_LISTS = []
 VALUES = []
@@ -111,11 +116,97 @@ def open_empty_menu(ctx):
     right_click(None)(ctx)
 
 
-def icon_size(chord):
+# ------------------------------------------------------------- pixel reads --
+# What UI Automation does not expose about an icon (its artwork's size, the
+# label's width and lines, the selection and hover rectangles) is read from
+# the screen: the cell's pixels compared with the same cell in another state.
+user32 = getattr(ctypes, "windll", None) and ctypes.windll.user32
+WM_COMMAND = 0x0111
+TOGGLE_ICONS = 0x7402              # the desktop view's Show desktop icons command
+COLOUR_STEP = 60                   # a channel sum this far from the other state is a change
+PAD = 8                            # read this far outside the cell: a highlight may overhang it
+FOCUS_EDGE = 2                     # the focus rectangle's band inside the cell's edge
+MEASURED = {}                      # read by the icon-size openers, published by METRICS
+
+
+def changed(a, b, what):
+    """The rows and columns where two reads of one box differ, as
+    [(row, first column, last column)]."""
+    rows = []
+    for r, (ra, rb) in enumerate(zip(a, b)):
+        cols = [c for c, (pa, pb) in enumerate(zip(ra, rb)) if sum(abs(i - j) for i, j in zip(pa, pb)) > COLOUR_STEP]
+        if cols:
+            rows.append((r, cols[0], cols[-1]))
+    if not rows:
+        raise core.Incomplete(f"nothing changed on the screen for {what}")
+    return rows
+
+
+def extent(rows):
+    """(width, height) of the changed rows' bounding box."""
+    return max(r[2] for r in rows) - min(r[1] for r in rows) + 1, rows[-1][0] - rows[0][0] + 1
+
+
+def blocks(rows):
+    """Runs of consecutive changed rows: the icon's artwork, then its label."""
+    out = [[rows[0]]]
+    for row in rows[1:]:
+        if row[0] == out[-1][-1][0] + 1:
+            out[-1].append(row)
+        else:
+            out.append([row])
+    return out
+
+
+def toggle_icons(ctx):
+    view = user32.FindWindowExW(desktop(ctx).el.CurrentNativeWindowHandle, 0, "SHELLDLL_DefView", None)
+    if not view:
+        raise core.Incomplete("the desktop's view window was not found")
+    user32.SendMessageW(view, WM_COMMAND, TOGGLE_ICONS, 0)
+    time.sleep(1.5)
+
+
+def read_cell(ctx, size):
+    """The Recycle Bin's artwork and label at this icon size, and at medium size
+    its selection and hover rectangles."""
+    x, y, w, h = (int(v) for v in icon(ctx, BIN).bounds)
+    box = (x - PAD, y - PAD, w + 2 * PAD, h + 2 * PAD)
+    # The artwork and label are read inside the cell's edge: the dotted focus
+    # rectangle runs along it and goes with the icons (2026-11-17).
+    inner = (x + FOCUS_EDGE, y + FOCUS_EDGE, w - 2 * FOCUS_EDGE, h - 2 * FOCUS_EDGE)
+    ctx.hover_point(*empty_point(ctx))
+    time.sleep(1)
+    plain, plain_inner = ctx.pixels(*box), ctx.pixels(*inner)
+    toggle_icons(ctx)
+    try:
+        bare = ctx.pixels(*inner)
+    finally:
+        toggle_icons(ctx)
+        icon(ctx, BIN)
+    parts = blocks(changed(plain_inner, bare, f"the {size} Recycle Bin icon"))
+    if len(parts) < 2:
+        raise core.Incomplete(f"the {size} Recycle Bin showed no gap between its artwork and its label")
+    art, label = parts[0], [r for part in parts[1:] for r in part]
+    MEASURED[size] = {"art": extent(art), "label": extent(label)}
+    if size != "medium":
+        return
+    ctx.hover_point(x + w // 2, y + h // 2)
+    time.sleep(1)
+    MEASURED["hover"] = extent(changed(plain, ctx.pixels(*box), "the hovered icon"))
+    ctx.click(icon(ctx, BIN))
+    ctx.hover_point(*empty_point(ctx))
+    time.sleep(1)
+    MEASURED["selected"] = extent(changed(plain, ctx.pixels(*box), "the selected icon"))
+    ctx.click_at(*empty_point(ctx))         # nothing selected for later scenes
+
+
+def icon_size(chord, size):
     def opener(ctx):
         ctx.click_at(*empty_point(ctx))       # the desktop takes the keys
         ctx.keys(chord)
         icon(ctx, BIN)
+        time.sleep(1)
+        read_cell(ctx, size)
     return opener
 
 
@@ -171,7 +262,7 @@ SCENES += [dict(slug=f"classic-{slug}-menu", label=f"{label} classic context men
 SCENES += [dict(slug="fit-modes", label="Wallpaper fit", kind="menu", open=open_fit_list, root=fit_list,
                 close=close_fit_list, expand=False)]
 # Measured for METRICS and not published: the Recycle Bin's cell at each icon size.
-SCENES += [dict(slug=f"icons-{size}", label=f"{size.title()} icons", kind="state", open=icon_size(chord),
+SCENES += [dict(slug=f"icons-{size}", label=f"{size.title()} icons", kind="state", open=icon_size(chord, size),
                 root=lambda ctx: icon(ctx, BIN), close=medium_again, keep=False)
            for size, chord in (("large", "ctrl+shift+2"), ("small", "ctrl+shift+4"), ("medium", "ctrl+shift+3"))]
 
@@ -201,6 +292,18 @@ def METRICS(records):
             raise ValueError(f"the {size} icon scene was not measured")
         out += [(f"cell-width-{size}", f"Icon cell width, {size} icons", cell["bounds"]["width"]),
                 (f"cell-height-{size}", f"Icon cell height, {size} icons", cell["bounds"]["height"])]
+    for size in ("large", "medium", "small"):
+        if size not in MEASURED:
+            raise ValueError(f"the {size} icon's pixels were not read")
+        (aw, ah), (lw, lh) = MEASURED[size]["art"], MEASURED[size]["label"]
+        out += [(f"art-width-{size}", f"Icon artwork width, {size} icons", aw),
+                (f"art-height-{size}", f"Icon artwork height, {size} icons", ah),
+                (f"label-width-{size}", f"Label width, {size} icons", lw)]
+    for state, label in (("hover", "Hover rectangle"), ("selected", "Selection rectangle")):
+        if state not in MEASURED:
+            raise ValueError(f"the icon's {state} rectangle was not read")
+        out += [(f"{state}-width", f"{label} width", MEASURED[state][0]),
+                (f"{state}-height", f"{label} height", MEASURED[state][1])]
     missing = [slug for slug, _, v in out if v is None]
     if missing:
         raise ValueError(f"the grid could not be measured: {', '.join(missing)}")
@@ -239,4 +342,4 @@ def _hand(start):
     return out
 
 
-HAND = _hand(start=20)                 # orders after the metrics, which number from 0
+HAND = _hand(start=40)                 # orders after the metrics, which number from 0 (25 on 26300.9974)

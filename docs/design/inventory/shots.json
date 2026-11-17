@@ -56,8 +56,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 5493857,
-  "sha256": "0ba0f00c0de0b72ad17e78668d23f843d47233b5d7b5ccdd93c6570952afb59d"
+  "size": 5493861,
+  "sha256": "9f2e86fd1ec310c7b26c8f773935207fd963300cfbd6fe03cb4bccf55c0e17a7"
  },
  {
   "surface": "desktop",
@@ -451,6 +451,16 @@
  },
  {
   "surface": "start",
+  "file": "start",
+  "state": "entry-menu",
+  "profile": "fhd-100",
+  "width": 145,
+  "height": 137,
+  "size": 2409,
+  "sha256": "862fdf9c5654456535cbe3ab8cb405514ecaa887bb5bd698e0b35a1c28198709"
+ },
+ {
+  "surface": "start",
   "file": "search",
   "state": "file-actions",
   "profile": "fhd-100",
@@ -506,8 +516,18 @@
   "profile": "fhd-100",
   "width": 240,
   "height": 227,
-  "size": 8849,
-  "sha256": "0175f57b7175a38f616ad8f7f4b1afce2b8cb7b069ccafcd719366e026ee63b2"
+  "size": 9050,
+  "sha256": "f438e1fb81a9e04dc2197abfc2c9536731b4ec11ba6a57d264e32160b413d770"
+ },
+ {
+  "surface": "start",
+  "file": "start",
+  "state": "pinned-folder",
+  "profile": "fhd-100",
+  "width": 832,
+  "height": 864,
+  "size": 38756,
+  "sha256": "dcb0cae0e2cbef9dbdaad10a1485a383935ea80b5a4dcbeda40eaa2f86684679"
  },
  {
   "surface": "start",
@@ -556,8 +576,8 @@
   "profile": "fhd-100",
   "width": 832,
   "height": 864,
-  "size": 32349,
-  "sha256": "46bf3d53fb37677f6d7db91bc52b0be62e1b81ccd8316a495aac38f2b72a6f89"
+  "size": 32240,
+  "sha256": "5ffd5a02b774886b4089faaafcf80762ca61c99cfefe8b12e8a71555bc107a7e"
  },
  {
   "surface": "start",
@@ -566,8 +586,8 @@
   "profile": "fhd-100",
   "width": 832,
   "height": 864,
-  "size": 32345,
-  "sha256": "205f7367701c9904f4aea223e4607b0d7bd75d0ea27b036ae0c6a639a63b8add"
+  "size": 32243,
+  "sha256": "9a2a42453112030a16d4cfa85a123df2ca41c23ad5cc9953493e4a6e9fefd02a"
  },
  {
   "surface": "start",
@@ -606,8 +626,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1032,
-  "size": 3382901,
-  "sha256": "c376d56d2023e4c7c922ec43162345ba54a7389d2e5a1f08eff159ad6f72c6c0"
+  "size": 3382941,
+  "sha256": "654cbf1d4490cf7ed7c50274a497bdcd89a2df051241563d27aeeeed84ca76d0"
  },
  {
   "surface": "start",
@@ -656,8 +676,8 @@
   "profile": "fhd-100",
   "width": 175,
   "height": 64,
-  "size": 2956,
-  "sha256": "3c745d3f378c89a5b9f1703f3727d2e21bde4487157c6f0c8dadf9ad9490d93e"
+  "size": 2987,
+  "sha256": "7cb2839649d36961e0d386bb9805fa61dc50805f1afc72c6151646640a387edf"
  },
  {
   "surface": "taskbar",
@@ -776,8 +796,18 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 48,
-  "size": 11792,
-  "sha256": "f48a59e795097d8b588dbd48dc8469beccfdb90ca0ccdb0a1e802039c2c2631a"
+  "size": 11830,
+  "sha256": "8e2d4834ca11afe5dd25c1f75a3a94b24e1b3c074ca835386a859c344673ee5e"
+ },
+ {
+  "surface": "taskbar",
+  "file": "tray-laptop",
+  "state": "tray-laptop",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 48,
+  "size": 11979,
+  "sha256": "92575dffd8f36d4440bf8ed683ff644d420ddae3ae161c8d1a92e85b780131de"
  },
  {
   "surface": "taskbar",

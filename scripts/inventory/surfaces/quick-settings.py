@@ -198,11 +198,6 @@ BEHAVIOURS = [
 FRAMES = [
     ("edit-mode", "No edit mode", "This build has no edit control: the footer holds only All settings and a tile's "
                                   "menu holds only Go to Settings, so tiles cannot be pinned, unpinned or moved."),
-    ("hardware-tiles", "Tiles the reference machine lacks", "Wi-Fi, Bluetooth, Airplane mode, Mobile hotspot, "
-                                                            "Rotation lock and the battery read-out need hardware the "
-                                                            "reference VM does not have, and VPN shows only once a VPN "
-                                                            "profile exists; the laptop file shows those a stand-in "
-                                                            "machine can provide."),
     ("media-card", "Media card", "The media card above the tiles shows only while an app plays media with a "
                                  "transport session; the reference machine plays none, so it is absent."),
     ("brightness", "Brightness slider", "Absent on the reference VM, whose display has no brightness control, as on "
@@ -212,7 +207,23 @@ FRAMES = [
                                           "only when the display driver can project; the reference VM's cannot, so "
                                           "the page shows its error line instead."),
 ]
+# Tiles no stand-in and no host can show (expected.json's absent rows give each
+# one's reason): each is designed as ours from the sibling named. Airplane
+# mode, VPN, Energy saver on battery and the battery read-out are in the laptop
+# file, captured on the stand-in.
+ABSENT_TILES = [
+    ("wifi", "Wi-Fi", "A split tile like VPN (quick-settings-laptop): the switch half turns the radio on or off, "
+                      "the arrow half opens the network list page."),
+    ("bluetooth", "Bluetooth", "A split tile like VPN (quick-settings-laptop): the switch half turns the radio on "
+                               "or off, the arrow half opens the device list page."),
+    ("mobile-hotspot", "Mobile hotspot", "A toggle tile like Night light: on shares the connection."),
+    ("rotation-lock", "Rotation lock", "A toggle tile like Night light: on keeps the screen's orientation; shown "
+                                       "only on a device with an orientation sensor."),
+]
 HAND = ([{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "gesture", "label": label, "order": 40 + i,
           "behaviour": text} for i, (slug, label, text) in enumerate(BEHAVIOURS)]
         + [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "region", "label": label, "order": 60 + i,
-            "behaviour": text} for i, (slug, label, text) in enumerate(FRAMES)])
+            "behaviour": text} for i, (slug, label, text) in enumerate(FRAMES)]
+        + [{"id": f"{ROOT}.absent-{slug}", "parent": ROOT, "kind": "control", "label": label, "order": 80 + i,
+            "behaviour": f"Absent on the reference machine (no hardware): {text}"}
+           for i, (slug, label, text) in enumerate(ABSENT_TILES)])

@@ -201,8 +201,9 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
 
 
-def grab(path, x, y, w, h):
-    """Copy a screen rectangle to a PNG."""
+def screen_rgb(x, y, w, h):
+    """A screen rectangle's pixels, as w * h * 3 bytes of red, green and blue,
+    rows top down: one copy of the rectangle and one read of it."""
     screen = user32.GetDC(None)
     mem = gdi32.CreateCompatibleDC(screen)
     bmp = gdi32.CreateCompatibleBitmap(screen, w, h)
@@ -217,11 +218,16 @@ def grab(path, x, y, w, h):
         bgra = buf.raw
         rgb = bytearray(w * h * 3)
         rgb[0::3], rgb[1::3], rgb[2::3] = bgra[2::4], bgra[1::4], bgra[0::4]
-        core.write_png(path, w, h, bytes(rgb))
+        return bytes(rgb)
     finally:
         gdi32.DeleteObject(bmp)
         gdi32.DeleteDC(mem)
         user32.ReleaseDC(None, screen)
+
+
+def grab(path, x, y, w, h):
+    """Copy a screen rectangle to a PNG."""
+    core.write_png(path, w, h, screen_rgb(x, y, w, h))
 
 
 # ------------------------------------------------------------- the tree --
@@ -464,6 +470,13 @@ class Context:
         time.sleep(settle)
         return arrived
 
+    def pixels(self, x, y, w, h):
+        """A screen rectangle as rows of (red, green, blue): what a surface
+        measures that UI Automation does not expose (an icon's artwork, a
+        highlight)."""
+        rgb = screen_rgb(int(x), int(y), int(w), int(h))
+        return [[tuple(rgb[(r * w + c) * 3:(r * w + c) * 3 + 3]) for c in range(w)] for r in range(h)]
+
     def hover_point(self, x, y):
         """Move the pointer to a point with a real mouse-move event (off a
         surface, so it shows no hover state)."""
@@ -503,21 +516,29 @@ class Context:
         Offscreen containers are searched too: a WinUI menu's popup window
         reports offscreen while its entries are on screen."""
         deadline = time.monotonic() + timeout
+        first = True
         while True:
             level = [within] if within is not None else None
             try:
                 level = level or self.live.children(self.live.uia.GetRootElement())
-                for _ in range(depth):
+                for d in range(depth):
                     nxt = []
                     for el in level:
                         if el is not within and core.matches(el, spec):
                             return el
-                        nxt.extend(el.children())
+                        # The first pass is the one look a short timeout promises
+                        # and always runs whole; a later pass stops at the
+                        # deadline, so a wait on a big tree ends near its bound.
+                        if not first and time.monotonic() >= deadline:
+                            raise core.Incomplete(f"no element matching {spec} within {timeout} s")
+                        if d + 1 < depth:    # the last level's children are never searched
+                            nxt.extend(el.children())
                     level = nxt
                     if not level:
                         break
             except self.live.COMError:
                 pass                 # a window closed mid-search; look again
+            first = False
             if time.monotonic() >= deadline:
                 raise core.Incomplete(f"no element matching {spec} within {timeout} s")
             time.sleep(0.5)

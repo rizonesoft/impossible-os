@@ -150,12 +150,16 @@ def close_search(ctx):
     raise core.Incomplete(f"search stayed open after {OPEN_TRIES} presses of Esc")
 
 
+# Characters a key chord types on the US layout, beside letters and digits.
+TYPED = {" ": "space", ":": "shift+semicolon", "*": "shift+8"}
+
+
 def type_query(ctx, text):
     ctx.click(ctx.find(within=window(ctx), automationId="SearchTextBox", depth=3))
     time.sleep(0.5)
     ctx.keys("ctrl+a")
     for ch in text:
-        ctx.keys("space" if ch == " " else ("shift+semicolon" if ch == ":" else ch))
+        ctx.keys(TYPED.get(ch, ch))
 
 
 def query(text, ready):
@@ -254,6 +258,12 @@ SCENES += [
          root=results, close=close_search, omit=FIRST_OMIT, keep=False, expand=False),
     dict(slug="enter", label="Enter on the best match", kind="state", open=open_by_enter, root=notepad,
          close=close_notepad, keep=False, expand=False),
+    # Measured, not published: offline, a calculation and a unit conversion each
+    # end at No results (the hand record "Calculation and unit answers").
+    dict(slug="calculation-answer", label="A calculation", kind="state", open=query("12*7", NONE), root=results,
+         close=close_search, omit=REST_OMIT, keep=False, expand=False),
+    dict(slug="unit-answer", label="A unit conversion", kind="state", open=query("10 km in miles", NONE),
+         root=results, close=close_search, omit=REST_OMIT, keep=False, expand=False),
 ]
 
 

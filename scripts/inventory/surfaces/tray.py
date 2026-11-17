@@ -297,8 +297,16 @@ BEHAVIOURS = [
 ]
 
 
+# Entries no stand-in and no host can show, each designed as ours from the
+# sibling named (expected.json's absent rows give the reason).
+ABSENT = [("pen", "Pen menu", "Needs pen hardware, which no stand-in has: designed as ours like the Touch keyboard "
+                              "entry, a fixed tray button that opens a menu of pen shortcuts.")]
+
+
 def _hand():
-    out = [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "state", "label": label, "order": 40 + i, "behaviour": text}
+    out = [{"id": f"{ROOT}.absent-{slug}", "parent": ROOT, "kind": "control", "label": label, "order": 80 + i,
+            "behaviour": f"Absent on the reference machine: {text}"} for i, (slug, label, text) in enumerate(ABSENT)]
+    out += [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "state", "label": label, "order": 40 + i, "behaviour": text}
            for i, (slug, label, text) in enumerate(STATES)]
     out += [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": "gesture", "label": label, "order": 60 + i,
              "behaviour": text} for i, (slug, label, text) in enumerate(BEHAVIOURS)]

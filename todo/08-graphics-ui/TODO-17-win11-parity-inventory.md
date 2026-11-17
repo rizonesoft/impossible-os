@@ -396,8 +396,9 @@ The report is the measure of progress, and the ownership check is the proof that
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
 - [x] Desktop Surface: writes `docs/design/inventory/desktop/desktop.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/desktop.py` (279 records, 20 screenshots); the default icons on this build are the Recycle Bin, Microsoft Edge and the Spotlight "Learn about this picture" icon, the last two `equivalent`
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/desktop.py` (300 records, 21 screenshots); the default icons on this build are the Recycle Bin, Microsoft Edge and the Spotlight "Learn about this picture" icon, the last two `equivalent`
   - Icon grid as `metric` records measured from the captured cells: cell 76 px wide, 70 px tall with one label line and 15 px per further line, row pitch 100, and the cell at large (106 by 118), medium (76 by 70) and small (76 by 54) icons
+  - Read from screen pixels (UIA exposes none of it): artwork 72 by 84, 36 by 42 and 24 by 28 at the three sizes, label width about 62, and hover and selection rectangles equal to the 76 by 70 cell
   - Modern menus for the empty area, a file, a folder, a shortcut and the Recycle Bin, each with its icon row and every submenu's entries (View, Sort by, New, Open with, Share with, Compress to); Paste, Paste shortcut and Undo come from an Explorer copy and paste before the capture
   - Classic menus behind "Show more options" for the same five triggers, as `contextMenu` records `replaced` under the `context-menus` ledger entry; their submenus do not open under UI Automation, and the same submenus are recorded from the modern menus
   - Behaviours by hand: rubber-band selection, drag to move, Ctrl-drag copy, Alt-drag shortcut, Ctrl and wheel icon size, double-click to open, F2 rename, and the three drop tips ("Move to", "Copy to", "Create link in") as `cursor` records; auto arrange, align to grid and show desktop icons are the captured View entries
@@ -405,23 +406,27 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [x] Wallpaper fit modes: `win11.desktop.fit-modes` from the classic Desktop Background page (Settings' list is disabled unactivated); Span is a hand record; owner `TODO-09` §3
 - [x] Taskbar: writes `docs/design/inventory/taskbar/taskbar.json` and `taskbar/secondary.json`
   - Captured on 26300.9974 by `scripts/inventory/surfaces/taskbar.py` and `taskbar-secondary.py`; the tray, clock, bell and show-desktop edge are the tray item's
-  - Metrics at both alignments: bar 48, button 44, pitch 44, icon 24 (from pixels; UIA exposes no icon), the four search modes, indicators (active 16 by 3, running 6 by 3), thumbnail 216 by 153 and its 0.55 s delay, jump list 318, a full bar's 32 px buttons and the overflow button and flyout
+  - Metrics at both alignments: bar 48, button 44, pitch 44, icon 24 (from pixels; UIA exposes no icon), the four search modes, indicators (active 16 by 3, running 6 by 3), thumbnail 216 by 153 and its 1.4 s delay (1398 ms), jump list 318, a full bar's 32 px buttons and the overflow button and flyout
   - Menus: the bar menu and the pinned, running and several-window jump lists; Recent and Tasks groups are hand records, since this machine fills neither
   - The row of previews for several windows is not exposed to UIA, so it is a hand state with the button states and behaviours
   - Second display on the two-display stand-in: its bar (72 px at 150 %) and the three button modes; pinned apps leave the second bar in the two "where open" modes
   - Owners: the taskbar roadmap's sections 1, 2, 3, 5, 6 and the new section 9 (every display), and the widget framework
 - [x] System Tray and Overflow: writes `docs/design/inventory/taskbar/tray.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/tray.py` (66 records): the order is the chevron, touch keyboard, input indicator, network, volume, clock, bell and show-desktop edge, each width a `metric`; the pen entry needs pen hardware and shows nothing in the VM
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/tray.py` (67 records): the order is the chevron, touch keyboard, input indicator, network, volume, clock, bell and show-desktop edge, each width a `metric`; the pen entry needs pen hardware: an `equivalent` record and an `absent` row of `expected.json`
+  - On the stand-in laptop, `tray-laptop.json` (9 records): the battery button, named "Power", follows volume in the group
   - The hidden icons flyout (cell 40, padding 17), the input indicator flyout, the clock tooltip, the clock, network and volume menus (the bell shares the clock's), an app icon's menu as frame only, and the clock with seconds (as wide as its wider line, so it grows only when the time outgrows the date)
   - Icon states, privacy indicators, the clock's lines and date forms, and the drag between flyout and bar are hand records: the VM has no microphone, location or capture source
   - Owners: the tray icons, notification centre, taskbar clock, layout switching, Aero Peek and on-screen keyboard sections
 - [x] Start Menu: writes `docs/design/inventory/start/start.json`
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/start.py` (124 records): the panel is 858 x 890 standing on the taskbar, at x 531 centred and x 0 aligned left; one scrolling list holds Pinned (8 x 2 tiles of 96 x 84, Show all grows it in place), Recommended (56 px rows) and All
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/start.py` (140 records): the panel is 858 x 890 standing on the taskbar, at x 531 centred and x 0 aligned left; one scrolling list holds Pinned (8 x 2 tiles of 96 x 84, Show all grows it in place), Recommended (56 px rows) and All
   - This build has no pinned page dots and no layout choice in Start; its layout and recommendation switches are Settings pages, inventoried with Settings
   - All apps: the category, grid and list views (40 px rows, 53 px letter headings), the letter jump grid and its Back, and every app listed, folders opened (39 entries)
-  - The bottom bar with all nine folder shortcuts in their order, the account card (`itemCount` 5) and the power menu (Lock, Shut down, Restart; `itemCount` 3), and the menus of a pinned tile, a recommended entry and the view button
-  - Drag, type-to-search, keyboard regions and closing are hand records
-  - `start-apps`: 38 rows matched by Start; OneDrive installs at first sign-in, after the baseline is read, so it carries `baselineMissing`; the other 35 rows are not in Start's list on this build and are matched by the Windows Tools item in section 13
+  - The bottom bar with all nine folder shortcuts in their order, the account card (`itemCount` 5) and the power menu (Lock, Shut down, Restart; `itemCount` 3), and the menus of a pinned tile, an all-apps entry, a recommended entry and the view button
+  - Sleep is an `absent` row of `expected.json` (S3 is unusable on both machines); the update variants are section 25's `power-menu-update`; the corner radius is section 9's pixel read
+  - Letter grid: 48 x 48 cells in 4 columns; grid columns and rows are `count` metrics
+  - A folder made with the tile menu's Create a new app folder, opened: a 4 by 3 grid; with every switch off Recommended still holds Get Started, so it has no empty state
+  - Drag (reorder, onto a tile, to the taskbar, out of the grid), type-to-search, keyboard regions and closing are hand records
+  - `start-apps`: 38 rows matched by Start; OneDrive installs at first sign-in, after the baseline is read, so it carries `baselineMissing`; the other 35 rows are not in Start's list on this build and stay unmatched until the Windows Tools item in section 13 captures them
 - [x] Search Flyout: writes `docs/design/inventory/start/search.json` (113 records; owners in `TODO-11-startmenu-tray-notifications.md` §3 and §8)
   - Capture the search surface before typing: the box, the filter row, recent searches as a frame, and the suggested apps row as a frame
     - Filter row: All, Apps, Documents, Web, Settings, Folders, Photos and the "more" list
@@ -432,7 +437,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Give web results, the highlights panel and cloud content the disposition decided under §6 and record them as frames only
   - Capture the search settings menu at the top right and its entries
   - Done when: `check-inventory.py --surface start` passes with `search.json` present; each of the four result kinds has its action list recorded with a matching `itemCount`.
-- [x] Quick Settings: `flyouts/quick-settings.json` (92 records) and `quick-settings-laptop.json` (78, stand-in); owners in `TODO-09-desktop-shell-features.md` §8 and §10
+- [x] Quick Settings: `flyouts/quick-settings.json` (95 records; Wi-Fi, Bluetooth, Mobile hotspot and Rotation lock are `equivalent` records) and `quick-settings-laptop.json` (78, stand-in); owners in `TODO-09-desktop-shell-features.md` §8 and §10
 - [x] Notification Center, Calendar and Toast: `flyouts/notifications.json` (187) and `notifications-overflow.json` (58); owners in `TODO-11` §5, §6, §9, §10, `TODO-12` §3, `TODO-19` §8, `TODO-09` §7; motion in §14
 - [x] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
 
@@ -453,6 +458,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [ ] Window Chrome and System Menu: writes `docs/design/inventory/window/chrome.json`
   - Capture the window frame of a classic program and of a modern program, at active and inactive
     - Title bar height, caption button size and hit area, icon and title position, border thickness, corner radius, shadow extent
+    - The same pixel read gives the corner radius of the Start panel, the flyouts and the menus, which section 8 could not read: UI Automation exposes no radius
   - Capture the caption buttons' states (rest, hover, pressed, the close button's own hover colour role) and the maximize and restore glyph swap
   - Capture the system menu (Alt-Space and title bar right-click): Restore, Move, Size, Minimize, Maximize, Close with its shortcut text
   - Record by hand the resize areas: edge and corner grip thickness inside and outside the frame, the minimum window size, and the cursor role per area
@@ -1215,6 +1221,7 @@ Downloading, installing and restart required need an update Windows actually rec
 
 - [ ] Derive checkpoints for `update-downloading`, `update-installing` and `update-restart-required` from a genuine Microsoft update received over the temporary network, removed before the checkpoint is taken
 - [ ] `services.ps1` names each variant and restores its checkpoint, so `expected.json`'s rows resolve
+- [ ] Capture Start's power menu in `update-restart-required` (`start/power-menu-update`): section 8 recorded Lock, Shut down and Restart only, with no update pending
 - [ ] Commit: `"inventory: delivered update states"`
 
 **Test checkpoint:** `ref-vm.ps1 -Verify` restores each update checkpoint with no network adapter and Settings > Windows Update shows its state.

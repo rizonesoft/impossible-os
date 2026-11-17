@@ -2106,7 +2106,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
 | [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
 | [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |    11 |
-| [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none  |     3 |
+| [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none  |     4 |
 | [ ]  | `D08 T17 §26` | Service-State Fixtures: Network Switch and Page States                  | none  |     3 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
