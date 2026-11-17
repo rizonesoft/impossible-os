@@ -200,6 +200,66 @@
   "sha256": "52e171516b5101b07d260123c35bfc91643a4f766c7048342c31d5445f0d761e"
  },
  {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "accessibility-page",
+  "profile": "fhd-100",
+  "width": 358,
+  "height": 400,
+  "size": 12108,
+  "sha256": "f6ecde1c95fc6cad5bd13f58feaf9a6243d7563353e4b8ec410125100466ace9"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "cast-page",
+  "profile": "fhd-100",
+  "width": 358,
+  "height": 400,
+  "size": 6993,
+  "sha256": "40fce1d816897dbb510201b4de26d73e9eb8ed13980d41fbc832a5c3d2d34899"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "page-2",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 335,
+  "size": 7754,
+  "sha256": "8c89560772757d2620d26be437b8297fdcb2b16138e5af2ceeb139fd64d5e664"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "project-page",
+  "profile": "fhd-100",
+  "width": 358,
+  "height": 400,
+  "size": 6015,
+  "sha256": "0495dc6ebeab1149d7c76f8c59a0ef607ef8e9c5663f6ac29a238fe88beff1a0"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "quick-settings",
+  "profile": "fhd-100",
+  "width": 384,
+  "height": 1032,
+  "size": 703085,
+  "sha256": "4cdb6f1065c653a39272f516d4edfc545d11bbf472f663d2b3bc9765cdd1f72a"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings",
+  "state": "tile-menu",
+  "profile": "fhd-100",
+  "width": 121,
+  "height": 38,
+  "size": 1213,
+  "sha256": "f6f01dd204c237a966f6858c24ffcc87d67d812a4f53f70c9a1da5611d8f2104"
+ },
+ {
   "surface": "start",
   "file": "start",
   "state": "account-menu",

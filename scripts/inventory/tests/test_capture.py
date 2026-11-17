@@ -577,6 +577,12 @@ class Merge(unittest.TestCase):
                                 "disposition": "ship"}])
         self.assertEqual(dropped, ["a.gone"])
 
+    def test_a_tiles_states_survive_a_recapture(self):
+        # Quick Settings' tile states are measured by clicking, not walked (2026-11-17).
+        old = [{"id": "q.night", "label": "Night light", "toggleStates": ["off", "on"]}]
+        out, _ = core.merge(old, [{"id": "q.night", "label": "Night light", "order": 4}], [])
+        self.assertEqual(out, [{"id": "q.night", "label": "Night light", "order": 4, "toggleStates": ["off", "on"]}])
+
     def test_the_baseline_match_survives_a_recapture(self):
         old = [{"id": "a.b", "label": "B", "baselineId": "settings:S1"}, {"id": "a.c", "label": "C", "baselineMissing": True},
                {"id": "a.gone", "label": "Gone", "baselineId": "settings:S2"}]

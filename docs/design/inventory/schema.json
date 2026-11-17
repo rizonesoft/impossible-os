@@ -300,6 +300,20 @@
       ],
       "description": "The visual state a state record measures (section 14)"
     },
+    "toggleStates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "off",
+          "on",
+          "unavailable",
+          "opens-page"
+        ]
+      },
+      "description": "The states a tile or toggle takes, measured by using it (section 8, Quick Settings): off, on, unavailable without its hardware, or opens a page"
+    },
     "session": {
       "enum": [
         "console",

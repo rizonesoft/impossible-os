@@ -52,6 +52,7 @@ title: "TODO-09 -- Desktop Shell Features"
 | 💎  |   7   | §7 Focus / DND -- Registry-backed mode enum, toast suppression filter, quick-settings tile hook     | §6 night light (both are quick-settings tiles; wire together)               |  [ ]   |
 | 💎  |   8   | §8 Quick settings flyout -- anchored 360 px, six toggles, brightness/volume sliders, footer       | §6, §7 night light + focus (tiles must be wired); §1 context menu (for panel) |  [ ]   |
 | ⭐  |   9   | §9 Virtual desktops -- 8 desktops, per-desktop Z-order, Win+Ctrl keys, Task View overlay           | §8 quick settings (task view is another overlay; patterns established)      |  [ ]   |
+| 💎  |  10   | §10 Quick settings pages, pager, tile menu and edit mode                                          | §8 quick settings flyout                                                    |  [ ]   |
 
 ---
 
@@ -217,6 +218,8 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 **Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
+**Inventory:** `win11.flyouts.quick-settings`
+
 Per `docs/design/shell.md#quick-settings`: Win+A or a click on the tray's system cluster opens a `THEME_SIZE_FLYOUT_WIDTH` (360) flyout anchored 12 px from the right edge and 12 px above the taskbar (content-height, not a full-height sidebar), flyout acrylic, radius 8, `THEME_ELEV_FLYOUT_*`; it fades and rises 12 px over `THEME_MOTION_NORMAL_MS`. Contents: a 3 x 2 grid of toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility), brightness and volume sliders, and a 48 px footer band (battery left; edit and Settings right). Closes on outside click or Escape.
 
 **Files:** `src/desktop/quick_settings.c` (new), `include/desktop/quick_settings.h` (new)
@@ -265,6 +268,25 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (c
 - [ ] Hotkeys in `hotkeys.c`: `MOD_WIN+MOD_CTRL+D` → `vdesk_create()` + `vdesk_switch(new)`; `MOD_WIN+MOD_CTRL+F4` → `vdesk_destroy(g_current)`; `MOD_WIN+MOD_CTRL+LEFT/RIGHT` → `vdesk_switch(current ± 1)`; `MOD_WIN+Tab` → `taskview_open()`
 - [ ] New window: assigned to `g_current_desktop` by default; `wm_create_window()` sets `win->desktop_idx = g_current_desktop`
 - [ ] Commit: `"desktop: virtual desktops -- 8 desktops, fade switch, per-desktop compositor, Task View overlay"`
+
+## 10. Quick Settings Pages, Pager and Edit Mode
+
+> **Spawned-by:** §8 (split)
+
+**Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
+
+**Inventory:** `win11.flyouts.page-2`, `win11.flyouts.accessibility-page`, `win11.flyouts.cast-page`, `win11.flyouts.project-page`, `win11.flyouts.tile-menu`, `win11.flyouts.quick-settings.pager`, `win11.flyouts.quick-settings.edit-mode`, `win11.flyouts.quick-settings.project-modes`
+
+What the flyout of section 8 needs past its first six tiles, measured in `docs/design/inventory/flyouts/quick-settings.json`: further pages of tiles behind a pager, the pages a tile opens in place of the grid, a tile's menu, and an edit mode, which the reference build has dropped and Impossible OS keeps.
+
+**Files:** `src/desktop/quick_settings.c` (extend), `include/desktop/quick_settings.h` (extend)
+
+- [ ] Pager: tiles past six go to further pages of 3 x 2; dots down the right edge, Previous disabled on the first page and Next on the last; the wheel moves between pages
+- [ ] Tile pages in place of the grid (358 px wide): a 40 px Back button, the title, the page's rows and a footer link
+  - Accessibility (Magnifier, Narrator, Color filters, Live captions, Mono audio switches), Cast (devices, or the wired-display line), Project (the four modes)
+- [ ] Tile menu: a right-click on a tile shows Go to Settings, which opens that tile's Settings page
+- [ ] Edit mode from the footer: pin and unpin tiles, drag to reorder, an Add list of the tiles not shown, and Done; the layout is kept per user
+- [ ] Commit: `"desktop: quick settings pages, pager, tile menu and edit mode"`
 
 ---
 
