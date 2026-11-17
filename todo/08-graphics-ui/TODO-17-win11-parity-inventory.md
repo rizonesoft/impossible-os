@@ -73,7 +73,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |   5   | §5 Completeness Baselines                                                                   | §1, §2, §4                  |  [x]   |
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1                          |  [x]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6                  |  [x]   |
-| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22           |  [ ]   |
+| 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22           |  [x]   |
 | 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                          |  [ ]   |
 | 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21, §23, §27 |  [ ]   |
 | 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10                         |  [ ]   |
@@ -402,8 +402,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Classic menus behind "Show more options" for the same five triggers, as `contextMenu` records `replaced` under the `context-menus` ledger entry; their submenus do not open under UI Automation, and the same submenus are recorded from the modern menus
   - Behaviours by hand: rubber-band selection, drag to move, Ctrl-drag copy, Alt-drag shortcut, Ctrl and wheel icon size, double-click to open, F2 rename, and the three drop tips ("Move to", "Copy to", "Create link in") as `cursor` records; auto arrange, align to grid and show desktop icons are the captured View entries
   - Owners: the window manager's Desktop Icons section, the desktop shell's Desktop Right-Click Menu section and the desktop icons' Icon Right-Click Context Menu section
-- [/] Wallpaper fit modes (Fill, Fit, Stretch, Tile, Center, Span) captured from the background page as records under `win11.desktop.desktop`
-  - Blocked: the reference VM's Windows is not activated, so Settings disables personalization and the fit list never shows (seen 2026-11-16); capture it once the operator activates the reference machine
+- [x] Wallpaper fit modes: `win11.desktop.fit-modes` from the classic Desktop Background page (Settings' list is disabled unactivated); Span is a hand record; owner `TODO-09` §3
 - [x] Taskbar: writes `docs/design/inventory/taskbar/taskbar.json` and `taskbar/secondary.json`
   - Captured on 26300.9974 by `scripts/inventory/surfaces/taskbar.py` and `taskbar-secondary.py`; the tray, clock, bell and show-desktop edge are the tray item's
   - Metrics at both alignments: bar 48, button 44, pitch 44, icon 24 (from pixels; UIA exposes no icon), the four search modes, indicators (active 16 by 3, running 6 by 3), thumbnail 216 by 153 and its 0.55 s delay, jump list 318, a full bar's 32 px buttons and the overflow button and flyout
@@ -434,19 +433,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the search settings menu at the top right and its entries
   - Done when: `check-inventory.py --surface start` passes with `search.json` present; each of the four result kinds has its action list recorded with a matching `itemCount`.
 - [x] Quick Settings: `flyouts/quick-settings.json` (92 records) and `quick-settings-laptop.json` (78, stand-in); owners in `TODO-09-desktop-shell-features.md` §8 and §10
-- [ ] Notification Center, Calendar and Toast: writes `docs/design/inventory/flyouts/notifications.json`
-  - Capture the notification center: the header (title, the do-not-disturb button, clear all), the group per app, the notification card, and the empty state
-  - Capture the card's slots
-    - The app row, title, body lines, the image slot, the progress slot, the input slot, the button row (up to five), and the expand, settings and close controls
-  - Capture the calendar: the collapsed date row, the month grid (6 by 7), the month, year and decade zoom levels, the scroll between months, and the focus session row beneath it
-  - Capture a toast on screen: its position, size, the stack of several toasts, the time it stays, and the swipe or close dismissal
-    - Overflowing groups, long text, expanded and collapsed cards come from the notification fixtures of §20
-  - Record by hand the toast kinds
-    - Plain, with buttons, with a text reply, with a selection, with a progress bar, an alarm or reminder that stays, an incoming call, and an urgent toast that breaks through do not disturb
-  - Capture the card's context menu: turn off for this app, go to notification settings, make high priority
-  - Record the motion: toast slide in and out, the center opening, and a card collapsing on dismissal, as `motion` records measured under §14
-  - Done when: `check-inventory.py --surface flyouts` passes; one `control` record exists per card slot and one `state` record per toast kind.
-- [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
+- [x] Notification Center, Calendar and Toast: `flyouts/notifications.json` (187) and `notifications-overflow.json` (58); owners in `TODO-11` §5, §6, §9, §10, `TODO-12` §3, `TODO-19` §8, `TODO-09` §7; motion in §14
+- [x] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
@@ -963,7 +951,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - It records at the display's refresh rate, tracks one edge of the moving element, and writes duration, distance and the nearest cubic curve
     - The recording is kept in `R:\11\ref-shots\motion\` with its frame timestamps and raw edge samples, hashed into `shots.json`, so a curve is re-fitted without the VM
   - Measure the motions
-    - Window open, close, minimize, maximize and restore; Start, flyout and menu open and close; toast in and out; Task View and desktop switch
+    - Window open, close, minimize, maximize and restore; Start, flyout and menu open and close; toast in and out; a notification card collapsing on dismissal; Task View and desktop switch
     - Hover and press on a button; the page transition in Settings; the tab switch underline; the progress ring's cycle
   - Record the sound events by name and role with their trigger; no sound file is recorded
     - Default beep, critical stop, exclamation, notification, device connect and disconnect, and the rest of the event list of §13

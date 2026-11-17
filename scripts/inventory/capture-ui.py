@@ -25,6 +25,7 @@ import pathlib
 import subprocess
 import sys
 import time
+import traceback
 from ctypes import wintypes
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -664,7 +665,7 @@ def main(argv=None):
         # A UI Automation call that fails mid-walk (an element gone, a provider
         # that stopped answering) leaves the capture unproven, never half-taken.
         # A ValueError is a module whose authored records are malformed.
-        meta["incomplete"] = str(exc) if not isinstance(exc, live.COMError) else f"UI Automation failed: {exc}"
+        meta["incomplete"] = describe_failure(exc, isinstance(exc, live.COMError))
         print(f"capture-ui: incomplete: {meta['incomplete']}")
     finally:
         if args.meta:
@@ -675,6 +676,28 @@ def main(argv=None):
     return code
 
 
+def describe_failure(exc, uia):
+    """The failure, the scene and step it happened in, and the innermost line of
+    a surface module or this tool that raised it."""
+    text = f"UI Automation failed: {exc}" if uia else str(exc)
+    where = list(getattr(exc, "__notes__", ()))
+    frames = [f for f in traceback.extract_tb(exc.__traceback__)
+              if pathlib.Path(f.filename).name not in ("capture_core.py", "contextlib.py")]
+    if frames:
+        f = frames[-1]
+        where.append(f"at {pathlib.Path(f.filename).name}:{f.lineno} in {f.name}")
+    return f"{text} ({'; '.join(where)})" if where else text
+
+
+def utf8_output():
+    """Element names carry marks a console code page lacks (the calendar's
+    direction marks, 2026-11-17): print them in UTF-8 instead of dying on
+    the report line. The environment variable this replaced only reached
+    child processes."""
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 if __name__ == "__main__":
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    utf8_output()
     sys.exit(main())

@@ -25,6 +25,7 @@ An unnamed Pane with no automation id is hosting plumbing (a XAML island's
 bridge and input site), not interface: the walk records its children in its
 place, so ids follow what a user sees.
 """
+import contextlib
 import json
 import os
 import pathlib
@@ -548,6 +549,16 @@ def restart_explorer(ctx, bar="Shell_TrayWnd", wait=90, clock=time.monotonic):
                 raise Incomplete(f"the {bar} bar did not come back within {wait} s of restarting Explorer")
 
 
+@contextlib.contextmanager
+def failing_step(where):
+    """Note `where` on an exception that leaves the block."""
+    try:
+        yield
+    except Exception as exc:
+        exc.add_note(where)
+        raise
+
+
 def run_scenes(scenes, ctx, walk_scene, on_open=None):
     """Open, walk to a settled capture, and close each scene in turn.
 
@@ -560,13 +571,18 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None):
     """
     total, passes = Capture(), {}
     for n, sc in enumerate(scenes):
-        sc.open(ctx)
+        # A failure names the scene and the step it failed in (2026-11-17: a UI
+        # Automation error from a nine-scene module named neither).
+        with failing_step(f"scene {sc.slug}: opening"):
+            sc.open(ctx)
         try:
-            cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
-            if on_open:
-                on_open(sc, cap)
+            with failing_step(f"scene {sc.slug}: walking"):
+                cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
+                if on_open:
+                    on_open(sc, cap)
         finally:
-            sc.close(ctx)
+            with failing_step(f"scene {sc.slug}: closing"):
+                sc.close(ctx)
         cap.records[0]["order"] = n
         if not sc.keep:
             total.measured.extend(cap.records)

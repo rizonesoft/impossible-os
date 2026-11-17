@@ -1718,6 +1718,31 @@ class Scenes(unittest.TestCase):
             core.run_scenes(core.scenes_of(m), None, self.walk_scene)
         self.assertEqual(log, ["open desktop", "close desktop"])
 
+    def test_a_failure_names_its_scene_and_step(self):
+        def boom(ctx):
+            raise core.Incomplete("gone")
+        for key, step in (("open", "opening"), ("root", "walking"), ("close", "closing")):
+            m, _ = self.mod()
+            m.SCENES[1][key] = boom
+            with self.assertRaises(core.Incomplete) as cm:
+                core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+            self.assertEqual(cm.exception.__notes__, [f"scene menu: {step}"], key)
+
+    def test_the_guest_report_says_where_a_failure_happened(self):
+        m, _ = self.mod()
+
+        def open_calendar(ctx):
+            raise RuntimeError("provider gone")
+        m.SCENES[1]["open"] = open_calendar
+        try:          # not assertRaises: it drops the traceback the report reads
+            core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+            self.fail("the scene did not fail")
+        except RuntimeError as exc:
+            got = guest.describe_failure(exc, True)
+        self.assertTrue(got.startswith("UI Automation failed: provider gone (scene menu: opening; at test_capture.py:"),
+                        got)
+        self.assertTrue(got.endswith(" in open_calendar)"), got)
+
     def test_a_measuring_scene_is_not_published(self):
         m, _ = self.mod()
         m.SCENES[1]["keep"] = False
@@ -1877,6 +1902,18 @@ class GuestImports(unittest.TestCase):
             sys.path[:] = saved_path
             if saved_core is not None:
                 sys.modules["capture_core"] = saved_core
+
+
+class GuestOutput(unittest.TestCase):
+    def test_a_name_the_console_code_page_lacks_still_prints(self):
+        code = (f"import importlib.util,sys\n"
+                f"spec=importlib.util.spec_from_file_location('g', {str(INV / 'capture-ui.py')!r})\n"
+                "g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)\n"
+                "g.utf8_output(); print('\\u200eNovember\\u200e 2026')\n")
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONPATH=str(INV))
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, env=env, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr.decode(errors="replace"))
+        self.assertEqual(r.stdout.decode("utf-8").strip(), "\u200eNovember\u200e 2026")
 
 
 class FindWindow(unittest.TestCase):

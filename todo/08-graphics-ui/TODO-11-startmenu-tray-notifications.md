@@ -55,6 +55,8 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 | 💎  |   6   | §6 Notification center -- shared flyout, history, dismiss/clear, 100-entry log                | §5 (history comes from toast queue); §4 (bell icon is the entry point) |  [ ]   |
 | 💎  |   7   | §7 Notification settings -- per-app Registry toggle + sound, Settings page                    | §6 (notification center lists registered apps; settings wires to that) |  [ ]   |
 | 💎  |   8   | §8 Search filters, per-kind result actions, options menu, opt-in online results               | §3 (the search panel and its results)                                  |  [ ]   |
+| 💎  |   9   | §9 Rich toast content -- hero, logo, progress, reply, buttons, reminder and call kinds        | §5 (the toast queue)                                                   |  [ ]   |
+| 💎  |  10   | §10 Notification cards -- expand, group headers, card menu, do not disturb state              | §6 (the center the cards live in)                                      |  [ ]   |
 
 ---
 
@@ -169,6 +171,8 @@ Typing in Start's search box, or clicking the taskbar's search button, opens sea
 
 **Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
+**Inventory:** `win11.flyouts.notifications.toast-stack`, `win11.flyouts.notifications.toast-dismiss`, `win11.flyouts.notifications.toast-duration`
+
 `notify_send(title, body, icon_id, timeout_ms)` enqueues notification. Queue: one shown at a time, stack vertically if multiple pending. Render per `docs/design/shell.md#toast-notifications`: `THEME_SIZE_TOAST_WIDTH` (364) wide flyout-acrylic card, radius 8, `THEME_ELEV_FLYOUT_*`, 12 px from the right edge and 12 px above the taskbar; top row app icon (16) + app name (caption, `text_secondary`) + close glyph on hover; title (body strong); body up to three lines; optional equal-width action buttons. Slides in from the right over `THEME_MOTION_TOAST_IN_MS` (250, decelerate), stays `THEME_MOTION_TOAST_DWELL_MS` (5 s, paused while hovered), then fades out and moves into the notification center. `SYS_NOTIFY_SEND=54` syscall.
 
 **Files:** `src/desktop/notify.c` (new), `include/desktop/notify.h` (new), `include/kernel/sched/syscall.h` (extend)
@@ -193,7 +197,7 @@ Typing in Start's search box, or clicking the taskbar's search button, opens sea
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
-**Inventory:** `win11.taskbar.tray.notifications`
+**Inventory:** `win11.taskbar.tray.notifications`, `win11.flyouts.notifications`, `win11.flyouts.notifications-overflowing`, `win11.flyouts.empty`, `win11.flyouts.notifications.open`
 
 The bell beside the clock (and a clock click) opens the shared notifications-and-calendar flyout: 360 px wide (`THEME_SIZE_FLYOUT_WIDTH`), anchored 12 px from the right edge and 12 px above the taskbar, flyout acrylic, radius 8; it fades and rises 12 px over `THEME_MOTION_NORMAL_MS`. The notification list sits above the calendar owned by `08-graphics-ui/TODO-12 §3`. Notification history grouped by source app (icon + app name header, entries with title + body + relative timestamp). Dismiss individual (× button) or "Clear all". Store last 100 in `HKLM\SYSTEM\Shell\NotifyHistory`.
 
@@ -253,6 +257,47 @@ The parts of the search panel (section 3) that act on a result: the filter bar o
 - [ ] Options menu: Search settings and Indexing options open their Settings pages; the two account entries open the account page (`09-desktop-shell/TODO-06 §9`); Feedback is left out
 - [ ] Online results: a provider the user picks in Search settings, off by default, adds the web filter and web result group; offline the bar ends at Photos as the reference does
 - [ ] Commit: `"startmenu: search filters, per-kind result actions, options menu, opt-in online results"`
+
+---
+
+## 9. Rich Toast Content and Toast Kinds
+
+> **Spawned-by:** §5 (split)
+
+**Design:** [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
+
+**Inventory:** `win11.flyouts.toast`, `win11.flyouts.notifications.toast-plain`, `win11.flyouts.notifications.toast-buttons`, `win11.flyouts.notifications.toast-reply`, `win11.flyouts.notifications.toast-selection`, `win11.flyouts.notifications.toast-progress`, `win11.flyouts.notifications.toast-reminder`, `win11.flyouts.notifications.toast-call`, `win11.flyouts.notifications.toast-urgent`, `win11.flyouts.notifications.toast-width`, `win11.flyouts.notifications.toast-hero-height`, `win11.flyouts.notifications.toast-button-height`, `win11.flyouts.notifications.toast-button-pitch`, `win11.flyouts.notifications.toast-reply-height`, `win11.flyouts.notifications.toast-progress-height`
+
+The slots a toast can fill and the kinds it comes in, measured in `docs/design/inventory/flyouts/notifications.json` on top of the queue of §5: a 364 px card with a 180 px hero image, the sender row, a title and body lines, a progress block, a reply box and up to five 32 px buttons.
+
+**Files:** `src/desktop/notify.c` (extend), `include/desktop/notify.h` (extend)
+
+- [ ] Toast content model: hero image, app logo, sender, title, up to two body lines, a progress block (title, bar, status, value), one input, up to five buttons
+- [ ] Draw the slots to the measured sizes: 180 px hero, 4 px progress bar, 32 px reply box, 32 px buttons at a 68 px pitch in one row
+- [ ] Inputs: a text reply with its send button and a selection drop-down, read by the button pressed and passed to the sender
+- [ ] Kinds: a reminder or alarm stays until acted on (snooze, dismiss), a call layout rings until answered, an urgent toast breaks through do not disturb
+- [ ] Progress updates in place by tag, without a new banner or a new card in the center
+- [ ] Commit: `"notify: rich toast content -- hero, logo, progress, reply, buttons, reminder and call kinds"`
+
+---
+
+## 10. Notification Cards: Expand, Menu and Do Not Disturb
+
+> **Spawned-by:** §6 (split)
+
+**Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar)
+
+**Inventory:** `win11.flyouts.card-expanded`, `win11.flyouts.notifications-expanded`, `win11.flyouts.card-menu`, `win11.flyouts.dnd-on`, `win11.flyouts.notifications.expand`, `win11.flyouts.notifications.clear`, `win11.flyouts.notifications.dnd-toggle`, `win11.flyouts.notifications.high-priority`
+
+What a card does in the center of §6, measured in `docs/design/inventory/flyouts/notifications.json`: a 143 px collapsed card that expands to its full text and image, a group header per app with its own settings and clear buttons, a card menu, and the do not disturb state of the header.
+
+**Files:** `src/desktop/notify_center.c` (extend), `include/desktop/notify_center.h` (extend)
+
+- [ ] Card expand and collapse from its time button; a group shows one card and a More notifications button that opens and closes the rest; only an opened group makes the list scroll
+- [ ] Group header per app: app name, a settings button and a clear-this-app button; a card's own settings and close buttons
+- [ ] Card menu: turn off notifications for the app, go to notification settings, and make high priority, which the reference build dropped and we keep
+- [ ] Do not disturb button in the header; while on, the header says so with a link to notification settings, and only priority banners show
+- [ ] Commit: `"notify_center: card expand, group headers, card menu and do not disturb state"`
 
 ---
 

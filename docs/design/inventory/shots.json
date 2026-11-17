@@ -56,8 +56,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 5493831,
-  "sha256": "f0db7711d912f65b015c76e7de1d68c7dcb32f0b1ad4dbd3bdd9360126f59db6"
+  "size": 5493857,
+  "sha256": "0ba0f00c0de0b72ad17e78668d23f843d47233b5d7b5ccdd93c6570952afb59d"
  },
  {
   "surface": "desktop",
@@ -98,6 +98,16 @@
   "height": 65,
   "size": 4631,
   "sha256": "c682a73b1b43d4a9828a80a741b92a1ca5025c374550f204b2a3b96840f97f4b"
+ },
+ {
+  "surface": "desktop",
+  "file": "desktop",
+  "state": "fit-modes",
+  "profile": "fhd-100",
+  "width": 170,
+  "height": 222,
+  "size": 19690,
+  "sha256": "ed991b0de2db990935daee104c86680efb8fb16b231acbd4f0600b0552ffa1ec"
  },
  {
   "surface": "desktop",
@@ -211,6 +221,56 @@
  },
  {
   "surface": "flyouts",
+  "file": "notifications",
+  "state": "calendar-decade",
+  "profile": "fhd-100",
+  "width": 240,
+  "height": 36,
+  "size": 668,
+  "sha256": "d23e4a1bd9b0da648b1e2313d18d0358f3134463777ff7e5a941a27ea9f61a6f"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "calendar-month",
+  "profile": "fhd-100",
+  "width": 336,
+  "height": 455,
+  "size": 15634,
+  "sha256": "b879d829c07a423c0b5e6097dc6c16fa7e414be5635d004cf6b6155aa138013d"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "calendar-year",
+  "profile": "fhd-100",
+  "width": 334,
+  "height": 350,
+  "size": 6132,
+  "sha256": "1d7b9fdba7564c2341fb153e7feca996bd44123c05f86a5a035aff9b7bf9c39b"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "card-expanded",
+  "profile": "fhd-100",
+  "width": 334,
+  "height": 257,
+  "size": 4221,
+  "sha256": "c6eca3ba951bfce080a1e499ba536e6af7e0261d953e84ff3a709a741f066ec6"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "card-menu",
+  "profile": "fhd-100",
+  "width": 332,
+  "height": 70,
+  "size": 3844,
+  "sha256": "4b52b335b22f18877869f30a3249d4a2412ca7c9926cd6a166531af6d5be16a4"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings",
   "state": "cast-page",
   "profile": "fhd-100",
@@ -221,6 +281,26 @@
  },
  {
   "surface": "flyouts",
+  "file": "notifications",
+  "state": "dnd-on",
+  "profile": "fhd-100",
+  "width": 336,
+  "height": 545,
+  "size": 21338,
+  "sha256": "f8974d5c969d3f1007344c92e37cefd02a41541a25ba8f313e06619edc7d274f"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "empty",
+  "profile": "fhd-100",
+  "width": 336,
+  "height": 232,
+  "size": 6265,
+  "sha256": "6498e54d6171cddecb6605fa2f74d2b9a0aa68564286930edaaa795a6dcc41ed"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings-laptop",
   "state": "media-card",
   "profile": "fhd-100",
@@ -228,6 +308,36 @@
   "height": 178,
   "size": 9686,
   "sha256": "be2e3a416c755379a832100ade56455e0610539930b36d863873c7a59c3e9e38"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "notifications",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 1032,
+  "size": 126882,
+  "sha256": "93a0d7190fb126972519ac1eddbae43f3bec57d7965ba7e69b0512bf7cbb9065"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "notifications-expanded",
+  "profile": "fhd-100",
+  "width": 334,
+  "height": 390,
+  "size": 9065,
+  "sha256": "be62bac1506c6ee115040cccb5c6e5fbe865deb989b8e0de67e997b055a88814"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications-overflow",
+  "state": "notifications-overflowing",
+  "profile": "fhd-100",
+  "width": 334,
+  "height": 850,
+  "size": 19900,
+  "sha256": "80e92ff17224716a6908ded9052be22e6bc3713c1b190da39750dda7e6ee95d4"
  },
  {
   "surface": "flyouts",
@@ -288,6 +398,16 @@
   "height": 38,
   "size": 1213,
   "sha256": "f6f01dd204c237a966f6858c24ffcc87d67d812a4f53f70c9a1da5611d8f2104"
+ },
+ {
+  "surface": "flyouts",
+  "file": "notifications",
+  "state": "toast",
+  "profile": "fhd-100",
+  "width": 364,
+  "height": 483,
+  "size": 12880,
+  "sha256": "b0595aa2f5c8ed72b4c863945843a42418c1e4f7b4765ec8d6f917b8b5f39bbc"
  },
  {
   "surface": "flyouts",

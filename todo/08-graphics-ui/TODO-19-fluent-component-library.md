@@ -202,6 +202,8 @@ The definition of done for a control, written once, so twenty-five sections do n
 
 **Design:** [`controls.md#date-picker`](../../docs/design/controls.md#date-picker)
 
+**Inventory:** `win11.flyouts.calendar-year`, `win11.flyouts.calendar-decade`, `win11.flyouts.notifications.calendar-zoom`, `win11.flyouts.notifications.calendar-year-columns`, `win11.flyouts.notifications.calendar-year-rows`, `win11.flyouts.notifications.calendar-year-item`, `win11.flyouts.notifications.calendar-year-pitch`, `win11.flyouts.notifications.calendar-decade-columns`, `win11.flyouts.notifications.calendar-decade-rows`, `win11.flyouts.notifications.calendar-decade-item`, `win11.flyouts.notifications.calendar-decade-pitch`
+
 - [ ] Add the calendar view, calendar date picker and time picker entries to `controls.md` from the inventory's measurements before building
 - [ ] Calendar view: the month grid (6 by 7), month, year and decade zoom levels with their transitions, first day of week and day names from the locale, today marked, selection single, multiple or range
 - [ ] Calendar keys: arrows move by day and week, Page Up and Down by month, Ctrl-Up and Ctrl-Down change zoom level, Home and End go to month start and end

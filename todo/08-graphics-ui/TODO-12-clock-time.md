@@ -98,7 +98,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar)
 
-**Inventory:** `win11.taskbar.tray.clock`, `win11.taskbar.clock-menu`, `win11.taskbar.clock-tooltip`
+**Inventory:** `win11.taskbar.tray.clock`, `win11.taskbar.clock-menu`, `win11.taskbar.clock-tooltip`, `win11.flyouts.notifications.calendar`, `win11.flyouts.calendar-month`, `win11.flyouts.notifications.calendar-month-columns`, `win11.flyouts.notifications.calendar-month-rows`, `win11.flyouts.notifications.calendar-month-item`, `win11.flyouts.notifications.calendar-month-pitch`
 
 Render the time over the date in the caption style (12/16), right-aligned in a `THEME_SIZE_TRAY_CLOCK_WIDTH` (76) wide, 40 px tall button beside the notification bell (`docs/design/shell.md#taskbar`). Update every 1 s (PIT tick counter). Click clock → the shared 360 px notifications-and-calendar flyout (`docs/design/shell.md#notifications-and-calendar`): the notification list of `08-graphics-ui/TODO-11 §6` above a month calendar (6 rows x 7 columns of 40 px cells), today as an accent circle.
 

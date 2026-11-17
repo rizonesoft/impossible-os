@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **991 of 2725 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **991 of 2727 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -52,7 +52,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §23` | Service-State Fixtures: Update Source and Network Switch                                                              | none     |     2 |
 | [x]  | `D08 T17 §24` | Reference Machine on the Host's Build                                                                                 | none     |     2 |
 | [ ]  | `D08 T17 §27` | Host Captures                                                                                                         | operator |     2 |
-| [ ]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | operator |     9 |
+| [/]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | operator |     9 |
 | [ ]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | none     |     7 |
 | [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none     |     7 |
 | [ ]  | `D08 T17 §11` | Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update                               | none     |     8 |
@@ -2117,7 +2117,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T08 §7`  | Drag and Drop                                                           | none  |     8 |
 | [ ]  | `D08 T08 §8`  | Compositor Performance                                                  | none  |     9 |
 | [ ]  | `D01 T14 §7`  | System-Wide Multi-Instance Spinner                                      | none  |     9 |
-| [ ]  | `D08 T09 §3`  | Wallpaper Engine                                                        | none  |     8 |
+| [ ]  | `D08 T09 §3`  | Wallpaper Engine                                                        | none  |     9 |
 | [ ]  | `D08 T09 §4`  | DPI Scaling                                                             | none  |     9 |
 | [ ]  | `D08 T09 §1`  | Context Menu Engine                                                     | none  |    11 |
 | [ ]  | `D06 T06 §7`  | Icon Right-Click Context Menu                                           | none  |     9 |
@@ -2125,7 +2125,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [x]  | `D06 T05 §2`  | Desktop Right-Click Context Menu                                        | none  |     1 |
 | [ ]  | `D08 T09 §5`  | Screenshot                                                              | none  |     8 |
 | [ ]  | `D08 T09 §6`  | Night Light                                                             | none  |     7 |
-| [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none  |     8 |
+| [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none  |     9 |
 | [ ]  | `D08 T09 §8`  | Quick Settings Panel                                                    | none  |    11 |
 | [ ]  | `D08 T09 §9`  | Virtual Desktops                                                        | none  |    11 |
 | [ ]  | `D08 T09 §10` | Quick Settings Pages, Pager and Edit Mode                               | none  |     6 |
@@ -2147,6 +2147,8 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T11 §6`  | Notification Center                                                     | none  |    11 |
 | [ ]  | `D08 T11 §7`  | Notification Settings                                                   | none  |     8 |
 | [ ]  | `D08 T11 §8`  | Search Filters, Result Actions and Options                              | none  |     5 |
+| [ ]  | `D08 T11 §9`  | Rich Toast Content and Toast Kinds                                      | none  |     6 |
+| [ ]  | `D08 T11 §10` | Notification Cards: Expand, Menu and Do Not Disturb                     | none  |     5 |
 | [ ]  | `D08 T12 §1`  | Kernel Time API                                                         | none  |    13 |
 | [ ]  | `D08 T12 §2`  | Time Formatting                                                         | none  |     6 |
 | [ ]  | `D08 T12 §5`  | Timezone Database                                                       | none  |     8 |

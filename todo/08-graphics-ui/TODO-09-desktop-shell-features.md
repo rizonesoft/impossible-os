@@ -117,6 +117,8 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop)
 
+**Inventory:** `win11.desktop.fit-modes`, `win11.desktop.desktop.fit-span`, `win11.desktop.desktop.fit-apply`
+
 `wallpaper_set(path, mode)`: load via `image_load()`, scale via `image_scale(mode)`, cache scaled bitmap. Registry watch: `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (the Windows 11 keys, per `08-graphics-ui/TODO-03 §9`) → auto-reload on change; when no wallpaper is set, the default silk wallpaper for the current theme is used. `background_color` fallback. Display Control Panel: thumbnail + fit-mode dropdown.
 
 **Files:** `src/desktop/wallpaper.c` (new), `include/desktop/wallpaper.h` (new), `src/desktop/desktop.c` (extend)
@@ -132,6 +134,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 - [ ] `void wallpaper_reload_on_dpi(void)`: `image_scale()` re-scale to new screen dims; called from `WM_DPI_CHANGED` handler
 - [ ] Default wallpaper is the impossible silk: `resources/backgrounds/silk-dark.jpg` (dark) and `silk-light.jpg` (light), Fill mode, per `docs/design/shell.md#desktop`
   - Ship both to the sysroot (today only `background.jpg`, the dark silk, is copied); the theme switch in `08-graphics-ui/TODO-03 §9` picks between them
+- [ ] Fit modes Fill, Fit, Stretch, Tile and Center, plus Span (one picture across every display) offered only with two or more displays; a change redraws at once
 - [ ] Commit: `"desktop: wallpaper_set() -- image_load+scale, cache, Registry watch, background_color fallback"`
 
 ## 4. DPI Scaling
@@ -198,6 +201,8 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 **Design:** [`shell.md#notifications-and-calendar`](../../docs/design/shell.md#notifications-and-calendar), [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
+**Inventory:** `win11.flyouts.notifications.focus`, `win11.flyouts.notifications.calendar.decreasetimebutton`, `win11.flyouts.notifications.calendar.duration`, `win11.flyouts.notifications.calendar.increasetimebutton`, `win11.flyouts.notifications.calendar.startbutton`, `win11.flyouts.calendar-month.decreasetimebutton`, `win11.flyouts.calendar-month.duration`, `win11.flyouts.calendar-month.increasetimebutton`, `win11.flyouts.calendar-month.startbutton`
+
 `HKCU\Software\Impossible\Shell\FocusMode` (0=off, 1=priority, 2=alarms-only). Priority: suppress non-priority toasts. Alarms-only: suppress all toasts. Toggled from the bell in the notifications header (Do not disturb) and the Focus row under the calendar, per `docs/design/shell.md#notifications-and-calendar`; also in Settings. Auto-enable during fullscreen apps (`DetectFullscreen` flag).
 
 **Files:** `src/desktop/focus_mode.c` (new), `include/desktop/focus_mode.h` (new)
@@ -212,6 +217,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 - [ ] `int focus_mode_allows_toast(uint8_t priority)` → 1 if toast should show: `FOCUS_OFF`=always; `FOCUS_PRIORITY`=only `PRIORITY_HIGH+ALARM`; `FOCUS_ALARMS`=only `PRIORITY_ALARM`
 - [ ] `desktop_toast(msg, icon)` stub: call `focus_mode_allows_toast(PRIORITY_NORMAL)` before showing; if 0: log to serial only
 - [ ] Fullscreen detect: in compositor, if `DetectFullscreen && topmost_covers_screen`: `focus_mode_set(FOCUS_PRIORITY)` silently
+- [ ] Focus session row under the calendar: length in 5 minute steps (minus, value, plus) and Focus, which turns on do not disturb until the session ends
 - [ ] Commit: `"desktop: focus/DND mode -- FOCUS_OFF/PRIORITY/ALARMS enum, toast filter, fullscreen auto-enable"`
 
 ## 8. Quick Settings Panel

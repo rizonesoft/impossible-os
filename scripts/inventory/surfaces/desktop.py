@@ -128,6 +128,34 @@ def nothing(ctx):
     pass
 
 
+# The background page's fit list. Settings' own fit list is disabled while the
+# reference VM's Windows is not activated (seen 2026-11-16); the classic Desktop
+# Background page lists the same fits and stays enabled (2026-11-17).
+BACKGROUND = r"Start-Process explorer.exe -ArgumentList 'shell:::{ED834ED6-4B5A-4bfe-8F11-A626DCB6A921} -Microsoft.Personalization\pageWallpaper'"
+BACKGROUND_WINDOW = {"className": "CabinetWClass", "name": "Desktop Background - File Explorer"}
+
+
+def background(ctx):
+    return ctx.find_window(timeout=30, **BACKGROUND_WINDOW)
+
+
+def fit_list(ctx):
+    return ctx.find(within=background(ctx), className="ComboLBox", depth=14, timeout=10)
+
+
+def open_fit_list(ctx):
+    ctx.powershell(BACKGROUND)
+    position = ctx.find(within=background(ctx), automationId="ComboBox_Position", depth=12, timeout=30)
+    ctx.click(ctx.find(within=position, automationId="DropDown", depth=3, timeout=10))
+    fit_list(ctx)
+
+
+def close_fit_list(ctx):
+    ctx.keys("esc")
+    ctx.keys("alt+f4")
+    ctx.gone(timeout=15, **BACKGROUND_WINDOW)
+
+
 TARGETS = [("file", FILE, "File"), ("folder", FOLDER, "Folder"), ("shortcut", SHORTCUT, "Shortcut"),
            ("recycle-bin", BIN, "Recycle Bin")]
 
@@ -140,6 +168,8 @@ SCENES += [dict(slug="classic-menu", label="Desktop classic context menu", kind=
                 root=classic, close=close_classic, expand=False)]
 SCENES += [dict(slug=f"classic-{slug}-menu", label=f"{label} classic context menu", kind="contextMenu",
                 open=show_more(name), root=classic, close=close_classic, expand=False) for slug, name, label in TARGETS]
+SCENES += [dict(slug="fit-modes", label="Wallpaper fit", kind="menu", open=open_fit_list, root=fit_list,
+                close=close_fit_list, expand=False)]
 # Measured for METRICS and not published: the Recycle Bin's cell at each icon size.
 SCENES += [dict(slug=f"icons-{size}", label=f"{size.title()} icons", kind="state", open=icon_size(chord),
                 root=lambda ctx: icon(ctx, BIN), close=medium_again, keep=False)
@@ -194,6 +224,12 @@ def _hand(start):
         ("drop-tip-copy", "cursor", "Copy to",
          "Drag tip with the copy cursor (a plus badge) when Ctrl is held or the target is on another drive."),
         ("drop-tip-link", "cursor", "Create link in", "Drag tip with the link cursor (an arrow badge) when Alt is held."),
+        ("fit-span", "state", "Span fit",
+         "With two or more displays the fit list adds Span, one picture stretched across every display; the reference "
+         "VM has one display, so its list ends at Center."),
+        ("fit-apply", "gesture", "Choosing a fit",
+         "Choosing a fit redraws the wallpaper at once; Fill crops to cover, Fit letterboxes, Stretch distorts, Tile "
+         "repeats from the top left and Center leaves the picture at its own size over the background colour."),
     ]
     out = [{"id": f"{ROOT}.{slug}", "parent": ROOT, "kind": kind, "label": label, "order": start + i, "behaviour": text}
            for i, (slug, kind, label, text) in enumerate(notes)]
