@@ -423,7 +423,21 @@ def _redirect_width(out, redir, i):
     m = _REDIRECT_RE.match(out[i])
     if not m:
         return 0
-    return 1 if m.group(1) or i + 1 >= len(out) else 2
+    if m.group(1):
+        target, last = m.group(1), i
+    elif i + 1 < len(out):
+        target, last = out[i + 1], i + 1
+    else:
+        return 1
+    # A process-substitution target (`>(tee log)`, `> >(tee log)`) is one shell
+    # word that the tokenizer split at its spaces: it runs to the `)` that
+    # balances its `(`.
+    if target.startswith(("(", ">(", "<(")):
+        depth = target.count("(") - target.count(")")
+        while depth > 0 and last + 1 < len(out):
+            last += 1
+            depth += out[last].count("(") - out[last].count(")")
+    return last - i + 1
 
 
 def guard_argv(seg):

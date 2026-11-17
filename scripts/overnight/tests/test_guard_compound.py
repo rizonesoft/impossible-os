@@ -89,6 +89,10 @@ SHAPES = [
     "timeout 2>/dev/null 5 {c}",
     "sudo 2>/dev/null -n {c}",
     "env >/dev/null FOO=1 {c}",
+    "timeout > >(tee /dev/null) 5 {c}",
+    "git > >(tee /dev/null) reset --hard",
+    "git 2> >(tee -a log >&2) reset --hard",
+    "git >(tee a b) reset --hard",
 ]
 REFUSED = "git reset --hard"
 
@@ -113,7 +117,8 @@ def test_harmless_compounds_stay_allowed():
                 "git status 2>\"status errors.txt\"", "echo 'git reset --hard >x'",
                 "git log >\"/tmp/a b\" -1", "git 2>&1> /dev/null status",
                 "git >| /dev/null status", "git status >|x | head",
-                "git << 'MSG' status\nx\nMSG", "timeout 2>/dev/null 5 git status"):
+                "git << 'MSG' status\nx\nMSG", "timeout 2>/dev/null 5 git status",
+                "git > >(tee /dev/null) status"):
         assert not ATTENDED._scan(cmd), f"attended_repair_guard refused {cmd!r}"
         assert not RUNNER._scan_command(cmd), f"runner_bash_guard refused {cmd!r}"
 
