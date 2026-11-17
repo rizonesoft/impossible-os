@@ -93,6 +93,12 @@ SHAPES = [
     "git > >(tee /dev/null) reset --hard",
     "git 2> >(tee -a log >&2) reset --hard",
     "git >(tee a b) reset --hard",
+    "git > \"(reset.log\" reset --hard",
+    "git >\"(log\" reset --hard",
+    "git >\"|\" reset --hard",
+    "git >\"&\" reset --hard",
+    "git > >(tee \"(log\") reset --hard",
+    "git > >(echo \")\" x) reset --hard",
 ]
 REFUSED = "git reset --hard"
 

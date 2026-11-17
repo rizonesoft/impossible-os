@@ -391,6 +391,26 @@ def _redirect_starts(tok):
     return starts
 
 
+def _piece(tok, a, b=None):
+    """tok[a:b], keeping the quote mask when `tok` carries one."""
+    mask = getattr(tok, "unquoted", None)
+    piece = tok[a:b]
+    if mask is None:
+        return piece
+    w = _Word(piece)
+    w.unquoted = mask[a:b]
+    return w
+
+
+def _syntax(tok):
+    """`tok` with every quoted character replaced by NUL, so an operator or a
+    paren is matched only where the shell would read it as one."""
+    mask = getattr(tok, "unquoted", None)
+    if mask is None:
+        return tok
+    return "".join(c if u else "\0" for c, u in zip(tok, mask))
+
+
 def _split_attached_redirects(out):
     """Split each word at every UNQUOTED redirection operator: `git>/dev/null`
     is the word `git` and the redirection `>/dev/null`, `2>&1>` is `2>&1` and
@@ -404,14 +424,14 @@ def _split_attached_redirects(out):
             words.append(tok)
             redir.append(False)
             continue
-        head = tok[:starts[0]]
+        head = _piece(tok, 0, starts[0])
         if head and not head.isdigit():
             words.append(head)
             redir.append(False)
         elif head:
             starts[0] = 0  # `2>x`: the fd belongs to the redirection
         for k, st in enumerate(starts):
-            words.append(tok[st:starts[k + 1]] if k + 1 < len(starts) else tok[st:])
+            words.append(_piece(tok, st, starts[k + 1] if k + 1 < len(starts) else None))
             redir.append(True)
     return words, redir
 
@@ -420,23 +440,26 @@ def _redirect_width(out, redir, i):
     """How many words starting at out[i] are one redirection (0 when none)."""
     if not redir[i]:
         return 0
-    m = _REDIRECT_RE.match(out[i])
+    # Matched on the syntax view: `>"|"` is `>` with target `|`, not `>|`.
+    m = _REDIRECT_RE.match(_syntax(out[i]))
     if not m:
         return 0
     if m.group(1):
         target, last = m.group(1), i
     elif i + 1 < len(out):
-        target, last = out[i + 1], i + 1
+        target, last = _syntax(out[i + 1]), i + 1
     else:
         return 1
     # A process-substitution target (`>(tee log)`, `> >(tee log)`) is one shell
     # word that the tokenizer split at its spaces: it runs to the `)` that
-    # balances its `(`.
+    # balances its `(`. Only unquoted parens count, so a quoted filename such
+    # as `> "(reset.log"` is an ordinary target.
     if target.startswith(("(", ">(", "<(")):
         depth = target.count("(") - target.count(")")
         while depth > 0 and last + 1 < len(out):
             last += 1
-            depth += out[last].count("(") - out[last].count(")")
+            word = _syntax(out[last])
+            depth += word.count("(") - word.count(")")
     return last - i + 1
 
 
