@@ -329,7 +329,7 @@ When a UKI is invoked (`boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`), the bootl
 
 ### Build pipeline
 
-The Makefile's `uki` target packs the image by calling [`scripts/uki-pack.sh`](../../scripts/uki-pack.sh), the one implementation of the pack; `scripts/build.sh` runs it between `EFI Boot` and `EFI Signing`, and `make all` reaches it through the signing stamp. It repacks only when the stub, `kernel.exe`, `boot.conf` or the set of staged payloads changed (a manifest of which payloads are present and their hashes, so a removed payload repacks too). The smoke harness calls the same script to build its UKI fixtures, so the image a test boots is packed exactly the way the shipped one is:
+The Makefile's `uki` target packs the image by calling [`scripts/uki-pack.sh`](../../scripts/uki-pack.sh), the one implementation of the pack; `scripts/build.sh` runs it between `EFI Boot` and `EFI Signing`, and `make all` reaches it through the signing stamp. It repacks only when the stub, `kernel.exe`, `boot.conf` or the set of staged payloads changed (a manifest of which payloads are present, each identified by `stat -L` size, nanosecond mtime and ctime, inode and device, so a removed, replaced or relinked payload repacks too). The smoke harness calls the same script to build its UKI fixtures, so the image a test boots is packed exactly the way the shipped one is:
 
 ```
 bash scripts/uki-pack.sh <stub.efi> <kernel.exe> <cmdline-file> <payload-dir> <out.efi>
