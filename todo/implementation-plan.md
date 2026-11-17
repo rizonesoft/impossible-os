@@ -2128,7 +2128,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none  |     8 |
 | [ ]  | `D08 T09 §8`  | Quick Settings Panel                                                    | none  |    11 |
 | [ ]  | `D08 T09 §9`  | Virtual Desktops                                                        | none  |    11 |
-| [ ]  | `D08 T09 §10` | Quick Settings Pages, Pager and Edit Mode                               | none  |     5 |
+| [ ]  | `D08 T09 §10` | Quick Settings Pages, Pager and Edit Mode                               | none  |     6 |
 | [ ]  | `D08 T10 §1`  | Taskbar Window List                                                     | none  |    12 |
 | [x]  | `D06 T05 §3`  | Taskbar Window State Sync                                               | none  |     1 |
 | [ ]  | `D08 T10 §3`  | Aero Peek                                                               | none  |     9 |

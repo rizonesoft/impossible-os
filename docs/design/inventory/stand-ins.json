@@ -85,5 +85,20 @@
       "date": "2026-11-16"
     },
     "marker": "Brightness"
+  },
+  "sound-output": {
+    "variant": "discharging",
+    "page": "ms-settings:sound",
+    "expect": {
+      "device": "HDAUDIO\\FUNC_01*\\*"
+    },
+    "shows": "Sound settings with the emulated HD Audio speakers as the output device, which gives Quick Settings a live volume row",
+    "marker": "Output",
+    "proof": {
+      "file": "stand-ins/sound-output.png",
+      "sha256": "a4a1174c3cfb2c2650bf68644147ce71e555d628e60dbddb046861d93fbc54e3",
+      "size": 2499014,
+      "date": "2026-11-17"
+    }
   }
 }

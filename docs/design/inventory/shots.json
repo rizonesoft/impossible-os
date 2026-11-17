@@ -221,6 +221,16 @@
  },
  {
   "surface": "flyouts",
+  "file": "quick-settings-laptop",
+  "state": "media-card",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 178,
+  "size": 9686,
+  "sha256": "be2e3a416c755379a832100ade56455e0610539930b36d863873c7a59c3e9e38"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings",
   "state": "page-2",
   "profile": "fhd-100",
@@ -251,6 +261,26 @@
  },
  {
   "surface": "flyouts",
+  "file": "quick-settings-laptop",
+  "state": "quick-settings-laptop",
+  "profile": "fhd-100",
+  "width": 384,
+  "height": 1032,
+  "size": 662238,
+  "sha256": "93f36d17944f469864862730390b6df18c5cfa9d50d71e8971d9b81c1d5d95ee"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings-laptop",
+  "state": "sound-output-page",
+  "profile": "fhd-100",
+  "width": 358,
+  "height": 400,
+  "size": 9570,
+  "sha256": "71e7167521604245378c5bd43f764bad948f594bd5585f018df01b5d8b9ac180"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings",
   "state": "tile-menu",
   "profile": "fhd-100",
@@ -258,6 +288,16 @@
   "height": 38,
   "size": 1213,
   "sha256": "f6f01dd204c237a966f6858c24ffcc87d67d812a4f53f70c9a1da5611d8f2104"
+ },
+ {
+  "surface": "flyouts",
+  "file": "quick-settings-laptop",
+  "state": "vpn-page",
+  "profile": "fhd-100",
+  "width": 358,
+  "height": 400,
+  "size": 5179,
+  "sha256": "65bd650903bd593b069a10ceed0cce7488f96e15059afbb3a277175c6dbb8078"
  },
  {
   "surface": "start",

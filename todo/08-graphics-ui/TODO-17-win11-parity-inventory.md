@@ -433,18 +433,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Give web results, the highlights panel and cloud content the disposition decided under §6 and record them as frames only
   - Capture the search settings menu at the top right and its entries
   - Done when: `check-inventory.py --surface start` passes with `search.json` present; each of the four result kinds has its action list recorded with a matching `itemCount`.
-- [ ] Quick Settings: writes `docs/design/inventory/flyouts/quick-settings.json`
-  - Capture the flyout: its width, the tile grid (columns, tile size, the split tile with its arrow), the sliders, and the bottom row (battery, edit, settings)
-  - Capture every tile the build offers and its two parts where it splits
-    - Wi-Fi, Bluetooth, VPN, Airplane mode, Accessibility, Battery saver or Energy saver, Night light, Mobile hotspot, Nearby sharing, Cast, Project, Live captions, Rotation lock, Focus
-  - Capture each tile's second page, each with its back button and footer link
-    - The Wi-Fi network list frame, the Bluetooth device list frame, the VPN list, the Accessibility switches, the Cast and Project lists
-  - Capture the volume slider row: the mute button, the slider, the output chooser page (devices, spatial sound, the per-app volume mixer frame)
-  - Capture the brightness slider and when it is absent (a desktop display without brightness control)
-  - Capture edit mode: the pin and unpin control, drag to reorder, the Add list, and Done
-  - Capture the media control card above the tiles: its size, the app row, the title rows, and the three transport buttons
-  - Record by hand the keyboard path through the flyout and the state of each tile (off, on, unavailable)
-  - Done when: `check-inventory.py --surface flyouts` passes; every tile record has a `state` list and every split tile has a child page record.
+- [x] Quick Settings: `flyouts/quick-settings.json` (92 records) and `quick-settings-laptop.json` (78, stand-in); owners in `TODO-09-desktop-shell-features.md` §8 and §10
 - [ ] Notification Center, Calendar and Toast: writes `docs/design/inventory/flyouts/notifications.json`
   - Capture the notification center: the header (title, the do-not-disturb button, clear all), the group per app, the notification card, and the empty state
   - Capture the card's slots

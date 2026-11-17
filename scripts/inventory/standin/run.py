@@ -160,6 +160,10 @@ def qemu_cmd(overlay, vars_fd, aml, job_img, variant, qmp):
            # Removable: Windows mounts a partitionless FAT volume only on removable media.
            "-drive", f"if=none,id=job,format=raw,file={job_img}", "-device", "usb-storage,drive=job,bus=xhci.0,removable=on",
            "-device", "usb-tablet,bus=xhci.0", "-device", "usb-kbd,bus=xhci.0",
+           # A sound output, so Windows shows a live volume row and its output chooser
+           # (Quick Settings, 2026-11-17); the null backend plays nothing on the host.
+           "-audiodev", "none,id=snd", "-device", "ich9-intel-hda,id=hda,addr=0x1b",
+           "-device", "hda-output,audiodev=snd,bus=hda.0",
            *heads(variant), "-nic", "none", "-qmp", f"unix:{qmp},server=on,wait=off"]
     if aml is not None:
         cmd += ["-acpitable", f"file={aml}"]

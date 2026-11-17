@@ -218,7 +218,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 
 **Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
-**Inventory:** `win11.flyouts.quick-settings`
+**Inventory:** `win11.flyouts.quick-settings`, `win11.flyouts.quick-settings-laptop`
 
 Per `docs/design/shell.md#quick-settings`: Win+A or a click on the tray's system cluster opens a `THEME_SIZE_FLYOUT_WIDTH` (360) flyout anchored 12 px from the right edge and 12 px above the taskbar (content-height, not a full-height sidebar), flyout acrylic, radius 8, `THEME_ELEV_FLYOUT_*`; it fades and rises 12 px over `THEME_MOTION_NORMAL_MS`. Contents: a 3 x 2 grid of toggles (Wi-Fi, Bluetooth, Airplane mode, Energy saver, Night light, Accessibility), brightness and volume sliders, and a 48 px footer band (battery left; edit and Settings right). Closes on outside click or Escape.
 
@@ -275,7 +275,7 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (c
 
 **Design:** [`shell.md#quick-settings`](../../docs/design/shell.md#quick-settings)
 
-**Inventory:** `win11.flyouts.page-2`, `win11.flyouts.accessibility-page`, `win11.flyouts.cast-page`, `win11.flyouts.project-page`, `win11.flyouts.tile-menu`, `win11.flyouts.quick-settings.pager`, `win11.flyouts.quick-settings.edit-mode`, `win11.flyouts.quick-settings.project-modes`
+**Inventory:** `win11.flyouts.page-2`, `win11.flyouts.accessibility-page`, `win11.flyouts.cast-page`, `win11.flyouts.project-page`, `win11.flyouts.tile-menu`, `win11.flyouts.quick-settings.pager`, `win11.flyouts.quick-settings.edit-mode`, `win11.flyouts.quick-settings.project-modes`, `win11.flyouts.sound-output-page`, `win11.flyouts.vpn-page`, `win11.flyouts.media-card`
 
 What the flyout of section 8 needs past its first six tiles, measured in `docs/design/inventory/flyouts/quick-settings.json`: further pages of tiles behind a pager, the pages a tile opens in place of the grid, a tile's menu, and an edit mode, which the reference build has dropped and Impossible OS keeps.
 
@@ -284,7 +284,10 @@ What the flyout of section 8 needs past its first six tiles, measured in `docs/d
 - [ ] Pager: tiles past six go to further pages of 3 x 2; dots down the right edge, Previous disabled on the first page and Next on the last; the wheel moves between pages
 - [ ] Tile pages in place of the grid (358 px wide): a 40 px Back button, the title, the page's rows and a footer link
   - Accessibility (Magnifier, Narrator, Color filters, Live captions, Mono audio switches), Cast (devices, or the wired-display line), Project (the four modes)
+  - VPN (the split tile's arrow: each connection with its status and Connect), Sound output (devices, spatial sound, the per-app mixer)
 - [ ] Tile menu: a right-click on a tile shows Go to Settings, which opens that tile's Settings page
+- [ ] Media card above the tiles while an app holds a media session: app row, title and artist, previous, play or pause, next
+  - The transport buttons -> XREF: `08-graphics-ui/TODO-19-fluent-component-library.md` §23 (item: "Bound to a media session interface")
 - [ ] Edit mode from the footer: pin and unpin tiles, drag to reorder, an Add list of the tiles not shown, and Done; the layout is kept per user
 - [ ] Commit: `"desktop: quick settings pages, pager, tile menu and edit mode"`
 

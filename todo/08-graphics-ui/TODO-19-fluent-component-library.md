@@ -448,6 +448,7 @@ One title bar for every window, the rule the consistency ledger sets for the fou
 - [ ] Seek slider extras: buffered range, a thumbnail or time tooltip while hovering, and keyboard seeking by small and large steps
 - [ ] Auto-hide after pointer inactivity during playback, shown again on movement, key or touch
 - [ ] Bound to a media session interface, so the video player, the media player and the quick settings media card drive one implementation
+  - The card -> XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md` §10 (item: "Media card above the tiles")
 - [ ] Media keys and the system media session: play, pause, next and previous from the keyboard reach the active session
 - [ ] Commit: `"controls: media transport controls"`
 

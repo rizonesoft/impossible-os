@@ -198,10 +198,11 @@ BEHAVIOURS = [
 FRAMES = [
     ("edit-mode", "No edit mode", "This build has no edit control: the footer holds only All settings and a tile's "
                                   "menu holds only Go to Settings, so tiles cannot be pinned, unpinned or moved."),
-    ("hardware-tiles", "Tiles the reference machine lacks", "Wi-Fi, Bluetooth, VPN, Airplane mode, Mobile hotspot, "
+    ("hardware-tiles", "Tiles the reference machine lacks", "Wi-Fi, Bluetooth, Airplane mode, Mobile hotspot, "
                                                             "Rotation lock and the battery read-out need hardware the "
-                                                            "reference VM does not have; the laptop file shows those a "
-                                                            "stand-in machine can provide."),
+                                                            "reference VM does not have, and VPN shows only once a VPN "
+                                                            "profile exists; the laptop file shows those a stand-in "
+                                                            "machine can provide."),
     ("media-card", "Media card", "The media card above the tiles shows only while an app plays media with a "
                                  "transport session; the reference machine plays none, so it is absent."),
     ("brightness", "Brightness slider", "Absent on the reference VM, whose display has no brightness control, as on "

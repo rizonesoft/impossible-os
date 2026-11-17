@@ -1304,6 +1304,11 @@ class StandIn(unittest.TestCase):
         self.assertIn("usb-storage,drive=job,bus=xhci.0,removable=on", cmd)
         self.assertIn("-no-reboot", cmd)
 
+    def test_the_laptop_has_a_sound_output_that_plays_nowhere(self):
+        cmd = " ".join(self.runner.qemu_cmd("o.qcow2", "v.fd", "a.aml", "j.img", {}, "q.sock"))
+        self.assertIn("-audiodev none,id=snd", cmd)
+        self.assertIn("hda-output,audiodev=snd,bus=hda.0", cmd)
+
     def test_the_guest_waits_for_room_before_it_boots(self):
         free = iter([3000, 4000, 5200])
         now = iter([0, 10, 20, 30])
