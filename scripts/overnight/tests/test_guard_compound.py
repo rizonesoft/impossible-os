@@ -74,6 +74,10 @@ SHAPES = [
     "bash -c 'echo ok >/dev/null; {c}'",
     "bash -c 'echo ok 2>&1; {c}' >/dev/null",
     "sh -c \"{c} >/dev/null\"",
+    "git 2>\"reset errors.txt\" reset --hard",
+    "git>\"reset log.txt\" reset --hard",
+    "if true; then >\"/tmp/review log\" {c}; fi",
+    "git reset --hard >\"/tmp/a b\"",
 ]
 REFUSED = "git reset --hard"
 
@@ -94,13 +98,15 @@ def test_harmless_compounds_stay_allowed():
     for cmd in ("if true; then git status; fi", "case x in x) echo git reset --hard;; esac",
                 "while :; do git log -1; done", "(git diff --stat)", "time git status",
                 "if git diff --quiet; then echo clean; fi", "git status 2>/dev/null",
-                ">/dev/null git log -1"):
+                ">/dev/null git log -1", "bash -c 'echo ok >/dev/null; git status'",
+                "git status 2>\"status errors.txt\"", "echo 'git reset --hard >x'",
+                "git log >\"/tmp/a b\" -1"):
         assert not ATTENDED._scan(cmd), f"attended_repair_guard refused {cmd!r}"
         assert not RUNNER._scan_command(cmd), f"runner_bash_guard refused {cmd!r}"
 
 
 def test_a_gh_mutation_behind_grammar_is_refused():
-    for shape in ("(command gh pr merge 123)", "case x in x)env gh pr merge 1;; esac", "if :; then gh pr merge 1; fi"):
+    for shape in ("(command gh pr merge 123)", 'gh 2>"merge errors.txt" pr merge 123', "case x in x)env gh pr merge 1;; esac", "if :; then gh pr merge 1; fi"):
         assert RUNNER._scan_command(shape), f"runner_bash_guard allowed {shape!r}"
 
 
@@ -113,6 +119,18 @@ def test_a_long_quoted_pattern_scales_linearly():
     RUNNER._scan_command(cmd)
     took = time.monotonic() - t0
     assert took < 2.5, f"two guard scans of a 220 KB pattern took {took:.2f} s"
+
+
+def test_quote_masks_agree_with_shlex():
+    """The quote mask is what tells `2>"a b"` (a redirection) from a quoted
+    `bash -c` body; a word whose mask is missing reads as all unquoted."""
+    cd = ATTENDED._cd
+    for cmd, unquoted in (('git 2>"a b" x', ["111", "11000", "1"]),
+                          ("bash -c 'x >y'", ["1111", "11", "0000"]),
+                          (r'echo a\ b "x\"y"', ["1111", "101", "000"])):
+        toks = cd._tokenize(cmd)
+        got = ["".join(str(b) for b in t.unquoted) for t in toks]
+        assert got == unquoted, f"{cmd!r}: masks {got}, expected {unquoted}"
 
 
 def test_nested_cases_scale_linearly():
@@ -134,4 +152,5 @@ if __name__ == "__main__":
     test_nested_cases_scale_linearly()
     test_a_gh_mutation_behind_grammar_is_refused()
     test_a_long_quoted_pattern_scales_linearly()
+    test_quote_masks_agree_with_shlex()
     print("PASS: guards see through shell grammar")

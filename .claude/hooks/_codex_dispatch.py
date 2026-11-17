@@ -361,29 +361,45 @@ _GRAMMAR_HEADS = frozenset({"if", "then", "else", "elif", "do", "while", "until"
 # wherever they stand (`>/dev/null git reset --hard`, `git 2>/dev/null reset`).
 # Longer operators first, so `>&` is not read as `>` with target `&`.
 _REDIRECT_RE = re.compile(r"\A(?:\d+|&)?(?:>>|>&|>\||<<<|<>|<&|>|<)(.*)\Z", re.S)
-_REDIRECT_CHARS = re.compile(r"&?[<>]")  # `&>` and `&>>` keep their `&`
+_REDIRECT_CHARS = frozenset("<>")
+
+
+def _unquoted_at(tok, j):
+    """True when character j of word `tok` stood outside quotes in the command.
+    A word without a mask (one this module built itself) counts as unquoted."""
+    mask = getattr(tok, "unquoted", None)
+    return mask is None or mask[j] == 1
 
 
 def _split_attached_redirects(out):
-    """`git>/dev/null` is the word `git` and the redirection `>/dev/null`."""
-    split = []
+    """Split each word at its first UNQUOTED `<` or `>` (with an unquoted `&`
+    before it): `git>/dev/null` is the word `git` and the redirection
+    `>/dev/null`, while `bash -c 'echo ok >/dev/null; ...'` stays one word and
+    `2>"reset errors.txt"` is one redirection. Returns the words and, beside
+    them, whether each one starts a redirection."""
+    words, redir = [], []
     for tok in out:
-        # a word holding whitespace was quoted (a `bash -c` body): left whole
-        m = None if any(c.isspace() for c in tok) else _REDIRECT_CHARS.search(tok)
-        if m and m.start() > 0 and not tok[:m.start()].isdigit() and tok[:m.start()] != "&":
-            split.append(tok[:m.start()])
-            split.append(tok[m.start():])
-        else:
-            split.append(tok)
-    return split
+        start = next((j for j, c in enumerate(tok) if c in _REDIRECT_CHARS and _unquoted_at(tok, j)), None)
+        if start is None:
+            words.append(tok)
+            redir.append(False)
+            continue
+        if start > 0 and tok[start - 1] == "&" and _unquoted_at(tok, start - 1):
+            start -= 1
+        head = tok[:start]
+        if head and not head.isdigit():
+            words.append(head)
+            redir.append(False)
+        words.append(tok if not head or head.isdigit() else tok[start:])
+        redir.append(True)
+    return words, redir
 
 
-def _redirect_width(out, i):
+def _redirect_width(out, redir, i):
     """How many words starting at out[i] are one redirection (0 when none)."""
-    tok = out[i]
-    if any(c.isspace() for c in tok):
-        return 0  # a word holding whitespace was quoted: an argument, never a redirection
-    m = _REDIRECT_RE.match(tok)
+    if not redir[i]:
+        return 0
+    m = _REDIRECT_RE.match(out[i])
     if not m:
         return 0
     return 1 if m.group(1) or i + 1 >= len(out) else 2
@@ -400,12 +416,12 @@ def guard_argv(seg):
     tokens: each is examined a bounded number of times. The Codex dispatch
     recogniser does not use this: its prompt arguments must stay byte-exact.
     """
-    out = _split_attached_redirects(seg)
+    out, redir = _split_attached_redirects(seg)
     n = len(out)
     i = _skip_env_and_wrappers(out, 0)
     while i < n:
         tok = out[i]
-        width = _redirect_width(out, i)
+        width = _redirect_width(out, redir, i)
         if width:
             i += width
         elif tok in _GRAMMAR_HEADS:
@@ -443,7 +459,7 @@ def guard_argv(seg):
         i = _skip_env_and_wrappers(out, i)
     argv = []
     while i < n:
-        width = _redirect_width(out, i)
+        width = _redirect_width(out, redir, i)
         if width:
             i += width
             continue
@@ -659,9 +675,74 @@ def _tokenize(cmd):
     cmd = _LINE_CONT_RE.sub(" ", cmd)
     cmd = _unquoted_newlines_to_sep(cmd)
     try:
-        return shlex.split(cmd, posix=True, comments=False)
+        toks = shlex.split(cmd, posix=True, comments=False)
     except ValueError:
         return []
+    return _with_quote_masks(cmd, toks)
+
+
+class _Word(str):
+    """A token that remembers which of its characters stood outside quotes
+    (`unquoted[j] == 1`), so the safety guards can tell the redirection in
+    `git 2>"reset errors.txt" reset` from the text of a quoted `bash -c` body.
+    It compares and hashes as the plain str it is; a slice is a plain str.
+    """
+
+
+def _with_quote_masks(cmd, toks):
+    """`toks` (shlex's split of `cmd`) as _Word tokens carrying quote masks.
+    One linear pass over `cmd` with the POSIX rules shlex applies; if its words
+    differ from shlex's in any way, `toks` is returned unmasked, which the
+    guards read as all unquoted (the stricter reading)."""
+    words, cur, mask, started = [], [], bytearray(), False
+    i, n, quote = 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            else:
+                cur.append(c)
+                mask.append(0)
+        elif quote == '"':
+            if c == '"':
+                quote = None
+            elif c == "\\" and i + 1 < n and cmd[i + 1] in '\\"':  # shlex escapes only these
+                i += 1
+                cur.append(cmd[i])
+                mask.append(0)
+            else:
+                cur.append(c)
+                mask.append(0)
+        elif c in " \t\r\n":
+            if started:
+                words.append((cur, mask))
+                cur, mask, started = [], bytearray(), False
+        elif c in "'\"":
+            quote, started = c, True
+        elif c == "\\" and i + 1 < n:
+            i += 1
+            cur.append(cmd[i])
+            mask.append(0)
+            started = True
+        else:
+            cur.append(c)
+            mask.append(1)
+            started = True
+        i += 1
+    if started:
+        words.append((cur, mask))
+    if len(words) != len(toks):
+        return toks
+    out = []
+    for (chars, m), tok in zip(words, toks):
+        text = "".join(chars)
+        if text != tok:
+            return toks
+        w = _Word(text)
+        w.unquoted = bytes(m)
+        out.append(w)
+    return out
 
 
 def is_codex_dispatch(cmd):
