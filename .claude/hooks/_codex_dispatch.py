@@ -371,27 +371,48 @@ def _unquoted_at(tok, j):
     return mask is None or mask[j] == 1
 
 
+def _redirect_starts(tok):
+    """Where each unquoted redirection operator in word `tok` begins: at a `<`
+    or `>` that does not continue an operator (`>>`, `>&`, `<>`), moved back
+    over an unquoted `&` (`&>`). `2>&1>x` holds two."""
+    starts = []
+    for j, c in enumerate(tok):
+        if c not in _REDIRECT_CHARS or not _unquoted_at(tok, j):
+            continue
+        prev = tok[j - 1] if j else ""
+        if prev in _REDIRECT_CHARS and _unquoted_at(tok, j - 1):
+            continue  # `>>`, `<>`, `<<<`
+        if prev == "&" and _unquoted_at(tok, j - 1):
+            if j >= 2 and tok[j - 2] in _REDIRECT_CHARS and _unquoted_at(tok, j - 2):
+                continue  # `>&>`: bash refuses it; read as one operator
+            starts.append(j - 1)
+            continue
+        starts.append(j)
+    return starts
+
+
 def _split_attached_redirects(out):
-    """Split each word at its first UNQUOTED `<` or `>` (with an unquoted `&`
-    before it): `git>/dev/null` is the word `git` and the redirection
-    `>/dev/null`, while `bash -c 'echo ok >/dev/null; ...'` stays one word and
-    `2>"reset errors.txt"` is one redirection. Returns the words and, beside
-    them, whether each one starts a redirection."""
+    """Split each word at every UNQUOTED redirection operator: `git>/dev/null`
+    is the word `git` and the redirection `>/dev/null`, `2>&1>` is `2>&1` and
+    `>`, `2>"reset errors.txt"` is one redirection, and the quoted body of
+    `bash -c 'echo ok >/dev/null; ...'` is left whole. Returns the words and,
+    beside them, whether each one is a redirection."""
     words, redir = [], []
     for tok in out:
-        start = next((j for j, c in enumerate(tok) if c in _REDIRECT_CHARS and _unquoted_at(tok, j)), None)
-        if start is None:
+        starts = _redirect_starts(tok)
+        if not starts:
             words.append(tok)
             redir.append(False)
             continue
-        if start > 0 and tok[start - 1] == "&" and _unquoted_at(tok, start - 1):
-            start -= 1
-        head = tok[:start]
+        head = tok[:starts[0]]
         if head and not head.isdigit():
             words.append(head)
             redir.append(False)
-        words.append(tok if not head or head.isdigit() else tok[start:])
-        redir.append(True)
+        elif head:
+            starts[0] = 0  # `2>x`: the fd belongs to the redirection
+        for k, st in enumerate(starts):
+            words.append(tok[st:starts[k + 1]] if k + 1 < len(starts) else tok[st:])
+            redir.append(True)
     return words, redir
 
 

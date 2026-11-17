@@ -78,6 +78,9 @@ SHAPES = [
     "git>\"reset log.txt\" reset --hard",
     "if true; then >\"/tmp/review log\" {c}; fi",
     "git reset --hard >\"/tmp/a b\"",
+    "git 2>&1> /dev/null reset --hard",
+    "git >x2>y reset --hard",
+    "git 2>&1&>x reset --hard",
 ]
 REFUSED = "git reset --hard"
 
@@ -100,13 +103,14 @@ def test_harmless_compounds_stay_allowed():
                 "if git diff --quiet; then echo clean; fi", "git status 2>/dev/null",
                 ">/dev/null git log -1", "bash -c 'echo ok >/dev/null; git status'",
                 "git status 2>\"status errors.txt\"", "echo 'git reset --hard >x'",
-                "git log >\"/tmp/a b\" -1"):
+                "git log >\"/tmp/a b\" -1", "git 2>&1> /dev/null status"):
         assert not ATTENDED._scan(cmd), f"attended_repair_guard refused {cmd!r}"
         assert not RUNNER._scan_command(cmd), f"runner_bash_guard refused {cmd!r}"
 
 
 def test_a_gh_mutation_behind_grammar_is_refused():
-    for shape in ("(command gh pr merge 123)", 'gh 2>"merge errors.txt" pr merge 123', "case x in x)env gh pr merge 1;; esac", "if :; then gh pr merge 1; fi"):
+    for shape in ("(command gh pr merge 123)", 'gh 2>"merge errors.txt" pr merge 123',
+                  "gh 2>&1> /dev/null pr merge 123", "case x in x)env gh pr merge 1;; esac", "if :; then gh pr merge 1; fi"):
         assert RUNNER._scan_command(shape), f"runner_bash_guard allowed {shape!r}"
 
 
