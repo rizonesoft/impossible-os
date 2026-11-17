@@ -368,7 +368,8 @@ def _split_attached_redirects(out):
     """`git>/dev/null` is the word `git` and the redirection `>/dev/null`."""
     split = []
     for tok in out:
-        m = _REDIRECT_CHARS.search(tok)
+        # a word holding whitespace was quoted (a `bash -c` body): left whole
+        m = None if any(c.isspace() for c in tok) else _REDIRECT_CHARS.search(tok)
         if m and m.start() > 0 and not tok[:m.start()].isdigit() and tok[:m.start()] != "&":
             split.append(tok[:m.start()])
             split.append(tok[m.start():])
@@ -379,7 +380,10 @@ def _split_attached_redirects(out):
 
 def _redirect_width(out, i):
     """How many words starting at out[i] are one redirection (0 when none)."""
-    m = _REDIRECT_RE.match(out[i])
+    tok = out[i]
+    if any(c.isspace() for c in tok):
+        return 0  # a word holding whitespace was quoted: an argument, never a redirection
+    m = _REDIRECT_RE.match(tok)
     if not m:
         return 0
     return 1 if m.group(1) or i + 1 >= len(out) else 2
