@@ -69,9 +69,11 @@ SAFE_TASKBAR = {"x": 188, "y": 1069, "rgb": [239, 239, 239]}   # the boot menu i
 # The boot and stop bursts end at the boot menu (until), so their counts are
 # ceilings: 14 boot frames ran out before Windows' spinner showed alone on a
 # slower restart (2026-11-18), and the boot burst keeps sampling until the menu
-# (90 frames is over two minutes) rather than handing the rest of a slow boot
-# to the menu wait, which keeps no frames (review, 2026-11-18).
-BOOT_BURST, REPAIR_BURST, STOP_BURST = 90, 12, 20
+# rather than handing the rest of a slow boot to the menu wait, which keeps no
+# frames (review, 2026-11-18). The boot burst watches for BOOT_BURST seconds
+# at one frame a second at most, so neither a fast nor a slow host changes
+# how long it watches.
+BOOT_BURST, REPAIR_BURST, STOP_BURST = 150, 12, 20
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -127,7 +129,7 @@ STEPS = [
     # then confirmed before any key: its 30 s countdown is the walk's only
     # window, which a fixed burst could outrun (review, 2026-11-18), and the
     # mode alone comes back while Windows' spinner still shows.
-    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "until": MENU},
+    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "cadence": 1, "seconds": BOOT_BURST, "until": MENU},
     # A burst that ran out before the menu fails here, before minutes of
     # navigation a missing frame would waste (review, 2026-11-18).
     {"op": "awaitcolour", **MENU, "timeout": 10},
@@ -220,6 +222,15 @@ def band(img, region, test):
     while end < h and (lit_rows[end] or True in lit_rows[end + 1:end + 2]):
         end += 1
     return (x, y + top, w, end - top)
+
+
+def tile_text(tile, ring_width):
+    """The text region beside a tile's icon square: from just right of the
+    square to just short of the focus rectangle's right edge, whose border
+    read as a second text line (review, 2026-11-18). The focus rectangle
+    starts 12 px left of the square and is ring_width wide."""
+    x, y, _, h = tile
+    return (x + 121, y - 4, ring_width - 137, h + 4)
 
 
 def has_description(img, region):
@@ -439,7 +450,7 @@ def records(shots, build, taken=None):
                 extra["reason"] = reason
             # The text region stops short of the focus rectangle's right edge
             # (review, 2026-11-18: the border read as a second text line).
-            text = (t[0] + 121, t[1] - 4, w - 137, t[3] + 4)
+            text = tile_text(t, w)
             if not rows_in(img, text, white, 10):
                 raise core.Incomplete(f"{name}: no name beside the {clabel} tile")
             rec(f"{rid}.{cid}", "control", clabel, f"{rid}.choices", controlType="button", bounds=(t[0] - 12, t[1] - 12, w, h),
@@ -480,7 +491,7 @@ def records(shots, build, taken=None):
               (("timer", "Change the timer", None, None), ("default", "Choose a default operating system", None, None),
                ("other", "Choose other options", None, None)),
               root, back=True, opened="Change defaults or choose other options",
-              behaviour="The same blue page with a back button: each tile names a setting and its current value under it.")
+              behaviour="The same blue page with a back button: the first two tiles name a setting with its current value under it, and the third opens the recovery environment, with a line naming what it holds.")
 
     rx = "Choose other options on the boot manager's options page, which opens the recovery environment without a restart"
     tile_page("recovery", "Choose an option", "recovery",
@@ -619,7 +630,7 @@ def records(shots, build, taken=None):
     rows = rows_in(img, body(img), lit, 14)
     if len(rows) != 3:
         raise core.Incomplete(f"automatic-repair: {len(rows)} text rows where 3 were expected: {rows}")
-    page = rec("automatic-repair", "page", "Repair failed", "repair-progress", bounds=SCREEN, openedBy="Startup Repair, when it finds nothing to fix",
+    page = rec("automatic-repair", "page", "Repair failed", "repair-progress", bounds=SCREEN, openedBy="Startup Repair, when it cannot repair the PC; the reason shown in this walk, which runs with no network, is that it could not connect to the network",
                behaviour="Black, centred text: what happened, how to go on, and two small grey lines with the reason and the log file's path.")
     for (cid, clab, beh), b in zip((("message", "Message", "A text slot of 56 characters in one line."),
                                      ("instruction", "Instruction", "A text slot of 51 characters naming Enter and a click."),

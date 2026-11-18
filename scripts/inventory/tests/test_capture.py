@@ -1074,6 +1074,23 @@ class Profile(unittest.TestCase):
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines, ["boot-1,boot-2,boot-3", "5"], out.stderr)
 
+    def test_a_burst_watches_for_its_seconds_whatever_a_shot_costs(self):
+        # A frame count timed the boot burst by host speed (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "$Name = 'x'; $NoSession = $false; $script:t = [datetime]'2026-01-01'; "
+              "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              "function Save-Shot($n) { $script:names += $n; $script:t = $script:t.AddMilliseconds($script:cost); "
+              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 } }; "
+              "$step = [pscustomobject]@{ op = 'burst'; name = 'boot'; count = 150; every = 0; cadence = 1; seconds = 30 }; "
+              "foreach ($c in 200, 2500) { $script:cost = $c; $script:names = @(); $script:t = [datetime]'2026-01-01'; "
+              "Invoke-Step $step; '' + $script:names.Count + ' ' + ($script:t - [datetime]'2026-01-01').TotalSeconds }")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        # 0.2 s a shot: one a second for 30 s. 2.5 s a shot: back to back, 12 in 30 s.
+        self.assertEqual(lines, ["30 30", "12 30"], out.stderr)
+
     def test_a_walk_without_a_session_checks_the_build_recorded_on_the_vm(self):
         # A setup walk (no session) could restore an old pre-oobe and publish it
         # under a newer reference.json build (review, 2026-11-18).
@@ -2947,6 +2964,16 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(sc.band(img, (0, 1, 120, 16), sc.white), (0, 3, 120, 9))
         self.assertEqual(sc.one(img, sc.band(img, (0, 1, 120, 16), sc.white), "mark", sc.white, 6), (2, 3, 54, 9))
         self.assertEqual(sc.band(frame(), (0, 1, 120, 16), sc.white), (0, 1, 120, 16))
+        # The production crop on a focused tile with only a name: the focus
+        # rectangle's right border must fall outside the text region.
+        tile = (40, 40, 108, 108)
+        ring = (28, 28, 404 - 400 + 300, 134)              # ring_width 304 fits the frame
+        rw = ring[2]
+        focused = frame(tile, (161, 40, 100, 20), (ring[0] + rw - 2, ring[1], 2, ring[3]))
+        x, y, tw, th = sc.tile_text(tile, rw)
+        self.assertLess(x + tw, ring[0] + rw - 2)
+        self.assertEqual(sc.rows_in(focused, sc.tile_text(tile, rw), sc.white, 10), [(161, 40, 100, 20)])
+        self.assertFalse(sc.has_description(focused, sc.tile_text(tile, rw)))
         name = (20, 10, 120, 20)
         self.assertFalse(sc.has_description(frame(name), (0, 0, 300, 120)))
         self.assertTrue(sc.has_description(frame(name, (20, 44, 160, 11)), (0, 0, 300, 120)))

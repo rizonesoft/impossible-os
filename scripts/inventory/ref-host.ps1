@@ -30,7 +30,7 @@ Steps, one object each, by "op":
   wait    {sec}               sleep
   awaitcolour {x, y, rgb, timeout[, width, height]}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding, at that mode if given
   shot    {name}              one shot at the current mode
-  burst   {name, count, every} count shots every `every` seconds, named <name>-<n>
+  burst   {name, count, every[, cadence, seconds, until]} count shots every `every` seconds, named <name>-<n>; cadence: shots start no closer than that; seconds: stop after that long; until: stop at a frame showing that pixel
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
   reconnect {}               open a new PowerShell Direct session (after a sign-out or restart)
   user    {name, admin, flags} make a local account with a random password this run keeps in memory
@@ -191,12 +191,22 @@ function Invoke-Step($step) {
         'wait' { Start-Sleep -Milliseconds ([int]([double]$step.sec * 1000)) }
         'shot' { Save-Shot $step.name }
         'burst' {
+            # seconds: also end when that long has passed, so the time watched
+            # does not depend on how fast the host saves a shot; cadence: start
+            # shots no closer than that, which bounds the frames a fast host
+            # keeps; count stays the ceiling on frames (review, 2026-11-18).
+            $start = Get-Date
             for ($i = 1; $i -le [int]$step.count; $i++) {
+                if ($step.seconds -and ((Get-Date) - $start).TotalSeconds -ge [double]$step.seconds) { break }
                 Save-Shot "$($step.name)-$i"
                 # until: end the burst at the first frame that shows that
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).
                 if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
+                if ($step.cadence) {
+                    $wait = ($start.AddSeconds($i * [double]$step.cadence) - (Get-Date)).TotalMilliseconds
+                    if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]$wait) }
+                }
                 Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))
             }
         }
