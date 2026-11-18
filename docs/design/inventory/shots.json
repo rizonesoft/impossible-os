@@ -541,6 +541,16 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays-dual",
+  "state": "project-modes",
+  "profile": "dual-100-150",
+  "width": 358,
+  "height": 400,
+  "size": 6550,
+  "sha256": "74b71c11b423b4f04864a7a108925e853ff01c669e0f5af6ae55f55ccb596b23"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings",
   "state": "project-page",
   "profile": "fhd-100",
