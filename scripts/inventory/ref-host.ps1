@@ -30,7 +30,7 @@ Steps, one object each, by "op":
   wait    {sec}               sleep
   awaitcolour {x, y, rgb, timeout[, width, height]}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding, at that mode if given
   shot    {name}              one shot at the current mode
-  burst   {name, count, every[, cadence, seconds, until]} count shots every `every` seconds, named <name>-<n>; cadence: shots start no closer than that; seconds: stop after that long; until: stop at a frame showing that pixel
+  burst   {name, count, every[, cadence, seconds, until, still]} count shots every `every` seconds, named <name>-<n>; cadence: shots start no closer than that; seconds: stop after that long; until: stop at a frame showing that pixel; still: stop once the screen has not changed for that long, and fail if it never holds still
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
   reconnect {}               open a new PowerShell Direct session (after a sign-out or restart)
   user    {name, admin, flags} make a local account with a random password this run keeps in memory
@@ -226,7 +226,10 @@ function Invoke-Step($step) {
             # burst ends. cadence: each shot starts no sooner than that after
             # the one before it, which bounds the frames a fast host keeps;
             # count stays the ceiling on frames (review, 2026-11-18).
+            # still: end once the screen has held still that long (the same
+            # frame bytes), and fail if it never does within the burst.
             $end = if ($step.seconds) { (Get-Date).AddSeconds([double]$step.seconds) } else { [datetime]::MaxValue }
+            $held = $null; $since = $null; $stilled = $false
             for ($i = 1; $i -le [int]$step.count; $i++) {
                 if ((Get-Date) -ge $end) { break }
                 $began = Get-Date
@@ -235,6 +238,11 @@ function Invoke-Step($step) {
                     throw
                 }
                 if ($script:ShotExpired) { break }
+                if ($step.still) {
+                    $h = Get-ThumbnailHash $script:LastShot.Bytes
+                    if ($h -ne $held) { $held = $h; $since = Get-Date }
+                    elseif (((Get-Date) - $since).TotalSeconds -ge [double]$step.still) { $stilled = $true; break }
+                }
                 # until: end the burst at the first frame that shows that
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).
@@ -254,6 +262,7 @@ function Invoke-Step($step) {
                 $rest = [Math]::Min([double]$step.every * 1000, ($end - (Get-Date)).TotalMilliseconds)
                 if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]$rest) }
             }
+            if ($step.still -and -not $stilled) { throw "burst $($step.name): the screen did not hold still for $($step.still) s" }
         }
         'awaitcolour' {
             # Wait until the pixel at (x, y) shows rgb, within the 16-bit

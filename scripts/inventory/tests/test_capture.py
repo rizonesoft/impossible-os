@@ -1181,6 +1181,26 @@ class Profile(unittest.TestCase):
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines, ["10", "0.1", "3.2"], (out.stdout, out.stderr))
 
+    def test_a_still_burst_keeps_frames_until_the_screen_holds_still(self):
+        # Startup Repair could start after a fixed burst's last frame, and the
+        # settle after it kept none (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-ThumbnailHash"]))
+              + "$Name = 'x'; $NoSession = $false; $t0 = [datetime]'2026-01-01'; "
+              "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              # The screen changes on every frame up to the switch, then holds.
+              "function Save-Shot($n, $Until) { $script:k++; $script:t = $script:t.AddMilliseconds(100); "
+              "$b = New-Object byte[] 20; if ($script:k -lt $script:switch) { $b[5] = $script:k }; $script:LastShot = @{ Bytes = $b; Width = 4; Height = 2 } }; "
+              "foreach ($w in 20, 1000) { $script:switch = $w; $script:k = 0; $script:t = $t0; "
+              "try { Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'r'; count = 80; every = 0; cadence = 3; seconds = 240; still = 5 }); 'held ' + $script:k } "
+              "catch { $_.Exception.Message } }")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        # Changing for 19 frames (57 s, past the old 12): held at frame 20 and
+        # stopped 6 s later, at frame 22. A screen that never holds fails.
+        self.assertEqual(lines, ["held 22", "burst r: the screen did not hold still for 5 s"], (out.stdout, out.stderr))
+
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
         # host clock stepped back an hour asked for an hour (review, 2026-11-18).
@@ -3132,6 +3152,25 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.restarting_parts(frame(sc.BLUE, (942, 492, 18, 10), word)))  # not on black
         self.assertEqual(sc.restarting_spinner([third, arc, frame(black, (941, 492, 18, 11), (986, 521, 6, 6), word)]),
                          ((928, 492, 64, 56), word, 3))
+        # A frame whose label sits 3 px off is another screen: its dots stay
+        # out; 2 px off is the same label.
+        moved = frame(black, (900, 470, 10, 10), (909, 588, 108, 23))
+        near = frame(black, (930, 500, 8, 8), (908, 585, 108, 23))
+        self.assertEqual(sc.restarting_spinner([third, moved]), ((928, 492, 63, 56), word, 1))
+        self.assertEqual(sc.restarting_spinner([third, near]), ((928, 492, 63, 56), word, 2))
+        # The boot logo's spinner: the union of the compact dots under the
+        # logo, in frames that show the logo.
+        sw, sh = 1024, 768
+
+        def fw(*boxes):
+            data = bytearray(sw * sh * 3)
+            for x, y, bw, bh in boxes:
+                for yy in range(y, y + bh):
+                    data[(yy * sw + x) * 3:(yy * sw + x + bw) * 3] = b"\xff" * (bw * 3)
+            return (sw, sh, bytes(data))
+        blogo = (420, 361, 184, 45)
+        self.assertEqual(sc.logo_spinner([fw(blogo, (504, 610, 17, 6)), fw(blogo, (498, 598, 29, 18)), fw(blogo), fw((10, 10, 50, 50), (498, 598, 29, 18))], blogo),
+                         ((498, 598, 29, 18), 2))
         # Startup Repair's first frame, in the firmware's 1024x768: the logo
         # with its label, with a spinner between them too, or with a spinner
         # alone (shapes from the saved walk, 2026-11-18).

@@ -73,7 +73,7 @@ SAFE_TASKBAR = {"x": 188, "y": 1069, "rgb": [239, 239, 239]}   # the boot menu i
 # frames (review, 2026-11-18). The boot and stop bursts watch for that many
 # seconds at one frame a second at most, so neither a fast nor a slow host
 # changes how long they watch.
-BOOT_BURST, REPAIR_BURST, STOP_BURST = 150, 12, 120
+BOOT_BURST, REPAIR_BURST, STOP_BURST = 150, 80, 120
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -163,9 +163,12 @@ STEPS = [
     *TO_RECOVERY, *keys(RIGHT), key(ENTER), wait(4), *keys(RIGHT), key(ENTER), wait(4),
     # The progress screens turn a spinner and the failure page is still, so the
     # page is the first screen that stays unchanged; a fixed 30 s wait came
-    # after a failure page that was up already (review, 2026-11-18).
-    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 3},
-    {"op": "settle", "sec": 5, "timeout": 180}, shot("automatic-repair"),
+    # after a failure page that was up already (review, 2026-11-18). One
+    # burst keeps frames until that page holds still, so a repair that starts
+    # late is still on them; a settle after a fixed burst kept none (review,
+    # 2026-11-18).
+    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 0, "cadence": 3, "seconds": 240, "still": 5},
+    shot("automatic-repair"),
     # After a failed repair the first page is More recovery options: Continue,
     # Quick machine recovery and Troubleshoot down the first column, Turn off
     # your PC beside Continue.
@@ -175,7 +178,7 @@ STEPS = [
 # Bursts across a restart: a shot there may straddle a mode change.
 MOVING = ("boot-", "repair-", "stop-")
 # Bursts that end at the boot menu, so they may hold fewer frames than their count.
-EARLY = ("boot-", "stop-")
+EARLY = ("boot-", "repair-", "stop-")
 
 SHOTS = [*[f"boot-{i}" for i in range(1, BOOT_BURST + 1)], "boot-manager", "boot-manager-second", "boot-manager-link",
          "boot-options", "recovery", "recovery-troubleshoot", "recovery-reset", "recovery-advanced",
@@ -224,6 +227,25 @@ def band(img, region, test):
     while end < h and (lit_rows[end] or True in lit_rows[end + 1:end + 2]):
         end += 1
     return (x, y + top, w, end - top)
+
+
+def frames_word(n):
+    return f"{n} frame" if n == 1 else f"{n} frames"
+
+
+def logo_spinner(imgs, logo):
+    """(extent, frames): the union of the spinner's dots seen under the
+    firmware logo (a box within 4 px of logo) in every frame that shows the
+    logo and only compact boxes below it, and how many frames that was."""
+    dots, n = [], 0
+    for img in imgs:
+        boxes = core.ink_boxes(img, body(img), lit, 10)
+        marks = [b for b in boxes if all(abs(b[i] - logo[i]) <= 4 for i in range(4))]
+        rest = [b for b in boxes if b not in marks]
+        if len(marks) == 1 and rest and all(b[2] <= 80 and b[3] <= 80 and b[1] >= marks[0][1] + marks[0][3] for b in rest):
+            dots += rest
+            n += 1
+    return union(*dots), n
 
 
 def restarting_parts(img):
@@ -447,7 +469,7 @@ def records(shots, build, taken=None):
     st = rec("restarting", "state", "Restarting screen", root, bounds=SCREEN, openedBy="Restart",
              behaviour="Black after the session closes: a dotted spinner with a one-word label under it, both centred, until the firmware takes over.")
     rec("restarting.spinner", "control", "Spinner", st, controlType="progressBar", bounds=spin,
-        behaviour=f"Dots running round a circle, centred above the middle of the screen; the bounds are the dots seen across {seen} frames, so the full circle can reach a little further.")
+        behaviour=f"Dots running round a circle, centred above the middle of the screen; the bounds are the dots seen in {frames_word(seen)}, so the full circle can reach a little further.")
     rec("restarting.label", "control", "Label", st, controlType="text", bounds=word,
         behaviour="A text slot of 10 characters in small bold white, centred under the spinner.")
 
@@ -464,17 +486,19 @@ def records(shots, build, taken=None):
              behaviour=f"Black in the firmware's own mode ({img[0]}x{img[1]} on the reference machine), the firmware's logo and Windows' spinner under it; positions are fractions of that screen, which no profile governs.")
     rec("logo.firmware", "control", "Firmware logo", st, controlType="image",
         behaviour=f"The logo the firmware publishes in its boot graphics table, drawn as it is, {place(img, mark)}; {mark[2] / img[0]:.0%} of the screen wide.")
+    # The dots move, so each frame shows one phase: both extents are unions
+    # over every exact frame that shows them, and no centre or unchanged
+    # place is claimed (review, 2026-11-18: one frame's midpoint moved
+    # between 49% and 51% with the phase caught).
     every = frames("boot", lambda i: True)
-    alone = lone = None
-    for n in every[every.index(got[0]) + 1:]:          # the first frame with the spinner alone
-        lone = spinner_alone(shots[n])
-        if lone:
-            alone = n
-            break
-    if not alone:
+    later = every[every.index(got[0]) + 1:]
+    fw, fw_n = logo_spinner([shots[n] for n in every if shots[n][:2] == img[:2]], mark)
+    lone = [b for b in (spinner_alone(shots[n]) for n in later) if b]
+    if not lone:
         raise core.Incomplete("boot burst: no frame with the spinner alone after the logo")
+    disp = next(shots[n] for n in later if spinner_alone(shots[n]))
     rec("logo.spinner", "control", "Spinner", st, controlType="progressBar",
-        behaviour=f"A ring of dots {place(img, spin)}, below the logo; it keeps turning alone, at the same place, once Windows sets the display's own mode ({place(shots[alone], lone)} at 1920x1080).")
+        behaviour=f"A ring of dots below the logo; the dots seen in {frames_word(fw_n)} in this mode sit {place(img, fw)}. It keeps turning alone once Windows sets the display's own mode, where the dots seen in {frames_word(len(lone))} sit {place(disp, union(*lone))} at 1920x1080.")
 
     # Tile pages: the boot manager's and the recovery environment's.
     def tiles(img, what, n):
