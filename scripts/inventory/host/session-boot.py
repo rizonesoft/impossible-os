@@ -226,6 +226,25 @@ def band(img, region, test):
     return (x, y + top, w, end - top)
 
 
+def repair_label(img):
+    """(logo, label) on Startup Repair's first frame, else None: in the
+    firmware's mode, on black, the topmost box is the logo and exactly one
+    wide box below it is the label. A compact spinner may sit between them;
+    counting exactly two boxes refused that frame and took a lone spinner for
+    the label (review, 2026-11-18)."""
+    if img[:2] == (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
+        return None
+    boxes = sorted(core.ink_boxes(img, body(img), lit, 10), key=lambda b: b[1])
+    if not boxes:
+        return None
+    mark = boxes[0]
+    below = [b for b in boxes[1:] if b[1] >= mark[1] + mark[3]]
+    labels = [b for b in below if b[2] >= 3 * b[3]]
+    if len(labels) != 1 or any(b[2] > 80 or b[3] > 80 for b in below if b is not labels[0]):
+        return None
+    return mark, labels[0]
+
+
 def stop_span(names, taken, shots, test):
     """(first, end) of a screen across burst frames: the first exact frame
     (its mode held across the shot) that passes test, and the first exact
@@ -634,13 +653,11 @@ def records(shots, build, taken=None):
         behaviour="The span between the host's times for the first exact frame with the stop error and the first exact frame without it; each time is taken as its frame is saved, so this is the span observed, not a bound on the screen's own; with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
-    def waiting(img):
-        return img[:2] != (1920, 1080) and len(core.ink_boxes(img, body(img), lit, 10)) == 2
-    got = frames("repair", waiting, first=True)
+    got = frames("repair", lambda i: repair_label(i) is not None, first=True)
     if not got:
         raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
     img = shots[got[0]]
-    mark, label = sorted(core.ink_boxes(img, body(img), lit, 10), key=lambda b: b[1])
+    mark, label = repair_label(img)
     # The second phase is published only when a frame shows it: at the
     # display's mode, the logo again with a spinner and a label below
     # (review, 2026-11-18: it was claimed from the first phase alone).

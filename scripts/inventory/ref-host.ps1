@@ -136,9 +136,14 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     # ShotExpired tells the burst to end (review, 2026-11-18).
     if ($Until -lt $script:ShotDeadline) { $script:ShotDeadline = $Until }
     $script:ShotExpired = $false
-    $script:ShotUntil = $Until
+    # The helpers check the shot's own deadline, the earlier of its 15 s and
+    # Until, between their host calls. Past Until the frame is dropped for
+    # the burst to end; past the 15 s alone the shot fails, so a standalone
+    # shot never disappears quietly (review, 2026-11-18).
+    $script:ShotUntil = $script:ShotDeadline
     try { $taken = Get-ShotPixels } catch {
         if ($_.Exception.Message -notlike 'shot expired*') { throw }
+        if ((Get-Date) -lt $Until) { throw "shot ${ShotName}: no frame within 15 s" }
         $script:ShotExpired = $true
         return
     } finally { $script:ShotUntil = [datetime]::MaxValue }
@@ -262,14 +267,18 @@ function Invoke-Step($step) {
                     # corner read black on the 1024 by 768 menu (2026-11-18).
                     $mode = $true; $tw = 160; $th = 90
                     if ($step.width) {
-                        $m = Get-RefVideoMode $Name; $mode = ($m[0] -eq [int]$step.width) -and ($m[1] -eq [int]$step.height)
+                        $m = Get-RefVideoMode $Name $deadline; $mode = ($m[0] -eq [int]$step.width) -and ($m[1] -eq [int]$step.height)
                         $th = [int](160 * [int]$step.height / [int]$step.width)
                     }
-                    if ($mode -and (Test-ThumbnailColour (Get-RefThumbnail $Name $tw $th) $tw $th $step)) { return }
+                    # Each host call checks the wait's deadline, so a poll
+                    # begun just before it starts no further call (review,
+                    # 2026-11-18); its expiry is the wait's timeout.
+                    if ($mode -and (Test-ThumbnailColour (Get-RefThumbnail $Name $tw $th $deadline) $tw $th $step)) { return }
                 } catch {
+                    if ($_.Exception.Message -like 'shot expired*') { break }
                     if ($_.Exception.Message -notlike 'thumbnail failed: 32775*' -and $_.Exception.Message -notlike 'no video head*') { throw }
                 }
-                Start-Sleep -Milliseconds 250
+                Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(250, ($deadline - (Get-Date)).TotalMilliseconds)))
             }
             throw "the pixel at ($($step.x), $($step.y)) did not show $($step.rgb -join ',') within $($step.timeout) s"
         }

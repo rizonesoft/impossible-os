@@ -1091,13 +1091,11 @@ class Profile(unittest.TestCase):
         # 0.2 s a shot: one a second for 30 s. 2.5 s a shot: back to back, 12 in 30 s.
         self.assertEqual(lines, ["30 30", "12 30"], out.stderr)
 
-    def test_a_timed_burst_starts_no_host_call_after_its_end(self):
-        # A frame admitted near a burst's end could take its own 15 s, retry a
-        # mode read or run a thumbnail's CIM calls after the end (review,
-        # 2026-11-18). The real Save-Shot, mode and thumbnail helpers run here
-        # over fake CIM calls, each logging when it starts.
-        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
-        base = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels"]),
+    def _cim_fakes(self):
+        """The real shot, mode, thumbnail and wait helpers over fake CIM calls
+        on a fake clock; each call logs when it starts (seconds from t0), costs
+        (Cost) ms, and the video head is missing while (Gone) holds."""
+        return (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels"]),
                                    (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-RefThumbnail", "Get-RefVideoMode", "Assert-RefBefore"]))
                 + "$Name = 'x'; $NoSession = $false; $Out = '.'; $script:Ns = 'n'; $shots = New-Object System.Collections.ArrayList; "
                 "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:calls = @(); $script:thumbs = 0; "
@@ -1109,6 +1107,37 @@ class Profile(unittest.TestCase):
                 "if ($ResultClassName -eq 'Msvm_VideoHead') { if (Gone) { $null } else { [pscustomobject]@{ CurrentHorizontalResolution = 1024; CurrentVerticalResolution = 768; CurrentBitsPerPixel = 16 } } } "
                 "else { [pscustomobject]@{ VirtualSystemType = 'Microsoft:Hyper-V:System:Realized' } } }; "
                 "function Invoke-CimMethod { Call; $script:thumbs++; [pscustomobject]@{ ReturnValue = 0; ImageData = (New-Object byte[] 20) } }; ")
+
+    def test_a_slow_shot_or_colour_wait_starts_no_host_call_past_its_deadline(self):
+        # A standalone shot whose mode read ended after 15 s went on to the
+        # thumbnail, and a colour wait's poll ran its CIM calls past the
+        # wait's end (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        tail = ("'' + $script:thumbs + ' ' + (($script:calls | Measure-Object -Maximum).Maximum).ToString([cultureinfo]::InvariantCulture)")
+        solo = ("function Cost { 16000 }; function Gone { $false }; "
+                "try { Save-Shot 'solo'; 'saved' } catch { $_.Exception.Message }; " + tail)
+        wait = ("function Cost { 400 }; function Gone { $false }; "
+                "try { Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); timeout = 1 }); 'shown' } "
+                "catch { $_.Exception.Message }; " + tail)
+        out = {}
+        for k, case in (("solo", solo), ("wait", wait)):
+            r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
+            out[k] = [line.strip() for line in r.stdout.splitlines() if line.strip()] or [r.stderr]
+        # The mode read's first call took 16 s: its second call, the
+        # thumbnail and the second mode read never start, and the shot fails.
+        self.assertEqual(out["solo"][0], "shot solo: no frame within 15 s", out)
+        self.assertEqual(out["solo"][1], "0 0", out)                      # one call, at 0 s
+        # Calls at 0, 0.4 and 0.8 s; the fourth would start after 1 s.
+        self.assertTrue(out["wait"][0].startswith("the pixel at (10, 10) did not show"), out)
+        self.assertEqual(out["wait"][1], "0 0.8", out)
+
+    def test_a_timed_burst_starts_no_host_call_after_its_end(self):
+        # A frame admitted near a burst's end could take its own 15 s, retry a
+        # mode read or run a thumbnail's CIM calls after the end (review,
+        # 2026-11-18). The real Save-Shot, mode and thumbnail helpers run here
+        # over fake CIM calls, each logging when it starts.
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        base = self._cim_fakes()
         burst = ("Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'stop'; count = 50; every = 0; cadence = 1; seconds = 5 }); "
                  "'' + $shots.Count + ' ' + $script:thumbs + ' ' + ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture) + ' ' + "
                  "(($script:calls | Measure-Object -Maximum).Maximum).ToString([cultureinfo]::InvariantCulture)")
@@ -1128,7 +1157,10 @@ class Profile(unittest.TestCase):
             n, thumbs, end, latest = last.split()
             self.assertEqual((n, thumbs), ("4", "4"), (k, last))         # frames at 0, 1, 2 and 3 s
             self.assertLess(float(latest), 5, (k, last))                  # no call starts after the end
-            self.assertLessEqual(float(end), 5.3, (k, last))              # one call's overrun at most
+            if k == "reset":
+                self.assertEqual(float(end), 5, last)                     # the retry sleep stops at the end
+            else:
+                self.assertLessEqual(float(end), 5.3, (k, last))          # one call's overrun at most
 
     def test_a_burst_spaces_each_shot_from_the_one_before_and_ends_on_time(self):
         # A slow first shot let the next ones catch up on a schedule counted
@@ -3023,6 +3055,21 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.spinner_alone(frame(sc.BLUE)))                        # the menu
         self.assertIsNone(sc.spinner_alone(frame(black, (600, 400, 700, 30))))     # a line of text
         self.assertIsNone(sc.spinner_alone(frame(black, (868, 391, 183, 45))))     # the firmware logo alone
+        # Startup Repair's first frame, in the firmware's 1024x768: the logo
+        # with its label, with a spinner between them too, or with a spinner
+        # alone (shapes from the saved walk, 2026-11-18).
+        def small(*boxes):
+            sw, sh = 1024, 768
+            data = bytearray(sw * sh * 3)
+            for x, y, bw, bh in boxes:
+                for yy in range(y, y + bh):
+                    data[(yy * sw + x) * 3:(yy * sw + x + bw) * 3] = b"\xff" * (bw * 3)
+            return (sw, sh, bytes(data))
+        logo, label = (420, 361, 183, 45), (451, 636, 124, 21)
+        self.assertEqual(sc.repair_label(small(logo, label)), (logo, label))
+        self.assertEqual(sc.repair_label(small(logo, (497, 592, 25, 24), label)), (logo, label))
+        self.assertIsNone(sc.repair_label(small(logo, (497, 592, 13, 10))))
+        self.assertIsNone(sc.repair_label(frame(black, logo, label)))      # the display's mode is not the first phase
         mark = (868, 391, 183, 45)
         self.assertTrue(sc.diagnosing(frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38)), mark))
         self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
