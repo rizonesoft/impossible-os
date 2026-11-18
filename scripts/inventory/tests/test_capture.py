@@ -2930,6 +2930,29 @@ class HostCapture(unittest.TestCase):
         self.assertFalse(sc.diagnosing(frame(black, mark), mark))
         self.assertFalse(sc.diagnosing(frame(black, mark, (785, 896, 60, 38), (900, 896, 60, 38)), mark))   # two words, no spinner
 
+    def test_corner_marks_and_tile_descriptions_read_only_their_own_text(self):
+        # Desktop icons under a Safe Mode mark, the focus border beside a tile
+        # name and a wrapped name all read as text (review, 2026-11-18).
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        w, h = 400, 300
+
+        def frame(*boxes):
+            data = bytearray(b"\x00" * (w * h * 3))
+            for x, y, bw, bh in boxes:
+                for yy in range(y, y + bh):
+                    data[(yy * w + x) * 3:(yy * w + x + bw) * 3] = b"\xff" * (bw * 3)
+            return (w, h, bytes(data))
+        # The mark in rows 3 to 11 (a gap inside it), an icon from row 14.
+        img = frame((2, 3, 54, 2), (2, 6, 54, 6), (2, 14, 40, 6))
+        self.assertEqual(sc.band(img, (0, 1, 120, 16), sc.white), (0, 3, 120, 9))
+        self.assertEqual(sc.one(img, sc.band(img, (0, 1, 120, 16), sc.white), "mark", sc.white, 6), (2, 3, 54, 9))
+        self.assertEqual(sc.band(frame(), (0, 1, 120, 16), sc.white), (0, 1, 120, 16))
+        name = (20, 10, 120, 20)
+        self.assertFalse(sc.has_description(frame(name), (0, 0, 300, 120)))
+        self.assertTrue(sc.has_description(frame(name, (20, 44, 160, 11)), (0, 0, 300, 120)))
+        self.assertFalse(sc.has_description(frame(name, (20, 41, 130, 25)), (0, 0, 300, 120)))      # a wrapped name
+        self.assertTrue(sc.has_description(frame(name, (20, 41, 130, 25), (20, 74, 150, 11)), (0, 0, 300, 120)))
+
     def test_the_setup_scenario_walks_the_local_account_path(self):
         sc = load("host_session_setup", INV / "host" / "session-setup.py")
         self.assertEqual(sc.PAGES, ["region", "keyboard", "second-keyboard", "network", "local-account",

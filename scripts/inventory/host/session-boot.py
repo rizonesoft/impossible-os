@@ -62,13 +62,16 @@ TIMEOUT = 1800
 
 ENTER, TAB, BACK, UP, DOWN, LEFT, RIGHT, FOUR = 13, 9, 8, 38, 40, 37, 39, 52
 BLUE = (33, 101, 181)         # the boot manager's and recovery's background
-MENU = {"x": 10, "y": 10, "rgb": list(BLUE)}   # the boot menu is up: its blue in the corner
+MENU = {"x": 10, "y": 10, "rgb": list(BLUE)}
+# A point on Safe mode's taskbar (1920 by 1080 coordinates, as awaitcolour
+# takes them): x 100, y 760 at its 1024x768, measured on the reference.
+SAFE_TASKBAR = {"x": 188, "y": 1069, "rgb": [239, 239, 239]}   # the boot menu is up: its blue in the corner
 # The boot and stop bursts end at the boot menu (until), so their counts are
 # ceilings: 14 boot frames ran out before Windows' spinner showed alone on a
 # slower restart (2026-11-18), and the boot burst keeps sampling until the menu
 # (90 frames is over two minutes) rather than handing the rest of a slow boot
 # to the menu wait, which keeps no frames (review, 2026-11-18).
-BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 90, 12, 8, 20
+BOOT_BURST, REPAIR_BURST, STOP_BURST = 90, 12, 20
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -125,7 +128,9 @@ STEPS = [
     # window, which a fixed burst could outrun (review, 2026-11-18), and the
     # mode alone comes back while Windows' spinner still shows.
     {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "until": MENU},
-    {"op": "awaitcolour", **MENU, "timeout": 90},
+    # A burst that ran out before the menu fails here, before minutes of
+    # navigation a missing frame would waste (review, 2026-11-18).
+    {"op": "awaitcolour", **MENU, "timeout": 10},
     shot("boot-manager"),
     *keys(DOWN), shot("boot-manager-second"),
     *keys(DOWN, TAB), shot("boot-manager-link"),
@@ -141,8 +146,12 @@ STEPS = [
     # mode, where the page before it is blue at the display's. A fixed 30 s
     # could send 4 to a screen still restarting (review, 2026-11-18).
     key(ENTER), {"op": "awaitcolour", **MENU, "width": 1024, "height": 768, "timeout": 120}, wait(2), shot("startup-settings"),
-    key(FOUR), {"op": "burst", "name": "safe-boot", "count": SAFE_BURST, "every": 2},
-    {"op": "settle", "sec": 5, "timeout": 240}, shot("safe-mode"),
+    # Safe mode boots to its desktop; no record reads the frames on the way
+    # (review, 2026-11-18), so the walk waits for the desktop's light taskbar
+    # at the basic driver's mode: the restart before it holds a black screen
+    # still for 8 s and more, which a settle alone took for the desktop.
+    key(FOUR), {"op": "awaitcolour", **SAFE_TASKBAR, "width": 1024, "height": 768, "timeout": 240},
+    {"op": "settle", "sec": 3, "timeout": 60}, shot("safe-mode"),
     # An NMI from the host stops Windows; it writes its dump and restarts to the menu.
     {"op": "nmi"}, {"op": "burst", "name": "stop", "count": STOP_BURST, "every": 0, "until": MENU},
     {"op": "awaitcolour", **MENU, "timeout": 120},
@@ -160,13 +169,13 @@ STEPS = [
 ]
 
 # Bursts across a restart: a shot there may straddle a mode change.
-MOVING = ("boot-", "repair-", "safe-boot-", "stop-")
+MOVING = ("boot-", "repair-", "stop-")
 # Bursts that end at the boot menu, so they may hold fewer frames than their count.
 EARLY = ("boot-", "stop-")
 
 SHOTS = [*[f"boot-{i}" for i in range(1, BOOT_BURST + 1)], "boot-manager", "boot-manager-second", "boot-manager-link",
          "boot-options", "recovery", "recovery-troubleshoot", "recovery-reset", "recovery-advanced",
-         "recovery-startup-settings", "startup-settings", *[f"safe-boot-{i}" for i in range(1, SAFE_BURST + 1)], "safe-mode",
+         "recovery-startup-settings", "startup-settings", "safe-mode",
          *[f"stop-{i}" for i in range(1, STOP_BURST + 1)],
          *[f"repair-{i}" for i in range(1, REPAIR_BURST + 1)], "automatic-repair", "recovery-more"]
 
@@ -196,6 +205,29 @@ def pieces(img, region, n, what, test, gap=12):
 
 def one(img, region, what, test, gap=12):
     return pieces(img, region, 1, what, test, gap)[0]
+
+
+def band(img, region, test):
+    """region cut down to its first band of text: from the first row with ink
+    to the first two blank rows after it. Safe Mode's corner marks sit just
+    above desktop icons, which a fixed crop runs into (review, 2026-11-18)."""
+    x, y, w, h = region
+    lit_rows = [any(test(pixel(img, xx, yy)) for xx in range(x, x + w)) for yy in range(y, y + h)]
+    if True not in lit_rows:
+        return region
+    top = lit_rows.index(True)
+    end = top
+    while end < h and (lit_rows[end] or True in lit_rows[end + 1:end + 2]):
+        end += 1
+    return (x, y + top, w, end - top)
+
+
+def has_description(img, region):
+    """True when the text beside a tile has a line in the smaller description
+    face (at most 16 px tall) under its name. Rows are read 4 px apart, so a
+    name that wraps stays two name lines and is not taken for a description."""
+    rows = sorted(rows_in(img, region, white, 4), key=lambda r: r[1])
+    return any(r[3] <= 16 for r in rows[1:])
 
 
 def union(*boxes):
@@ -405,11 +437,13 @@ def records(shots, build, taken=None):
             extra = {"disposition": disp} if disp else {}
             if reason:
                 extra["reason"] = reason
-            rows = rows_in(img, (t[0] + 121, t[1] - 4, w - 133, t[3] + 4), white, 10)
-            if not rows:
+            # The text region stops short of the focus rectangle's right edge
+            # (review, 2026-11-18: the border read as a second text line).
+            text = (t[0] + 121, t[1] - 4, w - 137, t[3] + 4)
+            if not rows_in(img, text, white, 10):
                 raise core.Incomplete(f"{name}: no name beside the {clabel} tile")
             rec(f"{rid}.{cid}", "control", clabel, f"{rid}.choices", controlType="button", bounds=(t[0] - 12, t[1] - 12, w, h),
-                behaviour=f"A {t[2]} px square of the lighter blue with a white line icon, the name beside it at its top{' and a description under it' if len(rows) > 1 else ''}; focus draws a white rectangle round tile and text.",
+                behaviour=f"A {t[2]} px square of the lighter blue with a white line icon, the name beside it at its top{' and a description under it' if has_description(img, text) else ''}; focus draws a white rectangle round tile and text.",
                 **extra)
         return img, page, ts, rings
 
@@ -522,8 +556,9 @@ def records(shots, build, taken=None):
     # Safe mode desktop: the marks Windows draws over a black desktop.
     img = firmware("safe-mode")
     bar = next(y for y in range(img[1] - 1, 0, -1) if pixel(img, img[0] // 2, y) == (0, 0, 0))
-    marks = [one(img, (0, 1, 120, 16), "safe-mode: top left mark", white, 6), one(img, (img[0] - 120, 1, 120, 16), "safe-mode: top right mark", white, 6),
-             one(img, (0, bar - 16, 120, 16), "safe-mode: bottom left mark", white, 6), one(img, (img[0] - 120, bar - 16, 120, 16), "safe-mode: bottom right mark", white, 6)]
+    marks = [one(img, band(img, r, white), f"safe-mode: {what} mark", white, 6)
+             for r, what in (((0, 1, 120, 16), "top left"), ((img[0] - 120, 1, 120, 16), "top right"),
+                             ((0, bar - 16, 120, 16), "bottom left"), ((img[0] - 120, bar - 16, 120, 16), "bottom right"))]
     build_line = union(*core.ink_boxes(img, (200, 1, img[0] - 400, 16), white, 6))
     st = rec("safe-mode", "state", "Safe mode desktop", root, openedBy="4 on the Startup Settings menu",
              behaviour=f"The desktop on black with the basic display driver ({img[0]}x{img[1]} on the reference machine), after sign-in; positions are fractions of that screen.")
