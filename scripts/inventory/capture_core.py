@@ -915,6 +915,128 @@ def write_png(path, width, height, rgb):
         fh.write(chunk(b"IEND", b""))
 
 
+def read_png(path):
+    """Read an 8-bit RGB or RGBA PNG (not interlaced) as (width, height, rgb):
+    rgb is width * height * 3 bytes, rows top to bottom. Enough for the shots
+    this tool and Hyper-V's host path write."""
+    data = pathlib.Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path}: not a PNG")
+    pos, idat, head = 8, [], None
+    while pos < len(data):
+        n, tag = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if tag == b"IHDR":
+            head = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat.append(body)
+        elif tag == b"IEND":
+            break
+        pos += 12 + n
+    if head is None:
+        raise ValueError(f"{path}: no IHDR")
+    w, h, depth, ctype, _, _, interlace = head
+    if depth != 8 or ctype not in (2, 6) or interlace:
+        raise ValueError(f"{path}: only 8-bit RGB or RGBA, not interlaced (depth {depth}, type {ctype})")
+    bpp = 3 if ctype == 2 else 4
+    raw, stride = zlib.decompress(b"".join(idat)), w * bpp
+    out, prev = bytearray(), bytearray(stride)
+    for y in range(h):
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            elif f != 0:
+                raise ValueError(f"{path}: row {y} has filter {f}")
+        out += line if bpp == 3 else b"".join(bytes(line[i:i + 3]) for i in range(0, stride, 4))
+        prev = line
+    return w, h, bytes(out)
+
+
+def ink_box(image, region, test):
+    """The bounding box (x, y, width, height) of the pixels inside `region`
+    (x, y, width, height) for which test((r, g, b)) holds, or None. `image` is
+    read_png's (width, height, rgb). How a host shot, which UI Automation never
+    saw, is measured: a region drawn round one element and a test for its ink."""
+    w, h, rgb = image
+    x0, y0, rw, rh = region
+    xs, ys = [], []
+    for y in range(max(0, y0), min(h, y0 + rh)):
+        row = y * w * 3
+        for x in range(max(0, x0), min(w, x0 + rw)):
+            i = row + x * 3
+            if test((rgb[i], rgb[i + 1], rgb[i + 2])):
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+def ink_boxes(image, region, test, gap=8):
+    """The separate pieces of ink inside `region`: the bounding box (x, y,
+    width, height) of each group of pixels for which test((r, g, b)) holds,
+    where pieces closer than about `gap` pixels count as one (a word, an icon,
+    a button's outline). Sorted top to bottom, then left to right."""
+    w, h, rgb = image
+    x0, y0, rw, rh = region
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x0 + rw), min(h, y0 + rh)
+    cells = {}
+    for y in range(y0, y1):
+        row = y * w * 3
+        for x in range(x0, x1):
+            i = row + x * 3
+            if test((rgb[i], rgb[i + 1], rgb[i + 2])):
+                c = ((x - x0) // gap, (y - y0) // gap)
+                b = cells.get(c)
+                cells[c] = (x, y, x, y) if b is None else (min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y))
+    seen, out = set(), []
+    for start in cells:
+        if start in seen:
+            continue
+        seen.add(start)
+        stack, box = [start], list(cells[start])
+        while stack:
+            cx, cy = stack.pop()
+            b = cells[(cx, cy)]
+            box = [min(box[0], b[0]), min(box[1], b[1]), max(box[2], b[2]), max(box[3], b[3])]
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    n = (cx + dx, cy + dy)
+                    if n in cells and n not in seen:
+                        seen.add(n)
+                        stack.append(n)
+        out.append((box[0], box[1], box[2] - box[0] + 1, box[3] - box[1] + 1))
+    # A piece inside or across another's box is part of it (a clock's colon
+    # between its digits), whatever the gap between their pixels.
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                a, b = out[i], out[j]
+                if a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]:
+                    x0, y0 = min(a[0], b[0]), min(a[1], b[1])
+                    out[i] = (x0, y0, max(a[0] + a[2], b[0] + b[2]) - x0, max(a[1] + a[3], b[1] + b[3]) - y0)
+                    del out[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return sorted(out, key=lambda b: (b[1], b[0]))
+
+
 def write_records(path, records):
     """Write one record per line, replacing the file only once the new one is whole."""
     tmp = f"{path}.tmp"

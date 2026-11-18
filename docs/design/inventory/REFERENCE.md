@@ -1,4 +1,4 @@
-<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-16 -->
+<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-host.ps1,scripts/inventory/host-capture.py,scripts/inventory/host,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-18 -->
 # Windows 11 Reference Machine
 
 Every record in the inventory is read from one machine: a clean Hyper-V virtual machine running one pinned Windows 11 build under one capture profile. A position or a size only means something against that machine, so this page names it, and a capture from anything else is refused until it is recorded here first. What a capture may take from it, facts and never Microsoft's text, images or files, is the rule in [the inventory format](index.md#what-does-it-never-hold).
@@ -113,6 +113,17 @@ powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
 `ref-run.ps1` takes a new, empty `-Out` folder for each run, holds the VM for itself, restores `clean`, checks the build, copies its inputs to `C:\ios\in` as one zip, runs one command in `ref`'s desktop (an interactive scheduled task under a headless console, so it draws no window of its own), waits for its exit code, copies `C:\ios\out` back and turns the VM off. Each capture therefore starts from the same desktop. `-Proof` runs the end-to-end check: it starts Notepad, finds its window through UI Automation and saves a screenshot. `pre-oobe` exists so first-run setup can be captured again at any time.
 
 The machine and the tools are kept after the inventory is captured, so anything missed can be captured later from the same build.
+
+## How are the screens UI Automation cannot see captured?
+
+The lock and sign-in screens, the secure desktop (security options and the elevation prompt), and the boot, setup and recovery screens are captured from the host instead. `ref-host.ps1` restores a checkpoint and drives the VM through Hyper-V's own keyboard and mouse (keys, chords, text, Ctrl+Alt+Delete, absolute clicks), runs guest commands where a session exists, and shoots the framebuffer with `GetVirtualSystemThumbnailImage` at the video head's current mode, which is pixel for pixel. Each shot in its `shots.json` records the mode read just before and just after it; a shot whose mode changed under it is not exact. It can make fixture accounts whose random passwords exist only in its memory, and types `ref`'s password from the DPAPI-protected credential beside the VM (`ref.clixml`) without writing it anywhere.
+
+```bash
+python3 scripts/inventory/host-capture.py --scenario session-secure            # capture, measure, check, publish
+python3 scripts/inventory/host-capture.py --scenario session-secure --dry-run  # capture and check only
+```
+
+A scenario in `scripts/inventory/host/` lists the steps and the shots it publishes, and measures its records from those shots: it looks for the pieces of ink it expects in a region and refuses when it finds a different number, so a screen that changed is never published with stale geometry. Every record is a `hand:` record. `host-capture.py` refuses a run with a failed step, a missing shot or one that is not exact, then checks and publishes exactly as `capture.py` does, under the same lock and into the same store and manifest.
 
 ## How are the hardware pages captured?
 

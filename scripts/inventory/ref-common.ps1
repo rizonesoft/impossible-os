@@ -109,14 +109,16 @@ function Set-HostKvp([string]$Name, [string]$Key, [string]$Value = '', [switch]$
     if ($job.JobState -ne 7) { throw "KVP $Key job failed: $($job.ErrorDescription)" }
 }
 
-# The VM's screen as 640x360 RGB565 bytes, read from the host without the guest's help.
-function Get-RefThumbnail([string]$Name) {
+# The VM's screen as RGB565 bytes (640x360 unless asked), read from the host
+# without the guest's help. Hyper-V scales the framebuffer to the size asked;
+# at the video head's own mode the copy is pixel for pixel.
+function Get-RefThumbnail([string]$Name, [int]$Width = 640, [int]$Height = 360) {
     $vm = Get-RefSystem $Name
     $svc = Get-CimInstance -Namespace $script:Ns -ClassName Msvm_VirtualSystemManagementService
     $vssd = Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_VirtualSystemSettingData |
         Where-Object { $_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized' }
     $r = Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{
-        TargetSystem = $vssd; WidthPixels = [uint16]640; HeightPixels = [uint16]360 }
+        TargetSystem = $vssd; WidthPixels = [uint16]$Width; HeightPixels = [uint16]$Height }
     if ($r.ReturnValue -ne 0 -or -not $r.ImageData) { throw "thumbnail failed: $($r.ReturnValue)" }
     return [byte[]]$r.ImageData
 }
@@ -129,18 +131,28 @@ function Get-ThumbnailFacts([byte[]]$Bytes) {
     return @{ Hash = $hash; Colours = $colours.Count }
 }
 
-function Save-Thumbnail([byte[]]$Bytes, [string]$Path) {
+function Save-Thumbnail([byte[]]$Bytes, [string]$Path, [int]$Width = 640, [int]$Height = 360) {
     Add-Type -AssemblyName System.Drawing
-    $bmp = New-Object System.Drawing.Bitmap 640, 360, ([System.Drawing.Imaging.PixelFormat]::Format16bppRgb565)
-    $rect = New-Object System.Drawing.Rectangle 0, 0, 640, 360
+    # Hyper-V returns the pixels first and can append a few bytes past them
+    # (4 at 1920 by 1080, seen 2026-11-18); fewer than the pixels is a fault.
+    if ($Bytes.Length -lt $Width * $Height * 2) { throw "a $Width by $Height thumbnail is $($Width * $Height * 2) bytes, got $($Bytes.Length)" }
+    $bmp = New-Object System.Drawing.Bitmap $Width, $Height, ([System.Drawing.Imaging.PixelFormat]::Format16bppRgb565)
+    $rect = New-Object System.Drawing.Rectangle 0, 0, $Width, $Height
     $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $bmp.PixelFormat)
     try {
-        for ($y = 0; $y -lt 360; $y++) {
-            [Runtime.InteropServices.Marshal]::Copy($Bytes, $y * 1280, [IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), 1280)
+        for ($y = 0; $y -lt $Height; $y++) {
+            [Runtime.InteropServices.Marshal]::Copy($Bytes, $y * $Width * 2, [IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), $Width * 2)
         }
     } finally { $bmp.UnlockBits($data) }
     $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
+}
+
+# The mode the VM's video head shows now: width, height and depth.
+function Get-RefVideoMode([string]$Name) {
+    $head = Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_VideoHead | Select-Object -First 1
+    if (-not $head) { throw "no video head on $Name" }
+    return @([int]$head.CurrentHorizontalResolution, [int]$head.CurrentVerticalResolution, [int]$head.CurrentBitsPerPixel)
 }
 
 # The operator-only folder rule: the folder's whole access list is replaced by

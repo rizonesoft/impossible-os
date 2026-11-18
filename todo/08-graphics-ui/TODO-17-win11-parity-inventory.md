@@ -462,34 +462,9 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
-- [ ] Window Chrome and System Menu: writes `docs/design/inventory/window/chrome.json`
-  - Capture the window frame of a classic program and of a modern program, at active and inactive
-    - Title bar height, caption button size and hit area, icon and title position, border thickness, corner radius, shadow extent
-    - The same pixel read gives the corner radius of the Start panel, the flyouts and the menus, which section 8 could not read: UI Automation exposes no radius
-    - Captured on 26300.9974 by `surfaces/window-chrome.py` (163 records, 15 shots): four programs over a solid desktop, caption buttons from UI Automation, colours from the screen, resize bands from the real pointer's cursor, each title bar behaviour tried
-    - Windows does not round a window in a virtual machine (Microsoft Learn, measured 0 on every window), so the radii are hand records citing Microsoft's geometry guidance until the parked read below
-  - Capture the caption buttons' states (rest, hover, pressed, the close button's own hover colour role) and the maximize and restore glyph swap
-  - Capture the system menu (Alt-Space and title bar right-click): Restore, Move, Size, Minimize, Maximize, Close with its shortcut text
-  - Record by hand the resize areas: edge and corner grip thickness inside and outside the frame, the minimum window size, and the cursor role per area
-  - Record by hand the title bar behaviours
-    - Double-click to maximize, drag from maximized to restore, shake to minimize others, drag to a screen edge, double-click the top edge to fill vertically
-  - Capture the tool window, dialog and borderless variants: which buttons each has and its title bar height
-  - Add the title bar heights found (six programs and styles, five heights) to the consistency ledger entry of §6 as its variants
-  - Record the accent colour on title bars and borders option and what it changes
-  - Done when: `check-inventory.py --surface window` passes; `metric` records exist for title bar height, caption button size, border and shadow for both program generations, each carrying the `inconsistency` id where the two differ, and for the radius as published (the parked item below reads it).
+- [x] Window Chrome and System Menu: `window/chrome.json`, both program generations' metrics with their ledger ids; `check-inventory.py --surface window` passes
 - [x] Snap, Alt+Tab, Task View and Virtual Desktops: `window/switching.json` and its wide and tall observation files; `check-inventory.py --surface window --complete` passes
-- [ ] Lock, Sign-In and Secure Screens: writes `docs/design/inventory/session/secure.json`
-  - Note: UI Automation does not reach the secure desktop. These records are `hand:` records, measured from host screenshots taken the way the boot item below describes.
-  - Record the lock screen: the clock and date position and size, the status row, the network and accessibility buttons, and how it dismisses (key, click, swipe)
-  - Record the sign-in screen
-    - The account picture, name, the credential box and its reveal and submit buttons, the other users list
-    - The sign-in options row (password, PIN, and the other methods as roles) and the bottom right buttons (network, accessibility, power)
-  - Record the wrong password, locked account, password expired and first sign-in states and the text slots each uses (slot and length, not Microsoft's wording)
-  - Record the security options screen (Ctrl-Alt-Delete): Lock, Switch user, Sign out, Change a password, Task Manager, Cancel, and the bottom right buttons
-  - Record the elevation prompt: its two forms (consent and credentials), the header colours by publisher trust as roles, the details expander, the button order, and the dimmed desktop behind it
-  - Record the shut down dialog (Alt-F4 on the desktop) and its list, the "apps are preventing shut down" screen, and the sign-out and restart progress screens
-  - Record the power button menu on the sign-in screen and the accessibility flyout's list
-  - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
+- [x] Lock, Sign-In and Secure Screens: `session/secure.json`, 89 hand records measured from host shots by `host-capture.py`; `check-inventory.py --surface session` passes
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
   - Run this capture from §2's `pre-oobe` checkpoint with an answer file that hides no setup page, driving the local-account branch with host keystrokes (Hyper-V's keyboard device) and a thumbnail per page before each advance; the checkpoint is restored afterwards
     - `-Reclean`'s answer file hides the local account and wireless pages and creates the account itself, so it cannot observe them
@@ -516,33 +491,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The recovery environment: automatic repair, the troubleshoot menu, startup settings and the reset path, each page as a `page` with its choices; a checkpoint is taken before each so the VM returns clean
   - Reconcile each screen against its owner in `D01 T15`, `D01 T14` and `D01 T22`, and note gaps in §15
   - Done when: `check-inventory.py --surface session` passes; the boot, boot manager, Safe mode, stop error and recovery screens each have records and a shot in `boot.json` (the update screens are §25's), and the stop error records name each text slot without Microsoft's words.
-- [ ] Shell Overlays: writes `docs/design/inventory/flyouts/overlays.json`
-  - Capture the volume and brightness indicator: its position, size, the icon slot, the bar, the number, and its timeout
-    - The reference VM has no audio device and no brightness control, so both forms are captured on §21's laptop stand-in (its sound output and backlight), into its own file `flyouts/overlays-laptop.json` as §8 does for Quick Settings; each change is shown to move the level and the indicator to dismiss after its timeout
-    - Captured on the stand-in by `surfaces/overlays-laptop.py` into `overlays-laptop.json` (15 records, 2 shots, 4 metrics): the volume indicator raised and muted, its size, its 0 px rest on the taskbar and its 1,900 ms timeout
-  - Capture clipboard history (Win-V): the item card, pin, delete, clear all, the tab row it shares with the emoji panel, and the empty and disabled states
-  - Capture the emoji panel (Win-period): the tab row, the search box, the category row, the grid, and the skin tone chooser
-    - Tabs: recent, emoji, GIF, kaomoji, symbols, clipboard; GIF gets its disposition under §6
-  - Capture the power user menu (Win-X) and every entry in order
-  - Capture the Run dialog: the icon, the label, the combo box, the three buttons and the elevated variant's extra line
-  - Capture the Project flyout (Win-P) and its four modes, and the Cast flyout (Win-K) as a frame
-    - Win-P and Win-K open Quick Settings on its Project and Cast pages, which §8 captured into `quick-settings.json` (`project-page`, `cast-page`); `overlays.json` adds only their two hotkeys
-    - Hyper-V's one display leaves the Project page with no modes (measured 2026-11-18), so the modes come from §22's `dual` stand-in, into `flyouts/overlays-dual.json`
-    - Captured by `surfaces/overlays-dual.py` under `dual-100-150` (15 records, 1 shot, 3 metrics): PC screen only, Duplicate, Extend and Second screen only as 58 px rows, Extend current
-  - Capture the input switcher (Win-Space), which needs a second input method and so comes from `profile-ime` into `overlays-ime.json`, and the touch keyboard: its layouts (default, compact, traditional and gamepad, the four 26300.9974 offers; it has no small or split), the key rows, and the handwriting panel as a frame
-    - The shifted, symbol (both pages), emoji and contextual (password, number, URL) layers, the last three on a focused field of an Edge app window over a local page, and IME composition with its candidate window and paging, typed from fixed text fixtures in the Japanese and Chinese input methods
-    - The input methods come from a derived checkpoint, `profile-ime`, made by `ref-vm.ps1 -Derive` with `Install-RefLanguage` for ja-JP and zh-CN (input method only, display language unchanged) and both enabled for `ref`; its capture restores it offline and proves each fixture opens its named IME and reaches a distinct second candidate page
-    - The IME states are their own file, `flyouts/overlays-ime.json` (profile `ime`, the documented exception to the canonical `fhd-100`), so neither capture drops the other's records
-    - `ref-vm.ps1` derives only width, height and display language today, so §9 adds an `inputMethods` profile setting: registered in `profiles.json`, derived and probed apart from `uiLanguage`, and a restore is shown to keep en-US display
-    - Captured on 26300.9974 by `surfaces/overlays-ime.py` into `overlays-ime.json` (118 records, 5 shots, 6 metrics): the switcher with three input methods, and each IME's candidate window on its first and a proven distinct second page; `profile-ime` probes `inputMethods` en-US,ja-JP,zh-CN with en-US display
-  - Capture the capture bar (Win-Shift-S): the mode buttons (rectangle, window, full screen, freeform), the video toggle, and close
-  - Capture voice typing (Win-H): the bar, the microphone button, the settings flyout
-  - Captured on 26300.9974 by `scripts/inventory/surfaces/overlays.py` into `overlays.json` (876 records, 33 shots, 8 metrics): every state below that names `overlays.json`; the laptop, IME and dual files follow
-  - Done when: `check-inventory.py --surface flyouts` passes and `overlays.json` holds these states, each with a shot
-    - In `overlays-laptop.json` the volume indicator (the brightness indicator is the parked item below); in `overlays.json` clipboard history with items, empty and disabled; each emoji panel tab and the skin tone chooser; the Win-X menu with every entry in order
-    - The Run dialog plain and elevated; the Win-P and Win-K hotkeys on §8's Project and Cast pages (in `overlays-dual.json` the four Project modes); in `overlays-ime.json` the input switcher with two layouts listed; each touch keyboard layout and layer; in `overlays-ime.json`, for each of the Japanese and the Chinese input method, its fixture's composition and the candidate window's first and second pages
-    - The capture bar's modes; the voice typing bar and its settings flyout
-    - Win-X and Win-Space open no new top-level window, so their capture is accepted only when the menu or the switcher list is found in the walked tree
+- [x] Shell Overlays: `flyouts/overlays.json` with its laptop, IME and dual files, every state with a shot; `check-inventory.py --surface flyouts` passes
 - [/] Read the corner radius of a window, the Start panel, a flyout and a menu from the screen on real hardware into `chrome.json` (Needs: bare-metal)
   - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
 - [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)

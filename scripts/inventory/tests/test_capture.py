@@ -2418,5 +2418,144 @@ class FindWindow(unittest.TestCase):
         self.assertEqual(raised, [7])          # Notepad only: the switcher would close
 
 
+class HostShots(unittest.TestCase):
+    """Host shots are measured from their pixels: read_png and ink_box."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_a_png_reads_back_the_pixels_it_was_written_with(self):
+        w, h = 7, 5
+        rgb = bytes((x * 30 + y) % 256 for y in range(h) for x in range(w) for _ in range(3))
+        core.write_png(self.tmp / "a.png", w, h, rgb)
+        self.assertEqual(core.read_png(self.tmp / "a.png"), (w, h, rgb))
+
+    def test_every_png_row_filter_decodes(self):
+        # write_png uses filter 0 only; Windows' encoder uses the others, so each
+        # is written by hand here (rows of a 2x1 RGB image, one filter per row).
+        w = 2
+        rows = [bytes([10, 20, 30, 40, 50, 60]), bytes([11, 21, 31, 41, 51, 61]),
+                bytes([12, 22, 32, 42, 52, 62]), bytes([13, 23, 33, 43, 53, 63]), bytes([14, 24, 34, 44, 54, 64])]
+
+        def enc(f, cur, prev):
+            out = bytearray()
+            for i, v in enumerate(cur):
+                a = cur[i - 3] if i >= 3 else 0
+                b = prev[i]
+                c = prev[i - 3] if i >= 3 else 0
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pred = [0, a, b, (a + b) // 2, a if pa <= pb and pa <= pc else b if pb <= pc else c][f]
+                out.append((v - pred) & 255)
+            return bytes([f]) + bytes(out)
+        raw, prev = b"", bytes(6)
+        for f, row in enumerate(rows):
+            raw += enc(f, row, prev)
+            prev = row
+        import struct
+        import zlib
+
+        def chunk(tag, data):
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        (self.tmp / "f.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, 5, 8, 2, 0, 0, 0))
+                                         + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+        self.assertEqual(core.read_png(self.tmp / "f.png"), (w, 5, b"".join(rows)))
+
+    def test_ink_box_bounds_only_the_ink_inside_the_region(self):
+        w, h = 10, 8
+        px = bytearray(w * h * 3)
+        for x, y in ((2, 3), (5, 6), (9, 0)):          # (9, 0) lies outside the region
+            px[(y * w + x) * 3:(y * w + x) * 3 + 3] = b"\xff\xff\xff"
+        img = (w, h, bytes(px))
+        white = lambda p: p == (255, 255, 255)          # noqa: E731
+        self.assertEqual(core.ink_box(img, (0, 2, 8, 6), white), (2, 3, 4, 4))
+        self.assertIsNone(core.ink_box(img, (0, 0, 2, 2), white))
+
+    def test_ink_boxes_splits_pieces_further_apart_than_the_gap(self):
+        w, h = 40, 10
+        px = bytearray(w * h * 3)
+        for x, y in ((1, 1), (3, 2), (30, 5), (31, 8)):
+            px[(y * w + x) * 3:(y * w + x) * 3 + 3] = b"\xff\xff\xff"
+        img = (w, h, bytes(px))
+        white = lambda p: p == (255, 255, 255)          # noqa: E731
+        self.assertEqual(core.ink_boxes(img, (0, 0, w, h), white, gap=4), [(1, 1, 3, 2), (30, 5, 2, 4)])
+        self.assertEqual(core.ink_boxes(img, (0, 0, w, h), white, gap=40), [(1, 1, 31, 8)])
+
+    def test_ink_boxes_folds_a_piece_lying_inside_another(self):
+        # A ring with a dot in its middle further than the gap from the ring.
+        w = h = 30
+        px = bytearray(w * h * 3)
+        for i in range(2, 28):
+            for x, y in ((i, 2), (i, 27), (2, i), (27, i)):
+                px[(y * w + x) * 3:(y * w + x) * 3 + 3] = b"\xff\xff\xff"
+        px[(15 * w + 15) * 3:(15 * w + 15) * 3 + 3] = b"\xff\xff\xff"
+        white = lambda p: p == (255, 255, 255)          # noqa: E731
+        self.assertEqual(core.ink_boxes((w, h, bytes(px)), (0, 0, w, h), white, gap=4), [(2, 2, 26, 26)])
+
+
+class HostCapture(unittest.TestCase):
+    """host-capture.py refuses what it cannot publish exactly."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hc = load("host_capture", INV / "host-capture.py")
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def index(self, shots, failed=None):
+        (self.tmp / "shots.json").write_text(json.dumps({"checkpoint": "clean", "shots": shots, "failed": failed}), encoding="utf-8")
+
+    def shot(self, name, exact=True):
+        return {"name": name, "file": f"{name}.png", "width": 1920, "height": 1080, "exact": exact}
+
+    def test_every_wanted_shot_taken_exactly_is_returned(self):
+        self.index([self.shot("a"), self.shot("b"), self.shot("extra")])
+        self.assertEqual(sorted(self.hc.taken(self.tmp, 0, ["a", "b"])), ["a", "b"])
+
+    def test_refuses_a_failed_step_a_missing_shot_and_a_mode_change(self):
+        cases = [
+            ([self.shot("a")], "step 3 (click): boom", 1, ["a"], "stopped"),
+            ([self.shot("a")], None, 0, ["a", "b"], "no shot of b"),
+            ([self.shot("a", exact=False)], None, 0, ["a"], "video mode changed"),
+            ([self.shot("a")], None, 1, ["a"], "exit 1"),
+        ]
+        for shots, failed, rc, wanted, why in cases:
+            self.index(shots, failed)
+            with self.assertRaisesRegex(self.hc.core.Incomplete, why):
+                self.hc.taken(self.tmp, rc, wanted)
+
+    def test_refuses_a_run_that_wrote_no_index(self):
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "no shots.json"):
+            self.hc.taken(self.tmp, 3, ["a"])
+
+    def test_refuses_a_record_not_marked_as_a_hand_record_of_this_build(self):
+        good = {"id": "win11.session.x", "surface": "session", "source": "hand:1.2", "capturedFrom": "1.2"}
+        self.assertEqual(self.hc.checked([good], "session", "1.2"), [good])
+        for bad in ({**good, "source": "uia:1.2"}, {**good, "capturedFrom": "1.3"}, {**good, "surface": "window"}):
+            with self.assertRaises(ValueError):
+                self.hc.checked([bad], "session", "1.2")
+
+    def test_a_scenario_measures_with_the_front_ends_own_module(self):
+        # Its Incomplete must be the class publish() catches, or a refused
+        # measurement escapes as a traceback (2026-11-18).
+        for path in sorted((INV / "host").glob("*.py")):
+            self.assertIs(self.hc.scenario(path.stem).core, self.hc.core, path.name)
+
+    def test_every_scenario_names_what_the_front_end_reads(self):
+        for path in sorted((INV / "host").glob("*.py")):
+            sc = load(f"host_{path.stem.replace('-', '_')}", path)
+            for name in ("SURFACE", "FILE", "PROFILE", "CHECKPOINT", "TIMEOUT", "STEPS", "SHOTS", "records"):
+                self.assertTrue(hasattr(sc, name), f"{path.name} has no {name}")
+            shot_names = {s["name"] for s in sc.STEPS if s.get("op") == "shot"}
+            shot_names |= {f"{s['name']}-{i}" for s in sc.STEPS if s.get("op") == "burst" for i in range(1, int(s["count"]) + 1)}
+            self.assertEqual(set(sc.SHOTS) - shot_names, set(), f"{path.name} publishes shots its steps never take")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
