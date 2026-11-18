@@ -1201,6 +1201,23 @@ class Profile(unittest.TestCase):
         # stopped 6 s later, at frame 22. A screen that never holds fails.
         self.assertEqual(lines, ["held 22", "burst r: the screen did not hold still for 5 s"], (out.stdout, out.stderr))
 
+    def test_a_timed_burst_outlives_a_video_outage_longer_than_a_shot(self):
+        # A 16 s outage during the repair restart failed a walk with minutes of
+        # burst left (review, 2026-11-19). The real shot helpers run over fake
+        # CIM calls; the head is gone from 2 s to 18 s.
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        case = ("function Cost { 50 }; function Gone { $s = ($script:t - $t0).TotalSeconds; $s -ge 2 -and $s -lt 18 }; "
+                "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'repair'; count = 80; every = 0; cadence = 3; seconds = 40 }); "
+                "($shots | ForEach-Object { $_.name }) -join ','")
+        r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+        # Frames at 0 s, then the outage holds frame 2 (tried at 3 s, again
+        # after 15 s), then on until 40 s, numbered without a gap.
+        self.assertTrue(lines, r.stderr)
+        names = lines[-1].split(",")
+        self.assertEqual(names, [f"repair-{i}" for i in range(1, len(names) + 1)], r.stdout)
+        self.assertGreaterEqual(len(names), 8, names)
+
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
         # host clock stepped back an hour asked for an hour (review, 2026-11-18).
@@ -3152,6 +3169,12 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.restarting_parts(frame(sc.BLUE, (942, 492, 18, 10), word)))  # not on black
         self.assertEqual(sc.restarting_spinner([third, arc, frame(black, (941, 492, 18, 11), (986, 521, 6, 6), word)]),
                          ((928, 492, 64, 56), word, 3))
+        # A wide arc (46 by 15) is shaped like text; the frames of the
+        # 2026-11-19 00:14 walk, boot-3 to boot-6, span 58 px together.
+        walk = [frame(black, (936, 492, 46, 15), (933, 538, 7, 6), (975, 543, 7, 7), word),
+                frame(black, (963, 492, 6, 7), (986, 518, 6, 6), word),
+                frame(black, (928, 492, 60, 31), word), frame(black, (933, 492, 51, 19), word)]
+        self.assertEqual(sc.restarting_spinner(walk), ((928, 492, 64, 58), word, 4))
         # A frame whose label sits 3 px off is another screen: its dots stay
         # out; 2 px off is the same label.
         moved = frame(black, (900, 470, 10, 10), (909, 588, 108, 23))

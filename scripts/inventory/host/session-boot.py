@@ -256,16 +256,18 @@ def restarting_parts(img):
     if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
         return None
     boxes = core.ink_boxes(img, body(img), lit, 10)
-    labels = [b for b in boxes if b[2] >= 3 * b[3] and 12 <= b[3] <= 40]
-    if len(labels) != 1:
-        return None
-    label = labels[0]
-    dots = [b for b in boxes if b is not label]
-    cx = label[0] + label[2] / 2
-    if not dots or any(b[2] > 80 or b[3] > 80 or b[1] + b[3] > label[1] or label[1] - b[1] > 150
-                       or abs(b[0] + b[2] / 2 - cx) > 100 for b in dots):
-        return None
-    return dots, label
+
+    def layout(label):
+        dots = [b for b in boxes if b is not label]
+        cx = label[0] + label[2] / 2
+        if not dots or any(b[2] > 80 or b[3] > 80 or b[1] + b[3] > label[1] or label[1] - b[1] > 150
+                           or abs(b[0] + b[2] / 2 - cx) > 100 for b in dots):
+            return None
+        return dots, label
+    # A wide arc of the spinner is shaped like a line of text too, so the
+    # label is the one candidate with only dots above it (review, 2026-11-19).
+    fits = [f for f in (layout(b) for b in boxes if b[2] >= 3 * b[3] and 12 <= b[3] <= 40) if f]
+    return fits[0] if len(fits) == 1 else None
 
 
 def restarting_spinner(imgs):

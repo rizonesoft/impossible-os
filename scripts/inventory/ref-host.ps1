@@ -234,7 +234,14 @@ function Invoke-Step($step) {
                 if ((Get-Date) -ge $end) { break }
                 $began = Get-Date
                 try { Save-Shot "$($step.name)-$i" $end } catch {
-                    if ((Get-Date) -ge $end -and ($_.Exception.Message -like 'no video head*' -or $_.Exception.Message -like 'thumbnail failed: 32775*')) { break }
+                    $m = $_.Exception.Message
+                    $transient = $m -like 'no video head*' -or $m -like 'thumbnail failed: 32775*' -or $m -like 'shot *: no frame within 15 s'
+                    if ($transient -and (Get-Date) -ge $end) { break }
+                    # A timed burst outlives a video outage longer than one
+                    # shot's 15 s: the same frame is tried again while the
+                    # burst has time, and a screen held still before the
+                    # outage counts afresh after it (review, 2026-11-19).
+                    if ($transient -and $step.seconds) { $held = $null; $i--; continue }
                     throw
                 }
                 if ($script:ShotExpired) { break }
