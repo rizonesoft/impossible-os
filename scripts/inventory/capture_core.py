@@ -654,7 +654,7 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None, transient=lambda exc: Fals
 # baselineId: a record a module builds from what it read (Start's app list,
 # scrolled through, 2026-11-17) names its baseline row like a walked one.
 AUTHORED_FIELDS = ("kind", "label", "order", "behaviour", "openedBy", "shortcut", "shortcutScope", "overridable",
-                   "measure", "motion", "state", "enabled", "itemCount", "controlType", "uiaId", "baselineId")
+                   "measure", "motion", "state", "enabled", "itemCount", "controlType", "uiaId", "baselineId", "colours")
 
 
 def authored(items, *, surface, build, source, profile=None, session=None):

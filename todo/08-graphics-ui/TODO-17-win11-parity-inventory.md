@@ -466,15 +466,17 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the window frame of a classic program and of a modern program, at active and inactive
     - Title bar height, caption button size and hit area, icon and title position, border thickness, corner radius, shadow extent
     - The same pixel read gives the corner radius of the Start panel, the flyouts and the menus, which section 8 could not read: UI Automation exposes no radius
+    - Captured on 26300.9974 by `surfaces/window-chrome.py` (163 records, 15 shots): four programs over a solid desktop, caption buttons from UI Automation, colours from the screen, resize bands from the real pointer's cursor, each title bar behaviour tried
+    - Windows does not round a window in a virtual machine (Microsoft Learn, measured 0 on every window), so the radii are hand records citing Microsoft's geometry guidance until the parked read below
   - Capture the caption buttons' states (rest, hover, pressed, the close button's own hover colour role) and the maximize and restore glyph swap
   - Capture the system menu (Alt-Space and title bar right-click): Restore, Move, Size, Minimize, Maximize, Close with its shortcut text
   - Record by hand the resize areas: edge and corner grip thickness inside and outside the frame, the minimum window size, and the cursor role per area
   - Record by hand the title bar behaviours
     - Double-click to maximize, drag from maximized to restore, shake to minimize others, drag to a screen edge, double-click the top edge to fill vertically
   - Capture the tool window, dialog and borderless variants: which buttons each has and its title bar height
-  - Add the four title bar heights found to the consistency ledger entry of §6 as its variants
+  - Add the title bar heights found (six programs and styles, five heights) to the consistency ledger entry of §6 as its variants
   - Record the accent colour on title bars and borders option and what it changes
-  - Done when: `check-inventory.py --surface window` passes; `metric` records exist for title bar height, caption button size, border, radius and shadow for both program generations, and each carries the `inconsistency` id where the two differ.
+  - Done when: `check-inventory.py --surface window` passes; `metric` records exist for title bar height, caption button size, border and shadow for both program generations, each carrying the `inconsistency` id where the two differ, and for the radius as published (the parked item below reads it).
 - [ ] Snap, Alt+Tab, Task View and Virtual Desktops: writes `docs/design/inventory/window/switching.json`
   - Capture the snap layout flyout on the maximize button: each layout, its zones (stored as pixel bounds, read as fractions of the work area), and the layouts offered at 1920 by 1080 and at a wide and a tall display
   - Capture the snap bar at the top edge when a window is dragged, and the edge and corner drop zones with their preview outline
@@ -556,6 +558,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - The Run dialog plain and elevated; the Win-P and Win-K hotkeys on §8's Project and Cast pages (in `overlays-dual.json` the four Project modes); in `overlays-ime.json` the input switcher with two layouts listed; each touch keyboard layout and layer; in `overlays-ime.json`, for each of the Japanese and the Chinese input method, its fixture's composition and the candidate window's first and second pages
     - The capture bar's modes; the voice typing bar and its settings flyout
     - Win-X and Win-Space open no new top-level window, so their capture is accepted only when the menu or the switcher list is found in the walked tree
+- [/] Read the corner radius of a window, the Start panel, a flyout and a menu from the screen on real hardware into `chrome.json` (Needs: bare-metal)
+  - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
 - [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)
   - The stand-in's brightness keys (`standin.asl` WMI0: an ACPI-WMI method that raises Notify (LCD0, 0x86)) move the level as a laptop's keys do, but on QEMU's display path Windows shows no indicator; WMI, powercfg and the shell hook message move the level silently too
 - [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)

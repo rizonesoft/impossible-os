@@ -1238,5 +1238,155 @@
   "height": 105,
   "size": 4676,
   "sha256": "1163860a3d4b55d89c9ea4cd557abb0e3faa9d314d9b2f640e76f6ac3e7ead80"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "borderless",
+  "profile": "fhd-100",
+  "width": 640,
+  "height": 400,
+  "size": 1635,
+  "sha256": "548ad73d392c6f4ebfe7568df58301cb503db7af78754eba3c509723b19774b6"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "classic-close-hover",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1915,
+  "sha256": "b8a7d6f5339034ae0a2982de49ee3b24634ff6cc160ebf90d54a1410b48b01ee"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "classic-title-bar",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1820,
+  "sha256": "2cd9166d8f28e2295532d8b7c7c862d0bec0bd3518389d836ef41d3a5a0990b3"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "classic-title-bar-accent",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1755,
+  "sha256": "fe412c8c45ff8d36aa8919b9298f1e7a690ebf8477e30d657c13124c637b58f3"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "classic-title-bar-inactive",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1802,
+  "sha256": "065c5f2e66836221271f35845e4d2b7c5e6bfe24c41e58357aa8a4fe78c27117"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "classic-title-bar-maximized",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 23,
+  "size": 1790,
+  "sha256": "d430d9623c8f12bd198d586a75c98b1f3e6c36a67a46f379b110335e41f4da7b"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "dialog",
+  "profile": "fhd-100",
+  "width": 625,
+  "height": 30,
+  "size": 659,
+  "sha256": "33000df61dd1a462d98f95f38b513e00c2e42dca330aafee93039c8564c272c8"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "explorer-title-bar",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1978,
+  "sha256": "2ecf99f2c8c68623e6c680b101b7d00679968d05ca02f9e298843b3aa58c5cd4"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "explorer-title-bar-inactive",
+  "profile": "fhd-100",
+  "width": 1185,
+  "height": 30,
+  "size": 1947,
+  "sha256": "12355c8fe3153932a95c0e9b5573657f0f642eeea85b4a689fc4c6089fa2969f"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "notepad-title-bar",
+  "profile": "fhd-100",
+  "width": 1187,
+  "height": 30,
+  "size": 1656,
+  "sha256": "1534f0a55deb8adbba66230a05ed7c7ceb7b6518900b3c1f548e35e58f852d35"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "notepad-title-bar-inactive",
+  "profile": "fhd-100",
+  "width": 1187,
+  "height": 30,
+  "size": 1622,
+  "sha256": "379aca3560e06cf459185f9edf8a43ed35bda97cf4d8cd9dbc1848fe96f8eefd"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "settings-title-bar",
+  "profile": "fhd-100",
+  "width": 188,
+  "height": 32,
+  "size": 269,
+  "sha256": "d7b8321c96140728557d361082ea91892fdb894e7ad915d45cc6f5563387444e"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "settings-title-bar-inactive",
+  "profile": "fhd-100",
+  "width": 188,
+  "height": 32,
+  "size": 269,
+  "sha256": "45a9493b49e61c098fa3c6c8b1c35eccb91aac08e16bbf1b7da125cd1a632ca9"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "system-menu",
+  "profile": "fhd-100",
+  "width": 185,
+  "height": 147,
+  "size": 1735,
+  "sha256": "91677aa7af57da7f099b1d9413b590b51f03012801bcd8c497bd29a23241f92f"
+ },
+ {
+  "surface": "window",
+  "file": "chrome",
+  "state": "tool-window",
+  "profile": "fhd-100",
+  "width": 624,
+  "height": 28,
+  "size": 554,
+  "sha256": "cfe2dd7078febed32f13afee407408abb7784f175651522f1ba587a820914f4e"
  }
 ]

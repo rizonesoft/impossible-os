@@ -30,9 +30,16 @@
   "id": "title-bars",
   "kind": "look",
   "question": "How tall is a title bar and what do its caption buttons look like?",
-  "variants": [],
+  "variants": [
+   "win11.window.classic-title-bar.title-bar-height",
+   "win11.window.settings-title-bar.title-bar-height",
+   "win11.window.explorer-title-bar.title-bar-height",
+   "win11.window.notepad-title-bar.title-bar-height",
+   "win11.window.dialog.title-bar-height",
+   "win11.window.tool-window.title-bar-height"
+  ],
   "rule": "One title bar height per density and one caption button style.",
-  "reason": "The reference has 32, 40 and 48 pixel bars and three caption button styles."
+  "reason": "Measured on 26300.9974 at 100%: 31 px for a classic frame and 31 for a dialog, 28 for a tool window, 33 for Settings, 40 for File Explorer and 42 for Notepad; caption buttons are 47 by 30 except Settings' 46 by 32."
  },
  {
   "id": "control-metrics",
@@ -92,5 +99,18 @@
   "rule": "A slight frosted glass, the one deliberate visual difference from the reference: shell surfaces and the active window's frame (title bar, navigation pane, dialog, tooltip) are glass with the values of tokens.json; content areas are solid. The shape, radius, border, text and icons of a glass surface match the reference exactly; only its fill is ours.",
   "reason": "The reference fills title bars with a wallpaper tint in new programs and a flat colour in old ones, and menus and flyouts with a different translucent material; the operator chose one glass for all of them on 2026-11-14.",
   "design": "shell.md#materials"
+ },
+ {
+  "id": "resize-borders",
+  "kind": "look",
+  "question": "Where does a window's edge resize it?",
+  "variants": [
+   "win11.window.classic-title-bar.resize-outside",
+   "win11.window.settings-title-bar.resize-outside",
+   "win11.window.explorer-title-bar.resize-outside",
+   "win11.window.notepad-title-bar.resize-outside"
+  ],
+  "rule": "Every window resizes from the same band: 7 px outside its border and the border itself, 7 px below its bottom border and the top 8 rows, the classic frame's values.",
+  "reason": "Measured on 26300.9974 at 100%: the band outside the side border is 7 px for a classic frame, Settings and File Explorer and 5 for Notepad, and Settings starts its top band 3 rows down."
  }
 ]

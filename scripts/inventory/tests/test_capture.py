@@ -2060,6 +2060,19 @@ class Authored(unittest.TestCase):
         code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records + hand + metric})
         self.assertEqual(code, 0, report)
 
+    def test_a_measured_colour_role_is_authored_and_checks(self):
+        m, _ = Scenes().mod()
+        cap, _ = core.run_scenes(core.scenes_of(m), None, Scenes().walk_scene)
+        hover = core.authored([{"id": "desktop.close-hover", "parent": "desktop", "kind": "state", "label": "Close, hover",
+                                "order": 3, "state": "hover", "colours": {"fill": {"light": "#c42b1c"}}}],
+                              surface="scenetest", build="26300.9974", source="uia", profile="fhd-100", session="console")
+        self.assertEqual(hover[0]["colours"], {"fill": {"light": "#c42b1c"}})
+        code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records + hover})
+        self.assertEqual(code, 0, report)
+        bad = [dict(hover[0], colours={"fill": {"light": "red"}})]
+        code, _ = capture.check_scratch({"scenetest/scenetest.json": cap.records + bad})
+        self.assertNotEqual(code, 0)
+
     def test_a_field_outside_the_list_is_refused(self):
         with self.assertRaises(ValueError):
             core.authored([{"id": "a.b", "kind": "state", "label": "x", "order": 0, "source": "uia:1.2"}],
