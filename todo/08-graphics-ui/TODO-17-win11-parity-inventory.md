@@ -458,6 +458,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Inventory:** writes the files under `docs/design/inventory/window/`, `session/` and `flyouts/overlays.json` named in each item
 
+**Needs:** bare-metal
+
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
 - [ ] Window Chrome and System Menu: writes `docs/design/inventory/window/chrome.json`
@@ -530,6 +532,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [ ] Shell Overlays: writes `docs/design/inventory/flyouts/overlays.json`
   - Capture the volume and brightness indicator: its position, size, the icon slot, the bar, the number, and its timeout
     - The reference VM has no audio device and no brightness control, so both forms are captured on §21's laptop stand-in (its sound output and backlight), into its own file `flyouts/overlays-laptop.json` as §8 does for Quick Settings; each change is shown to move the level and the indicator to dismiss after its timeout
+    - Captured on the stand-in by `surfaces/overlays-laptop.py` into `overlays-laptop.json` (15 records, 2 shots, 4 metrics): the volume indicator raised and muted, its size, its 0 px rest on the taskbar and its 1,900 ms timeout
   - Capture clipboard history (Win-V): the item card, pin, delete, clear all, the tab row it shares with the emoji panel, and the empty and disabled states
   - Capture the emoji panel (Win-period): the tab row, the search box, the category row, the grid, and the skin tone chooser
     - Tabs: recent, emoji, GIF, kaomoji, symbols, clipboard; GIF gets its disposition under §6
@@ -547,10 +550,12 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture voice typing (Win-H): the bar, the microphone button, the settings flyout
   - Captured on 26300.9974 by `scripts/inventory/surfaces/overlays.py` into `overlays.json` (876 records, 33 shots, 8 metrics): every state below that names `overlays.json`; the laptop, IME and dual files follow
   - Done when: `check-inventory.py --surface flyouts` passes and `overlays.json` holds these states, each with a shot
-    - In `overlays-laptop.json` the volume and the brightness indicator; in `overlays.json` clipboard history with items, empty and disabled; each emoji panel tab and the skin tone chooser; the Win-X menu with every entry in order
+    - In `overlays-laptop.json` the volume indicator (the brightness indicator is the parked item below); in `overlays.json` clipboard history with items, empty and disabled; each emoji panel tab and the skin tone chooser; the Win-X menu with every entry in order
     - The Run dialog plain and elevated; the Win-P and Win-K hotkeys on §8's Project and Cast pages (in `overlays-dual.json` the four Project modes); in `overlays-ime.json` the input switcher with two layouts listed; each touch keyboard layout and layer; in `overlays-ime.json`, for each of the Japanese and the Chinese input method, its fixture's composition and the candidate window's first and second pages
     - The capture bar's modes; the voice typing bar and its settings flyout
     - Win-X and Win-Space open no new top-level window, so their capture is accepted only when the menu or the switcher list is found in the walked tree
+- [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)
+  - The stand-in's brightness keys (`standin.asl` WMI0: an ACPI-WMI method that raises Notify (LCD0, 0x86)) move the level as a laptop's keys do, but on QEMU's display path Windows shows no indicator; WMI, powercfg and the shell hook message move the level silently too
 - [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.

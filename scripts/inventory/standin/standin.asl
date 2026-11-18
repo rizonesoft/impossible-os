@@ -1,8 +1,8 @@
 /*
  * Stand-in laptop devices for the reference disk under QEMU: an AC adapter,
  * a control-method battery and a lid, as a laptop's firmware describes them
- * (ACPI 6.5 sections 10.2 to 10.3 and 9.4), and backlight control on the
- * display. Windows binds its inbox drivers (cmbatt, the lid button), so
+ * (ACPI 6.5 sections 10.2 to 10.3 and 9.4), backlight control on the
+ * display and its brightness keys. Windows binds its inbox drivers (cmbatt, the lid button), so
  * Settings shows the battery and lid pages.
  * run.py fills the @NAME@ values per variant before iasl compiles it.
  * Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 21.
@@ -71,6 +71,35 @@ DefinitionBlock ("", "SSDT", 2, "IOS   ", "STANDIN ", 0x00000001)
             Name (_HID, EisaId ("PNP0C0D"))
             Method (_STA, 0, NotSerialized) { Return (0x0F) }
             Method (_LID, 0, NotSerialized) { Return (One) }
+        }
+
+        /*
+         * The brightness keys, as a laptop's firmware wires them: a key raises
+         * Notify (LCD0, 0x86) to step up or 0x87 to step down (ACPI 6.5
+         * appendix B.6), which is what makes Windows show its brightness
+         * indicator; a WMI or power-setting change moves the level silently.
+         * A QEMU guest has no such key, so an ACPI-WMI bridge (PNP0C14, bound
+         * by the inbox wmiacpi driver) stands in for it: method 1 of the
+         * block below presses brightness up, method 2 brightness down.
+         * GUID 6c1f2b8e-4d3a-4e5b-9a7c-1b2d3e4f5a60, object id "AA".
+         */
+        Device (WMI0)
+        {
+            Name (_HID, EisaId ("PNP0C14"))
+            Name (_UID, "STANDIN")
+            Method (_STA, 0, NotSerialized) { Return (0x0F) }
+            Name (_WDG, Buffer (0x14)
+            {
+                0x8E, 0x2B, 0x1F, 0x6C, 0x3A, 0x4D, 0x5B, 0x4E,
+                0x9A, 0x7C, 0x1B, 0x2D, 0x3E, 0x4F, 0x5A, 0x60,
+                0x41, 0x41, 0x01, 0x02
+            })
+            Method (WMAA, 3, Serialized)
+            {
+                If (Arg1 == One) { Notify (\_SB.PCI0.S18.LCD0, 0x86) }
+                ElseIf (Arg1 == 0x02) { Notify (\_SB.PCI0.S18.LCD0, 0x87) }
+                Return (Zero)
+            }
         }
     }
 }

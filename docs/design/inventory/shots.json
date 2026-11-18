@@ -741,6 +741,26 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays-laptop",
+  "state": "volume-indicator",
+  "profile": "fhd-100",
+  "width": 234,
+  "height": 62,
+  "size": 15848,
+  "sha256": "44a0fb4d5961e36797d6c81969bdc58dc2d4401e1137eea05ee848e3bcbb19f0"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays-laptop",
+  "state": "volume-indicator-muted",
+  "profile": "fhd-100",
+  "width": 234,
+  "height": 62,
+  "size": 15697,
+  "sha256": "35e25954e77f37e6a1b92a37f823ac601402e9b0ae18b00827abb9cb9078975f"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings-laptop",
   "state": "vpn-page",
   "profile": "fhd-100",
