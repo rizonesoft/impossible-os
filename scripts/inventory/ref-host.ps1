@@ -239,6 +239,10 @@ function Invoke-Step($step) {
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).
                 if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
+                # No sleep after the last frame, and none past the end
+                # (review, 2026-11-18: the repair burst slept 3 s after its
+                # twelfth frame).
+                if ($i -ge [int]$step.count -or (Get-Date) -ge $end) { break }
                 if ($step.cadence) {
                     # At most one cadence, and never past the burst's end, so a
                     # step in the host's clock cannot stretch the sleep (review,
@@ -247,7 +251,8 @@ function Invoke-Step($step) {
                     $wait = [Math]::Min($wait, [Math]::Min([double]$step.cadence * 1000, ($end - (Get-Date)).TotalMilliseconds))
                     if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]$wait) }
                 }
-                Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))
+                $rest = [Math]::Min([double]$step.every * 1000, ($end - (Get-Date)).TotalMilliseconds)
+                if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]$rest) }
             }
         }
         'awaitcolour' {

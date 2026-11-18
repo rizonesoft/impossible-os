@@ -226,6 +226,37 @@ def band(img, region, test):
     return (x, y + top, w, end - top)
 
 
+def restarting_parts(img):
+    """(dots, label) on a Restarting frame, else None: at the display's
+    mode, on black, exactly one line of text (at least three times as wide
+    as it is tall, 12 to 40 px tall) with at least one compact box (80 px at
+    most) above it, within 150 px and roughly centred on it."""
+    if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
+        return None
+    boxes = core.ink_boxes(img, body(img), lit, 10)
+    labels = [b for b in boxes if b[2] >= 3 * b[3] and 12 <= b[3] <= 40]
+    if len(labels) != 1:
+        return None
+    label = labels[0]
+    dots = [b for b in boxes if b is not label]
+    cx = label[0] + label[2] / 2
+    if not dots or any(b[2] > 80 or b[3] > 80 or b[1] + b[3] > label[1] or label[1] - b[1] > 150
+                       or abs(b[0] + b[2] / 2 - cx) > 100 for b in dots):
+        return None
+    return dots, label
+
+
+def restarting_spinner(imgs):
+    """(spinner, label, frames) from Restarting frames: the union of the
+    dots seen above the first frame's label in every frame whose label is the
+    same (within 2 px), and how many frames that was."""
+    parts = [restarting_parts(i) for i in imgs]
+    parts = [p for p in parts if p]
+    word = parts[0][1]
+    same = [p for p in parts if all(abs(p[1][i] - word[i]) <= 2 for i in range(4))]
+    return union(*(d for dots, _ in same for d in dots)), word, len(same)
+
+
 def repair_label(img, logo):
     """(logo, label) on Startup Repair's first frame, else None: in the
     firmware's mode, on black, the firmware logo where the boot burst measured
@@ -405,17 +436,18 @@ def records(shots, build, taken=None):
                behaviour="Screens drawn before Windows starts, while it restarts or stops, and by the recovery environment; full screen, no desktop session.")
 
     # Restarting: a spinner over a one-word label on black, at the display's mode.
-    def restarting(img):
-        return img[:2] == (1920, 1080) and pixel(img, 10, 10) == (0, 0, 0) and len(rows_in(img, body(img), lit)) == 2
-    got = frames("boot", restarting, first=True)
+    # The spinner's dots move, so one frame shows one phase of them: the
+    # record publishes the union of the dots seen above the same label in
+    # every exact Restarting frame (review, 2026-11-18: one frame's cluster
+    # left out dots another frame showed).
+    got = frames("boot", lambda i: restarting_parts(i) is not None)
     if not got:
         raise core.Incomplete("boot burst: no Restarting frame (a spinner over a label on black)")
-    img = shots[got[0]]
-    spin, word = rows_in(img, body(img), lit)
+    spin, word, seen = restarting_spinner([shots[n] for n in got])
     st = rec("restarting", "state", "Restarting screen", root, bounds=SCREEN, openedBy="Restart",
              behaviour="Black after the session closes: a dotted spinner with a one-word label under it, both centred, until the firmware takes over.")
     rec("restarting.spinner", "control", "Spinner", st, controlType="progressBar", bounds=spin,
-        behaviour="Dots running round a circle, centred above the middle of the screen.")
+        behaviour=f"Dots running round a circle, centred above the middle of the screen; the bounds are the dots seen across {seen} frames, so the full circle can reach a little further.")
     rec("restarting.label", "control", "Label", st, controlType="text", bounds=word,
         behaviour="A text slot of 10 characters in small bold white, centred under the spinner.")
 

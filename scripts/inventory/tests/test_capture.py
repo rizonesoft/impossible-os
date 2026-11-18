@@ -1096,7 +1096,7 @@ class Profile(unittest.TestCase):
         on a fake clock; each call logs when it starts (seconds from t0), costs
         (Cost) ms, and the video head is missing while (Gone) holds."""
         return (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels"]),
-                                   (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-RefThumbnail", "Get-RefVideoMode", "Assert-RefBefore"]))
+                                   (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-RefThumbnail", "Get-RefVideoMode", "Assert-RefBefore", "Get-ThumbnailHash"]))
                 + "$Name = 'x'; $NoSession = $false; $Out = '.'; $script:Ns = 'n'; $shots = New-Object System.Collections.ArrayList; "
                 "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:calls = @(); $script:thumbs = 0; "
                 "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
@@ -1157,6 +1157,29 @@ class Profile(unittest.TestCase):
         self.assertEqual(got["first"], ["timed out", "1 0 1.2"], got)
         self.assertEqual(got["mismatch"], ["timed out", "6 0.75 1"], got)
         self.assertEqual(got["settle"], ["timed out", "3 0.8 1.2"], got)
+        # A settle poll that gets its thumbnail at 0.8 s sleeps only the 0.2 s
+        # left and times out at 1 s.
+        settle = ("function Cost { 200 }; function Gone { $false }; "
+                  "try { Invoke-Step ([pscustomobject]@{ op = 'settle'; sec = 5; timeout = 1 }) } catch { $_.Exception.Message }; ")
+        r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + settle + tail], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["the screen did not settle for 5 s within 1 s", "4 0.6 1"], (r.stdout, r.stderr))
+
+    def test_a_burst_sleeps_neither_past_its_end_nor_after_its_last_frame(self):
+        # every = 30 with 10 s left slept 30 s, and the repair burst slept 3 s
+        # after its last frame (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "$Name = 'x'; $NoSession = $false; $t0 = [datetime]'2026-01-01'; "
+              "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              "function Save-Shot($n, $Until) { $script:t = $script:t.AddMilliseconds(100); $script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 } }; "
+              "foreach ($s in @(@{ count = 5; every = 30; seconds = 10 }, @{ count = 1; every = 3 }, @{ count = 2; every = 3 })) { $script:t = $t0; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $s.count; every = $s.every; seconds = $s.seconds }); "
+              "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture) }")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["10", "0.1", "3.2"], (out.stdout, out.stderr))
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
@@ -3097,6 +3120,18 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.spinner_alone(frame(sc.BLUE)))                        # the menu
         self.assertIsNone(sc.spinner_alone(frame(black, (600, 400, 700, 30))))     # a line of text
         self.assertIsNone(sc.spinner_alone(frame(black, (868, 391, 183, 45))))     # the firmware logo alone
+        # Restarting: the dots move, so each frame shows one phase; the
+        # spinner is their union above the one label (boot-3, 5 and 6 of the
+        # 2026-11-19 walk).
+        word = (906, 585, 108, 23)
+        third = frame(black, (942, 492, 18, 10), (972, 496, 7, 7), (928, 524, 6, 6), (985, 528, 6, 7), (936, 541, 7, 7), word)
+        arc = frame(black, (928, 521, 13, 25), word)                        # a partial arc
+        self.assertEqual(sc.restarting_parts(arc), ([(928, 521, 13, 25)], word))
+        self.assertIsNone(sc.restarting_parts(frame(black, word)))           # the label alone
+        self.assertIsNone(sc.restarting_parts(frame(black, (900, 300, 200, 200), word)))   # not a spinner
+        self.assertIsNone(sc.restarting_parts(frame(sc.BLUE, (942, 492, 18, 10), word)))  # not on black
+        self.assertEqual(sc.restarting_spinner([third, arc, frame(black, (941, 492, 18, 11), (986, 521, 6, 6), word)]),
+                         ((928, 492, 64, 56), word, 3))
         # Startup Repair's first frame, in the firmware's 1024x768: the logo
         # with its label, with a spinner between them too, or with a spinner
         # alone (shapes from the saved walk, 2026-11-18).
