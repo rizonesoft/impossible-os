@@ -2923,10 +2923,12 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(sc.spinner_alone(frame(black, (940, 820, 40, 40))), (940, 820, 40, 40))
         self.assertIsNone(sc.spinner_alone(frame(sc.BLUE)))                        # the menu
         self.assertIsNone(sc.spinner_alone(frame(black, (600, 400, 700, 30))))     # a line of text
+        self.assertIsNone(sc.spinner_alone(frame(black, (868, 391, 183, 45))))     # the firmware logo alone
         mark = (868, 391, 183, 45)
         self.assertTrue(sc.diagnosing(frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38)), mark))
         self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
         self.assertFalse(sc.diagnosing(frame(black, mark), mark))
+        self.assertFalse(sc.diagnosing(frame(black, mark, (785, 896, 60, 38), (900, 896, 60, 38)), mark))   # two words, no spinner
 
     def test_the_setup_scenario_walks_the_local_account_path(self):
         sc = load("host_session_setup", INV / "host" / "session-setup.py")

@@ -65,8 +65,10 @@ BLUE = (33, 101, 181)         # the boot manager's and recovery's background
 MENU = {"x": 10, "y": 10, "rgb": list(BLUE)}   # the boot menu is up: its blue in the corner
 # The boot and stop bursts end at the boot menu (until), so their counts are
 # ceilings: 14 boot frames ran out before Windows' spinner showed alone on a
-# slower restart (2026-11-18).
-BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 30, 12, 8, 20
+# slower restart (2026-11-18), and the boot burst keeps sampling until the menu
+# (90 frames is over two minutes) rather than handing the rest of a slow boot
+# to the menu wait, which keeps no frames (review, 2026-11-18).
+BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 90, 12, 8, 20
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -243,18 +245,28 @@ def spinner_alone(img):
     if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
         return None
     boxes = core.ink_boxes(img, body(img), lit, 10)
-    return boxes[0] if len(boxes) == 1 and boxes[0][2] <= 200 and boxes[0][3] <= 200 else None
+    if len(boxes) != 1:
+        return None
+    x, y, w, h = boxes[0]
+    # A ring of dots, small and below the middle: the firmware logo (183 by 45,
+    # high on the screen) is one box too (review, 2026-11-18).
+    return boxes[0] if w <= 80 and h <= 80 and y + h / 2 > img[1] / 2 else None
 
 
 def diagnosing(img, mark):
     """True on Startup Repair's second phase: at the display's mode, on black,
-    the logo (a box of mark's size) with at least two boxes well below it, the
-    spinner and its label."""
+    the logo (a box of mark's size), a compact spinner well below it, and a
+    label under the spinner. Words of one label on one line are not a spinner
+    (review, 2026-11-18)."""
     if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
         return False
     boxes = core.ink_boxes(img, body(img), lit, 10)
     top = [b for b in boxes if abs(b[2] - mark[2]) <= 4 and abs(b[3] - mark[3]) <= 4]
-    return len(top) == 1 and len([b for b in boxes if b[1] > top[0][1] + top[0][3] + 200]) >= 2
+    if len(top) != 1:
+        return False
+    below = [b for b in boxes if b[1] > top[0][1] + top[0][3] + 200]
+    spins = [b for b in below if b[2] <= 80 and b[3] <= 80]
+    return any(any(l[1] >= sp[1] + sp[3] for l in below if l is not sp) for sp in spins)
 
 
 def records(shots, build, taken=None):
@@ -436,7 +448,7 @@ def records(shots, build, taken=None):
               root, back=True, opened="Change defaults or choose other options",
               behaviour="The same blue page with a back button: each tile names a setting and its current value under it.")
 
-    rx = "Choose other options on the boot manager's options page, which restarts into the recovery environment"
+    rx = "Choose other options on the boot manager's options page, which opens the recovery environment without a restart"
     tile_page("recovery", "Choose an option", "recovery",
               (("continue", "Continue", None, None), ("device", "Use a device", None, None), ("other-os", "Use another operating system", None, None),
                ("troubleshoot", "Troubleshoot", None, None), ("off", "Turn off your PC", None, None)),
@@ -516,7 +528,7 @@ def records(shots, build, taken=None):
     st = rec("safe-mode", "state", "Safe mode desktop", root, openedBy="4 on the Startup Settings menu",
              behaviour=f"The desktop on black with the basic display driver ({img[0]}x{img[1]} on the reference machine), after sign-in; positions are fractions of that screen.")
     rec("safe-mode.marks", "group", "Safe Mode marks", st, itemCount=4,
-        behaviour=f"The two words in small white text in each corner, {marks[0][3]} px tall at this mode, over the wallpaper; the bottom pair sits just above the taskbar, which is {img[1] - 1 - bar} px tall here.")
+        behaviour=f"The two words in small white text in each corner, over the wallpaper; the bottom pair sits just above the taskbar, which is {img[1] - 1 - bar} px tall here. Each mark's size is on its own record.")
     for (cid, lab), m in zip((("top-left", "Top left mark"), ("top-right", "Top right mark"),
                               ("bottom-left", "Bottom left mark"), ("bottom-right", "Bottom right mark")), marks):
         rec(f"safe-mode.marks.{cid}", "control", lab, "safe-mode.marks", controlType="text",
