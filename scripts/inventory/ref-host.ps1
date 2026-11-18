@@ -119,13 +119,16 @@ function Test-ThumbnailColour([byte[]]$Bytes, [int]$Width, [int]$Height, $Want) 
     return @(0, 1, 2 | Where-Object { [Math]::Abs($p[$_] - [int]$Want.rgb[$_]) -gt 8 }).Count -eq 0
 }
 
-function Save-Shot([string]$ShotName) {
+function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     $png = Join-Path $Out "$ShotName.png"
     # One deadline for the whole shot, shared by the mode reads and the
     # thumbnail, so a reset cannot hold a burst frame much past 15 s (review,
     # 2026-11-18: each read had its own budget, and the budget counted only
     # sleeps, not the host calls between them).
+    # Until: a timed burst's own end, which a frame started late in it must
+    # not run past (review, 2026-11-18).
     $script:ShotDeadline = (Get-Date).AddSeconds(15)
+    if ($Until -lt $script:ShotDeadline) { $script:ShotDeadline = $Until }
     for ($try = 1; $try -le 2; ) {
         $before = Get-ShotMode
         try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
@@ -192,19 +195,25 @@ function Invoke-Step($step) {
         'shot' { Save-Shot $step.name }
         'burst' {
             # seconds: also end when that long has passed, so the time watched
-            # does not depend on how fast the host saves a shot; cadence: start
-            # shots no closer than that, which bounds the frames a fast host
-            # keeps; count stays the ceiling on frames (review, 2026-11-18).
-            $start = Get-Date
+            # does not depend on how fast the host saves a shot; a frame that
+            # is waiting for the VM when that time runs out is dropped and the
+            # burst ends. cadence: each shot starts no sooner than that after
+            # the one before it, which bounds the frames a fast host keeps;
+            # count stays the ceiling on frames (review, 2026-11-18).
+            $end = if ($step.seconds) { (Get-Date).AddSeconds([double]$step.seconds) } else { [datetime]::MaxValue }
             for ($i = 1; $i -le [int]$step.count; $i++) {
-                if ($step.seconds -and ((Get-Date) - $start).TotalSeconds -ge [double]$step.seconds) { break }
-                Save-Shot "$($step.name)-$i"
+                if ((Get-Date) -ge $end) { break }
+                $began = Get-Date
+                try { Save-Shot "$($step.name)-$i" $end } catch {
+                    if ((Get-Date) -ge $end -and ($_.Exception.Message -like 'no video head*' -or $_.Exception.Message -like 'thumbnail failed: 32775*')) { break }
+                    throw
+                }
                 # until: end the burst at the first frame that shows that
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).
                 if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
                 if ($step.cadence) {
-                    $wait = ($start.AddSeconds($i * [double]$step.cadence) - (Get-Date)).TotalMilliseconds
+                    $wait = ($began.AddSeconds([double]$step.cadence) - (Get-Date)).TotalMilliseconds
                     if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]$wait) }
                 }
                 Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))

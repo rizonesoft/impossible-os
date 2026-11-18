@@ -1091,6 +1091,30 @@ class Profile(unittest.TestCase):
         # 0.2 s a shot: one a second for 30 s. 2.5 s a shot: back to back, 12 in 30 s.
         self.assertEqual(lines, ["30 30", "12 30"], out.stderr)
 
+    def test_a_burst_spaces_each_shot_from_the_one_before_and_ends_on_time(self):
+        # A slow first shot let the next ones catch up on a schedule counted
+        # from the burst's start, and a frame admitted late could wait 15 s
+        # past the burst's end (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "$Name = 'x'; $NoSession = $false; $t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:starts = @(); "
+              "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              "function Save-Shot($n, $Until) { $script:starts += ($script:t - $t0).TotalSeconds; "
+              "if ($script:starts.Count -eq 1) { $script:t = $script:t.AddMilliseconds(2500) } "
+              "elseif (($script:t - $t0).TotalSeconds -ge 8) { $script:t = $Until; throw 'no video head: resetting' } "
+              "else { $script:t = $script:t.AddMilliseconds(200) }; "
+              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 } }; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'boot'; count = 150; every = 0; cadence = 1; seconds = 10 }); "
+              "(($script:starts | ForEach-Object { $_.ToString([cultureinfo]::InvariantCulture) }) -join ';'); ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 2, out.stdout + out.stderr)
+        starts = [float(x) for x in lines[0].split(";")]
+        self.assertEqual(starts[:3], [0, 2.5, 3.5], starts)
+        self.assertTrue(all(b - a >= 1 for a, b in zip(starts, starts[1:])), starts)
+        self.assertEqual(float(lines[1]), 10, out.stderr)                 # ends at its budget, no error
+
     def test_a_walk_without_a_session_checks_the_build_recorded_on_the_vm(self):
         # A setup walk (no session) could restore an old pre-oobe and publish it
         # under a newer reference.json build (review, 2026-11-18).

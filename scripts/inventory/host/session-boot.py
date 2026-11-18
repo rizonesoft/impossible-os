@@ -70,10 +70,10 @@ SAFE_TASKBAR = {"x": 188, "y": 1069, "rgb": [239, 239, 239]}   # the boot menu i
 # ceilings: 14 boot frames ran out before Windows' spinner showed alone on a
 # slower restart (2026-11-18), and the boot burst keeps sampling until the menu
 # rather than handing the rest of a slow boot to the menu wait, which keeps no
-# frames (review, 2026-11-18). The boot burst watches for BOOT_BURST seconds
-# at one frame a second at most, so neither a fast nor a slow host changes
-# how long it watches.
-BOOT_BURST, REPAIR_BURST, STOP_BURST = 150, 12, 20
+# frames (review, 2026-11-18). The boot and stop bursts watch for that many
+# seconds at one frame a second at most, so neither a fast nor a slow host
+# changes how long they watch.
+BOOT_BURST, REPAIR_BURST, STOP_BURST = 150, 12, 120
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -155,8 +155,10 @@ STEPS = [
     key(FOUR), {"op": "awaitcolour", **SAFE_TASKBAR, "width": 1024, "height": 768, "timeout": 240},
     {"op": "settle", "sec": 3, "timeout": 60}, shot("safe-mode"),
     # An NMI from the host stops Windows; it writes its dump and restarts to the menu.
-    {"op": "nmi"}, {"op": "burst", "name": "stop", "count": STOP_BURST, "every": 0, "until": MENU},
-    {"op": "awaitcolour", **MENU, "timeout": 120},
+    # The stop burst watches the whole way to the menu, like the boot burst:
+    # 20 unpaced frames could all land on the stop screen (review, 2026-11-18).
+    {"op": "nmi"}, {"op": "burst", "name": "stop", "count": STOP_BURST, "every": 0, "cadence": 1, "seconds": STOP_BURST, "until": MENU},
+    {"op": "awaitcolour", **MENU, "timeout": 10},
     # Back into recovery for Startup Repair, which looks for the network and gives up.
     *TO_RECOVERY, *keys(RIGHT), key(ENTER), wait(4), *keys(RIGHT), key(ENTER), wait(4),
     # The progress screens turn a spinner and the failure page is still, so the
