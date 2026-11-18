@@ -104,6 +104,7 @@ function Get-ShotMode() {
     for (;;) {
         try { return Get-RefVideoMode $Name $script:ShotUntil } catch {
             if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'no video head*') { throw }
+            $script:ShotInterrupted = $true
             # The wait stops at the deadline, and no read starts after it
             # (review, 2026-11-18: a retry started past a burst's end).
             Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($script:ShotDeadline - (Get-Date)).TotalMilliseconds)))
@@ -112,6 +113,7 @@ function Get-ShotMode() {
     }
 }
 $script:ShotDeadline = Get-Date
+$script:ShotInterrupted = $false
 $script:ShotUntil = [datetime]::MaxValue
 $script:LastShot = $null
 
@@ -136,6 +138,10 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     # ShotExpired tells the burst to end (review, 2026-11-18).
     if ($Until -lt $script:ShotDeadline) { $script:ShotDeadline = $Until }
     $script:ShotExpired = $false
+    # ShotInterrupted: the helpers waited out a missing video head or an
+    # invalid state inside this shot, which a still screen must not span
+    # (review, 2026-11-19).
+    $script:ShotInterrupted = $false
     # The helpers check the shot's own deadline, the earlier of its 15 s and
     # Until, between their host calls. Past Until the frame is dropped for
     # the burst to end; past the 15 s alone the shot fails, so a standalone
@@ -165,6 +171,7 @@ function Get-ShotPixels() {
             # resets (after the boot walk's stop error, 2026-11-18). Wait it out
             # like a missing video head, up to 15 s, reading the mode again.
             if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+            $script:ShotInterrupted = $true
             Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($script:ShotDeadline - (Get-Date)).TotalMilliseconds)))
             if ((Get-Date) -ge $script:ShotDeadline) { throw }
             continue
@@ -229,7 +236,7 @@ function Invoke-Step($step) {
             # still: end once the screen has held still that long (the same
             # frame bytes), and fail if it never does within the burst.
             $end = if ($step.seconds) { (Get-Date).AddSeconds([double]$step.seconds) } else { [datetime]::MaxValue }
-            $held = $null; $since = $null; $stilled = $false
+            $held = $null; $since = $null; $stilled = $false; $saved = 0
             for ($i = 1; $i -le [int]$step.count; $i++) {
                 if ((Get-Date) -ge $end) { break }
                 $began = Get-Date
@@ -245,6 +252,9 @@ function Invoke-Step($step) {
                     throw
                 }
                 if ($script:ShotExpired) { break }
+                $saved++
+                # The hold restarts after an outage the shot waited out.
+                if ($script:ShotInterrupted) { $held = $null }
                 if ($step.still) {
                     $h = Get-ThumbnailHash $script:LastShot.Bytes
                     if ($h -ne $held) { $held = $h; $since = Get-Date }
@@ -269,6 +279,10 @@ function Invoke-Step($step) {
                 $rest = [Math]::Min([double]$step.every * 1000, ($end - (Get-Date)).TotalMilliseconds)
                 if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]$rest) }
             }
+            # A burst that kept no frame cannot be published, so the walk
+            # stops here and not after the steps that follow (review,
+            # 2026-11-19).
+            if ($saved -eq 0) { throw "burst $($step.name): no frame within the burst" }
             if ($step.still -and -not $stilled) { throw "burst $($step.name): the screen did not hold still for $($step.still) s" }
         }
         'awaitcolour' {

@@ -1218,6 +1218,30 @@ class Profile(unittest.TestCase):
         self.assertEqual(names, [f"repair-{i}" for i in range(1, len(names) + 1)], r.stdout)
         self.assertGreaterEqual(len(names), 8, names)
 
+    def test_a_still_burst_restarts_its_hold_after_an_outage_and_an_empty_burst_fails(self):
+        # An outage a shot waited out let the first frame after it end a still
+        # burst, and a burst with no frame went on to the next steps (review,
+        # 2026-11-19). Identical pixels throughout; the head is gone from 2 s
+        # (from the start for the empty burst) to the given end.
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        burst = "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'repair'; count = 80; every = 0; cadence = 3; seconds = 60; still = 5 })"
+        cases = {"short": (12, burst), "long": (20, burst),
+                 "empty": (100, "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'boot'; count = 10; every = 0; cadence = 1; seconds = 5 })")}
+        got = {}
+        for k, (back, step) in cases.items():
+            gone_from = 0 if k == "empty" else 2      # the empty burst never sees the head
+            case = ("function Cost { 50 }; function Gone { $s = ($script:t - $t0).TotalSeconds; $s -ge %d -and $s -lt %d }; "
+                    "try { %s; 'ok ' + (($shots | ForEach-Object { $_.at }) -join ';') } catch { $_.Exception.Message }; "
+                    "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)") % (gone_from, back, step)
+            r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
+            got[k] = ([line.strip() for line in r.stdout.splitlines() if line.strip()] or [r.stderr])
+        # The hold counts only from the first frame after the head returns:
+        # the burst ends at least 5 s after it, never on that frame.
+        for k, back in (("short", 12), ("long", 20)):
+            self.assertTrue(got[k][0].startswith("ok"), got)
+            self.assertGreaterEqual(float(got[k][-1]), back + 5, got)
+        self.assertEqual(got["empty"][0], "burst boot: no frame within the burst", got)
+
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
         # host clock stepped back an hour asked for an hour (review, 2026-11-18).
