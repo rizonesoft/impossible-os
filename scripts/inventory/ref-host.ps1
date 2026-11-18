@@ -28,7 +28,7 @@ Steps, one object each, by "op":
   nmi     {}                  inject a non-maskable interrupt (Debug-VM), which stops Windows with a stop error
   click   {x, y, button}      move the mouse to a screen pixel and click (button 1 left, 2 right)
   wait    {sec}               sleep
-  awaitcolour {x, y, rgb, timeout}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding
+  awaitcolour {x, y, rgb, timeout[, width, height]}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding, at that mode if given
   shot    {name}              one shot at the current mode
   burst   {name, count, every} count shots every `every` seconds, named <name>-<n>
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
@@ -210,10 +210,23 @@ function Invoke-Step($step) {
             # background and needs no video mode, which a restart takes away
             # (review, 2026-11-18: a native-size image per poll, and a mode
             # read that gave up after 15 s of a 90 s wait).
+            # With width and height, the head must also show that mode: the
+            # Startup Settings menu is blue in the firmware's mode, and the
+            # recovery page before it is blue at the display's (2026-11-18).
             $deadline = (Get-Date).AddSeconds([double]$step.timeout)
             while ((Get-Date) -lt $deadline) {
-                try { if (Test-ThumbnailColour (Get-RefThumbnail $Name 160 90) 160 90 $step) { return } } catch {
-                    if ($_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+                try {
+                    # The thumbnail keeps the screen's aspect: Hyper-V puts a
+                    # 4:3 screen in a 16:9 one between black bars, so the
+                    # corner read black on the 1024 by 768 menu (2026-11-18).
+                    $mode = $true; $tw = 160; $th = 90
+                    if ($step.width) {
+                        $m = Get-RefVideoMode $Name; $mode = ($m[0] -eq [int]$step.width) -and ($m[1] -eq [int]$step.height)
+                        $th = [int](160 * [int]$step.height / [int]$step.width)
+                    }
+                    if ($mode -and (Test-ThumbnailColour (Get-RefThumbnail $Name $tw $th) $tw $th $step)) { return }
+                } catch {
+                    if ($_.Exception.Message -notlike 'thumbnail failed: 32775*' -and $_.Exception.Message -notlike 'no video head*') { throw }
                 }
                 Start-Sleep -Milliseconds 250
             }

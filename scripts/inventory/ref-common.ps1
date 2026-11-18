@@ -379,6 +379,9 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     $script:RefTouched = $true   # from here the VM is this run's to turn off
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
     Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
+    # A checkpoint taken while running restores running: a teardown stops it
+    # before the media repair, so a repair that fails cannot leave it running.
+    if ($NoStart -and (Get-VM -Name $Name).State -eq 'Running') { Stop-VM -Name $Name -TurnOff -Force }
     # A checkpoint taken while the VM was built in its -next folder keeps that
     # folder's media path in its saved state after the folder became $VmPath,
     # though Get-VMDvdDrive already reports the new path; starting it then fails
@@ -399,9 +402,7 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
         if ($LASTEXITCODE -ne 0) { throw "icacls on $($d.Path) failed: $out" }
     }
     if ($NoStart) {
-        if ((Get-VM -Name $Name).State -eq 'Running') { Stop-VM -Name $Name -TurnOff -Force }
-        $state = (Get-VM -Name $Name).State
-        if ($state -eq 'Running') { throw "$Name is still running after the restore of $Checkpoint" }
+        if ((Get-VM -Name $Name).State -eq 'Running') { throw "$Name is still running after the restore of $Checkpoint" }
         return
     }
     if ((Get-VM -Name $Name).State -ne 'Running') { Start-VM -Name $Name }

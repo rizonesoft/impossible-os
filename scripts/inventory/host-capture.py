@@ -241,7 +241,9 @@ def publish(sc, out, rc, dry_run):
         at = captured_build(out)
         shots = taken(out, rc, sc.SHOTS + proof, getattr(sc, "MOVING", ()), getattr(sc, "EARLY", ()))
         proven(sc, out, shots)
-        shots = {n: shots[n] for n in sc.SHOTS}
+        # A burst that ended early has no frames past its last; taken() has
+        # already refused a gap or a missing still (review, 2026-11-18).
+        shots = {n: shots[n] for n in sc.SHOTS if n in shots}
     except core.Incomplete as exc:
         print(f"host-capture: {exc}; nothing published")
         return 3

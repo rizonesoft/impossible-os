@@ -25,6 +25,24 @@ import sys
 from datetime import datetime
 
 
+def band_bytes(img, box):
+    """The pixels of box in a read_png image, row by row."""
+    w, _, data = img
+    x, y, bw, bh = box
+    return b"".join(bytes(data[((y + r) * w + x) * 3:((y + r) * w + x + bw) * 3]) for r in range(bh))
+
+
+def band_change(imgs, box):
+    """What the frames show of one band: the first frame's and every frame of
+    its size are compared, never a frame of another mode (review, 2026-11-18)."""
+    alike = [i for i in imgs if i[:2] == imgs[0][:2]]
+    if len(alike) < 2:
+        return "one frame caught it, so this walk shows no change"
+    if len({band_bytes(i, box) for i in alike}) > 1:
+        return f"its text changed across the {len(alike)} frames compared"
+    return f"its text stayed the same in the {len(alike)} frames compared"
+
+
 def _core():
     if "capture_core" in sys.modules:
         return sys.modules["capture_core"]
@@ -45,7 +63,10 @@ TIMEOUT = 1800
 ENTER, TAB, BACK, UP, DOWN, LEFT, RIGHT, FOUR = 13, 9, 8, 38, 40, 37, 39, 52
 BLUE = (33, 101, 181)         # the boot manager's and recovery's background
 MENU = {"x": 10, "y": 10, "rgb": list(BLUE)}   # the boot menu is up: its blue in the corner
-BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 14, 12, 8, 10
+# The boot and stop bursts end at the boot menu (until), so their counts are
+# ceilings: 14 boot frames ran out before Windows' spinner showed alone on a
+# slower restart (2026-11-18).
+BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 30, 12, 8, 20
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
 FIXTURE = (
@@ -108,7 +129,10 @@ STEPS = [
     *keys(UP, RIGHT), key(ENTER), wait(4), shot("recovery-advanced"),
     # Startup Settings shows its Restart page, then the numbered menu after a restart.
     *keys(DOWN), key(ENTER), wait(4), shot("recovery-startup-settings"),
-    key(ENTER), wait(30), shot("startup-settings"),
+    # Restart shows the numbered menu after a reboot: blue in the firmware's
+    # mode, where the page before it is blue at the display's. A fixed 30 s
+    # could send 4 to a screen still restarting (review, 2026-11-18).
+    key(ENTER), {"op": "awaitcolour", **MENU, "width": 1024, "height": 768, "timeout": 120}, wait(2), shot("startup-settings"),
     key(FOUR), {"op": "burst", "name": "safe-boot", "count": SAFE_BURST, "every": 2},
     {"op": "settle", "sec": 5, "timeout": 240}, shot("safe-mode"),
     # An NMI from the host stops Windows; it writes its dump and restarts to the menu.
@@ -116,7 +140,11 @@ STEPS = [
     {"op": "awaitcolour", **MENU, "timeout": 120},
     # Back into recovery for Startup Repair, which looks for the network and gives up.
     *TO_RECOVERY, *keys(RIGHT), key(ENTER), wait(4), *keys(RIGHT), key(ENTER), wait(4),
-    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 3}, wait(30), shot("automatic-repair"),
+    # The progress screens turn a spinner and the failure page is still, so the
+    # page is the first screen that stays unchanged; a fixed 30 s wait came
+    # after a failure page that was up already (review, 2026-11-18).
+    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 3},
+    {"op": "settle", "sec": 5, "timeout": 180}, shot("automatic-repair"),
     # After a failed repair the first page is More recovery options: Continue,
     # Quick machine recovery and Troubleshoot down the first column, Turn off
     # your PC beside Continue.
@@ -234,11 +262,6 @@ def records(shots, build, taken=None):
             raise core.Incomplete(f"{name}: drawn at 1920x1080, where the firmware's own mode was expected")
         return img
 
-    def band_bytes(img, box):
-        w, _, data = img
-        x, y, bw, bh = box
-        return b"".join(bytes(data[((y + r) * w + x) * 3:((y + r) * w + x + bw) * 3]) for r in range(bh))
-
     def frames(prefix, test, exact=True):
         """The burst frames whose screen passes test, in order. Geometry is
         measured only from exact frames (the mode held across the shot); a
@@ -279,13 +302,17 @@ def records(shots, build, taken=None):
     rec("logo.firmware", "control", "Firmware logo", st, controlType="image",
         behaviour=f"The logo the firmware publishes in its boot graphics table, drawn as it is, {place(img, mark)}; {mark[2] / img[0]:.0%} of the screen wide.")
     every = frames("boot", lambda i: True)
-    alone = [n for n in every[every.index(got[0]) + 1:]
-             if shots[n][:2] == (1920, 1080) and len(core.ink_boxes(shots[n], body(shots[n]), lit, 10)) == 1]
+    alone = lone = None
+    for n in every[every.index(got[0]) + 1:]:          # the first frame with the spinner alone
+        if shots[n][:2] == (1920, 1080):
+            boxes = core.ink_boxes(shots[n], body(shots[n]), lit, 10)
+            if len(boxes) == 1:
+                alone, lone = n, boxes[0]
+                break
     if not alone:
         raise core.Incomplete("boot burst: no frame with the spinner alone after the logo")
-    lone = core.ink_boxes(shots[alone[0]], body(shots[alone[0]]), lit, 10)[0]
     rec("logo.spinner", "control", "Spinner", st, controlType="progressBar",
-        behaviour=f"A ring of dots {place(img, spin)}, below the logo; it keeps turning alone, at the same place, once Windows sets the display's own mode ({place(shots[alone[0]], lone)} at 1920x1080).")
+        behaviour=f"A ring of dots {place(img, spin)}, below the logo; it keeps turning alone, at the same place, once Windows sets the display's own mode ({place(shots[alone], lone)} at 1920x1080).")
 
     # Tile pages: the boot manager's and the recovery environment's.
     def tiles(img, what, n):
@@ -479,10 +506,7 @@ def records(shots, build, taken=None):
     # What the frames show of the percentage: whether the line's band changed
     # between them. It read 0% in some walks and reached 100% in others
     # (stop-6, review 2026-11-18), so no single value is published.
-    band = (0, progress[1], img[0], progress[3])
-    seen = {band_bytes(shots[n], band) for n in got if shots[n][:2] == img[:2]}
-    moved = f"its text changed across the {len(got)} frames that caught the screen" if len(seen) > 1 \
-        else f"its text stayed the same in the {len(got)} frames that caught the screen"
+    moved = band_change([shots[n] for n in got], (0, progress[1], img[0], progress[3]))
     rec("stop.progress", "control", "Progress", st, controlType="text",
         behaviour=f"A text slot of a percentage and one word, {place(img, progress)}; {moved}.")
     rec("stop.code", "control", "Stop code", st, controlType="text",

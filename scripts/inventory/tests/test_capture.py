@@ -1046,11 +1046,17 @@ class Profile(unittest.TestCase):
               "($script:sizes | Select-Object -Unique) -join ';'; "
               "function Get-RefThumbnail { Img 0 0 }; "
               "try { Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); timeout = 30 }); 'returned' } catch { 'timed out' }; "
-              "'waited=' + ($script:now - [datetime]'2026-01-01').TotalSeconds")
+              "'waited=' + ($script:now - [datetime]'2026-01-01').TotalSeconds; "
+              # With a mode: blue at the display's mode is the page before; a
+              # missing head is waited out; blue at the firmware's mode is the menu.
+              "function Get-RefThumbnail($n, $w, $h) { $script:asked = \"$w x $h\"; $b = New-Object byte[] (4 + $w * $h * 2); for ($i = 4; $i -lt $b.Length; $i += 2) { $b[$i] = 0x36; $b[$i + 1] = 0x23 }; ,$b }; $script:m = 0; "
+              "function Get-RefVideoMode { $script:m++; if ($script:m -eq 1) { return @(1920, 1080, 32) }; if ($script:m -eq 2) { throw 'no video head on x' }; @(1024, 768, 32) }; "
+              "Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); width = 1024; height = 768; timeout = 30 }); 'modes=' + $script:m + ' ' + $script:asked")
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines[:4], ["33,101,181", "reads=3", "160 x 90", "timed out"], out.stderr)
         self.assertGreaterEqual(float(lines[4].split("=")[1]), 30.5, out.stderr)   # the whole 30 s, after the first wait
+        self.assertEqual(lines[5], "modes=3 160 x 120", out.stderr)   # the 4:3 screen's own aspect
 
     def test_a_burst_with_until_ends_at_the_first_matching_frame(self):
         # A fixed burst could outrun the boot menu's 30 s countdown (review, 2026-11-18).
@@ -1101,11 +1107,16 @@ class Profile(unittest.TestCase):
               "$p = [IO.Path]::GetTempPath(); "
               "Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'running-checkpoint: ' + $script:state + ' starts=' + $script:starts; "
               "$script:after = 'Saved'; Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'saved-checkpoint: ' + $script:state + ' starts=' + $script:starts; "
-              "Restore-RefCheckpoint 'x' 'clean' $p; 'capture: ' + $script:state + ' starts=' + $script:starts")
+              "Restore-RefCheckpoint 'x' 'clean' $p; 'capture: ' + $script:state + ' starts=' + $script:starts; "
+              # A media repair that fails must not leave a running restore running.
+              "$script:after = 'Running'; $script:state = 'Running'; "
+              "function Get-VMDvdDrive { @([pscustomobject]@{ Path = 'D:\\x\\a.iso' }) }; function Test-Path { $true }; "
+              "function Set-VMDvdDrive { throw 'media refused' }; "
+              "try { Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'no error' } catch { 'error: ' + $_.Exception.Message + ' state=' + $script:state }")
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
         self.assertEqual(lines, ["running-checkpoint: Off starts=0", "saved-checkpoint: Saved starts=0",
-                                 "capture: Running starts=1"], out.stderr)
+                                 "capture: Running starts=1", "error: media refused state=Off"], out.stderr)
 
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
@@ -2740,6 +2751,27 @@ class HostCapture(unittest.TestCase):
         wrote.assert_not_called()
         self.assertIn("not the guest's screen 1:1", said.getvalue())
 
+    def test_a_burst_that_ended_early_is_published_with_the_frames_it_took(self):
+        # publish() indexed every scenario name and raised KeyError on the
+        # frames an early burst skipped (review, 2026-11-18).
+        core = self.hc.core
+        self.index([self.shot("boot-1"), self.shot("menu")])
+        for n in ("boot-1", "menu"):
+            core.write_png(self.tmp / f"{n}.png", 1, 1, bytes(3))
+        (self.tmp / "build.json").write_text(json.dumps({"build": "1"}), encoding="utf-8")
+        got = {}
+
+        class Sc:
+            SHOTS, MOVING, EARLY, SURFACE, FILE = ["boot-1", "boot-2", "boot-3", "menu"], ("boot-",), ("boot-",), "session", "x"
+
+            def records(images, at, shots):
+                got["images"], got["shots"] = sorted(images), sorted(shots)
+                return []
+        with mock.patch.object(self.hc, "build", lambda: "1"), mock.patch.object(self.hc, "checked", lambda r, *_: r), \
+                mock.patch.object(self.hc.capture, "check_scratch", return_value=(0, "")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.hc.publish(Sc, self.tmp, 0, True), 0)
+        self.assertEqual(got, {"images": ["boot-1", "menu"], "shots": ["boot-1", "menu"]})
+
     def test_a_replay_of_another_builds_shots_is_refused(self):
         # A --from replay after the reference build moved on stamped the old
         # shots with the new build (review, 2026-11-18).
@@ -2863,6 +2895,17 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(stop.call_args[0][1], "pre-oobe")
         self.assertIn("interrupted; restored", said.getvalue())
         self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
+
+    def test_the_stop_progress_compares_only_frames_of_one_mode(self):
+        # Two stop frames of different modes were counted as two compared
+        # frames (review, 2026-11-18).
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        a, b = (2, 1, bytes(6)), (2, 1, bytes([255] * 6))
+        other = (1, 1, bytes(3))
+        box = (0, 0, 2, 1)
+        self.assertEqual(sc.band_change([a, other], box), "one frame caught it, so this walk shows no change")
+        self.assertEqual(sc.band_change([a, a, other], box), "its text stayed the same in the 2 frames compared")
+        self.assertEqual(sc.band_change([a, b, other], box), "its text changed across the 2 frames compared")
 
     def test_the_setup_scenario_walks_the_local_account_path(self):
         sc = load("host_session_setup", INV / "host" / "session-setup.py")
