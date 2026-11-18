@@ -240,7 +240,11 @@ function Invoke-Step($step) {
                 # burst could outrun (review, 2026-11-18).
                 if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
                 if ($step.cadence) {
+                    # At most one cadence, and never past the burst's end, so a
+                    # step in the host's clock cannot stretch the sleep (review,
+                    # 2026-11-18).
                     $wait = ($began.AddSeconds([double]$step.cadence) - (Get-Date)).TotalMilliseconds
+                    $wait = [Math]::Min($wait, [Math]::Min([double]$step.cadence * 1000, ($end - (Get-Date)).TotalMilliseconds))
                     if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]$wait) }
                 }
                 Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))
@@ -285,11 +289,16 @@ function Invoke-Step($step) {
         'settle' {
             $quiet = [double]$step.sec; $deadline = (Get-Date).AddSeconds([double]$step.timeout)
             $last = $null; $since = Get-Date
+            # Each poll's host calls check the deadline, and the sleep stops
+            # at it (review, 2026-11-18), as in awaitcolour.
             while ((Get-Date) -lt $deadline) {
-                $h = Get-ThumbnailHash (Get-RefThumbnail $Name)
+                try { $h = Get-ThumbnailHash (Get-RefThumbnail $Name 640 360 $deadline) } catch {
+                    if ($_.Exception.Message -like 'shot expired*') { break }
+                    throw
+                }
                 if ($h -ne $last) { $last = $h; $since = Get-Date }
                 elseif (((Get-Date) - $since).TotalSeconds -ge $quiet) { return }
-                Start-Sleep -Milliseconds 500
+                Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($deadline - (Get-Date)).TotalMilliseconds)))
             }
             throw "the screen did not settle for $quiet s within $($step.timeout) s"
         }

@@ -226,20 +226,23 @@ def band(img, region, test):
     return (x, y + top, w, end - top)
 
 
-def repair_label(img):
+def repair_label(img, logo):
     """(logo, label) on Startup Repair's first frame, else None: in the
-    firmware's mode, on black, the topmost box is the logo and exactly one
-    wide box below it is the label. A compact spinner may sit between them;
-    counting exactly two boxes refused that frame and took a lone spinner for
-    the label (review, 2026-11-18)."""
+    firmware's mode, on black, the firmware logo where the boot burst measured
+    it (logo, within 4 px) and exactly one line of text below it, 60 px wide
+    or more and 12 to 30 px tall. A compact spinner may sit between them.
+    Counting two boxes refused that frame and took a lone spinner for the
+    label; the topmost box and any 3:1 box took a spinner for the logo and a
+    fragment for the label (review, 2026-11-18)."""
     if img[:2] == (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
         return None
     boxes = sorted(core.ink_boxes(img, body(img), lit, 10), key=lambda b: b[1])
-    if not boxes:
+    marks = [b for b in boxes if all(abs(b[i] - logo[i]) <= 4 for i in range(4))]
+    if len(marks) != 1:
         return None
-    mark = boxes[0]
-    below = [b for b in boxes[1:] if b[1] >= mark[1] + mark[3]]
-    labels = [b for b in below if b[2] >= 3 * b[3]]
+    mark = marks[0]
+    below = [b for b in boxes if b[1] >= mark[1] + mark[3]]
+    labels = [b for b in below if b[2] >= 60 and 12 <= b[3] <= 30]
     if len(labels) != 1 or any(b[2] > 80 or b[3] > 80 for b in below if b is not labels[0]):
         return None
     return mark, labels[0]
@@ -424,6 +427,7 @@ def records(shots, build, taken=None):
         raise core.Incomplete("boot burst: no frame with the firmware logo and the spinner")
     img = firmware(got[0])
     mark, spin = sorted(core.ink_boxes(img, body(img), lit, 10), key=lambda b: b[1])
+    boot_logo = mark
     st = rec("logo", "state", "Boot logo", root, openedBy="Power on or restart",
              behaviour=f"Black in the firmware's own mode ({img[0]}x{img[1]} on the reference machine), the firmware's logo and Windows' spinner under it; positions are fractions of that screen, which no profile governs.")
     rec("logo.firmware", "control", "Firmware logo", st, controlType="image",
@@ -653,11 +657,11 @@ def records(shots, build, taken=None):
         behaviour="The span between the host's times for the first exact frame with the stop error and the first exact frame without it; each time is taken as its frame is saved, so this is the span observed, not a bound on the screen's own; with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
-    got = frames("repair", lambda i: repair_label(i) is not None, first=True)
+    got = frames("repair", lambda i: repair_label(i, boot_logo) is not None, first=True)
     if not got:
         raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
     img = shots[got[0]]
-    mark, label = repair_label(img)
+    mark, label = repair_label(img, boot_logo)
     # The second phase is published only when a frame shows it: at the
     # display's mode, the logo again with a spinner and a label below
     # (review, 2026-11-18: it was claimed from the first phase alone).

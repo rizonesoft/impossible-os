@@ -1131,6 +1131,48 @@ class Profile(unittest.TestCase):
         self.assertTrue(out["wait"][0].startswith("the pixel at (10, 10) did not show"), out)
         self.assertEqual(out["wait"][1], "0 0.8", out)
 
+    def test_waits_stop_their_host_calls_and_sleeps_at_their_deadline(self):
+        # A sized colour wait's mode read, its poll sleep and a settle poll
+        # could each run past the wait's end (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        tail = ("'' + $script:calls.Count + ' ' + (($script:calls | Measure-Object -Maximum).Maximum).ToString([cultureinfo]::InvariantCulture) "
+                "+ ' ' + ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+        colour = "Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); width = 1920; height = 1080; timeout = 1 })"
+        cases = {
+            # The mode read's first call uses the whole second: the video head
+            # lookup never starts.
+            "first": "function Cost { 1200 }; function Gone { $false }; try { %s } catch { 'timed out' }; " % colour,
+            # The mode never matches (1024x768): polls at 0, 0.35 and 0.7 s,
+            # and the last sleep stops at 1 s, not 1.05.
+            "mismatch": "function Cost { 50 }; function Gone { $false }; try { %s } catch { 'timed out' }; " % colour,
+            # A settle whose thumbnail calls cross the end: calls at 0, 0.4
+            # and 0.8 s, and none at 1.2.
+            "settle": "function Cost { 400 }; function Gone { $false }; "
+                      "try { Invoke-Step ([pscustomobject]@{ op = 'settle'; sec = 5; timeout = 1 }) } catch { 'timed out' }; ",
+        }
+        got = {}
+        for k, case in cases.items():
+            r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case + tail], capture_output=True, text=True, timeout=120)
+            got[k] = [line.strip() for line in r.stdout.splitlines() if line.strip()] or [r.stderr]
+        self.assertEqual(got["first"], ["timed out", "1 0 1.2"], got)
+        self.assertEqual(got["mismatch"], ["timed out", "6 0.75 1"], got)
+        self.assertEqual(got["settle"], ["timed out", "3 0.8 1.2"], got)
+
+    def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
+        # The cadence sleep was the difference of two wall-clock readings, so a
+        # host clock stepped back an hour asked for an hour (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "$Name = 'x'; $NoSession = $false; $script:t = [datetime]'2026-01-01T12:00'; $script:longest = 0; $script:n = 0; "
+              "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:longest = [Math]::Max($script:longest, $Milliseconds); $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              "function Save-Shot($n, $Until) { $script:n++; if ($script:n -eq 2) { $script:t = $script:t.AddHours(-1) } else { $script:t = $script:t.AddMilliseconds(100) }; "
+              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 } }; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = 5; every = 0; cadence = 1; seconds = 30 }); $script:longest")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertTrue(lines and int(lines[-1]) <= 1000, (out.stdout, out.stderr))
+
     def test_a_timed_burst_starts_no_host_call_after_its_end(self):
         # A frame admitted near a burst's end could take its own 15 s, retry a
         # mode read or run a thumbnail's CIM calls after the end (review,
@@ -3066,10 +3108,12 @@ class HostCapture(unittest.TestCase):
                     data[(yy * sw + x) * 3:(yy * sw + x + bw) * 3] = b"\xff" * (bw * 3)
             return (sw, sh, bytes(data))
         logo, label = (420, 361, 183, 45), (451, 636, 124, 21)
-        self.assertEqual(sc.repair_label(small(logo, label)), (logo, label))
-        self.assertEqual(sc.repair_label(small(logo, (497, 592, 25, 24), label)), (logo, label))
-        self.assertIsNone(sc.repair_label(small(logo, (497, 592, 13, 10))))
-        self.assertIsNone(sc.repair_label(frame(black, logo, label)))      # the display's mode is not the first phase
+        self.assertEqual(sc.repair_label(small(logo, label), logo), (logo, label))
+        self.assertEqual(sc.repair_label(small(logo, (497, 592, 25, 24), label), logo), (logo, label))
+        self.assertIsNone(sc.repair_label(small(logo, (497, 592, 13, 10)), logo))
+        self.assertIsNone(sc.repair_label(frame(black, logo, label), logo))      # the display's mode is not the first phase
+        self.assertIsNone(sc.repair_label(small((497, 592, 25, 24), label), logo))   # a spinner is not the logo
+        self.assertIsNone(sc.repair_label(small(logo, (497, 640, 12, 4)), logo))     # a fragment is not the label
         mark = (868, 391, 183, 45)
         self.assertTrue(sc.diagnosing(frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38)), mark))
         self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
