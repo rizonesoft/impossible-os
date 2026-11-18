@@ -28,6 +28,7 @@ Steps, one object each, by "op":
   nmi     {}                  inject a non-maskable interrupt (Debug-VM), which stops Windows with a stop error
   click   {x, y, button}      move the mouse to a screen pixel and click (button 1 left, 2 right)
   wait    {sec}               sleep
+  awaitcolour {x, y, rgb, timeout}  wait until that pixel shows rgb (within 16-bit rounding)
   shot    {name}              one shot at the current mode
   burst   {name, count, every} count shots every `every` seconds, named <name>-<n>
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
@@ -100,25 +101,30 @@ function Get-RefMouse() {
 # A restart takes the video head away for a moment; a shot then waits for it
 # (up to 15 s) rather than failing the run.
 function Get-ShotMode() {
-    for ($i = 0; ; $i++) {
+    for (;;) {
         try { return Get-RefVideoMode $Name } catch {
-            if ($i -ge 30 -or $_.Exception.Message -notlike 'no video head*') { throw }
+            if ($script:ShotWaits -ge 30 -or $_.Exception.Message -notlike 'no video head*') { throw }
+            $script:ShotWaits++
             Start-Sleep -Milliseconds 500
         }
     }
 }
+$script:ShotWaits = 0
 
 function Save-Shot([string]$ShotName) {
     $png = Join-Path $Out "$ShotName.png"
-    $waits = 0
+    # One budget of waits for the whole shot, shared by the mode reads and the
+    # thumbnail, so a reset cannot hold a burst frame past 15 s (review,
+    # 2026-11-18: each read had its own).
+    $script:ShotWaits = 0
     for ($try = 1; $try -le 2; ) {
         $before = Get-ShotMode
         try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
             # 32775 is Hyper-V's "invalid state": the VM is between states as it
             # resets (after the boot walk's stop error, 2026-11-18). Wait it out
             # like a missing video head, up to 15 s, reading the mode again.
-            if ($waits -ge 30 -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
-            $waits++
+            if ($script:ShotWaits -ge 30 -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+            $script:ShotWaits++
             Start-Sleep -Milliseconds 500
             continue
         }
@@ -180,6 +186,25 @@ function Invoke-Step($step) {
                 Save-Shot "$($step.name)-$i"
                 Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))
             }
+        }
+        'awaitcolour' {
+            # Wait until the pixel at (x, y) shows rgb, within the 16-bit
+            # rounding of the host path: the boot walk's timer for the boot
+            # manager's blue. A burst's length timed it, and then the mode,
+            # which comes back while Windows' spinner still shows alone
+            # (review and live run, 2026-11-18).
+            $deadline = (Get-Date).AddSeconds([double]$step.timeout)
+            while ((Get-Date) -lt $deadline) {
+                $script:ShotWaits = 0
+                $m = Get-ShotMode
+                try { $p = Get-ThumbnailPixel (Get-RefThumbnail $Name $m[0] $m[1]) $m[0] $m[1] ([int]$step.x) ([int]$step.y) } catch {
+                    if ($_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+                    $p = $null
+                }
+                if ($p -and @(0, 1, 2 | Where-Object { [Math]::Abs($p[$_] - [int]$step.rgb[$_]) -gt 8 }).Count -eq 0) { return }
+                Start-Sleep -Milliseconds 250
+            }
+            throw "the pixel at ($($step.x), $($step.y)) did not show $($step.rgb -join ',') within $($step.timeout) s"
         }
         'settle' {
             $quiet = [double]$step.sec; $deadline = (Get-Date).AddSeconds([double]$step.timeout)
@@ -254,11 +279,12 @@ try {
 } finally {
     Close-Session
     if ($script:RefTouched) {
-        if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
         # Put the VM back on its checkpoint, so what a walk changed (the boot
         # walk's boot entry and crash settings) does not outlive the run, on a
-        # failed step too (review, 2026-11-18).
-        try { Restore-VMSnapshot -VMSnapshot (Get-VMSnapshot -VMName $Name -Name $Checkpoint) -Confirm:$false } catch {
+        # failed step too (review, 2026-11-18). Restore-RefCheckpoint turns it
+        # off first and attaches the media again from the VM's own folder, which
+        # a plain restore of pre-oobe would leave pointing at the build folder.
+        try { Restore-RefCheckpoint $Name $Checkpoint $VmPath } catch {
             $why = "the VM could not be restored to $Checkpoint after the run: $($_.Exception.Message)"
             Write-Host "ref-host: $why"
             if (-not $failed) { $failed = $why }

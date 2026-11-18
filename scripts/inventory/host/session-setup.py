@@ -45,6 +45,7 @@ TIMEOUT = 1200
 
 ENTER, ESC, TAB, SHIFT, DOWN, F10 = 13, 27, 9, 16, 40, 121
 EASE = (1540, 949)
+REGION_YES = (1443, 849)      # the centre of the region page's Yes button
 CONSOLE = (700, 500)
 READY_BURST = 10
 PREPARE_BURST = 8
@@ -76,14 +77,15 @@ def advance():
 STEPS = [
     wait(5), settle(90), shot("setup"),
     # The accessibility menu opens about 5 s after the click and keeps the
-    # keyboard. A second click closed it slowly and not always: an Enter sent
-    # 8 s after it still reached the menu, and the walk lost sync (2026-11-18).
-    # Esc goes to the menu that holds the keyboard; the page is then waited on
-    # until it stops changing. On the network page the click opened nothing.
+    # keyboard. Esc closes it, but the focus goes back to its button, so an
+    # Enter then opened it again and the walk lost sync (2026-11-18, twice,
+    # also after closing it with a second click). The page is submitted with
+    # a click on its Yes button, which no focus decides. On the network page
+    # the click opened nothing.
     {"op": "click", "x": EASE[0], "y": EASE[1]}, wait(6), shot("setup-accessibility"),
     key(ESC), wait(3), settle(),
     # The transition between pages, taken as soon as the page is submitted.
-    key(ENTER), shot("between"), wait(3), settle(), shot("keyboard"),
+    {"op": "click", "x": REGION_YES[0], "y": REGION_YES[1]}, shot("between"), wait(3), settle(), shot("keyboard"),
     *advance(), shot("second-keyboard"),
     *advance(), shot("network"),
     {"op": "chord", "mod": SHIFT, "vk": F10}, wait(4), shot("console"),
@@ -169,6 +171,31 @@ def pixel(img, x, y):
     return tuple(data[i:i + 3])
 
 
+def panel_at(img, box, what):
+    """Check that the panel measured on the first page still has its edges at
+    box: at each edge the fill is brighter than the shadow just outside it, and
+    that step is the largest within 4 pixels. The panel is acrylic, so its fill
+    takes the backdrop's tint, and on a light backdrop (a landscape behind the
+    privacy page, 2026-11-18) no colour test tells it from the backdrop; the
+    edge still does, and a panel moved by one pixel fails."""
+    x, y, w, h = box
+
+    def lum(px, py):
+        return sum(pixel(img, px, py))
+
+    def step_x(at, inward):                        # inside minus outside across the edge at `at`
+        return lum(at, y + 40) - lum(at - inward, y + 40)
+
+    def step_y(at, inward):
+        return lum(x + 40, at) - lum(x + 40, at - inward)
+    for name, step, at, inward in (("left", step_x, x, 1), ("right", step_x, x + w - 1, -1),
+                                   ("top", step_y, y, 1), ("bottom", step_y, y + h - 1, -1)):
+        here = step(at, inward)
+        near = max(step(at + d, inward) for d in range(-4, 5) if d)
+        if here < 20 or near >= here:
+            raise core.Incomplete(f"{what}: no panel edge at the {name} of {box} (step {here}, {near} within 4 px)")
+
+
 def panel(img, what):
     """The setup frame's white panel: its edges along a row above the content
     and a column left of the illustration."""
@@ -209,8 +236,7 @@ def records(shots, build, taken=None):
     screen = (0, 0, 1920, 1080)
     frame = panel(shots["setup"], "setup")
     for name in ("between", "keyboard", "second-keyboard", "network", "privacy", "privacy-more", "preparing-1"):
-        if panel(shots[name], name) != frame:
-            raise core.Incomplete(f"{name}: the setup panel moved: {panel(shots[name], name)} against {frame}")
+        panel_at(shots[name], frame, name)
     fx, fy, fw, fh = frame
     content = (fx + fw // 2, fy, fw // 2, fh)
     art = (fx, fy, fw // 2, fh)
@@ -350,7 +376,7 @@ def records(shots, build, taken=None):
 
     # Getting ready: full screen messages between the account and privacy.
     ready = [n for n in sorted((k for k in shots if k.startswith("getting-ready-")), key=lambda k: int(k.rsplit("-", 1)[1]))]
-    messages = []
+    messages, spinners = [], []
     for n in ready:
         img = shots[n]
         # Dark, not exact black: the blue glow reaches the corner (0, 0, 8 on
@@ -359,6 +385,13 @@ def records(shots, build, taken=None):
         if max(pixel(img, 10, 10)) > 16:
             continue
         text = core.ink_boxes(img, screen, lambda p: min(p) >= 60, 20)
+        # The first message has a dotted spinner above it: a narrow piece over
+        # the text, kept out of the text's bounds (review, 2026-11-18).
+        if len(text) > 1:
+            top = min(text, key=lambda b: b[1])
+            if top[2] < 40 and all(b[1] >= top[1] + top[3] for b in text if b is not top):
+                spinners.append(top)
+                text = [b for b in text if b is not top]
         if text:
             messages.append((n, union(*text)))
     if len(messages) < 3:
@@ -372,13 +405,17 @@ def records(shots, build, taken=None):
     rec("page.getting-ready.message", "control", "Message", "page.getting-ready", controlType="text",
         bounds=union(*(box for _, box in messages)),
         behaviour=f"One centred message at a time on black, of one line or of two with the second smaller; the bounds cover every message the frames caught (widths {', '.join(map(str, widths))} px).")
+    rec("page.getting-ready.spinner", "control", "Spinner", "page.getting-ready", controlType="progressBar",
+        **({"bounds": union(*spinners)} if spinners else {}),
+        behaviour="A dotted spinner centred above the first message"
+                  + ("." if spinners else "; no frame of this run caught it, so it has no bounds here."))
     if taken:
         first = next(n for n, _ in messages)
         last = messages[-1][0]
         span = (stamp(taken[last]) - stamp(taken[first])).total_seconds() * 1000
         rec("page.getting-ready.duration", "metric", "Getting ready duration", "page.getting-ready",
             measure={"value": round(span), "unit": "ms", "readBy": f"host frame times, {first} to {last}"},
-            behaviour="At least this long: the first and last dark frames with text, taken about 2.5 s apart; the fade curves belong to the motion catalogue's recorder.")
+            behaviour="At least this long: from the first to the last dark frame with text, named in readBy; the fade curves belong to the motion catalogue's recorder.")
 
     img = shots["privacy"]
     page("privacy", "Privacy settings", frame,

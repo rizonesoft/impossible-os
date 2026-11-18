@@ -1003,11 +1003,42 @@ class Profile(unittest.TestCase):
               "function Start-Sleep { }; function Get-RefVideoMode { @(2, 1, 16) }; function Save-Thumbnail { }; "
               "$script:calls = 0; function Get-RefThumbnail { $script:calls++; if ($script:calls -le 2) { throw 'thumbnail failed: 32775' }; [byte[]](0) }; "
               "$Name = 'x'; $Out = [IO.Path]::GetTempPath(); $shots = New-Object System.Collections.ArrayList; "
+              "$script:ShotWaits = 0; $script:ModesSeen = New-Object System.Collections.ArrayList; "
               "Save-Shot 'a'; 'calls=' + $script:calls; 'exact=' + $shots[0].exact; "
-              "$script:calls = -100; try { Save-Shot 'b'; 'saved' } catch { 'gave up' }") % script
+              "$script:calls = -100; try { Save-Shot 'b'; 'saved' } catch { 'gave up' }; "
+              # One budget for the whole shot: 20 waits for the head, then 20 for
+              # the thumbnail, is more than 15 s and gives up (review, 2026-11-18).
+              "$script:heads = 0; function Get-RefVideoMode { $script:heads++; if ($script:heads -le 20) { throw 'no video head on x' }; @(2, 1, 16) }; "
+              "$script:calls = -18; try { Save-Shot 'c'; 'saved' } catch { 'gave up' }") % script
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("ref-host:")]
-        self.assertEqual(lines, ["calls=3", "exact=True", "gave up"], out.stderr)
+        self.assertEqual(lines, ["calls=3", "exact=True", "gave up", "gave up"], out.stderr)
+
+    def test_await_colour_waits_for_the_pixel_and_reads_rgb565(self):
+        # The boot walk timed its menu by a burst's length, then by the mode,
+        # which comes back while the spinner still shows (2026-11-18).
+        shell, script = self._powershell(INV / "ref-host.ps1", windows=True)
+        common = self._powershell(INV / "ref-common.ps1", windows=True)[1]
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "$b = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "foreach ($fn in 'Get-ShotMode', 'Invoke-Step') { "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text }; "
+              "$f = $b.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-ThumbnailPixel' }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text; "
+              "function Start-Sleep { }; $Name = 'x'; $NoSession = $false; $script:ShotWaits = 0; "
+              "function Get-RefVideoMode { @(2, 1, 16) }; "
+              # black, then 32775 (a reset), then blue (33, 101, 181) as RGB565 0x2336 at (1, 0)
+              "$script:i = 0; function Get-RefThumbnail { $script:i++; "
+              "if ($script:i -eq 1) { return ,[byte[]](0, 0, 0, 0, 0, 0, 0, 0) }; if ($script:i -eq 2) { throw 'thumbnail failed: 32775' }; "
+              "return ,[byte[]](0, 0, 0, 0, 0, 0, 0x36, 0x23) }; "
+              "(Get-ThumbnailPixel ([byte[]](0, 0, 0, 0, 0, 0, 0x36, 0x23)) 2 1 1 0) -join ','; "
+              "Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 1; y = 0; rgb = @(33, 101, 181); timeout = 30 }); 'reads=' + $script:i; "
+              "function Get-RefThumbnail { return ,[byte[]](0, 0, 0, 0, 0, 0, 0, 0) }; "
+              "try { Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 1; y = 0; rgb = @(33, 101, 181); timeout = 0.3 }); 'returned' } catch { 'timed out' }") % (script, common)
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["33,101,181", "reads=3", "timed out"], out.stderr)
 
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
@@ -2605,9 +2636,25 @@ class HostCapture(unittest.TestCase):
 
             def records(*_):
                 raise AssertionError("measured after a failed proof")
-        with mock.patch.object(self.hc.capture, "publish") as wrote, mock.patch.object(self.hc, "build", lambda: "1"):
+        (self.tmp / "build.json").write_text(json.dumps({"build": "1"}), encoding="utf-8")
+        said = io.StringIO()
+        with mock.patch.object(self.hc.capture, "publish") as wrote, mock.patch.object(self.hc, "build", lambda: "1"), \
+                contextlib.redirect_stdout(said):
             self.assertEqual(self.hc.publish(Sc, self.tmp, 0, False), 3)
         wrote.assert_not_called()
+        self.assertIn("not the guest's screen 1:1", said.getvalue())
+
+    def test_a_replay_of_another_builds_shots_is_refused(self):
+        # A --from replay after the reference build moved on stamped the old
+        # shots with the new build (review, 2026-11-18).
+        with mock.patch.object(self.hc, "build", lambda: "2"):
+            with self.assertRaisesRegex(self.hc.core.Incomplete, "no build.json"):
+                self.hc.captured_build(self.tmp)
+            (self.tmp / "build.json").write_text(json.dumps({"build": "1"}), encoding="utf-8")
+            with self.assertRaisesRegex(self.hc.core.Incomplete, "shots are of build 1, the inventory is of 2"):
+                self.hc.captured_build(self.tmp)
+            (self.tmp / "build.json").write_text(json.dumps({"build": "2"}), encoding="utf-8")
+            self.assertEqual(self.hc.captured_build(self.tmp), "2")
 
     def test_the_host_shot_must_be_the_guests_screen_after_16_bit_rounding(self):
         guest = (2, 2, bytes([200, 100, 50] * 4))
@@ -2712,6 +2759,27 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(sc.PAGES, ["region", "keyboard", "second-keyboard", "network", "local-account",
                                     "getting-ready", "privacy", "preparing"])
         self.assertFalse(sc.SESSION)
+
+    def test_the_setup_panel_is_found_by_its_edge_on_a_light_backdrop(self):
+        # A landscape behind the privacy page left the backdrop as light as the
+        # acrylic panel (247, 247, 255 beside 255), and the colour test broke
+        # (2026-11-18); the edge's shadow step still tells them apart.
+        sc = load("host_session_setup", INV / "host" / "session-setup.py")
+        w, h, box = 200, 160, (40, 30, 120, 100)
+        data = bytearray()
+        for y in range(h):
+            for x in range(w):
+                inside = box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]
+                near = box[0] - 3 <= x < box[0] + box[2] + 3 and box[1] - 3 <= y < box[1] + box[3] + 3
+                data += bytes((255, 255, 255) if inside else (231, 231, 239) if near else (247, 247, 255))
+        img = (w, h, bytes(data))
+        sc.panel_at(img, box, "privacy")
+        for moved in ((41, 30, 120, 100), (40, 30, 119, 100), (40, 29, 120, 100)):
+            with self.assertRaisesRegex(self.hc.core.Incomplete, "no panel edge"):
+                sc.panel_at(img, moved, "privacy")
+        flat = (w, h, bytes((247, 247, 255)) * (w * h))
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "no panel edge at the left"):
+            sc.panel_at(flat, box, "privacy")
 
 
 if __name__ == "__main__":

@@ -65,9 +65,11 @@ def build():
 def run_host(label, steps, checkpoint, timeout, session=True):
     """Run ref-host.ps1 over `steps` on a fresh restore of `checkpoint`.
     Returns (output folder, exit code); 3 when it outlived its deadline (the VM
-    is then turned off)."""
+    is then turned off and restored to `checkpoint`). The folder's build.json
+    names the reference build the shots are of."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = capture.WORK / f"{label}-{stamp}"
+    at = build()             # read before the run: the build the restored checkpoint is
     plan = capture.WORK / f"{label}-{stamp}-steps.json"
     plan.write_text(json.dumps(steps, indent=1), encoding="utf-8")
     runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
@@ -76,11 +78,14 @@ def run_host(label, steps, checkpoint, timeout, session=True):
                                      "-Out", capture.winpath(out), "-Checkpoint", checkpoint] + ([] if session else ["-NoSession"]),
                            capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
     except subprocess.TimeoutExpired:
-        stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
+        # -Stop restores the checkpoint too: the killed walk's teardown never ran.
+        stop = runner + [capture.winpath(HERE / "ref-run.ps1"), "-Checkpoint", checkpoint]
         print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop))
         return out, 3
     finally:
         plan.unlink(missing_ok=True)
+    if out.is_dir():         # ref-host refuses a folder that is not empty, so this comes after
+        (out / "build.json").write_text(json.dumps({"build": at}), encoding="utf-8")
     print(r.stdout.replace("\r", "").strip())
     if r.returncode and r.stderr.strip():
         print(f"host-capture: ref-host exit {r.returncode}: " + r.stderr.replace("\r", "").strip())
@@ -200,16 +205,30 @@ def main(argv=None):
         return 4
 
 
+def captured_build(out):
+    """The reference build the run in `out` shot, from the build.json run_host
+    wrote; raises core.Incomplete when it is missing or not the build the
+    inventory names now, so a --from replay never stamps old shots with a newer
+    build (review, 2026-11-18)."""
+    f = out / "build.json"
+    if not f.is_file():
+        raise core.Incomplete(f"{out} names no reference build (no build.json); capture it again")
+    shot = json.loads(f.read_text(encoding="utf-8")).get("build")
+    if shot != build():
+        raise core.Incomplete(f"the shots are of build {shot}, the inventory is of {build()}; capture them again")
+    return shot
+
+
 def publish(sc, out, rc, dry_run):
     proof = [sc.PROOF[0]] if hasattr(sc, "PROOF") else []
     try:
+        at = captured_build(out)
         shots = taken(out, rc, sc.SHOTS + proof, getattr(sc, "MOVING", ()))
         proven(sc, out, shots)
         shots = {n: shots[n] for n in sc.SHOTS}
     except core.Incomplete as exc:
         print(f"host-capture: {exc}; nothing published")
         return 3
-    at = build()
     images = {n: core.read_png(out / s["file"]) for n, s in shots.items()}
     try:
         records = checked(sc.records(images, at, shots), sc.SURFACE, at)

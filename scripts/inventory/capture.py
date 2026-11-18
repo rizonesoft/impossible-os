@@ -225,7 +225,7 @@ def stop_vm(runner):
     try:
         stop = subprocess.run(runner + ["-Stop"], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"ref-run -Stop failed ({exc}); turn the VM off with ref-run.ps1 -Stop"
+        return f"ref-run -Stop failed ({exc}); turn the VM off and restore it with ref-run.ps1 -Stop"
     return stop.stdout.replace("\r", "").strip() or f"ref-run -Stop exited {stop.returncode}"
 
 

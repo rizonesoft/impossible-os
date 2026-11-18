@@ -160,6 +160,19 @@ function Save-Thumbnail([byte[]]$Bytes, [string]$Path, [int]$Width = 640, [int]$
     $bmp.Dispose()
 }
 
+# One pixel of a thumbnail as (r, g, b), from the same layout Save-Thumbnail
+# reads: 4 bytes before the pixels, then little-endian RGB565 by rows.
+function Get-ThumbnailPixel([byte[]]$Bytes, [int]$Width, [int]$Height, [int]$X, [int]$Y) {
+    if ($Bytes.Length -ne 4 + $Width * $Height * 2) { throw "a $Width by $Height thumbnail is $(4 + $Width * $Height * 2) bytes, got $($Bytes.Length)" }
+    if ($X -lt 0 -or $Y -lt 0 -or $X -ge $Width -or $Y -ge $Height) { throw "($X, $Y) is outside $Width by $Height" }
+    $i = 4 + ($Y * $Width + $X) * 2
+    $v = [int]$Bytes[$i] -bor ([int]$Bytes[$i + 1] -shl 8)
+    $r = (($v -shr 11) -band 31) * 255 / 31
+    $g = (($v -shr 5) -band 63) * 255 / 63
+    $bl = ($v -band 31) * 255 / 31
+    return @([int][Math]::Round($r), [int][Math]::Round($g), [int][Math]::Round($bl))
+}
+
 # The mode the VM's video head shows now: width, height and depth.
 function Get-RefVideoMode([string]$Name) {
     $head = Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_VideoHead | Select-Object -First 1

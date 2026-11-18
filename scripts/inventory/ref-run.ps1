@@ -16,11 +16,12 @@ docs/design/inventory/reference.json names.
 
     powershell.exe -File scripts\inventory\ref-run.ps1 -Command 'python C:\ios\in\capture-ui.py --surface notepad-smoke --out C:\ios\out\notepad.json' -In tools -Out R:\11\out
     powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out   # the Notepad UI Automation and screenshot proof
-    powershell.exe -File scripts\inventory\ref-run.ps1 -Stop                    # turn the VM off after a killed run
+    powershell.exe -File scripts\inventory\ref-run.ps1 -Stop                    # turn the VM off and restore it after a killed run
 
 -Stop takes the VM lock first, so it turns off only a VM no live run holds: a
 run still working keeps it (exit 4), and a run that was killed left its lock
-abandoned, which -Stop takes over. Exits 0 when the VM is off.
+abandoned, which -Stop takes over. It turns the VM off and restores -Checkpoint
+(clean unless given). Exits 0 when the VM is off and restored.
 #>
 [CmdletBinding()]
 param(
@@ -42,8 +43,11 @@ $ErrorActionPreference = 'Stop'
 
 if ($Stop) {
     Enter-RefLock $Name
-    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    Write-Host "ref-run: $Name is off"
+    # Back to -Checkpoint, not only off: a killed host walk may have changed the
+    # disk (the boot walk's boot entry and crash settings) before its own
+    # teardown could restore it (review, 2026-11-18).
+    Restore-RefCheckpoint $Name $Checkpoint $VmPath
+    Write-Host "ref-run: $Name is off and back on $Checkpoint"
     exit 0
 }
 if (-not $Out) { Write-Host 'ref-run: give -Out'; exit 2 }

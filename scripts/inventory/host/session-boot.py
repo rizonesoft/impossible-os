@@ -43,6 +43,7 @@ CHECKPOINT = "clean"
 TIMEOUT = 1800
 
 ENTER, TAB, BACK, UP, DOWN, LEFT, RIGHT, FOUR = 13, 9, 8, 38, 40, 37, 39, 52
+BLUE = (33, 101, 181)         # the boot manager's and recovery's background
 BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 14, 12, 8, 10
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
@@ -90,6 +91,10 @@ STEPS = [
     {"op": "admin", "script": FIXTURE},
     # Restarting, the firmware logo with the spinner, then the menu counting down.
     {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0},
+    # Wait for the menu's blue rather than trusting the burst's length to land
+    # inside its 30 s countdown; the mode alone comes back while Windows'
+    # spinner still shows (2026-11-18).
+    {"op": "awaitcolour", "x": 10, "y": 10, "rgb": list(BLUE), "timeout": 90},
     shot("boot-manager"),
     *keys(DOWN), shot("boot-manager-second"),
     *keys(DOWN, TAB), shot("boot-manager-link"),
@@ -126,7 +131,6 @@ SHOTS = [*[f"boot-{i}" for i in range(1, BOOT_BURST + 1)], "boot-manager", "boot
 
 
 SCREEN = (0, 0, 1920, 1080)
-BLUE = (33, 101, 181)         # the boot manager's and recovery's background
 TILE = (74, 166, 222)         # the square behind each choice's icon
 
 
@@ -471,8 +475,9 @@ def records(shots, build, taken=None):
     if not after or got[0] not in taken or after[0] not in taken:
         raise core.Incomplete("stop burst: no frame after the stop error to time it by")
     shown = round((stamp(taken[after[0]]) - stamp(taken[got[0]])).total_seconds() * 1000)
-    rec("stop.shown", "metric", "Stop error shown for", st, measure={"value": shown, "unit": "ms"},
-        behaviour="From the first frame with the stop error to the first frame after it, from frames about 2.5 s apart, with the small memory dump this walk sets.")
+    rec("stop.shown", "metric", "Stop error shown for", st,
+        measure={"value": shown, "unit": "ms", "readBy": f"host frame times, {got[0]} to {after[0]}"},
+        behaviour="The span from the first frame with the stop error to the first frame after it, so the true time is within one frame gap of it either way; with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
     def waiting(img):
