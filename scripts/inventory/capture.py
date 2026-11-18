@@ -37,6 +37,12 @@ profile with two displays is captured there without asking: Hyper-V gives the
 reference VM one display, so the variant with two heads ("dual") provides it
 (capture_core.standin_variant, section 22).
 
+--observe publishes the capture as observations instead (schema.json
+$defs/observation): the measured facts of each record under --profile, written
+whole to <surface>/<file>.<profile>.json beside the canonical <file>.json,
+which must exist and is not touched, so one profile's refresh leaves every
+other profile's file as it was.
+
 --verify-shots re-hashes the store against shots.json and names every missing or
 changed file. --dry-run does steps 1 to 4 and publishes nothing. --fixture also
 keeps the walked tree (tree.json in the raw output) for a test fixture; it costs
@@ -206,6 +212,11 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     print(r.stdout.replace("\r", "").strip())
+    # A failure ref-run did not catch (the guest command's deadline throws)
+    # reaches only stderr; without it the capture would report the missing
+    # output and not its cause.
+    if r.returncode and r.stderr.strip():
+        print(f"{who}: ref-run exit {r.returncode}: " + r.stderr.replace("\r", "").strip())
     return out, r.returncode
 
 
@@ -343,7 +354,7 @@ def recover(journal):
     return True
 
 
-def publish(target, records, surface, out, states, manifest_path, store, *, profile, journal=None):
+def publish(target, records, surface, out, states, manifest_path, store, *, profile, journal=None, file=None):
     """Publish records and screenshots together, or leave the old publication alone.
 
     Stage: copy every screenshot next to its destination under a temporary name,
@@ -355,13 +366,16 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
     handler sees, leaves the journal, and the next run's recover() rolls back.
     Each manifest entry names the record file it was taken for; this run replaces
     only the entries of its own surface, file and profile, so a capture of
-    another file or profile keeps its screenshots on record.
+    another file or profile keeps its screenshots on record. `file` names the
+    record file the screenshots belong to when the target is not that file
+    (an observation file <file>.<profile>.json belongs to <file>).
     """
     journal = journal or JOURNAL
     names = [s["file"] for s in states]
     if len(set(names)) != len(names):
         raise OSError(f"two screenshots of {surface} share a file name; nothing staged")
-    owner = (surface, target.stem, profile)
+    file = file or target.stem
+    owner = (surface, file, profile)
     manifest = [e for e in load_manifest(manifest_path)
                 if (e["surface"], e.get("file"), e["profile"]) != owner]
     dest = store / surface
@@ -379,7 +393,7 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
             staged.append((tmp, dest / s["file"]))
             if sha256(tmp) != sha256(src):
                 raise OSError(f"{tmp}: the copy differs from {src}")
-            manifest.append({"surface": surface, "file": target.stem, "state": state, "profile": p, "width": s["width"],
+            manifest.append({"surface": surface, "file": file, "state": state, "profile": p, "width": s["width"],
                              "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
         manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
         man_tmp = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
@@ -454,6 +468,8 @@ def main(argv=None):
     ap.add_argument("--module", help="the surface module that writes this file (default: the one named after --surface)")
     ap.add_argument("--profile", default="fhd-100")
     ap.add_argument("--merge", action="store_true")
+    ap.add_argument("--observe", action="store_true",
+                    help="publish the capture as observations of the canonical records, in <file>.<profile>.json")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fixture", action="store_true", help="also keep the walked tree, for a test fixture")
     ap.add_argument("--verify-shots", action="store_true")
@@ -490,6 +506,8 @@ def main(argv=None):
     args.standin, problem = core.standin_variant(args.profile, profiles[args.profile], variants, args.standin)
     if problem:
         ap.error(problem)
+    if args.observe and args.merge:
+        ap.error("--observe rewrites the observation file whole; --merge applies to a canonical file")
     if args.file.startswith("baseline"):
         # check-inventory.py reads a baseline* file as completeness rows and skips its records.
         ap.error(f"--file {args.file!r}: names starting with baseline are completeness baselines, not record files")
@@ -516,11 +534,26 @@ def capture_and_publish(args):
     except core.Incomplete as exc:
         print(f"capture: {exc}; nothing published, nothing removed")
         return 3
-    rel = pathlib.PurePosixPath(core.slug(args.surface)) / f"{args.file}.json"
-    try:
-        records = build_file(INVENTORY / rel, new, meta, args.merge)
-    except SystemExit as exc:
-        return exc.code
+    if args.observe:
+        # An observation file holds only what this capture measured, so it is
+        # rewritten whole; the canonical file and the other profiles' files
+        # are not touched.
+        rel = pathlib.PurePosixPath(core.slug(args.surface)) / f"{args.file}.{args.profile}.json"
+        canonical = INVENTORY / rel.parent / f"{args.file}.json"
+        if not canonical.is_file():
+            print(f"capture: {canonical} does not exist; capture the canonical profile first")
+            return 2
+        try:
+            records = core.observations(new, args.profile)
+        except ValueError as exc:
+            print(f"capture: {exc}")
+            return 1
+    else:
+        rel = pathlib.PurePosixPath(core.slug(args.surface)) / f"{args.file}.json"
+        try:
+            records = build_file(INVENTORY / rel, new, meta, args.merge)
+        except SystemExit as exc:
+            return exc.code
     code, report = check_scratch({rel: records})
     print(report.strip())
     if code != 0:
@@ -531,7 +564,7 @@ def capture_and_publish(args):
         return 0
     try:
         publish(INVENTORY / rel, records, args.surface, out, meta.get("states", []), SHOTS_MANIFEST, STORE,
-                profile=args.profile)
+                profile=args.profile, file=args.file)
     except OSError as exc:
         print(f"capture: publishing failed ({exc}); the previous publication is unchanged")
         return 1

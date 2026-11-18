@@ -904,6 +904,122 @@ class Decisions(unittest.TestCase):
         self.assertEqual({e["kind"] for e in entries}, {"look", "flow", "home"})
 
 
+
+W = "win11.window"
+STATES = ("restored", "maximized", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right", "minimized")
+KEYS = ("up", "down", "left", "right")
+
+
+def box(x, y, w, h):
+    return {"x": x, "y": y, "width": w, "height": h}
+
+
+def wrec(rid, **kw):
+    kw.setdefault("surface", "window")
+    kw.setdefault("captureProfile", "fhd-100")
+    kw.setdefault("session", "console")
+    return rec(rid, **kw)
+
+
+def obs(rid, profile, bounds):
+    return {"id": rid, "captureProfile": profile, "capturedFrom": B, "session": "console", "bounds": bounds}
+
+
+def arrangement(halves=((0, 960), (960, 960)), area=(1920, 1032), choices=("Halves",)):
+    """A work area with one layout of two side-by-side zones, the flyout that
+    offers it, and a complete Win and arrow key table."""
+    w, h = area
+    t = [wrec(f"{W}.snap-zones", kind="region", bounds=box(0, 0, w, h)),
+         wrec(f"{W}.snap-zones.halves", kind="group", label="Halves", parent=f"{W}.snap-zones", bounds=box(0, 0, w, h))]
+    for i, (x, zw) in enumerate(halves):
+        t.append(wrec(f"{W}.snap-zones.halves.zone-{i}", kind="region", parent=f"{W}.snap-zones.halves", order=i,
+                      bounds=box(x, 0, zw, h)))
+    t.append(wrec(f"{W}.snap-layouts", kind="region"))
+    for i, c in enumerate(choices):
+        t.append(wrec(f"{W}.snap-layouts.c{i}", kind="group", label=c, controlType="group", parent=f"{W}.snap-layouts",
+                      order=i, bounds=box(10 + i * 100, 10, 98, 64)))
+    t.append(wrec(f"{W}.snap-keys", kind="group", source=f"hand:{B}", parent=f"{W}.snap-zones", order=1))
+    n = 0
+    for st in STATES:
+        for k in KEYS:
+            t.append(wrec(f"{W}.snap-keys.{st}-{k}", kind="gesture", parent=f"{W}.snap-keys", order=n,
+                          source=f"hand:{B}", behaviour=f"Goes somewhere from {st}"))
+            n += 1
+    return t
+
+
+def observed(profile, area, halves):
+    w, h = area
+    rows = [obs(f"{W}.snap-zones", profile, box(0, 0, w, h)), obs(f"{W}.snap-zones.halves", profile, box(0, 0, w, h))]
+    rows += [obs(f"{W}.snap-zones.halves.zone-{i}", profile, box(x, 0, zw, h)) for i, (x, zw) in enumerate(halves)]
+    rows.append(obs(f"{W}.snap-layouts.c0", profile, box(10, 10, 98, 64)))
+    return rows
+
+
+class Tiling(unittest.TestCase):
+    """Snap zones tile the work area exactly, per profile."""
+
+    def tree(self, t, extra=None):
+        files = {"window/switching.json": t}
+        files.update(extra or {})
+        return files
+
+    def fails(self, files, rule, *args):
+        r = run(files, *args)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(f": {rule}:", r.stdout)
+
+    def test_halves_tile(self):
+        r = run(self.tree(arrangement()))
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_split_that_is_no_whole_number_of_pixels_tiles(self):
+        # 1921 / 3: thirds of 640, 640 and 641 px.
+        t = arrangement(halves=((0, 640), (640, 640), (1280, 641)), area=(1921, 1032))
+        r = run(self.tree(t))
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_zone_collapsed_to_zero_width_fails(self):
+        self.fails(self.tree(arrangement(halves=((0, 1920), (1920, 0)))), "tiling-empty")
+
+    def test_a_gutter_widened_into_a_zone_fails(self):
+        t = arrangement(halves=((0, 960), (970, 950)))
+        t.insert(4, wrec(f"{W}.snap-zones.halves.gutter", kind="region", parent=f"{W}.snap-zones.halves", order=5,
+                         label="Gutter", bounds=box(955, 0, 15, 1032)))
+        self.fails(self.tree(t), "tiling-overlap")
+
+    def test_an_edge_zone_one_pixel_past_the_work_area_fails(self):
+        self.fails(self.tree(arrangement(halves=((0, 960), (960, 961)))), "tiling-outside")
+
+    def test_a_gap_fails(self):
+        self.fails(self.tree(arrangement(halves=((0, 960), (961, 959)))), "tiling-gap")
+
+    def test_an_observed_profile_is_tiled_too(self):
+        extra = {"window/switching.wide-100.json": observed("wide-100", (2560, 1032), ((0, 1280), (1280, 1279)))}
+        self.fails(self.tree(arrangement(), extra), "tiling-gap")
+
+    def test_every_profile_is_required_at_completion(self):
+        extra = {"window/switching.wide-100.json": observed("wide-100", (2560, 1032), ((0, 1280), (1280, 1280)))}
+        self.assertEqual(run(self.tree(arrangement(), extra)).returncode, 0)
+        self.fails(self.tree(arrangement(), extra), "tiling-profile", "--complete")
+        extra["window/switching.tall-100.json"] = observed("tall-100", (1080, 1872), ((0, 540), (540, 540)))
+        r = run(self.tree(arrangement(), extra), "--complete")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_layout_the_flyout_offers_without_zones_fails_at_completion(self):
+        extra = {"window/switching.wide-100.json": observed("wide-100", (2560, 1032), ((0, 1280), (1280, 1280))),
+                 "window/switching.tall-100.json": observed("tall-100", (1080, 1872), ((0, 540), (540, 540)))}
+        t = arrangement(choices=("Halves", "Wide only"))
+        extra["window/switching.wide-100.json"].append(obs(f"{W}.snap-layouts.c1", "wide-100", box(110, 10, 98, 64)))
+        t = [r for r in t if r["id"] != f"{W}.snap-layouts.c1"] + [
+            wrec(f"{W}.snap-layouts.c1", kind="group", label="Wide only", controlType="group", parent=f"{W}.snap-layouts",
+                 order=1, source=f"hand:{B}")]
+        self.fails(self.tree(t, extra), "tiling-choices", "--complete")
+
+    def test_an_unlisted_key_transition_fails(self):
+        t = [r for r in arrangement() if r["id"] != f"{W}.snap-keys.left-down"]
+        self.fails(self.tree(t), "key-table")
+
 class Index(unittest.TestCase):
     """--index judges the staged bytes, not a later unstaged fix."""
 

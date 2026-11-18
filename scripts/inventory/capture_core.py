@@ -182,13 +182,18 @@ def matches(element, spec):
     "selected" and "sa_hv" under the pointer, 2026-11-17). `automationIdPrefix`
     matches the start of the automation id, for a web page's list whose id
     carries its category and a URL-encoded query (the emoji panel's
-    "expanded-view-list-Emoji-Most%20frequently%20used", 2026-11-18)."""
+    "expanded-view-list-Emoji-Most%20frequently%20used", 2026-11-18).
+    `nameSuffix` matches the end of the name, for elements named for a live
+    value and then a fixed kind (a snap zone's "Left, 28% width, 100% height":
+    the place and share change with the display, the ending does not)."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
               "className": element.class_name, "name": name_of(element)}
 
     def one(k, v):
         if k == "namePrefix":
             return fields["name"].startswith(v)
+        if k == "nameSuffix":
+            return fields["name"].endswith(v)
         if k == "automationIdPrefix":
             return (fields["automationId"] or "").startswith(v)
         if k == "classPrefix":
@@ -655,6 +660,9 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None, transient=lambda exc: Fals
 # scrolled through, 2026-11-17) names its baseline row like a walked one.
 AUTHORED_FIELDS = ("kind", "label", "order", "behaviour", "openedBy", "shortcut", "shortcutScope", "overridable",
                    "measure", "motion", "state", "enabled", "itemCount", "controlType", "uiaId", "baselineId", "colours")
+# What only METRICS may author: facts read off the screen (a snapped window's
+# frame), never typed by hand, so a HAND record carrying one is refused.
+MEASURED_FIELDS = ("bounds",)
 
 
 def authored(items, *, surface, build, source, profile=None, session=None):
@@ -665,7 +673,8 @@ def authored(items, *, surface, build, source, profile=None, session=None):
     carried across a merge."""
     out = []
     for it in items:
-        extra = set(it) - set(AUTHORED_FIELDS) - {"id", "parent"}
+        allowed = set(AUTHORED_FIELDS) | (set(MEASURED_FIELDS) if source == "uia" else set())
+        extra = set(it) - allowed - {"id", "parent"}
         if extra:
             raise ValueError(f"{it.get('id')}: field(s) {sorted(extra)} cannot be authored")
         r = {"id": f"win11.{surface}.{it['id']}", "surface": surface, "kind": it["kind"], "label": it["label"],
@@ -711,6 +720,31 @@ def confirm_dump(tree, cap, **walk_args):
 # baseline link), the capture's value wins: the module is that field's author.
 HAND_FIELDS = ("behaviour", "disposition", "inconsistency", "reason", "mergedInto", "placedUnder", "baselineId", "baselineMissing",
                "toggleStates")
+
+
+# What an observation carries (schema.json $defs/observation): the same element
+# measured under another capture profile, keyed by (id, profile).
+OBSERVED_FIELDS = ("bounds", "measure", "textMetrics")
+
+
+def observations(records, profile):
+    """The observation rows of a capture taken under `profile`: each record's
+    measured facts, keyed by its id. A record that measured nothing is left
+    out (an observation carries at least one fact); a record taken under
+    another profile is refused, since its facts would be filed under the
+    wrong one. A hand record was taken under no profile and measures
+    nothing, so it is no observation either."""
+    rows = []
+    for r in records:
+        if r.get("source", "").split(":")[0] == "hand":
+            continue
+        if r.get("captureProfile") != profile:
+            raise ValueError(f"{r['id']}: taken at {r.get('captureProfile')}, not {profile}")
+        facts = {f: r[f] for f in OBSERVED_FIELDS if f in r}
+        if facts:
+            rows.append({"id": r["id"], "captureProfile": profile, "capturedFrom": r["capturedFrom"],
+                         "session": r["session"], **facts})
+    return rows
 
 
 def merge(old, new, ambiguous):

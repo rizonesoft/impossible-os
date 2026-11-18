@@ -482,6 +482,25 @@ class Identity(unittest.TestCase):
         self.assertEqual([r["id"] for r in cap.records[1:]], ["win11.s.r.volume", "win11.s.r.bell"])
         self.assertNotIn("audio", json.dumps(cap.records))
 
+    def test_a_name_suffix_picks_out_snap_zones_by_position_on_every_display(self):
+        # A snap zone is named for its place and its share of the screen, and
+        # a portrait display renames every zone (2026-11-18): the zones are
+        # told apart by their order, and only the buttons whose name ends in
+        # the share are zones, so a suggestion button beside them keeps its name.
+        def layout(*names):
+            return node("2 window split layout", "Group", "LayoutGrid",
+                        children=[node(n, "Button", cls="Button") for n in names] +
+                        [node("Suggested", "Button", cls="Button")])
+        identity = [({"className": "Button", "nameSuffix": "% height", "nth": k}, f"zone-{k}") for k in (1, 2)]
+        for names in (("Left half, 50% width, 100% height", "Right half, 50% width, 100% height"),
+                      ("Top half, 100% width, 50% height", "Bottom half, 100% width, 50% height")):
+            cap = core.walk(core.FixtureElement(node("Root", "Window", children=[layout(*names)])), surface="s",
+                            build="1.2", profile="p", session="console", root_slug="r", root_label="R",
+                            identity=identity)
+            self.assertEqual([r["id"] for r in cap.records[2:]],
+                             ["win11.s.r.layoutgrid.zone-1", "win11.s.r.layoutgrid.zone-2",
+                              "win11.s.r.layoutgrid.suggested"])
+
     def test_a_class_prefix_matches_whole_leading_words(self):
         # Search's best match row gains state classes under the pointer; the
         # prefix is whole words, so "suggestion" never matches "suggestions".
@@ -1098,9 +1117,9 @@ class Shots(unittest.TestCase):
     STATE = [{"state": "rest", "file": "rest.fhd-100.png", "width": 2, "height": 1}]
 
     def publish(self, records=({"id": "win11.notepad-smoke.window", "label": "Notepad"},), target=None,
-                states=None, profile="fhd-100"):
+                states=None, profile="fhd-100", file=None):
         capture.publish(target or self.target, list(records), "notepad-smoke", self.out, states or self.STATE,
-                        self.manifest, self.store, profile=profile, journal=self.journal)
+                        self.manifest, self.store, profile=profile, journal=self.journal, file=file)
 
     def shot(self, name):
         core.write_png(self.out / "shots" / "notepad-smoke" / name, 2, 1, b"\xff\x00\x00\x00\xff\x00")
@@ -1121,6 +1140,46 @@ class Shots(unittest.TestCase):
                                    ("window", "rest", "fhd-150")])
         mine = [e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke"]
         self.assertEqual(capture.verify_shots(mine, self.store), [])
+
+    def test_refreshing_one_profile_leaves_the_others_byte_identical(self):
+        def rec(rid, x, profile):
+            return {"id": rid, "surface": "notepad-smoke", "kind": "region", "label": "Zone", "order": 0,
+                    "source": "uia:1", "capturedFrom": "1", "captureProfile": profile, "session": "console",
+                    "bounds": {"x": x, "y": 0, "width": 7, "height": 3}}
+        self.publish([rec("win11.notepad-smoke.zone", 0, "fhd-100")])
+        files = {}
+        for profile, x in (("wide-100", 1), ("tall-100", 2)):
+            files[profile] = self.target.with_name(f"window.{profile}.json")
+            self.publish(core.observations([rec("win11.notepad-smoke.zone", x, profile)], profile),
+                         target=files[profile], states=[self.shot(f"rest.{profile}.png")], profile=profile,
+                         file="window")
+        before = {p: f.read_bytes() for p, f in [("fhd-100", self.target)] + list(files.items())}
+        self.publish(core.observations([rec("win11.notepad-smoke.zone", 5, "wide-100")], "wide-100"),
+                     target=files["wide-100"], states=[self.shot("rest.wide-100.png")], profile="wide-100",
+                     file="window")
+        self.assertEqual(self.target.read_bytes(), before["fhd-100"])
+        self.assertEqual(files["tall-100"].read_bytes(), before["tall-100"])
+        self.assertEqual(json.loads(files["wide-100"].read_text())["bounds"]["x"], 5)
+        owned = sorted((e["file"], e["profile"]) for e in json.loads(self.manifest.read_text())
+                       if e["surface"] == "notepad-smoke")
+        self.assertEqual(owned, [("window", "fhd-100"), ("window", "tall-100"), ("window", "wide-100")])
+
+    def test_an_observation_keeps_only_measured_facts_of_its_profile(self):
+        r = {"id": "win11.s.a", "surface": "s", "kind": "control", "label": "A", "order": 0, "source": "uia:1",
+             "capturedFrom": "1", "captureProfile": "wide-100", "session": "console",
+             "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "disposition": "build"}
+        bare = dict(r, id="win11.s.b")
+        del bare["bounds"]
+        self.assertEqual(core.observations([r, bare], "wide-100"),
+                         [{"id": "win11.s.a", "captureProfile": "wide-100", "capturedFrom": "1",
+                           "session": "console", "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}}])
+        with self.assertRaises(ValueError):
+            core.observations([r], "tall-100")
+
+    def test_a_hand_record_belongs_to_no_profile_and_is_no_observation(self):
+        hand = {"id": "win11.s.keys", "surface": "s", "kind": "group", "label": "Keys", "order": 0,
+                "source": "hand:1", "capturedFrom": "1", "disposition": "build"}
+        self.assertEqual(core.observations([hand], "wide-100"), [])
 
     def test_a_shot_of_another_profile_publishes_nothing(self):
         with self.assertRaises(OSError):
@@ -1748,6 +1807,24 @@ class Serial(unittest.TestCase):
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith("-in")], [])   # staging removed
 
 
+    def test_a_failed_guest_run_reports_why(self):
+        # ref-run's guest-command deadline throws, and PowerShell writes the
+        # error to stderr; dropped, the capture said only "no meta.json"
+        # (2026-11-18, a switching capture past the 900 s default).
+        real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath
+
+        def fake(cmd, **kw):
+            return capture.subprocess.CompletedProcess(
+                cmd, 1, "", "Wait-Until : timed out after 900 s waiting for the interactive command\r\n")
+        capture.subprocess.run, capture.WORK, capture.winpath = fake, self.tmp, str
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                _, rc = capture.run_guest("notepad-smoke", "fhd-100", 900)
+        finally:
+            capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
+        self.assertEqual(rc, 1)
+        self.assertIn("timed out after 900 s", out.getvalue())
+
     def test_an_interrupted_capture_stops_the_vm(self):
         calls = []
         real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath
@@ -2044,6 +2121,14 @@ class Scenes(unittest.TestCase):
 
 
 class Authored(unittest.TestCase):
+    def test_measured_bounds_are_authored_by_metrics_never_by_hand(self):
+        zone = {"id": "z", "kind": "region", "label": "Zone", "order": 0,
+                "bounds": {"x": 0, "y": 0, "width": 960, "height": 1032}}
+        (r,) = core.authored([zone], surface="window", build="1", source="uia", profile="fhd-100", session="console")
+        self.assertEqual(r["bounds"]["width"], 960)
+        with self.assertRaises(ValueError):
+            core.authored([zone], surface="window", build="1", source="hand")
+
     def test_hand_and_metric_records_check_beside_the_capture(self):
         m, _ = Scenes().mod()
         cap, _ = core.run_scenes(core.scenes_of(m), None, Scenes().walk_scene)

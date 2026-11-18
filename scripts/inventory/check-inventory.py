@@ -53,7 +53,13 @@ record or whose profile differs from its file name, and two observations of one
 id under one profile.
 
     python3 scripts/inventory/check-inventory.py [--surface NAME] [--baselines] [--json] [--root DIR] [--index]
-                                                 [--allow-undecided] [--design-root DIR]
+                                                 [--allow-undecided] [--design-root DIR] [--complete]
+
+Window arrangements (section 9): each layout of a tiled container (TILED) tiles
+the work area exactly under every profile that measured it, and a Win and arrow
+key table (KEY_TABLES) lists every state and arrow. --complete, run at the
+section's Done when and never by a publish, also requires each listed profile
+and, under each, the same layouts as its flyout offers.
 
 --design-root is the folder a ledger design is read from: the parent of the
 inventory unless given (a scratch copy of the inventory alone names the real one).
@@ -102,6 +108,22 @@ CATALOGUE_KINDS = frozenset({"shortcut", "gesture", "metric", "motion", "sound",
 # A replaced record of the key kind is held by a record of the value kind.
 MERGE_KINDS = {"setting": "setting", "page": "page", "dialogTab": "page"}
 PLACE_KINDS = ("page", "group")
+# Window arrangements (the Windows 11 parity inventory, its window switching item). Each container's layouts tile its
+# bounds (the work area) exactly under every profile that measured them: the
+# container's children are layouts, each layout's children its zones and
+# gutters, every one an integer rectangle inside the work area with positive
+# width and height, no two overlapping, together covering it. A layout counts
+# under a profile when it has bounds there; its fractions of the work area are
+# derived from the bounds, never stored. --complete (the section's Done when,
+# never a publish) also requires every listed profile, and under each one the
+# same layouts as the flyout `choices` offers there, matched by label.
+TILED = {"win11.window.snap-zones": {"profiles": ("fhd-100", "wide-100", "tall-100"),
+                                      "choices": "win11.window.snap-layouts"}}
+# The Win and arrow key table: one record <table>.<state>-<key> for every state
+# a window can be in and every arrow, so no transition goes unlisted.
+KEY_TABLES = {"win11.window.snap-keys": (("restored", "maximized", "left", "right", "top-left", "top-right",
+                                          "bottom-left", "bottom-right", "minimized"),
+                                         ("up", "down", "left", "right"))}
 GONE = ("replaced", "excluded")
 
 _spec = importlib.util.spec_from_file_location("baseline_core", pathlib.Path(__file__).resolve().parent / "baseline_core.py")
@@ -535,7 +557,95 @@ def baseline_summary(root, surface, records, err):
     return summary
 
 
-def check(root, surface=None, allow_undecided=False, design_root=None):
+def _area(b):
+    return b["width"] * b["height"]
+
+
+def _overlap(a, b):
+    return (a["x"] < b["x"] + b["width"] and b["x"] < a["x"] + a["width"]
+            and a["y"] < b["y"] + b["height"] and b["y"] < a["y"] + a["height"])
+
+
+def tiling_errors(records, children, observations, err, complete):
+    """TILED and KEY_TABLES over the loaded tree (see their comment)."""
+    seen = {(obj["id"], profile): (path, n, obj) for path, n, profile, obj in observations}
+
+    def at(rid, profile):
+        """(bounds, path, line) of rid under profile, or None."""
+        path, n, obj, _ = records[rid]
+        if obj.get("captureProfile") == profile and "bounds" in obj:
+            return obj["bounds"], path, n
+        o = seen.get((rid, profile))
+        if o and "bounds" in o[2]:
+            return o[2]["bounds"], o[0], o[1]
+        return None
+
+    for cid, rule in TILED.items():
+        if cid not in records:
+            continue
+        cpath, cn, _, cmine = records[cid]
+        profiles = {records[cid][2].get("captureProfile")} | {p for (i, p) in seen if i == cid}
+        if complete:
+            for p in rule["profiles"]:
+                if p not in profiles or at(cid, p) is None:
+                    err(cpath, cn, "tiling-profile", f"{cid}: no work area measured at {p}")
+        for p in sorted(x for x in profiles if x):
+            found = at(cid, p)
+            if found is None:
+                continue
+            area = found[0]
+            layouts = [k for k in children.get(cid, []) if records[k][2]["kind"] == "group" and at(k, p)]
+            if complete and not layouts:
+                err(cpath, cn, "tiling-profile", f"{cid}: no layout measured at {p}")
+            for lid in layouts:
+                lb, lpath, ln = at(lid, p)
+                if lb != area:
+                    err(lpath, ln, "tiling-layout", f"{lid} at {p}: bounds {lb} are not the work area {area}")
+                parts = [(k, *at(k, p)) for k in children.get(lid, []) if at(k, p)]
+                if not parts:
+                    err(lpath, ln, "tiling-gap", f"{lid} at {p}: no zone measured")
+                    continue
+                good = []
+                for k, b, path, n in parts:
+                    if b["width"] <= 0 or b["height"] <= 0:
+                        err(path, n, "tiling-empty", f"{k} at {p}: {b['width']} by {b['height']} px is no zone")
+                    elif (b["x"] < area["x"] or b["y"] < area["y"] or b["x"] + b["width"] > area["x"] + area["width"]
+                          or b["y"] + b["height"] > area["y"] + area["height"]):
+                        err(path, n, "tiling-outside", f"{k} at {p}: {b} reaches past the work area {area}")
+                    else:
+                        good.append((k, b, path, n))
+                clash = False
+                for i, (k, b, path, n) in enumerate(good):
+                    for k2, b2, _, _ in good[i + 1:]:
+                        if _overlap(b, b2):
+                            clash = True
+                            err(path, n, "tiling-overlap", f"{k} and {k2} overlap at {p}")
+                if len(good) == len(parts) and not clash and sum(_area(b) for _, b, _, _ in good) != _area(area):
+                    covered = sum(_area(b) for _, b, _, _ in good)
+                    err(lpath, ln, "tiling-gap", f"{lid} at {p}: its zones cover {covered} of the work area's "
+                        f"{_area(area)} px")
+        choices = rule.get("choices")
+        if complete and choices in records:
+            for p in rule["profiles"]:
+                offered = {records[k][2]["label"] for k in children.get(choices, [])
+                           if records[k][2].get("controlType") == "group" and at(k, p)}
+                zoned = {records[k][2]["label"] for k in children.get(cid, [])
+                         if records[k][2]["kind"] == "group" and at(k, p)}
+                for label in sorted(offered ^ zoned):
+                    where_ = "offered by the flyout but has no zones" if label in offered else "has zones the flyout does not offer"
+                    err(cpath, cn, "tiling-choices", f"{cid} at {p}: layout {label!r} {where_}")
+
+    for tid, (states, keys) in KEY_TABLES.items():
+        if tid not in records or not records[tid][3]:
+            continue
+        path, n, _, _ = records[tid]
+        for st in states:
+            for k in keys:
+                if f"{tid}.{st}-{k}" not in records:
+                    err(path, n, "key-table", f"{tid}: no record for Win+{k} from {st}")
+
+
+def check(root, surface=None, allow_undecided=False, design_root=None, complete=False):
     schema = json.loads((root / "schema.json").read_text(encoding="utf-8"))
     record_v = Draft202012Validator(schema)
     registry = Registry().with_resource(schema["$id"], Resource.from_contents(schema))
@@ -792,6 +902,8 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
         elif state in ("build", "equivalent") and obj["kind"] not in CATALOGUE_KINDS and fate_of(rid) == "gone":
             err(path, n, "unplaced", f"{rid}: built, but its captured home is replaced or excluded; name where it lives in placedUnder")
 
+    tiling_errors(records, children, observations, err, complete)
+
     summary = baseline_summary(root, surface, records, err)
 
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
@@ -806,6 +918,8 @@ def main(argv=None):
     ap.add_argument("--index", action="store_true", help="check the staged inventory, not the working tree")
     ap.add_argument("--allow-undecided", action="store_true",
                     help="accept a record with no disposition yet (a fresh capture, before its hand fields)")
+    ap.add_argument("--complete", action="store_true",
+                    help="also require every profile a window arrangement lists (a section's Done when, not a publish)")
     ap.add_argument("--design-root", help="the folder a ledger design is read from (default: the inventory's parent)")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
@@ -827,7 +941,7 @@ def main(argv=None):
         print(f"check-inventory: no surface folder {args.surface}", file=sys.stderr)
         return 2
     design_root = pathlib.Path(args.design_root) if args.design_root else None
-    records, obs, errors, summary = check(root, args.surface, args.allow_undecided, design_root)
+    records, obs, errors, summary = check(root, args.surface, args.allow_undecided, design_root, args.complete)
     if args.baselines:
         for name in sorted(set(baseline_core.OWNERS) - set(summary)):
             errors.append({"file": f"{name}/{BASELINE_FILE}", "line": 0, "rule": "baseline-missing",
@@ -881,6 +995,8 @@ def from_index(args):
                 argv.append("--baselines")
             if args.allow_undecided:
                 argv.append("--allow-undecided")
+            if args.complete:
+                argv.append("--complete")
             return main(argv)
         finally:
             shutil.rmtree(scratch)
