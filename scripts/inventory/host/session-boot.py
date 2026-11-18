@@ -226,10 +226,21 @@ def band(img, region, test):
     return (x, y + top, w, end - top)
 
 
-def first_clear(names, taken, shots, test):
-    """The first of names that is an exact frame (its mode held across the
-    shot) and no longer passes test, else None."""
-    return next((n for n in names if taken.get(n, {}).get("exact") and not test(shots[n])), None)
+def stop_span(names, taken, shots, test):
+    """(first, end) of a screen across burst frames: the first exact frame
+    (its mode held across the shot) that passes test, and the first exact
+    frame after it that does not. None for end when no such frame exists.
+    A screen that passes again after end is no single span to time, and is
+    refused (review, 2026-11-18: the end was searched after the last match)."""
+    exact = [n for n in names if taken.get(n, {}).get("exact")]
+    first = next((n for n in exact if test(shots[n])), None)
+    if first is None:
+        return None, None
+    rest = exact[exact.index(first) + 1:]
+    end = next((n for n in rest if not test(shots[n])), None)
+    if end is not None and any(test(shots[n]) for n in rest[rest.index(end) + 1:]):
+        raise core.Incomplete(f"stop burst: the stop error showed again after {end}, so its span is not one")
+    return first, end
 
 
 def tile_text(tile, ring_width):
@@ -611,11 +622,11 @@ def records(shots, build, taken=None):
     rec("stop.code", "control", "Stop code", st, controlType="text",
         behaviour=f"A small text slot with a label, the stop code's name and its number in hex, {place(img, code)}, near the bottom edge.")
     every = frames("stop", lambda i: True, exact=False)
-    # The end is the first exact frame that no longer shows the stop error:
-    # a frame taken while the mode changed can still show it (review,
-    # 2026-11-18).
-    end = first_clear(every[every.index(got[-1]) + 1:], taken, shots, stopped)
-    if not end or got[0] not in taken:
+    # The end is the first exact frame after the first stop frame that no
+    # longer shows it: a frame taken while the mode changed can still show it
+    # (review, 2026-11-18).
+    first, end = stop_span(every, taken, shots, stopped)
+    if not end or first != got[0]:
         raise core.Incomplete("stop burst: no exact frame after the stop error to time it by")
     shown = round((stamp(taken[end]) - stamp(taken[got[0]])).total_seconds() * 1000)
     rec("stop.shown", "metric", "Stop error shown for", st,

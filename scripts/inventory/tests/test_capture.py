@@ -997,7 +997,7 @@ class Profile(unittest.TestCase):
         # whole walk with "thumbnail failed: 32775" (2026-11-18).
         shell, script = self._powershell(INV / "ref-host.ps1", windows=True)
         ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
-              "foreach ($fn in 'Get-ShotMode', 'Save-Shot') { "
+              "foreach ($fn in 'Get-ShotMode', 'Save-Shot', 'Get-ShotPixels') { "
               "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
               "Invoke-Expression $f.Extent.Text }; "
               "$script:now = [datetime]'2026-01-01'; function Get-Date { $script:now }; "
@@ -1091,41 +1091,44 @@ class Profile(unittest.TestCase):
         # 0.2 s a shot: one a second for 30 s. 2.5 s a shot: back to back, 12 in 30 s.
         self.assertEqual(lines, ["30 30", "12 30"], out.stderr)
 
-    def test_a_timed_burst_ends_at_its_budget_through_the_real_save_shot(self):
-        # A frame admitted near a burst's end could take its own 15 s, or start
-        # a thumbnail after the end (review, 2026-11-18).
+    def test_a_timed_burst_starts_no_host_call_after_its_end(self):
+        # A frame admitted near a burst's end could take its own 15 s, retry a
+        # mode read or run a thumbnail's CIM calls after the end (review,
+        # 2026-11-18). The real Save-Shot, mode and thumbnail helpers run here
+        # over fake CIM calls, each logging when it starts.
         shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
-        base = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode"]),
-                                   (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
-                + "$Name = 'x'; $NoSession = $false; $Out = '.'; $shots = New-Object System.Collections.ArrayList; "
-                "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:thumbs = 0; "
+        base = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels"]),
+                                   (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-RefThumbnail", "Get-RefVideoMode", "Assert-RefBefore"]))
+                + "$Name = 'x'; $NoSession = $false; $Out = '.'; $script:Ns = 'n'; $shots = New-Object System.Collections.ArrayList; "
+                "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:calls = @(); $script:thumbs = 0; "
                 "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
                 "function Write-Host { }; function Save-Thumbnail { }; "
-                "function Get-RefThumbnail { $script:thumbs++; $script:t = $script:t.AddMilliseconds(100); ,(New-Object byte[] 20) }; ")
+                "function Call { $script:calls += ($script:t - $t0).TotalSeconds; $script:t = $script:t.AddMilliseconds((Cost)) }; "
+                "function Get-RefSystem { Call; 'vm' }; function Get-CimInstance { Call; 'svc' }; "
+                "function Get-CimAssociatedInstance($InputObject, $ResultClassName) { Call; "
+                "if ($ResultClassName -eq 'Msvm_VideoHead') { if (Gone) { $null } else { [pscustomobject]@{ CurrentHorizontalResolution = 1024; CurrentVerticalResolution = 768; CurrentBitsPerPixel = 16 } } } "
+                "else { [pscustomobject]@{ VirtualSystemType = 'Microsoft:Hyper-V:System:Realized' } } }; "
+                "function Invoke-CimMethod { Call; $script:thumbs++; [pscustomobject]@{ ReturnValue = 0; ImageData = (New-Object byte[] 20) } }; ")
         burst = ("Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'stop'; count = 50; every = 0; cadence = 1; seconds = 5 }); "
-                 "'' + $shots.Count + ' ' + $script:thumbs + ' ' + ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+                 "'' + $shots.Count + ' ' + $script:thumbs + ' ' + ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture) + ' ' + "
+                 "(($script:calls | Measure-Object -Maximum).Maximum).ToString([cultureinfo]::InvariantCulture)")
+        late = "(($script:t - $t0).TotalSeconds -ge 3.5)"
         cases = {
-            # The head goes away from 3.5 s: the frame started at 4 s waits for
-            # it only until the burst's end at 5 s.
-            "reset": "function Get-RefVideoMode { $script:t = $script:t.AddMilliseconds(50); "
-                     "if (($script:t - $t0).TotalSeconds -ge 3.5) { throw 'no video head: x' }; @(1024, 768) }; ",
-            # Mode reads turn slow from 3.5 s: the read that ends after 5 s
-            # starts no thumbnail.
-            "slow": "function Get-RefVideoMode { $ms = if (($script:t - $t0).TotalSeconds -ge 3.5) { 1500 } else { 50 }; "
-                    "$script:t = $script:t.AddMilliseconds($ms); @(1024, 768) }; ",
+            # The video head goes away from 3.5 s; the frame begun at 4 s
+            # retries mode reads only until the burst's end at 5 s.
+            "reset": "function Cost { 50 }; function Gone { %s }; " % late,
+            # Host calls turn slow from 3.5 s: the frame begun at 4 s crosses
+            # the end inside its thumbnail's CIM calls.
+            "slow": "function Cost { if (%s) { 300 } else { 50 } }; function Gone { $false }; " % late,
         }
-        got = {}
         for k, fake in cases.items():
             out = subprocess.run([shell, "-NoProfile", "-Command", base + fake + burst], capture_output=True, text=True, timeout=120)
-            got[k] = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else out.stderr
-        n, thumbs, end = got["reset"].split()
-        self.assertEqual((n, thumbs), ("4", "4"), got)
-        self.assertLessEqual(float(end), 5.5, got)                       # not 4 + 15 s
-        n, thumbs, end = got["slow"].split()
-        # Frames at 0, 1, 2, 3 s; the one at 4 s reads its mode until 5.5 s
-        # and stops there, with no thumbnail.
-        self.assertEqual((n, thumbs), ("4", "4"), got)
-        self.assertLessEqual(float(end), 5.5, got)
+            last = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+            self.assertEqual(len(last.split()), 4, (k, out.stdout, out.stderr))
+            n, thumbs, end, latest = last.split()
+            self.assertEqual((n, thumbs), ("4", "4"), (k, last))         # frames at 0, 1, 2 and 3 s
+            self.assertLess(float(latest), 5, (k, last))                  # no call starts after the end
+            self.assertLessEqual(float(end), 5.3, (k, last))              # one call's overrun at most
 
     def test_a_burst_spaces_each_shot_from_the_one_before_and_ends_on_time(self):
         # A slow first shot let the next ones catch up on a schedule counted
@@ -2974,17 +2977,23 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
 
     def test_the_stop_error_is_timed_to_the_first_exact_frame_without_it(self):
-        # An inexact frame still showing the stop error was taken as its end
-        # (review, 2026-11-18).
+        # An inexact frame still showing the stop error was taken as its end,
+        # and the end was searched after the last stop frame (review, 2026-11-18).
         sc = load("host_session_boot", INV / "host" / "session-boot.py")
         stop, clear = (1, 1, b"s"), (1, 1, b"c")
-        shots = {"stop-6": stop, "stop-7": clear, "stop-8": clear}
-        taken = {"stop-6": {"exact": False}, "stop-7": {"exact": False}, "stop-8": {"exact": True}}
         is_stop = lambda i: i[2] == b"s"
-        self.assertEqual(sc.first_clear(["stop-6", "stop-7", "stop-8"], taken, shots, is_stop), "stop-8")
-        taken["stop-6"]["exact"] = True
-        self.assertEqual(sc.first_clear(["stop-6", "stop-7", "stop-8"], taken, shots, is_stop), "stop-8")
-        self.assertIsNone(sc.first_clear(["stop-6"], taken, shots, is_stop))
+
+        def span(*frames):
+            names = [f"stop-{i}" for i in range(1, len(frames) + 1)]
+            shots = {n: (stop if f[0] == "s" else clear) for n, f in zip(names, frames)}
+            taken = {n: {"exact": f[1] == "x"} for n, f in zip(names, frames)}
+            return sc.stop_span(names, taken, shots, is_stop)
+        self.assertEqual(span("cx", "sx", "sx", "s~", "c~", "cx"), ("stop-2", "stop-6"))   # inexact frames are passed over
+        self.assertEqual(span("sx", "cx", "cx"), ("stop-1", "stop-2"))
+        self.assertEqual(span("sx", "sx"), ("stop-1", None))
+        self.assertEqual(span("cx", "cx"), (None, None))
+        with self.assertRaises(sc.core.Incomplete):
+            span("sx", "cx", "sx", "cx")                                  # it came back: no single span
 
     def test_the_stop_progress_compares_only_frames_of_one_mode(self):
         # Two stop frames of different modes were counted as two compared

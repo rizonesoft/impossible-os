@@ -102,13 +102,17 @@ function Get-RefMouse() {
 # rather than failing the run, until the shot's deadline.
 function Get-ShotMode() {
     for (;;) {
-        try { return Get-RefVideoMode $Name } catch {
+        try { return Get-RefVideoMode $Name $script:ShotUntil } catch {
             if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'no video head*') { throw }
-            Start-Sleep -Milliseconds 500
+            # The wait stops at the deadline, and no read starts after it
+            # (review, 2026-11-18: a retry started past a burst's end).
+            Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($script:ShotDeadline - (Get-Date)).TotalMilliseconds)))
+            if ((Get-Date) -ge $script:ShotDeadline) { throw }
         }
     }
 }
 $script:ShotDeadline = Get-Date
+$script:ShotUntil = [datetime]::MaxValue
 $script:LastShot = $null
 
 # True when the pixel at (x, y) of a thumbnail of the given size shows rgb,
@@ -132,29 +136,40 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     # ShotExpired tells the burst to end (review, 2026-11-18).
     if ($Until -lt $script:ShotDeadline) { $script:ShotDeadline = $Until }
     $script:ShotExpired = $false
-    for ($try = 1; $try -le 2; ) {
-        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
-        $before = Get-ShotMode
-        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
-        try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
-            # 32775 is Hyper-V's "invalid state": the VM is between states as it
-            # resets (after the boot walk's stop error, 2026-11-18). Wait it out
-            # like a missing video head, up to 15 s, reading the mode again.
-            if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
-            Start-Sleep -Milliseconds 500
-            continue
-        }
-        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
-        $after = Get-ShotMode
-        $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
-        if ($exact) { break }
-        $try++
-    }
+    $script:ShotUntil = $Until
+    try { $taken = Get-ShotPixels } catch {
+        if ($_.Exception.Message -notlike 'shot expired*') { throw }
+        $script:ShotExpired = $true
+        return
+    } finally { $script:ShotUntil = [datetime]::MaxValue }
+    $bytes, $before, $after, $exact, $try = $taken
     Save-Thumbnail $bytes $png $before[0] $before[1]
     $script:LastShot = @{ Bytes = $bytes; Width = $before[0]; Height = $before[1] }
     [void]$shots.Add([ordered]@{ name = $ShotName; file = "$ShotName.png"; width = $before[0]; height = $before[1]
         depth = 16; modeBefore = $before; modeAfter = $after; exact = $exact; tries = [Math]::Min($try, 2); at = (Get-Date).ToString('o') })
     Write-Host "ref-host: shot $ShotName $($before[0])x$($before[1])$(if (-not $exact) { ' (the mode changed during it twice)' })"
+}
+
+# The thumbnail and the mode read before and after it, retried once at a new
+# mode; every host call checks $script:ShotUntil through the helpers.
+function Get-ShotPixels() {
+    for ($try = 1; $try -le 2; ) {
+        $before = Get-ShotMode
+        try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] $script:ShotUntil } catch {
+            # 32775 is Hyper-V's "invalid state": the VM is between states as it
+            # resets (after the boot walk's stop error, 2026-11-18). Wait it out
+            # like a missing video head, up to 15 s, reading the mode again.
+            if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+            Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($script:ShotDeadline - (Get-Date)).TotalMilliseconds)))
+            if ((Get-Date) -ge $script:ShotDeadline) { throw }
+            continue
+        }
+        $after = Get-ShotMode
+        $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
+        if ($exact) { break }
+        $try++
+    }
+    return $bytes, $before, $after, $exact, $try
 }
 
 function Invoke-Step($step) {

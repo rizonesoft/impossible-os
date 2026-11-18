@@ -114,11 +114,21 @@ function Set-HostKvp([string]$Name, [string]$Key, [string]$Value = '', [switch]$
 # The VM's screen as RGB565 bytes (640x360 unless asked), read from the host
 # without the guest's help. Hyper-V scales the framebuffer to the size asked;
 # at the video head's own mode the copy is pixel for pixel.
-function Get-RefThumbnail([string]$Name, [int]$Width = 640, [int]$Height = 360) {
+# Until: no host call starts at or after it ("shot expired"); a timed burst's
+# frame must not run past the burst's end (review, 2026-11-18).
+function Assert-RefBefore([datetime]$Until) {
+    if ((Get-Date) -ge $Until) { throw 'shot expired' }
+}
+
+function Get-RefThumbnail([string]$Name, [int]$Width = 640, [int]$Height = 360, [datetime]$Until = [datetime]::MaxValue) {
+    Assert-RefBefore $Until
     $vm = Get-RefSystem $Name
+    Assert-RefBefore $Until
     $svc = Get-CimInstance -Namespace $script:Ns -ClassName Msvm_VirtualSystemManagementService
+    Assert-RefBefore $Until
     $vssd = Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_VirtualSystemSettingData |
         Where-Object { $_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized' }
+    Assert-RefBefore $Until
     $r = Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{
         TargetSystem = $vssd; WidthPixels = [uint16]$Width; HeightPixels = [uint16]$Height }
     if ($r.ReturnValue -ne 0 -or -not $r.ImageData) { throw "thumbnail failed: $($r.ReturnValue)" }
@@ -178,8 +188,11 @@ function Get-ThumbnailPixel([byte[]]$Bytes, [int]$Width, [int]$Height, [int]$X, 
 }
 
 # The mode the VM's video head shows now: width, height and depth.
-function Get-RefVideoMode([string]$Name) {
-    $head = Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_VideoHead | Select-Object -First 1
+function Get-RefVideoMode([string]$Name, [datetime]$Until = [datetime]::MaxValue) {
+    Assert-RefBefore $Until
+    $vm = Get-RefSystem $Name
+    Assert-RefBefore $Until
+    $head = Get-CimAssociatedInstance -InputObject $vm -ResultClassName Msvm_VideoHead | Select-Object -First 1
     if (-not $head) { throw "no video head on $Name" }
     return @([int]$head.CurrentHorizontalResolution, [int]$head.CurrentVerticalResolution, [int]$head.CurrentBitsPerPixel)
 }
