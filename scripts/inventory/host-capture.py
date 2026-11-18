@@ -6,10 +6,12 @@ Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 9.
     python3 scripts/inventory/host-capture.py --scenario session-secure [--dry-run] [--from DIR]
 
 A scenario is scripts/inventory/host/<name>.py. It names SURFACE, FILE,
-PROFILE, CHECKPOINT and TIMEOUT, the STEPS ref-host.ps1 runs on the reference
+PROFILE, CHECKPOINT and TIMEOUT (and SESSION = False for a checkpoint with no
+account to open a session as), the STEPS ref-host.ps1 runs on the reference
 VM (keys, clicks, guest commands, shots), SHOTS (the shots it publishes) and
-records(shots), which measures its records from those shots (a dict of name to
-capture_core.read_png images) and returns them. Every record is a hand record:
+records(images, build, taken), which measures its records from those shots
+(images: name to capture_core.read_png image; taken: name to its shots.json
+entry, with the time it was taken) and returns them. Every record is a hand record:
 source hand:<build>, since no tool read it from the running system.
 
 Refuses (exit 3, nothing published) a run whose step failed, a shot it
@@ -56,7 +58,7 @@ def build():
     return json.loads((capture.INVENTORY / "reference.json").read_text(encoding="utf-8"))["build"]
 
 
-def run_host(label, steps, checkpoint, timeout):
+def run_host(label, steps, checkpoint, timeout, session=True):
     """Run ref-host.ps1 over `steps` on a fresh restore of `checkpoint`.
     Returns (output folder, exit code); 3 when it outlived its deadline (the VM
     is then turned off)."""
@@ -67,7 +69,7 @@ def run_host(label, steps, checkpoint, timeout):
     runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
     try:
         r = subprocess.run(runner + [capture.winpath(HERE / "ref-host.ps1"), "-Steps", capture.winpath(plan),
-                                     "-Out", capture.winpath(out), "-Checkpoint", checkpoint],
+                                     "-Out", capture.winpath(out), "-Checkpoint", checkpoint] + ([] if session else ["-NoSession"]),
                            capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
     except subprocess.TimeoutExpired:
         stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
@@ -133,7 +135,7 @@ def main(argv=None):
             if args.earlier is not None:
                 out, rc = args.earlier, 0
             else:
-                out, rc = run_host(args.scenario, sc.STEPS, sc.CHECKPOINT, sc.TIMEOUT)
+                out, rc = run_host(args.scenario, sc.STEPS, sc.CHECKPOINT, sc.TIMEOUT, getattr(sc, "SESSION", True))
             return publish(sc, out, rc, args.dry_run)
     except BlockingIOError:
         print(f"host-capture: another capture holds {capture.LOCK}; run one at a time")
@@ -149,7 +151,7 @@ def publish(sc, out, rc, dry_run):
     at = build()
     images = {n: core.read_png(out / s["file"]) for n, s in shots.items()}
     try:
-        records = checked(sc.records(images, at), sc.SURFACE, at)
+        records = checked(sc.records(images, at, shots), sc.SURFACE, at)
     except (ValueError, core.Incomplete) as exc:
         print(f"host-capture: {exc}; nothing published")
         return 3

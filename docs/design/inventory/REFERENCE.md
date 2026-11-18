@@ -1,4 +1,4 @@
-<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-host.ps1,scripts/inventory/host-capture.py,scripts/inventory/host,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-18 -->
+<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-host.ps1,scripts/inventory/host-capture.py,scripts/inventory/host,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-18T18:30 -->
 # Windows 11 Reference Machine
 
 Every record in the inventory is read from one machine: a clean Hyper-V virtual machine running one pinned Windows 11 build under one capture profile. A position or a size only means something against that machine, so this page names it, and a capture from anything else is refused until it is recorded here first. What a capture may take from it, facts and never Microsoft's text, images or files, is the rule in [the inventory format](index.md#what-does-it-never-hold).
@@ -124,6 +124,8 @@ python3 scripts/inventory/host-capture.py --scenario session-secure --dry-run  #
 ```
 
 A scenario in `scripts/inventory/host/` lists the steps and the shots it publishes, and measures its records from those shots: it looks for the pieces of ink it expects in a region and refuses when it finds a different number, so a screen that changed is never published with stale geometry. Every record is a `hand:` record. `host-capture.py` refuses a run with a failed step, a missing shot or one that is not exact, then checks and publishes exactly as `capture.py` does, under the same lock and into the same store and manifest.
+
+First-run setup is captured the same way from the `pre-oobe` checkpoint (`--scenario session-setup`). No account exists there, so the scenario sets `SESSION = False` and `ref-host.ps1 -NoSession` drives the screen with keys and clicks only. The VM has no network adapter, so the walk opens the local account form through Shift+F10 and `start ms-cxh:localonly`; the scenario's `PAGES` names the local-account path, and the capture refuses shots that show another page order. A checkpoint taken while the VM was built in its `-next` folder still names that folder's media in its saved state, so every restore attaches the media again from the VM's own folder.
 
 ## How are the hardware pages captured?
 

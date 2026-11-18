@@ -851,6 +851,16 @@
  },
  {
   "surface": "session",
+  "file": "setup",
+  "state": "between",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 128194,
+  "sha256": "17f49330a92d7ccad0fb398a501e65486f2313c60c4ffefe847995de9c16e855"
+ },
+ {
+  "surface": "session",
   "file": "secure",
   "state": "change-password",
   "profile": "fhd-100",
@@ -858,6 +868,16 @@
   "height": 1080,
   "size": 350950,
   "sha256": "5748beaa24a1edc17f2a2eebb6b4d660c82743fb11b26655de58ea9a38ca5587"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "console",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 125462,
+  "sha256": "8e74dabfe99e42e3391096ed06438b2ec84817407cc8f200d3c5cf346fe4cbce"
  },
  {
   "surface": "session",
@@ -908,6 +928,16 @@
   "height": 1080,
   "size": 575120,
   "sha256": "56d40c5bf288e3ae25c8d661a593c75ca3edacfd03cef2d2c680f70c430cf8b8"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "first-desktop",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595968,
+  "sha256": "7a517cd1bd9805e39b5a4acc93d0c27f68522c7ce86ca5d7f6f9417de3ce3a65"
  },
  {
   "surface": "session",
@@ -1031,6 +1061,126 @@
  },
  {
   "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-1",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 83826,
+  "sha256": "e00fcd0f516e9d4aad9b7a98b0899aa6cbd76ad6bcc8bff935e0cdc4be9c3feb"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-10",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 12609,
+  "sha256": "ca7cb818757f52f19aa63d263f49a2cb4c83e58f76211babb83cbc17a4434d65"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-2",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 10153,
+  "sha256": "ae7ce80b037a85520d6bf38db384713702702408af63334fae4fee77c5032f58"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-3",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 10693,
+  "sha256": "aac31412b5283a03e104e27835dcee4c9074f854a327620af9af820a8b880bcd"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-4",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15075,
+  "sha256": "cc5348f3705bae46a6f18fd068459ffccd9caef5bedd061f63ce031c12e7dcbd"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-5",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15075,
+  "sha256": "cc5348f3705bae46a6f18fd068459ffccd9caef5bedd061f63ce031c12e7dcbd"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-6",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 68366,
+  "sha256": "3546021d26eb561a416da224f23794e64346e93864c0e3e3852588cefa7228c1"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-7",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 162109,
+  "sha256": "54bbeb0f04983e59990af09c8671514dbfbebdc20eda11cbed721a4be1bc962e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-8",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 201085,
+  "sha256": "f6af84508a4d0999c60e2e9e4e03d01b465d3ff9840e90c62ab60a549bd8c99a"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "getting-ready-9",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 195682,
+  "sha256": "ca44f9b74b9c07373d62fa808cc7dce882680b8511b77d96cbffe030b57c8b90"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "keyboard",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 131556,
+  "sha256": "4cd0f843cda1043b87ecca74cfc6914724de609b57988ad388e2588d626ca71b"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "local-account-filled",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 105734,
+  "sha256": "8cfa4ec6428b981979301f4bc8a5aece8d4317751635ab6394701b33aaf4fa1a"
+ },
+ {
+  "surface": "session",
   "file": "secure",
   "state": "lock",
   "profile": "fhd-100",
@@ -1058,6 +1208,16 @@
   "height": 1080,
   "size": 377442,
   "sha256": "6470b43177b642e53fe72be00171084d9cb4a61774dce169cd32f0e943a1bfd8"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "network",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 141416,
+  "sha256": "2926400b089b2a6985a8dd8411d365812e428c250a0f20c51870f0239a64c191"
  },
  {
   "surface": "session",
@@ -1091,6 +1251,106 @@
  },
  {
   "surface": "session",
+  "file": "setup",
+  "state": "preparing-1",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 156817,
+  "sha256": "10cce1110979c231e24914bfbe97ae4745b0cd609352a5d49dfacd4f1158753c"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-2",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2754319,
+  "sha256": "d92b5a1069a5bd570d3032b1b1808e1b1a865d84f4adbd26095a30e6f2c5603a"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-3",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-4",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-5",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-6",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-7",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "preparing-8",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2595907,
+  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "privacy",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 197259,
+  "sha256": "1ad1225db213782960db169ced2461fbbb8594222f3216a93d1ea1ab2cff630f"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "privacy-more",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 200484,
+  "sha256": "249bbd4add82d38a8fd7b76e295db4b3b26b0149a001007de46c9579511ace8a"
+ },
+ {
+  "surface": "session",
   "file": "secure",
   "state": "restarting",
   "profile": "fhd-100",
@@ -1098,6 +1358,16 @@
   "height": 1080,
   "size": 12561,
   "sha256": "2ce080fa2b720e66ee1e9b642eb3aae7f194bd9b5f3c497f93ae3b69723bca78"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "second-keyboard",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 123077,
+  "sha256": "c105d907151da237c22e7d4aa8815f47cd680efde970c641e0a6200276d9a90f"
  },
  {
   "surface": "session",
@@ -1118,6 +1388,46 @@
   "height": 1080,
   "size": 15771,
   "sha256": "ab1924e0803b90b076fce07d768efda9ec185342f70b97a8ab8077cb24c8c05e"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "security-questions",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 106295,
+  "sha256": "1d551045cae343dd5de39a4eb6170679c98a923d084bd75273e509fd602adb13"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "setup",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 137615,
+  "sha256": "1b9c267bba54cce2f968295c77c0a78127c7d2a3ed4cd9947d4d27edf8218ee5"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "setup-accessibility",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 138242,
+  "sha256": "b76eec2ba7ac25ee5f4c0ae9f2d6dad1bf325e2296204d78f51bee7201959c83"
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "setup-local-account",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 104180,
+  "sha256": "e4dedc1d2ffe18dee5b0fb19f7db0fe5b399d98e7a5694404342ea86dc4ea491"
  },
  {
   "surface": "session",

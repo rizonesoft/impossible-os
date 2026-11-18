@@ -32,7 +32,8 @@ Steps, one object each, by "op":
   user    {name, admin, flags} make a local account with a random password this run keeps in memory
                               (never written); flags go to net user (e.g. "/logonpasswordchg:yes")
   typeof  {name}              type that account's password
-  renew   {name}              make a new random password for that account and type it (a change form)
+  renew   {name}              make a new random password for that account and type it (a change
+                              form, or the first one of an account a setup form creates)
 
     powershell.exe -File scripts\inventory\ref-host.ps1 -Steps steps.json -Out R:\11\captures\session-x
 #>
@@ -42,7 +43,12 @@ param(
     [Parameter(Mandatory)] [string]$Out,
     [string]$Checkpoint = 'clean',
     [string]$VmPath = 'R:\11\ios-win11-ref',
-    [string]$Name = 'ios-win11-ref'
+    [string]$Name = 'ios-win11-ref',
+    # For a checkpoint before any account exists (pre-oobe): restore and drive
+    # the screen only. No session opens, so guest, admin, user and reconnect
+    # steps refuse, and the build is not read back from the guest (ref-vm.ps1
+    # checked it when it took the checkpoint).
+    [switch]$NoSession
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -99,6 +105,7 @@ function Save-Shot([string]$ShotName) {
 }
 
 function Invoke-Step($step) {
+    if ($NoSession -and $step.op -in 'guest', 'admin', 'user', 'reconnect') { throw "a $($step.op) step needs a session, and this run has none (-NoSession)" }
     switch ($step.op) {
         'guest' {
             $r = Invoke-RefInteractive $script:Session $step.cmd 600
@@ -169,7 +176,7 @@ function Invoke-Step($step) {
             Send-Text $script:Pw[$step.name]
         }
         'renew' {
-            if (-not $script:Pw.ContainsKey($step.name)) { throw "no fixture account $($step.name) in this run" }
+            # Also the first password of an account a setup form creates.
             $script:Pw[$step.name] = New-FixturePassword
             Send-Text $script:Pw[$step.name]
         }
@@ -184,9 +191,14 @@ function Invoke-Step($step) {
 $code = 3
 $failed = $null
 try {
-    try { $script:Session = Start-RefFrom $Name $VmPath $Checkpoint } catch { Write-Host "ref-host: $($_.Exception.Message)" }
-    if ($script:Session) {
-        $wrong = @(Test-RefIdentity $script:Session)
+    $ready = $false
+    if ($NoSession) {
+        try { Restore-RefCheckpoint $Name $Checkpoint $VmPath; $ready = $true } catch { Write-Host "ref-host: $($_.Exception.Message)" }
+    } else {
+        try { $script:Session = Start-RefFrom $Name $VmPath $Checkpoint; $ready = [bool]$script:Session } catch { Write-Host "ref-host: $($_.Exception.Message)" }
+    }
+    if ($ready) {
+        $wrong = if ($NoSession) { @() } else { @(Test-RefIdentity $script:Session) }
         if ($wrong.Count) {
             foreach ($w in $wrong) { Write-Host "ref-host: $w" }
             $code = 5

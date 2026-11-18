@@ -2555,6 +2555,32 @@ class HostCapture(unittest.TestCase):
             shot_names = {s["name"] for s in sc.STEPS if s.get("op") == "shot"}
             shot_names |= {f"{s['name']}-{i}" for s in sc.STEPS if s.get("op") == "burst" for i in range(1, int(s["count"]) + 1)}
             self.assertEqual(set(sc.SHOTS) - shot_names, set(), f"{path.name} publishes shots its steps never take")
+            if not getattr(sc, "SESSION", True):
+                # ref-host refuses these without a session, so the run would stop at the first.
+                needs = [s["op"] for s in sc.STEPS if s.get("op") in ("guest", "admin", "user", "reconnect")]
+                self.assertEqual(needs, [], f"{path.name} runs without a session but has steps that need one")
+
+    def test_a_scenario_without_a_session_runs_ref_host_with_no_session(self):
+        seen = []
+
+        class Done:
+            returncode, stdout, stderr = 0, "", ""
+
+        def run(argv, **_):
+            seen.append(argv)
+            return Done()
+        with mock.patch.object(self.hc.subprocess, "run", run), mock.patch.object(self.hc.capture, "WORK", self.tmp), \
+                mock.patch.object(self.hc.capture, "winpath", str):
+            self.hc.run_host("x", [], "pre-oobe", 10, session=False)
+            self.hc.run_host("x", [], "clean", 10)
+        self.assertEqual(seen[0][-1], "-NoSession")
+        self.assertNotIn("-NoSession", seen[1])
+
+    def test_the_setup_scenario_walks_the_local_account_path(self):
+        sc = load("host_session_setup", INV / "host" / "session-setup.py")
+        self.assertEqual(sc.PAGES, ["region", "keyboard", "second-keyboard", "network", "local-account",
+                                    "getting-ready", "privacy", "preparing"])
+        self.assertFalse(sc.SESSION)
 
 
 if __name__ == "__main__":

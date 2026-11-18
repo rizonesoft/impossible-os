@@ -226,7 +226,7 @@ def disc(img, cx, cy, what):
     return (left, top, size[0], size[1])
 
 
-def records(shots, build):
+def records(shots, build, taken=None):
     src = f"hand:{build}"
     out = []
 

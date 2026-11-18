@@ -329,6 +329,16 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     $script:RefTouched = $true   # from here the VM is this run's to turn off
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
     Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
+    # A checkpoint taken while the VM was built in its -next folder keeps that
+    # folder's media path in its saved state after the folder became $VmPath,
+    # though Get-VMDvdDrive already reports the new path; starting it then fails
+    # with "virtual disk support provider ... not found" (pre-oobe and
+    # answer-install.iso, 2026-11-18). Attaching the media again from $VmPath
+    # writes the path the saved state uses.
+    foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path })) {
+        $here = Join-Path $root (Split-Path -Leaf $d.Path)
+        if (Test-Path -LiteralPath $here) { Set-VMDvdDrive -VMDvdDrive $d -Path $here }
+    }
     $id = (Get-VM -Name $Name).Id
     foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })) {
         # Through cmd so a refusal is an exit code, not a PowerShell error record;
