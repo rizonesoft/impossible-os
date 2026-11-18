@@ -562,6 +562,8 @@ The secure desktop, setup and the boot screens are outside the session the captu
 A: (run decision, 2026-11-17) A. Every inventory record names colours as roles, so 16-bit colour loses nothing a record holds; one host path serves all three surfaces; the fixture sections already own the states. Reversal cost: a guest-side grabber (one script, SYSTEM token in session 1) and re-taking the secure and setup shots.
 
 
+- **Amended (run decision, 2026-11-18, after the section 9 plan review):** the thumbnail is requested at the source mode `Msvm_VideoHead` reports, and a shot records source size, output size and depth, so a scaled shot is marked as thumbnail coordinates instead of passing as exact; setup is driven from `pre-oobe` with an answer file that hides no page and host keystrokes, because `-Reclean`'s file hides the local account page; §25 and §26 write their own files (`session/update-screens.json`, `session/setup-network.json`), because a later merge into §9's files drops the records it did not see. Reversal: one file each to fold back into `boot.json` and `setup.json` once the merge can keep another run's records.
+
 ## Q49 (00-infrastructure/TODO-01 §19): raw `make all` fails on a tree without build/; make owns the graph, or make refuses?
 
 `build/generated/shim_ca.h` and `build/tools/BOOTX64.UKI.efi` were produced only by `scripts/build.sh`, while the make graph consumes both.

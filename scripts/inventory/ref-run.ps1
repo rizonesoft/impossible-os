@@ -35,6 +35,9 @@ param(
     [switch]$Stop
 )
 $ErrorActionPreference = 'Stop'
+# capture.py decodes this output as UTF-8; the console's own code page cannot
+# carry what a guest's message can hold (emoji names, 2026-11-18).
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
 
 if ($Stop) {

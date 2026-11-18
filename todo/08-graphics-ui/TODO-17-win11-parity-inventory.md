@@ -474,7 +474,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the accent colour on title bars and borders option and what it changes
   - Done when: `check-inventory.py --surface window` passes; `metric` records exist for title bar height, caption button size, border, radius and shadow for both program generations, and each carries the `inconsistency` id where the two differ.
 - [ ] Snap, Alt+Tab, Task View and Virtual Desktops: writes `docs/design/inventory/window/switching.json`
-  - Capture the snap layout flyout on the maximize button: each layout, its zones as fractions of the screen, and the layouts offered at 1920 by 1080 and at a wide and a tall display
+  - Capture the snap layout flyout on the maximize button: each layout, its zones (stored as pixel bounds, read as fractions of the work area), and the layouts offered at 1920 by 1080 and at a wide and a tall display
   - Capture the snap bar at the top edge when a window is dragged, and the edge and corner drop zones with their preview outline
   - Capture snap assist: the picker that offers the other windows for the empty zones, and the snap group shown on the taskbar and in Alt+Tab
   - Record by hand the Win and arrow key table: every transition between left, right, quadrant, maximized, restored and minimized, and the move between displays
@@ -483,7 +483,12 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - A desktop's menu: rename, choose background, move left or right, close
     - A window's menu: snap, move to desktop, show on all desktops, close
   - Record by hand the desktop switching keys and the four-finger gesture, and what happens to windows when a desktop closes
-  - Done when: `check-inventory.py --surface window` passes; every snap layout has its zones recorded as four numbers that sum to the whole screen, and the arrow key table has no unlisted transition.
+  - Record the work area, each zone and each gutter as integer pixel `bounds` (the schema's form); a zone's fractions of the work area are derived from them, never stored, and a test shows a split that is not a whole number of pixels survives publication and passes the coverage check
+    - `fhd-100` writes `switching.json`; `wide-100` and `tall-100` write the profile observation files `switching.wide-100.json` and `switching.tall-100.json` (keyed by id and profile), so no profile's publish drops another's layouts
+    - `capture.py` gains observation publishing: with a non-canonical `--profile` and `--observe` it writes `<file>.<profile>.json` observation rows, and a test shows refreshing one profile leaves the other two files byte-identical
+    - A layout offered only on a wide or tall display gets canonical hand records in `switching.json` (kept by `--merge`), one for the layout, one per zone and one per gutter, listing the profiles that offer it, so each zone's and gutter's observation resolves and survives an `fhd-100` refresh; the Done when compares each profile's layout set with its flyout's choices, and a test drops a wide-only layout and fails
+    - Each publish validates only its own file; the three-profile completeness check runs at this item's Done when, never inside a publish, so the first profile can publish alone
+  - Done when: `check-inventory.py --surface window` passes; the checker finds layouts for each of `fhd-100`, `wide-100` and `tall-100` (failing on a missing profile) and proves each layout's zones and gutters tile the work area exactly: every rectangle inside it with positive width and height, no two overlapping, their union equal to it (tests collapse a zone to zero width, widen a gutter into a zone and an edge zone past the work area by one pixel, and both fail), and the arrow key table has no unlisted transition.
 - [ ] Lock, Sign-In and Secure Screens: writes `docs/design/inventory/session/secure.json`
   - Note: UI Automation does not reach the secure desktop. These records are `hand:` records, measured from host screenshots taken the way the boot item below describes.
   - Record the lock screen: the clock and date position and size, the status row, the network and accessibility buttons, and how it dismisses (key, click, swipe)
@@ -497,38 +502,58 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record the power button menu on the sign-in screen and the accessibility flyout's list
   - Done when: `check-inventory.py --surface session` passes; every record's `source` is `hand:<build>` and no record carries a label longer than the checker allows.
 - [ ] First-Run Setup: writes `docs/design/inventory/session/setup.json`
-  - Run this capture from §2's `pre-oobe` checkpoint (the replay `-Reclean` already drives) for the local-account branch; §26 captures the network branch once its switch exists
+  - Run this capture from §2's `pre-oobe` checkpoint with an answer file that hides no setup page, driving the local-account branch with host keystrokes (Hyper-V's keyboard device) and a thumbnail per page before each advance; the checkpoint is restored afterwards
+    - `-Reclean`'s answer file hides the local account and wireless pages and creates the account itself, so it cannot observe them
+    - The VM has no network adapter, so the capture's `oobe.cmd` sets `BypassNRO` (HKLM `...\CurrentVersion\OOBE`) on the restored guest before it runs Sysprep (the replay runs `oobeSystem` only, never `specialize`); where the pinned build ignores it, Shift+F10 runs `start ms-cxh:localonly`
+    - The checkpoint proof reads the value back and records which transition reached the local account form before the walk is trusted
+  - §26 captures the network branch into its own file, `session/setup-network.json`, so neither capture can drop the other's records
   - Record the setup frame from the `pre-oobe` checkpoint of §2: the page layout (illustration side, content side), the button row, the progress between pages, and the accessibility and volume buttons
   - Record each page in order as a `page` record with its controls: region, keyboard layout, second layout, network, device name, account, privacy choices, and the final preparing screen
   - Give every page tied to a Microsoft account, cloud backup, advertising or the assistant its disposition under §6
   - Record the keyboard path through setup and which pages can be skipped
   - Record the "getting ready" animation as a `motion` record: its duration, text slot changes and background behaviour
+    - It advances on its own, so timestamped host frames run from the last page's submission to the first desktop frame, and the record cites the frames that fix its duration and each text change
   - Record the first desktop after setup: which windows open, which toasts appear, and the default pins on the taskbar and Start as frames
-  - Done when: `check-inventory.py --surface session` passes; `setup.json` lists the pages in order with no gap in `order`, and each cloud-tied page has `disposition` other than `build`.
+  - Done when: `check-inventory.py --surface session` passes; `setup.json`'s page ids equal the expected local-account path the module names, in order, and each cloud-tied page has `disposition` other than `build`.
 - [ ] Boot, Update, Stop and Recovery Screens: writes `docs/design/inventory/session/boot.json`
   - Captured from the host side (Hyper-V screenshot of the VM framebuffer), because UIA does not run there; every record is `hand:<build>` with a shot
-  - The host path is Hyper-V's thumbnail taken at the framebuffer's own 1920 by 1080, 16-bit colour: each shot records that depth and gives geometry, with colour only as roles; a guest screenshot of the same desktop proves the geometry matches
+  - The host path is Hyper-V's thumbnail in 16-bit colour, requested at the source mode the VM's video head reports at that moment (`Msvm_VideoHead` resolution)
+    - Each shot records source size, output size and depth; geometry is exact only where source equals output, and a shot that differs records its coordinates as thumbnail coordinates with the scale
+    - The mode is read immediately before and after each thumbnail; a change retries the shot, and a screen that has passed keeps its shot with geometry marked unverified
+    - Colour is recorded only as roles; a guest screenshot of the same desktop proves the 1:1 mapping at 1920 by 1080
+  - §25 captures the working-on-updates screens into its own file, `session/update-screens.json`
   - The boot logo and spinner, the boot manager menu and the Safe mode desktop's marks; the "working on updates" screens need a delivered update, so §25 captures them
   - The stop error screen, raised by a host NMI (`Debug-VM -InjectNonMaskableInterrupt` with `NMICrashDump` set), including its progress and restart
   - The recovery environment: automatic repair, the troubleshoot menu, startup settings and the reset path, each page as a `page` with its choices; a checkpoint is taken before each so the VM returns clean
   - Reconcile each screen against its owner in `D01 T15`, `D01 T14` and `D01 T22`, and note gaps in §15
-  - Done when: `check-inventory.py --surface session` passes; every screen listed has records and a shot, and the stop error records name each text slot without Microsoft's words.
+  - Done when: `check-inventory.py --surface session` passes; the boot, boot manager, Safe mode, stop error and recovery screens each have records and a shot in `boot.json` (the update screens are §25's), and the stop error records name each text slot without Microsoft's words.
 - [ ] Shell Overlays: writes `docs/design/inventory/flyouts/overlays.json`
   - Capture the volume and brightness indicator: its position, size, the icon slot, the bar, the number, and its timeout
+    - The reference VM has no audio device and no brightness control, so both forms are captured on §21's laptop stand-in (its sound output and backlight), into its own file `flyouts/overlays-laptop.json` as §8 does for Quick Settings; each change is shown to move the level and the indicator to dismiss after its timeout
   - Capture clipboard history (Win-V): the item card, pin, delete, clear all, the tab row it shares with the emoji panel, and the empty and disabled states
   - Capture the emoji panel (Win-period): the tab row, the search box, the category row, the grid, and the skin tone chooser
     - Tabs: recent, emoji, GIF, kaomoji, symbols, clipboard; GIF gets its disposition under §6
   - Capture the power user menu (Win-X) and every entry in order
   - Capture the Run dialog: the icon, the label, the combo box, the three buttons and the elevated variant's extra line
   - Capture the Project flyout (Win-P) and its four modes, and the Cast flyout (Win-K) as a frame
-  - Capture the input switcher (Win-Space) and the touch keyboard: its layouts (default, small, split, traditional), the key rows, and the handwriting panel as a frame
-    - The shifted, symbol, emoji and contextual (password, number, URL) layers, and IME composition with its candidate window and paging, typed from fixed text fixtures in the Japanese and Chinese input methods
+    - Win-P and Win-K open Quick Settings on its Project and Cast pages, which §8 captured into `quick-settings.json` (`project-page`, `cast-page`); `overlays.json` adds only their two hotkeys
+    - Hyper-V's one display leaves the Project page with no modes (measured 2026-11-18), so the modes come from §22's `dual` stand-in, into `flyouts/overlays-dual.json`
+  - Capture the input switcher (Win-Space), which needs a second input method and so comes from `profile-ime` into `overlays-ime.json`, and the touch keyboard: its layouts (default, compact, traditional and gamepad, the four 26300.9974 offers; it has no small or split), the key rows, and the handwriting panel as a frame
+    - The shifted, symbol (both pages), emoji and contextual (password, number, URL) layers, the last three on a focused field of an Edge app window over a local page, and IME composition with its candidate window and paging, typed from fixed text fixtures in the Japanese and Chinese input methods
+    - The input methods come from a derived checkpoint, `profile-ime`, made by `ref-vm.ps1 -Derive` with `Install-RefLanguage` for ja-JP and zh-CN (input method only, display language unchanged) and both enabled for `ref`; its capture restores it offline and proves each fixture opens its named IME and reaches a distinct second candidate page
+    - The IME states are their own file, `flyouts/overlays-ime.json` (profile `ime`, the documented exception to the canonical `fhd-100`), so neither capture drops the other's records
+    - `ref-vm.ps1` derives only width, height and display language today, so §9 adds an `inputMethods` profile setting: registered in `profiles.json`, derived and probed apart from `uiLanguage`, and a restore is shown to keep en-US display
   - Capture the capture bar (Win-Shift-S): the mode buttons (rectangle, window, full screen, freeform), the video toggle, and close
   - Capture voice typing (Win-H): the bar, the microphone button, the settings flyout
-  - Done when: `check-inventory.py --surface flyouts` passes; `overlays.json` holds one `surface` record per overlay named above, each with at least one child.
+  - Captured on 26300.9974 by `scripts/inventory/surfaces/overlays.py` into `overlays.json` (876 records, 33 shots, 8 metrics): every state below that names `overlays.json`; the laptop, IME and dual files follow
+  - Done when: `check-inventory.py --surface flyouts` passes and `overlays.json` holds these states, each with a shot
+    - In `overlays-laptop.json` the volume and the brightness indicator; in `overlays.json` clipboard history with items, empty and disabled; each emoji panel tab and the skin tone chooser; the Win-X menu with every entry in order
+    - The Run dialog plain and elevated; the Win-P and Win-K hotkeys on §8's Project and Cast pages (in `overlays-dual.json` the four Project modes); in `overlays-ime.json` the input switcher with two layouts listed; each touch keyboard layout and layer; in `overlays-ime.json`, for each of the Japanese and the Chinese input method, its fixture's composition and the candidate window's first and second pages
+    - The capture bar's modes; the voice typing bar and its settings flyout
+    - Win-X and Win-Space open no new top-level window, so their capture is accepted only when the menu or the switcher list is found in the walked tree
 - [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
 
-**Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
+**Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.
 
 ---
 
@@ -1228,10 +1253,11 @@ Downloading, installing and restart required need an update Windows actually rec
 - [ ] Derive checkpoints for `update-downloading`, `update-installing` and `update-restart-required` from a genuine Microsoft update received over the temporary network, removed before the checkpoint is taken
 - [ ] `services.ps1` names each variant and restores its checkpoint, so `expected.json`'s rows resolve
 - [ ] Capture Start's power menu in `update-restart-required` (`start/power-menu-update`): section 8 recorded Lock, Shut down and Restart only, with no update pending
-- [ ] Capture the "working on updates" screens before and after the restart from `update-restart-required` into `session/boot.json` (moved from §9, which records the other boot screens)
+- [ ] Capture the "working on updates" screens before and after the restart from `update-restart-required` into `session/update-screens.json`
+  - Its own file, so §9's `boot.json` is never merged over (moved from §9, which records the other boot screens)
 - [ ] Commit: `"inventory: delivered update states"`
 
-**Test checkpoint:** `ref-vm.ps1 -Verify` restores each update checkpoint with no network adapter and Settings > Windows Update shows its state.
+**Test checkpoint:** `ref-vm.ps1 -Verify` restores each update checkpoint with no network adapter and Settings > Windows Update shows its state; `session/update-screens.json` passes `check-inventory.py --surface session` and holds the pre-restart and post-restart screens, each with a shot.
 
 ---
 
@@ -1245,10 +1271,12 @@ The network states need a network the host switches per checkpoint, with no rout
 
 - [ ] Add a host-only switch that `ref-run.ps1` connects per run, and the `network-on`, `network-authentication-failed` (802.1X required with no authenticator) and `network-discovery-failed` variants
 - [ ] Add the `page-loading`, `page-timeout`, `page-validation-error` and `page-disconnected` variants, each named by the Settings page it shows
-- [ ] Capture First-Run Setup's network branch from `pre-oobe` with `network-on` into `session/setup.json` (moved from §9, which records the local-account branch)
+- [ ] Capture First-Run Setup's network branch from `pre-oobe` with `network-on` into `session/setup-network.json`
+  - Its own file, so §9's `setup.json` is never merged over (moved from §9, which records the local-account branch)
+  - Branch-qualified shot names (`network-<page>`), so no §9 shot is replaced; `capture.py --verify-shots` passes after it publishes
 - [ ] Commit: `"inventory: network and page states"`
 
-**Test checkpoint:** `fixtures/run.py --twice` leaves the same state twice for every variant; a screenshot shows each state.
+**Test checkpoint:** `fixtures/run.py --twice` leaves the same state twice for every variant; a screenshot shows each state; `session/setup-network.json` passes `check-inventory.py --surface session` and holds the page ids of the expected network-branch path the module names, in order, through its terminal page, the first page that needs the internet (the account sign-in or the connectivity retry, whichever this build shows), each with a shot; the network has no internet route, so the branch ends there by design and the cloud pages past it are designed as ours under §6.
 
 ---
 

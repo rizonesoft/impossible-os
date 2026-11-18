@@ -429,6 +429,23 @@ class Identity(unittest.TestCase):
         ids = [r["id"] for r in self.run_walk(t).records[1:]]
         self.assertEqual(ids, ["win11.s.r.twin--1", "win11.s.r.twin--2", "win11.s.r.twin-1--1", "win11.s.r.twin-1--2"])
 
+    def test_nth_names_twins_whose_order_is_their_identity(self):
+        # The traditional touch keyboard's two Control keys share an id and a name.
+        keys = [node("Control", "Button", "switchCtl"), node("Space", "Button", "39"), node("Control", "Button", "switchCtl")]
+        t = node("Root", "Window", children=keys)
+        identity = [({"automationId": "switchCtl", "nth": 1}, "left-control"),
+                    ({"automationId": "switchCtl", "nth": 2}, "right-control")]
+        cap = self.run_walk(t, identity=identity)
+        self.assertEqual([r["id"] for r in cap.records[1:]],
+                         ["win11.s.r.left-control", "win11.s.r.space", "win11.s.r.right-control"])
+        self.assertEqual(cap.ambiguous, [])
+        # Without the rule they are positional; an nth past the matches names nothing.
+        self.assertEqual(len(self.run_walk(t).ambiguous), 2)
+        self.assertEqual(len(self.run_walk(t, identity=[({"automationId": "switchCtl", "nth": 3}, "x")]).ambiguous), 2)
+        # A lone match is no twin: the layouts with one Control key keep "switchctl".
+        lone = node("Root", "Window", children=[node("Control", "Button", "switchCtl")])
+        self.assertEqual([r["id"] for r in self.run_walk(lone, identity=identity).records[1:]], ["win11.s.r.switchctl"])
+
     def test_identity_segments_must_be_slugs(self):
         t = node("Root", "Window", children=[node("A", "Button")])
         with self.assertRaises(ValueError):
@@ -474,6 +491,27 @@ class Identity(unittest.TestCase):
         self.assertFalse(core.matches(core.FixtureElement(node("x", "List", cls="suggestions")),
                                       {"classPrefix": "suggestion"}))
         self.assertFalse(core.matches(core.FixtureElement(node("x", "List")), {"classPrefix": "suggestion"}))
+
+    def test_a_shot_box_is_clipped_to_the_screen(self):
+        # The emoji panel's page reports scrolled-away rows far below the
+        # screen; the shot keeps the panel and stops at the screen's edge.
+        screen = (0, 0, 1920, 1080)
+        panel, rows = (1559, 627, 360, 400), (1575, 808, 328, 15000)
+        self.assertEqual(core.clip_box([panel, rows], screen), (1559, 627, 1919, 1080))
+        self.assertEqual(core.clip_box([(10, 10, 20, 20)], screen), (10, 10, 30, 30))
+        with self.assertRaises(core.Incomplete):
+            core.clip_box([(2000, 0, 50, 50)], screen)
+
+    def test_an_automation_id_prefix_matches_the_start_of_the_id(self):
+        # The emoji panel's lists carry their category and a URL-encoded query
+        # in the id; the rows' containers share the stem and are ListItems.
+        grid = core.FixtureElement(node("Emoji", "List", "expanded-view-list-Emoji-Most%20frequently%20used"))
+        spec = {"controlType": "List", "automationIdPrefix": "expanded-view-list-"}
+        self.assertTrue(core.matches(grid, spec))
+        self.assertFalse(core.matches(core.FixtureElement(
+            node("Emoji", "ListItem", "expanded-view-list-container-Emoji")), spec))
+        self.assertFalse(core.matches(core.FixtureElement(node("Emoji", "List", "view-list-Emoji")), spec))
+        self.assertFalse(core.matches(core.FixtureElement(node("Emoji", "List")), spec))
 
     def test_kinds_set_the_record_kind_a_control_type_would_get_wrong(self):
         t = node("Actions", "List", children=[node("Open", "ListItem", "pp_S_Open"), node("Copy path", "ListItem")])
@@ -1881,6 +1919,47 @@ class Scenes(unittest.TestCase):
         with self.assertRaises(core.Incomplete):
             core.run_scenes(core.scenes_of(m), None, self.walk_scene)
         self.assertEqual(log, ["open desktop", "close desktop"])
+
+    def test_a_transient_failure_reopens_the_scene_a_bounded_number_of_times(self):
+        class Dropped(Exception):
+            pass
+        m, log = self.mod()
+        fails = [2]
+        walk = m.SCENES[0]["root"]
+
+        def flaky(ctx):
+            if fails[0]:
+                fails[0] -= 1
+                raise Dropped()
+            return walk(ctx)
+        m.SCENES[0]["root"] = flaky
+        cap, _ = core.run_scenes(core.scenes_of(m), None, self.walk_scene, transient=lambda e: isinstance(e, Dropped))
+        self.assertEqual(log[:6], ["open desktop", "close desktop"] * 3)
+        self.assertIn("win11.scenetest.desktop", [r["id"] for r in cap.records])
+        # Past SCENE_TRIES opens it fails; and a failure not named transient is never retried.
+        m, log = self.mod()
+        m.SCENES[0]["root"] = lambda ctx: (_ for _ in ()).throw(Dropped())
+        with self.assertRaises(Dropped):
+            core.run_scenes(core.scenes_of(m), None, self.walk_scene, transient=lambda e: isinstance(e, Dropped))
+        self.assertEqual(log.count("open desktop"), core.SCENE_TRIES)
+        m, log = self.mod()
+        m.SCENES[0]["root"] = lambda ctx: (_ for _ in ()).throw(Dropped())
+        with self.assertRaises(Dropped):
+            core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        self.assertEqual(log, ["open desktop", "close desktop"])
+        # A transient failure inside the open closes the scene before the retry.
+        m, log = self.mod()
+        opens = [1]
+        logged = m.SCENES[0]["open"]
+
+        def flaky_open(ctx):
+            logged(ctx)
+            if opens[0]:
+                opens[0] -= 1
+                raise Dropped()
+        m.SCENES[0]["open"] = flaky_open
+        core.run_scenes(core.scenes_of(m), None, self.walk_scene, transient=lambda e: isinstance(e, Dropped))
+        self.assertEqual(log[:4], ["open desktop", "close desktop", "open desktop", "close desktop"])
 
     def test_a_failure_names_its_scene_and_step(self):
         def boom(ctx):

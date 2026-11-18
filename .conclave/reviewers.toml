@@ -1,6 +1,6 @@
 # Reviewer pin and review schedule for Impossible OS. Same format as RasterFold's pin (schema_version 1).
 #
-# Operator decision 2026-11-10: when Claude is the writer, the reviewer is always GPT-6 Astra through the Codex CLI.
+# Operator decision 2026-11-10: when Claude is the writer, the reviewer is always GPT-6.2 Astra (moved from GPT-6 on 2026-11-17) through the Codex CLI.
 # One route, one reviewer, no fallback. An outage is never an approval.
 # Operator decision 2026-11-14: an outage is a delay, and it does not stop the run. A section built while the
 # reviewer is down is recorded as owed (scripts/overnight/review_owed.py), nothing is pushed while a debt is

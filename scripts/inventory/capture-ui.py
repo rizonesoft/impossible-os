@@ -71,6 +71,8 @@ POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Mic
 # foreground to itself, and so does a jump list (a CoreWindow) or a thumbnail
 # (the XAML island host); the taskbar is always on top already (2026-11-16).
 # The input indicator's flyout is light-dismissed the same way (2026-11-17).
+SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 76, 77, 78, 79
+EVENT_E_ALL_SUBSCRIBERS_FAILED = -2147220991
 ON_SCREEN_MAX = 8                  # windows a failure message names
 NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd",
                                  "Shell_InputSwitchTopLevelWindow"}
@@ -131,7 +133,7 @@ def read_profile():
 
 # ---------------------------------------------------------------- input --
 VK = {"alt": 0x12, "ctrl": 0x11, "shift": 0x10, "win": 0x5B, "esc": 0x1B, "enter": 0x0D, "tab": 0x09,
-      "space": 0x20, "semicolon": 0xBA, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
+      "space": 0x20, "semicolon": 0xBA, "period": 0xBE, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
       **{f"f{n}": 0x6F + n for n in range(1, 13)}}
 
 
@@ -152,14 +154,34 @@ class INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
 
-def keys(chord):
-    """Press a chord such as "alt+f4" or "esc" the way a keyboard does."""
-    codes = [VK[k] if k in VK else ord(k.upper()) for k in chord.lower().split("+")]
-    seq = [(c, 0) for c in codes] + [(c, 2) for c in reversed(codes)]
+def chord_codes(chord):
+    return [VK[k] if k in VK else ord(k.upper()) for k in chord.lower().split("+")]
+
+
+def send_keys(seq, what):
     arr = (INPUT * len(seq))(*[INPUT(type=1, ki=KEYBDINPUT(wVk=c, dwFlags=f)) for c, f in seq])
     if user32.SendInput(len(seq), arr, ctypes.sizeof(INPUT)) != len(seq):
-        raise core.Incomplete(f"SendInput refused {chord}")
+        raise core.Incomplete(f"SendInput refused {what}")
     time.sleep(0.3)
+
+
+def keys(chord):
+    """Press a chord such as "alt+f4" or "esc" the way a keyboard does."""
+    codes = chord_codes(chord)
+    send_keys([(c, 0) for c in codes] + [(c, 2) for c in reversed(codes)], chord)
+
+
+def hold(chord):
+    """Press a chord and keep its first key down: a surface that shows only
+    while a key is held (Win-Space's input list, 2026-11-18). release() lets
+    it go; a scene that holds closes with a release."""
+    codes = chord_codes(chord)
+    send_keys([(c, 0) for c in codes] + [(c, 2) for c in reversed(codes[1:])], chord)
+
+
+def release(chord):
+    """Let go of the key hold() kept down."""
+    send_keys([(chord_codes(chord)[0], 2)], f"the release of {chord}")
 
 
 # Down and up flags of MOUSEINPUT per button.
@@ -199,6 +221,12 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
                 ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG), ("biYPelsPerMeter", wintypes.LONG),
                 ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+def screen_box():
+    """The virtual screen as (left, top, right, bottom)."""
+    x, y = user32.GetSystemMetrics(SM_XVIRTUALSCREEN), user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    return x, y, x + user32.GetSystemMetrics(SM_CXVIRTUALSCREEN), y + user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
 
 
 def screen_rgb(x, y, w, h):
@@ -436,6 +464,8 @@ class Context:
     def __init__(self, live):
         self.live = live
         self.keys = keys
+        self.hold = hold
+        self.release = release
 
     def launch(self, *argv):
         return subprocess.Popen(list(argv))
@@ -454,6 +484,17 @@ class Context:
             el.el.GetCurrentPattern(INVOKE).QueryInterface(self.live.UIA.IUIAutomationInvokePattern).Invoke()
         except self.live.COMError as exc:
             raise core.Incomplete(f"{el.name or el.automation_id}: Invoke failed ({exc})") from None
+        time.sleep(0.3)
+
+    def expand_only(self, el):
+        """Open an element through its ExpandCollapse pattern and return: a
+        submenu that neither a click nor a hover opens (the touch keyboard's
+        layout menu, 2026-11-18). Unlike walking an expandable element, it
+        reads nothing; the scene's root finds what opened."""
+        try:
+            el._pattern().Expand()
+        except self.live.COMError as exc:
+            raise core.Incomplete(f"{el.name or el.automation_id}: Expand failed ({exc})") from None
         time.sleep(0.3)
 
     def hover(self, el, settle=1.5):
@@ -541,8 +582,12 @@ class Context:
                 raise core.Incomplete(f"no element matching {spec} within {timeout} s")
             time.sleep(0.5)
 
-    def find_window(self, timeout=15, **spec):
-        """The first top-level window matching spec (className, name, automationId)."""
+    def find_window(self, timeout=15, foreground=True, **spec):
+        """The first top-level window matching spec (className, name, automationId).
+        foreground=False leaves a light-dismissed window where it is: the emoji
+        and clipboard panel is an ApplicationFrameWindow, the class Settings and
+        other apps also run in, and it closes when it is brought forward
+        (2026-11-18), so the caller that knows it is light-dismissed says so."""
         deadline = time.monotonic() + timeout
         while True:                  # one look at least: timeout=0 is a single check
             # The raw view: a classic menu's #32768 window is not a control
@@ -551,7 +596,7 @@ class Context:
                 if core.matches(w, spec) and not w.offscreen:
                     # A popup is never brought forward: a menu that loses the
                     # foreground to itself closes (2026-11-16, the classic menu).
-                    if w.class_name not in NO_FOREGROUND:
+                    if foreground and w.class_name not in NO_FOREGROUND:
                         user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
                     return w
             if time.monotonic() >= deadline:
@@ -618,6 +663,12 @@ def main(argv=None):
         return 2
     live = Live()
     ctx = Context(live)
+
+    def transient(exc):
+        # EVENT_E_ALL_SUBSCRIBERS_FAILED: a web view's provider dropped one call
+        # while its page reflowed (the emoji panel and the capture bar,
+        # 2026-11-18); the next open of the same scene reads it whole.
+        return isinstance(exc, live.COMError) and exc.args and exc.args[0] == EVENT_E_ALL_SUBSCRIBERS_FAILED
     meta = {"surface": args.surface, "build": build, "profile": args.profile, "complete": False}
     shots = pathlib.Path(args.shots) / args.surface if args.shots else None
     if shots:
@@ -633,8 +684,10 @@ def main(argv=None):
     def shot(state, el, items, box=None):
         # box: the root's extent when it has no area of its own (core.extent).
         boxes = [box or el.bounds] + [i.bounds for i in items if i.bounds[2] and i.bounds[3]]
-        x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
-        x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+        # A web page reports the rows it has scrolled away as on screen, far
+        # below its window (the emoji panel, 16051 px, 2026-11-18): a shot is
+        # clipped to the screen, which is all a screenshot can show.
+        x0, y0, x1, y1 = core.clip_box(boxes, screen_box())
         name = f"{state}.{args.profile}.png"
         grab(str(shots / name), x0, y0, x1 - x0, y1 - y0)
         written.append(shots / name)
@@ -666,7 +719,7 @@ def main(argv=None):
 
     code = 3
     try:
-        cap, passes = core.run_scenes(scenes, ctx, walk_scene, on_open=dump_scene)
+        cap, passes = core.run_scenes(scenes, ctx, walk_scene, on_open=dump_scene, transient=transient)
         records = cap.records
         records += core.authored(getattr(mod, "HAND", ()), surface=mod.SURFACE, build=build, source="hand")
         metrics = mod.METRICS(cap.records + cap.measured) if hasattr(mod, "METRICS") else ()

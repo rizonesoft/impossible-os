@@ -179,13 +179,18 @@ def matches(element, spec):
     followed by a live value (the tray's "Volume No audio device is installed").
     `classPrefix` matches the first word of the class, for a web page's element
     whose class list grows with its state (search's best match row adds
-    "selected" and "sa_hv" under the pointer, 2026-11-17)."""
+    "selected" and "sa_hv" under the pointer, 2026-11-17). `automationIdPrefix`
+    matches the start of the automation id, for a web page's list whose id
+    carries its category and a URL-encoded query (the emoji panel's
+    "expanded-view-list-Emoji-Most%20frequently%20used", 2026-11-18)."""
     fields = {"controlType": element.control_type, "automationId": element.automation_id,
               "className": element.class_name, "name": name_of(element)}
 
     def one(k, v):
         if k == "namePrefix":
             return fields["name"].startswith(v)
+        if k == "automationIdPrefix":
+            return (fields["automationId"] or "").startswith(v)
         if k == "classPrefix":
             words, want = (fields["className"] or "").split(), v.split()
             return words[:len(want)] == want
@@ -195,7 +200,7 @@ def matches(element, spec):
 
 def _segment(el, identity=(), values=()):
     for spec, seg in identity:
-        if matches(el, spec):
+        if "nth" not in spec and matches(el, spec):
             return seg
     aid = (el.automation_id or "").strip()
     # A number-only automation id is a runtime index (Win32 menu commands), not a name.
@@ -252,6 +257,18 @@ def excluded(el):
     if el.control_type == "Text" and len(name_of(el)) > LABEL_MAX:
         return "prose"                 # a description under a setting is not a label
     return None
+
+
+def clip_box(boxes, screen):
+    """The box around `boxes` (x, y, width, height each), clipped to `screen`
+    (left, top, right, bottom), as (x0, y0, x1, y1). A box wholly off the
+    screen leaves nothing to show and fails the capture."""
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+    x0, y0, x1, y1 = max(x0, screen[0]), max(y0, screen[1]), min(x1, screen[2]), min(y1, screen[3])
+    if x1 <= x0 or y1 <= y0:
+        raise Incomplete("the screenshot's box lies wholly off the screen")
+    return x0, y0, x1, y1
 
 
 def is_hosting(el):
@@ -404,6 +421,18 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
         "--": a positional id is recognisable in any capture, old or new, and a
         note written on one is never carried (see merge)."""
         segs = [_segment(k, identity, values) for k in kids]
+        # An IDENTITY spec with "nth" names the nth of the siblings that match the
+        # rest of it, counting from 1 in tree order: for twins whose order is what
+        # they are (a keyboard's left and right Control keys, 2026-11-18), never
+        # for a list whose rows can move.
+        for spec, seg in identity:
+            if "nth" not in spec:
+                continue
+            rest = {k: v for k, v in spec.items() if k != "nth"}
+            hits = [i for i, k in enumerate(kids) if matches(k, rest)]
+            # Only twins: a lone match keeps its own name.
+            if len(hits) > 1 and len(hits) >= spec["nth"]:
+                segs[hits[spec["nth"] - 1]] = seg
         total = {}
         for s in segs:
             total[s] = total.get(s, 0) + 1
@@ -559,7 +588,10 @@ def failing_step(where):
         raise
 
 
-def run_scenes(scenes, ctx, walk_scene, on_open=None):
+SCENE_TRIES = 3                    # opens of one scene a transient provider failure may cost
+
+
+def run_scenes(scenes, ctx, walk_scene, on_open=None, transient=lambda exc: False):
     """Open, walk to a settled capture, and close each scene in turn.
 
     Returns (Capture, passes by slug); an unkept scene's records are in the
@@ -568,21 +600,43 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None):
     the state an earlier one left. Each scene's root takes its place in the list
     as its order, so the file keeps the scenes in the order the module gives.
     on_open(scene) runs after a scene opens, before its walk (a dump hook).
+    transient(exc) names a provider failure that says nothing about the
+    surface (a web page's provider dropping one call, 2026-11-18): the scene is
+    closed and opened again, up to SCENE_TRIES times, never past that.
     """
     total, passes = Capture(), {}
     for n, sc in enumerate(scenes):
         # A failure names the scene and the step it failed in (2026-11-17: a UI
         # Automation error from a nine-scene module named neither).
-        with failing_step(f"scene {sc.slug}: opening"):
-            sc.open(ctx)
-        try:
-            with failing_step(f"scene {sc.slug}: walking"):
-                cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
-                if on_open:
-                    on_open(sc, cap)
-        finally:
-            with failing_step(f"scene {sc.slug}: closing"):
-                sc.close(ctx)
+        for attempt in range(1, SCENE_TRIES + 1):
+            opened = False
+            try:
+                with failing_step(f"scene {sc.slug}: opening"):
+                    sc.open(ctx)
+                opened = True
+                with failing_step(f"scene {sc.slug}: walking"):
+                    cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
+                    if on_open:
+                        on_open(sc, cap)
+                failed = None
+            except Exception as exc:
+                if attempt == SCENE_TRIES or not transient(exc):
+                    raise
+                failed = exc
+                if not opened:
+                    # A retry starts from a closed scene: an open that failed
+                    # part way may have left its window up. A close that fails
+                    # here raises, with the transient failure as its context.
+                    with failing_step(f"scene {sc.slug}: closing before a retry"):
+                        sc.close(ctx)
+            finally:
+                # Only an opened scene is closed: a close that fails on a scene
+                # that never opened would hide why it did not.
+                if opened:
+                    with failing_step(f"scene {sc.slug}: closing"):
+                        sc.close(ctx)
+            if failed is None:
+                break
         cap.records[0]["order"] = n
         if not sc.keep:
             total.measured.extend(cap.records)

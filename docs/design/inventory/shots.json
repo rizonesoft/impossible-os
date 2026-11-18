@@ -251,6 +251,26 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays",
+  "state": "capture-bar",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 4343942,
+  "sha256": "275ca438bd52912519861439b60f780a9d00ee0286da7d2d8d11e70571ac6342"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "capture-modes",
+  "profile": "fhd-100",
+  "width": 124,
+  "height": 149,
+  "size": 4151,
+  "sha256": "6317fe1a6516ae0fdbe8b73f3a2f2b7c71ba269c50a98791d6d41fc60bda5710"
+ },
+ {
+  "surface": "flyouts",
   "file": "notifications",
   "state": "card-expanded",
   "profile": "fhd-100",
@@ -298,6 +318,56 @@
   "height": 232,
   "size": 6265,
   "sha256": "6498e54d6171cddecb6605fa2f74d2b9a0aa68564286930edaaa795a6dcc41ed"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "history",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 408,
+  "size": 13828,
+  "sha256": "cca7e4507d3b323a3263955f013b4fce4cad9875f46a0c39bd41e1fc562fe487"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "history-empty",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 400,
+  "size": 6124,
+  "sha256": "fe9997ff253fe1ce8d67e3af0fe7761ac04daf30871b9d4c72309839e8922308"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "history-item",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 80,
+  "size": 1618,
+  "sha256": "298b06d12be64cc6d67b9c4cbea6783e97bf9dcc8715f99738cec4d96984ebd9"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "history-item-more",
+  "profile": "fhd-100",
+  "width": 493,
+  "height": 80,
+  "size": 35497,
+  "sha256": "70d4b23d3075bfb522ef9084fbf058c88622a16f62fa027ad228522a066c69ff"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "history-off",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 400,
+  "size": 7375,
+  "sha256": "024f102c7446123ee035d3539e6dd7ac26031d4e479f30519fb211d72d006c15"
  },
  {
   "surface": "flyouts",
@@ -351,6 +421,76 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-emoji",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 453,
+  "size": 51898,
+  "sha256": "e064663b6a379f16b5963fa78753812c49628379632bbef2657520332b98125b"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-gif",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 400,
+  "size": 7474,
+  "sha256": "4e24367b9b9eae6bbf821d11ed4511321e297d44e2b2cac920cbba542bf8527f"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-kaomoji",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 453,
+  "size": 18371,
+  "sha256": "729102682ab66ca2be29323cb3ab5372588a1831e99a605e3c1c777d8c021ac6"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-people",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 1080,
+  "size": 613547,
+  "sha256": "66196cbd35a7548b0c78366f857b8a97fa75301506c3ab8e5d20e29ccde72a3e"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-recent",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 453,
+  "size": 35184,
+  "sha256": "2aa4ade5ed7ba3f1c718ad40deff4ac3706112fbe5a032b1a7a4f21f10be0643"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "panel-symbols",
+  "profile": "fhd-100",
+  "width": 360,
+  "height": 453,
+  "size": 16260,
+  "sha256": "41d3799a91c342a33baee67d61bdff1a71320f91dd56305e8aae149ef48460bb"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "power-user-menu",
+  "profile": "fhd-100",
+  "width": 206,
+  "height": 556,
+  "size": 14856,
+  "sha256": "bef1f77ccfa40938a1b03acab34ed87e90ea35ab868bdbddb4e40ee71b4e9238"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings",
   "state": "project-page",
   "profile": "fhd-100",
@@ -381,6 +521,26 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays",
+  "state": "run",
+  "profile": "fhd-100",
+  "width": 413,
+  "height": 213,
+  "size": 24468,
+  "sha256": "589304b22ae962ce6d7379f2144225a5559f720ff6cb90e6c44c224c5c0d2cba"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "run-elevated",
+  "profile": "fhd-100",
+  "width": 429,
+  "height": 236,
+  "size": 26284,
+  "sha256": "d19b374c5a10a02eb553aa02b7237ffdc5143b364f39139458915eb47039108e"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings-laptop",
   "state": "sound-output-page",
   "profile": "fhd-100",
@@ -408,6 +568,176 @@
   "height": 483,
   "size": 12880,
   "sha256": "b0595aa2f5c8ed72b4c863945843a42418c1e4f7b4765ec8d6f917b8b5f39bbc"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 41055,
+  "sha256": "4fc87d570a4e577d7d7a3c45924a3e22c8e8e98ead48fde5259065b3d51b4773"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-compact",
+  "profile": "fhd-100",
+  "width": 280,
+  "height": 249,
+  "size": 14527,
+  "sha256": "d8e761ed763f35cb5000c8c02eb7211ea1f2cdb0ab9a031204e8d80e595172fd"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-emoji",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 524,
+  "size": 47630,
+  "sha256": "4489c8222e938bd0347e81542fd24535d829c4a4e2ead3cd1cf6563c4cffb7ba"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-gamepad",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 42790,
+  "sha256": "1902bf5b3e6837a868204cea87ff5040535aa8709fe1f767592a18cef8f66aba"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-handwriting",
+  "profile": "fhd-100",
+  "width": 656,
+  "height": 217,
+  "size": 23614,
+  "sha256": "5597fe55e936737a5985257af0b55dc95a6266066065f6fd3bfa4dd5a76f75c5"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-layouts",
+  "profile": "fhd-100",
+  "width": 262,
+  "height": 166,
+  "size": 2733,
+  "sha256": "8cea5afc9b5f0a521a672ec680652ce5ba4d4b05d6c56f0301ce95dfedb86be3"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-number",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 27934,
+  "sha256": "23ec637bf9cc37eb318186a59e020ba7eb3692a82ddbc00c07357a8c286d4181"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-password",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 28426,
+  "sha256": "96506b013734875fe58c0cb2a5439a9c24e6689d1df6e347352bb6568b117f26"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-settings",
+  "profile": "fhd-100",
+  "width": 262,
+  "height": 212,
+  "size": 4329,
+  "sha256": "be1f60d770d57ac1cb5a0ec7092a16f7b1b6189525fa31d2c2ca5d8433f5fa00"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-shift",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 41337,
+  "sha256": "72b00c8b863fdfb4b6289662c7b809fec69a17c2ebc1a718548a2e034a3f5282"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-symbols",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 41069,
+  "sha256": "daeb6ee1b8897ae65793e75dfb8c8e19b905e288b712c6fc2f738ebe21c1b41b"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-symbols-2",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 40627,
+  "sha256": "21dbe3c6413066d6af175ea068c54813b32cbd7eedaef624b8c738583e24e025"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-traditional",
+  "profile": "fhd-100",
+  "width": 1073,
+  "height": 411,
+  "size": 49037,
+  "sha256": "f9dad58ef8d24178e4fcaea3c1174acd388b0b3a8ae48e0d2a075638b40568f8"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "touch-keyboard-url",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 362,
+  "size": 28752,
+  "sha256": "bb31f050f468de403d9b18e26a34a4a2a404096795a5264577fe3221736350d6"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "voice-consent",
+  "profile": "fhd-100",
+  "width": 326,
+  "height": 234,
+  "size": 37791,
+  "sha256": "6a71f505f1bde09798d4a32d89c7995fa2c8d74cb4127647da677cd8ac248671"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "voice-settings",
+  "profile": "fhd-100",
+  "width": 279,
+  "height": 479,
+  "size": 21005,
+  "sha256": "767eb4cbd6ab3bfa7a90c3dc3a37edd972c90c489a69187edd9ce587d8ccfbf5"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays",
+  "state": "voice-typing",
+  "profile": "fhd-100",
+  "width": 160,
+  "height": 102,
+  "size": 2009,
+  "sha256": "7465d2fac915c7c3b3757001152c5247f100e12a4b2c2e47d0f142444d208c5c"
  },
  {
   "surface": "flyouts",
