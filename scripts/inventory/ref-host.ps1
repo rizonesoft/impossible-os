@@ -343,9 +343,15 @@ function Invoke-Step($step) {
             while ((Get-Date) -lt $deadline) {
                 try { $h = Get-ThumbnailHash (Get-RefThumbnail $Name 640 360 $deadline) } catch {
                     if ($_.Exception.Message -like 'shot expired*') { break }
-                    throw
+                    # Hyper-V's invalid state is the VM between states: the
+                    # quiet time starts again after it, inside the same
+                    # timeout (review, 2026-11-19: one such read ended a 60 s
+                    # settle).
+                    if ($_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+                    $last = $null; $h = $null
                 }
-                if ($h -ne $last) { $last = $h; $since = Get-Date }
+                if ($null -eq $h) { }
+                elseif ($h -ne $last) { $last = $h; $since = Get-Date }
                 elseif (((Get-Date) - $since).TotalSeconds -ge $quiet) { return }
                 Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(500, ($deadline - (Get-Date)).TotalMilliseconds)))
             }

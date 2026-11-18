@@ -387,7 +387,7 @@ def spinner_alone(img):
     if len(boxes) != 1:
         return None
     x, y, w, h = boxes[0]
-    # A ring of dots, small and below the middle: the firmware logo (183 by 45,
+    # The spinner's arc, small and below the middle: the firmware logo (183 by 45,
     # high on the screen) is one box too (review, 2026-11-18).
     return boxes[0] if w <= 80 and h <= 80 and y + h / 2 > img[1] / 2 else None
 
@@ -500,7 +500,7 @@ def records(shots, build, taken=None):
         raise core.Incomplete("boot burst: no frame with the spinner alone after the logo")
     disp = next(shots[n] for n in later if spinner_alone(shots[n]))
     rec("logo.spinner", "control", "Spinner", st, controlType="progressBar",
-        behaviour=f"A ring of dots below the logo; the dots seen in {frames_word(fw_n)} in this mode sit {place(img, fw)}. It keeps turning alone once Windows sets the display's own mode, where the dots seen in {frames_word(len(lone))} sit {place(disp, union(*lone))} at 1920x1080.")
+        behaviour=f"A solid arc turning round a circle below the logo, not the Restarting screen's dots; the arc seen in {frames_word(fw_n)} in this mode sits {place(img, fw)}. It keeps turning alone once Windows sets the display's own mode, where the arc seen in {frames_word(len(lone))} sits {place(disp, union(*lone))} at 1920x1080.")
 
     # Tile pages: the boot manager's and the recovery environment's.
     def tiles(img, what, n):

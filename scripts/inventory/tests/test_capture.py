@@ -1250,22 +1250,42 @@ class Profile(unittest.TestCase):
         # Calls take 50 ms: the thumbnail ends at 0.1 s, the mode read after
         # it meets the outage (0.12 to 0.8 s), so the shot takes its pixels
         # again after 0.8 s.
+        # Each thumbnail carries its own number in its first byte, and the
+        # saved and kept frames must be the one taken after the outage.
         again = ("function Cost { 50 }; function Gone { $s = ($script:t - $t0).TotalSeconds; $s -ge 0.12 -and $s -lt 0.8 }; $script:at = @(); "
                  "function Invoke-CimMethod { Call; $script:at += ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture); "
-                 "[pscustomobject]@{ ReturnValue = 0; ImageData = (New-Object byte[] 20) } }; "
-                 "Save-Shot 'x'; '' + $script:ShotInterrupted + ' ' + ($script:at -join ';')")
+                 "$b = New-Object byte[] 20; $b[0] = $script:at.Count; [pscustomobject]@{ ReturnValue = 0; ImageData = $b } }; "
+                 "function Save-Thumbnail($Bytes) { $script:saved = $Bytes[0] }; "
+                 "Save-Shot 'x'; '' + $script:ShotInterrupted + ' ' + ($script:at -join ';') + ' ' + $script:saved + ' ' + $script:LastShot.Bytes[0]")
         fail = ("function Cost { 50 }; function Gone { $true }; function Write-Host($m) { $m }; Save-FailureShot 4; "
                 "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
         got = {}
         for k, case in (("again", again), ("fail", fail)):
             r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
             got[k] = [line.strip() for line in r.stdout.splitlines() if line.strip()] or [r.stderr]
-        flag, thumbs = got["again"][-1].split(" ")
+        flag, thumbs, saved, kept = got["again"][-1].split(" ")
+        self.assertEqual((saved, kept), ("2", "2"), got)
         self.assertEqual(flag, "True", got)
         self.assertEqual(len(thumbs.split(";")), 2, got)
         self.assertGreaterEqual(float(thumbs.split(";")[-1]), 0.8, got)
         self.assertTrue(got["fail"][0].startswith("ref-host: no shot of the failure either: "), got)
         self.assertLessEqual(float(got["fail"][-1]), 3.1, got)
+
+    def test_a_settle_waits_out_an_invalid_state_and_counts_its_quiet_time_afresh(self):
+        # One 32775 read ended a 60 s settle (review, 2026-11-19). Identical
+        # frames on both sides of one failed read at the second poll.
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        case = ("function Cost { 50 }; function Gone { $false }; $script:n = 0; "
+                "function Invoke-CimMethod { Call; $script:n++; if ($script:n -eq 2) { return [pscustomobject]@{ ReturnValue = 32775; ImageData = $null } }; "
+                "[pscustomobject]@{ ReturnValue = 0; ImageData = (New-Object byte[] 20) } }; "
+                "try { Invoke-Step ([pscustomobject]@{ op = 'settle'; sec = 2; timeout = 60 }); 'settled' } catch { $_.Exception.Message }; "
+                "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+        r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+        # Poll 1 at 0, the failed read at 0.55, then frames from 1.1 s: two
+        # quiet seconds are counted from 1.1, so it settles at 3.3 s or later.
+        self.assertEqual(lines[0], "settled", (r.stdout, r.stderr))
+        self.assertGreaterEqual(float(lines[-1]), 3.1, lines)
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
