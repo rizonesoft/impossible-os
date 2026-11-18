@@ -161,6 +161,14 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     Write-Host "ref-host: shot $ShotName $($before[0])x$($before[1])$(if (-not $exact) { ' (the mode changed during it twice)' })"
 }
 
+# A shot of the screen a step failed on, for the operator. It waits at most
+# 3 s: a failure that left no video head would otherwise hold the VM lock
+# for another 15 s before teardown (review, 2026-11-19).
+function Save-FailureShot([int]$N) {
+    try { Save-Shot "failed-step-$N" (Get-Date).AddSeconds(3) } catch { Write-Host "ref-host: no shot of the failure either: $($_.Exception.Message)"; return }
+    if ($script:ShotExpired) { Write-Host "ref-host: no shot of the failure either: no frame within 3 s" }
+}
+
 # The thumbnail and the mode read before and after it, retried once at a new
 # mode; every host call checks $script:ShotUntil through the helpers.
 function Get-ShotPixels() {
@@ -176,7 +184,13 @@ function Get-ShotPixels() {
             if ((Get-Date) -ge $script:ShotDeadline) { throw }
             continue
         }
+        # Pixels taken before an outage that the mode read after them waited
+        # out are not this frame: take them again, still under the shot's
+        # deadline (review, 2026-11-19: they started a still hold).
+        $was = $script:ShotInterrupted; $script:ShotInterrupted = $false
         $after = Get-ShotMode
+        $lost = $script:ShotInterrupted; $script:ShotInterrupted = $was -or $lost
+        if ($lost) { continue }
         $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
         if ($exact) { break }
         $try++
@@ -391,7 +405,7 @@ try {
                 try { Invoke-Step $step } catch {
                     $failed = "step $n ($($step.op)): $($_.Exception.Message)"
                     Write-Host "ref-host: $failed"
-                    try { Save-Shot "failed-step-$n" } catch { Write-Host "ref-host: no shot of the failure either: $($_.Exception.Message)" }
+                    Save-FailureShot $n
                     $code = 1
                     break
                 }

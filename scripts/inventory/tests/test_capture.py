@@ -1095,7 +1095,7 @@ class Profile(unittest.TestCase):
         """The real shot, mode, thumbnail and wait helpers over fake CIM calls
         on a fake clock; each call logs when it starts (seconds from t0), costs
         (Cost) ms, and the video head is missing while (Gone) holds."""
-        return (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels"]),
+        return (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode", "Get-ShotPixels", "Save-FailureShot"]),
                                    (INV / "ref-common.ps1", ["Get-ThumbnailPixel", "Get-RefThumbnail", "Get-RefVideoMode", "Assert-RefBefore", "Get-ThumbnailHash"]))
                 + "$Name = 'x'; $NoSession = $false; $Out = '.'; $script:Ns = 'n'; $shots = New-Object System.Collections.ArrayList; "
                 "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:calls = @(); $script:thumbs = 0; "
@@ -1241,6 +1241,31 @@ class Profile(unittest.TestCase):
             self.assertTrue(got[k][0].startswith("ok"), got)
             self.assertGreaterEqual(float(got[k][-1]), back + 5, got)
         self.assertEqual(got["empty"][0], "burst boot: no frame within the burst", got)
+
+    def test_pixels_from_before_an_outage_are_taken_again_and_a_failure_shot_waits_3_s(self):
+        # The mode read after a thumbnail could wait out an outage and return
+        # the pixels from before it, and the failure shot waited another 15 s
+        # with no head (review, 2026-11-19).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        # Calls take 50 ms: the thumbnail ends at 0.1 s, the mode read after
+        # it meets the outage (0.12 to 0.8 s), so the shot takes its pixels
+        # again after 0.8 s.
+        again = ("function Cost { 50 }; function Gone { $s = ($script:t - $t0).TotalSeconds; $s -ge 0.12 -and $s -lt 0.8 }; $script:at = @(); "
+                 "function Invoke-CimMethod { Call; $script:at += ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture); "
+                 "[pscustomobject]@{ ReturnValue = 0; ImageData = (New-Object byte[] 20) } }; "
+                 "Save-Shot 'x'; '' + $script:ShotInterrupted + ' ' + ($script:at -join ';')")
+        fail = ("function Cost { 50 }; function Gone { $true }; function Write-Host($m) { $m }; Save-FailureShot 4; "
+                "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+        got = {}
+        for k, case in (("again", again), ("fail", fail)):
+            r = subprocess.run([shell, "-NoProfile", "-Command", self._cim_fakes() + case], capture_output=True, text=True, timeout=120)
+            got[k] = [line.strip() for line in r.stdout.splitlines() if line.strip()] or [r.stderr]
+        flag, thumbs = got["again"][-1].split(" ")
+        self.assertEqual(flag, "True", got)
+        self.assertEqual(len(thumbs.split(";")), 2, got)
+        self.assertGreaterEqual(float(thumbs.split(";")[-1]), 0.8, got)
+        self.assertTrue(got["fail"][0].startswith("ref-host: no shot of the failure either: "), got)
+        self.assertLessEqual(float(got["fail"][-1]), 3.1, got)
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
