@@ -188,8 +188,8 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     """Stage `files` ({path under C:\\ios\\in: source}) and run `cmd` in the VM on a
     fresh restore of `checkpoint` (clean, or a machine profile's profile-<id>).
     Returns (output folder, exit code); 3 when ref-run
-    outlived its margin (the VM is then turned off), and on an interrupt the VM is
-    turned off before the interrupt goes on. The staging folder is always removed."""
+    outlived its margin (the VM is then turned off and `checkpoint` restored), and
+    on an interrupt the same happens before the interrupt goes on. The staging folder is always removed."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = WORK / f"{label}-{stamp}-in"
     out = WORK / f"{label}-{stamp}"
@@ -203,11 +203,11 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
                            capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
     except subprocess.TimeoutExpired:
         # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
-        print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner))
+        print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner, checkpoint))
         return out, 3
     except KeyboardInterrupt:
         # subprocess.run has killed the runner, whose own finally may not run.
-        print(f"{who}: interrupted; " + stop_vm(runner))
+        print(f"{who}: interrupted; " + stop_vm(runner, checkpoint))
         raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
@@ -220,12 +220,14 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     return out, r.returncode
 
 
-def stop_vm(runner):
-    """ref-run -Stop: the VM off unless a live run still holds it. Returns its message."""
+def stop_vm(runner, checkpoint="clean"):
+    """ref-run -Stop -Checkpoint: unless a live run still holds the VM, turn it
+    off and restore `checkpoint`, the one the killed run started from (a
+    machine profile's profile-<id> too, review 2026-11-18). Returns its message."""
     try:
-        stop = subprocess.run(runner + ["-Stop"], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff
+        stop = subprocess.run(runner + ["-Stop", "-Checkpoint", checkpoint], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff and the restore
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"ref-run -Stop failed ({exc}); turn the VM off and restore it with ref-run.ps1 -Stop"
+        return f"ref-run -Stop failed ({exc}); turn the VM off and restore it with ref-run.ps1 -Stop -Checkpoint {checkpoint}"
     return stop.stdout.replace("\r", "").strip() or f"ref-run -Stop exited {stop.returncode}"
 
 

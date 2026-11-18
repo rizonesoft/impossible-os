@@ -670,7 +670,7 @@ function Invoke-DeriveProfile([string]$Id) {
     $s = New-RefSession $Name $VmPath
     try {
         Send-GuestScripts $s
-        $wrong = @(Test-RefIdentity $s)
+        $wrong = @(Test-RefIdentity $s $Name)
         if ($wrong.Count) { throw "the build changed while online: $($wrong -join '; ')" }
         $r = Invoke-RefInteractive $s "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\set-profile.ps1 -Profiles C:\ios\probe\profiles.json -Name $Id" 300
         if ($r.ExitCode -ne 0) { throw "profile $Id not applied: $("$($r.Output)".Trim())" }

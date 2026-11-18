@@ -65,7 +65,7 @@ def build():
 def run_host(label, steps, checkpoint, timeout, session=True):
     """Run ref-host.ps1 over `steps` on a fresh restore of `checkpoint`.
     Returns (output folder, exit code); 3 when it outlived its deadline (the VM
-    is then turned off and restored to `checkpoint`). The folder's build.json
+    is then turned off and restored to `checkpoint`, as on an interrupt). The folder's build.json
     names the reference build the shots are of."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = capture.WORK / f"{label}-{stamp}"
@@ -79,9 +79,15 @@ def run_host(label, steps, checkpoint, timeout, session=True):
                            capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
     except subprocess.TimeoutExpired:
         # -Stop restores the checkpoint too: the killed walk's teardown never ran.
-        stop = runner + [capture.winpath(HERE / "ref-run.ps1"), "-Checkpoint", checkpoint]
-        print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop))
+        stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
+        print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop, checkpoint))
         return out, 3
+    except KeyboardInterrupt:
+        # subprocess.run has killed ref-host, whose finally may not have run, so
+        # the boot walk's fixture could outlive it (review, 2026-11-18).
+        stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
+        print("host-capture: interrupted; " + capture.stop_vm(stop, checkpoint))
+        raise
     finally:
         plan.unlink(missing_ok=True)
     if out.is_dir():         # ref-host refuses a folder that is not empty, so this comes after
@@ -104,13 +110,15 @@ def burst_frame(name, moving):
     return any(name.startswith(p) and name[len(p):].isdigit() for p in moving)
 
 
-def taken(out, rc, wanted, moving=()):
+def taken(out, rc, wanted, moving=(), early=()):
     """The shots ref-host wrote, checked: {name: entry}. Raises core.Incomplete
     on a failed step, shots from another thumbnail revision, a missing shot or
     one whose mode changed under it, unless it is a numbered frame of one of
     the `moving` bursts (`<prefix><n>`, a burst across a restart, where a mode
     change is the screen passing; it is kept with exact false and the scenario
-    measures no geometry from it)."""
+    measures no geometry from it). A burst in `early` ends at the first frame
+    that shows what it waits for, so its frames from that one on may be
+    missing; its first frame never is, and a gap inside it is refused."""
     index = out / "shots.json"
     if not index.is_file():
         raise core.Incomplete(f"ref-host wrote no shots.json (exit {rc})")
@@ -122,6 +130,14 @@ def taken(out, rc, wanted, moving=()):
     if rc != 0:
         raise core.Incomplete(f"ref-host exit {rc}")
     shots = {s["name"]: s for s in doc.get("shots", [])}
+
+    def ended(n):                    # a frame after the last one an early burst took
+        for p in early:
+            if burst_frame(n, (p,)):
+                took = [int(m[len(p):]) for m in shots if burst_frame(m, (p,))]
+                return bool(took) and int(n[len(p):]) > max(took)
+        return False
+    wanted = [n for n in wanted if n in shots or not ended(n)]
     missing = [n for n in wanted if n not in shots]
     if missing:
         raise core.Incomplete(f"no shot of {', '.join(missing)}")
@@ -223,7 +239,7 @@ def publish(sc, out, rc, dry_run):
     proof = [sc.PROOF[0]] if hasattr(sc, "PROOF") else []
     try:
         at = captured_build(out)
-        shots = taken(out, rc, sc.SHOTS + proof, getattr(sc, "MOVING", ()))
+        shots = taken(out, rc, sc.SHOTS + proof, getattr(sc, "MOVING", ()), getattr(sc, "EARLY", ()))
         proven(sc, out, shots)
         shots = {n: shots[n] for n in sc.SHOTS}
     except core.Incomplete as exc:

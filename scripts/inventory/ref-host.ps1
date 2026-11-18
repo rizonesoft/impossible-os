@@ -28,7 +28,7 @@ Steps, one object each, by "op":
   nmi     {}                  inject a non-maskable interrupt (Debug-VM), which stops Windows with a stop error
   click   {x, y, button}      move the mouse to a screen pixel and click (button 1 left, 2 right)
   wait    {sec}               sleep
-  awaitcolour {x, y, rgb, timeout}  wait until that pixel shows rgb (within 16-bit rounding)
+  awaitcolour {x, y, rgb, timeout}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding
   shot    {name}              one shot at the current mode
   burst   {name, count, every} count shots every `every` seconds, named <name>-<n>
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
@@ -99,32 +99,40 @@ function Get-RefMouse() {
 # A shot whose mode changed while it was taken is taken again once at the new
 # mode; a screen that has passed by then keeps the second shot, marked inexact.
 # A restart takes the video head away for a moment; a shot then waits for it
-# (up to 15 s) rather than failing the run.
+# rather than failing the run, until the shot's deadline.
 function Get-ShotMode() {
     for (;;) {
         try { return Get-RefVideoMode $Name } catch {
-            if ($script:ShotWaits -ge 30 -or $_.Exception.Message -notlike 'no video head*') { throw }
-            $script:ShotWaits++
+            if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'no video head*') { throw }
             Start-Sleep -Milliseconds 500
         }
     }
 }
-$script:ShotWaits = 0
+$script:ShotDeadline = Get-Date
+$script:LastShot = $null
+
+# True when the pixel at (x, y) of a thumbnail of the given size shows rgb,
+# within the 16-bit rounding of the host path (8 a channel); x and y are in
+# 1920 by 1080 and scaled to the thumbnail's size.
+function Test-ThumbnailColour([byte[]]$Bytes, [int]$Width, [int]$Height, $Want) {
+    $p = Get-ThumbnailPixel $Bytes $Width $Height ([int]([int]$Want.x * $Width / 1920)) ([int]([int]$Want.y * $Height / 1080))
+    return @(0, 1, 2 | Where-Object { [Math]::Abs($p[$_] - [int]$Want.rgb[$_]) -gt 8 }).Count -eq 0
+}
 
 function Save-Shot([string]$ShotName) {
     $png = Join-Path $Out "$ShotName.png"
-    # One budget of waits for the whole shot, shared by the mode reads and the
-    # thumbnail, so a reset cannot hold a burst frame past 15 s (review,
-    # 2026-11-18: each read had its own).
-    $script:ShotWaits = 0
+    # One deadline for the whole shot, shared by the mode reads and the
+    # thumbnail, so a reset cannot hold a burst frame much past 15 s (review,
+    # 2026-11-18: each read had its own budget, and the budget counted only
+    # sleeps, not the host calls between them).
+    $script:ShotDeadline = (Get-Date).AddSeconds(15)
     for ($try = 1; $try -le 2; ) {
         $before = Get-ShotMode
         try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
             # 32775 is Hyper-V's "invalid state": the VM is between states as it
             # resets (after the boot walk's stop error, 2026-11-18). Wait it out
             # like a missing video head, up to 15 s, reading the mode again.
-            if ($script:ShotWaits -ge 30 -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
-            $script:ShotWaits++
+            if ((Get-Date) -ge $script:ShotDeadline -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
             Start-Sleep -Milliseconds 500
             continue
         }
@@ -134,6 +142,7 @@ function Save-Shot([string]$ShotName) {
         $try++
     }
     Save-Thumbnail $bytes $png $before[0] $before[1]
+    $script:LastShot = @{ Bytes = $bytes; Width = $before[0]; Height = $before[1] }
     [void]$shots.Add([ordered]@{ name = $ShotName; file = "$ShotName.png"; width = $before[0]; height = $before[1]
         depth = 16; modeBefore = $before; modeAfter = $after; exact = $exact; tries = [Math]::Min($try, 2); at = (Get-Date).ToString('o') })
     Write-Host "ref-host: shot $ShotName $($before[0])x$($before[1])$(if (-not $exact) { ' (the mode changed during it twice)' })"
@@ -184,6 +193,10 @@ function Invoke-Step($step) {
         'burst' {
             for ($i = 1; $i -le [int]$step.count; $i++) {
                 Save-Shot "$($step.name)-$i"
+                # until: end the burst at the first frame that shows that
+                # pixel, the boot menu's blue, whose 30 s countdown a fixed
+                # burst could outrun (review, 2026-11-18).
+                if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
                 Start-Sleep -Milliseconds ([int]([double]$step.every * 1000))
             }
         }
@@ -193,15 +206,15 @@ function Invoke-Step($step) {
             # manager's blue. A burst's length timed it, and then the mode,
             # which comes back while Windows' spinner still shows alone
             # (review and live run, 2026-11-18).
+            # A 160 by 90 thumbnail is enough for one pixel of a uniform
+            # background and needs no video mode, which a restart takes away
+            # (review, 2026-11-18: a native-size image per poll, and a mode
+            # read that gave up after 15 s of a 90 s wait).
             $deadline = (Get-Date).AddSeconds([double]$step.timeout)
             while ((Get-Date) -lt $deadline) {
-                $script:ShotWaits = 0
-                $m = Get-ShotMode
-                try { $p = Get-ThumbnailPixel (Get-RefThumbnail $Name $m[0] $m[1]) $m[0] $m[1] ([int]$step.x) ([int]$step.y) } catch {
+                try { if (Test-ThumbnailColour (Get-RefThumbnail $Name 160 90) 160 90 $step) { return } } catch {
                     if ($_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
-                    $p = $null
                 }
-                if ($p -and @(0, 1, 2 | Where-Object { [Math]::Abs($p[$_] - [int]$step.rgb[$_]) -gt 8 }).Count -eq 0) { return }
                 Start-Sleep -Milliseconds 250
             }
             throw "the pixel at ($($step.x), $($step.y)) did not show $($step.rgb -join ',') within $($step.timeout) s"
@@ -210,7 +223,7 @@ function Invoke-Step($step) {
             $quiet = [double]$step.sec; $deadline = (Get-Date).AddSeconds([double]$step.timeout)
             $last = $null; $since = Get-Date
             while ((Get-Date) -lt $deadline) {
-                $h = (Get-ThumbnailFacts (Get-RefThumbnail $Name)).Hash
+                $h = Get-ThumbnailHash (Get-RefThumbnail $Name)
                 if ($h -ne $last) { $last = $h; $since = Get-Date }
                 elseif (((Get-Date) - $since).TotalSeconds -ge $quiet) { return }
                 Start-Sleep -Milliseconds 500
@@ -257,7 +270,9 @@ try {
         try { $script:Session = Start-RefFrom $Name $VmPath $Checkpoint; $ready = [bool]$script:Session } catch { Write-Host "ref-host: $($_.Exception.Message)" }
     }
     if ($ready) {
-        $wrong = if ($NoSession) { @() } else { @(Test-RefIdentity $script:Session) }
+        # Without a session the guest cannot be asked its build, so the build
+        # the VM was last verified as is checked instead (review, 2026-11-18).
+        $wrong = if ($NoSession) { @(Test-RefBuildNote $Name) } else { @(Test-RefIdentity $script:Session $Name) }
         if ($wrong.Count) {
             foreach ($w in $wrong) { Write-Host "ref-host: $w" }
             $code = 5
@@ -284,7 +299,7 @@ try {
         # failed step too (review, 2026-11-18). Restore-RefCheckpoint turns it
         # off first and attaches the media again from the VM's own folder, which
         # a plain restore of pre-oobe would leave pointing at the build folder.
-        try { Restore-RefCheckpoint $Name $Checkpoint $VmPath } catch {
+        try { Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart } catch {
             $why = "the VM could not be restored to $Checkpoint after the run: $($_.Exception.Message)"
             Write-Host "ref-host: $why"
             if (-not $failed) { $failed = $why }

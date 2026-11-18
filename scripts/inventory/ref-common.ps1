@@ -127,9 +127,13 @@ function Get-RefThumbnail([string]$Name, [int]$Width = 640, [int]$Height = 360) 
     return ,([byte[]]$r.ImageData)
 }
 
-function Get-ThumbnailFacts([byte[]]$Bytes) {
+function Get-ThumbnailHash([byte[]]$Bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
-    $hash = ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+    return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+}
+
+function Get-ThumbnailFacts([byte[]]$Bytes) {
+    $hash = Get-ThumbnailHash $Bytes
     $colours = New-Object 'System.Collections.Generic.HashSet[uint16]'
     for ($i = 0; $i -lt $Bytes.Length; $i += 2) { [void]$colours.Add([BitConverter]::ToUInt16($Bytes, $i)) }
     return @{ Hash = $hash; Colours = $colours.Count }
@@ -214,7 +218,7 @@ function Get-RefIdentity() {
 }
 
 # The guest's edition, version and build, read over the session.
-function Test-RefIdentity($Session) {
+function Test-RefIdentity($Session, [string]$Name) {
     $want = Get-RefIdentity
     $seen = Invoke-Command -Session $Session -ScriptBlock {
         $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
@@ -224,7 +228,25 @@ function Test-RefIdentity($Session) {
     foreach ($k in 'edition', 'displayVersion', 'build') {
         if ("$($seen[$k])" -ne "$($want.$k)") { $problems += "$k is $($seen[$k]), reference.json says $($want.$k)" }
     }
+    if (-not $problems.Count) { Set-RefBuildNote $Name $want.build }
     return $problems
+}
+
+# The build a VM's install was last verified as, kept in the VM's notes, so a
+# walk that cannot open a session (pre-oobe, the setup pages) still checks it.
+# The notes belong to the VM: a rebuild makes a new VM, which has none until a
+# session verifies it. One checkpoint tree is one install, so the build the
+# guest reported in clean is pre-oobe's too.
+function Set-RefBuildNote([string]$Name, [string]$Build) {
+    if ("$((Get-VM -Name $Name).Notes)" -ne "ios-build=$Build") { Set-VM -Name $Name -Notes "ios-build=$Build" }
+}
+
+function Test-RefBuildNote([string]$Name) {
+    $want = (Get-RefIdentity).build
+    $note = "$((Get-VM -Name $Name).Notes)"
+    if ($note -notmatch '^ios-build=(\S+)$') { return @("$Name has no verified build in its notes; a capture from clean records it") }
+    if ($Matches[1] -ne $want) { return @("$Name was verified as build $($Matches[1]), reference.json says $want") }
+    return @()
 }
 
 function Get-RefCredential([string]$VmPath) {
@@ -345,7 +367,10 @@ function Repair-RefPromotion([string]$Name, [string]$Checkpoint) {
     }
 }
 
-function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath) {
+# Starts the VM after the restore unless -NoStart; a teardown passes it, and
+# then makes sure the VM is not running (review, 2026-11-18: both teardowns
+# left the guest running).
+function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPath, [switch]$NoStart) {
     Repair-RefPromotion $Name $Checkpoint
     # Inputs are checked before the VM is touched, so a bad argument leaves it as it was.
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
@@ -372,6 +397,12 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
         Push-Location -LiteralPath $env:SystemRoot
         try { $out = & cmd.exe /c "icacls.exe `"$($d.Path)`" /grant `"NT VIRTUAL MACHINE\${id}:(R)`" 2>&1" } finally { Pop-Location }
         if ($LASTEXITCODE -ne 0) { throw "icacls on $($d.Path) failed: $out" }
+    }
+    if ($NoStart) {
+        if ((Get-VM -Name $Name).State -eq 'Running') { Stop-VM -Name $Name -TurnOff -Force }
+        $state = (Get-VM -Name $Name).State
+        if ($state -eq 'Running') { throw "$Name is still running after the restore of $Checkpoint" }
+        return
     }
     if ((Get-VM -Name $Name).State -ne 'Running') { Start-VM -Name $Name }
 }

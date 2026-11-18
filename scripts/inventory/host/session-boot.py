@@ -44,6 +44,7 @@ TIMEOUT = 1800
 
 ENTER, TAB, BACK, UP, DOWN, LEFT, RIGHT, FOUR = 13, 9, 8, 38, 40, 37, 39, 52
 BLUE = (33, 101, 181)         # the boot manager's and recovery's background
+MENU = {"x": 10, "y": 10, "rgb": list(BLUE)}   # the boot menu is up: its blue in the corner
 BOOT_BURST, REPAIR_BURST, SAFE_BURST, STOP_BURST = 14, 12, 8, 10
 
 # A second entry so the boot manager shows its menu, and a stop error on NMI.
@@ -90,11 +91,12 @@ STEPS = [
     {"op": "fetch", "path": r"C:\ios\out\guest-desktop.png", "name": "guest-desktop.png"},
     {"op": "admin", "script": FIXTURE},
     # Restarting, the firmware logo with the spinner, then the menu counting down.
-    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0},
-    # Wait for the menu's blue rather than trusting the burst's length to land
-    # inside its 30 s countdown; the mode alone comes back while Windows'
-    # spinner still shows (2026-11-18).
-    {"op": "awaitcolour", "x": 10, "y": 10, "rgb": list(BLUE), "timeout": 90},
+    # The burst ends at the first frame with the menu's blue, and the menu is
+    # then confirmed before any key: its 30 s countdown is the walk's only
+    # window, which a fixed burst could outrun (review, 2026-11-18), and the
+    # mode alone comes back while Windows' spinner still shows.
+    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "until": MENU},
+    {"op": "awaitcolour", **MENU, "timeout": 90},
     shot("boot-manager"),
     *keys(DOWN), shot("boot-manager-second"),
     *keys(DOWN, TAB), shot("boot-manager-link"),
@@ -110,7 +112,8 @@ STEPS = [
     key(FOUR), {"op": "burst", "name": "safe-boot", "count": SAFE_BURST, "every": 2},
     {"op": "settle", "sec": 5, "timeout": 240}, shot("safe-mode"),
     # An NMI from the host stops Windows; it writes its dump and restarts to the menu.
-    {"op": "nmi"}, {"op": "burst", "name": "stop", "count": STOP_BURST, "every": 0}, wait(3),
+    {"op": "nmi"}, {"op": "burst", "name": "stop", "count": STOP_BURST, "every": 0, "until": MENU},
+    {"op": "awaitcolour", **MENU, "timeout": 120},
     # Back into recovery for Startup Repair, which looks for the network and gives up.
     *TO_RECOVERY, *keys(RIGHT), key(ENTER), wait(4), *keys(RIGHT), key(ENTER), wait(4),
     key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 3}, wait(30), shot("automatic-repair"),
@@ -122,6 +125,8 @@ STEPS = [
 
 # Bursts across a restart: a shot there may straddle a mode change.
 MOVING = ("boot-", "repair-", "safe-boot-", "stop-")
+# Bursts that end at the boot menu, so they may hold fewer frames than their count.
+EARLY = ("boot-", "stop-")
 
 SHOTS = [*[f"boot-{i}" for i in range(1, BOOT_BURST + 1)], "boot-manager", "boot-manager-second", "boot-manager-link",
          "boot-options", "recovery", "recovery-troubleshoot", "recovery-reset", "recovery-advanced",
@@ -228,6 +233,11 @@ def records(shots, build, taken=None):
         if img[:2] == (1920, 1080):
             raise core.Incomplete(f"{name}: drawn at 1920x1080, where the firmware's own mode was expected")
         return img
+
+    def band_bytes(img, box):
+        w, _, data = img
+        x, y, bw, bh = box
+        return b"".join(bytes(data[((y + r) * w + x) * 3:((y + r) * w + x + bw) * 3]) for r in range(bh))
 
     def frames(prefix, test, exact=True):
         """The burst frames whose screen passes test, in order. Geometry is
@@ -466,8 +476,15 @@ def records(shots, build, taken=None):
              behaviour=f"Black in the firmware's mode ({img[0]}x{img[1]} here), no icon or code image: a message, a progress line and a stop code line; the machine restarted by itself within seconds.")
     rec("stop.message", "control", "Message", st, controlType="text",
         behaviour=f"A text slot of 52 characters in one line, {place(img, message)}.")
+    # What the frames show of the percentage: whether the line's band changed
+    # between them. It read 0% in some walks and reached 100% in others
+    # (stop-6, review 2026-11-18), so no single value is published.
+    band = (0, progress[1], img[0], progress[3])
+    seen = {band_bytes(shots[n], band) for n in got if shots[n][:2] == img[:2]}
+    moved = f"its text changed across the {len(got)} frames that caught the screen" if len(seen) > 1 \
+        else f"its text stayed the same in the {len(got)} frames that caught the screen"
     rec("stop.progress", "control", "Progress", st, controlType="text",
-        behaviour=f"A text slot of a percentage and one word, {place(img, progress)}; it read 0% in every frame before the restart.")
+        behaviour=f"A text slot of a percentage and one word, {place(img, progress)}; {moved}.")
     rec("stop.code", "control", "Stop code", st, controlType="text",
         behaviour=f"A small text slot with a label, the stop code's name and its number in hex, {place(img, code)}, near the bottom edge.")
     every = frames("stop", lambda i: True, exact=False)

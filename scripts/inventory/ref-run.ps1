@@ -46,8 +46,8 @@ if ($Stop) {
     # Back to -Checkpoint, not only off: a killed host walk may have changed the
     # disk (the boot walk's boot entry and crash settings) before its own
     # teardown could restore it (review, 2026-11-18).
-    Restore-RefCheckpoint $Name $Checkpoint $VmPath
-    Write-Host "ref-run: $Name is off and back on $Checkpoint"
+    Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart
+    Write-Host "ref-run: $Name is back on $Checkpoint and not running ($((Get-VM -Name $Name).State))"
     exit 0
 }
 if (-not $Out) { Write-Host 'ref-run: give -Out'; exit 2 }
@@ -75,7 +75,7 @@ try {
                 New-Item -ItemType Directory -Path $d | Out-Null
             }
         }
-        $wrong = @(Test-RefIdentity $s)
+        $wrong = @(Test-RefIdentity $s $Name)
         if ($wrong.Count) {
             foreach ($w in $wrong) { Write-Host "ref-run: $w" }
             $code = 5

@@ -1000,45 +1000,112 @@ class Profile(unittest.TestCase):
               "foreach ($fn in 'Get-ShotMode', 'Save-Shot') { "
               "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
               "Invoke-Expression $f.Extent.Text }; "
-              "function Start-Sleep { }; function Get-RefVideoMode { @(2, 1, 16) }; function Save-Thumbnail { }; "
+              "$script:now = [datetime]'2026-01-01'; function Get-Date { $script:now }; "
+              "function Start-Sleep([int]$Milliseconds) { $script:now = $script:now.AddMilliseconds($Milliseconds) }; "
+              "function Get-RefVideoMode { @(2, 1, 16) }; function Save-Thumbnail { }; "
               "$script:calls = 0; function Get-RefThumbnail { $script:calls++; if ($script:calls -le 2) { throw 'thumbnail failed: 32775' }; [byte[]](0) }; "
               "$Name = 'x'; $Out = [IO.Path]::GetTempPath(); $shots = New-Object System.Collections.ArrayList; "
-              "$script:ShotWaits = 0; $script:ModesSeen = New-Object System.Collections.ArrayList; "
               "Save-Shot 'a'; 'calls=' + $script:calls; 'exact=' + $shots[0].exact; "
               "$script:calls = -100; try { Save-Shot 'b'; 'saved' } catch { 'gave up' }; "
-              # One budget for the whole shot: 20 waits for the head, then 20 for
-              # the thumbnail, is more than 15 s and gives up (review, 2026-11-18).
+              # One deadline for the whole shot: 10 s waiting for the head, then
+              # 9 s for the thumbnail, is past 15 s and gives up (review, 2026-11-18).
               "$script:heads = 0; function Get-RefVideoMode { $script:heads++; if ($script:heads -le 20) { throw 'no video head on x' }; @(2, 1, 16) }; "
               "$script:calls = -18; try { Save-Shot 'c'; 'saved' } catch { 'gave up' }") % script
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("ref-host:")]
         self.assertEqual(lines, ["calls=3", "exact=True", "gave up", "gave up"], out.stderr)
 
-    def test_await_colour_waits_for_the_pixel_and_reads_rgb565(self):
+    def _ps_functions(self, *pairs):
+        """PowerShell that defines the named functions of each (script, names)."""
+        out = []
+        for path, names in pairs:
+            script = self._powershell(path, windows=True)[1]
+            out.append("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+                       "foreach ($fn in %s) { "
+                       "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
+                       "Invoke-Expression $f.Extent.Text }; " % (script, ", ".join(f"'{n}'" for n in names)))
+        return "".join(out)
+
+    def test_await_colour_waits_for_the_pixel_on_a_small_thumbnail(self):
         # The boot walk timed its menu by a burst's length, then by the mode,
-        # which comes back while the spinner still shows (2026-11-18).
-        shell, script = self._powershell(INV / "ref-host.ps1", windows=True)
-        common = self._powershell(INV / "ref-common.ps1", windows=True)[1]
-        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
-              "$b = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
-              "foreach ($fn in 'Get-ShotMode', 'Invoke-Step') { "
-              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
-              "Invoke-Expression $f.Extent.Text }; "
-              "$f = $b.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-ThumbnailPixel' }, $true) | Select-Object -First 1; "
-              "Invoke-Expression $f.Extent.Text; "
-              "function Start-Sleep { }; $Name = 'x'; $NoSession = $false; $script:ShotWaits = 0; "
-              "function Get-RefVideoMode { @(2, 1, 16) }; "
-              # black, then 32775 (a reset), then blue (33, 101, 181) as RGB565 0x2336 at (1, 0)
-              "$script:i = 0; function Get-RefThumbnail { $script:i++; "
-              "if ($script:i -eq 1) { return ,[byte[]](0, 0, 0, 0, 0, 0, 0, 0) }; if ($script:i -eq 2) { throw 'thumbnail failed: 32775' }; "
-              "return ,[byte[]](0, 0, 0, 0, 0, 0, 0x36, 0x23) }; "
-              "(Get-ThumbnailPixel ([byte[]](0, 0, 0, 0, 0, 0, 0x36, 0x23)) 2 1 1 0) -join ','; "
-              "Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 1; y = 0; rgb = @(33, 101, 181); timeout = 30 }); 'reads=' + $script:i; "
-              "function Get-RefThumbnail { return ,[byte[]](0, 0, 0, 0, 0, 0, 0, 0) }; "
-              "try { Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 1; y = 0; rgb = @(33, 101, 181); timeout = 0.3 }); 'returned' } catch { 'timed out' }") % (script, common)
+        # which comes back while the spinner still shows; then a native-size
+        # image per poll and a mode read that gave up a 90 s wait after 15 s
+        # (2026-11-18). A 160 by 90 thumbnail, no mode read, its own deadline.
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "$script:now = [datetime]'2026-01-01'; function Get-Date { $script:now }; "
+              "function Start-Sleep([int]$Milliseconds) { $script:now = $script:now.AddMilliseconds($Milliseconds) }; "
+              "function Get-RefVideoMode { throw 'no video head on x' }; $Name = 'x'; $NoSession = $false; "
+              "function Img([int]$lo, [int]$hi) { $b = New-Object byte[] (4 + 160 * 90 * 2); for ($i = 4; $i -lt $b.Length; $i += 2) { $b[$i] = $lo; $b[$i + 1] = $hi }; ,$b }; "
+              # black, then 32775 (a reset), then blue (33, 101, 181) as RGB565 0x2336
+              "$script:sizes = @(); $script:i = 0; function Get-RefThumbnail($n, $w, $h) { $script:sizes += \"$w x $h\"; $script:i++; "
+              "if ($script:i -eq 1) { return (Img 0 0) }; if ($script:i -eq 2) { throw 'thumbnail failed: 32775' }; return (Img 0x36 0x23) }; "
+              "(Get-ThumbnailPixel (Img 0x36 0x23) 160 90 159 89) -join ','; "
+              "Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); timeout = 90 }); 'reads=' + $script:i; "
+              "($script:sizes | Select-Object -Unique) -join ';'; "
+              "function Get-RefThumbnail { Img 0 0 }; "
+              "try { Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = 10; y = 10; rgb = @(33, 101, 181); timeout = 30 }); 'returned' } catch { 'timed out' }; "
+              "'waited=' + ($script:now - [datetime]'2026-01-01').TotalSeconds")
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
-        self.assertEqual(lines, ["33,101,181", "reads=3", "timed out"], out.stderr)
+        self.assertEqual(lines[:4], ["33,101,181", "reads=3", "160 x 90", "timed out"], out.stderr)
+        self.assertGreaterEqual(float(lines[4].split("=")[1]), 30.5, out.stderr)   # the whole 30 s, after the first wait
+
+    def test_a_burst_with_until_ends_at_the_first_matching_frame(self):
+        # A fixed burst could outrun the boot menu's 30 s countdown (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step"]),
+                                 (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+              + "function Start-Sleep { }; $Name = 'x'; $NoSession = $false; $script:names = @(); "
+              "function Img([int]$lo, [int]$hi) { $b = New-Object byte[] (4 + 4 * 2 * 2); for ($i = 4; $i -lt $b.Length; $i += 2) { $b[$i] = $lo; $b[$i + 1] = $hi }; ,$b }; "
+              "function Save-Shot($n) { $script:names += $n; $c = if ($script:names.Count -ge 3) { Img 0x36 0x23 } else { Img 0 0 }; "
+              "$script:LastShot = @{ Bytes = $c; Width = 4; Height = 2 } }; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'boot'; count = 14; every = 0; until = [pscustomobject]@{ x = 10; y = 10; rgb = @(33, 101, 181) } }); "
+              "$script:names -join ','; $script:names = @(); "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'stop'; count = 5; every = 0 }); $script:names.Count")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["boot-1,boot-2,boot-3", "5"], out.stderr)
+
+    def test_a_walk_without_a_session_checks_the_build_recorded_on_the_vm(self):
+        # A setup walk (no session) could restore an old pre-oobe and publish it
+        # under a newer reference.json build (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Set-RefBuildNote", "Test-RefBuildNote"]))
+              + "function Get-RefIdentity { [pscustomobject]@{ build = '26300.9974' } }; "
+              "$script:notes = ''; $script:sets = 0; function Get-VM { [pscustomobject]@{ Notes = $script:notes } }; "
+              "function Set-VM { param($Name, $Notes) $script:notes = $Notes; $script:sets++ }; "
+              "@(Test-RefBuildNote 'x') -join '|'; "
+              "Set-RefBuildNote 'x' '26300.9000'; @(Test-RefBuildNote 'x') -join '|'; "
+              "Set-RefBuildNote 'x' '26300.9974'; Set-RefBuildNote 'x' '26300.9974'; 'sets=' + $script:sets; "
+              "'problems=' + @(Test-RefBuildNote 'x').Count")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["x has no verified build in its notes; a capture from clean records it",
+                                 "x was verified as build 26300.9000, reference.json says 26300.9974",
+                                 "sets=2", "problems=0"], out.stderr)
+
+    def test_a_teardown_restore_leaves_the_vm_not_running(self):
+        # Restore-RefCheckpoint started the VM, so both teardowns released the
+        # lock with the guest running (review, 2026-11-18). A checkpoint taken
+        # while running restores Running: -NoStart turns it off.
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint"]))
+              + "function Repair-RefPromotion { }; function Get-VMDvdDrive { @() }; "
+              "function Get-VMSnapshot { @([pscustomobject]@{ Name = 'clean' }) }; "
+              "$script:state = 'Running'; $script:after = 'Running'; "
+              "function Get-VM { [pscustomobject]@{ State = $script:state; Id = 'id' } }; "
+              "function Stop-VM { $script:state = 'Off' }; function Restore-VMSnapshot { $script:state = $script:after }; "
+              "$script:starts = 0; function Start-VM { $script:starts++; $script:state = 'Running' }; "
+              "$p = [IO.Path]::GetTempPath(); "
+              "Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'running-checkpoint: ' + $script:state + ' starts=' + $script:starts; "
+              "$script:after = 'Saved'; Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'saved-checkpoint: ' + $script:state + ' starts=' + $script:starts; "
+              "Restore-RefCheckpoint 'x' 'clean' $p; 'capture: ' + $script:state + ' starts=' + $script:starts")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["running-checkpoint: Off starts=0", "saved-checkpoint: Saved starts=0",
+                                 "capture: Running starts=1"], out.stderr)
 
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
@@ -1879,7 +1946,7 @@ class Serial(unittest.TestCase):
             capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
         self.assertEqual(rc, 3)
         self.assertEqual(calls[0][1], 900 + capture.RUN_MARGIN)
-        self.assertIn("-Stop", calls[1][0])
+        self.assertEqual(calls[1][0][-3:], ["-Stop", "-Checkpoint", "clean"])
         self.assertIn("is off", out.getvalue())
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith("-in")], [])   # staging removed
 
@@ -1919,6 +1986,24 @@ class Serial(unittest.TestCase):
             capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
         self.assertEqual(sum("-Stop" in c for c in calls), 1)
         self.assertIn("interrupted; ref-run: ios-win11-ref is off", out.getvalue())
+
+    def test_a_machine_profile_run_is_restored_to_its_own_checkpoint(self):
+        # Recovery restored clean after a profile-<id> run (review, 2026-11-18).
+        calls = []
+        real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            if "-Stop" in cmd:
+                return capture.subprocess.CompletedProcess(cmd, 0, "ref-run: restored", "")
+            raise capture.subprocess.TimeoutExpired(cmd, kw["timeout"])
+        capture.subprocess.run, capture.WORK, capture.winpath = fake, self.tmp, str
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                capture.ref_run("x", {}, "cmd", 10, checkpoint="profile-dual")
+        finally:
+            capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
+        self.assertEqual(calls[1][-3:], ["-Stop", "-Checkpoint", "profile-dual"])
 
 
 class States(unittest.TestCase):
@@ -2618,6 +2703,17 @@ class HostCapture(unittest.TestCase):
         with self.assertRaisesRegex(self.hc.core.Incomplete, "video mode changed during boot-manager"):
             self.hc.taken(self.tmp, 0, ["boot-manager"], ("boot-",))
 
+    def test_a_burst_that_ended_early_keeps_only_the_frames_it_took(self):
+        # The boot walk's bursts end at the boot menu (review, 2026-11-18).
+        wanted = ["boot-1", "boot-2", "boot-3", "boot-4", "menu"]
+        self.index([self.shot("boot-1"), self.shot("boot-2"), self.shot("menu")])
+        self.assertEqual(sorted(self.hc.taken(self.tmp, 0, wanted, ("boot-",), ("boot-",))), ["boot-1", "boot-2", "menu"])
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "no shot of boot-3, boot-4"):
+            self.hc.taken(self.tmp, 0, wanted, ("boot-",))          # not an early burst
+        self.index([self.shot("boot-2"), self.shot("menu")])
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "no shot of boot-1"):
+            self.hc.taken(self.tmp, 0, wanted, ("boot-",), ("boot-",))
+
     def test_shots_read_by_an_older_thumbnail_revision_are_refused(self):
         # Revision 1 put Hyper-V's 4 leading bytes into the first two pixels;
         # a --from replay of such a run must not republish (2026-11-18).
@@ -2753,6 +2849,20 @@ class HostCapture(unittest.TestCase):
             self.hc.run_host("x", [], "clean", 10)
         self.assertEqual(seen[0][-1], "-NoSession")
         self.assertNotIn("-NoSession", seen[1])
+
+    def test_an_interrupted_host_walk_restores_its_checkpoint(self):
+        # Ctrl+C killed ref-host before its finally, and only a deadline ran
+        # the recovery (review, 2026-11-18).
+        def run(cmd, **kw):
+            raise KeyboardInterrupt
+        with mock.patch.object(self.hc.subprocess, "run", run), mock.patch.object(self.hc.capture, "WORK", self.tmp), \
+                mock.patch.object(self.hc.capture, "winpath", str), \
+                mock.patch.object(self.hc.capture, "stop_vm", return_value="restored") as stop, \
+                contextlib.redirect_stdout(io.StringIO()) as said, self.assertRaises(KeyboardInterrupt):
+            self.hc.run_host("x", [], "pre-oobe", 10, session=False)
+        self.assertEqual(stop.call_args[0][1], "pre-oobe")
+        self.assertIn("interrupted; restored", said.getvalue())
+        self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
 
     def test_the_setup_scenario_walks_the_local_account_path(self):
         sc = load("host_session_setup", INV / "host" / "session-setup.py")
