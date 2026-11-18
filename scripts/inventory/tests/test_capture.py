@@ -2907,6 +2907,27 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(sc.band_change([a, a, other], box), "its text stayed the same in the 2 frames compared")
         self.assertEqual(sc.band_change([a, b, other], box), "its text changed across the 2 frames compared")
 
+    def test_the_spinner_and_the_repair_phase_are_read_only_from_frames_that_show_them(self):
+        # The blue boot menu read as the spinner alone, and the repair record
+        # claimed a second phase no frame showed (review, 2026-11-18).
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        w, h = 1920, 1080
+
+        def frame(bg, *boxes):
+            data = bytearray(bytes(bg) * (w * h))
+            for x, y, bw, bh in boxes:
+                for yy in range(y, y + bh):
+                    data[(yy * w + x) * 3:(yy * w + x + bw) * 3] = b"\xff" * (bw * 3)
+            return (w, h, bytes(data))
+        black = (0, 0, 0)
+        self.assertEqual(sc.spinner_alone(frame(black, (940, 820, 40, 40))), (940, 820, 40, 40))
+        self.assertIsNone(sc.spinner_alone(frame(sc.BLUE)))                        # the menu
+        self.assertIsNone(sc.spinner_alone(frame(black, (600, 400, 700, 30))))     # a line of text
+        mark = (868, 391, 183, 45)
+        self.assertTrue(sc.diagnosing(frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38)), mark))
+        self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
+        self.assertFalse(sc.diagnosing(frame(black, mark), mark))
+
     def test_the_setup_scenario_walks_the_local_account_path(self):
         sc = load("host_session_setup", INV / "host" / "session-setup.py")
         self.assertEqual(sc.PAGES, ["region", "keyboard", "second-keyboard", "network", "local-account",

@@ -97,7 +97,13 @@ def keys(*vks):
 
 
 # The boot manager menu, reached again after the stop error restarts.
-TO_RECOVERY = [*keys(DOWN, DOWN, TAB), key(ENTER), wait(5), *keys(DOWN, DOWN), key(ENTER), wait(18)]
+# Choose other options opens recovery without a restart: the page was up and
+# still within 5 s in a probe (2026-11-18), blue like the options page before
+# it. The walk waits for the screen to stop changing rather than a fixed 18 s;
+# a page that never came fails the recovery tile checks, a rerun, never a
+# wrong record.
+INTO_RECOVERY = [wait(3), {"op": "settle", "sec": 3, "timeout": 60}]
+TO_RECOVERY = [*keys(DOWN, DOWN, TAB), key(ENTER), wait(5), *keys(DOWN, DOWN), key(ENTER), *INTO_RECOVERY]
 
 # The guest's own screenshot of the desktop, taken just before a host shot of
 # it: host-capture.py checks the two match pixel for pixel (PROOF).
@@ -122,8 +128,8 @@ STEPS = [
     *keys(DOWN), shot("boot-manager-second"),
     *keys(DOWN, TAB), shot("boot-manager-link"),
     key(ENTER), wait(5), shot("boot-options"),
-    # Choose other options restarts into the recovery environment.
-    *keys(DOWN, DOWN), key(ENTER), wait(18), shot("recovery"),
+    # Choose other options opens the recovery environment.
+    *keys(DOWN, DOWN), key(ENTER), *INTO_RECOVERY, shot("recovery"),
     *keys(RIGHT), key(ENTER), wait(4), shot("recovery-troubleshoot"),
     *keys(DOWN), key(ENTER), wait(6), shot("recovery-reset"), key(BACK), wait(4),
     *keys(UP, RIGHT), key(ENTER), wait(4), shot("recovery-advanced"),
@@ -230,6 +236,27 @@ def stamp(entry):
     return datetime.fromisoformat(entry["at"])
 
 
+def spinner_alone(img):
+    """The box of Windows' spinner on a frame that shows it alone, else None:
+    black at the display's mode and one compact box. The blue boot menu also
+    reads as one box, the whole screen (review, 2026-11-18)."""
+    if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
+        return None
+    boxes = core.ink_boxes(img, body(img), lit, 10)
+    return boxes[0] if len(boxes) == 1 and boxes[0][2] <= 200 and boxes[0][3] <= 200 else None
+
+
+def diagnosing(img, mark):
+    """True on Startup Repair's second phase: at the display's mode, on black,
+    the logo (a box of mark's size) with at least two boxes well below it, the
+    spinner and its label."""
+    if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0):
+        return False
+    boxes = core.ink_boxes(img, body(img), lit, 10)
+    top = [b for b in boxes if abs(b[2] - mark[2]) <= 4 and abs(b[3] - mark[3]) <= 4]
+    return len(top) == 1 and len([b for b in boxes if b[1] > top[0][1] + top[0][3] + 200]) >= 2
+
+
 def records(shots, build, taken=None):
     src = f"hand:{build}"
     out = []
@@ -262,14 +289,21 @@ def records(shots, build, taken=None):
             raise core.Incomplete(f"{name}: drawn at 1920x1080, where the firmware's own mode was expected")
         return img
 
-    def frames(prefix, test, exact=True):
+    def frames(prefix, test, exact=True, first=False):
         """The burst frames whose screen passes test, in order. Geometry is
         measured only from exact frames (the mode held across the shot); a
         frame taken while the mode changed is skipped unless `exact` is False,
-        for a caller that reads only its time."""
+        for a caller that reads only its time. With `first`, only the first
+        match is looked for."""
         names = sorted((n for n in shots if n.startswith(prefix + "-") and n[len(prefix) + 1:].isdigit()),
                        key=lambda n: int(n[len(prefix) + 1:]))
-        return [n for n in names if (not exact or taken.get(n, {}).get("exact")) and test(shots[n])]
+        got = []
+        for n in names:
+            if (not exact or taken.get(n, {}).get("exact")) and test(shots[n]):
+                got.append(n)
+                if first:
+                    break
+        return got
 
     root = rec("", "surface", "Boot, recovery and stop screens", bounds=SCREEN,
                behaviour="Screens drawn before Windows starts, while it restarts or stops, and by the recovery environment; full screen, no desktop session.")
@@ -277,7 +311,7 @@ def records(shots, build, taken=None):
     # Restarting: a spinner over a one-word label on black, at the display's mode.
     def restarting(img):
         return img[:2] == (1920, 1080) and pixel(img, 10, 10) == (0, 0, 0) and len(rows_in(img, body(img), lit)) == 2
-    got = frames("boot", restarting)
+    got = frames("boot", restarting, first=True)
     if not got:
         raise core.Incomplete("boot burst: no Restarting frame (a spinner over a label on black)")
     img = shots[got[0]]
@@ -292,7 +326,7 @@ def records(shots, build, taken=None):
     # The firmware's logo with Windows' spinner, in the firmware's own mode.
     def logo(img):
         return img[:2] != (1920, 1080) and len(core.ink_boxes(img, body(img), lit, 10)) == 2
-    got = frames("boot", logo)
+    got = frames("boot", logo, first=True)
     if not got:
         raise core.Incomplete("boot burst: no frame with the firmware logo and the spinner")
     img = firmware(got[0])
@@ -304,11 +338,10 @@ def records(shots, build, taken=None):
     every = frames("boot", lambda i: True)
     alone = lone = None
     for n in every[every.index(got[0]) + 1:]:          # the first frame with the spinner alone
-        if shots[n][:2] == (1920, 1080):
-            boxes = core.ink_boxes(shots[n], body(shots[n]), lit, 10)
-            if len(boxes) == 1:
-                alone, lone = n, boxes[0]
-                break
+        lone = spinner_alone(shots[n])
+        if lone:
+            alone = n
+            break
     if not alone:
         raise core.Incomplete("boot burst: no frame with the spinner alone after the logo")
     rec("logo.spinner", "control", "Spinner", st, controlType="progressBar",
@@ -483,11 +516,11 @@ def records(shots, build, taken=None):
     st = rec("safe-mode", "state", "Safe mode desktop", root, openedBy="4 on the Startup Settings menu",
              behaviour=f"The desktop on black with the basic display driver ({img[0]}x{img[1]} on the reference machine), after sign-in; positions are fractions of that screen.")
     rec("safe-mode.marks", "group", "Safe Mode marks", st, itemCount=4,
-        behaviour=f"The two words in small white text in each corner, the bottom pair resting on the taskbar ({marks[0][3]} px tall at this mode), over the wallpaper.")
+        behaviour=f"The two words in small white text in each corner, {marks[0][3]} px tall at this mode, over the wallpaper; the bottom pair sits just above the taskbar, which is {img[1] - 1 - bar} px tall here.")
     for (cid, lab), m in zip((("top-left", "Top left mark"), ("top-right", "Top right mark"),
                               ("bottom-left", "Bottom left mark"), ("bottom-right", "Bottom right mark")), marks):
         rec(f"safe-mode.marks.{cid}", "control", lab, "safe-mode.marks", controlType="text",
-            behaviour=f"Flush with the screen's {cid.replace('-', ' ')} corner{', on the taskbar' if cid.startswith('bottom') else ''}; {m[2]} by {m[3]} px at {img[0]}x{img[1]}.")
+            behaviour=f"In the screen's {cid.replace('-', ' ')} corner{', just above the taskbar' if cid.startswith('bottom') else ''}; {m[2]} by {m[3]} px at {img[0]}x{img[1]}.")
     rec("safe-mode.build", "control", "Build line", st, controlType="text",
         behaviour=f"The product name and full build string in one small white line {place(img, build_line)}, at the top edge.")
 
@@ -523,13 +556,18 @@ def records(shots, build, taken=None):
     # Startup Repair: progress, then the failure screen and More recovery options.
     def waiting(img):
         return img[:2] != (1920, 1080) and len(core.ink_boxes(img, body(img), lit, 10)) == 2
-    got = frames("repair", waiting)
+    got = frames("repair", waiting, first=True)
     if not got:
         raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
     img = shots[got[0]]
     mark, label = sorted(core.ink_boxes(img, body(img), lit, 10), key=lambda b: b[1])
+    # The second phase is published only when a frame shows it: at the
+    # display's mode, the logo again with a spinner and a label below
+    # (review, 2026-11-18: it was claimed from the first phase alone).
+    later = frames("repair", lambda i: diagnosing(i, mark), first=True)
+    then = ", then, at the display's mode, the logo again with a spinner and a label below it" if later else ""
     rec("repair-progress", "state", "Startup Repair progress", "recovery-advanced", openedBy="Startup Repair",
-        behaviour=f"A restart to the firmware's logo with a short label {place(img, label)}, then a spinner with a label for diagnosing, on black.")
+        behaviour=f"A restart to the firmware's logo with a short label {place(img, label)}{then}, on black.")
     img = full("automatic-repair")
     rows = rows_in(img, body(img), lit, 14)
     if len(rows) != 3:
