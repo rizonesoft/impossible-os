@@ -465,25 +465,14 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [x] Window Chrome and System Menu: `window/chrome.json`, both program generations' metrics with their ledger ids; `check-inventory.py --surface window` passes
 - [x] Snap, Alt+Tab, Task View and Virtual Desktops: `window/switching.json` and its wide and tall observation files; `check-inventory.py --surface window --complete` passes
 - [x] Lock, Sign-In and Secure Screens: `session/secure.json`, 89 hand records measured from host shots by `host-capture.py`; `check-inventory.py --surface session` passes
-- [x] First-Run Setup: `session/setup.json`, 63 hand records on the local-account path in order; the getting-ready time is a `metric` (fade curves are §14's recorder); check passes
-- [ ] Boot, Update, Stop and Recovery Screens: writes `docs/design/inventory/session/boot.json`
-  - Captured from the host side (Hyper-V screenshot of the VM framebuffer), because UIA does not run there; every record is `hand:<build>` with a shot
-  - The host path is Hyper-V's thumbnail in 16-bit colour, requested at the source mode the VM's video head reports at that moment (`Msvm_VideoHead` resolution)
-    - Each shot records source size, output size and depth; geometry is exact only where source equals output, and a shot that differs records its coordinates as thumbnail coordinates with the scale
-    - The mode is read immediately before and after each thumbnail; a change retries the shot, and a screen that has passed keeps its shot with geometry marked unverified
-    - Colour is recorded only as roles; a guest screenshot of the same desktop proves the 1:1 mapping at 1920 by 1080
-  - §25 captures the working-on-updates screens into its own file, `session/update-screens.json`
-  - The boot logo and spinner, the boot manager menu and the Safe mode desktop's marks; the "working on updates" screens need a delivered update, so §25 captures them
-  - The stop error screen, raised by a host NMI (`Debug-VM -InjectNonMaskableInterrupt` with `NMICrashDump` set), including its progress and restart
-  - The recovery environment: automatic repair, the troubleshoot menu, startup settings and the reset path, each page as a `page` with its choices; a checkpoint is taken before each so the VM returns clean
-  - Reconcile each screen against its owner in `D01 T15`, `D01 T14` and `D01 T22`, and note gaps in §15
-  - Done when: `check-inventory.py --surface session` passes; the boot, boot manager, Safe mode, stop error and recovery screens each have records and a shot in `boot.json` (the update screens are §25's), and the stop error records name each text slot without Microsoft's words.
+- [x] First-Run Setup: `session/setup.json`, 60 hand records on the local-account path in order; the getting-ready time is a `metric` (fade curves are §14's recorder); check passes
+- [x] Boot, Stop and Recovery Screens: `session/boot.json`, 112 hand records from one walk from `clean`, proven 1:1 against a guest screenshot; check passes
 - [x] Shell Overlays: `flyouts/overlays.json` with its laptop, IME and dual files, every state with a shot; `check-inventory.py --surface flyouts` passes
 - [/] Read the corner radius of a window, the Start panel, a flyout and a menu from the screen on real hardware into `chrome.json` (Needs: bare-metal)
   - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
 - [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)
   - The stand-in's brightness keys (`standin.asl` WMI0: an ACPI-WMI method that raises Notify (LCD0, 0x86)) move the level as a laptop's keys do, but on QEMU's display path Windows shows no indicator; WMI, powercfg and the shell hook message move the level silently too
-- [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
+- [x] Commit: `"inventory: shell surfaces inventory captured"`, one commit per surface file
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.
 
@@ -965,6 +954,9 @@ The step that turns records into precise work: every record ends up owned by exa
 - [ ] Generate each new section's item skeleton from the records (`author-sections.py --draft`), then rewrite it by hand: the script proposes, the author decides
 - [ ] File the missing owners found during capture, each through `/create-todo` with a reciprocal XREF here
   - The Settings pages beyond the frame (`D09 T11 §2` owns the navigation frame and applet rows, not the System, Personalization and other pages), a consoles frame, the secure screens, first-run setup pages, and any inbox app with no file
+  - From `session/boot.json` (reconciled 2026-11-18 against `D01 T14`, `T15`, `T22`, `D08 T13`, `D01 T07`, `D10 T04`, `D02 T28`): no owner for the firmware logo, the Restarting screen, the recovery page tree, the repair progress and failure screens, Startup Settings, and the black stop layout
+    - Natural owners: firmware logo and Restarting in `D08 T13`; the recovery pages and repair screens in `D01 T22 §7`; Startup Settings in `D08 T13 §5`; the stop layout in `D02 T28`, whose screen is blue with detail
+    - Partial: the Safe mode build line is not in `D08 T13 §5`'s corner marks; the boot menu's options page maps to `D01 T07` hotkeys, not a page
 - [ ] Resolve any double ownership the capture finds (the 2026-11-14 audit moved the apps that had two homes into `11-apps` and left pointers behind)
   - Name one owner per app and turn the other into an XREF, never by deleting shipped work
 - [ ] Run `python3 scripts/todo-plan.py --sync` and rebuild the todo-graph cache after each surface, and commit one surface per commit

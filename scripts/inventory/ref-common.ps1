@@ -42,7 +42,9 @@ function Get-GuestKvp([string]$Name) {
 }
 
 function Get-RefKeyboard([string]$Name) {
-    return Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_Keyboard
+    $kb = Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_Keyboard
+    if (-not $kb) { throw "no keyboard on $Name (state $((Get-VM -Name $Name).State)); a step may have turned it off" }
+    return $kb
 }
 
 function Send-RefKey([string]$Name, [uint32]$Key) {
@@ -133,15 +135,19 @@ function Get-ThumbnailFacts([byte[]]$Bytes) {
 
 function Save-Thumbnail([byte[]]$Bytes, [string]$Path, [int]$Width = 640, [int]$Height = 360) {
     Add-Type -AssemblyName System.Drawing
-    # Hyper-V returns the pixels first and can append a few bytes past them
-    # (4 at 1920 by 1080, seen 2026-11-18); fewer than the pixels is a fault.
+    # Hyper-V puts a few bytes BEFORE the pixels (4 at 1920 by 1080): read from
+    # byte 0, every row came out 2 pixels to the right, with those bytes as the
+    # first two pixels; a guest screenshot of the same desktop showed it
+    # (2026-11-18). The pixels are the last width * height * 2 bytes; fewer
+    # than that is a fault.
     if ($Bytes.Length -lt $Width * $Height * 2) { throw "a $Width by $Height thumbnail is $($Width * $Height * 2) bytes, got $($Bytes.Length)" }
+    $skip = $Bytes.Length - $Width * $Height * 2
     $bmp = New-Object System.Drawing.Bitmap $Width, $Height, ([System.Drawing.Imaging.PixelFormat]::Format16bppRgb565)
     $rect = New-Object System.Drawing.Rectangle 0, 0, $Width, $Height
     $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $bmp.PixelFormat)
     try {
         for ($y = 0; $y -lt $Height; $y++) {
-            [Runtime.InteropServices.Marshal]::Copy($Bytes, $y * $Width * 2, [IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), $Width * 2)
+            [Runtime.InteropServices.Marshal]::Copy($Bytes, $skip + $y * $Width * 2, [IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), $Width * 2)
         }
     } finally { $bmp.UnlockBits($data) }
     $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)

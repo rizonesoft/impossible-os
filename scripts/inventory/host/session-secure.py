@@ -182,6 +182,34 @@ def largest(img, region, what, test, gap=30):
     return max(got, key=lambda b: b[2] * b[3])
 
 
+def pixel(img, x, y):
+    w, _, data = img
+    i = (y * w + x) * 3
+    return tuple(data[i:i + 3])
+
+
+def first_sign_in_text(frames, region):
+    """(greeting, every later line) from the first sign-in burst: the first
+    black frame with one short line, then the union of the single lines on
+    black after it. A frame not black at (10, 10) is the desktop, one lit block
+    the size of the screen, and once published as the progress message
+    (2026-11-18)."""
+    greeting, lines = None, []
+    for img in frames:
+        if pixel(img, 10, 10) != (0, 0, 0):
+            continue
+        got = core.ink_boxes(img, region, lambda p: min(p) >= 50, 20)
+        if len(got) != 1:
+            continue
+        if greeting is None and got[0][2] < 200:
+            greeting = got[0]
+        elif greeting is not None:
+            lines.append(got[0])
+    if greeting is None or not lines:
+        raise core.Incomplete(f"first sign-in: the burst shows no {'greeting' if greeting is None else 'line after the greeting'}")
+    return greeting, union(*lines)
+
+
 def union(*boxes):
     x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
     x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
@@ -277,7 +305,9 @@ def records(shots, build, taken=None):
 
     # Sign-in screen.
     img = shots["secure"]
-    glyph, name, users = pieces(img, (0, 300, 1600, 780), 3, "sign-in: picture, name and user list")
+    glyph, name = pieces(img, (300, 300, 1300, 500), 2, "sign-in: picture and name")
+    # The account list at the bottom left: pictures and names, one group.
+    users = union(*core.ink_boxes(img, (0, 800, 600, 280), white))
     sign = rec("sign-in", "state", "Sign-in screen", root, bounds=screen, openedBy="Dismissing the lock screen",
                behaviour="The account picture, name and credential box centred; the other accounts at the bottom left; network, accessibility and power at the bottom right.")
     rec("sign-in.picture", "control", "Account picture", sign, controlType="image",
@@ -337,21 +367,17 @@ def records(shots, build, taken=None):
 
     # First sign-in: classify the burst. The greeting is one small piece of
     # text on black; the progress page is one block of two dim lines.
-    greeting = progress = None
-    for i in range(1, FIRST_BURST + 1):
-        got = core.ink_boxes(shots[f"first-sign-in-{i}"], screen, lambda p: min(p) >= 50, 20)
-        if len(got) == 1 and got[0][2] < 200 and greeting is None:
-            greeting = got[0]
-        elif len(got) == 1 and got[0][2] >= 300 and progress is None:
-            progress = got[0]
-    if greeting is None or progress is None:
-        raise core.Incomplete(f"first sign-in: the burst shows no {'greeting' if greeting is None else 'progress page'}")
+    # The lines fade in and out one at a time and a burst about 2.5 s apart
+    # catches a different subset each run (2026-11-18: one run the two-line
+    # progress message, the next only the closing line), so after the greeting
+    # one slot covers every later line the frames caught.
+    greeting, progress = first_sign_in_text([shots[f"first-sign-in-{i}"] for i in range(1, FIRST_BURST + 1)], screen)
     first = rec("first-sign-in", "state", "First sign-in", root, bounds=screen,
                 behaviour="Black, then a short greeting slot centred, then a progress page with a slot of 34 and one of 23 characters fading in on black, then the desktop with Start open.")
     rec("first-sign-in.greeting", "control", "Greeting", first, controlType="text", bounds=greeting,
         behaviour="A text slot of 3 characters, centred on black.")
     rec("first-sign-in.progress", "control", "Progress message", first, controlType="text", bounds=progress,
-        behaviour="Two centred lines, the second smaller and dimmer.")
+        behaviour="Lines centred on black after the greeting, one message at a time: a two-line progress message (the second line smaller and dimmer), then a short closing line; the bounds cover the lines the frames caught.")
 
     # Security options (Ctrl+Alt+Delete).
     img = shots["security-options"]
@@ -436,7 +462,7 @@ def records(shots, build, taken=None):
     # Apps preventing restart, and the progress screens.
     img = shots["apps-preventing"]
     title = largest(img, (500, 200, 920, 200), "apps preventing: title", white, 12)
-    restart_anyway, cancel = sorted(pieces(img, (600, 700, 600, 100), 2, "apps preventing: buttons", lambda p: min(p) >= 40, 4))
+    restart_anyway, cancel = sorted(pieces(img, (600, 700, 600, 100), 2, "apps preventing: buttons", lambda p: min(p) >= 40, 1))
     ap = rec("apps-preventing", "state", "Apps preventing restart", root, bounds=screen,
              behaviour="Black screen: a title slot that counts the programs (28 characters for one) and a line of 72, a list of the programs with icon, name and reason, then Restart anyway and Cancel at the bottom left.")
     rec("apps-preventing.title", "control", "Title", ap, controlType="text", bounds=title)

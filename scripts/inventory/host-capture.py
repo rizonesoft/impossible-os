@@ -8,7 +8,11 @@ Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 9.
 A scenario is scripts/inventory/host/<name>.py. It names SURFACE, FILE,
 PROFILE, CHECKPOINT and TIMEOUT (and SESSION = False for a checkpoint with no
 account to open a session as), the STEPS ref-host.ps1 runs on the reference
-VM (keys, clicks, guest commands, shots), SHOTS (the shots it publishes) and
+VM (keys, clicks, guest commands, shots), SHOTS (the shots it publishes),
+MOVING (optional: name prefixes of bursts across a mode change), PROOF
+(optional: a shot and the guest's own screenshot of the same screen, fetched
+into the run folder, which must match it pixel for pixel after the 16-bit
+rounding of Hyper-V's host path) and
 records(images, build, taken), which measures its records from those shots
 (images: name to capture_core.read_png image; taken: name to its shots.json
 entry, with the time it was taken) and returns them. Every record is a hand record:
@@ -83,9 +87,12 @@ def run_host(label, steps, checkpoint, timeout, session=True):
     return out, r.returncode
 
 
-def taken(out, rc, wanted):
+def taken(out, rc, wanted, moving=()):
     """The shots ref-host wrote, checked: {name: entry}. Raises core.Incomplete
-    on a failed step, a missing shot or one whose mode changed under it."""
+    on a failed step, a missing shot or one whose mode changed under it, unless
+    its name starts with one of `moving` (a burst across a restart, where a
+    mode change is the screen passing; it is kept with exact false and the
+    scenario measures no geometry from it)."""
     index = out / "shots.json"
     if not index.is_file():
         raise core.Incomplete(f"ref-host wrote no shots.json (exit {rc})")
@@ -98,10 +105,46 @@ def taken(out, rc, wanted):
     missing = [n for n in wanted if n not in shots]
     if missing:
         raise core.Incomplete(f"no shot of {', '.join(missing)}")
-    moved = [n for n in wanted if not shots[n].get("exact")]
+    moved = [n for n in wanted if not shots[n].get("exact") and not n.startswith(tuple(moving))]
     if moved:
         raise core.Incomplete(f"the video mode changed during {', '.join(moved)}")
     return {n: shots[n] for n in wanted}
+
+
+# Hyper-V's host path is 16-bit colour: 5 bits of red and blue, 6 of green,
+# so a channel can differ from the guest's own screenshot by up to 8.
+ROUNDING = 8
+# A share of pixels allowed to differ beyond rounding: the taskbar clock may
+# change its minute between the two screenshots.
+PROOF_SHARE = 0.999
+
+
+def mapping(host, guest):
+    """(share of pixels within ROUNDING on every channel, largest difference)
+    of two read_png images; raises core.Incomplete when their sizes differ."""
+    if host[:2] != guest[:2]:
+        raise core.Incomplete(f"the host shot is {host[0]}x{host[1]}, the guest's screenshot {guest[0]}x{guest[1]}")
+    a, b = host[2], guest[2]
+    worst = near = 0
+    for i in range(0, len(a), 3):
+        d = max(abs(a[i] - b[i]), abs(a[i + 1] - b[i + 1]), abs(a[i + 2] - b[i + 2]))
+        worst = max(worst, d)
+        near += d <= ROUNDING
+    return near / (len(a) // 3), worst
+
+
+def proven(sc, out, shots):
+    """Check the scenario's PROOF: its host shot against the guest's screenshot."""
+    if not hasattr(sc, "PROOF"):
+        return
+    name, file = sc.PROOF
+    host = core.read_png(out / shots[name]["file"])
+    guest = core.read_png(out / file)
+    share, worst = mapping(host, guest)
+    if share < PROOF_SHARE:
+        raise core.Incomplete(f"the host shot {name} is not the guest's screen 1:1: {share:.2%} of pixels within {ROUNDING}")
+    print(f"host-capture: {name} is the guest's screen 1:1 at {host[0]}x{host[1]}: {share:.3%} of pixels within "
+          f"16-bit rounding, largest difference {worst}")
 
 
 def checked(records, surface, at):
@@ -143,8 +186,11 @@ def main(argv=None):
 
 
 def publish(sc, out, rc, dry_run):
+    proof = [sc.PROOF[0]] if hasattr(sc, "PROOF") else []
     try:
-        shots = taken(out, rc, sc.SHOTS)
+        shots = taken(out, rc, sc.SHOTS + proof, getattr(sc, "MOVING", ()))
+        proven(sc, out, shots)
+        shots = {n: shots[n] for n in sc.SHOTS}
     except core.Incomplete as exc:
         print(f"host-capture: {exc}; nothing published")
         return 3
@@ -170,7 +216,11 @@ def publish(sc, out, rc, dry_run):
     states = []
     for n, s in shots.items():
         shutil.copyfile(out / s["file"], lay / f"{n}.{sc.PROFILE}.png")
-        states.append({"file": f"{n}.{sc.PROFILE}.png", "width": s["width"], "height": s["height"]})
+        # Output size from the image itself; source size and depth from the
+        # mode the video head reported (the host path is always 16-bit).
+        w, h = images[n][:2]
+        states.append({"file": f"{n}.{sc.PROFILE}.png", "width": w, "height": h, "depth": s["depth"],
+                       "sourceWidth": s["modeBefore"][0], "sourceHeight": s["modeBefore"][1]})
     try:
         capture.publish(capture.INVENTORY / rel, records, sc.SURFACE, out, states, capture.SHOTS_MANIFEST,
                         capture.STORE, profile=sc.PROFILE, file=sc.FILE)

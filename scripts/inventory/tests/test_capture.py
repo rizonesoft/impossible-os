@@ -972,6 +972,23 @@ class Profile(unittest.TestCase):
         self.assertEqual(lines, ["dpi is 96, want 144", "textScale is 100, want 150", "highContrast is none, want Dusk",
                                  "ok-run", "0"], out.stderr)
 
+    def test_a_thumbnail_skips_hyper_vs_leading_bytes(self):
+        # Hyper-V puts 4 bytes BEFORE the pixels at 1920 by 1080; reading from
+        # byte 0 shifted every host shot 2 pixels right, and a guest screenshot
+        # of the same desktop showed it (2026-11-18).
+        shell, script = self._powershell(INV / "ref-common.ps1", windows=True)
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Save-Thumbnail' }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text; "
+              "$png = Join-Path ([IO.Path]::GetTempPath()) ('ios-th-' + [Guid]::NewGuid().ToString('N') + '.png'); "
+              "Save-Thumbnail ([byte[]](0x11, 0x22, 0x33, 0x44, 0x00, 0xF8, 0x1F, 0x00)) $png 2 1; "
+              "$b = [System.Drawing.Bitmap]::FromFile($png); "
+              "foreach ($x in 0, 1) { $c = $b.GetPixel($x, 0); '{0},{1},{2}' -f $c.R, $c.G, $c.B }; "
+              "$b.Dispose(); Remove-Item -LiteralPath $png") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["255,0,0", "0,0,255"], out.stderr)
+
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
         # Disks"; the cleanup removed only disk.vhdx and left them (2026-11-16).
@@ -1197,6 +1214,14 @@ class Shots(unittest.TestCase):
         self.assertEqual(bad, [f"changed: {self.store / 'other' / 'rest.fhd-100.png'}"])
         (self.store / "notepad-smoke" / "rest.fhd-100.png").unlink()
         self.assertEqual(len(capture.verify_shots(manifest, self.store)), 2)
+
+    def test_a_host_shot_records_its_source_size_and_depth(self):
+        # Section 9: each host shot records source size, output size and depth.
+        state = {**self.STATE[0], "depth": 16, "sourceWidth": 2, "sourceHeight": 1, "extra": 1}
+        self.publish(states=[state])
+        entry = next(e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke")
+        self.assertEqual((entry["width"], entry["height"], entry["depth"], entry["sourceWidth"], entry["sourceHeight"]), (2, 1, 16, 2, 1))
+        self.assertNotIn("extra", entry)
 
     def test_a_recapture_replaces_its_surface_entries_only(self):
         self.publish()
@@ -2530,6 +2555,61 @@ class HostCapture(unittest.TestCase):
             with self.assertRaisesRegex(self.hc.core.Incomplete, why):
                 self.hc.taken(self.tmp, rc, wanted)
 
+    def test_a_mode_change_is_kept_only_inside_a_burst_across_a_restart(self):
+        self.index([self.shot("boot-3", exact=False), self.shot("menu", exact=False)])
+        self.assertFalse(self.hc.taken(self.tmp, 0, ["boot-3"], ("boot-",))["boot-3"]["exact"])
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "video mode changed during menu"):
+            self.hc.taken(self.tmp, 0, ["boot-3", "menu"], ("boot-",))
+
+    def test_the_host_shot_must_be_the_guests_screen_after_16_bit_rounding(self):
+        guest = (2, 2, bytes([200, 100, 50] * 4))
+        rounded = (2, 2, bytes([207, 103, 56] * 4))
+        self.assertEqual(self.hc.mapping(rounded, guest), (1.0, 7))
+        moved = (2, 2, bytes([200, 100, 50] * 3 + [0, 0, 0]))
+        self.assertEqual(self.hc.mapping(moved, guest)[0], 0.75)
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "2x2, the guest's screenshot 2x1"):
+            self.hc.mapping(guest, (2, 1, bytes(6)))
+
+    def test_a_proof_that_does_not_match_publishes_nothing(self):
+        core = self.hc.core
+        core.write_png(self.tmp / "desktop.png", 2, 1, bytes([200, 100, 50, 0, 0, 0]))
+        core.write_png(self.tmp / "guest.png", 2, 1, bytes([200, 100, 50, 255, 255, 255]))
+
+        class Sc:
+            PROOF = ("desktop", "guest.png")
+        with self.assertRaisesRegex(core.Incomplete, "not the guest's screen 1:1"):
+            self.hc.proven(Sc, self.tmp, {"desktop": {"file": "desktop.png"}})
+        core.write_png(self.tmp / "guest.png", 2, 1, bytes([200, 100, 50, 0, 0, 0]))
+        self.hc.proven(Sc, self.tmp, {"desktop": {"file": "desktop.png"}})
+
+    def test_the_boot_scenario_proves_its_shots_and_walks_known_key_paths(self):
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        self.assertEqual(sc.PROOF[0], "desktop")
+        self.assertIn({"op": "fetch", "path": "C:\\ios\\out\\guest-desktop.png", "name": sc.PROOF[1]}, sc.STEPS)
+        ops = [s["op"] for s in sc.STEPS]
+        # The stop error comes before Startup Repair: after a failed repair the
+        # recovery pages change their layout, and a key path from the first
+        # pages turned the VM off (2026-11-18).
+        self.assertLess(ops.index("nmi"), [s.get("name") for s in sc.STEPS].index("automatic-repair"))
+
+    def test_the_first_sign_in_text_skips_the_desktop_and_spans_every_later_line(self):
+        sc = load("host_session_secure", INV / "host" / "session-secure.py")
+        w, h = 400, 40
+
+        def frame(bg, *boxes):
+            px = bytearray(bytes(bg) * (w * h))
+            for x0, y0, bw, bh in boxes:
+                for y in range(y0, y0 + bh):
+                    for x in range(x0, x0 + bw):
+                        px[(y * w + x) * 3:(y * w + x) * 3 + 3] = b"\xff\xff\xff"
+            return (w, h, bytes(px))
+        black = (0, 0, 0)
+        frames = [frame(black), frame(black, (190, 20, 20, 8)), frame(black, (100, 18, 250, 10)),
+                  frame((189, 199, 222)), frame(black, (150, 20, 120, 8))]
+        self.assertEqual(sc.first_sign_in_text(frames, (0, 0, w, h)), ((190, 20, 20, 8), (100, 18, 250, 10)))
+        with self.assertRaisesRegex(sc.core.Incomplete, "no line after the greeting"):
+            sc.first_sign_in_text(frames[:2] + [frame((189, 199, 222))], (0, 0, w, h))
+
     def test_refuses_a_run_that_wrote_no_index(self):
         with self.assertRaisesRegex(self.hc.core.Incomplete, "no shots.json"):
             self.hc.taken(self.tmp, 3, ["a"])
@@ -2557,7 +2637,7 @@ class HostCapture(unittest.TestCase):
             self.assertEqual(set(sc.SHOTS) - shot_names, set(), f"{path.name} publishes shots its steps never take")
             if not getattr(sc, "SESSION", True):
                 # ref-host refuses these without a session, so the run would stop at the first.
-                needs = [s["op"] for s in sc.STEPS if s.get("op") in ("guest", "admin", "user", "reconnect")]
+                needs = [s["op"] for s in sc.STEPS if s.get("op") in ("guest", "admin", "fetch", "user", "reconnect")]
                 self.assertEqual(needs, [], f"{path.name} runs without a session but has steps that need one")
 
     def test_a_scenario_without_a_session_runs_ref_host_with_no_session(self):

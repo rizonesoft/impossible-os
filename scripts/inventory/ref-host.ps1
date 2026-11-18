@@ -18,11 +18,13 @@ bad argument, 3 when the VM never became reachable, 4 when another run holds it.
 Steps, one object each, by "op":
   guest   {cmd}               run a command line in ref's desktop session and wait for it
   admin   {script}            run PowerShell in the guest over PowerShell Direct (no desktop)
+  fetch   {path, name}        copy a guest file into the output folder as name (over PowerShell Direct)
   key     {vk}                type one virtual key on the VM's keyboard
   chord   {mod, vk}           type vk with mod held (a virtual key or a list of them)
   text    {text}              type text
   secret  {}                  type ref's password, never written anywhere
   cad     {}                  Ctrl+Alt+Delete
+  nmi     {}                  inject a non-maskable interrupt (Debug-VM), which stops Windows with a stop error
   click   {x, y, button}      move the mouse to a screen pixel and click (button 1 left, 2 right)
   wait    {sec}               sleep
   shot    {name}              one shot at the current mode
@@ -92,26 +94,46 @@ function Get-RefMouse() {
     return Get-CimAssociatedInstance -InputObject (Get-RefSystem $Name) -ResultClassName Msvm_SyntheticMouse
 }
 
+# A shot whose mode changed while it was taken is taken again once at the new
+# mode; a screen that has passed by then keeps the second shot, marked inexact.
+# A restart takes the video head away for a moment; a shot then waits for it
+# (up to 15 s) rather than failing the run.
+function Get-ShotMode() {
+    for ($i = 0; ; $i++) {
+        try { return Get-RefVideoMode $Name } catch {
+            if ($i -ge 30 -or $_.Exception.Message -notlike 'no video head*') { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
 function Save-Shot([string]$ShotName) {
-    $before = Get-RefVideoMode $Name
-    $bytes = Get-RefThumbnail $Name $before[0] $before[1]
-    $after = Get-RefVideoMode $Name
     $png = Join-Path $Out "$ShotName.png"
+    for ($try = 1; $try -le 2; $try++) {
+        $before = Get-ShotMode
+        $bytes = Get-RefThumbnail $Name $before[0] $before[1]
+        $after = Get-ShotMode
+        $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
+        if ($exact) { break }
+    }
     Save-Thumbnail $bytes $png $before[0] $before[1]
-    $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
     [void]$shots.Add([ordered]@{ name = $ShotName; file = "$ShotName.png"; width = $before[0]; height = $before[1]
-        depth = 16; modeBefore = $before; modeAfter = $after; exact = $exact; at = (Get-Date).ToString('o') })
-    Write-Host "ref-host: shot $ShotName $($before[0])x$($before[1])$(if (-not $exact) { ' (the mode changed during it)' })"
+        depth = 16; modeBefore = $before; modeAfter = $after; exact = $exact; tries = [Math]::Min($try, 2); at = (Get-Date).ToString('o') })
+    Write-Host "ref-host: shot $ShotName $($before[0])x$($before[1])$(if (-not $exact) { ' (the mode changed during it twice)' })"
 }
 
 function Invoke-Step($step) {
-    if ($NoSession -and $step.op -in 'guest', 'admin', 'user', 'reconnect') { throw "a $($step.op) step needs a session, and this run has none (-NoSession)" }
+    if ($NoSession -and $step.op -in 'guest', 'admin', 'fetch', 'user', 'reconnect') { throw "a $($step.op) step needs a session, and this run has none (-NoSession)" }
     switch ($step.op) {
         'guest' {
             $r = Invoke-RefInteractive $script:Session $step.cmd 600
             if ($r.ExitCode -ne 0) { throw "guest command exit $($r.ExitCode): $($step.cmd) $($r.Output)" }
         }
         'admin' { Invoke-Command -Session $script:Session -ScriptBlock ([scriptblock]::Create($step.script)) | Out-Host }
+        'fetch' {
+            if ($step.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "fetch: name '$($step.name)' is not a plain file name" }
+            Copy-Item -FromSession $script:Session -LiteralPath $step.path -Destination (Join-Path $Out $step.name) -Force
+        }
         'key' { Send-RefKey $Name ([uint32]$step.vk) }
         'chord' {
             # mod is one virtual key or a list of them, pressed in order and
@@ -131,6 +153,7 @@ function Invoke-Step($step) {
             Send-Text (Get-RefCredential $VmPath).GetNetworkCredential().Password
         }
         'cad' { [void](Invoke-CimMethod -InputObject (Get-RefKeyboard $Name) -MethodName TypeCtrlAltDel) }
+        'nmi' { Debug-VM -Name $Name -InjectNonMaskableInterrupt -Force -Confirm:$false }
         'click' {
             $m = Get-RefMouse
             [void](Invoke-CimMethod -InputObject $m -MethodName SetAbsolutePosition -Arguments @{

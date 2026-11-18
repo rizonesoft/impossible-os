@@ -836,8 +836,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 348607,
-  "sha256": "b1907bf4d52e77dfb58cdd798c6144b9b4577da212e154c479cfa581b3820ff3"
+  "size": 347751,
+  "sha256": "4e09cc08f1f23b653cb43a07a8a46074709e3dd9e363428603f3003ada5750c2",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -846,8 +849,24 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 19441,
-  "sha256": "9db29d93f14a40051de8b62b758df28faf7eb15798177febb954d37de5456c66"
+  "size": 19445,
+  "sha256": "57ee78a22bad8df809bc46f9e78f80bffad5137ff49115ed613960654a43734f",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "automatic-repair",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 22948,
+  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -856,8 +875,245 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 128194,
-  "sha256": "17f49330a92d7ccad0fb398a501e65486f2313c60c4ffefe847995de9c16e855"
+  "size": 128288,
+  "sha256": "9af5a11eea4714e3a3ea59205646cb0c10ce37223125e269a92ac8cf6b50b4fe",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-1",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 3493394,
+  "sha256": "4db33517df4dfef41a696a976c14cb301436a85f8d359c44b027c3388d0c77b8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-10",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28624,
+  "sha256": "9428922fefbd3012fbe779d38f596abca2954abdd0b9a1ec1b816f16514e0187",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-11",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28599,
+  "sha256": "d4f12a96e8934451a8dbdb2b8c0f2fe82b9ac899463018da733c5ee48b541cdf",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-12",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28619,
+  "sha256": "694435e3f5aa93531aaf631f923c0d5a4678fcbbcc6e352556ead7a311798cb8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-13",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28616,
+  "sha256": "02f5ecdd373efd38f1a6baebfeba13f4e82aa75f846ccef4ef0117f08b793be8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-14",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28627,
+  "sha256": "c9a31e2204e506a1da64bf8bd6c56a57d23fa8c4f7ec72db6cb51b796ead358a",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-2",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2547207,
+  "sha256": "b459c02563fec4516fe768356f757c7304d6da1ea9c2cbdb76759189ce10359c",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-3",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 12741,
+  "sha256": "eb15c88b24b1bdc932efaca72502b7d730e61bfc6af8c6866621783a97187d86",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-4",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 12568,
+  "sha256": "d2eb00c20218d21cec17d033f7f691867e14d2d1248b4b14b3f513cb6579828d",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-5",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-6",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6673,
+  "sha256": "814e91ba5d7b8944e7857d004a155e528a2f730048c8803e1139be80c551afd7",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-7",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 10780,
+  "sha256": "c9b8d79581e8f4d6c216f78a819d0d265ec49c90d94dbd6a7b7c67c98b88914e",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-8",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 11774,
+  "sha256": "1565c8afe8d45c4e3f1db591ae35979ac31d65b2c2cb43366db8d8026be21a97",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-9",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 11266,
+  "sha256": "de00afbbe455dad1a2a0efb38c604fd3fd3b0d93c68f6c10a86e396eafcef3ae",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-manager",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28604,
+  "sha256": "d6d99008ae78c71bc1aa4edce503e3f3e7283a4ae3ac87cc6822101204dfe431",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-manager-link",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 26347,
+  "sha256": "9e80a6ee5574483544cd9ea9daed9cd63491e17d4bf4a557a0f287248be02bbe",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-manager-second",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 27046,
+  "sha256": "a373df9a2e0df420775ebdfa06c0eee5954f4304c18ae98e7df25d478fd2c7ff",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-options",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 31104,
+  "sha256": "b0042f8c98573fcb2e5937f40e76ae0a9337996e4611def602a5ff4ccabdcde5",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -866,8 +1122,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 350950,
-  "sha256": "5748beaa24a1edc17f2a2eebb6b4d660c82743fb11b26655de58ea9a38ca5587"
+  "size": 349740,
+  "sha256": "ca8efe538e6132edd6c9619e71aa87d5a0a049d8cd3283a63f6be7e5374d9ada",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -876,8 +1135,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 125462,
-  "sha256": "8e74dabfe99e42e3391096ed06438b2ec84817407cc8f200d3c5cf346fe4cbce"
+  "size": 125508,
+  "sha256": "93bfb533b3b969b42190e113916f361374b36de6f030371e7c823231099c1fa7",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -886,8 +1148,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1828061,
-  "sha256": "71badc950c88265b704d7713928c6dc0e3b61e0db6022b7b74840f41ff631373"
+  "size": 1827515,
+  "sha256": "c76a1d80835dacadd5935d403c6a6b71e3961bf6a4cb3ead5bbcc7369f3ab7fa",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -896,8 +1161,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 381491,
-  "sha256": "4f75c310f1356ac50ee8854c0b13616c014f39104345d3ea7be84f4982bd83dc"
+  "size": 1218891,
+  "sha256": "090acc15f1cbdb58fb8166657305215319f458433a2933555a2e23b310d7bf73",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -906,8 +1174,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1793440,
-  "sha256": "bfb671b13eff8006bf801a6e2fc65d451a0c78e73864880a7344db19ca514720"
+  "size": 1792844,
+  "sha256": "0c55f930d0b9dd36e0f5ddb9ec3cfeed50de097a07129ef9686423952146b8ff",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -916,18 +1187,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1813678,
-  "sha256": "1a31f7db4eab583b675279b6dd87089c9bf505cf8ed6a4144d64b2dc79d926f8"
- },
- {
-  "surface": "session",
-  "file": "secure",
-  "state": "first-desktop",
-  "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 575120,
-  "sha256": "56d40c5bf288e3ae25c8d661a593c75ca3edacfd03cef2d2c680f70c430cf8b8"
+  "size": 1813150,
+  "sha256": "2772c3ae6de57221eb0da9be6ed9ee6a5fe305e709999b89fb5c82155ed24825",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -936,8 +1200,24 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595968,
-  "sha256": "7a517cd1bd9805e39b5a4acc93d0c27f68522c7ce86ca5d7f6f9417de3ce3a65"
+  "size": 2595716,
+  "sha256": "d859055c8ab9878973a4ff2fa6421a17f2dfe80405a3a4cf7a0dfce23e1d0766",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "secure",
+  "state": "first-desktop",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 1607451,
+  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -946,8 +1226,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10679,
-  "sha256": "e1c5c9f4f8cdcd7dea94aebe4d9e4106c37946a0d6a1436c9fa5516b0d28fe18"
+  "size": 10143,
+  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -956,8 +1239,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575120,
-  "sha256": "56d40c5bf288e3ae25c8d661a593c75ca3edacfd03cef2d2c680f70c430cf8b8"
+  "size": 1607450,
+  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -966,8 +1252,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575120,
-  "sha256": "56d40c5bf288e3ae25c8d661a593c75ca3edacfd03cef2d2c680f70c430cf8b8"
+  "size": 1607451,
+  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -976,8 +1265,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575120,
-  "sha256": "56d40c5bf288e3ae25c8d661a593c75ca3edacfd03cef2d2c680f70c430cf8b8"
+  "size": 1607451,
+  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -986,8 +1278,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10582,
-  "sha256": "69bf2004653573d461658c75ef8b299a364a7fd564b87b438d25edcfcdc3bdf9"
+  "size": 10554,
+  "sha256": "536d0b4ffafc63c6bc5d24b9beebafc338417b31e0171c95da658c0af3977ed1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -996,8 +1291,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 13950,
-  "sha256": "d5b9dd425670f83af7ed4c6be83b6227b16dddbf45c400f668dd0f9ff799fc21"
+  "size": 10143,
+  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1006,8 +1304,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 59323,
-  "sha256": "9b760be321a60001a28f7f22bd78a0a146d80d81fae7f07934160e8928f9bf6b"
+  "size": 12568,
+  "sha256": "f7dd0142c2e037ba8fc2321fb11475204c6f774df7bc687e215ea697fcc7aa4a",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1016,8 +1317,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575021,
-  "sha256": "71f4a5da2f39e1c11c5bb509e2c2f43d9f4874e8acdf18fbba246db650faa2f1"
+  "size": 1607395,
+  "sha256": "4209dba02e624f339b97213f1686fcf98481c9d114a96188aa3536811467f109",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1026,8 +1330,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575109,
-  "sha256": "ac5ebd09d17e0e0c381d73a164b6978615f982c0274c48fe52b2541e08e36627"
+  "size": 1607450,
+  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1036,8 +1343,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575109,
-  "sha256": "ac5ebd09d17e0e0c381d73a164b6978615f982c0274c48fe52b2541e08e36627"
+  "size": 1607450,
+  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1046,8 +1356,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575109,
-  "sha256": "ac5ebd09d17e0e0c381d73a164b6978615f982c0274c48fe52b2541e08e36627"
+  "size": 1607450,
+  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1056,8 +1369,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 575109,
-  "sha256": "ac5ebd09d17e0e0c381d73a164b6978615f982c0274c48fe52b2541e08e36627"
+  "size": 1607450,
+  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1066,8 +1382,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 83826,
-  "sha256": "e00fcd0f516e9d4aad9b7a98b0899aa6cbd76ad6bcc8bff935e0cdc4be9c3feb"
+  "size": 83725,
+  "sha256": "bfcc11b24a3d19e2bfa066dcf7f8e939c441d1fbd5ab657238d5c53ca87568c6",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1076,8 +1395,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12609,
-  "sha256": "ca7cb818757f52f19aa63d263f49a2cb4c83e58f76211babb83cbc17a4434d65"
+  "size": 12478,
+  "sha256": "b193b196a204887441b90df0aadaa6b9a1794b851b6e8d320376661d5f8d3706",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1086,8 +1408,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10153,
-  "sha256": "ae7ce80b037a85520d6bf38db384713702702408af63334fae4fee77c5032f58"
+  "size": 10669,
+  "sha256": "2dade674bb997c23fbbe5e317ff8894f21f9ed7d61110266b29e349183616595",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1096,8 +1421,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10693,
-  "sha256": "aac31412b5283a03e104e27835dcee4c9074f854a327620af9af820a8b880bcd"
+  "size": 10678,
+  "sha256": "c03842845da4202a68312fc15c6525ed269f48a05032c23981c48b69bd12f22d",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1106,8 +1434,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15075,
-  "sha256": "cc5348f3705bae46a6f18fd068459ffccd9caef5bedd061f63ce031c12e7dcbd"
+  "size": 15019,
+  "sha256": "ad0e9330a109eeb8d726e4947e81d0a2cfd812910656ba42469efabd4ef10881",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1116,8 +1447,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15075,
-  "sha256": "cc5348f3705bae46a6f18fd068459ffccd9caef5bedd061f63ce031c12e7dcbd"
+  "size": 15061,
+  "sha256": "f0810bb75c4a15aec416e6b3e5ed7206944dc523db83d37bc727399f6b2f9580",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1126,8 +1460,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 68366,
-  "sha256": "3546021d26eb561a416da224f23794e64346e93864c0e3e3852588cefa7228c1"
+  "size": 48206,
+  "sha256": "edee1e2833b2220f34631df52f69aa50916ae8f96270ca3c4cb707700696eb63",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1136,8 +1473,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 162109,
-  "sha256": "54bbeb0f04983e59990af09c8671514dbfbebdc20eda11cbed721a4be1bc962e"
+  "size": 136648,
+  "sha256": "fd62c46af4992e75e11ee9fd6ff705e742b83126b3e8838b59faaad36def5745",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1146,8 +1486,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 201085,
-  "sha256": "f6af84508a4d0999c60e2e9e4e03d01b465d3ff9840e90c62ab60a549bd8c99a"
+  "size": 201733,
+  "sha256": "8b9c307740402e6c8aef0ae07f83ba7ef78ece6784786f19c74776d61d101abf",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1156,8 +1499,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 195682,
-  "sha256": "ca44f9b74b9c07373d62fa808cc7dce882680b8511b77d96cbffe030b57c8b90"
+  "size": 194290,
+  "sha256": "c920f4421646cf9dd5f6d8fc1f88b4ed386973e5a47a1b8adab38516953438c4",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1166,8 +1512,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 131556,
-  "sha256": "4cd0f843cda1043b87ecca74cfc6914724de609b57988ad388e2588d626ca71b"
+  "size": 131637,
+  "sha256": "da6397e928d4189b67ace0b1dfcd2dca49ba809a386bf048094eb450656bc44a",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1176,8 +1525,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 105734,
-  "sha256": "8cfa4ec6428b981979301f4bc8a5aece8d4317751635ab6394701b33aaf4fa1a"
+  "size": 105782,
+  "sha256": "c5c85cb916e5c5f6ef32a18a93ae243860c43f6a71450d2b10ac67ddc45f29ec",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1186,8 +1538,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 462379,
-  "sha256": "5159db2adcc3da1c9589d46e83d4bcdee5d7365f6aa8dd13d2f35d40809394ab"
+  "size": 461587,
+  "sha256": "583e0c7c4429b3cfef115a8a0a71b82d9fe8185eb53257141bf9aa800671f57b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1196,18 +1551,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 349723,
-  "sha256": "4ca079be5967b8d9e383dfc6d515cf07ee03f4820f6ca2d5f5990c5b8f16dc04"
- },
- {
-  "surface": "session",
-  "file": "secure",
-  "state": "network",
-  "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 377442,
-  "sha256": "6470b43177b642e53fe72be00171084d9cb4a61774dce169cd32f0e943a1bfd8"
+  "size": 348505,
+  "sha256": "00c536b6e983246e419fad0f606e93bcf345305077adce4af759cd6caeaec849",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1216,8 +1564,24 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 141416,
-  "sha256": "2926400b089b2a6985a8dd8411d365812e428c250a0f20c51870f0239a64c191"
+  "size": 141522,
+  "sha256": "406979d0177c73380e7cde2b454125f48c8539238eaab6cc393bf9988e797f1f",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "secure",
+  "state": "network",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 376381,
+  "sha256": "3169580badc208dd8f2275acde92a36ac942b898e4f94fc680e4f4c707d0ecc4",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1226,8 +1590,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 348471,
-  "sha256": "15b22afff44dd60d4bea246164dd7060afb4a03d81a25a0ca685371f0ecfa8d4"
+  "size": 347230,
+  "sha256": "5523437b0d5596ffe708982a74d27f0f4feee7d0c0cbcf3a8df59a0499a00b90",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1236,8 +1603,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 349190,
-  "sha256": "ec9477864576edefcf7f2644fbf7de2ea267142063f6dc127ed1fa53ecbdd702"
+  "size": 347956,
+  "sha256": "126ec34ebd98285f4eaa96e8616dc3cd47392bf29963164308b841abdf31bc09",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1246,8 +1616,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 354869,
-  "sha256": "60609624cb2e73a784829a7f97d6ae4ea336e9d2bb9d1c9d9bf6e486246c4f18"
+  "size": 353051,
+  "sha256": "bf39150f7b5442e9cb2d181bebd22edfe38301e70afac841e44e059b9eefeb0c",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1256,8 +1629,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 156817,
-  "sha256": "10cce1110979c231e24914bfbe97ae4745b0cd609352a5d49dfacd4f1158753c"
+  "size": 156510,
+  "sha256": "e8af594dcbe115887c57be7de81dfdd3e07cb0fda2118389be9e0e24ad235935",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1266,8 +1642,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2754319,
-  "sha256": "d92b5a1069a5bd570d3032b1b1808e1b1a865d84f4adbd26095a30e6f2c5603a"
+  "size": 2595658,
+  "sha256": "4e7648a58a53ef25fefa8126a9ef54896c3e7a24dc75ed8b16b9bb959f7bbd25",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1276,8 +1655,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1286,8 +1668,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1296,8 +1681,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1306,8 +1694,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1316,8 +1707,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1326,8 +1720,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595907,
-  "sha256": "f9dd8161f76af9207075d05f7808c26d82453150570ba4fd922da88362c26f9e"
+  "size": 2595692,
+  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1336,8 +1733,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 197259,
-  "sha256": "1ad1225db213782960db169ced2461fbbb8594222f3216a93d1ea1ab2cff630f"
+  "size": 197141,
+  "sha256": "bcc48b31ea4af94a37c638fde30635a9974cdd295f40144188aaf577e8394c43",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1346,8 +1746,245 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 200484,
-  "sha256": "249bbd4add82d38a8fd7b76e295db4b3b26b0149a001007de46c9579511ace8a"
+  "size": 200343,
+  "sha256": "b667dd730da5978c09c707a22b275ffaecbbc65a7d28f925e1f41795cd6bdeb8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 39297,
+  "sha256": "3e5a81e572a56eb1552386cf9ebad26a3727c6246ebeb65850930ab4b8157155",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery-advanced",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 52641,
+  "sha256": "a92edcdf05feaf837baf5e06842074ec2d9321442e87c11097b4e0982c07eef0",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery-more",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 34416,
+  "sha256": "f35b776796521f2a2b33c821f9c4162914561f6a8aa673bca259b4cc985e1309",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery-reset",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 26105,
+  "sha256": "462b527173474dd22c00e3d49ebce32641793496a454e0d7e154603a2cc398df",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery-startup-settings",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 27885,
+  "sha256": "47e15b23ca72114832b19c2e4f5ffc5db253a77e746dcf67b30b9fb7bd9a8422",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "recovery-troubleshoot",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 36414,
+  "sha256": "a30c27318ee277e8e2a8a2fea2c09e16953abcc0379f8bcc2f7d826908fe0740",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-1",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 7749,
+  "sha256": "72920f14397bdfa7e822fbef06bcfcded45a44123e0eaf66dcabcde3e340ac82",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-10",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 22948,
+  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-11",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 22948,
+  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-12",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 22948,
+  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-2",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 10143,
+  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-3",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15747,
+  "sha256": "33dfc89ae9706cddba80a2c0ed1e083d83eb1ccce6f3d504ad9e67e8163735a1",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-4",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 16123,
+  "sha256": "7744ab85ff1bbe0ee3c8c29591cb95b83fbcdbe61cc8b068147479892838acc4",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-5",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15739,
+  "sha256": "841009aa84a7b13ed8e2fbc12bf1afb8e40fa26466c5ab8dc6f3e01e0a62590a",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-6",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 16036,
+  "sha256": "6b376d8db5faa032556a8f3107640330ce65773cc434aeb153f18bcc6eb940fe",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-7",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15688,
+  "sha256": "a3ccf174f323879c50a35dd89ab8f51d92dbf9d38a538177b9423c3b9424fbee",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-8",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 16041,
+  "sha256": "26e5d8d5ee07dbe22cdc09fc73d8e68098dc80c1501f4d2835539a3d9b533f51",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "repair-9",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 15760,
+  "sha256": "168c209aef5f73de9a1fe4b9ab6e0dcecba3e0bba020e22ebae645ebd9640a29",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1356,8 +1993,128 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12561,
-  "sha256": "2ce080fa2b720e66ee1e9b642eb3aae7f194bd9b5f3c497f93ae3b69723bca78"
+  "size": 12420,
+  "sha256": "acf3cf72e8823cc1c6d2f4e6bc152ffa7b69ce67a252118f3d7afb590b481b9b",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-1",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-2",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 4550,
+  "sha256": "58e146ca9a9e823c581fb4949b1c6675424a9ae44ba7602645c4500b10d83b0f",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-3",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 4550,
+  "sha256": "58e146ca9a9e823c581fb4949b1c6675424a9ae44ba7602645c4500b10d83b0f",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-4",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 7071,
+  "sha256": "e1d39705cc3e10231d600ae7dfdaedf829b196fc9fa82e58b0036fc32344ed81",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-5",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 164705,
+  "sha256": "a189200a60e67682709d0a73042cfb8f6cf3bc545eeaccad227cf940d922c182",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-6",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 164726,
+  "sha256": "8c9df65079011dbd02348caa9e91397b069aac7457ffac474f68e33251565a48",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-7",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 164679,
+  "sha256": "5b25c4713f6631c1cd4428c42b4ffcdbbe313df62ea7073822a67e94462dfbf6",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-boot-8",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 22255,
+  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "safe-mode",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 22255,
+  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
  },
  {
   "surface": "session",
@@ -1366,8 +2123,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 123077,
-  "sha256": "c105d907151da237c22e7d4aa8815f47cd680efde970c641e0a6200276d9a90f"
+  "size": 123150,
+  "sha256": "ad60ec00ab5dc89e80ac79b552d8a9831745c8bd0242e304804527d35b78a1ec",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1376,8 +2136,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 349063,
-  "sha256": "dd5a130bcdabdce2361eff11b321f2516b106faeed26aa6e11cc1f03a8ea0c84"
+  "size": 347831,
+  "sha256": "f5c041aa34a24e56d09132b673f5c0e4406d43d18bf595024c2c3427be3d0e10",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1386,8 +2149,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15771,
-  "sha256": "ab1924e0803b90b076fce07d768efda9ec185342f70b97a8ab8077cb24c8c05e"
+  "size": 15764,
+  "sha256": "6d744f8c6895cd6660213b196d748de2bf82528f44a0a6be7ff2ab75de0c2c08",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1396,8 +2162,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 106295,
-  "sha256": "1d551045cae343dd5de39a4eb6170679c98a923d084bd75273e509fd602adb13"
+  "size": 106364,
+  "sha256": "6cf147dbd2f3c43fb7dfe3850d273dfb938791276f52e6abced04d6ee2f4b83f",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1406,8 +2175,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 137615,
-  "sha256": "1b9c267bba54cce2f968295c77c0a78127c7d2a3ed4cd9947d4d27edf8218ee5"
+  "size": 137685,
+  "sha256": "857a25b17d14a2d03d6fdf2a94fe184e6b6126e380edfcd0ad374ab0fb82af98",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1416,8 +2188,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 138242,
-  "sha256": "b76eec2ba7ac25ee5f4c0ae9f2d6dad1bf325e2296204d78f51bee7201959c83"
+  "size": 138286,
+  "sha256": "bd6f31abcb1421e5b98d1df4dea7449c37c1ce682fa474de04f55be1e79edd11",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1426,8 +2201,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 104180,
-  "sha256": "e4dedc1d2ffe18dee5b0fb19f7db0fe5b399d98e7a5694404342ea86dc4ea491"
+  "size": 104227,
+  "sha256": "7c275e2e3c1708c770d2af13d5d8611685b14f819f1866a2dffb052b348a0904",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1436,8 +2214,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 3189604,
-  "sha256": "99dac69fa4de4518a3b73789c01134c53c6c35e4998585fe33e60ea76363d7f4"
+  "size": 3189294,
+  "sha256": "8d7fbb9c1aa5459fe22cca558ceb203a20156ac6dc4702cc204162c3797b2500",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1446,8 +2227,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 3190985,
-  "sha256": "a77c6b359c9685683297e67435e2246c7aa3ab1e103a4deeca862cf1a216f00c"
+  "size": 3190673,
+  "sha256": "50090d41936ee2149122fbed2a85e9fcf2b3b65f3ab0f0dfa6be5b973582d083",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1456,8 +2240,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 349853,
-  "sha256": "cf876d6acd619d29f38e24c590c3f7e34d9e408fd6fd1dc283d672735d8801b7"
+  "size": 348628,
+  "sha256": "8031e92a812e661d0dc204539aed106cf83d1b0b3abe53808f45c14a90a79d37",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1466,8 +2253,154 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12522,
-  "sha256": "08993ba998645c2c6f3e1576ddb7b2b965671817f5cf47a4c41c14ac373f35a3"
+  "size": 12382,
+  "sha256": "5c8444d9e42f113721f2af91fe5fa66bc624710c86d6ec76371d4cde0e95932a",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "startup-settings",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 32415,
+  "sha256": "580f8a19519cc60f08b5cc20c7b9449f47b1349906ba925df317e343d3d138d5",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-1",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 22255,
+  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-10",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28631,
+  "sha256": "607b04ff5fbcd93ccc9a45f8901cd0a32f2010158f56f817058c5e5b1363f810",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-2",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 12333,
+  "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-3",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 12333,
+  "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-4",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 12333,
+  "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-5",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-6",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6539,
+  "sha256": "23ca5069b4f7789a83fc0039e8ea83cd7bea0bd9905d685825b5afbd7be20fb3",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-7",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 768,
+  "size": 6832,
+  "sha256": "09cb52b0133fc1743e83cba9463102bbce5fc2136b6d8520e902fdf62a07e64d",
+  "depth": 16,
+  "sourceWidth": 1024,
+  "sourceHeight": 768
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-8",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 11228,
+  "sha256": "00d0dbf32efbedf3f3090ae980defecb13e7225997ff4fbdff8b82b20d098330",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "stop-9",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28624,
+  "sha256": "9428922fefbd3012fbe779d38f596abca2954abdd0b9a1ec1b816f16514e0187",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1476,8 +2409,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 348891,
-  "sha256": "18520078c72f497aa8963b4348872e0fb5beedb2eea01ed1fc0709141bf69fe8"
+  "size": 347664,
+  "sha256": "a6fa3adeda988a09a7a9b0f9f142ee83d770006bdaaa10c68fa19308980323a8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "session",
@@ -1486,8 +2422,11 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 348134,
-  "sha256": "b47305f4057b91dd6071ea325f3f309a162f942a6132a4727d78e267544fb03e"
+  "size": 346893,
+  "sha256": "e2b4950c9d85de880a25d104c4affc9321d7a10b99538e6e87c7f1e17444c9ef",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080
  },
  {
   "surface": "start",

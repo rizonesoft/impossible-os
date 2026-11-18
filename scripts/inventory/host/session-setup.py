@@ -361,14 +361,13 @@ def records(shots, build, taken=None):
         raise core.Incomplete(f"getting-ready: {len(messages)} black frames with text where at least 3 were expected")
     page("getting-ready", "Getting ready", screen,
          "Full screen black between the account and the privacy page: one centred line at a time, each fading in and out (a moment, a greeting, getting things ready, a few minutes with a smaller line not to turn off the PC, almost there), and a deep blue glow behind the few-minutes line.")
-    seen = []
-    for n, box in messages:
-        if seen and abs(seen[-1][1][2] - box[2]) <= 4 and abs(seen[-1][1][1] - box[1]) <= 4:
-            continue
-        seen.append((n, box))
-    for i, (n, box) in enumerate(seen):
-        rec(f"page.getting-ready.message-{i + 1}", "state", f"Message {i + 1}", "page.getting-ready", bounds=box,
-            behaviour=f"A text slot {box[2]} px wide centred on the screen, frame {n}.")
+    # One slot, not one record per message: a burst about 2.5 s apart catches
+    # a different subset of the five each run, so a record per caught message
+    # made the file's record count change from run to run (2026-11-18).
+    widths = sorted({box[2] for _, box in messages})
+    rec("page.getting-ready.message", "control", "Message", "page.getting-ready", controlType="text",
+        bounds=union(*(box for _, box in messages)),
+        behaviour=f"One centred line at a time on black; the bounds cover every line the frames caught (widths {', '.join(map(str, widths))} px).")
     if taken:
         first = next(n for n, _ in messages)
         last = messages[-1][0]

@@ -354,6 +354,12 @@ def recover(journal):
     return True
 
 
+# What a host shot adds to its manifest entry: the bit depth of the image and
+# the size of the screen it was taken from (section 9: a host shot records
+# source size, output size and depth).
+SHOT_DETAIL = ("depth", "sourceWidth", "sourceHeight")
+
+
 def publish(target, records, surface, out, states, manifest_path, store, *, profile, journal=None, file=None):
     """Publish records and screenshots together, or leave the old publication alone.
 
@@ -394,7 +400,8 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
             if sha256(tmp) != sha256(src):
                 raise OSError(f"{tmp}: the copy differs from {src}")
             manifest.append({"surface": surface, "file": file, "state": state, "profile": p, "width": s["width"],
-                             "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
+                             "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src),
+                             **{k: s[k] for k in SHOT_DETAIL if k in s}})
         manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
         man_tmp = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
         man_tmp.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
