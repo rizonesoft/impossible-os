@@ -133,7 +133,7 @@ def read_profile():
 
 # ---------------------------------------------------------------- input --
 VK = {"alt": 0x12, "ctrl": 0x11, "shift": 0x10, "win": 0x5B, "esc": 0x1B, "enter": 0x0D, "tab": 0x09,
-      "space": 0x20, "semicolon": 0xBA, "period": 0xBE, "volume_mute": 0xAD, "volume_down": 0xAE, "volume_up": 0xAF, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
+      "space": 0x20, "semicolon": 0xBA, "period": 0xBE, "ime_on": 0x16, "pageup": 0x21, "pagedown": 0x22, "volume_mute": 0xAD, "volume_down": 0xAE, "volume_up": 0xAF, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
       **{f"f{n}": 0x6F + n for n in range(1, 13)}}
 
 

@@ -81,6 +81,11 @@ $cls = New-Object System.Text.StringBuilder 256
     # the console cannot render, such as Arabic (seen 2026-11-16).
     uiLanguage = [Globalization.CultureInfo]::GetCultureInfo([int][Ios.Native]::GetUserDefaultUILanguage()).Name
     format = (Get-Culture).Name
+    # The user's input methods in order, each by the locale of its language's
+    # first input tip (0411:{...} is ja-JP): the language list's own tags are
+    # Windows' forms (ja, zh-Hans-CN), not the ones a profile installs. A
+    # profile's inputMethods names them apart from the display language.
+    inputMethods = (@((Get-WinUserLanguageList) | ForEach-Object { [Globalization.CultureInfo]::GetCultureInfo([Convert]::ToInt32(($_.InputMethodTips[0] -split ':')[0], 16)).Name }) -join ',')
     appsLight = [int]$theme.AppsUseLightTheme
     systemLight = [int]$theme.SystemUsesLightTheme
     accent = $accent

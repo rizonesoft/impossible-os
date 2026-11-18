@@ -371,6 +371,56 @@
  },
  {
   "surface": "flyouts",
+  "file": "overlays-ime",
+  "state": "ime-ja-candidates",
+  "profile": "ime",
+  "width": 162,
+  "height": 359,
+  "size": 9110,
+  "sha256": "da2662eec833735e420817f370d1be6a192f5631e069c08d38ad3fad75f8d6e1"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays-ime",
+  "state": "ime-ja-candidates-page-2",
+  "profile": "ime",
+  "width": 162,
+  "height": 359,
+  "size": 9238,
+  "sha256": "abc7e73580b38e488c674556f914fa3e7c6d634d4ea874a3c92fe64ca36893de"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays-ime",
+  "state": "ime-zh-candidates",
+  "profile": "ime",
+  "width": 599,
+  "height": 257,
+  "size": 10242,
+  "sha256": "b6ab337f77a3e69953dca58ba7c70608885995b530ec7843443d127f7f5eda82"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays-ime",
+  "state": "ime-zh-candidates-page-2",
+  "profile": "ime",
+  "width": 599,
+  "height": 257,
+  "size": 10136,
+  "sha256": "7824b0c8af31cf0d24ca683b644044fa5a6ad72f1e74b0edb0f4f76a89c5deeb"
+ },
+ {
+  "surface": "flyouts",
+  "file": "overlays-ime",
+  "state": "input-switcher",
+  "profile": "ime",
+  "width": 384,
+  "height": 192,
+  "size": 24831,
+  "sha256": "1f3081a6760a283242c55e7ae9d8efa3dcab958e3920df9f7746e49c212258b8"
+ },
+ {
+  "surface": "flyouts",
   "file": "quick-settings-laptop",
   "state": "media-card",
   "profile": "fhd-100",

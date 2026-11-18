@@ -1453,7 +1453,7 @@ class Displays(unittest.TestCase):
     def test_a_machine_profile_restores_its_own_checkpoint(self):
         self.assertEqual(core.checkpoint_for("fhd-100", self.profiles), "clean")
         self.assertEqual(core.checkpoint_for("fhd-150", self.profiles), "clean")          # live: applied in clean
-        for name in ("fhd-100-rtl", "wide-100", "tall-100", "qhd-200"):
+        for name in ("fhd-100-rtl", "wide-100", "tall-100", "qhd-200", "ime"):
             self.assertEqual(core.checkpoint_for(name, self.profiles), f"profile-{name}", name)
 
     def test_the_live_keys_are_the_same_in_both_tools(self):

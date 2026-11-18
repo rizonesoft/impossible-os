@@ -29,8 +29,8 @@ reinstalling Windows; then verifies. Use it when the profile or the probes chang
 
 -Derive -Profile <id>|machine: takes the checkpoint profile-<id> from clean for a
 profile that needs a changed machine on one display: the VM's video mode for
-another resolution (Set-VMVideo, with the guest shut down), and for another
-display language the language pack, installed through a network adapter on the
+another resolution (Set-VMVideo, with the guest shut down), for another
+display language or added input methods (inputMethods) the language packs, installed through a network adapter on the
 Default Switch that exists only while it installs (automatic updates and Store
 updates are held off by policy for that time, and the build is checked after),
 then the user's display language. The live values are applied with
@@ -78,7 +78,7 @@ $LiveKeys = 'dpi', 'appsLight', 'systemLight', 'highContrast', 'textScale', 'sec
 $GuestScripts = 'probe-profile.ps1', 'probe-notepad.ps1', 'set-profile.ps1'
 # The machine keys a derived Hyper-V checkpoint provides; a profile needing any
 # other (a second display) is the stand-in machine's.
-$DerivableKeys = 'width', 'height', 'uiLanguage'
+$DerivableKeys = 'width', 'height', 'uiLanguage', 'inputMethods'
 
 function Get-MachineKeys($Want) {
     return @($Want.PSObject.Properties | Where-Object { $LiveKeys -notcontains $_.Name -and "$($_.Value)" -ne "$($FhdProfile.($_.Name))" } | ForEach-Object { $_.Name })
@@ -585,7 +585,10 @@ function Get-DerivableIds([string]$Which) {
 # Language pack install with a network adapter that exists only for it. Policies
 # hold off automatic and Store updates while the guest is online; both are
 # removed again, with the adapter, before anything is checkpointed.
-function Install-RefLanguage($Session, [string]$Language) {
+# -Typing installs each language with its features: an input method needs its
+# typing feature (the Pinyin IME has no dictionary without it, seen 2026-11-18);
+# a display language needs none of them.
+function Install-RefLanguage($Session, [string[]]$Language, [switch]$Typing) {
     $adapter = 'ios-derive-net'
     # Only what is added here is removed again: the values, and a key only when
     # this function created it.
@@ -600,17 +603,19 @@ function Install-RefLanguage($Session, [string]$Language) {
     }
     try {
         Add-VMNetworkAdapter -VMName $Name -SwitchName 'Default Switch' -Name $adapter
-        Write-Ref "installing the $Language language pack (temporary network)"
-        Invoke-Command -Session $Session -ArgumentList $Language -ScriptBlock {
-            param($lang)
+        Write-Ref "installing the $($Language -join ', ') language pack(s) (temporary network)"
+        Invoke-Command -Session $Session -ArgumentList $Language, [bool]$Typing -ScriptBlock {
+            param($lang, $typing)
             $ErrorActionPreference = 'Stop'
             $deadline = (Get-Date).AddMinutes(3)
             while (-not (Test-NetConnection -ComputerName 'www.msftconnecttest.com' -Port 80 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
                 if ((Get-Date) -gt $deadline) { throw 'the guest found no network on the Default Switch' }
                 Start-Sleep -Seconds 5
             }
-            Install-Language -Language $lang -ExcludeFeatures | Out-Null
-            if (-not (Get-InstalledLanguage -Language $lang)) { throw "Install-Language $lang reported success but the language is not installed" }
+            foreach ($one in $lang) {
+                if ($typing) { Install-Language -Language $one | Out-Null } else { Install-Language -Language $one -ExcludeFeatures | Out-Null }
+                if (-not (Get-InstalledLanguage -Language $one)) { throw "Install-Language $one reported success but the language is not installed" }
+            }
         }
     } finally {
         Get-VMNetworkAdapter -VMName $Name | Where-Object { $_.Name -eq $adapter } | Remove-VMNetworkAdapter
@@ -643,6 +648,18 @@ function Invoke-DeriveProfile([string]$Id) {
                 "Set-WinUserLanguageList `$l -Force; Set-WinUILanguageOverride -Language $l; " +
                 "Set-WinDefaultInputMethodOverride -InputTip '0409:00000409'; Set-Culture $($want.format)") 120
             if ($r.ExitCode -ne 0) { throw "display language not set: $($r.Output.Trim())" }
+        }
+        if ("$($want.inputMethods)" -ne "$($FhdProfile.inputMethods)") {
+            # Input methods only: each language joins ref's list after the display
+            # language, bringing its default IME (Microsoft IME for ja-JP, Microsoft
+            # Pinyin for zh-CN); the display language and the format stay as they are.
+            $tags = @("$($want.inputMethods)" -split ',')
+            if ($tags[0] -ne $want.uiLanguage) { throw "profile ${Id}: inputMethods must start with its display language $($want.uiLanguage)" }
+            Install-RefLanguage $s @($tags | Select-Object -Skip 1) -Typing
+            $r = Invoke-RefInteractive $s ("powershell.exe -NoProfile -Command `$l = New-WinUserLanguageList $($tags[0]); " +
+                (@($tags | Select-Object -Skip 1 | ForEach-Object { "`$l.Add('$_'); " }) -join '') +
+                "Set-WinUserLanguageList `$l -Force") 120
+            if ($r.ExitCode -ne 0) { throw "input methods not set: $($r.Output.Trim())" }
         }
     } finally { Remove-PSSession $s }
     # The video mode is set with the guest off; the language takes effect at the

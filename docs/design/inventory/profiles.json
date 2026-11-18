@@ -234,5 +234,21 @@
     "taskbarCentred": true,
     "highContrast": "none",
     "textScale": 100
+  },
+  "ime": {
+    "width": 1920,
+    "height": 1080,
+    "dpi": 96,
+    "monitors": 1,
+    "uiLanguage": "en-US",
+    "format": "en-US",
+    "appsLight": 1,
+    "systemLight": 1,
+    "accent": "FFD47800",
+    "accentOnSurfaces": 0,
+    "taskbarCentred": true,
+    "highContrast": "none",
+    "textScale": 100,
+    "inputMethods": "en-US,ja-JP,zh-CN"
   }
 }
