@@ -225,18 +225,21 @@ def records(shots, build, taken=None):
             raise core.Incomplete(f"{name}: drawn at 1920x1080, where the firmware's own mode was expected")
         return img
 
-    def frames(prefix, test):
-        """The burst frames whose screen passes test, in order."""
+    def frames(prefix, test, exact=True):
+        """The burst frames whose screen passes test, in order. Geometry is
+        measured only from exact frames (the mode held across the shot); a
+        frame taken while the mode changed is skipped unless `exact` is False,
+        for a caller that reads only its time."""
         names = sorted((n for n in shots if n.startswith(prefix + "-") and n[len(prefix) + 1:].isdigit()),
                        key=lambda n: int(n[len(prefix) + 1:]))
-        return [n for n in names if test(shots[n])]
+        return [n for n in names if (not exact or taken.get(n, {}).get("exact")) and test(shots[n])]
 
     root = rec("", "surface", "Boot, recovery and stop screens", bounds=SCREEN,
                behaviour="Screens drawn before Windows starts, while it restarts or stops, and by the recovery environment; full screen, no desktop session.")
 
     # Restarting: a spinner over a one-word label on black, at the display's mode.
     def restarting(img):
-        return img[:2] == (1920, 1080) and len(rows_in(img, body(img), lit)) == 2 and pixel(img, 10, 10) == (0, 0, 0)
+        return img[:2] == (1920, 1080) and pixel(img, 10, 10) == (0, 0, 0) and len(rows_in(img, body(img), lit)) == 2
     got = frames("boot", restarting)
     if not got:
         raise core.Incomplete("boot burst: no Restarting frame (a spinner over a label on black)")
@@ -307,9 +310,11 @@ def records(shots, build, taken=None):
             rec(f"{rid}.back", "control", "Back button", page, controlType="button", bounds=arrow[0],
                 behaviour="A circled arrow left of the title; Backspace does the same.")
         rec(f"{rid}.title", "control", "Title", page, controlType="text", bounds=title)
-        rec(f"{rid}.choices", "group", "Choices", page, bounds=union(*ts), itemCount=len(choices),
-            behaviour="Tiles in columns of three, read down the first column then the next; arrow keys move the focus, Enter takes it.")
         w, h = size.get("ring", (404, 134))
+        # The group encloses its buttons (tile, name and focus rectangle), not
+        # only the icon squares (review, 2026-11-18).
+        rec(f"{rid}.choices", "group", "Choices", page, bounds=union(*((t[0] - 12, t[1] - 12, w, h) for t in ts)), itemCount=len(choices),
+            behaviour="Tiles in columns of three, read down the first column then the next; arrow keys move the focus, Enter takes it.")
         for (cid, clabel, disp, reason), t in zip(choices, ts):
             extra = {"disposition": disp} if disp else {}
             if reason:
@@ -332,7 +337,7 @@ def records(shots, build, taken=None):
     title = union(*core.ink_boxes(img, (170, 40, 1700, 90), white, 14))
     count = one(img, (170, title[1] + title[3] + 10, 1000, ts[0][1] - 12 - title[1] - title[3] - 20), "boot-manager: countdown", white, 16)
     rec("boot-manager.countdown", "control", "Countdown", bm, controlType="text", bounds=count,
-        behaviour="A text slot naming the default entry and the seconds left, counting down from the boot manager's timeout (30 by default); at zero the default starts.")
+        behaviour="A text slot naming the default entry and the seconds left, counting down from the boot manager's timeout (30 in this walk).")
     link = one(img, (170, ts[-1][1] + ts[-1][3] + 20, 1000, 400), "boot-manager: options link", white, 16)
     rec("boot-manager.options", "control", "Change defaults or choose other options", bm, controlType="hyperlink", bounds=link,
         behaviour="A text link near the bottom left; Tab focuses it with a dotted rectangle, Enter opens the options page.")
@@ -342,7 +347,7 @@ def records(shots, build, taken=None):
     if ring(second, ts[1]) is None or ring(second, ts[0]) is not None:
         raise core.Incomplete("boot-manager-second: Down did not move the focus to the second entry")
     rec("boot-manager.stop-countdown", "gesture", "Stop the countdown", bm,
-        behaviour="Any key removes the countdown line; the menu then waits for a choice.")
+        behaviour="A key press (Down in this walk) removes the countdown line; the menu then waits for a choice.")
     linked = full("boot-manager-link")
     if ring(linked, ts[0]) or ring(linked, ts[1]):
         raise core.Incomplete("boot-manager-link: a tile still has the focus after Tab")
@@ -362,7 +367,7 @@ def records(shots, build, taken=None):
               (("continue", "Continue", None, None), ("device", "Use a device", None, None), ("other-os", "Use another operating system", None, None),
                ("troubleshoot", "Troubleshoot", None, None), ("off", "Turn off your PC", None, None)),
               root, back=True, opened=rx,
-              behaviour="The recovery environment's first page, in the same tile layout as the boot manager; reached from the boot manager, from Settings, or after two failed starts.")
+              behaviour="The recovery environment's first page, in the same tile layout as the boot manager; this walk reaches it through the boot manager's options page.")
     tile_page("recovery-troubleshoot", "Troubleshoot", "recovery-troubleshoot",
               (("restore", "Point-in-time restore", None, None), ("reset", "Reset this PC", None, None),
                ("cloud", "Cloud rebuild", "excluded", "It reinstalls Windows from Microsoft's cloud; Impossible OS reinstalls from its own recovery image (Reset this PC)."),
@@ -393,14 +398,15 @@ def records(shots, build, taken=None):
                behaviour="An intro line and a bulleted list of what the restart lets you change, then a Restart button; no tiles.")
     rec("recovery-startup-settings.back", "control", "Back button", page, controlType="button", bounds=arrow)
     rec("recovery-startup-settings.title", "control", "Title", page, controlType="text", bounds=title)
-    rec("recovery-startup-settings.list", "group", "What it changes", page, bounds=union(*bullets), itemCount=len(bullets),
-        behaviour="Small bullets with one line each, from low-resolution video to automatic restart after a failure.")
     effects = ("Low-resolution video", "Debugging", "Boot logging", "Safe Mode", "Driver signature enforcement off",
                "Early-launch anti-malware off", "Automatic restart on failure off")
     if len(bullets) != len(effects):
         raise core.Incomplete(f"recovery-startup-settings: {len(bullets)} bullets where {len(effects)} were expected")
-    for i, (lab, b) in enumerate(zip(effects, bullets), 1):
-        row = union(b, *core.ink_boxes(img, (b[0] + 10, b[1] - 8, 700, 20), white, 10))
+    rows = [union(b, *core.ink_boxes(img, (b[0] + 10, b[1] - 8, 700, 20), white, 10)) for b in bullets]
+    # The group encloses its rows, not only the bullet dots (review, 2026-11-18).
+    rec("recovery-startup-settings.list", "group", "What it changes", page, bounds=union(*rows), itemCount=len(bullets),
+        behaviour="Small bullets with one line each, from low-resolution video to automatic restart after a failure.")
+    for i, (lab, row) in enumerate(zip(effects, rows), 1):
         rec(f"recovery-startup-settings.list.{i}", "control", lab, "recovery-startup-settings.list", controlType="listItem", bounds=row)
     rec("recovery-startup-settings.restart", "control", "Restart", page, controlType="button", bounds=button,
         behaviour="A small outlined button; Enter restarts into the numbered menu.")
@@ -421,11 +427,11 @@ def records(shots, build, taken=None):
         rec(f"startup-settings.options.{i}", "control", lab, "startup-settings.options", controlType="listItem",
             behaviour=f"Line {i}, {place(img, numbered[i - 1])}.")
     rec("startup-settings.choose", "shortcut", "Choose an option", page, shortcut="1-9, F1-F9",
-        behaviour="A number key or function key starts Windows with that option for this start only.")
+        behaviour="The page's hint line names the number keys and F1 to F9; 4 started Safe mode in this walk.")
     rec("startup-settings.more", "shortcut", "More options", page, shortcut="F10, 0",
-        behaviour="Shows the second page of options (the recovery environment).")
+        behaviour="Named by the first footer line, for more options; not taken in this walk.")
     rec("startup-settings.return", "shortcut", "Return to Windows", page, shortcut="Enter",
-        behaviour="Starts Windows normally.")
+        behaviour="Named by the second footer line, to return to the operating system; not taken in this walk.")
 
     # Safe mode desktop: the marks Windows draws over a black desktop.
     img = firmware("safe-mode")
@@ -436,7 +442,7 @@ def records(shots, build, taken=None):
     st = rec("safe-mode", "state", "Safe mode desktop", root, openedBy="4 on the Startup Settings menu",
              behaviour=f"The desktop on black with the basic display driver ({img[0]}x{img[1]} on the reference machine), after sign-in; positions are fractions of that screen.")
     rec("safe-mode.marks", "group", "Safe Mode marks", st, itemCount=4,
-        behaviour=f"The two words in small white text in each corner, the bottom pair resting on the taskbar ({marks[0][3]} px tall at this mode); drawn over everything, never covered.")
+        behaviour=f"The two words in small white text in each corner, the bottom pair resting on the taskbar ({marks[0][3]} px tall at this mode), over the wallpaper.")
     for (cid, lab), m in zip((("top-left", "Top left mark"), ("top-right", "Top right mark"),
                               ("bottom-left", "Bottom left mark"), ("bottom-right", "Bottom right mark")), marks):
         rec(f"safe-mode.marks.{cid}", "control", lab, "safe-mode.marks", controlType="text",
@@ -453,20 +459,20 @@ def records(shots, build, taken=None):
     img = shots[got[0]]
     message, progress, code = rows_in(img, body(img), white, 10)
     st = rec("stop", "state", "Stop error screen", root, openedBy="A stop error (here a non-maskable interrupt from the host)",
-             behaviour=f"Black in the firmware's mode ({img[0]}x{img[1]} here), no icon or code image: a message, a progress line and a stop code line; it restarts by itself once the memory dump is written.")
+             behaviour=f"Black in the firmware's mode ({img[0]}x{img[1]} here), no icon or code image: a message, a progress line and a stop code line; the machine restarted by itself within seconds.")
     rec("stop.message", "control", "Message", st, controlType="text",
         behaviour=f"A text slot of 52 characters in one line, {place(img, message)}.")
     rec("stop.progress", "control", "Progress", st, controlType="text",
-        behaviour=f"A text slot of a percentage and one word that counts up while the dump is written, {place(img, progress)}.")
+        behaviour=f"A text slot of a percentage and one word, {place(img, progress)}; it read 0% in every frame before the restart.")
     rec("stop.code", "control", "Stop code", st, controlType="text",
         behaviour=f"A small text slot with a label, the stop code's name and its number in hex, {place(img, code)}, near the bottom edge.")
-    every = frames("stop", lambda i: True)
+    every = frames("stop", lambda i: True, exact=False)
     after = every[every.index(got[-1]) + 1:]
     if not after or got[0] not in taken or after[0] not in taken:
         raise core.Incomplete("stop burst: no frame after the stop error to time it by")
     shown = round((stamp(taken[after[0]]) - stamp(taken[got[0]])).total_seconds() * 1000)
     rec("stop.shown", "metric", "Stop error shown for", st, measure={"value": shown, "unit": "ms"},
-        behaviour="From the first frame with the stop error to the first frame of the restart, with the small memory dump this machine is set to; a larger dump takes longer.")
+        behaviour="From the first frame with the stop error to the first frame after it, from frames about 2.5 s apart, with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
     def waiting(img):
@@ -496,4 +502,13 @@ def records(shots, build, taken=None):
                ("troubleshoot", "Troubleshoot", None, None), ("off", "Turn off your PC", None, None)),
               "automatic-repair", back=True, opened="Enter on the repair failed screen",
               behaviour="The recovery environment's first page after a failed repair: a cloud recovery tile replaces Use a device and Use another operating system, and Turn off sits beside Continue.")
+    # A group's bounds enclose its members' (review, 2026-11-18: the choices
+    # once covered only the icon squares).
+    box = {r["id"]: r["bounds"] for r in out if "bounds" in r}
+    for r in out:
+        g = box.get(r.get("parent"))
+        if g and "bounds" in r and next(p for p in out if p["id"] == r["parent"])["kind"] == "group":
+            b = r["bounds"]
+            if b["x"] < g["x"] or b["y"] < g["y"] or b["x"] + b["width"] > g["x"] + g["width"] or b["y"] + b["height"] > g["y"] + g["height"]:
+                raise core.Incomplete(f"{r['id']}: outside its group {r['parent']}")
     return out

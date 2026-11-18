@@ -9,7 +9,7 @@ A scenario is scripts/inventory/host/<name>.py. It names SURFACE, FILE,
 PROFILE, CHECKPOINT and TIMEOUT (and SESSION = False for a checkpoint with no
 account to open a session as), the STEPS ref-host.ps1 runs on the reference
 VM (keys, clicks, guest commands, shots), SHOTS (the shots it publishes),
-MOVING (optional: name prefixes of bursts across a mode change), PROOF
+MOVING (optional: prefixes of bursts across a mode change; only their numbered frames, <prefix><n>, may be inexact), PROOF
 (optional: a shot and the guest's own screenshot of the same screen, fetched
 into the run folder, which must match it pixel for pixel after the 16-bit
 rounding of Hyper-V's host path) and
@@ -87,16 +87,31 @@ def run_host(label, steps, checkpoint, timeout, session=True):
     return out, r.returncode
 
 
+# The revision of ref-common.ps1's Save-Thumbnail that wrote the shots. Shots
+# from revision 1 (no field) sit 2 pixels right with Hyper-V's 4 leading bytes
+# as their first pixels, so a --from replay of one is refused (2026-11-18).
+THUMBNAIL = 2
+
+
+def burst_frame(name, moving):
+    """True when name is a numbered frame of one of the `moving` bursts:
+    <burst>-<n>, never a still shot that merely shares the prefix."""
+    return any(name.startswith(p) and name[len(p):].isdigit() for p in moving)
+
+
 def taken(out, rc, wanted, moving=()):
     """The shots ref-host wrote, checked: {name: entry}. Raises core.Incomplete
-    on a failed step, a missing shot or one whose mode changed under it, unless
-    its name starts with one of `moving` (a burst across a restart, where a
-    mode change is the screen passing; it is kept with exact false and the
-    scenario measures no geometry from it)."""
+    on a failed step, shots from another thumbnail revision, a missing shot or
+    one whose mode changed under it, unless it is a numbered frame of one of
+    the `moving` bursts (`<prefix><n>`, a burst across a restart, where a mode
+    change is the screen passing; it is kept with exact false and the scenario
+    measures no geometry from it)."""
     index = out / "shots.json"
     if not index.is_file():
         raise core.Incomplete(f"ref-host wrote no shots.json (exit {rc})")
     doc = json.loads(index.read_text(encoding="utf-8-sig"))
+    if doc.get("thumbnail") != THUMBNAIL:
+        raise core.Incomplete(f"the shots were read by thumbnail revision {doc.get('thumbnail', 1)}, not {THUMBNAIL}; capture them again")
     if doc.get("failed"):
         raise core.Incomplete(f"ref-host stopped: {doc['failed']}")
     if rc != 0:
@@ -105,7 +120,7 @@ def taken(out, rc, wanted, moving=()):
     missing = [n for n in wanted if n not in shots]
     if missing:
         raise core.Incomplete(f"no shot of {', '.join(missing)}")
-    moved = [n for n in wanted if not shots[n].get("exact") and not n.startswith(tuple(moving))]
+    moved = [n for n in wanted if not shots[n].get("exact") and not burst_frame(n, moving)]
     if moved:
         raise core.Incomplete(f"the video mode changed during {', '.join(moved)}")
     return {n: shots[n] for n in wanted}
@@ -220,7 +235,7 @@ def publish(sc, out, rc, dry_run):
         # mode the video head reported (the host path is always 16-bit).
         w, h = images[n][:2]
         states.append({"file": f"{n}.{sc.PROFILE}.png", "width": w, "height": h, "depth": s["depth"],
-                       "sourceWidth": s["modeBefore"][0], "sourceHeight": s["modeBefore"][1]})
+                       "sourceWidth": s["modeBefore"][0], "sourceHeight": s["modeBefore"][1], "exact": bool(s.get("exact"))})
     try:
         capture.publish(capture.INVENTORY / rel, records, sc.SURFACE, out, states, capture.SHOTS_MANIFEST,
                         capture.STORE, profile=sc.PROFILE, file=sc.FILE)

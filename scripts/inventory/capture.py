@@ -357,7 +357,7 @@ def recover(journal):
 # What a host shot adds to its manifest entry: the bit depth of the image and
 # the size of the screen it was taken from (section 9: a host shot records
 # source size, output size and depth).
-SHOT_DETAIL = ("depth", "sourceWidth", "sourceHeight")
+SHOT_DETAIL = ("depth", "sourceWidth", "sourceHeight", "exact")
 
 
 def publish(target, records, surface, out, states, manifest_path, store, *, profile, journal=None, file=None):

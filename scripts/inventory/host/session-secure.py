@@ -194,6 +194,8 @@ def first_sign_in_text(frames, region):
     black after it. A frame not black at (10, 10) is the desktop, one lit block
     the size of the screen, and once published as the progress message
     (2026-11-18)."""
+    def same_box(a, b):
+        return all(abs(p - q) <= 4 for p, q in zip(a, b))
     greeting, lines = None, []
     for img in frames:
         if pixel(img, 10, 10) != (0, 0, 0):
@@ -203,8 +205,8 @@ def first_sign_in_text(frames, region):
             continue
         if greeting is None and got[0][2] < 200:
             greeting = got[0]
-        elif greeting is not None:
-            lines.append(got[0])
+        elif greeting is not None and not same_box(got[0], greeting):
+            lines.append(got[0])            # a repeated greeting is not a later message
     if greeting is None or not lines:
         raise core.Incomplete(f"first sign-in: the burst shows no {'greeting' if greeting is None else 'line after the greeting'}")
     return greeting, union(*lines)
@@ -373,7 +375,7 @@ def records(shots, build, taken=None):
     # one slot covers every later line the frames caught.
     greeting, progress = first_sign_in_text([shots[f"first-sign-in-{i}"] for i in range(1, FIRST_BURST + 1)], screen)
     first = rec("first-sign-in", "state", "First sign-in", root, bounds=screen,
-                behaviour="Black, then a short greeting slot centred, then a progress page with a slot of 34 and one of 23 characters fading in on black, then the desktop with Start open.")
+                behaviour="Black, then a short greeting slot centred, then later messages centred on black one at a time, fading in and out, then the desktop with Start open.")
     rec("first-sign-in.greeting", "control", "Greeting", first, controlType="text", bounds=greeting,
         behaviour="A text slot of 3 characters, centred on black.")
     rec("first-sign-in.progress", "control", "Progress message", first, controlType="text", bounds=progress,

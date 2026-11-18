@@ -11,7 +11,8 @@ in -Steps (a JSON array) in order, writes each shot to -Out as <name>.png, and
 writes -Out\shots.json with what each shot is: the video head's mode read just
 before and just after it, the size it was taken at, and whether the two agree
 (a shot is pixel for pixel only when the mode held and it was taken at that
-mode). Turns the VM off at the end. Exits 0 when every step ran, 1 when a step
+mode). Turns the VM off at the end and restores -Checkpoint again, so the VM
+leaves the run as it started. Exits 0 when every step ran, 1 when a step
 failed (the shots before it are kept and the failure is in shots.json), 2 on a
 bad argument, 3 when the VM never became reachable, 4 when another run holds it.
 
@@ -109,12 +110,22 @@ function Get-ShotMode() {
 
 function Save-Shot([string]$ShotName) {
     $png = Join-Path $Out "$ShotName.png"
-    for ($try = 1; $try -le 2; $try++) {
+    $waits = 0
+    for ($try = 1; $try -le 2; ) {
         $before = Get-ShotMode
-        $bytes = Get-RefThumbnail $Name $before[0] $before[1]
+        try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
+            # 32775 is Hyper-V's "invalid state": the VM is between states as it
+            # resets (after the boot walk's stop error, 2026-11-18). Wait it out
+            # like a missing video head, up to 15 s, reading the mode again.
+            if ($waits -ge 30 -or $_.Exception.Message -notlike 'thumbnail failed: 32775*') { throw }
+            $waits++
+            Start-Sleep -Milliseconds 500
+            continue
+        }
         $after = Get-ShotMode
         $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
         if ($exact) { break }
+        $try++
     }
     Save-Thumbnail $bytes $png $before[0] $before[1]
     [void]$shots.Add([ordered]@{ name = $ShotName; file = "$ShotName.png"; width = $before[0]; height = $before[1]
@@ -241,10 +252,24 @@ try {
         }
     }
 } finally {
-    $doc = [ordered]@{ checkpoint = $Checkpoint; shots = $shots; failed = $failed }
-    $doc | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Out 'shots.json') -Encoding UTF8
     Close-Session
-    if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    if ($script:RefTouched) {
+        if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+        # Put the VM back on its checkpoint, so what a walk changed (the boot
+        # walk's boot entry and crash settings) does not outlive the run, on a
+        # failed step too (review, 2026-11-18).
+        try { Restore-VMSnapshot -VMSnapshot (Get-VMSnapshot -VMName $Name -Name $Checkpoint) -Confirm:$false } catch {
+            $why = "the VM could not be restored to $Checkpoint after the run: $($_.Exception.Message)"
+            Write-Host "ref-host: $why"
+            if (-not $failed) { $failed = $why }
+            if ($code -eq 0) { $code = 1 }
+        }
+    }
+    # thumbnail: the revision of Save-Thumbnail's reading of Hyper-V's bytes;
+    # host-capture.py refuses shots from any other (revision 2 skips the 4
+    # bytes before the pixels, 2026-11-18).
+    $doc = [ordered]@{ checkpoint = $Checkpoint; thumbnail = $script:ThumbnailRevision; shots = $shots; failed = $failed }
+    $doc | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Out 'shots.json') -Encoding UTF8
 }
 Write-Host "ref-host: exit $code; $($shots.Count) shot(s) in $Out"
 exit $code

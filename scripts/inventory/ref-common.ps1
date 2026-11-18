@@ -122,7 +122,9 @@ function Get-RefThumbnail([string]$Name, [int]$Width = 640, [int]$Height = 360) 
     $r = Invoke-CimMethod -InputObject $svc -MethodName GetVirtualSystemThumbnailImage -Arguments @{
         TargetSystem = $vssd; WidthPixels = [uint16]$Width; HeightPixels = [uint16]$Height }
     if ($r.ReturnValue -ne 0 -or -not $r.ImageData) { throw "thumbnail failed: $($r.ReturnValue)" }
-    return [byte[]]$r.ImageData
+    # The comma returns the array as one object: without it the pipeline
+    # enumerates 4 million bytes at 1920 by 1080 between burst frames.
+    return ,([byte[]]$r.ImageData)
 }
 
 function Get-ThumbnailFacts([byte[]]$Bytes) {
@@ -133,15 +135,19 @@ function Get-ThumbnailFacts([byte[]]$Bytes) {
     return @{ Hash = $hash; Colours = $colours.Count }
 }
 
+# The revision of Save-Thumbnail's reading; ref-host.ps1 writes it into shots.json.
+$script:ThumbnailRevision = 2
+
 function Save-Thumbnail([byte[]]$Bytes, [string]$Path, [int]$Width = 640, [int]$Height = 360) {
     Add-Type -AssemblyName System.Drawing
-    # Hyper-V puts a few bytes BEFORE the pixels (4 at 1920 by 1080): read from
-    # byte 0, every row came out 2 pixels to the right, with those bytes as the
-    # first two pixels; a guest screenshot of the same desktop showed it
-    # (2026-11-18). The pixels are the last width * height * 2 bytes; fewer
-    # than that is a fault.
-    if ($Bytes.Length -lt $Width * $Height * 2) { throw "a $Width by $Height thumbnail is $($Width * $Height * 2) bytes, got $($Bytes.Length)" }
-    $skip = $Bytes.Length - $Width * $Height * 2
+    # Hyper-V puts 4 bytes BEFORE the pixels: read from byte 0, every row came
+    # out 2 pixels to the right, with those bytes as the first two pixels; a
+    # guest screenshot of the same desktop showed it (2026-11-18). The same 4
+    # were read at 1920 by 1080, 1024 by 768 and 640 by 360. Any other length
+    # is a layout nobody has checked, so it is refused, not guessed.
+    $skip = 4
+    $want = $skip + $Width * $Height * 2
+    if ($Bytes.Length -ne $want) { throw "a $Width by $Height thumbnail is $want bytes ($skip before the pixels), got $($Bytes.Length)" }
     $bmp = New-Object System.Drawing.Bitmap $Width, $Height, ([System.Drawing.Imaging.PixelFormat]::Format16bppRgb565)
     $rect = New-Object System.Drawing.Rectangle 0, 0, $Width, $Height
     $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $bmp.PixelFormat)

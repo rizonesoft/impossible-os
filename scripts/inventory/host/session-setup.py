@@ -76,11 +76,12 @@ def advance():
 STEPS = [
     wait(5), settle(90), shot("setup"),
     # The accessibility menu opens about 5 s after the click and keeps the
-    # keyboard; a second click closes it, as slowly, and gives the page its
-    # focus back. An Enter sent within 3 s of that click went to the menu
-    # (2026-11-18), and on the network page the click opened nothing.
+    # keyboard. A second click closed it slowly and not always: an Enter sent
+    # 8 s after it still reached the menu, and the walk lost sync (2026-11-18).
+    # Esc goes to the menu that holds the keyboard; the page is then waited on
+    # until it stops changing. On the network page the click opened nothing.
     {"op": "click", "x": EASE[0], "y": EASE[1]}, wait(6), shot("setup-accessibility"),
-    {"op": "click", "x": EASE[0], "y": EASE[1]}, wait(8),
+    key(ESC), wait(3), settle(),
     # The transition between pages, taken as soon as the page is submitted.
     key(ENTER), shot("between"), wait(3), settle(), shot("keyboard"),
     *advance(), shot("second-keyboard"),
@@ -352,29 +353,32 @@ def records(shots, build, taken=None):
     messages = []
     for n in ready:
         img = shots[n]
-        if pixel(img, 10, 10) != (0, 0, 0):
+        # Dark, not exact black: the blue glow reaches the corner (0, 0, 8 on
+        # 2026-11-18). Grey text from 60: the glow is blue, so its lowest
+        # channel stays below that, and a fading line still clears it (82).
+        if max(pixel(img, 10, 10)) > 16:
             continue
-        text = core.ink_boxes(img, screen, lambda p: min(p) >= 150, 20)
+        text = core.ink_boxes(img, screen, lambda p: min(p) >= 60, 20)
         if text:
             messages.append((n, union(*text)))
     if len(messages) < 3:
         raise core.Incomplete(f"getting-ready: {len(messages)} black frames with text where at least 3 were expected")
     page("getting-ready", "Getting ready", screen,
-         "Full screen black between the account and the privacy page: one centred line at a time, each fading in and out (a moment, a greeting, getting things ready, a few minutes with a smaller line not to turn off the PC, almost there), and a deep blue glow behind the few-minutes line.")
+         "Full screen black between the account and the privacy page: one centred message at a time, each fading in and out (a moment, a greeting, getting things ready, a few minutes with a smaller line not to turn off the PC, almost there), and a deep blue glow behind the few-minutes line.")
     # One slot, not one record per message: a burst about 2.5 s apart catches
     # a different subset of the five each run, so a record per caught message
     # made the file's record count change from run to run (2026-11-18).
     widths = sorted({box[2] for _, box in messages})
     rec("page.getting-ready.message", "control", "Message", "page.getting-ready", controlType="text",
         bounds=union(*(box for _, box in messages)),
-        behaviour=f"One centred line at a time on black; the bounds cover every line the frames caught (widths {', '.join(map(str, widths))} px).")
+        behaviour=f"One centred message at a time on black, of one line or of two with the second smaller; the bounds cover every message the frames caught (widths {', '.join(map(str, widths))} px).")
     if taken:
         first = next(n for n, _ in messages)
         last = messages[-1][0]
         span = (stamp(taken[last]) - stamp(taken[first])).total_seconds() * 1000
         rec("page.getting-ready.duration", "metric", "Getting ready duration", "page.getting-ready",
             measure={"value": round(span), "unit": "ms", "readBy": f"host frame times, {first} to {last}"},
-            behaviour="At least this long: the first and last black frames with text, taken about 2.5 s apart; the fade curves belong to the motion catalogue's recorder.")
+            behaviour="At least this long: the first and last dark frames with text, taken about 2.5 s apart; the fade curves belong to the motion catalogue's recorder.")
 
     img = shots["privacy"]
     page("privacy", "Privacy settings", frame,

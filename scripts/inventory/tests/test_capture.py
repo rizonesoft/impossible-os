@@ -981,13 +981,33 @@ class Profile(unittest.TestCase):
               "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Save-Thumbnail' }, $true) | Select-Object -First 1; "
               "Invoke-Expression $f.Extent.Text; "
               "$png = Join-Path ([IO.Path]::GetTempPath()) ('ios-th-' + [Guid]::NewGuid().ToString('N') + '.png'); "
-              "Save-Thumbnail ([byte[]](0x11, 0x22, 0x33, 0x44, 0x00, 0xF8, 0x1F, 0x00)) $png 2 1; "
+              "Save-Thumbnail ([byte[]](0x11, 0x22, 0x33, 0x44, 0x00, 0xF8, 0x1F, 0x00, 0xE0, 0x07, 0xFF, 0xFF)) $png 2 2; "
               "$b = [System.Drawing.Bitmap]::FromFile($png); "
-              "foreach ($x in 0, 1) { $c = $b.GetPixel($x, 0); '{0},{1},{2}' -f $c.R, $c.G, $c.B }; "
-              "$b.Dispose(); Remove-Item -LiteralPath $png") % script
+              "foreach ($xy in @(0, 0), @(1, 0), @(0, 1), @(1, 1)) { $c = $b.GetPixel($xy[0], $xy[1]); '{0},{1},{2}' -f $c.R, $c.G, $c.B }; "
+              "$b.Dispose(); Remove-Item -LiteralPath $png; "
+              "try { Save-Thumbnail ([byte[]](0x11, 0x22, 0x00, 0xF8, 0x1F, 0x00)) $png 2 1; 'saved' } catch { 'refused' }") % script
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
-        self.assertEqual(lines, ["255,0,0", "0,0,255"], out.stderr)
+        # Rows cross a boundary at the third pixel; a length with another
+        # prefix (2 bytes here) is a layout nobody checked, and is refused.
+        self.assertEqual(lines, ["255,0,0", "0,0,255", "0,255,0", "255,255,255", "refused"], out.stderr)
+
+    def test_a_shot_waits_out_hyper_vs_invalid_state_during_a_reset(self):
+        # A burst frame taken as the VM reset after the stop error failed the
+        # whole walk with "thumbnail failed: 32775" (2026-11-18).
+        shell, script = self._powershell(INV / "ref-host.ps1", windows=True)
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "foreach ($fn in 'Get-ShotMode', 'Save-Shot') { "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text }; "
+              "function Start-Sleep { }; function Get-RefVideoMode { @(2, 1, 16) }; function Save-Thumbnail { }; "
+              "$script:calls = 0; function Get-RefThumbnail { $script:calls++; if ($script:calls -le 2) { throw 'thumbnail failed: 32775' }; [byte[]](0) }; "
+              "$Name = 'x'; $Out = [IO.Path]::GetTempPath(); $shots = New-Object System.Collections.ArrayList; "
+              "Save-Shot 'a'; 'calls=' + $script:calls; 'exact=' + $shots[0].exact; "
+              "$script:calls = -100; try { Save-Shot 'b'; 'saved' } catch { 'gave up' }") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("ref-host:")]
+        self.assertEqual(lines, ["calls=3", "exact=True", "gave up"], out.stderr)
 
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
@@ -1217,10 +1237,11 @@ class Shots(unittest.TestCase):
 
     def test_a_host_shot_records_its_source_size_and_depth(self):
         # Section 9: each host shot records source size, output size and depth.
-        state = {**self.STATE[0], "depth": 16, "sourceWidth": 2, "sourceHeight": 1, "extra": 1}
+        state = {**self.STATE[0], "depth": 16, "sourceWidth": 2, "sourceHeight": 1, "exact": False, "extra": 1}
         self.publish(states=[state])
         entry = next(e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke")
-        self.assertEqual((entry["width"], entry["height"], entry["depth"], entry["sourceWidth"], entry["sourceHeight"]), (2, 1, 16, 2, 1))
+        self.assertEqual((entry["width"], entry["height"], entry["depth"], entry["sourceWidth"], entry["sourceHeight"], entry["exact"]),
+                         (2, 1, 16, 2, 1, False))
         self.assertNotIn("extra", entry)
 
     def test_a_recapture_replaces_its_surface_entries_only(self):
@@ -2534,7 +2555,8 @@ class HostCapture(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def index(self, shots, failed=None):
-        (self.tmp / "shots.json").write_text(json.dumps({"checkpoint": "clean", "shots": shots, "failed": failed}), encoding="utf-8")
+        (self.tmp / "shots.json").write_text(json.dumps({"checkpoint": "clean", "thumbnail": self.hc.THUMBNAIL, "shots": shots, "failed": failed}),
+                                             encoding="utf-8")
 
     def shot(self, name, exact=True):
         return {"name": name, "file": f"{name}.png", "width": 1920, "height": 1080, "exact": exact}
@@ -2560,6 +2582,32 @@ class HostCapture(unittest.TestCase):
         self.assertFalse(self.hc.taken(self.tmp, 0, ["boot-3"], ("boot-",))["boot-3"]["exact"])
         with self.assertRaisesRegex(self.hc.core.Incomplete, "video mode changed during menu"):
             self.hc.taken(self.tmp, 0, ["boot-3", "menu"], ("boot-",))
+        # A still shot that only shares the burst's prefix must hold its mode.
+        self.index([self.shot("boot-manager", exact=False)])
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "video mode changed during boot-manager"):
+            self.hc.taken(self.tmp, 0, ["boot-manager"], ("boot-",))
+
+    def test_shots_read_by_an_older_thumbnail_revision_are_refused(self):
+        # Revision 1 put Hyper-V's 4 leading bytes into the first two pixels;
+        # a --from replay of such a run must not republish (2026-11-18).
+        (self.tmp / "shots.json").write_text(json.dumps({"checkpoint": "clean", "shots": [self.shot("a")]}), encoding="utf-8")
+        with self.assertRaisesRegex(self.hc.core.Incomplete, "thumbnail revision 1, not 2"):
+            self.hc.taken(self.tmp, 0, ["a"])
+
+    def test_a_failed_proof_publishes_nothing(self):
+        core = self.hc.core
+        self.index([{**self.shot("desktop"), "width": 2, "height": 1}])
+        core.write_png(self.tmp / "desktop.png", 2, 1, bytes([200, 100, 50, 0, 0, 0]))
+        core.write_png(self.tmp / "guest.png", 2, 1, bytes([200, 100, 50, 255, 255, 255]))
+
+        class Sc:
+            SHOTS, PROOF = ["desktop"], ("desktop", "guest.png")
+
+            def records(*_):
+                raise AssertionError("measured after a failed proof")
+        with mock.patch.object(self.hc.capture, "publish") as wrote, mock.patch.object(self.hc, "build", lambda: "1"):
+            self.assertEqual(self.hc.publish(Sc, self.tmp, 0, False), 3)
+        wrote.assert_not_called()
 
     def test_the_host_shot_must_be_the_guests_screen_after_16_bit_rounding(self):
         guest = (2, 2, bytes([200, 100, 50] * 4))
@@ -2609,6 +2657,9 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(sc.first_sign_in_text(frames, (0, 0, w, h)), ((190, 20, 20, 8), (100, 18, 250, 10)))
         with self.assertRaisesRegex(sc.core.Incomplete, "no line after the greeting"):
             sc.first_sign_in_text(frames[:2] + [frame((189, 199, 222))], (0, 0, w, h))
+        # A greeting caught twice is still only the greeting.
+        with self.assertRaisesRegex(sc.core.Incomplete, "no line after the greeting"):
+            sc.first_sign_in_text(frames[:2] + [frame(black, (190, 20, 20, 8)), frame((189, 199, 222))], (0, 0, w, h))
 
     def test_refuses_a_run_that_wrote_no_index(self):
         with self.assertRaisesRegex(self.hc.core.Incomplete, "no shots.json"):

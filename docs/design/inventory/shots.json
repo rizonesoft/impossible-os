@@ -840,7 +840,8 @@
   "sha256": "4e09cc08f1f23b653cb43a07a8a46074709e3dd9e363428603f3003ada5750c2",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -853,7 +854,8 @@
   "sha256": "57ee78a22bad8df809bc46f9e78f80bffad5137ff49115ed613960654a43734f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -866,7 +868,8 @@
   "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -875,11 +878,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 128288,
-  "sha256": "9af5a11eea4714e3a3ea59205646cb0c10ce37223125e269a92ac8cf6b50b4fe",
+  "size": 128261,
+  "sha256": "b637f7a4e5ffc8ffa605c86770bbe224f7c251738a25c735ab541abcb9d42a3d",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -888,11 +892,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 3493394,
-  "sha256": "4db33517df4dfef41a696a976c14cb301436a85f8d359c44b027c3388d0c77b8",
+  "size": 3493395,
+  "sha256": "5d7bce6d82af75dc1bb265050e56356a994eebd49b8ba5e7a93ef3631ba82ac3",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -901,11 +906,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28624,
-  "sha256": "9428922fefbd3012fbe779d38f596abca2954abdd0b9a1ec1b816f16514e0187",
+  "size": 10926,
+  "sha256": "3ff2f080ee2c105e94cfc9241748b730a484c133ba11ef9509b0b270e1b68ea1",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -914,11 +920,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28599,
-  "sha256": "d4f12a96e8934451a8dbdb2b8c0f2fe82b9ac899463018da733c5ee48b541cdf",
+  "size": 11286,
+  "sha256": "001464de24678d584c73cc1e0a9453054d8345f712d1f4535f60d26500c7c51c",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -927,11 +934,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28619,
-  "sha256": "694435e3f5aa93531aaf631f923c0d5a4678fcbbcc6e352556ead7a311798cb8",
+  "size": 11334,
+  "sha256": "acae33d15e98f6747be07c09fe39f58bbc4ec3d58c9fbc581e637c64a0d2855e",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -940,11 +948,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28616,
-  "sha256": "02f5ecdd373efd38f1a6baebfeba13f4e82aa75f846ccef4ef0117f08b793be8",
+  "size": 10887,
+  "sha256": "b53fbc516200e1dd7eb67f6511d13712ac75fbaf390ec424cc2b911addc0fbff",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -953,11 +962,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28627,
-  "sha256": "c9a31e2204e506a1da64bf8bd6c56a57d23fa8c4f7ec72db6cb51b796ead358a",
+  "size": 28640,
+  "sha256": "e43b66c6bda6d0b9b774f2487657176b2e09675a57472ed88b83f61a867e1ee8",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -966,11 +976,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2547207,
-  "sha256": "b459c02563fec4516fe768356f757c7304d6da1ea9c2cbdb76759189ce10359c",
+  "size": 2547213,
+  "sha256": "f82fde4a0db5119b5aea595281256aa342d97b97f8bf67fa6ba4b3ef479c8a90",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -979,11 +990,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12741,
-  "sha256": "eb15c88b24b1bdc932efaca72502b7d730e61bfc6af8c6866621783a97187d86",
+  "size": 12747,
+  "sha256": "41b031e09f0a3463354e6337a79734ce0d93f31756f65aa30134173738fbd32d",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -992,16 +1004,45 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12568,
-  "sha256": "d2eb00c20218d21cec17d033f7f691867e14d2d1248b4b14b3f513cb6579828d",
+  "size": 12702,
+  "sha256": "ca0200670c5d89fe9b8d76ccbdf701a7cdbb1ba91f9f78fa2dc43233ecf235d9",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "boot-5",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 12408,
+  "sha256": "7c7e53b054584b34be081543e246eb44927acd5967f8617a7644f35d93e3127e",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080,
+  "exact": true
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-6",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 12709,
+  "sha256": "f1bcf1c6439fc976c0f576d8791ee48296430d12b9c7ed4ea88a7288b5dbc368",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080,
+  "exact": true
+ },
+ {
+  "surface": "session",
+  "file": "boot",
+  "state": "boot-7",
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
@@ -1009,59 +1050,36 @@
   "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
- },
- {
-  "surface": "session",
-  "file": "boot",
-  "state": "boot-6",
-  "profile": "fhd-100",
-  "width": 1024,
-  "height": 768,
-  "size": 6673,
-  "sha256": "814e91ba5d7b8944e7857d004a155e528a2f730048c8803e1139be80c551afd7",
-  "depth": 16,
-  "sourceWidth": 1024,
-  "sourceHeight": 768
- },
- {
-  "surface": "session",
-  "file": "boot",
-  "state": "boot-7",
-  "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 10780,
-  "sha256": "c9b8d79581e8f4d6c216f78a819d0d265ec49c90d94dbd6a7b7c67c98b88914e",
-  "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "boot-8",
   "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 11774,
-  "sha256": "1565c8afe8d45c4e3f1db591ae35979ac31d65b2c2cb43366db8d8026be21a97",
+  "width": 1024,
+  "height": 768,
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
   "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceWidth": 1024,
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "boot-9",
   "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 11266,
-  "sha256": "de00afbbe455dad1a2a0efb38c604fd3fd3b0d93c68f6c10a86e396eafcef3ae",
+  "width": 1024,
+  "height": 768,
+  "size": 6718,
+  "sha256": "222a2f05f20b9c682c171a932ef494076c439c799aa546845723c6c550694d66",
   "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceWidth": 1024,
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1070,11 +1088,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28604,
-  "sha256": "d6d99008ae78c71bc1aa4edce503e3f3e7283a4ae3ac87cc6822101204dfe431",
+  "size": 28624,
+  "sha256": "9428922fefbd3012fbe779d38f596abca2954abdd0b9a1ec1b816f16514e0187",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1087,7 +1106,8 @@
   "sha256": "9e80a6ee5574483544cd9ea9daed9cd63491e17d4bf4a557a0f287248be02bbe",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1100,7 +1120,8 @@
   "sha256": "a373df9a2e0df420775ebdfa06c0eee5954f4304c18ae98e7df25d478fd2c7ff",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1113,7 +1134,8 @@
   "sha256": "b0042f8c98573fcb2e5937f40e76ae0a9337996e4611def602a5ff4ccabdcde5",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1126,7 +1148,8 @@
   "sha256": "ca8efe538e6132edd6c9619e71aa87d5a0a049d8cd3283a63f6be7e5374d9ada",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1135,11 +1158,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 125508,
-  "sha256": "93bfb533b3b969b42190e113916f361374b36de6f030371e7c823231099c1fa7",
+  "size": 125527,
+  "sha256": "6bcb7872c74b42cc7376cc0d81e6ce1787b94d511c6035cd4e20125f262ee03f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1152,7 +1176,8 @@
   "sha256": "c76a1d80835dacadd5935d403c6a6b71e3961bf6a4cb3ead5bbcc7369f3ab7fa",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1161,11 +1186,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1218891,
-  "sha256": "090acc15f1cbdb58fb8166657305215319f458433a2933555a2e23b310d7bf73",
+  "size": 1218827,
+  "sha256": "0aee0ee894b88965929cf696ed762dcbe9e1fbdd0c88611d491b7a51a9f3deb8",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1178,7 +1204,8 @@
   "sha256": "0c55f930d0b9dd36e0f5ddb9ec3cfeed50de097a07129ef9686423952146b8ff",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1191,20 +1218,8 @@
   "sha256": "2772c3ae6de57221eb0da9be6ed9ee6a5fe305e709999b89fb5c82155ed24825",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
- },
- {
-  "surface": "session",
-  "file": "setup",
-  "state": "first-desktop",
-  "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 2595716,
-  "sha256": "d859055c8ab9878973a4ff2fa6421a17f2dfe80405a3a4cf7a0dfce23e1d0766",
-  "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1213,11 +1228,26 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607451,
-  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "size": 1607221,
+  "sha256": "f678f590fc38d59a6b0ee44b2ce69e987fa4da4e77de68b5cc2d22b85cdccd40",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "first-desktop",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 2214440,
+  "sha256": "7eda6732c00e10d9f5f3cbdc0e92ca36d1d2ea80f386a099f10e317622bce7f0",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1226,11 +1256,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10143,
-  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "size": 10669,
+  "sha256": "2dade674bb997c23fbbe5e317ff8894f21f9ed7d61110266b29e349183616595",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1239,11 +1270,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607450,
-  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "size": 1607221,
+  "sha256": "f678f590fc38d59a6b0ee44b2ce69e987fa4da4e77de68b5cc2d22b85cdccd40",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1252,11 +1284,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607451,
-  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "size": 1607221,
+  "sha256": "f678f590fc38d59a6b0ee44b2ce69e987fa4da4e77de68b5cc2d22b85cdccd40",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1265,11 +1298,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607451,
-  "sha256": "9e56d18dd85a8e30c811a53a25ff23adbc1135ed23eea51ab6f657db6b24581d",
+  "size": 1607221,
+  "sha256": "f678f590fc38d59a6b0ee44b2ce69e987fa4da4e77de68b5cc2d22b85cdccd40",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1278,11 +1312,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10554,
-  "sha256": "536d0b4ffafc63c6bc5d24b9beebafc338417b31e0171c95da658c0af3977ed1",
+  "size": 10678,
+  "sha256": "c03842845da4202a68312fc15c6525ed269f48a05032c23981c48b69bd12f22d",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1291,11 +1326,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10143,
-  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "size": 15061,
+  "sha256": "f0810bb75c4a15aec416e6b3e5ed7206944dc523db83d37bc727399f6b2f9580",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1304,11 +1340,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12568,
-  "sha256": "f7dd0142c2e037ba8fc2321fb11475204c6f774df7bc687e215ea697fcc7aa4a",
+  "size": 67034,
+  "sha256": "32b298c70cf2d13d24482db44e8d295c3edd264599a4469f04c556ac825e1cfa",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1317,11 +1354,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607395,
-  "sha256": "4209dba02e624f339b97213f1686fcf98481c9d114a96188aa3536811467f109",
+  "size": 12584,
+  "sha256": "88ddc86fafd9644ac78d1800cf8c407170838b7994904cc189b45ea2421f4587",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1330,11 +1368,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607450,
-  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "size": 1767692,
+  "sha256": "2ce3f24a972d0361f86aae9a1e87eb68aa716d36748549cbef831e35619ff901",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1343,11 +1382,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607450,
-  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "size": 1607198,
+  "sha256": "f741f81271bac524e95396aa41b93d234975eca609dbde1110ceb145ea9626af",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1356,11 +1396,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607450,
-  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "size": 1607252,
+  "sha256": "1fdbe9460302eacc91e7d7689b61c7f1ec0cc2f9dfa1596230b6bef61b20551d",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1369,11 +1410,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 1607450,
-  "sha256": "9a8309b38c754195e9ddd8a40a52cc0976dde331bdbf31412957e61aab048fe1",
+  "size": 1607221,
+  "sha256": "f678f590fc38d59a6b0ee44b2ce69e987fa4da4e77de68b5cc2d22b85cdccd40",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1382,11 +1424,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 83725,
-  "sha256": "bfcc11b24a3d19e2bfa066dcf7f8e939c441d1fbd5ab657238d5c53ca87568c6",
+  "size": 83752,
+  "sha256": "a599d6e1f5eaf906e2f33f8031dae18eb7821bc17a8399c87be4888d2485d3aa",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1395,11 +1438,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12478,
-  "sha256": "b193b196a204887441b90df0aadaa6b9a1794b851b6e8d320376661d5f8d3706",
+  "size": 126236,
+  "sha256": "b63303368b81b0efecfbdf851ac3d38a03252db138f0b8887fff5261ebfaea23",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1408,11 +1452,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10669,
-  "sha256": "2dade674bb997c23fbbe5e317ff8894f21f9ed7d61110266b29e349183616595",
+  "size": 12740,
+  "sha256": "0a8d61be2b49e13202db492b49314d8c2ed04aac50db53967d987e99c6cf4cac",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1421,11 +1466,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 10678,
-  "sha256": "c03842845da4202a68312fc15c6525ed269f48a05032c23981c48b69bd12f22d",
+  "size": 10548,
+  "sha256": "861beb8ee142b8f89f58508dadfa3adfab5e6d7b6b3756482b6f3b92e6fc6243",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1434,11 +1480,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15019,
-  "sha256": "ad0e9330a109eeb8d726e4947e81d0a2cfd812910656ba42469efabd4ef10881",
+  "size": 10678,
+  "sha256": "c03842845da4202a68312fc15c6525ed269f48a05032c23981c48b69bd12f22d",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1447,11 +1494,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15061,
-  "sha256": "f0810bb75c4a15aec416e6b3e5ed7206944dc523db83d37bc727399f6b2f9580",
+  "size": 10569,
+  "sha256": "89c123366bf5f74b725cd81227c2e16ad590e2bb8cce9bc00afad695ee2fdbf6",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1460,11 +1508,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 48206,
-  "sha256": "edee1e2833b2220f34631df52f69aa50916ae8f96270ca3c4cb707700696eb63",
+  "size": 15061,
+  "sha256": "f0810bb75c4a15aec416e6b3e5ed7206944dc523db83d37bc727399f6b2f9580",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1473,11 +1522,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 136648,
-  "sha256": "fd62c46af4992e75e11ee9fd6ff705e742b83126b3e8838b59faaad36def5745",
+  "size": 15061,
+  "sha256": "f0810bb75c4a15aec416e6b3e5ed7206944dc523db83d37bc727399f6b2f9580",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1486,11 +1536,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 201733,
-  "sha256": "8b9c307740402e6c8aef0ae07f83ba7ef78ece6784786f19c74776d61d101abf",
+  "size": 15042,
+  "sha256": "ff70095841342a409d782b8924dedee2b9d64b93f5fcb328021e6d489a5c43cf",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1499,11 +1550,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 194290,
-  "sha256": "c920f4421646cf9dd5f6d8fc1f88b4ed386973e5a47a1b8adab38516953438c4",
+  "size": 65789,
+  "sha256": "fa20f82d79c54b50d3ef2cbfe2ce1681f55d8be00e64dd290d6965cc556f0687",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1512,11 +1564,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 131637,
-  "sha256": "da6397e928d4189b67ace0b1dfcd2dca49ba809a386bf048094eb450656bc44a",
+  "size": 131617,
+  "sha256": "36f28c8f3aad4597e9bc22c556702ce9249ea85429116094f7180723b31dbdff",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1529,7 +1582,8 @@
   "sha256": "c5c85cb916e5c5f6ef32a18a93ae243860c43f6a71450d2b10ac67ddc45f29ec",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1538,11 +1592,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 461587,
-  "sha256": "583e0c7c4429b3cfef115a8a0a71b82d9fe8185eb53257141bf9aa800671f57b",
+  "size": 461930,
+  "sha256": "26e630957336ca7fdfb8dd308f05117655e70ec27596217f1a2b77551d6e81f2",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1555,20 +1610,8 @@
   "sha256": "00c536b6e983246e419fad0f606e93bcf345305077adce4af759cd6caeaec849",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
- },
- {
-  "surface": "session",
-  "file": "setup",
-  "state": "network",
-  "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 141522,
-  "sha256": "406979d0177c73380e7cde2b454125f48c8539238eaab6cc393bf9988e797f1f",
-  "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1581,7 +1624,22 @@
   "sha256": "3169580badc208dd8f2275acde92a36ac942b898e4f94fc680e4f4c707d0ecc4",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
+ },
+ {
+  "surface": "session",
+  "file": "setup",
+  "state": "network",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 141529,
+  "sha256": "4e9ef88fffeeb51c834b77dc7418ada357690e113e8a50ff803b8b3e76c39f3e",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1594,7 +1652,8 @@
   "sha256": "5523437b0d5596ffe708982a74d27f0f4feee7d0c0cbcf3a8df59a0499a00b90",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1607,7 +1666,8 @@
   "sha256": "126ec34ebd98285f4eaa96e8616dc3cd47392bf29963164308b841abdf31bc09",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1616,11 +1676,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 353051,
-  "sha256": "bf39150f7b5442e9cb2d181bebd22edfe38301e70afac841e44e059b9eefeb0c",
+  "size": 353782,
+  "sha256": "c6dfb5da9fcc98b3fbcfeebfcddbd2d715c13ccdfa542241d73bfa1116624b3e",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1629,11 +1690,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 156510,
-  "sha256": "e8af594dcbe115887c57be7de81dfdd3e07cb0fda2118389be9e0e24ad235935",
+  "size": 132083,
+  "sha256": "9f50f9fd6533065147558b19900482a5544f517bee501fbb8400104c71fcf882",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1642,11 +1704,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595658,
-  "sha256": "4e7648a58a53ef25fefa8126a9ef54896c3e7a24dc75ed8b16b9bb959f7bbd25",
+  "size": 3604796,
+  "sha256": "7fc12c6ce4d9ca0b9f69f7bf6746509bf4b39eca380f086cfc3407da6d530197",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1655,11 +1718,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214370,
+  "sha256": "bcca82f2477594a8123e30366024fb85aa810c65ca8dec97514559dc24e62ad8",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1668,11 +1732,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214370,
+  "sha256": "bcca82f2477594a8123e30366024fb85aa810c65ca8dec97514559dc24e62ad8",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1681,11 +1746,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214413,
+  "sha256": "73efe0a4c3d4aa33ef4642504de63a43bede9fc8da9916029879e1b893c8e29f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1694,11 +1760,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214413,
+  "sha256": "73efe0a4c3d4aa33ef4642504de63a43bede9fc8da9916029879e1b893c8e29f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1707,11 +1774,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214413,
+  "sha256": "73efe0a4c3d4aa33ef4642504de63a43bede9fc8da9916029879e1b893c8e29f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1720,11 +1788,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 2595692,
-  "sha256": "706c90b5c3b98fd6950c88defd7f1cd545f6ec1ba6d025c6db1a624c74d91cf3",
+  "size": 2214389,
+  "sha256": "547ecd4609393a834c0004e6ff3cb856030949baa15c90a5962f846ce8cd1696",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1733,11 +1802,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 197141,
-  "sha256": "bcc48b31ea4af94a37c638fde30635a9974cdd295f40144188aaf577e8394c43",
+  "size": 172423,
+  "sha256": "bab03d77d7cd71342283264ca410324902e91f64c2e69ca4ce1366f340a0870f",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1746,11 +1816,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 200343,
-  "sha256": "b667dd730da5978c09c707a22b275ffaecbbc65a7d28f925e1f41795cd6bdeb8",
+  "size": 176345,
+  "sha256": "6844aba23752030e0b1e8b4f171f35bd8164cb95ec4dcddef80c489df08f13d2",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1763,7 +1834,8 @@
   "sha256": "3e5a81e572a56eb1552386cf9ebad26a3727c6246ebeb65850930ab4b8157155",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1776,7 +1848,8 @@
   "sha256": "a92edcdf05feaf837baf5e06842074ec2d9321442e87c11097b4e0982c07eef0",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1789,7 +1862,8 @@
   "sha256": "f35b776796521f2a2b33c821f9c4162914561f6a8aa673bca259b4cc985e1309",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1802,7 +1876,8 @@
   "sha256": "462b527173474dd22c00e3d49ebce32641793496a454e0d7e154603a2cc398df",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1815,7 +1890,8 @@
   "sha256": "47e15b23ca72114832b19c2e4f5ffc5db253a77e746dcf67b30b9fb7bd9a8422",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1828,7 +1904,8 @@
   "sha256": "a30c27318ee277e8e2a8a2fea2c09e16953abcc0379f8bcc2f7d826908fe0740",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1841,7 +1918,8 @@
   "sha256": "72920f14397bdfa7e822fbef06bcfcded45a44123e0eaf66dcabcde3e340ac82",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1850,11 +1928,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 22948,
-  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "size": 15972,
+  "sha256": "33caad5e2a896614c814a30b78943b46a7ff186edb4f5692b1e38e88d0a1291a",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1863,11 +1942,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 22948,
-  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "size": 16089,
+  "sha256": "0ba1193ec8062626ff80ae3beeea6979914c40fc3058f72f9000b51f4d46d77a",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1876,24 +1956,26 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 22948,
-  "sha256": "df85b51010b266048bf51380e921742a4d1726db9a6813e157e25c7ef3e89e5b",
+  "size": 15942,
+  "sha256": "703e96fc31adc2e78998e065921403b354d295e2d34d9af5429bc4904c84bc13",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "repair-2",
   "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 10143,
-  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
+  "width": 1024,
+  "height": 768,
+  "size": 8081,
+  "sha256": "07dc2b9201197aa8e0776895d4abf8ce69f7d02455c53333f25d0e2ac22bf356",
   "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceWidth": 1024,
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1902,11 +1984,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15747,
-  "sha256": "33dfc89ae9706cddba80a2c0ed1e083d83eb1ccce6f3d504ad9e67e8163735a1",
+  "size": 10143,
+  "sha256": "a5d8fab8a2f28589ebac021211379ffee5bedd8c2066bb6a9b192ec87b51d1a9",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1915,11 +1998,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 16123,
-  "sha256": "7744ab85ff1bbe0ee3c8c29591cb95b83fbcdbe61cc8b068147479892838acc4",
+  "size": 15747,
+  "sha256": "33dfc89ae9706cddba80a2c0ed1e083d83eb1ccce6f3d504ad9e67e8163735a1",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1928,11 +2012,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15739,
-  "sha256": "841009aa84a7b13ed8e2fbc12bf1afb8e40fa26466c5ab8dc6f3e01e0a62590a",
+  "size": 15784,
+  "sha256": "bf3b309c47330e535d761a03f66cd9509bd953d2a12ae7d951f9ea7c71d3536e",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1941,11 +2026,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 16036,
-  "sha256": "6b376d8db5faa032556a8f3107640330ce65773cc434aeb153f18bcc6eb940fe",
+  "size": 16139,
+  "sha256": "3b41be6024c23189866dda72d5b79a715837d4950391b2cb5df80d60b2a6f7f7",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1954,11 +2040,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15688,
-  "sha256": "a3ccf174f323879c50a35dd89ab8f51d92dbf9d38a538177b9423c3b9424fbee",
+  "size": 15962,
+  "sha256": "d87e280c56a0eaceba58e751f3b2e9441152a4cab5bda2dd6d4d071246cf0a15",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1967,11 +2054,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 16041,
-  "sha256": "26e5d8d5ee07dbe22cdc09fc73d8e68098dc80c1501f4d2835539a3d9b533f51",
+  "size": 15740,
+  "sha256": "99fc132369d8fef5cf23c9d925ddc5d0ea5403cbc4975b563a3fae8464243089",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1980,11 +2068,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 15760,
-  "sha256": "168c209aef5f73de9a1fe4b9ab6e0dcecba3e0bba020e22ebae645ebd9640a29",
+  "size": 15788,
+  "sha256": "1d3a3d194e9eee6b7c8fb92365d229d968633bff3a426dcda4925cee61313081",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -1993,11 +2082,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12420,
-  "sha256": "acf3cf72e8823cc1c6d2f4e6bc152ffa7b69ce67a252118f3d7afb590b481b9b",
+  "size": 11804,
+  "sha256": "368e8ba85f3052a6cf8aa5466e9b458af626c7cbbb41a73e5cb4461fcbe045c5",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2010,7 +2100,8 @@
   "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2023,7 +2114,8 @@
   "sha256": "58e146ca9a9e823c581fb4949b1c6675424a9ae44ba7602645c4500b10d83b0f",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2036,7 +2128,8 @@
   "sha256": "58e146ca9a9e823c581fb4949b1c6675424a9ae44ba7602645c4500b10d83b0f",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2045,11 +2138,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 7071,
-  "sha256": "e1d39705cc3e10231d600ae7dfdaedf829b196fc9fa82e58b0036fc32344ed81",
+  "size": 7040,
+  "sha256": "a36bcc34521e66bbf6c39a81b947ce79b008cec4a742908a07023dbb3e18df08",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2058,11 +2152,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 164705,
-  "sha256": "a189200a60e67682709d0a73042cfb8f6cf3bc545eeaccad227cf940d922c182",
+  "size": 164731,
+  "sha256": "cc9991c3c1c6554c57a996176be493318dfacc2459e513e7dbd545599d09212b",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2071,11 +2166,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 164726,
-  "sha256": "8c9df65079011dbd02348caa9e91397b069aac7457ffac474f68e33251565a48",
+  "size": 15105,
+  "sha256": "9e6f51a096c2f274c24f7d23ded324a25c43cf3ca62b1a4e8c5b4329ac0572b0",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2084,11 +2180,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 164679,
-  "sha256": "5b25c4713f6631c1cd4428c42b4ffcdbbe313df62ea7073822a67e94462dfbf6",
+  "size": 22285,
+  "sha256": "fee82cdaa2a4aa9ea441e54f8fa9bdd3d682fc12720b473cd1c8e2e68a9983f4",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2097,11 +2194,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 22255,
-  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "size": 22285,
+  "sha256": "fee82cdaa2a4aa9ea441e54f8fa9bdd3d682fc12720b473cd1c8e2e68a9983f4",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2110,11 +2208,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 22255,
-  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "size": 22285,
+  "sha256": "fee82cdaa2a4aa9ea441e54f8fa9bdd3d682fc12720b473cd1c8e2e68a9983f4",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2123,11 +2222,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 123150,
-  "sha256": "ad60ec00ab5dc89e80ac79b552d8a9831745c8bd0242e304804527d35b78a1ec",
+  "size": 123130,
+  "sha256": "ef159092c8a057c83b02163ee44fb58c8cd901ca5be6d41dff3f8f47b7d0740c",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2140,7 +2240,8 @@
   "sha256": "f5c041aa34a24e56d09132b673f5c0e4406d43d18bf595024c2c3427be3d0e10",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2153,7 +2254,8 @@
   "sha256": "6d744f8c6895cd6660213b196d748de2bf82528f44a0a6be7ff2ab75de0c2c08",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2162,11 +2264,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 106364,
-  "sha256": "6cf147dbd2f3c43fb7dfe3850d273dfb938791276f52e6abced04d6ee2f4b83f",
+  "size": 106352,
+  "sha256": "15d003db774dceae297ff0171afad96b0ffe9924825152e48a526412f4f6cee9",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2179,7 +2282,8 @@
   "sha256": "857a25b17d14a2d03d6fdf2a94fe184e6b6126e380edfcd0ad374ab0fb82af98",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2192,7 +2296,8 @@
   "sha256": "bd6f31abcb1421e5b98d1df4dea7449c37c1ce682fa474de04f55be1e79edd11",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2205,7 +2310,8 @@
   "sha256": "7c275e2e3c1708c770d2af13d5d8611685b14f819f1866a2dffb052b348a0904",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2214,11 +2320,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 3189294,
-  "sha256": "8d7fbb9c1aa5459fe22cca558ceb203a20156ac6dc4702cc204162c3797b2500",
+  "size": 3189283,
+  "sha256": "a5ecea20b41e1b5a75461b4c840661e24dedfa0906d46820aba5625e6d566363",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2227,11 +2334,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 3190673,
-  "sha256": "50090d41936ee2149122fbed2a85e9fcf2b3b65f3ab0f0dfa6be5b973582d083",
+  "size": 3190394,
+  "sha256": "6f90592f553391633e84500606f4ab1bda60bb49d6d9278e217ee21c487486a2",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2244,7 +2352,8 @@
   "sha256": "8031e92a812e661d0dc204539aed106cf83d1b0b3abe53808f45c14a90a79d37",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2253,11 +2362,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 12382,
-  "sha256": "5c8444d9e42f113721f2af91fe5fa66bc624710c86d6ec76371d4cde0e95932a",
+  "size": 12517,
+  "sha256": "1661d4fd188e7bd8ba16b27909e6e7dd75a886e5668d211d11ee57e5e39112cb",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2270,7 +2380,8 @@
   "sha256": "580f8a19519cc60f08b5cc20c7b9449f47b1349906ba925df317e343d3d138d5",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2279,11 +2390,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 22255,
-  "sha256": "6bbb7b87d323b92ee162b63c0d26bed0b9cf8dd4fec2605a4929eaec1daae927",
+  "size": 22285,
+  "sha256": "fee82cdaa2a4aa9ea441e54f8fa9bdd3d682fc12720b473cd1c8e2e68a9983f4",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2292,11 +2404,12 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 28631,
-  "sha256": "607b04ff5fbcd93ccc9a45f8901cd0a32f2010158f56f817058c5e5b1363f810",
+  "size": 10683,
+  "sha256": "ea3677f551c311bf3312822d664081731f2c0d322c67c6ba0066144063019bb9",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2309,7 +2422,8 @@
   "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2322,7 +2436,8 @@
   "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2335,7 +2450,8 @@
   "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2344,11 +2460,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 6395,
-  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
+  "size": 12333,
+  "sha256": "bac437f80d63854d10dad0380319b77d8b8566a1eedbac657dd4fe6e45642753",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2357,11 +2474,12 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 6539,
-  "sha256": "23ca5069b4f7789a83fc0039e8ea83cd7bea0bd9905d685825b5afbd7be20fb3",
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2370,37 +2488,40 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 768,
-  "size": 6832,
-  "sha256": "09cb52b0133fc1743e83cba9463102bbce5fc2136b6d8520e902fdf62a07e64d",
+  "size": 6395,
+  "sha256": "3832dbc60d71e2b0539bbc6262ddc75b441cc211143c2981bd7a62c6244dc14d",
   "depth": 16,
   "sourceWidth": 1024,
-  "sourceHeight": 768
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "stop-8",
   "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 11228,
-  "sha256": "00d0dbf32efbedf3f3090ae980defecb13e7225997ff4fbdff8b82b20d098330",
+  "width": 1024,
+  "height": 768,
+  "size": 6762,
+  "sha256": "73b423b0d726f615db6c4645b4b0501cef4a8667ed869bf4c5d1f25d06a2f418",
   "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceWidth": 1024,
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
   "file": "boot",
   "state": "stop-9",
   "profile": "fhd-100",
-  "width": 1920,
-  "height": 1080,
-  "size": 28624,
-  "sha256": "9428922fefbd3012fbe779d38f596abca2954abdd0b9a1ec1b816f16514e0187",
+  "width": 1024,
+  "height": 768,
+  "size": 6834,
+  "sha256": "4917b13cb52c401fc5af49a36e6f28c6e035203b9504b4e773cfb6b4d2850a52",
   "depth": 16,
-  "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceWidth": 1024,
+  "sourceHeight": 768,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2413,7 +2534,8 @@
   "sha256": "a6fa3adeda988a09a7a9b0f9f142ee83d770006bdaaa10c68fa19308980323a8",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "session",
@@ -2426,7 +2548,8 @@
   "sha256": "e2b4950c9d85de880a25d104c4affc9321d7a10b99538e6e87c7f1e17444c9ef",
   "depth": 16,
   "sourceWidth": 1920,
-  "sourceHeight": 1080
+  "sourceHeight": 1080,
+  "exact": true
  },
  {
   "surface": "start",
