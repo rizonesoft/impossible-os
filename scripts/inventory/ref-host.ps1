@@ -128,9 +128,14 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
     # Until: a timed burst's own end, which a frame started late in it must
     # not run past (review, 2026-11-18).
     $script:ShotDeadline = (Get-Date).AddSeconds(15)
+    # Past Until, no new host call starts: the frame is dropped and
+    # ShotExpired tells the burst to end (review, 2026-11-18).
     if ($Until -lt $script:ShotDeadline) { $script:ShotDeadline = $Until }
+    $script:ShotExpired = $false
     for ($try = 1; $try -le 2; ) {
+        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
         $before = Get-ShotMode
+        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
         try { $bytes = Get-RefThumbnail $Name $before[0] $before[1] } catch {
             # 32775 is Hyper-V's "invalid state": the VM is between states as it
             # resets (after the boot walk's stop error, 2026-11-18). Wait it out
@@ -139,6 +144,7 @@ function Save-Shot([string]$ShotName, [datetime]$Until = [datetime]::MaxValue) {
             Start-Sleep -Milliseconds 500
             continue
         }
+        if ((Get-Date) -ge $Until) { $script:ShotExpired = $true; return }
         $after = Get-ShotMode
         $exact = ($before[0] -eq $after[0]) -and ($before[1] -eq $after[1])
         if ($exact) { break }
@@ -208,6 +214,7 @@ function Invoke-Step($step) {
                     if ((Get-Date) -ge $end -and ($_.Exception.Message -like 'no video head*' -or $_.Exception.Message -like 'thumbnail failed: 32775*')) { break }
                     throw
                 }
+                if ($script:ShotExpired) { break }
                 # until: end the burst at the first frame that shows that
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).

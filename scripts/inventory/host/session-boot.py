@@ -226,6 +226,12 @@ def band(img, region, test):
     return (x, y + top, w, end - top)
 
 
+def first_clear(names, taken, shots, test):
+    """The first of names that is an exact frame (its mode held across the
+    shot) and no longer passes test, else None."""
+    return next((n for n in names if taken.get(n, {}).get("exact") and not test(shots[n])), None)
+
+
 def tile_text(tile, ring_width):
     """The text region beside a tile's icon square: from just right of the
     square to just short of the focus rectangle's right edge, whose border
@@ -605,13 +611,16 @@ def records(shots, build, taken=None):
     rec("stop.code", "control", "Stop code", st, controlType="text",
         behaviour=f"A small text slot with a label, the stop code's name and its number in hex, {place(img, code)}, near the bottom edge.")
     every = frames("stop", lambda i: True, exact=False)
-    after = every[every.index(got[-1]) + 1:]
-    if not after or got[0] not in taken or after[0] not in taken:
-        raise core.Incomplete("stop burst: no frame after the stop error to time it by")
-    shown = round((stamp(taken[after[0]]) - stamp(taken[got[0]])).total_seconds() * 1000)
+    # The end is the first exact frame that no longer shows the stop error:
+    # a frame taken while the mode changed can still show it (review,
+    # 2026-11-18).
+    end = first_clear(every[every.index(got[-1]) + 1:], taken, shots, stopped)
+    if not end or got[0] not in taken:
+        raise core.Incomplete("stop burst: no exact frame after the stop error to time it by")
+    shown = round((stamp(taken[end]) - stamp(taken[got[0]])).total_seconds() * 1000)
     rec("stop.shown", "metric", "Stop error shown for", st,
-        measure={"value": shown, "unit": "ms", "readBy": f"host frame times, {got[0]} to {after[0]}"},
-        behaviour="The span from the first frame with the stop error to the first frame after it, so the true time is within one frame gap of it either way; with the small memory dump this walk sets.")
+        measure={"value": shown, "unit": "ms", "readBy": f"host frame times, {got[0]} to {end}"},
+        behaviour="The span between the host's times for the first exact frame with the stop error and the first exact frame without it; each time is taken as its frame is saved, so this is the span observed, not a bound on the screen's own; with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
     def waiting(img):

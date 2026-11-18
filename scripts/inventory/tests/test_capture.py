@@ -1091,6 +1091,42 @@ class Profile(unittest.TestCase):
         # 0.2 s a shot: one a second for 30 s. 2.5 s a shot: back to back, 12 in 30 s.
         self.assertEqual(lines, ["30 30", "12 30"], out.stderr)
 
+    def test_a_timed_burst_ends_at_its_budget_through_the_real_save_shot(self):
+        # A frame admitted near a burst's end could take its own 15 s, or start
+        # a thumbnail after the end (review, 2026-11-18).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        base = (self._ps_functions((INV / "ref-host.ps1", ["Test-ThumbnailColour", "Invoke-Step", "Save-Shot", "Get-ShotMode"]),
+                                   (INV / "ref-common.ps1", ["Get-ThumbnailPixel"]))
+                + "$Name = 'x'; $NoSession = $false; $Out = '.'; $shots = New-Object System.Collections.ArrayList; "
+                "$t0 = [datetime]'2026-01-01'; $script:t = $t0; $script:thumbs = 0; "
+                "function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+                "function Write-Host { }; function Save-Thumbnail { }; "
+                "function Get-RefThumbnail { $script:thumbs++; $script:t = $script:t.AddMilliseconds(100); ,(New-Object byte[] 20) }; ")
+        burst = ("Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'stop'; count = 50; every = 0; cadence = 1; seconds = 5 }); "
+                 "'' + $shots.Count + ' ' + $script:thumbs + ' ' + ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
+        cases = {
+            # The head goes away from 3.5 s: the frame started at 4 s waits for
+            # it only until the burst's end at 5 s.
+            "reset": "function Get-RefVideoMode { $script:t = $script:t.AddMilliseconds(50); "
+                     "if (($script:t - $t0).TotalSeconds -ge 3.5) { throw 'no video head: x' }; @(1024, 768) }; ",
+            # Mode reads turn slow from 3.5 s: the read that ends after 5 s
+            # starts no thumbnail.
+            "slow": "function Get-RefVideoMode { $ms = if (($script:t - $t0).TotalSeconds -ge 3.5) { 1500 } else { 50 }; "
+                    "$script:t = $script:t.AddMilliseconds($ms); @(1024, 768) }; ",
+        }
+        got = {}
+        for k, fake in cases.items():
+            out = subprocess.run([shell, "-NoProfile", "-Command", base + fake + burst], capture_output=True, text=True, timeout=120)
+            got[k] = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else out.stderr
+        n, thumbs, end = got["reset"].split()
+        self.assertEqual((n, thumbs), ("4", "4"), got)
+        self.assertLessEqual(float(end), 5.5, got)                       # not 4 + 15 s
+        n, thumbs, end = got["slow"].split()
+        # Frames at 0, 1, 2, 3 s; the one at 4 s reads its mode until 5.5 s
+        # and stops there, with no thumbnail.
+        self.assertEqual((n, thumbs), ("4", "4"), got)
+        self.assertLessEqual(float(end), 5.5, got)
+
     def test_a_burst_spaces_each_shot_from_the_one_before_and_ends_on_time(self):
         # A slow first shot let the next ones catch up on a schedule counted
         # from the burst's start, and a frame admitted late could wait 15 s
@@ -2936,6 +2972,19 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(stop.call_args[0][1], "pre-oobe")
         self.assertIn("interrupted; restored", said.getvalue())
         self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
+
+    def test_the_stop_error_is_timed_to_the_first_exact_frame_without_it(self):
+        # An inexact frame still showing the stop error was taken as its end
+        # (review, 2026-11-18).
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        stop, clear = (1, 1, b"s"), (1, 1, b"c")
+        shots = {"stop-6": stop, "stop-7": clear, "stop-8": clear}
+        taken = {"stop-6": {"exact": False}, "stop-7": {"exact": False}, "stop-8": {"exact": True}}
+        is_stop = lambda i: i[2] == b"s"
+        self.assertEqual(sc.first_clear(["stop-6", "stop-7", "stop-8"], taken, shots, is_stop), "stop-8")
+        taken["stop-6"]["exact"] = True
+        self.assertEqual(sc.first_clear(["stop-6", "stop-7", "stop-8"], taken, shots, is_stop), "stop-8")
+        self.assertIsNone(sc.first_clear(["stop-6"], taken, shots, is_stop))
 
     def test_the_stop_progress_compares_only_frames_of_one_mode(self):
         # Two stop frames of different modes were counted as two compared
