@@ -24,7 +24,7 @@ A new build goes into the install image, never into a running machine, so `pre-o
 
 1. Download the build's cumulative update from the Microsoft Update Catalog; the file name carries its SHA-1. Only the cumulative update: the catalog also lists the 24H2 checkpoint update (KB5043080), which a 26300 image refuses with `0x80070228`.
 2. `update-iso.ps1 -Package <msu> -Out D:\11\win11-<build>.iso` services image 6 inside the reference VM (DISM needs elevation, which the guest has and the host shell does not), splits it into `install.swm` parts and builds the ISO with `xorriso` in WSL. About two and a half hours, most of it DISM. The serviced parts stay in `D:\11\update-iso\parts` with `parts.json` naming their inputs, so a run that fails while building the ISO is run again in about 15 minutes, without servicing again; one run at a time per work folder and VM (a second exits 4).
-3. Record the new build in `reference.json` and on this page, then build the machine from the new ISO with `-ImageIndex 1`. To keep the old machine until the new one verifies, build it beside it (`-Name ios-win11-ref-next -VmPath D:\11\ios-win11-ref-next`), then remove the old VM, `Rename-VM` the new one and `Move-VMStorage` it to `D:\11\ios-win11-ref`.
+3. Record the new build in `reference.json` and on this page, then build the machine from the new ISO with `-ImageIndex 1`. To keep the old machine until the new one verifies, build it beside it (`-Name ios-win11-ref-next -VmPath D:\11\ios-win11-ref-next`), then remove the old VM, `Rename-VM` the new one, `Move-VMStorage` it to `D:\11\ios-win11-ref` and move `ref.clixml`, `answer-install.iso`, `pre-oobe.png` and `ref-vm.log` after it by hand. `Move-VMStorage` carries only Hyper-V's own files, and `ref.clixml` is the only copy of the `ref` password: a store move on 2026-11-19 left it behind and the machine had to be rebuilt. Moving the whole store is the same: move every file in the folder, not only the VM.
 4. `-Derive -Profile machine`, rebuild the stand-in disk (`standin/derive.ps1`), regenerate `ms-hashes.txt` (`make-ms-hashes.ps1`) and read the baselines again (`baselines.py`); only then capture.
 
 Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
@@ -94,7 +94,7 @@ A fixture is a guest script in `scripts/inventory/fixtures/` that puts made-up c
 | --- | --- |
 | VM | `ios-win11-ref`, Hyper-V Generation 2, Secure Boot (Microsoft Windows template), virtual TPM |
 | Processors and memory | 4 vCPU, static 4 GiB |
-| Disk | 80 GiB dynamic, `D:\11\ios-win11-ref\disk.vhdx` |
+| Disk | 80 GiB dynamic, `D:\11\ios-win11-ref\Virtual Hard Disks\disk.vhdx` (a moved VM keeps Hyper-V's folder layout) |
 | Network | none: no adapter, so nothing updates the build or changes content between captures |
 | Account | one local administrator, `ref`, with a random password kept only as DPAPI `Export-Clixml` beside the VM |
 | Checkpoints | `pre-oobe` (the first setup page) and `clean` (the signed-in desktop under `fhd-100`) |

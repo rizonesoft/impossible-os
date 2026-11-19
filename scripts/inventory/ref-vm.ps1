@@ -554,8 +554,17 @@ function Test-DerivedProfile([string]$Id) {
 function Test-StandinProfile([string]$Id, $Want) {
     $linux = (& wsl.exe -e wslpath -u $PSScriptRoot | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $linux) { return @("profile ${Id}: this checkout's path has no WSL form ($PSScriptRoot)") }
-    $out = @(& wsl.exe -e python3 "$linux/standin/probe.py" $Id 2>&1 | ForEach-Object { "$_" })
-    if ($LASTEXITCODE -ne 0) { return @("profile ${Id} on the stand-in machine: $(($out | Select-Object -Last 3) -join ' / ')") }
+    # The exit code is the probe's verdict. Under Stop, 5.1 made a wsl.exe
+    # warning on stderr fatal ("Failed to translate" a dead PATH entry,
+    # 2026-11-20), and a stderr line could also end up as the "last line" read
+    # as the probe's JSON; so stderr is kept apart and only named on a failure.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $all = @(& wsl.exe -e python3 "$linux/standin/probe.py" $Id 2>&1) } finally { $ErrorActionPreference = $prev }
+    $code = $LASTEXITCODE
+    $out = @($all | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+    $err = @($all | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { "$_".TrimEnd() })
+    if ($code -ne 0 -or -not $out.Count) { return @("profile ${Id} on the stand-in machine: $((@($err) + @($out) | Select-Object -Last 3) -join ' / ')") }
     $script:SeenJson = ($out | Select-Object -Last 1).Trim()
     $seen = $script:SeenJson | ConvertFrom-Json
     $wrong = @(Compare-RefProfile $seen (Get-RefIdentity) $Want $script:QuietForeground)

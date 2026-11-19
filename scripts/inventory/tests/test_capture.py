@@ -1478,6 +1478,24 @@ class Profile(unittest.TestCase):
                                  "x was verified as build 26300.9000, reference.json says 26300.9974",
                                  "sets=2", "problems=0"], out.stderr)
 
+    def test_a_stand_in_probe_is_judged_by_its_exit_code_not_its_stderr(self):
+        # A wsl.exe warning on stderr ("Failed to translate" a dead PATH entry)
+        # stopped the whole verify under Stop (2026-11-20).
+        shell = self._powershell(INV / "ref-vm.ps1", windows=True)[0]
+        ps = ("$ErrorActionPreference = 'Stop'; Push-Location -LiteralPath $env:SystemRoot; "
+              + self._ps_functions((INV / "ref-vm.ps1", ["Test-StandinProfile"]))
+              + "function Get-RefIdentity { [pscustomobject]@{ build = '1' } }; function Compare-RefProfile { @() }; "
+              "$script:rc = 0; function wsl.exe { if ($args[1] -eq 'wslpath') { $global:LASTEXITCODE = 0; '/x'; return } "
+              "cmd.exe /c \"echo wsl: Failed to translate R:\\gone 1>&2 & echo {\"\"remote\"\":false} & exit /b $script:rc\" }; "
+              "try { 'ok=' + (@(Test-StandinProfile 'dual' $null)).Count } catch { 'threw: ' + $_ }; "
+              "'seen=' + $script:SeenJson; "
+              "$script:rc = 3; (@(Test-StandinProfile 'dual' $null)) -join '|'")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("ref-vm:")]
+        self.assertEqual(lines, ["ok=0", 'seen={"remote":false}',
+                                 'profile dual on the stand-in machine: wsl: Failed to translate R:\\gone / {"remote":false}'],
+                         out.stdout + out.stderr)
+
     def test_a_new_checkpoint_is_renamed_through_its_object(self):
         # Rename-VMSnapshot by name straight after Checkpoint-VM found nothing
         # (derive 2026-11-16, clean 2026-11-19); only a promotion repair, which
