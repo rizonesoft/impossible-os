@@ -653,9 +653,11 @@ def records(shots, build, taken=None):
         raise core.Incomplete("boot-manager-second: Down did not move the focus to the second entry")
     rec("boot-manager.stop-countdown", "gesture", "Stop the countdown", bm,
         behaviour="A key press (Down in this walk) removes the countdown line; the menu then waits for a choice.")
-    for vk, lab, beh in (("Up, Down", "Move between entries", "Arrow keys move the focus up and down the tiles."),
-                         ("Tab", "Focus the options link", "Tab moves the focus from the tiles to the options link."),
-                         ("Enter", "Start the focused entry", "Enter starts the focused entry or opens the focused link.")):
+    # Only the keys this walk sends, in the order it sends them: it never
+    # presses Up, Tab alone, or Enter on a tile (review, 2026-11-19).
+    for vk, lab, beh in (("Down", "Move to the next entry", "Down moves the focus from the first tile to the second."),
+                         ("Down, Tab", "Focus the options link", "From the second tile, Down and then Tab put the focus on the options link."),
+                         ("Enter", "Open the focused link", "Enter on the focused options link opens the options page.")):
         rec(f"boot-manager.{lab.lower().replace(' ', '-')}", "shortcut", lab, bm, shortcut=vk, behaviour=beh)
 
     tile_page("boot-options", "Boot manager options", "boot-options",

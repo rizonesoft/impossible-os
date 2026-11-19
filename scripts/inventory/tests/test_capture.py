@@ -1343,6 +1343,21 @@ class Profile(unittest.TestCase):
         # Frames 1 s apart, all the same: held 2 s at the third.
         self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png>still.png r-3:r-3.png:True:Tr-3|still:still.png:True:Tr-3")
 
+    def test_the_boot_menu_shortcuts_name_only_the_keys_the_walk_sends(self):
+        # The records claimed Up, Tab alone and Enter on a tile, which the
+        # walk never sends (review, 2026-11-19). Each record's keys are a run
+        # of key steps between the boot burst and the boot-options shot.
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        names = {"Down": sc.DOWN, "Up": sc.UP, "Tab": sc.TAB, "Enter": sc.ENTER}
+        steps = sc.STEPS[:next(i for i, st in enumerate(sc.STEPS) if st.get("name") == "boot-options")]
+        sent = [st["vk"] for st in steps if st["op"] == "key"]
+        records = [json.loads(line) for line in (INV.parent.parent / "docs/design/inventory/session/boot.json").read_text(encoding="utf-8").splitlines() if line.strip()]
+        menu = [r for r in records if r.get("parent") == "win11.session.boot.boot-manager" and r["kind"] == "shortcut"]
+        self.assertEqual(len(menu), 3)
+        for r in menu:
+            want = [names[k] for k in r["shortcut"].split(", ")]
+            self.assertTrue(any(sent[i:i + len(want)] == want for i in range(len(sent))), (r["shortcut"], sent))
+
     def test_burst_frames_are_in_burst_order(self):
         # frames() reads the bursts through this; repair_phases relies on the
         # order (the spinner and repair test drives it).
