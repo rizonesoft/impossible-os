@@ -1478,6 +1478,17 @@ class Profile(unittest.TestCase):
                                  "x was verified as build 26300.9000, reference.json says 26300.9974",
                                  "sets=2", "problems=0"], out.stderr)
 
+    def test_a_new_checkpoint_is_renamed_through_its_object(self):
+        # Rename-VMSnapshot by name straight after Checkpoint-VM found nothing
+        # (derive 2026-11-16, clean 2026-11-19); only a promotion repair, which
+        # renames a checkpoint that already existed, may look it up by name.
+        by_name = []
+        for path in sorted(INV.glob("**/*.ps1")):
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "Rename-VMSnapshot" in line and "-VMSnapshot" not in line.replace("Rename-VMSnapshot", ""):
+                    by_name.append(f"{path.relative_to(INV)}:{n}")
+        self.assertEqual(by_name, ["ref-common.ps1:390"])
+
     def test_a_restore_finds_media_the_store_move_left_behind(self):
         # The store moved from R:\11 to D:\11 (2026-11-19): every checkpoint
         # still attached R:\11\win11-26300.9974.iso, which lives in the store

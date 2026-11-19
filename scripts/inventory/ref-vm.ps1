@@ -422,9 +422,11 @@ function Complete-Clean() {
     # The old clean is replaced only once its successor exists.
     Repair-RefPromotion $Name 'clean'
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean-next' }) { Remove-VMSnapshot -VMName $Name -Name 'clean-next' }
-    Checkpoint-VM -Name $Name -SnapshotName 'clean-next'
+    # Renamed through the object Checkpoint-VM returns, as Invoke-Derive does: a
+    # lookup by name straight after the checkpoint did not find it (2026-11-19).
+    $next = Checkpoint-VM -Name $Name -SnapshotName 'clean-next' -Passthru
     if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean' }) { Remove-VMSnapshot -VMName $Name -Name 'clean' }
-    Rename-VMSnapshot -VMName $Name -Name 'clean-next' -NewName 'clean'
+    Rename-VMSnapshot -VMSnapshot $next -NewName 'clean'
     Write-Ref 'checkpoint clean taken'
 }
 
