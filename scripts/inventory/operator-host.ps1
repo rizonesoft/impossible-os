@@ -338,8 +338,12 @@ function Views($c) {
         if ($i -eq $MaxViews) { throw "the page did not reach its end in $MaxViews half-viewport steps" }
         # Half a viewport, as a percentage of the scrollable range.
         $step = 50 * $v.VerticalViewSize / (100 - $v.VerticalViewSize)
-        $c.pattern.SetScrollPercent(-1, [Math]::Min(100, $v.VerticalScrollPercent + $step))
+        $was = $v.VerticalScrollPercent
+        $c.pattern.SetScrollPercent(-1, [Math]::Min(100, $was + $step))
         Start-Sleep -Seconds 1
+        # A provider that does not move would be read the same way MaxViews
+        # times (review, 2026-11-20): stop at the first step that went nowhere.
+        if ($c.pattern.Current.VerticalScrollPercent -le $was) { throw "the page did not scroll from $([Math]::Round($was, 1)) percent" }
         # After a scroll only the page's content is read again: the rest of the window does not move.
         $snap = Snapshot $c.element
         $snap.scrolled = Scrolled $c
@@ -559,11 +563,13 @@ try {
         }
         $bmp.Save((Join-Path $Out "$page.png"), [System.Drawing.Imaging.ImageFormat]::Png)
         $bmp.Dispose()
+        # Binds the shot to this tree: the masks are read from the tree.
+        $png = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Out "$page.png")).Hash.ToLowerInvariant()
         $top.scrolled = Scrolled $c
         $views = Views $c
         [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height); dpi = $Dpi
                     textScale = $access.textScale; highContrast = $access.highContrast
-                    before = $before; top = $top; views = $views } |
+                    before = $before; top = $top; views = $views; png = $png } |
             ConvertTo-Json -Depth 100 -Compress | Set-Content -LiteralPath (Join-Path $Out "$page.json") -Encoding UTF8
         $before = $top = $views = $null   # written: free for the next page
         "captured $page"

@@ -5,6 +5,7 @@ import io
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -533,6 +534,47 @@ class Blanks(unittest.TestCase):
         top = window(el("Button", "Pat Home 5G properties", bounds=(-5100, 500, 300, 40)))
         rects = oc.blanks({"monitor": MON, "top": top}, ["Pat Home 5G"])
         self.assertIn((660, 500, 300, 40), rects)
+
+    def test_a_personal_text_child_off_screen_does_not_spare_its_control(self):
+        # The child is never masked (no placed bounds), so the control painting
+        # the same caption must be (review, 2026-11-20).
+        for child in (dict(el("Text", "Pat Home 5G"), offscreen=True), dict(el("Text", "Pat Home 5G"), bounds=None)):
+            top = window(el("Button", "Pat Home 5G properties", bounds=(-5100, 500, 300, 40), kids=[child]))
+            self.assertIn((660, 500, 300, 40), oc.blanks({"monitor": MON, "top": top}, ["Pat Home 5G"]))
+        placed = el("Text", "Pat Home 5G", bounds=(-5090, 510, 120, 19))
+        top = window(el("Button", "Pat Home 5G properties", bounds=(-5100, 500, 300, 40), kids=[placed]))
+        rects = oc.blanks({"monitor": MON, "top": top}, ["Pat Home 5G"])
+        self.assertIn((670, 510, 120, 19), rects)
+        self.assertNotIn((660, 500, 300, 40), rects)
+
+    def test_a_shot_must_be_the_one_saved_with_its_tree(self):
+        # A replayed folder whose wifi.png was swapped for another page's would
+        # be masked by the Wi-Fi tree (review, 2026-11-20).
+        with tempfile.TemporaryDirectory() as d:
+            wifi, camera = pathlib.Path(d) / "wifi.png", pathlib.Path(d) / "camera.png"
+            wifi.write_bytes(b"wifi pixels")
+            camera.write_bytes(b"camera pixels")
+            dump = {"png": oc.capture.sha256(wifi)}
+            self.assertTrue(oc.shot_is_bound(dump, wifi))
+            self.assertFalse(oc.shot_is_bound(dump, camera))
+            self.assertFalse(oc.shot_is_bound({}, wifi))                          # a run from before the digest
+            self.assertFalse(oc.shot_is_bound(dump, pathlib.Path(d) / "gone.png"))
+        self.assertIn("png = $png", oc.HOST_SCRIPT.read_text(encoding="utf-8"))   # the host writes it
+
+    def test_a_scroll_that_does_not_move_stops_the_page(self):
+        shell = shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("no Windows PowerShell on this host")
+        script = subprocess.run(["wslpath", "-w", str(oc.HOST_SCRIPT)], capture_output=True, text=True, check=True).stdout.strip()
+        ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Views' }, $true) | Select-Object -First 1; "
+              "Invoke-Expression $f.Extent.Text; function Start-Sleep { }; function Snapshot { @{} }; function Scrolled { 0 }; $MaxViews = 20; "
+              "$script:sets = 0; $p = [pscustomobject]@{ Current = [pscustomobject]@{ VerticallyScrollable = $true; VerticalScrollPercent = 40.0; VerticalViewSize = 50.0 } }; "
+              "$p | Add-Member ScriptMethod SetScrollPercent { param($h, $v) $script:sets++ }; "
+              "try { Views ([pscustomobject]@{ pattern = $p; element = $null; pane = $null }) | Out-Null; 'no error' } catch { 'error: ' + $_.Exception.Message }; 'sets=' + $script:sets") % script
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        self.assertEqual([x.strip() for x in out.stdout.splitlines() if x.strip()],
+                         ["error: the page did not scroll from 40 percent", "sets=1"], out.stderr)
 
     def test_a_list_that_moved_while_the_page_was_copied_is_refused(self):
         def tree(y):

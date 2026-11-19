@@ -514,17 +514,28 @@ def blanks(dump, personal):
         out.append((b["x"], b["y"], b["width"], b["height"]))
     def personal_in(n):
         return any(s.casefold() in (n.get("name") or "").casefold() for s in personal)
-    # A text naming the operator, and a control naming them whose caption no text
-    # under it carries (a button that paints its own name).
+    def placed(n):
+        return bool(n.get("bounds")) and not n.get("offscreen")
+    # A text naming the operator, and a control naming them whose caption no
+    # placed text under it carries (a button that paints its own name). A text
+    # child that is offscreen or unplaced gets no mask of its own, so it cannot
+    # stand in for the control's (review, 2026-11-20).
     named = [n for n, _ in walk(tree) if personal_in(n)
              and (n.get("controlType") == "Text"
-                  or not any(personal_in(t) for t, _ in walk(n) if t is not n and t.get("controlType") == "Text"))
+                  or not any(personal_in(t) and placed(t) for t, _ in walk(n)
+                             if t is not n and t.get("controlType") == "Text"))
              and n is not head]
     for n in named + entry_texts(tree):
         if n.get("bounds") and not n.get("offscreen"):
             b = rel(n["bounds"], mon)
             out.append((b["x"], b["y"], b["width"], b["height"]))
     return out
+
+
+def shot_is_bound(dump, png):
+    """True when png is the shot the host saved with this page's tree (the
+    digest it wrote into the dump); a dump without one is not evidence."""
+    return bool(dump.get("png")) and png.is_file() and dump["png"] == capture.sha256(png)
 
 
 def moved(dump, personal):
@@ -690,6 +701,12 @@ def check_and_publish(args, pages, out):
             return 3
         if moved(dump[p], personal):
             print(f"operator-capture: the {p} page changed while it was copied; nothing published")
+            return 3
+        # The masks come from this page's tree, so the pixels must be the ones
+        # the host saved beside it: a replayed folder whose shot was swapped
+        # would be masked in the wrong places (review, 2026-11-20).
+        if not shot_is_bound(dump[p], out / f"{p}.png"):
+            print(f"operator-capture: {p}.png is not the shot the host saved with {p}.json; nothing published")
             return 3
         recs += page_records(p, dump[p], build, personal)
         name = f"{p}.{PROFILE}.png"
