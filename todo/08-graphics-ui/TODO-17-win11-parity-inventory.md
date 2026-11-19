@@ -1217,7 +1217,7 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
   - `operator-capture.py` drives `operator-host.ps1` on the operator's session: the profile's theme and accent for the capture only, restored in a finally block, each page maximized on the 1920x1080, 96 dpi monitor
   - A device, app or adapter list keeps its first entry as an `Entry` template; the account header, machine name, taskbar and each entry's own texts are blanked in the shots
   - Its differences from the profile (three monitors, en-ZA format, the wallpaper tint in Mica) are stated on the surface record
-- [/] Shots retaken through the window capture: the four published shots predate it; republish from a version-10 run with nobody at the keyboard (blocker: the operator away from the machine for 2 minutes)
+- [x] Shots retaken through the window capture: republished 2026-11-20 from an unattended run on the host at 26300.9974; records unchanged
 - [x] Commit: `"inventory: host captures"`
 
 **Test checkpoint:** the `settings` `host` rows bluetooth, camera, graphics and wifi of `expected.json` have records and a screenshot taken on the host at the build `reference.json` names.
