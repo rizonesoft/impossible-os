@@ -281,6 +281,12 @@ def page_records(page, dump, build, personal):
             if id(n) in skip or n is content:
                 continue
             ctype, name, aid = n.get("controlType"), n.get("name") or "", n.get("automationId") or ""
+            if ctype == "ScrollBar":
+                # The content pane's own scroll bar: the frame's, not the page's,
+                # and its buttons show only while it is expanded.
+                for d, _ in walk(n):
+                    skip.add(id(d))
+                continue
             if not shown(name):
                 name = ""
             in_list = any(id(a) in lists for a in ancestors(n, ups, content))

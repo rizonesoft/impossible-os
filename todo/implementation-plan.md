@@ -56,7 +56,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | bare-metal |     9 |
 | [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none       |     7 |
 | [ ]  | `D08 T17 §11` | Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update                               | none       |     8 |
-| [ ]  | `D08 T17 §12` | File Explorer and Common Dialogs Inventory                                                                            | none       |     6 |
+| [ ]  | `D08 T17 §12` | File Explorer and Common Dialogs Inventory                                                                            | none       |     7 |
 | [ ]  | `D08 T17 §13` | Control Panel, System Tools and Inbox Apps Inventory                                                                  | none       |    10 |
 | [ ]  | `D08 T17 §14` | Shortcut, Gesture, Metric, Motion and State Catalogues                                                                | none       |     5 |
 | [ ]  | `D08 T17 §15` | Inventory-to-Roadmap Authoring                                                                                        | none       |     9 |

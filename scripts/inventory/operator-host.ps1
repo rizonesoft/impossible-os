@@ -9,9 +9,11 @@
 #   powershell -File operator-host.ps1 -Out <folder> -Pages bluetooth,camera,...
 #   powershell -File operator-host.ps1 -Out <folder> -Restore
 #
-# -Restore puts back the values an interrupted capture saved (the pending-restore
-# file beside <folder>): the caller runs it when a capture was killed before its
-# own finally block ran, and every capture runs it first.
+# <folder> is a run folder directly under the capture root ($Captures). -Restore
+# puts back the values an interrupted capture saved (the pending-restore file in
+# that root): the caller runs it when a capture was killed before its own finally
+# block ran, and every capture runs it first. One host runs at a time per user
+# (a named mutex), however it was started.
 #
 # For the capture only, the session takes the capture profile's theme and
 # accent (light, the default blue); the operator's own values are saved first
@@ -130,7 +132,7 @@ $Uri = @{ bluetooth = 'ms-settings:bluetooth'; camera = 'ms-settings:camera'
 # The page's title, the last breadcrumb (en-US, the profile's display language):
 # the window shows the requested page only once it is there.
 $Title = @{ bluetooth = 'Devices'; camera = 'Cameras'; graphics = 'Graphics'; wifi = 'Wi-Fi' }
-$SettleSeconds = 5          # a page's lists fill in after it opens
+$SettleStep = 1000         # ms: a page is settled when two reads this far apart, twice running, agree
 $WindowWait = 30            # s for the Settings window to appear
 $MaxDepth = 30              # levels of the tree: a Settings page nests about 20 deep
 
@@ -338,7 +340,11 @@ $SavedPath = Join-Path $Out 'saved-values.json'
 # Written before the first theme write and removed after the restore: a run cut
 # off by a restart or a kill leaves it, and the next run restores from it before
 # it saves anything, so the capture theme is never saved as the operator's own.
-$Pending = Join-Path (Split-Path -Parent $Out) 'operator-pending-restore.json'
+# The capture root, the same folder as capture.WORK in capture.py: the journal
+# lives there whatever -Out a caller gives, so every run finds it.
+$Captures = 'R:\11\captures'
+if ((Split-Path -Parent $Out).TrimEnd('\') -ne $Captures) { throw "-Out must be a folder directly under $Captures" }
+$Pending = Join-Path $Captures 'operator-pending-restore.json'
 # Settings closed: a window opened under the capture theme keeps it until it closes.
 # None open is fine; one that does not exit within 10 s throws.
 function Close-Settings {
@@ -361,7 +367,9 @@ function Restore-Values($values) {
     try { Close-Settings } catch { $err = $_ }
     Put-Values $values
     if ($err) { throw $err }
-    Remove-Item -LiteralPath $Pending -ErrorAction SilentlyContinue   # removed already is fine
+    # Removed already is fine; one that cannot be removed throws, so a stale
+    # journal is never left to undo a theme the operator picks later.
+    if (Test-Path -LiteralPath $Pending) { Remove-Item -LiteralPath $Pending -ErrorAction Stop }
 }
 
 function Restore-Pending {
@@ -371,6 +379,11 @@ function Restore-Pending {
         "restored the operator's theme and accent from an interrupted capture"
     }
 }
+# One host at a time for this user, the Python lock or not: released when the
+# process ends, so a killed run frees it.
+$Mutex = New-Object System.Threading.Mutex($false, 'Local\impossible-os-operator-host')
+try { $held = $Mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+if (-not $held) { throw 'another operator-host.ps1 is running; run one at a time' }
 # An interrupted capture's theme first, before anything this run can refuse.
 Restore-Pending
 if ($Restore) { exit 0 }
@@ -446,7 +459,17 @@ try {
         [W]::SetForegroundWindow($h) | Out-Null
         # The pointer off the window: no hover state in the shot.
         [W]::SetCursorPos($mon.X + $mon.Width - 2, $mon.Y + $mon.Height - 2) | Out-Null
-        Start-Sleep -Seconds $SettleSeconds
+        # Its lists fill in after it opens: read until the content stops changing.
+        $c = Content $win
+        $deadline = (Get-Date).AddSeconds($WindowWait)
+        $last = Snapshot $c.element; $alike = 0
+        while ($alike -lt 2) {
+            if ((Get-Date) -gt $deadline) { throw "the $page page kept changing for $WindowWait s" }
+            Start-Sleep -Milliseconds $SettleStep
+            $now = Snapshot $c.element
+            $alike = if (Same $last $now) { $alike + 1 } else { 0 }
+            $last = $now
+        }
         # The shot copies the monitor, so Settings must be in front and cover it:
         # otherwise another window's pixels, which no mask can find, are in it.
         $b = $win.Current.BoundingRectangle
@@ -473,7 +496,6 @@ try {
         }
         $bmp.Save((Join-Path $Out "$page.png"), [System.Drawing.Imaging.ImageFormat]::Png)
         $g.Dispose(); $bmp.Dispose()
-        $c = Content $win
         $top.scrolled = Scrolled $c
         $views = Views $c
         [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height)

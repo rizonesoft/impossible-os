@@ -143,6 +143,12 @@ class Records(unittest.TestCase):
         self.assertEqual(by["Add desktop app"]["parent"], by["Custom settings for applications"]["id"])
         self.assertEqual(by["Show more settings"]["parent"], by["Entry"]["id"])
 
+    def test_the_content_scroll_bar_is_not_a_page_record(self):
+        bar = el("ScrollBar", "", cls="ScrollBar", kids=[el("Button", "Vertical Small Decrease")])
+        recs = self.page(window(el("Button", "Add device", aid="AddDevice"), bar))
+        self.assertNotIn("Vertical Small Decrease", [r["label"] for r in recs])
+        self.assertIn("Add device", [r["label"] for r in recs])
+
     def test_each_template_keeps_its_expander_once(self):
         def entry(title):
             exp = el("Button", "Show more settings", aid="EntityItemButton", cls="ExpanderToggleButton",
@@ -280,6 +286,14 @@ class Main(unittest.TestCase):
                 with oc.capture.exclusive(locks / "capture.lock"):       # a VM capture holds the inventory
                     self.assertEqual(oc.main(["--dry-run"]), 4)
         measured.assert_called_once()
+
+    def test_the_host_journal_root_is_the_capture_root(self):
+        # operator-host.ps1 keeps the restore journal in a fixed root; it must be
+        # the folder Python puts runs in and looks for the journal in.
+        text = oc.HOST_SCRIPT.read_text(encoding="utf-8")
+        root = next(line.split("'")[1] for line in text.splitlines() if line.startswith("$Captures = "))
+        drive, rest = oc.capture.WORK.parts[2], oc.capture.WORK.parts[3:]
+        self.assertEqual(root, "\\".join([f"{drive.upper()}:", *rest]))
 
     def test_the_host_lock_is_shared_by_every_checkout(self):
         # Beside the pending-restore file, not under this checkout's build/.
