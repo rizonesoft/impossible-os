@@ -51,7 +51,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D08 T17 §22` | Derived Reference Machines: Right-to-Left, Viewports and Two Displays                                                 | none       |     4 |
 | [x]  | `D08 T17 §23` | Service-State Fixtures: Update Source and Network Switch                                                              | none       |     2 |
 | [x]  | `D08 T17 §24` | Reference Machine on the Host's Build                                                                                 | none       |     2 |
-| [/]  | `D08 T17 §27` | Host Captures                                                                                                         | operator   |     2 |
+| [/]  | `D08 T17 §27` | Host Captures                                                                                                         | operator   |     3 |
 | [x]  | `D08 T17 §8`  | Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                                                         | operator   |     9 |
 | [x]  | `D08 T17 §9`  | Shell Surfaces Inventory: Windows, Session Screens and Overlays                                                       | bare-metal |     9 |
 | [ ]  | `D08 T17 §10` | Settings Inventory: Frame, System, Devices, Network and Personalization                                               | none       |     7 |
