@@ -367,6 +367,22 @@ if ((Split-Path -Parent $Out).TrimEnd('\') -ne $Captures) { throw "-Out must be 
 $Pending = Join-Path $Captures 'operator-pending-restore.json'
 # Settings closed: a window opened under the capture theme keeps it until it closes.
 # None open is fine; one that does not exit within 10 s throws.
+# Two copies of the monitor, pixel for pixel above the taskbar strip (blanked in
+# every shot, and its clock may turn over between the copies).
+function Same-Pixels($a, $b) {
+    $r = New-Object System.Drawing.Rectangle 0, 0, $a.Width, ($a.Height - 48)
+    $fmt = [System.Drawing.Imaging.PixelFormat]::Format32bppArgb
+    $da = $a.LockBits($r, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, $fmt)
+    $db = $b.LockBits($r, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, $fmt)
+    try {
+        $n = $da.Stride * $r.Height
+        $xa = New-Object byte[] $n; $xb = New-Object byte[] $n
+        [System.Runtime.InteropServices.Marshal]::Copy($da.Scan0, $xa, 0, $n)
+        [System.Runtime.InteropServices.Marshal]::Copy($db.Scan0, $xb, 0, $n)
+        [System.Linq.Enumerable]::SequenceEqual([byte[]]$xa, [byte[]]$xb)
+    } finally { $a.UnlockBits($da); $b.UnlockBits($db) }
+}
+
 function Close-Settings {
     $open = @(Get-Process SystemSettings -ErrorAction SilentlyContinue)
     if (-not $open) { return }
@@ -516,21 +532,32 @@ try {
         # publication checks them again.
         $bmp = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height
         $g = [System.Drawing.Graphics]::FromImage($bmp)
-        # The occlusion check is repeated after each copy too, so a window or a
-        # notification that showed up while it was taken sends it round again.
+        $again = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height
+        $g2 = [System.Drawing.Graphics]::FromImage($again)
+        # The occlusion check is repeated after each copy, and a second copy is
+        # taken after it: the first is kept only when the two are the same pixels.
+        # A window or a notification shown at the first copy is then either still
+        # there at the check (refused) or gone by the second copy (a difference),
+        # so nothing transient survives in the shot.
         for ($try = 1; ; $try++) {
             $before = Snapshot $win
             $g.CopyFromScreen($mon.X, $mon.Y, 0, 0, $bmp.Size)
             $top = Snapshot $win
             $covered = @([W]::Above($h, $mon.X, $mon.Y, $mon.Right, $mon.Bottom - 48))
             $front = [W]::GetForegroundWindow() -eq $h
-            if ((Same $before $top) -and $front -and -not $covered) { break }
+            $still = $false
+            if ($front -and -not $covered -and (Same $before $top)) {
+                $g2.CopyFromScreen($mon.X, $mon.Y, 0, 0, $again.Size)
+                $still = Same-Pixels $bmp $again
+                if ($still) { break }
+            }
             if ($try -ge 3) {
                 if (-not $front -or $covered) { throw "a window showed over Settings while $page was copied (classes: $($covered -join ', '))" }
                 throw "the $page page kept changing while it was copied"
             }
             Start-Sleep -Seconds 2
         }
+        $g2.Dispose(); $again.Dispose()
         $bmp.Save((Join-Path $Out "$page.png"), [System.Drawing.Imaging.ImageFormat]::Png)
         $g.Dispose(); $bmp.Dispose()
         $top.scrolled = Scrolled $c
