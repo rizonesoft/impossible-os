@@ -420,6 +420,36 @@ def diagnosing(img, mark):
     return any(any(l[1] >= sp[1] + sp[3] for l in below if l is not sp) for sp in spins)
 
 
+def repair_phases(frames, logo):
+    """(first, mark, label, later) from the repair burst's exact frames in
+    order: the first frame with the firmware logo and a label, its logo and
+    label, and whether a later frame shows the second phase (diagnosing).
+    None when no frame shows the first phase."""
+    for i, img in enumerate(frames):
+        got = repair_label(img, logo)
+        if got:
+            mark, label = got
+            return img, mark, label, any(diagnosing(f, mark) for f in frames[i + 1:])
+    return None
+
+
+def failure_rows(img, mark):
+    """The repair failure page's three text rows (message, instruction,
+    details) or None: at the display's mode, on black, not the diagnosing
+    screen (the logo, a spinner and a label are three rows too; review,
+    2026-11-19), two lines at least 400 px wide and 12 to 40 px tall, then a
+    narrower block below them."""
+    if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0) or diagnosing(img, mark):
+        return None
+    rows = rows_in(img, body(img), lit, 14)
+    if len(rows) != 3:
+        return None
+    one, two, three = rows
+    if not all(r[2] >= 400 and 12 <= r[3] <= 40 for r in (one, two)) or three[2] >= one[2] or three[1] <= two[1] + two[3]:
+        return None
+    return rows
+
+
 def records(shots, build, taken=None):
     src = f"hand:{build}"
     out = []
@@ -726,23 +756,20 @@ def records(shots, build, taken=None):
         behaviour="The span between the host's times for the first exact frame with the stop error and the first exact frame without it; each time is taken as its frame is saved, so this is the span observed, not a bound on the screen's own; with the small memory dump this walk sets.")
 
     # Startup Repair: progress, then the failure screen and More recovery options.
-    got = frames("repair", lambda i: repair_label(i, boot_logo) is not None, first=True)
-    if not got:
-        raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
-    img = shots[got[0]]
-    mark, label = repair_label(img, boot_logo)
     # The second phase is published only when a frame after the first
-    # phase shows it: at the display's mode, the logo again with a spinner
-    # and a label below (review, 2026-11-18: it was claimed from the first
-    # phase alone; 2026-11-19: from a frame before it).
-    later = frames("repair", lambda i: diagnosing(i, mark), first=True, after=got[0])
+    # phase shows it (review, 2026-11-18: it was claimed from the first phase
+    # alone; 2026-11-19: from a frame before it).
+    phases = repair_phases([shots[n] for n in frames("repair", lambda i: True)], boot_logo)
+    if not phases:
+        raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
+    img, mark, label, later = phases
     then = ", then, at the display's mode, the logo again with a spinner and a label below it" if later else ""
     rec("repair-progress", "state", "Startup Repair progress", "recovery-advanced", openedBy="Startup Repair",
         behaviour=f"A restart to the firmware's logo with a short label {place(img, label)}{then}, on black.")
     img = full("automatic-repair")
-    rows = rows_in(img, body(img), lit, 14)
-    if len(rows) != 3:
-        raise core.Incomplete(f"automatic-repair: {len(rows)} text rows where 3 were expected: {rows}")
+    rows = failure_rows(img, mark)
+    if not rows:
+        raise core.Incomplete(f"automatic-repair: not the failure page (two lines of text and the details under them): {rows_in(img, body(img), lit, 14)}")
     page = rec("automatic-repair", "page", "Repair failed", "repair-progress", bounds=SCREEN, openedBy="Startup Repair, when it cannot repair the PC; the reason shown in this walk, which runs with no network, is that it could not connect to the network",
                behaviour="Black, centred text: what happened, how to go on, and two small grey lines with the reason and the log file's path.")
     for (cid, clab, beh), b in zip((("message", "Message", "A text slot of 56 characters in one line."),

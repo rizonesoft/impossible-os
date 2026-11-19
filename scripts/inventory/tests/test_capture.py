@@ -1310,44 +1310,45 @@ class Profile(unittest.TestCase):
               + "$Name = 'x'; $NoSession = $false; $Out = 'o'; $shots = New-Object System.Collections.ArrayList; "
               "$script:t = [datetime]'2026-01-01'; function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
               "function Write-Host { }; function Get-RefThumbnail { New-Object byte[] 20 }; function Get-ThumbnailHash { 'same' }; "
-              "function Copy-Item($LiteralPath, $Destination, [switch]$Force) { $script:ev += 'copy:' + (Split-Path $LiteralPath -Leaf) }; "
+              "function Copy-Item($LiteralPath, $Destination, [switch]$Force) { $script:ev += 'copy:' + (Split-Path $LiteralPath -Leaf) + '>' + (Split-Path $Destination -Leaf) }; "
               # The colour shows from look number $from on, at a burst frame or
               # a wait poll; every look and save is logged in order.
               "function Test-ThumbnailColour { $script:looks++; $r = $script:looks -ge $script:from; $script:ev += 'look:' + $r; $r }; "
               "function Save-Shot($n, $Until) { $script:t = $script:t.AddMilliseconds(100); $script:ev += 'save:' + $n; "
-              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 }; [void]$shots.Add([ordered]@{ name = $n; file = \"$n.png\"; exact = $script:exact }) }; "
+              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 }; [void]$shots.Add([ordered]@{ name = $n; file = \"$n.png\"; exact = $script:exact; at = 'T' + $n }) }; "
               "$menu = [pscustomobject]@{ x = 1; y = 1; rgb = @(0, 0, 0) }; "
               "foreach ($c in @(@{ count = 5; exact = $true; from = 3 }, @{ count = 5; exact = $false; from = 3 }, @{ count = 2; exact = $true; from = 3 }, @{ count = 2; exact = $true; from = 99 })) { "
               "$shots.Clear(); $script:ev = @(); $script:looks = 0; $script:exact = $c.exact; $script:from = $c.from; "
               "try { Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $c.count; every = 0; cadence = 1; seconds = 30; until = $menu; as = 'page'; astimeout = 1 }) } catch { $script:ev += 'threw' }; "
-              "$script:ev -join ',' }; "
+              "($script:ev -join ',') + ' ' + ((@($shots)[-1]).Values -join ':') }; "
               # A still burst names the frame that held still the same way.
               "$shots.Clear(); $script:ev = @(); $script:exact = $true; "
-              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'r'; count = 9; every = 0; cadence = 1; seconds = 30; still = 2; as = 'still' }); $script:ev -join ','")
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'r'; count = 9; every = 0; cadence = 1; seconds = 30; still = 2; as = 'still' }); "
+              "($script:ev -join ',') + ' ' + ((@($shots)[-1]).Values -join ':')")
         r = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
         self.assertEqual(len(lines), 5, (r.stdout, r.stderr))
         exact, inexact, early, never, still = lines
-        # The exact frame that met the colour is the page: no wait, no shot.
-        self.assertEqual(exact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,copy:b-3.png")
+        # The exact frame that met the colour is the page: no wait, no shot;
+        # its copy is page.png and the page's entry keeps the frame's own
+        # record (its time) under the page's name and file.
+        self.assertEqual(exact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,copy:b-3.png>page.png page:page.png:True:Tb-3")
         # Otherwise a wait poll that sees the colour comes after the burst's
         # last look and before the page is shot.
-        self.assertEqual(inexact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,look:True,save:page")
-        self.assertEqual(early, "save:b-1,look:False,save:b-2,look:False,look:True,save:page")
+        self.assertEqual(inexact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,look:True,save:page page:page.png:False:Tpage")
+        self.assertEqual(early, "save:b-1,look:False,save:b-2,look:False,look:True,save:page page:page.png:True:Tpage")
         # A colour that never shows times out and the page is never shot.
-        self.assertTrue(never.endswith(",threw") and "save:page" not in never, never)
+        self.assertTrue("threw" in never and "save:page" not in never and "page:" not in never, never)
         # Frames 1 s apart, all the same: held 2 s at the third.
-        self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png")
+        self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png>still.png still:still.png:True:Tr-3")
 
-    def test_the_second_repair_phase_is_looked_for_only_after_the_first(self):
-        # A diagnosing frame before the first phase let the record say "then"
-        # for an order the shots did not show (review, 2026-11-19).
+    def test_burst_frames_are_in_burst_order(self):
+        # frames() reads the bursts through this; repair_phases relies on the
+        # order (the spinner and repair test drives it).
         sc = load("host_session_boot", INV / "host" / "session-boot.py")
         names = ["repair-10", "repair-3", "repair-5", "boot-1", "repair-x", "repair-12"]
         self.assertEqual(sc.burst_frames(names, "repair"), ["repair-3", "repair-5", "repair-10", "repair-12"])
         self.assertEqual(sc.burst_frames(names, "repair", "repair-5"), ["repair-10", "repair-12"])
-        src = (INV / "host" / "session-boot.py").read_text(encoding="utf-8")
-        self.assertIn('frames("repair", lambda i: diagnosing(i, mark), first=True, after=got[0])', src)
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
@@ -3349,6 +3350,19 @@ class HostCapture(unittest.TestCase):
         self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
         self.assertFalse(sc.diagnosing(frame(black, mark), mark))
         self.assertFalse(sc.diagnosing(frame(black, mark, (785, 896, 60, 38), (900, 896, 60, 38)), mark))   # two words, no spinner
+        # The phases in the order the burst saw them: a diagnosing frame
+        # before the first phase is not its second phase (review, 2026-11-19).
+        first, diag = small(logo, label), frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38))
+        self.assertEqual(sc.repair_phases([diag, first], logo)[1:], (logo, label, False))
+        self.assertEqual(sc.repair_phases([first, diag], logo)[1:], (logo, label, True))
+        self.assertIsNone(sc.repair_phases([diag], logo))
+        # The failure page is two wide lines and the details under them; the
+        # diagnosing screen's logo, spinner and label are three rows as well.
+        rows = [(619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)]
+        self.assertEqual(sc.failure_rows(frame(black, *rows), logo), rows)
+        self.assertIsNone(sc.failure_rows(diag, logo))
+        self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1]), logo))               # no details
+        self.assertIsNone(sc.failure_rows(frame(black, rows[0], (662, 494, 300, 27), rows[2]), logo))   # a short line
 
     def test_corner_marks_and_tile_descriptions_read_only_their_own_text(self):
         # Desktop icons under a Safe Mode mark, the focus border beside a tile
