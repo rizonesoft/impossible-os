@@ -130,7 +130,8 @@ def shown(text):
 
 
 DISCOVERABLE_ID = "SystemSettings_Device_DiscoverableAs_DiscoverableAsTextBlock"
-QUOTED = re.compile(r"[\u201c\"](.+?)[\u201d\"]")
+# The whole value between the caption's outer quotes: a name may hold quotes of its own.
+DISCOVERABLE = re.compile(r"Discoverable as [\u201c\"](.+)[\u201d\"]", re.S)
 
 
 def personal_strings(tree, host_names):
@@ -144,8 +145,10 @@ def personal_strings(tree, host_names):
             out.add(n["name"])
     for n, _ in walk(tree):
         if n.get("automationId") == DISCOVERABLE_ID and n.get("name"):
-            m = QUOTED.search(n["name"])
-            out.add(m.group(1) if m else n["name"])
+            m = DISCOVERABLE.fullmatch(n["name"].strip())
+            if not m:
+                raise core.Incomplete(f"the Bluetooth radio name cannot be read from {n['name']!r}")
+            out.add(m.group(1))
     return sorted(out, key=len, reverse=True)
 
 
@@ -434,13 +437,13 @@ def page_records(page, dump, build, personal):
             if id(n) in template:
                 lkey = template[id(n)][0]
                 slug = (list_rid[lkey].rsplit(".", 1)[-1] + "-entry") if lkey in list_rid else slug
+            elif kind == "control" and card is not None and id(card) in rid_of:
+                # So is a control in a card, inside a template or not (every
+                # card's expander shares one automation ID): a card missing this
+                # time does not pass its control's id to the next card's.
+                slug = rid_of[id(card)].rsplit(".", 1)[-1] + "-" + slug
             elif owner_entry and owner_entry[0] in entry_rid:
                 slug = entry_rid[owner_entry[0]].rsplit(".", 1)[-1] + "-" + slug
-            elif kind == "control" and card is not None and id(card) in rid_of:
-                # So is a control in a card (every card's expander shares one
-                # automation ID): a card missing this time does not pass its
-                # control's id to the next card's.
-                slug = rid_of[id(card)].rsplit(".", 1)[-1] + "-" + slug
             rid, i = f"{pid}.{slug}", 2
             while rid in used:
                 rid, i = f"{pid}.{slug}-{i}", i + 1
@@ -652,9 +655,13 @@ def check_and_publish(args, pages, out):
     personal = set(names)
     for p in [p for p in PAGES if p in pages]:
         d = json.loads((out / f"{p}.json").read_text(encoding="utf-8-sig"))
-        for tree in [d.get("top")] + list(d.get("views") or []):
-            if tree:
-                personal.update(personal_strings(tree, ()))
+        try:
+            for tree in [d.get("top")] + list(d.get("views") or []):
+                if tree:
+                    personal.update(personal_strings(tree, ()))
+        except core.Incomplete as exc:
+            print(f"operator-capture: {exc}; nothing published")
+            return 3
         del d
     personal = sorted(personal, key=len, reverse=True)
     recs, states = [surface_record(build)], []

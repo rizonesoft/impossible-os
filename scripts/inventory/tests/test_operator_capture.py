@@ -191,6 +191,21 @@ class Records(unittest.TestCase):
         self.assertEqual(help_only["help-from-the-web"], both["help-from-the-web"])
         self.assertNotIn(both["advanced-graphics-settings"], help_only.values())
 
+    def test_a_control_in_a_card_inside_a_template_is_named_for_that_card(self):
+        def inner(title):
+            return el("Group", title, cls="NamedContainerAutomationPeer",
+                      kids=[el("Text", title), el("Button", "Show more settings", aid="EntityItemButton",
+                                                  cls="ExpanderToggleButton")])
+        def expander_ids(*titles):
+            entry = el("Group", "Pat's adapter", cls="NamedContainerAutomationPeer",
+                       kids=[el("Text", "Pat's adapter")] + [inner(x) for x in titles])
+            recs = self.page(window(el("List", aid="Adapters", kids=[entry])))
+            return {r["parent"].rsplit(".", 1)[-1]: r["id"] for r in recs if r["label"] == "Show more settings"}
+        both = expander_ids("Show available networks", "Hardware properties")
+        one = expander_ids("Hardware properties")
+        self.assertEqual(one["adapters-entry-hardware-properties"], both["adapters-entry-hardware-properties"])
+        self.assertNotIn(both["adapters-entry-show-available-networks"], one.values())
+
     def test_template_ids_are_named_for_their_list_not_their_place(self):
         def entry(title):
             return el("Group", title, cls="NamedContainerAutomationPeer",
@@ -454,6 +469,20 @@ class Blanks(unittest.TestCase):
         self.assertFalse([r["id"] for r in recs if "laptop" in str(r).casefold()])
         self.assertEqual(oc.leaks(recs, personal), [])
         self.assertIn((660, 300, 300, 20), oc.blanks({"monitor": MON, "top": top}, personal))
+
+    def test_a_radio_name_holding_quotes_is_read_whole(self):
+        shown = el("Text", 'Discoverable as \u201cStudio "Juniper" Laptop\u201d', aid=oc.DISCOVERABLE_ID)
+        top = window(shown, el("Button", 'Rename Studio "Juniper" Laptop', aid="Rename"))
+        personal = oc.personal_strings(top, ["PAT-PC"])
+        self.assertIn('Studio "Juniper" Laptop', personal)
+        recs = oc.page_records("bluetooth", {"monitor": MON, "uri": "ms-settings:bluetooth", "top": top},
+                               "26300.9974", personal)
+        self.assertFalse([r["id"] for r in recs if "juniper" in str(r).casefold()])
+
+    def test_an_unreadable_radio_caption_refuses_the_run(self):
+        top = window(el("Text", "Visible to nearby devices", aid=oc.DISCOVERABLE_ID))
+        with self.assertRaises(oc.core.Incomplete):
+            oc.personal_strings(top, [])
 
     def test_a_control_painting_a_personal_name_is_blanked(self):
         top = window(el("Button", "Pat Home 5G properties", bounds=(-5100, 500, 300, 40)))

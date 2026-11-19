@@ -472,8 +472,9 @@ try {
             # icons do not all reload. Closed (so Settings keeps the placement)
             # and opened again, it starts on the monitor at its scale.
             Start-Sleep -Seconds 1
+            $sp = $win.Current.ProcessId                                     # this window's process, not every Settings
             $win.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
-            Wait-Process SystemSettings -Timeout $WindowWait -ErrorAction SilentlyContinue   # already gone is fine
+            Wait-Process -Id $sp -Timeout $WindowWait -ErrorAction SilentlyContinue   # already gone is fine
             Start-Process $Uri[$page]
             $win = Settings-Window
             $h = [IntPtr]$win.Current.NativeWindowHandle
