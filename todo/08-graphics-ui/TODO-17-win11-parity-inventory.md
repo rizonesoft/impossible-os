@@ -466,7 +466,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [x] Snap, Alt+Tab, Task View and Virtual Desktops: `window/switching.json` and its wide and tall observation files; `check-inventory.py --surface window --complete` passes
 - [x] Lock, Sign-In and Secure Screens: `session/secure.json`, 89 hand records measured from host shots by `host-capture.py`; `check-inventory.py --surface session` passes
 - [x] First-Run Setup: `session/setup.json`, 61 hand records on the local-account path in order; the getting-ready time is a `metric` (fade curves are §14's recorder); check passes
-- [x] Boot, Stop and Recovery Screens: `session/boot.json`, 112 hand records from one walk from `clean`, proven 1:1 against a guest screenshot; check passes
+- [x] Boot, Stop and Recovery Screens: `session/boot.json`, 113 hand records from one walk from `clean`, proven 1:1 against a guest screenshot; check passes
 - [x] Shell Overlays: `flyouts/overlays.json` with its laptop, IME and dual files, every state with a shot; `check-inventory.py --surface flyouts` passes
 - [/] Read the corner radius of a window, the Start panel, a flyout and a menu from the screen on real hardware into `chrome.json` (Needs: bare-metal)
   - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
