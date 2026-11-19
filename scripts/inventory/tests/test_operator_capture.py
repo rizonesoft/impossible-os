@@ -576,6 +576,27 @@ class Blanks(unittest.TestCase):
         self.assertEqual([x.strip() for x in out.stdout.splitlines() if x.strip()],
                          ["error: the page did not scroll from 40 percent", "sets=1"], out.stderr)
 
+    def test_a_page_too_long_for_the_steps_is_refused_before_it_is_read(self):
+        shell = shutil.which("powershell.exe")
+        if not shell:
+            self.skipTest("no Windows PowerShell on this host")
+        script = subprocess.run(["wslpath", "-w", str(oc.HOST_SCRIPT)], capture_output=True, text=True, check=True).stdout.strip()
+
+        def run(view):
+            # Each request moves the page as asked, so only the size decides.
+            ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
+                  "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Views' }, $true) | Select-Object -First 1; "
+                  "Invoke-Expression $f.Extent.Text; function Start-Sleep { }; function Snapshot { @{} }; function Scrolled { 0 }; $MaxViews = 20; "
+                  "$cur = [pscustomobject]@{ VerticallyScrollable = $true; VerticalScrollPercent = 0.0; VerticalViewSize = %s }; "
+                  "$p = [pscustomobject]@{ Current = $cur }; $p | Add-Member ScriptMethod SetScrollPercent { param($h, $v) $this.Current.VerticalScrollPercent = [double]$v }; "
+                  "try { $r = Views ([pscustomobject]@{ pattern = $p; element = $null; pane = $null }); 'views=' + $r.Count } catch { 'error: ' + $_.Exception.Message }") % (script, view)
+            out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+            return [x.strip() for x in out.stdout.splitlines() if x.strip()], out.stderr
+        lines, err = run("8.0")       # 23 steps of 4.35 percent
+        self.assertEqual(lines, ["error: the page needs 23 half-viewport steps to reach its end; 20 are left"], err)
+        lines, err = run("9.0907")    # a page that ends on step 20
+        self.assertEqual(lines, ["views=20"], err)
+
     def test_the_wifi_identity_is_read_after_the_theme_is_restored(self):
         # Its WLAN calls have no deadline: a stalled service must not hold the
         # capture theme on the operator's machine (review, 2026-11-20).

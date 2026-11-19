@@ -338,6 +338,10 @@ function Views($c) {
         if ($i -eq $MaxViews) { throw "the page did not reach its end in $MaxViews half-viewport steps" }
         # Half a viewport, as a percentage of the scrollable range.
         $step = 50 * $v.VerticalViewSize / (100 - $v.VerticalViewSize)
+        # A page its own size shows cannot end within the steps left is refused
+        # now, not after reading every step (review, 2026-11-20).
+        $need = [Math]::Ceiling((100 - $v.VerticalScrollPercent) / $step - 0.01)
+        if ($need -gt $MaxViews - $i) { throw "the page needs $need half-viewport steps to reach its end; $($MaxViews - $i) are left" }
         $was = $v.VerticalScrollPercent
         $c.pattern.SetScrollPercent(-1, [Math]::Min(100, $was + $step))
         Start-Sleep -Seconds 1
