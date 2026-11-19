@@ -1320,11 +1320,11 @@ class Profile(unittest.TestCase):
               "foreach ($c in @(@{ count = 5; exact = $true; from = 3 }, @{ count = 5; exact = $false; from = 3 }, @{ count = 2; exact = $true; from = 3 }, @{ count = 2; exact = $true; from = 99 })) { "
               "$shots.Clear(); $script:ev = @(); $script:looks = 0; $script:exact = $c.exact; $script:from = $c.from; "
               "try { Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $c.count; every = 0; cadence = 1; seconds = 30; until = $menu; as = 'page'; astimeout = 1 }) } catch { $script:ev += 'threw' }; "
-              "($script:ev -join ',') + ' ' + ((@($shots)[-1]).Values -join ':') }; "
+              "($script:ev -join ',') + ' ' + ((@($shots)[-2..-1] | ForEach-Object { $_.Values -join ':' }) -join '|') }; "
               # A still burst names the frame that held still the same way.
               "$shots.Clear(); $script:ev = @(); $script:exact = $true; "
               "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'r'; count = 9; every = 0; cadence = 1; seconds = 30; still = 2; as = 'still' }); "
-              "($script:ev -join ',') + ' ' + ((@($shots)[-1]).Values -join ':')")
+              "($script:ev -join ',') + ' ' + ((@($shots)[-2..-1] | ForEach-Object { $_.Values -join ':' }) -join '|')")
         r = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
         self.assertEqual(len(lines), 5, (r.stdout, r.stderr))
@@ -1332,15 +1332,16 @@ class Profile(unittest.TestCase):
         # The exact frame that met the colour is the page: no wait, no shot;
         # its copy is page.png and the page's entry keeps the frame's own
         # record (its time) under the page's name and file.
-        self.assertEqual(exact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,copy:b-3.png>page.png page:page.png:True:Tb-3")
+        # The burst frame's own entry stays as it was, before the page's.
+        self.assertEqual(exact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,copy:b-3.png>page.png b-3:b-3.png:True:Tb-3|page:page.png:True:Tb-3")
         # Otherwise a wait poll that sees the colour comes after the burst's
         # last look and before the page is shot.
-        self.assertEqual(inexact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,look:True,save:page page:page.png:False:Tpage")
-        self.assertEqual(early, "save:b-1,look:False,save:b-2,look:False,look:True,save:page page:page.png:True:Tpage")
+        self.assertEqual(inexact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,look:True,save:page b-3:b-3.png:False:Tb-3|page:page.png:False:Tpage")
+        self.assertEqual(early, "save:b-1,look:False,save:b-2,look:False,look:True,save:page b-2:b-2.png:True:Tb-2|page:page.png:True:Tpage")
         # A colour that never shows times out and the page is never shot.
         self.assertTrue("threw" in never and "save:page" not in never and "page:" not in never, never)
         # Frames 1 s apart, all the same: held 2 s at the third.
-        self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png>still.png still:still.png:True:Tr-3")
+        self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png>still.png r-3:r-3.png:True:Tr-3|still:still.png:True:Tr-3")
 
     def test_burst_frames_are_in_burst_order(self):
         # frames() reads the bursts through this; repair_phases relies on the
@@ -3358,11 +3359,15 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.repair_phases([diag], logo))
         # The failure page is two wide lines and the details under them; the
         # diagnosing screen's logo, spinner and label are three rows as well.
+        # The details' two lines are those of the 02:22 walk's page.
+        reason, path = (855, 653, 221, 12), (776, 678, 379, 16)
         rows = [(619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)]
-        self.assertEqual(sc.failure_rows(frame(black, *rows), logo), rows)
+        self.assertEqual(sc.failure_rows(frame(black, rows[0], rows[1], reason, path), logo), rows)
         self.assertIsNone(sc.failure_rows(diag, logo))
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1]), logo))               # no details
-        self.assertIsNone(sc.failure_rows(frame(black, rows[0], (662, 494, 300, 27), rows[2]), logo))   # a short line
+        self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1], reason), logo))       # no log path
+        self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1], path), logo))         # no reason
+        self.assertIsNone(sc.failure_rows(frame(black, rows[0], (662, 494, 300, 27), reason, path), logo))   # a short line
 
     def test_corner_marks_and_tile_descriptions_read_only_their_own_text(self):
         # Desktop icons under a Safe Mode mark, the focus border beside a tile

@@ -438,7 +438,7 @@ def failure_rows(img, mark):
     details) or None: at the display's mode, on black, not the diagnosing
     screen (the logo, a spinner and a label are three rows too; review,
     2026-11-19), two lines at least 400 px wide and 12 to 40 px tall, then a
-    narrower block below them."""
+    narrower block below them of two lines, each 8 to 20 px tall."""
     if img[:2] != (1920, 1080) or pixel(img, 10, 10) != (0, 0, 0) or diagnosing(img, mark):
         return None
     rows = rows_in(img, body(img), lit, 14)
@@ -446,6 +446,11 @@ def failure_rows(img, mark):
         return None
     one, two, three = rows
     if not all(r[2] >= 400 and 12 <= r[3] <= 40 for r in (one, two)) or three[2] >= one[2] or three[1] <= two[1] + two[3]:
+        return None
+    # The details are two lines, the reason and the log file's path; a block
+    # with one of them is not what the record says (review, 2026-11-19).
+    lines = rows_in(img, three, lit, 3)
+    if len(lines) != 2 or any(not 8 <= r[3] <= 20 for r in lines):
         return None
     return rows
 
