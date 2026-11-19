@@ -3260,6 +3260,27 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(seen[0][-1], "-NoSession")
         self.assertNotIn("-NoSession", seen[1])
 
+    def test_a_host_run_never_stamps_a_folder_another_run_filled(self):
+        # ref-host refused a folder that was not empty and run_host then wrote
+        # the current build over that run's build.json (review, 2026-11-19).
+        seen = []
+
+        class Done:
+            returncode, stdout, stderr = 0, "", ""
+
+        def run(argv, **_):
+            seen.append(argv)
+            return Done()
+        with mock.patch.object(self.hc.subprocess, "run", run), mock.patch.object(self.hc.capture, "WORK", self.tmp), \
+                mock.patch.object(self.hc.capture, "winpath", str), mock.patch.object(self.hc.time, "strftime", lambda _f: "20260101-000000"), \
+                mock.patch.object(self.hc, "build", lambda: "26300.9999"):
+            old = self.tmp / "x-20260101-000000"
+            old.mkdir()
+            (old / "build.json").write_text(json.dumps({"build": "26300.1"}), encoding="utf-8")
+            out, rc = self.hc.run_host("x", [], "clean", 10)
+        self.assertEqual((out, rc, seen), (old, 2, []))
+        self.assertEqual(json.loads((old / "build.json").read_text(encoding="utf-8")), {"build": "26300.1"})
+
     def test_an_interrupted_host_walk_restores_its_checkpoint(self):
         # Ctrl+C killed ref-host before its finally, and only a deadline ran
         # the recovery (review, 2026-11-18).
@@ -3380,6 +3401,26 @@ class HostCapture(unittest.TestCase):
         self.assertFalse(sc.diagnosing(frame(black, (619, 394, 691, 27), (662, 494, 606, 27), (776, 653, 379, 41)), mark))   # the failure page
         self.assertFalse(sc.diagnosing(frame(black, mark), mark))
         self.assertFalse(sc.diagnosing(frame(black, mark, (785, 896, 60, 38), (900, 896, 60, 38)), mark))   # two words, no spinner
+        # The options link's focus is a dotted rectangle around its text; the
+        # same menu without it, and a blank frame, are not focus (review,
+        # 2026-11-19). The geometry is the walks' (172, 647, 786, 41).
+        text = (181, 660, 458, 26)
+
+        def dotted(bg, rect, *boxes):
+            img = frame(bg, *boxes)
+            data = bytearray(img[2])
+            x, y, rw, rh = rect
+            for xx in range(x, x + rw, 2):
+                for yy in (y, y + rh - 1):
+                    data[(yy * w + xx) * 3:(yy * w + xx) * 3 + 3] = b"\xff\xff\xff"
+            for yy in range(y, y + rh, 2):
+                for xx in (x, x + rw - 1):
+                    data[(yy * w + xx) * 3:(yy * w + xx) * 3 + 3] = b"\xff\xff\xff"
+            return (w, h, bytes(data))
+        self.assertEqual(sc.link_focus(dotted(sc.BLUE, (172, 647, 786, 41), text), text), (172, 647, 786, 41))
+        self.assertIsNone(sc.link_focus(frame(sc.BLUE, text), text))                   # no rectangle
+        self.assertIsNone(sc.link_focus(frame(black), text))                           # a blank frame
+        self.assertIsNone(sc.link_focus(frame(sc.BLUE, (172, 647, 786, 41)), text))   # a solid block, not dotted
         # The phases in the order the burst saw them: a diagnosing frame
         # before the first phase is not its second phase (review, 2026-11-19).
         first, diag = small(logo, label), frame(black, mark, (931, 826, 40, 40), (785, 896, 294, 38))

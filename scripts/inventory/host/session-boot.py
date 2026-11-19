@@ -420,6 +420,23 @@ def diagnosing(img, mark):
     return any(any(l[1] >= sp[1] + sp[3] for l in below if l is not sp) for sp in spins)
 
 
+def link_focus(img, link):
+    """The dotted focus rectangle around the text box link, or None: one box
+    of white ink (gaps of 2 px) that holds link with room on every side, at
+    the display's mode, whose top and bottom edges are dotted (a third to
+    two thirds of their pixels lit)."""
+    if img[:2] != (1920, 1080):
+        return None
+    region = (max(0, link[0] - 40), max(0, link[1] - 40), min(img[0], link[0] + 1200) - max(0, link[0] - 40), link[3] + 80)
+    for x, y, w, h in core.ink_boxes(img, region, white, 2):
+        if not (x < link[0] and y < link[1] and x + w > link[0] + link[2] and y + h > link[1] + link[3]):
+            continue
+        edges = [sum(white(pixel(img, xx, yy)) for xx in range(x, x + w)) / w for yy in (y, y + h - 1)]
+        if all(1 / 3 <= e <= 2 / 3 for e in edges):
+            return (x, y, w, h)
+    return None
+
+
 def repair_phases(frames, logo):
     """(first, mark, label, later) from the repair burst's exact frames in
     order: the first frame with the firmware logo and a label, its logo and
@@ -616,8 +633,19 @@ def records(shots, build, taken=None):
     rec("boot-manager.countdown", "control", "Countdown", bm, controlType="text", bounds=count,
         behaviour="A text slot naming the default entry and the seconds left, counting down from the boot manager's timeout (30 in this walk).")
     link = one(img, (170, ts[-1][1] + ts[-1][3] + 20, 1000, 400), "boot-manager: options link", white, 16)
-    rec("boot-manager.options", "control", "Change defaults or choose other options", bm, controlType="hyperlink", bounds=link,
-        behaviour="A text link near the bottom left; Tab focuses it with a dotted rectangle, Enter opens the options page.")
+    # The link's extent is its focus rectangle, measured on the frame after
+    # Tab: a frame with no tile focused, a blank one too, passed for focus
+    # (review, 2026-11-19).
+    linked = full("boot-manager-link")
+    if ring(linked, ts[0]) or ring(linked, ts[1]):
+        raise core.Incomplete("boot-manager-link: a tile still has the focus after Tab")
+    focus = link_focus(linked, link)
+    if not focus:
+        raise core.Incomplete("boot-manager-link: no dotted focus rectangle around the options link after Tab")
+    opts = rec("boot-manager.options", "control", "Change defaults or choose other options", bm, controlType="hyperlink", bounds=focus,
+               behaviour="A text link near the bottom left, wider than its text; Tab focuses it with a dotted white rectangle, these bounds, and Enter opens the options page.")
+    rec("boot-manager.options.text", "control", "Text", opts, controlType="text", bounds=link,
+        behaviour="The link's words in white, at the rectangle's left.")
     second = full("boot-manager-second")
     if core.ink_boxes(second, count, white, 10):
         raise core.Incomplete("boot-manager-second: the countdown is still shown after a key")
@@ -625,9 +653,6 @@ def records(shots, build, taken=None):
         raise core.Incomplete("boot-manager-second: Down did not move the focus to the second entry")
     rec("boot-manager.stop-countdown", "gesture", "Stop the countdown", bm,
         behaviour="A key press (Down in this walk) removes the countdown line; the menu then waits for a choice.")
-    linked = full("boot-manager-link")
-    if ring(linked, ts[0]) or ring(linked, ts[1]):
-        raise core.Incomplete("boot-manager-link: a tile still has the focus after Tab")
     for vk, lab, beh in (("Up, Down", "Move between entries", "Arrow keys move the focus up and down the tiles."),
                          ("Tab", "Focus the options link", "Tab moves the focus from the tiles to the link and back."),
                          ("Enter", "Start the focused entry", "Enter starts the focused entry or opens the focused link.")):

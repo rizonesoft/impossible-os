@@ -69,6 +69,12 @@ def run_host(label, steps, checkpoint, timeout, session=True):
     names the reference build the shots are of."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = capture.WORK / f"{label}-{stamp}"
+    # A folder that exists holds another run's shots (two runs in one second):
+    # stamping its build.json would relabel them, so nothing runs (review,
+    # 2026-11-19: ref-host refused it, and the build was written anyway).
+    if out.exists():
+        print(f"host-capture: {out} exists already; nothing run")
+        return out, 2
     at = build()             # read before the run: the build the restored checkpoint is
     plan = capture.WORK / f"{label}-{stamp}-steps.json"
     plan.write_text(json.dumps(steps, indent=1), encoding="utf-8")
