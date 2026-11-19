@@ -26,10 +26,12 @@
 param(
     [Parameter(Mandatory)] [string] $Out,
     [string[]] $Pages = @(),
-    [switch] $Restore,
-    [int] $Width = 1920, [int] $Height = 1080, [int] $Dpi = 96
+    [switch] $Restore
 )
 $ErrorActionPreference = 'Stop'
+# The capture profile (fhd-100 in docs/design/inventory/profiles.json): fixed, and
+# recorded in every page's dump, so a run at another size or scale is refused.
+$Width = 1920; $Height = 1080; $Dpi = 96
 
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -417,7 +419,7 @@ function Write-Identity($earlier) {
     $names = [Wlan]::Names()
     $ssids = @(@($earlier) + @($names[0]) | Where-Object { $_ } | Select-Object -Unique)
     $profiles = @($names[1] | Where-Object { $_ } | Select-Object -Unique)
-    [ordered]@{ version = 7; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
+    [ordered]@{ version = 8; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
                 ssids = $ssids; profiles = $profiles } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'identity.json') -Encoding UTF8
 }
@@ -501,7 +503,7 @@ try {
         $g.Dispose(); $bmp.Dispose()
         $top.scrolled = Scrolled $c
         $views = Views $c
-        [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height)
+        [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height); dpi = $Dpi
                     before = $before; top = $top; views = $views } |
             ConvertTo-Json -Depth 100 -Compress | Set-Content -LiteralPath (Join-Path $Out "$page.json") -Encoding UTF8
         "captured $page"

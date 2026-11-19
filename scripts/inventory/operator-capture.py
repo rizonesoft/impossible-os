@@ -51,8 +51,10 @@ TITLES = {"bluetooth": "Devices", "camera": "Cameras", "graphics": "Graphics", "
 ROOT = f"win11.{SURFACE}.hardware"
 HOST_SCRIPT = HERE / "operator-host.ps1"
 HOST_TIMEOUT = 600                     # deadline: four pages at about 15 s each, plus the theme change and restore
-IDENTITY_VERSION = 7   # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
-                       # shot bracketed by two tree reads, nothing shown above Settings
+IDENTITY_VERSION = 8   # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
+                       # shot bracketed by two tree reads, nothing shown above Settings, a fresh folder
+                       # per run, the profile's size and scale recorded
+PROFILE_SIZE, PROFILE_DPI = (1920, 1080), 96   # fhd-100 in docs/design/inventory/profiles.json
 PENDING = "operator-pending-restore.json"   # beside the run folder; operator-host.ps1 writes and removes it
 # One host capture at a time on this machine: beside the pending-restore file
 # every checkout shares, so two checkouts cannot both change the theme.
@@ -181,6 +183,9 @@ def wrong_pages(dumps):
                   if n.get("className") == "Microsoft.UI.Xaml.Controls.BreadcrumbBarItem" and n.get("name")]
         if not crumbs or crumbs[-1] != TITLES[p] or not find(d["top"], CONTENT_ID):
             out[p] = crumbs[-1] if crumbs else None
+        elif tuple(d["monitor"][2:]) != PROFILE_SIZE or d.get("dpi") != PROFILE_DPI:
+            # Records and shot are published as the fhd-100 profile: read at another size or scale they are not.
+            out[p] = f"{d['monitor'][2]}x{d['monitor'][3]} at {d.get('dpi')} dpi"
     return out
 
 
@@ -570,7 +575,7 @@ def check_and_publish(args, pages, out):
             return 3
         wrong = wrong_pages(dump)
         if wrong:
-            print(f"operator-capture: pages that show another page (last breadcrumb): {wrong}; nothing published")
+            print(f"operator-capture: pages that are not the page or the profile asked for: {wrong}; nothing published")
             return 3
         if personal is None:
             personal = personal_strings(dump[p]["top"], names)

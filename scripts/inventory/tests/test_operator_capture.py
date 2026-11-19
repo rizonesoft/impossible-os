@@ -203,7 +203,16 @@ class Records(unittest.TestCase):
         self.assertEqual(oc.wrong_pages({"wifi": {"top": window()}}), {"wifi": "Devices"})
         crumb = el("Button", "Wi-Fi", cls="Microsoft.UI.Xaml.Controls.BreadcrumbBarItem")
         ok = el("Window", "Settings", kids=[crumb, el("Pane", aid=oc.CONTENT_ID)])
-        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok}}), {})
+        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON, "dpi": 96}}), {})
+
+    def test_a_page_read_at_another_scale_is_refused(self):
+        crumb = el("Button", "Wi-Fi", cls="Microsoft.UI.Xaml.Controls.BreadcrumbBarItem")
+        ok = el("Window", "Settings", kids=[crumb, el("Pane", aid=oc.CONTENT_ID)])
+        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON, "dpi": 120}}),
+                         {"wifi": "1920x1080 at 120 dpi"})
+        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON}}), {"wifi": "1920x1080 at None dpi"})
+        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": [0, 0, 2560, 1440], "dpi": 96}}),
+                         {"wifi": "2560x1440 at 96 dpi"})
 
     def test_a_run_without_its_identity_cannot_be_redacted(self):
         with tempfile.TemporaryDirectory() as d:
@@ -226,6 +235,8 @@ class Records(unittest.TestCase):
                         '{"version": 5, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                         ' "ssids": [], "profiles": ["Home"]}',
                         '{"version": 6, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
+                        ' "ssids": [], "profiles": ["Home"]}',
+                        '{"version": 7, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                         ' "ssids": [], "profiles": ["Home"]}'):
                 (pathlib.Path(d) / "identity.json").write_text(old)
                 with self.assertRaises(oc.core.Incomplete):
@@ -258,7 +269,7 @@ class Host(unittest.TestCase):
     def test_saved_network_names_are_personal(self):
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "identity.json").write_text(
-                '{"version": 7, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
+                '{"version": 8, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                 ' "ssids": "Pat Home 5G", "profiles": ["Pat Home"]}')
             names = oc.identity(pathlib.Path(d))
         self.assertIn("Pat Home 5G", names)
