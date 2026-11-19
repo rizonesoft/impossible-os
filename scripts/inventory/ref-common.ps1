@@ -257,9 +257,13 @@ function Test-RefIdentity($Session, [string]$Name) {
 # kept as they are (review, 2026-11-19: the whole field was replaced).
 function Set-RefBuildNote([string]$Name, [string]$Build) {
     $notes = "$((Get-VM -Name $Name).Notes)"
-    $lines = @($notes -split "\r?\n" | Where-Object { $_ -notmatch '^ios-build=' })
-    $want = (@("ios-build=$Build") + @($lines | Where-Object { $_ -ne '' })) -join "`n"
-    if ($notes -ne $want) { Set-VM -Name $Name -Notes $want }
+    # Only the value changes, in place; the rest of the text, its line
+    # endings and blank lines too, stays byte for byte (review, 2026-11-19).
+    $stamp = [regex]'(?m)^ios-build=[^\r\n]*'
+    if ($stamp.IsMatch($notes)) { $want = $stamp.Replace($notes, "ios-build=$Build", 1) }
+    elseif ($notes) { $want = "ios-build=$Build" + $(if ($notes -match "\r\n") { "`r`n" } else { "`n" }) + $notes }
+    else { $want = "ios-build=$Build" }
+    if ($notes -cne $want) { Set-VM -Name $Name -Notes $want }
 }
 
 function Test-RefBuildNote([string]$Name) {

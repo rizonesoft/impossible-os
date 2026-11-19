@@ -1455,6 +1455,19 @@ class Profile(unittest.TestCase):
                                  "x was verified as build 26300.9000, reference.json says 26300.9974",
                                  "ios-build=26300.9974|reference VM|keep this", "sets=2", "problems=0"], out.stderr)
 
+        # A stamp in the middle of CRLF notes with blank and trailing lines:
+        # a match writes nothing, and a change touches only the value.
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Set-RefBuildNote", "Test-RefBuildNote"]))
+              + "function Get-RefIdentity { [pscustomobject]@{ build = '26300.9974' } }; "
+              "$t = \"top`r`n`r`nios-build=26300.9974`r`nbottom`r`n\"; $script:notes = $t; $script:sets = 0; "
+              "function Get-VM { [pscustomobject]@{ Notes = $script:notes } }; function Set-VM { param($Name, $Notes) $script:notes = $Notes; $script:sets++ }; "
+              "Set-RefBuildNote 'x' '26300.9974'; 'sets=' + $script:sets + ' same=' + ($script:notes -ceq $t); "
+              "Set-RefBuildNote 'x' '26300.9999'; 'sets=' + $script:sets + ' rest=' + ($script:notes -ceq $t.Replace('26300.9974', '26300.9999')); "
+              "'problems=' + @(Test-RefBuildNote 'x').Count")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["sets=0 same=True", "sets=1 rest=True", "problems=1"], out.stderr)
+
     def test_a_teardown_restore_leaves_the_vm_not_running(self):
         # Restore-RefCheckpoint started the VM, so both teardowns released the
         # lock with the guest running (review, 2026-11-18). A checkpoint taken
