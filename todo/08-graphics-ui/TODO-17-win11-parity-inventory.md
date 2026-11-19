@@ -92,7 +92,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  23   | §23 Service-State Fixtures: Update Source and Network Switch                                | §2, §19, §20                |  [x]   |
 | 💎  |  25   | §25 Service-State Fixtures: Delivered Updates                                               | §2, §20, §23                |  [ ]   |
 | 💎  |  26   | §26 Service-State Fixtures: Network Switch and Page States                                  | §2, §20, §23                |  [ ]   |
-| 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [ ]   |
+| 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [x]   |
 | 💎  |  28   | §28 Recovery Branches: Reset This PC and Automatic Repair                                   | §9                          |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
@@ -1210,12 +1210,15 @@ The network states need a network the host switches per checkpoint, with no rout
 
 What the VM cannot show and the operator's Windows host has, captured on the host at the reference build §24 put the VM on.
 
-- [ ] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
-  - Waits for the operator's restart of the host: until then the host runs 26300.9818 with KB5132061 pending, and a capture there would not match `reference.json`
-  - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
-- [ ] Commit: `"inventory: host captures"`
+- [x] Host pages captured: Bluetooth, Camera, Graphics and Wi-Fi in `settings/host.json` (83 records, 4 shots, `hand:26300.9974`)
+  - `operator-capture.py` drives `operator-host.ps1` on the operator's session: the profile's theme and accent for the capture only, restored in a finally block, each page maximized on the 1920x1080, 96 dpi monitor
+  - A device, app or adapter list keeps its first entry as an `Entry` template; the account header, machine name, taskbar and each entry's own texts are blanked in the shots
+  - Its differences from the profile (three monitors, en-ZA format, the wallpaper tint in Mica) are stated on the surface record
+- [x] Commit: `"inventory: host captures"`
 
 **Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
+
+> **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (37 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
 
 ---
 

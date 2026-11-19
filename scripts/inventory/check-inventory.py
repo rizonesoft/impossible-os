@@ -22,7 +22,8 @@ a new reference build is reached by reading the baselines again and then
 capturing again. The table under "Which baseline rows are absent?" in REFERENCE.md lists
 rows documented as absent, each with a reason. --baselines prints, per
 baseline, its rows and how many are matched, absent, pending (the owner surface
-has no records yet) or unmatched (the owner was captured and the row was not).
+has no records from the capture tool yet) or unmatched (the owner was captured
+and the row was not).
 
 Facts only (section 4): a label longer than 80 characters is a sentence, not a
 name; no string anywhere in a record or observation holds an http link; a
@@ -541,7 +542,9 @@ def baseline_summary(root, surface, records, err):
             del absent[(name, row)]
             if baselines[name]["mine"]:
                 err(root / "REFERENCE.md", n, "absent-matched", f"{name}:{row} is listed absent and a record matches it")
-    captured = {p.parent.name for p, _, obj, _ in records.values()}
+    # The owner is captured when the capture tool has read it: records read by hand
+    # (a host page, a stand-in) do not make the surface's other rows unmatched.
+    captured = {p.parent.name for p, _, obj, _ in records.values() if str(obj.get("source", "")).startswith("uia:")}
     summary = {}
     for name, b in baselines.items():
         rows = set(b["rows"])

@@ -1,4 +1,4 @@
-<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-host.ps1,scripts/inventory/host-capture.py,scripts/inventory/host,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-19T04:40 -->
+<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/update-iso.ps1,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-host.ps1,scripts/inventory/host-capture.py,scripts/inventory/operator-capture.py,scripts/inventory/operator-host.ps1,scripts/inventory/host,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-19T15:10 -->
 # Windows 11 Reference Machine
 
 Every record in the inventory is read from one machine: a clean Hyper-V virtual machine running one pinned Windows 11 build under one capture profile. A position or a size only means something against that machine, so this page names it, and a capture from anything else is refused until it is recorded here first. What a capture may take from it, facts and never Microsoft's text, images or files, is the rule in [the inventory format](index.md#what-does-it-never-hold).
@@ -18,7 +18,7 @@ The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` re
 
 ## What is the rule for a new build?
 
-Every captured record carries the build it was read from in `capturedFrom`, as `26300.9974`. A capture from any other build is a new reference. The reference follows the operator's host build, because the host captures (Bluetooth, camera, graphics) must share it with the VM's.
+Every captured record carries the build it was read from in `capturedFrom`, as `26300.9974`. A capture from any other build is a new reference. The reference follows the operator's host build, because the host captures (Bluetooth, camera, graphics, Wi-Fi) must share it with the VM's.
 
 A new build goes into the install image, never into a running machine, so `pre-oobe` and every setup page are the new build too:
 
@@ -153,7 +153,9 @@ python3 scripts/inventory/capture.py --surface settings --file battery --standin
 
 `docs/design/inventory/stand-ins.json` lists each stand-in with its variant, the page that shows it, a marker (the name of an element only that page shows) and what the guest must report. `prove.py` opens each page once, takes its screenshot when the marker shows, checks that report (power status, a working device, or a monitor brightness reading) and keeps the page's screenshot in `R:\11\ref-shots\stand-ins\` with its SHA-256; a `stand-in` row of `expected.json` names its stand-in, and `inventory-report.py --campaign --check` refuses one without a proof. `capture.py --standin VARIANT` runs a capture on the stand-in machine exactly as `ref-run` runs it on the VM; the Settings walker it needs is written by the [Settings inventory](../../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) (section 10), so today only `prove.py` runs there.
 
-Touch, pen, touchpad, rotation lock and tablet posture have no stand-in: QEMU's virtio multitouch device does not start under the virtio-win 0.1.302 input driver (code 10, `0xC000009A`), and no emulated pen digitizer, precision touchpad, orientation sensor or slate-mode indicator has a Windows driver. Those rows, with Wi-Fi, fingerprint and face enrolment, are `absent`: each names its reason and its sibling: the page, captured by the Settings sections, that it is designed from.
+Touch, pen, touchpad, rotation lock and tablet posture have no stand-in: QEMU's virtio multitouch device does not start under the virtio-win 0.1.302 input driver (code 10, `0xC000009A`), and no emulated pen digitizer, precision touchpad, orientation sensor or slate-mode indicator has a Windows driver. Those rows, with fingerprint and face enrolment, are `absent`: each names its reason and its sibling: the page, captured by the Settings sections, that it is designed from.
+
+The Settings pages that need real hardware the VM lacks (Bluetooth, Cameras, Graphics, Wi-Fi) are read on the operator's own machine at the reference build: `python3 scripts/inventory/operator-capture.py` runs `operator-host.ps1` in the operator's session, which gives the session the profile's light theme and blue accent for the capture only and puts the operator's own back afterwards (a capture cut off by a kill or a restart leaves a pending-restore file that the next run replays first). The records are `hand:<build>` in `settings/host.json` with one shot per page. What names the operator never leaves the private run folder: the account header, the machine name, the user's profile path, saved Wi-Fi network names, the taskbar and each list entry's own texts (devices, apps, adapters) are blanked in the shots, a list keeps only its first entry, labelled `Entry`, as its template, and a record naming any of them is refused. `--dry-run` captures and checks without publishing, and `--from <run folder>` publishes a run read at the reference build.
 
 ## Which records are not built as captured?
 

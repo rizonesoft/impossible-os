@@ -183,7 +183,7 @@
   {"surface": "settings", "state": "bluetooth", "profile": "fhd-100", "needs": ["records", "shot"], "source": "host"},
   {"surface": "settings", "state": "camera", "profile": "fhd-100", "needs": ["records", "shot"], "source": "host"},
   {"surface": "settings", "state": "graphics", "profile": "fhd-100", "needs": ["records", "shot"], "source": "host"},
-  {"surface": "settings", "state": "wifi", "profile": "fhd-100", "needs": ["records", "shot"], "source": "absent", "reason": "neither the VM nor the host has a Wi-Fi adapter yet; a host capture replaces this row once the host has its USB adapter", "sibling": "settings/network"},
+  {"surface": "settings", "state": "wifi", "profile": "fhd-100", "needs": ["records", "shot"], "source": "host"},
   {"surface": "settings", "state": "fingerprint-enrolment", "profile": "fhd-100", "needs": ["records", "shot"], "source": "absent", "reason": "no stand-in and no host hardware can show it; the equivalent disposition designs it as ours, after the PIN enrolment flow", "sibling": "settings/accounts"},
   {"surface": "settings", "state": "face-enrolment", "profile": "fhd-100", "needs": ["records", "shot"], "source": "absent", "reason": "no stand-in and no host hardware can show it; the equivalent disposition designs it as ours, after the PIN enrolment flow", "sibling": "settings/accounts"}
 ]

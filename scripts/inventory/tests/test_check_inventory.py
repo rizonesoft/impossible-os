@@ -162,6 +162,13 @@ class Baselines(unittest.TestCase):
         self.assertEqual(out["baselines"]["settings"],
                          {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1, "stale": 0, "removed": []})
 
+    def test_hand_records_alone_do_not_capture_the_owner(self):
+        # Pages read by hand on the operator's machine are not a capture of the surface:
+        # its baseline rows stay pending until the capture tool has read it.
+        rows = [rec("win11.settings.hardware", surface="settings", kind="surface", source=f"hand:{B}")]
+        _, out = self.report({"settings/baseline.json": bl("settings", ["a", "b"]), "settings/host.json": rows})
+        self.assertEqual((out["baselines"]["settings"]["pending"], out["baselines"]["settings"]["unmatched"]), (2, 0))
+
     def test_the_text_report_prints_one_line_per_baseline(self):
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]),
                  "controls/baseline.json": bl("controls", ["Button"], build=None,
