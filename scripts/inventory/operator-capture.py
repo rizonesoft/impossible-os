@@ -499,6 +499,13 @@ def stale_pages(dumps, build):
     return {p: d.get("build") for p, d in dumps.items() if d.get("build") != build}
 
 
+def carry_hand_fields(target, recs):
+    """What a person wrote on the published records (a baseline match, an
+    inconsistency note) carried across by id, as capture.py --merge does; what
+    this script writes itself (behaviour, disposition) is refreshed."""
+    return capture.build_file(target, recs, {"complete": True}, True)
+
+
 def leaks(recs, personal):
     """Records whose text read from this machine still holds a personal string:
     the label (a UI Automation name), and the ID part made from it when the
@@ -625,6 +632,7 @@ def check_and_publish(args, pages, out):
         print(f"operator-capture: records still name the operator ({leaked[:5]}); nothing published")
         return 3
     rel_path = pathlib.PurePosixPath(SURFACE) / f"{FILE}.json"
+    recs = carry_hand_fields(capture.INVENTORY / rel_path, recs)
     code, report = capture.check_scratch({rel_path: recs})
     print(report.strip())
     if code:

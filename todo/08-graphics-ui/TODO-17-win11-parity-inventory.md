@@ -1219,7 +1219,7 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 
 **Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
 
-> **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (43 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
+> **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (44 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
 
 ---
 

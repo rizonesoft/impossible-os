@@ -1,5 +1,8 @@
 """operator-capture.py: records from a Settings page's tree, and what is blanked."""
+import contextlib
 import importlib.util
+import io
+import json
 import pathlib
 import subprocess
 import tempfile
@@ -350,6 +353,18 @@ class Main(unittest.TestCase):
                     mock.patch.object(oc, "measure", side_effect=AssertionError("measured")):
                 with oc.capture.exclusive(lock):                         # another checkout's capture
                     self.assertEqual(oc.main(["--dry-run"]), 4)
+
+    def test_a_recapture_keeps_what_a_person_wrote(self):
+        rid = "win11.settings.hardware.bluetooth.bluetooth"
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d) / "host.json"
+            old = {"id": rid, "kind": "control", "label": "Bluetooth", "behaviour": "old text",
+                   "disposition": "build", "inconsistency": "a note", "baselineId": "nosuchbaseline:row"}
+            target.write_text(json.dumps(old) + "\n", encoding="utf-8")
+            new = {"id": rid, "kind": "control", "label": "Bluetooth", "behaviour": "new text", "disposition": "build"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                out = oc.carry_hand_fields(target, [new])
+        self.assertEqual(out, [{**new, "inconsistency": "a note", "baselineId": "nosuchbaseline:row"}])
 
     def test_a_subset_of_pages_publishes_nothing(self):
         with self.assertRaises(SystemExit) as e:

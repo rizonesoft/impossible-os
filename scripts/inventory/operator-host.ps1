@@ -398,9 +398,10 @@ function Restore-Pending {
         "restored the operator's theme and accent from an interrupted capture"
     }
 }
-# One host at a time for this user, the Python lock or not: released when the
-# process ends, so a killed run frees it.
-$Mutex = New-Object System.Threading.Mutex($false, 'Local\impossible-os-operator-host')
+# One host at a time on this machine, the Python lock or not, across Windows
+# sessions too (the restore journal is one file for the account): released when
+# the process ends, so a killed run frees it.
+$Mutex = New-Object System.Threading.Mutex($false, 'Global\impossible-os-operator-host')
 try { $held = $Mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { $Mutex.Dispose(); throw 'another operator-host.ps1 is running; run one at a time' }
 # Released at the end whichever way the script ends, also when it ran inside a
@@ -525,6 +526,7 @@ try {
                     textScale = $access.textScale; highContrast = $access.highContrast
                     before = $before; top = $top; views = $views } |
             ConvertTo-Json -Depth 100 -Compress | Set-Content -LiteralPath (Join-Path $Out "$page.json") -Encoding UTF8
+        $before = $top = $views = $null   # written: free for the next page
         "captured $page"
     }
     Write-Identity $ssids
