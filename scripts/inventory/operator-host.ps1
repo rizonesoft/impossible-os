@@ -31,7 +31,7 @@ param(
 $ErrorActionPreference = 'Stop'
 # The capture profile (fhd-100 in docs/design/inventory/profiles.json): fixed, and
 # recorded in every page's dump, so a run at another size or scale is refused.
-$Width = 1920; $Height = 1080; $Dpi = 96
+$Width = 1920; $Height = 1080; $Dpi = 96; $TextScale = 100; $Contrast = 'none'
 
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -49,6 +49,7 @@ public static class W {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);
   [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
@@ -417,6 +418,10 @@ $Pages = @($Pages | Select-Object -Unique)
 $build = Build
 $mon = Monitor
 $access = Accessibility
+# Refused before the theme changes: such a run could never be published.
+if ($access.textScale -ne $TextScale -or $access.highContrast -ne $Contrast) {
+    throw "text size $($access.textScale)% and contrast '$($access.highContrast)' are not the capture profile's ($TextScale%, '$Contrast')"
+}
 # A fresh folder per run: a retry into an old one could leave its tree beside a new shot.
 if (Test-Path -LiteralPath $Out) { throw "$Out exists already; every capture writes a new folder" }
 New-Item -ItemType Directory -Path $Out | Out-Null
@@ -472,9 +477,9 @@ try {
             # icons do not all reload. Closed (so Settings keeps the placement)
             # and opened again, it starts on the monitor at its scale.
             Start-Sleep -Seconds 1
-            $sp = $win.Current.ProcessId                                     # this window's process, not every Settings
             $win.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
-            Wait-Process -Id $sp -Timeout $WindowWait -ErrorAction SilentlyContinue   # already gone is fine
+            # This window gone (already gone is fine), so the window found next is the new one.
+            Until 'close for the reopen' { -not [W]::IsWindow($h) }
             Start-Process $Uri[$page]
             $win = Settings-Window
             $h = [IntPtr]$win.Current.NativeWindowHandle

@@ -3102,8 +3102,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 130676,
-  "sha256": "b4908d2304a09bbb64837c74cc70372bd888a9e6349b79daa1e8b594a7b4296c"
+  "size": 130669,
+  "sha256": "05f3091877479134e848cb9b7340a0aeb50cc1fb2f76a4dffd10c7236314e9f0"
  },
  {
   "surface": "settings",
@@ -3112,8 +3112,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 159790,
-  "sha256": "f4512bbb42d79f8eb408ff8a602a1a681a588d3dba9780316ab363b6fa6a4c1c"
+  "size": 159216,
+  "sha256": "ab271cddf1f7c8b73677a01666130f80bcc68fb3c8ad713d6b4958e96d9b46e3"
  },
  {
   "surface": "settings",
@@ -3122,8 +3122,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 164758,
-  "sha256": "ee1a3ca7573db5fabc7a3a5556fc4f713d4d417471745f2eed806a17fb888799"
+  "size": 164585,
+  "sha256": "10d8122e8781b8fc416300c15457b269b05d753e3e48d63e6179e9d91c34ebe3"
  },
  {
   "surface": "settings",
@@ -3132,8 +3132,8 @@
   "profile": "fhd-100",
   "width": 1920,
   "height": 1080,
-  "size": 158461,
-  "sha256": "7f8ebbb1562e4e70d51386eaeeadc5872eaffeab7d9872561c6d34bbc6e5240f"
+  "size": 158576,
+  "sha256": "a9f2f776b512c32f9c42da60661d650038ead73ea614df73c13f59c10a951ad9"
  },
  {
   "surface": "start",

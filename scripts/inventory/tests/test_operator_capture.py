@@ -407,6 +407,17 @@ class Main(unittest.TestCase):
         drive, rest = oc.capture.WORK.parts[2], oc.capture.WORK.parts[3:]
         self.assertEqual(root, "\\".join([f"{drive.upper()}:", *rest]))
 
+    def test_the_host_refuses_what_the_profile_does_not_allow(self):
+        # operator-host.ps1 refuses a run before the theme changes: its fixed
+        # profile must be the one Python publishes under.
+        text = oc.HOST_SCRIPT.read_text(encoding="utf-8")
+        line = next(x for x in text.splitlines() if x.startswith("$Width = "))
+        host = {k.strip().lstrip("$"): v.strip().strip("'") for k, v in (a.split("=") for a in line.split(";"))}
+        prof = oc.profile()
+        self.assertEqual((int(host["Width"]), int(host["Height"]), int(host["Dpi"]), int(host["TextScale"]),
+                          host["Contrast"]),
+                         (prof["width"], prof["height"], prof["dpi"], prof["textScale"], prof["highContrast"]))
+
     def test_the_host_lock_is_shared_by_every_checkout(self):
         # Beside the pending-restore file, not under this checkout's build/.
         self.assertEqual(oc.HOST_LOCK.parent, oc.capture.WORK)
@@ -470,6 +481,16 @@ class Blanks(unittest.TestCase):
         self.assertEqual(oc.leaks(recs, personal), [])
         self.assertIn((660, 300, 300, 20), oc.blanks({"monitor": MON, "top": top}, personal))
 
+    def test_an_ssid_starting_with_the_adapter_name_is_replaced_whole(self):
+        entry = el("Group", "Wi-Fi", cls="NamedContainerAutomationPeer",
+                   kids=[el("Text", "Wi-Fi"), el("Button", "Wi-Fi Studio Loft properties", aid="Props")])
+        top = window(el("List", aid="Adapters", kids=[entry]))
+        personal = oc.personal_strings(top, ["Wi-Fi Studio Loft"])
+        recs = oc.page_records("wifi", {"monitor": MON, "uri": "ms-settings:network-wifi", "top": top},
+                               "26300.9974", personal)
+        self.assertFalse([r["id"] for r in recs if "loft" in str(r).casefold()])
+        self.assertIn("<personal> properties", [r["label"] for r in recs])
+
     def test_a_radio_name_holding_quotes_is_read_whole(self):
         shown = el("Text", 'Discoverable as \u201cStudio "Juniper" Laptop\u201d', aid=oc.DISCOVERABLE_ID)
         top = window(shown, el("Button", 'Rename Studio "Juniper" Laptop', aid="Rename"))
@@ -522,6 +543,13 @@ class Blanks(unittest.TestCase):
                    kids=[el("Text", "Pat's app", bounds=(-5090, 612, 200, 19))])
         rects = oc.blanks({"monitor": MON, "top": window(el("List", aid="Apps", kids=[entry]))}, [])
         self.assertIn((611, 600, 59, 69), rects)
+
+    def test_an_entry_cut_by_the_viewport_without_a_placed_title_is_blanked_whole(self):
+        entry = el("Group", "App", cls="NamedContainerAutomationPeer", bounds=(-5149, 1020, 1000, 12),
+                   kids=[el("Text", "Pat's app", bounds=(0, 0, 0, 0))])
+        entry["children"][0]["bounds"] = None
+        rects = oc.blanks({"monitor": MON, "top": window(el("List", aid="Apps", kids=[entry]))}, [])
+        self.assertIn((611, 1020, 1000, 12), rects)
 
     def test_every_entry_title_is_blanked_and_windows_own_cards_are_not(self):
         nested = el("Group", "Show available networks", cls="NamedContainerAutomationPeer",

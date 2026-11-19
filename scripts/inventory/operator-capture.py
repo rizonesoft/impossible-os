@@ -158,10 +158,19 @@ def _pattern(personal):
     return re.compile("|".join(re.escape(s) for s in sorted(personal, key=len, reverse=True)), re.I)
 
 
-def scrub(text, personal, placeholder=None):
+def scrub(text, personal, placeholder=None, entry=None):
+    """`text` with each personal string replaced, in one pass, longest first.
+    `entry`, a list entry's title, becomes "Entry" instead: matched in the same
+    pass, so a longer personal string holding it (an SSID that starts with the
+    adapter's name) is replaced whole rather than cut by it."""
     placeholder = PLACEHOLDER if placeholder is None else placeholder
-    personal = tuple(s for s in personal if s)
-    return _pattern(personal).sub(placeholder, text) if personal else text
+    personal = tuple(s for s in personal if s) + ((entry,) if entry else ())
+    if not personal:
+        return text
+    if not entry:
+        return _pattern(personal).sub(placeholder, text)
+    return _pattern(personal).sub(
+        lambda m: "Entry" if m.group(0).casefold() == entry.casefold() else placeholder, text)
 
 
 def identity(out):
@@ -279,6 +288,10 @@ def entry_texts(tree):
                               and k.get("className") == "NamedContainerAutomationPeer"), None)
                 bottom = inner[1] if inner else eb[1] + eb[3]
                 out.append({"bounds": [eb[0], eb[1], title["bounds"][0] - eb[0], bottom - eb[1]]})
+            elif eb and not e.get("offscreen"):
+                # Shown without a placed title (cut by the viewport's edge): where
+                # its icon ends is unknown, so the whole entry is blanked.
+                out.append({"bounds": list(eb)})
     return out
 
 
@@ -392,12 +405,10 @@ def page_records(page, dump, build, personal):
                 name = "Entry"
             else:
                 # A control in the template entry can repeat that name (the Wi-Fi
-                # radio is named for its adapter): replaced whole, before any
-                # personal string inside it is.
+                # radio is named for its adapter): replaced with "Entry" in the
+                # same pass as the personal strings, longest match first.
                 owner_entry = next((template[id(a)] for a in ancestors(n, ups, content) if id(a) in template), None)
-                if owner_entry and owner_entry[1]:
-                    name = scrub(name, [owner_entry[1]], "Entry")
-            label = scrub(name, personal) if name else "List"
+            label = scrub(name, personal, entry=owner_entry[1] if owner_entry else None) if name else "List"
             # A list entry's id names this machine's device or app (a device
             # path, an install path, a package name): not part of the design.
             uia = "" if in_list or HARDWARE_ID.search(aid) else aid
