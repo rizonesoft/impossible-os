@@ -129,13 +129,23 @@ def shown(text):
     return any(not c.isspace() and not 0xE000 <= ord(c) <= 0xF8FF for c in text or "")
 
 
+DISCOVERABLE_ID = "SystemSettings_Device_DiscoverableAs_DiscoverableAsTextBlock"
+QUOTED = re.compile(r"[\u201c\"](.+?)[\u201d\"]")
+
+
 def personal_strings(tree, host_names):
-    """What names the operator: the account header's texts and the machine's names."""
+    """What names the operator: the account header's texts, the name the
+    Bluetooth radio is discoverable as (set apart from the computer name in
+    Windows) and the machine's names."""
     out = set(s for s in host_names if s)
     head = find(tree, ACCOUNT_ID)
     for n, _ in walk(head) if head else ():
         if n.get("controlType") == "Text" and n.get("name"):
             out.add(n["name"])
+    for n, _ in walk(tree):
+        if n.get("automationId") == DISCOVERABLE_ID and n.get("name"):
+            m = QUOTED.search(n["name"])
+            out.add(m.group(1) if m else n["name"])
     return sorted(out, key=len, reverse=True)
 
 
@@ -426,6 +436,11 @@ def page_records(page, dump, build, personal):
                 slug = (list_rid[lkey].rsplit(".", 1)[-1] + "-entry") if lkey in list_rid else slug
             elif owner_entry and owner_entry[0] in entry_rid:
                 slug = entry_rid[owner_entry[0]].rsplit(".", 1)[-1] + "-" + slug
+            elif kind == "control" and card is not None and id(card) in rid_of:
+                # So is a control in a card (every card's expander shares one
+                # automation ID): a card missing this time does not pass its
+                # control's id to the next card's.
+                slug = rid_of[id(card)].rsplit(".", 1)[-1] + "-" + slug
             rid, i = f"{pid}.{slug}", 2
             while rid in used:
                 rid, i = f"{pid}.{slug}-{i}", i + 1
@@ -632,7 +647,17 @@ def check_and_publish(args, pages, out):
     # One page at a time: only its records and its redacted shot outlive it.
     lay = out / "shots" / SURFACE
     lay.mkdir(parents=True, exist_ok=True)
-    recs, states, personal = [surface_record(build)], [], None
+    # What names the operator is read from every page first: the radio name
+    # shown on one page is blanked on all of them.
+    personal = set(names)
+    for p in [p for p in PAGES if p in pages]:
+        d = json.loads((out / f"{p}.json").read_text(encoding="utf-8-sig"))
+        for tree in [d.get("top")] + list(d.get("views") or []):
+            if tree:
+                personal.update(personal_strings(tree, ()))
+        del d
+    personal = sorted(personal, key=len, reverse=True)
+    recs, states = [surface_record(build)], []
     for p in [p for p in PAGES if p in pages]:
         dump = {p: json.loads((out / f"{p}.json").read_text(encoding="utf-8-sig"))}
         # Each page carries the build it was read at: a replayed run is evidence for that build only.
@@ -644,8 +669,6 @@ def check_and_publish(args, pages, out):
         if wrong:
             print(f"operator-capture: pages that are not the page or the profile asked for: {wrong}; nothing published")
             return 3
-        if personal is None:
-            personal = personal_strings(dump[p]["top"], names)
         if moved(dump[p], personal):
             print(f"operator-capture: the {p} page changed while it was copied; nothing published")
             return 3

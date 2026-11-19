@@ -178,6 +178,19 @@ class Records(unittest.TestCase):
         self.assertEqual(by["Add desktop app"]["parent"], by["Custom settings for applications"]["id"])
         self.assertEqual(by["Show more settings"]["parent"], by["Entry"]["id"])
 
+    def test_a_control_in_a_card_is_named_for_its_card(self):
+        def cardn(title):
+            return el("Group", title, cls="NamedContainerAutomationPeer",
+                      kids=[el("Text", title), el("Button", "Show more settings", aid="EntityItemButton",
+                                                  cls="ExpanderToggleButton")])
+        def expander_ids(*titles):
+            recs = self.page(window(*[cardn(x) for x in titles]))
+            return {r["parent"].rsplit(".", 1)[-1]: r["id"] for r in recs if r.get("uiaId") == "EntityItemButton"}
+        both = expander_ids("Advanced graphics settings", "Help from the web")
+        help_only = expander_ids("Help from the web")
+        self.assertEqual(help_only["help-from-the-web"], both["help-from-the-web"])
+        self.assertNotIn(both["advanced-graphics-settings"], help_only.values())
+
     def test_template_ids_are_named_for_their_list_not_their_place(self):
         def entry(title):
             return el("Group", title, cls="NamedContainerAutomationPeer",
@@ -429,6 +442,18 @@ class Blanks(unittest.TestCase):
         self.assertIn((0, 1080 - oc.TASKBAR, 1920, oc.TASKBAR), rects)
         self.assertIn((5, 49, 290, 75), rects)                 # the account header, monitor-relative
         self.assertIn((660, 200, 300, 20), rects)
+
+    def test_the_bluetooth_radio_name_is_personal_apart_from_the_computer_name(self):
+        shown = el("Text", "Discoverable as \u201cPat's Laptop\u201d", aid=oc.DISCOVERABLE_ID,
+                   bounds=(-5100, 300, 300, 20))
+        top = window(shown)
+        personal = oc.personal_strings(top, ["PAT-PC"])
+        self.assertIn("Pat's Laptop", personal)
+        recs = oc.page_records("bluetooth", {"monitor": MON, "uri": "ms-settings:bluetooth", "top": top},
+                               "26300.9974", personal)
+        self.assertFalse([r["id"] for r in recs if "laptop" in str(r).casefold()])
+        self.assertEqual(oc.leaks(recs, personal), [])
+        self.assertIn((660, 300, 300, 20), oc.blanks({"monitor": MON, "top": top}, personal))
 
     def test_a_control_painting_a_personal_name_is_blanked(self):
         top = window(el("Button", "Pat Home 5G properties", bounds=(-5100, 500, 300, 40)))
