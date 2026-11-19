@@ -383,17 +383,23 @@ function Restore-Pending {
 # process ends, so a killed run frees it.
 $Mutex = New-Object System.Threading.Mutex($false, 'Local\impossible-os-operator-host')
 try { $held = $Mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
-if (-not $held) { throw 'another operator-host.ps1 is running; run one at a time' }
+if (-not $held) { $Mutex.Dispose(); throw 'another operator-host.ps1 is running; run one at a time' }
+# Released at the end whichever way the script ends, also when it ran inside a
+# PowerShell session that stays open.
+try {
 # An interrupted capture's theme first, before anything this run can refuse.
 Restore-Pending
-if ($Restore) { exit 0 }
+if ($Restore) { return }
 # -File hands a comma list over as one string.
 $Pages = @($Pages | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if (-not $Pages) { throw 'no pages named' }
 $Pages = @($Pages | Select-Object -Unique)
 $build = Build
 $mon = Monitor
-New-Item -ItemType Directory -Path $Out -Force | Out-Null
+# A fresh folder per run: a retry into an old one could leave its tree beside a new shot.
+if (Test-Path -LiteralPath $Out) { throw "$Out exists already; every capture writes a new folder" }
+New-Item -ItemType Directory -Path $Out | Out-Null
+$ssids = @([Wlan]::Names()[0] | Where-Object { $_ })   # before the journal: a failed read changes nothing
 $saved = @(Save-Values)
 $saved | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $SavedPath -Encoding UTF8
 # Written whole beside it, then renamed: recovery sees no journal or a complete one.
@@ -407,8 +413,6 @@ Move-Item -LiteralPath $PendingNew -Destination $Pending -Force
 # Read before the first page and again after the last (the two kept), so a
 # network the adapter joins during the capture is masked too. identity.json is
 # written once, after the last read: a run cut off before it cannot be replayed.
-function Read-Ssids { @([Wlan]::Names()[0] | Where-Object { $_ }) }
-
 function Write-Identity($earlier) {
     $names = [Wlan]::Names()
     $ssids = @(@($earlier) + @($names[0]) | Where-Object { $_ } | Select-Object -Unique)
@@ -417,7 +421,6 @@ function Write-Identity($earlier) {
                 ssids = $ssids; profiles = $profiles } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'identity.json') -Encoding UTF8
 }
-$ssids = Read-Ssids
 try {
     Put-Values ($Profile | ForEach-Object { [pscustomobject]@{ Path = $_[0]; Name = $_[1]; Type = $_[2]; Value = $_[3] } })
     # A Settings window from before the change keeps the old theme; none open is fine.
@@ -508,4 +511,9 @@ try {
 finally {
     Restore-Values $saved           # on failure too
     "restored the operator's theme and accent"
+}
+}
+finally {
+    $Mutex.ReleaseMutex()
+    $Mutex.Dispose()
 }
