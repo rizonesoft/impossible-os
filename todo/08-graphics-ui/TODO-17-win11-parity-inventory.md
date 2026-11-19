@@ -1222,7 +1222,7 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 
 **Test checkpoint:** the `settings` `host` rows bluetooth, camera, graphics and wifi of `expected.json` have records and a screenshot taken on the host at the build `reference.json` names.
 
-> **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (57 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
+> **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (62 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
 
 - -> XREF: §29 -- the host captures this section does not cover: the GPU preference states of the Graphics page and the Quick Settings Wi-Fi and Bluetooth flyouts (item: "Graphics GPU preferences captured" in §29)
 - -> XREF: §12 -- publication and swap recovery into the shared shot store still run without a store-wide lock across checkouts (item: "Shared shot-store lock" in §12)
