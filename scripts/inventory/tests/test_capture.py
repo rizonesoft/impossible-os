@@ -1478,6 +1478,27 @@ class Profile(unittest.TestCase):
                                  "x was verified as build 26300.9000, reference.json says 26300.9974",
                                  "sets=2", "problems=0"], out.stderr)
 
+    def test_a_restore_finds_media_the_store_move_left_behind(self):
+        # The store moved from R:\11 to D:\11 (2026-11-19): every checkpoint
+        # still attached R:\11\win11-26300.9974.iso, which lives in the store
+        # root above the VM folder, so the VM-folder-only lookup missed it.
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Find-RefMedia"]))
+              + "$s = Join-Path ([IO.Path]::GetTempPath()) ('ios-media-' + [Guid]::NewGuid().ToString('N')); "
+              "$vm = Join-Path $s 'ios-win11-ref'; New-Item -ItemType Directory -Path $vm | Out-Null; "
+              "try { "
+              "Set-Content -LiteralPath (Join-Path $s 'install.iso') -Value x; "
+              "Set-Content -LiteralPath (Join-Path $vm 'both.iso') -Value x; Set-Content -LiteralPath (Join-Path $s 'both.iso') -Value x; "
+              "New-Item -ItemType Directory -Path (Join-Path $s 'dir.iso') | Out-Null; "
+              "(Find-RefMedia 'R:\\11\\install.iso' $vm).Substring($s.Length); "
+              "(Find-RefMedia 'R:\\11\\ios-win11-ref-next\\both.iso' $vm).Substring($s.Length); "
+              "'gone=' + ($null -eq (Find-RefMedia 'R:\\11\\gone.iso' $vm)); "
+              "'dir=' + ($null -eq (Find-RefMedia 'R:\\11\\dir.iso' $vm)) "
+              "} finally { Remove-Item -LiteralPath $s -Recurse -Force }")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["\\install.iso", "\\ios-win11-ref\\both.iso", "gone=True", "dir=True"], out.stderr)
+
     def test_the_build_note_keeps_the_operators_own_notes(self):
         # A match replaced the whole Notes field (review, 2026-11-19).
         shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
@@ -1512,7 +1533,7 @@ class Profile(unittest.TestCase):
         # lock with the guest running (review, 2026-11-18). A checkpoint taken
         # while running restores Running: -NoStart turns it off.
         shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
-        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint"]))
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint", "Find-RefMedia"]))
               + "function Repair-RefPromotion { }; function Get-VMDvdDrive { @() }; "
               "function Get-VMSnapshot { @([pscustomobject]@{ Name = 'clean' }) }; "
               "$script:state = 'Running'; $script:after = 'Running'; "
@@ -1808,6 +1829,27 @@ class Shots(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged", ".old"))]
         self.assertEqual(leftovers, [])
+
+    def test_a_state_another_file_published_is_not_overwritten(self):
+        # session/secure and session/setup both published first-desktop: the
+        # store path has no file in it, so setup's shot replaced secure's
+        # while both kept their manifest entries (2026-11-18).
+        self.publish()                                                     # window: rest
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        other = self.target.with_name("menu.json")
+        with self.assertRaisesRegex(OSError, r"rest\.fhd-100\.png \(published for window\)"):
+            self.publish([{"id": "win11.notepad-smoke.menu", "label": "Menu"}], target=other, states=[self.shot("rest.fhd-100.png")])
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(other.exists())
+        self.publish([{"id": "win11.notepad-smoke.menu", "label": "Menu"}], target=other,
+                     states=[self.shot("menu.fhd-100.png")])                # its own state still publishes
+
+    def test_verify_names_a_store_path_two_files_claim(self):
+        self.publish()
+        manifest = [e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke"]
+        manifest.append(dict(manifest[0], file="menu"))
+        path = self.store / "notepad-smoke" / "rest.fhd-100.png"
+        self.assertEqual(capture.verify_shots(manifest, self.store), [f"shared: {path} is claimed by menu, window"])
 
     def test_two_shots_with_one_file_name_publish_nothing(self):
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
@@ -3513,6 +3555,17 @@ class HostCapture(unittest.TestCase):
         # pages turned the VM off (2026-11-18).
         takes = [s.get("as") or s.get("name") for s in sc.STEPS]          # a burst's as is the shot it takes
         self.assertLess(ops.index("nmi"), takes.index("automatic-repair"))
+
+    def test_the_host_scenarios_of_one_surface_publish_disjoint_shots(self):
+        # secure and setup both took first-desktop and network, so one store
+        # path held either file's shot (2026-11-18); publish now refuses that.
+        owners = {}
+        for path in sorted((INV / "host").glob("*.py")):
+            sc = load("host_" + path.stem.replace("-", "_"), path)
+            for name in sc.SHOTS:
+                owners.setdefault((sc.SURFACE, name), []).append(sc.FILE)
+        self.assertEqual({k: v for k, v in owners.items() if len(v) > 1}, {})
+        self.assertEqual({f for (s, _), fs in owners.items() for f in fs if s == "session"}, {"boot", "secure", "setup"})
 
     def test_the_first_sign_in_text_skips_the_desktop_and_spans_every_later_line(self):
         sc = load("host_session_secure", INV / "host" / "session-secure.py")

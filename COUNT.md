@@ -16,9 +16,9 @@
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
 | **C sources** (`.c`)  |     520 |     410093 |
-| **Headers** (`.h`)    |     365 |      85699 |
+| **Headers** (`.h`)    |     366 |      85712 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **896** | **497180** |
+| **Subtotal**          | **897** | **497193** |
 
 ## SDK Tools
 
@@ -32,37 +32,37 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     116 |     106012 |
+| **Shell scripts** (`.sh`)         |     126 |     106298 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
-| **PowerShell** (`.ps1`)           |      36 |       7430 |
-| **Python** (`.py`)                |     367 |     154410 |
+| **PowerShell** (`.ps1`)           |      36 |       7447 |
+| **Python** (`.py`)                |     367 |     154721 |
 | **JavaScript** (`.js`)            |       2 |        858 |
 | **Include fragments** (`.inc`)    |       7 |       3250 |
 | **Makefile**                      |       3 |       2384 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **618** | **275884** |
+| **Subtotal**                      | **618** | **276212** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     700 |     166552 |
-| **JSON** (`.json`)          |      70 |      17307 |
+| **Markdown** (`.md`)        |     700 |     166556 |
+| **JSON** (`.json`)          |      70 |      17279 |
 | **YAML** (`.yml`/`.yaml`)   |      18 |       2353 |
 | **HTML** (`.html`)          |      22 |       3483 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **812** | **190296** |
+| **Subtotal**                | **812** | **190272** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1522** |  **774796** |
-| **Supporting text + metadata**                       |  **812** |  **190296** |
-| **Written here**                                     | **2334** |  **965092** |
+| **Core code + tooling**                              | **1522** |  **775124** |
+| **Supporting text + metadata**                       |  **812** |  **190272** |
+| **Written here**                                     | **2334** |  **965396** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2924** | **1441420** |
+| **All lines in tree**                                | **2924** | **1441724** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,441,420 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,441,724 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 18 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 774,796 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 775,124 lines
 > written here imply **109 developers** working for **8 month(s), 18 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-19 20:13 · commit `f4ec09107`*
+*Last updated: 2026-11-19 23:43 · commit `fdb4814df`*

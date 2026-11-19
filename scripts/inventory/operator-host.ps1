@@ -353,7 +353,7 @@ $SavedPath = Join-Path $Out 'saved-values.json'
 # it saves anything, so the capture theme is never saved as the operator's own.
 # The capture root, the same folder as capture.WORK in capture.py: the journal
 # lives there whatever -Out a caller gives, so every run finds it.
-$Captures = 'R:\11\captures'
+$Captures = 'D:\11\captures'
 if ((Split-Path -Parent $Out).TrimEnd('\') -ne $Captures) { throw "-Out must be a folder directly under $Captures" }
 $Pending = Join-Path $Captures 'operator-pending-restore.json'
 # Settings closed: a window opened under the capture theme keeps it until it closes.

@@ -12,7 +12,7 @@ Every record in the inventory is read from one machine: a clean Hyper-V virtual 
 | Build          | 26300.9974 (`CurrentBuild`.`UBR`), the operator's host build                                                 |
 | Read from      | the VM's Registry, `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, inside the signed-in session         |
 | Read on        | 2026-11-16                                                                                                   |
-| Installed from | `R:\11\win11-26300.9974.iso`: `R:\11\win11.iso` (en-US, 26300.9711) with KB5132061 added by `update-iso.ps1` |
+| Installed from | `D:\11\win11-26300.9974.iso`: `D:\11\win11.iso` (en-US, 26300.9711) with KB5132061 added by `update-iso.ps1` |
 
 The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` refuses to take or verify `clean`, and `ref-run.ps1` refuses to capture (exit 5), when the guest's edition, version or build differs from it. The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9974)` when the machine matches.
 
@@ -23,8 +23,8 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 A new build goes into the install image, never into a running machine, so `pre-oobe` and every setup page are the new build too:
 
 1. Download the build's cumulative update from the Microsoft Update Catalog; the file name carries its SHA-1. Only the cumulative update: the catalog also lists the 24H2 checkpoint update (KB5043080), which a 26300 image refuses with `0x80070228`.
-2. `update-iso.ps1 -Package <msu> -Out R:\11\win11-<build>.iso` services image 6 inside the reference VM (DISM needs elevation, which the guest has and the host shell does not), splits it into `install.swm` parts and builds the ISO with `xorriso` in WSL. About two and a half hours, most of it DISM. The serviced parts stay in `R:\11\update-iso\parts` with `parts.json` naming their inputs, so a run that fails while building the ISO is run again in about 15 minutes, without servicing again; one run at a time per work folder and VM (a second exits 4).
-3. Record the new build in `reference.json` and on this page, then build the machine from the new ISO with `-ImageIndex 1`. To keep the old machine until the new one verifies, build it beside it (`-Name ios-win11-ref-next -VmPath R:\11\ios-win11-ref-next`), then remove the old VM, `Rename-VM` the new one and `Move-VMStorage` it to `R:\11\ios-win11-ref`.
+2. `update-iso.ps1 -Package <msu> -Out D:\11\win11-<build>.iso` services image 6 inside the reference VM (DISM needs elevation, which the guest has and the host shell does not), splits it into `install.swm` parts and builds the ISO with `xorriso` in WSL. About two and a half hours, most of it DISM. The serviced parts stay in `D:\11\update-iso\parts` with `parts.json` naming their inputs, so a run that fails while building the ISO is run again in about 15 minutes, without servicing again; one run at a time per work folder and VM (a second exits 4).
+3. Record the new build in `reference.json` and on this page, then build the machine from the new ISO with `-ImageIndex 1`. To keep the old machine until the new one verifies, build it beside it (`-Name ios-win11-ref-next -VmPath D:\11\ios-win11-ref-next`), then remove the old VM, `Rename-VM` the new one and `Move-VMStorage` it to `D:\11\ios-win11-ref`.
 4. `-Derive -Profile machine`, rebuild the stand-in disk (`standin/derive.ps1`), regenerate `ms-hashes.txt` (`make-ms-hashes.ps1`) and read the baselines again (`baselines.py`); only then capture.
 
 Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
@@ -94,7 +94,7 @@ A fixture is a guest script in `scripts/inventory/fixtures/` that puts made-up c
 | --- | --- |
 | VM | `ios-win11-ref`, Hyper-V Generation 2, Secure Boot (Microsoft Windows template), virtual TPM |
 | Processors and memory | 4 vCPU, static 4 GiB |
-| Disk | 80 GiB dynamic, `R:\11\ios-win11-ref\disk.vhdx` |
+| Disk | 80 GiB dynamic, `D:\11\ios-win11-ref\disk.vhdx` |
 | Network | none: no adapter, so nothing updates the build or changes content between captures |
 | Account | one local administrator, `ref`, with a random password kept only as DPAPI `Export-Clixml` beside the VM |
 | Checkpoints | `pre-oobe` (the first setup page) and `clean` (the signed-in desktop under `fhd-100`) |
@@ -107,7 +107,7 @@ Install and setup run unattended. The setup pages are reached with no keyboard i
 powershell.exe -File scripts\inventory\ref-vm.ps1 -Rebuild    # install from the ISO: about 12 minutes
 powershell.exe -File scripts\inventory\ref-vm.ps1 -Reclean    # clean again from pre-oobe, no reinstall
 powershell.exe -File scripts\inventory\ref-vm.ps1 -Verify     # exits 0 when the machine matches this page
-powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
+powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out D:\11\out
 ```
 
 `ref-run.ps1` takes a new, empty `-Out` folder for each run, holds the VM for itself, restores `clean`, checks the build, copies its inputs to `C:\ios\in` as one zip, runs one command in `ref`'s desktop (an interactive scheduled task under a headless console, so it draws no window of its own), waits for its exit code, copies `C:\ios\out` back and turns the VM off. Each capture therefore starts from the same desktop. `-Proof` runs the end-to-end check: it starts Notepad, finds its window through UI Automation and saves a screenshot. `pre-oobe` exists so first-run setup can be captured again at any time.
@@ -144,14 +144,14 @@ Hyper-V shows no battery, lid, backlight, touch screen or second display, so the
 | Jobs | a logon task in `ref`'s session gives the desktop focus (Win+D, the state `clean` starts in), runs `ios-job\job.ps1` from a removable FAT volume labelled IOSJOB, writes its exit code, and shuts the guest down |
 
 ```bash
-powershell.exe -File scripts\inventory\standin\derive.ps1 -Out R:\11\standin\standin.vhdx
-qemu-img convert -f vhdx -O qcow2 /mnt/r/11/standin/standin.vhdx ~/.local/share/ios-standin/standin.qcow2
+powershell.exe -File scripts\inventory\standin\derive.ps1 -Out D:\11\standin\standin.vhdx
+qemu-img convert -f vhdx -O qcow2 /mnt/d/11/standin/standin.vhdx ~/.local/share/ios-standin/standin.qcow2
 python3 scripts/inventory/standin/prove.py                        # proves every stand-in, records each proof
 python3 scripts/inventory/standin/probe.py dual-100-150           # applies a two-display profile there, prints the probe
 python3 scripts/inventory/capture.py --surface settings --file battery --standin saver   # once the Settings walker exists
 ```
 
-`docs/design/inventory/stand-ins.json` lists each stand-in with its variant, the page that shows it, a marker (the name of an element only that page shows) and what the guest must report. `prove.py` opens each page once, takes its screenshot when the marker shows, checks that report (power status, a working device, or a monitor brightness reading) and keeps the page's screenshot in `R:\11\ref-shots\stand-ins\` with its SHA-256; a `stand-in` row of `expected.json` names its stand-in, and `inventory-report.py --campaign --check` refuses one without a proof. `capture.py --standin VARIANT` runs a capture on the stand-in machine exactly as `ref-run` runs it on the VM; the Settings walker it needs is written by the [Settings inventory](../../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) (section 10), so today only `prove.py` runs there.
+`docs/design/inventory/stand-ins.json` lists each stand-in with its variant, the page that shows it, a marker (the name of an element only that page shows) and what the guest must report. `prove.py` opens each page once, takes its screenshot when the marker shows, checks that report (power status, a working device, or a monitor brightness reading) and keeps the page's screenshot in `D:\11\ref-shots\stand-ins\` with its SHA-256; a `stand-in` row of `expected.json` names its stand-in, and `inventory-report.py --campaign --check` refuses one without a proof. `capture.py --standin VARIANT` runs a capture on the stand-in machine exactly as `ref-run` runs it on the VM; the Settings walker it needs is written by the [Settings inventory](../../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) (section 10), so today only `prove.py` runs there.
 
 Touch, pen, touchpad, rotation lock and tablet posture have no stand-in: QEMU's virtio multitouch device does not start under the virtio-win 0.1.302 input driver (code 10, `0xC000009A`), and no emulated pen digitizer, precision touchpad, orientation sensor or slate-mode indicator has a Windows driver. Those rows, with fingerprint and face enrolment, are `absent`: each names its reason and its sibling: the page, captured by the Settings sections, that it is designed from.
 

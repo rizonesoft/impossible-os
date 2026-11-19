@@ -16,12 +16,12 @@ the guest down cleanly and merges its disk chain into one standalone VHDX at
 -Out. The checkpoint itself is unchanged: the next ref-run restores it.
 qemu-img convert -O qcow2 then gives standin/run.py its disk.
 
-    powershell.exe -File scripts\inventory\standin\derive.ps1 -Out R:\11\standin\standin.vhdx
+    powershell.exe -File scripts\inventory\standin\derive.ps1 -Out D:\11\standin\standin.vhdx
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Out,
-    [string]$VmPath = 'R:\11\ios-win11-ref',
+    [string]$VmPath = 'D:\11\ios-win11-ref',
     [string]$Name = 'ios-win11-ref'
 )
 $ErrorActionPreference = 'Stop'

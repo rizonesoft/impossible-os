@@ -4,7 +4,7 @@
     "url": "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.302-1/virtio-win-0.1.302.iso",
     "sha256": "303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d",
     "license": "BSD-3-Clause (kvm-guest-drivers-windows); downloaded at use, not redistributed",
-    "iso": "R:\\11\\virtio-win-0.1.302.iso",
+    "iso": "D:\\11\\virtio-win-0.1.302.iso",
     "display": {
       "folder": "viogpudo\\w11\\amd64",
       "files": ["viogpudo.inf", "viogpudo.sys", "viogpudo.cat"]

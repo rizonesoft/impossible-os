@@ -39,14 +39,14 @@ Steps, one object each, by "op":
   renew   {name}              make a new random password for that account and type it (a change
                               form, or the first one of an account a setup form creates)
 
-    powershell.exe -File scripts\inventory\ref-host.ps1 -Steps steps.json -Out R:\11\captures\session-x
+    powershell.exe -File scripts\inventory\ref-host.ps1 -Steps steps.json -Out D:\11\captures\session-x
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string]$Steps,
     [Parameter(Mandatory)] [string]$Out,
     [string]$Checkpoint = 'clean',
-    [string]$VmPath = 'R:\11\ios-win11-ref',
+    [string]$VmPath = 'D:\11\ios-win11-ref',
     [string]$Name = 'ios-win11-ref',
     # For a checkpoint before any account exists (pre-oobe): restore and drive
     # the screen only. No session opens, so guest, admin, user and reconnect

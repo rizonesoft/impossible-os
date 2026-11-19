@@ -113,7 +113,7 @@ STEPS = [
     key(ENTER), wait(5), shot("wrong-password"), key(ENTER), wait(2),
     click(POWER), wait(2), shot("power-menu"), key(ESC), wait(1),
     click(EASE), wait(2), shot("accessibility"), key(ESC), wait(1),
-    click(NETWORK), wait(4), shot("network"), key(ESC), wait(1),
+    click(NETWORK), wait(4), shot("network-flyout"), key(ESC), wait(1),
     # The second account: locked out, then expired, changed and signed in for the first time.
     click(SECOND_ROW), wait(3), shot("sign-in-other"),
     *[s for n in (1, 2, 3) for s in ({"op": "text", "text": f"bad{n}"}, key(ENTER), wait(4), key(ENTER), wait(2))],
@@ -127,7 +127,7 @@ STEPS = [
     shot("change-password-filled"),
     key(ENTER), wait(5), shot("password-changed"), key(ENTER),
     {"op": "burst", "name": "first-sign-in", "count": FIRST_BURST, "every": 4},
-    {"op": "settle", "sec": 5, "timeout": 180}, shot("first-desktop"),
+    {"op": "settle", "sec": 5, "timeout": 180}, shot("signed-in-desktop"),
     # The credentials form of the elevation prompt, as other (a standard user).
     *elevate("cmd", "elevation-credentials"), key(ESC), wait(3), key(ESC), wait(1),
     # Sign out, then back in as ref.
@@ -141,9 +141,9 @@ STEPS = [
     click((749, 756)), wait(1), shot("restarting"),
 ]
 
-SHOTS = ["lock", "secure", "typed", "wrong-password", "power-menu", "accessibility", "network", "sign-in-other",
+SHOTS = ["lock", "secure", "typed", "wrong-password", "power-menu", "accessibility", "network-flyout", "sign-in-other",
          "locked-account", "password-expired", "change-password", "password-changed",
-         *[f"first-sign-in-{i}" for i in range(1, FIRST_BURST + 1)], "first-desktop", "security-options", "elevation-consent", "elevation-details",
+         *[f"first-sign-in-{i}" for i in range(1, FIRST_BURST + 1)], "signed-in-desktop", "security-options", "elevation-consent", "elevation-details",
          "elevation-unknown", "elevation-credentials", "shut-down-dialog", "shut-down-list", "signing-out-1",
          "apps-preventing", "restarting"]
 

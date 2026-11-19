@@ -14,7 +14,7 @@ with no VM.
     powershell.exe -File scripts\inventory\make-ms-hashes.ps1
 #>
 [CmdletBinding()]
-param([string]$Out = 'R:\11\out-hashes')
+param([string]$Out = 'D:\11\out-hashes')
 $ErrorActionPreference = 'Stop'
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("ios-hash-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null

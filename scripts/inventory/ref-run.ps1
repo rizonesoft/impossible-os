@@ -14,8 +14,8 @@ exit code; 2 when -Out is not a new empty folder, 3 when the VM never became
 reachable, 4 when another run holds the VM, 5 when the guest is not the build
 docs/design/inventory/reference.json names.
 
-    powershell.exe -File scripts\inventory\ref-run.ps1 -Command 'python C:\ios\in\capture-ui.py --surface notepad-smoke --out C:\ios\out\notepad.json' -In tools -Out R:\11\out
-    powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out   # the Notepad UI Automation and screenshot proof
+    powershell.exe -File scripts\inventory\ref-run.ps1 -Command 'python C:\ios\in\capture-ui.py --surface notepad-smoke --out C:\ios\out\notepad.json' -In tools -Out D:\11\out
+    powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out D:\11\out   # the Notepad UI Automation and screenshot proof
     powershell.exe -File scripts\inventory\ref-run.ps1 -Stop                    # turn the VM off and restore it after a killed run
 
 -Stop takes the VM lock first, so it turns off only a VM no live run holds: a
@@ -29,7 +29,7 @@ param(
     [string]$In,
     [string]$Out,
     [string]$Checkpoint = 'clean',
-    [string]$VmPath = 'R:\11\ios-win11-ref',
+    [string]$VmPath = 'D:\11\ios-win11-ref',
     [string]$Name = 'ios-win11-ref',
     [int]$TimeoutSec = 900,
     [switch]$Proof,

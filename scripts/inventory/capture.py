@@ -26,7 +26,7 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
 4. Runs check-inventory.py over a scratch copy of the inventory holding the new
    file; a file that fails is not published.
 5. Publishes docs/design/inventory/<surface>/<file>.json, moves the screenshots
-   to the store (R:\\11\\ref-shots\\<surface>\\<state>.<profile>.png) and records
+   to the store (D:\\11\\ref-shots\\<surface>\\<state>.<profile>.png) and records
    each in docs/design/inventory/shots.json (surface, state, profile, size,
    SHA-256); writes build/inventory/<surface>-unnamed.json for hand labels.
 
@@ -77,8 +77,8 @@ _spec.loader.exec_module(core)
 INVENTORY = REPO / "docs" / "design" / "inventory"
 FIXTURES = HERE / "fixtures"
 SHOTS_MANIFEST = INVENTORY / "shots.json"
-STORE = pathlib.Path("/mnt/r/11/ref-shots")
-WORK = pathlib.Path("/mnt/r/11/captures")
+STORE = pathlib.Path("/mnt/d/11/ref-shots")
+WORK = pathlib.Path("/mnt/d/11/captures")
 # deadline: ref-run.ps1 bounds the guest command by --timeout and its session by
 # 600 s; this margin covers restore, transfer and teardown on top, so ref-run's
 # own finally (which turns the VM off) always gets to run before the host gives up.
@@ -107,9 +107,19 @@ def load_manifest(path):
 def verify_shots(manifest, store):
     """Messages for every manifest entry whose stored file is missing or changed."""
     out = []
+    owners = {}
+    for e in manifest:
+        owners.setdefault((e["surface"], e["state"], e["profile"]), []).append(e.get("file"))
     for e in manifest:
         f = store / e["surface"] / f"{e['state']}.{e['profile']}.png"
-        if not f.is_file():
+        files = owners[(e["surface"], e["state"], e["profile"])]
+        if len(files) > 1:
+            # One store path, two records: the later capture overwrote the
+            # other's shot (session secure and setup, 2026-11-18).
+            msg = f"shared: {f} is claimed by {', '.join(sorted(str(x) for x in files))}"
+            if msg not in out:
+                out.append(msg)
+        elif not f.is_file():
             out.append(f"missing: {f}")
         elif f.stat().st_size != e["size"] or sha256(f) != e["sha256"]:
             out.append(f"changed: {f}")
@@ -393,6 +403,14 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
     owner = (surface, file, profile)
     manifest = [e for e in load_manifest(manifest_path)
                 if (e["surface"], e.get("file"), e["profile"]) != owner]
+    # The store path is <surface>/<state>.<profile>.png, so a state another
+    # record file of this surface already published would overwrite its shot
+    # (session secure and setup both had first-desktop and network, 2026-11-18).
+    taken = {(e["state"], e["profile"]): e.get("file") for e in manifest if e["surface"] == surface}
+    clash = sorted(f"{n} (published for {taken[k]})" for n in names
+                   if (k := tuple(n[: -len(".png")].rsplit(".", 1))) in taken)
+    if clash:
+        raise OSError(f"{surface}/{file}: another record file owns {', '.join(clash)}; nothing staged")
     dest = store / surface
     staged = []
     try:
@@ -497,7 +515,7 @@ def main(argv=None):
         bad = verify_shots(load_manifest(SHOTS_MANIFEST), STORE)
         for b in bad:
             print(b)
-        print(f"shots: {len(load_manifest(SHOTS_MANIFEST))} in the manifest, {len(bad)} missing or changed")
+        print(f"shots: {len(load_manifest(SHOTS_MANIFEST))} in the manifest, {len(bad)} missing, changed or shared")
         return 1 if bad else 0
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")

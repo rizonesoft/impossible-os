@@ -536,7 +536,7 @@ The section text pinned the host's build as 26300.9818. That was the host's runn
 - **Package:** only the cumulative update. The catalog also offers KB5043080, the 24H2 checkpoint update, which a 26300 system refuses (`0x80070228`, measured 2026-11-16).
 - **Swap:** the new VM was built beside the old one and replaced it only after `-Verify` passed.
 
-Reversing costs a rebuild from `R:\11\win11.iso` (about 15 minutes) plus the derives (about 30 minutes).
+Reversing costs a rebuild from `D:\11\win11.iso` (about 15 minutes) plus the derives (about 30 minutes).
 
 A: (run decision, 2026-11-16) as listed.
 

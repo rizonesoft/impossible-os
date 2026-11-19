@@ -52,9 +52,9 @@ deleted before clean is taken.
 #>
 [CmdletBinding()]
 param(
-    [string]$IsoPath = 'R:\11\win11.iso',
-    [string]$VmPath = 'R:\11\ios-win11-ref',
-    [string]$RuntimeCache = 'R:\11\runtime',
+    [string]$IsoPath = 'D:\11\win11.iso',
+    [string]$VmPath = 'D:\11\ios-win11-ref',
+    [string]$RuntimeCache = 'D:\11\runtime',
     [string]$Name = 'ios-win11-ref',
     [int]$ImageIndex = 6,
     [switch]$Verify,

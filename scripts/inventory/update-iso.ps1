@@ -31,8 +31,8 @@ is touched, and a second run exits 4.
 
 The new ISO holds one image, so build the VM from it with -ImageIndex 1:
 
-    powershell.exe -File scripts\inventory\update-iso.ps1 -Package R:\11\updates\windows11.0-kb5132061-x64_<sha1>.msu -Out R:\11\win11-26300.9974.iso
-    powershell.exe -File scripts\inventory\ref-vm.ps1 -Rebuild -IsoPath R:\11\win11-26300.9974.iso -ImageIndex 1
+    powershell.exe -File scripts\inventory\update-iso.ps1 -Package D:\11\updates\windows11.0-kb5132061-x64_<sha1>.msu -Out D:\11\win11-26300.9974.iso
+    powershell.exe -File scripts\inventory\ref-vm.ps1 -Rebuild -IsoPath D:\11\win11-26300.9974.iso -ImageIndex 1
 
 The package is checked against the SHA-1 in its catalog file name before use.
 Only the cumulative update goes in: the catalog also offers the 24H2 checkpoint
@@ -43,11 +43,11 @@ update (KB5043080), which a 26300 image refuses with 0x80070228 (seen
 param(
     [Parameter(Mandatory)][string]$Package,
     [Parameter(Mandatory)][string]$Out,
-    [string]$Iso = 'R:\11\win11.iso',
+    [string]$Iso = 'D:\11\win11.iso',
     [int]$Index = 6,
-    [string]$Work = 'R:\11\update-iso',
-    [string]$PackageDisk = 'R:\11\updates.vhdx',
-    [string]$VmPath = 'R:\11\ios-win11-ref',
+    [string]$Work = 'D:\11\update-iso',
+    [string]$PackageDisk = 'D:\11\updates.vhdx',
+    [string]$VmPath = 'D:\11\ios-win11-ref',
     [string]$Name = 'ios-win11-ref'
 )
 $ErrorActionPreference = 'Stop'

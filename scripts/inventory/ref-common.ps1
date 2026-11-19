@@ -392,6 +392,20 @@ function Repair-RefPromotion([string]$Name, [string]$Checkpoint) {
     }
 }
 
+# Where a checkpoint's media file is now: the same file name in $VmPath, else
+# in the store root that holds $VmPath (the install ISO lives there). $null
+# when neither has it, and the restore leaves that drive as the saved state has it.
+function Find-RefMedia([string]$Path, [string]$VmPath) {
+    $leaf = Split-Path -Leaf $Path
+    $vm = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\')
+    foreach ($dir in @($vm, (Split-Path -Parent $vm))) {
+        if (-not $dir) { continue }
+        $here = Join-Path $dir $leaf
+        if (Test-Path -LiteralPath $here -PathType Leaf) { return $here }
+    }
+    return $null
+}
+
 # Starts the VM after the restore unless -NoStart; a teardown passes it, and
 # then makes sure the VM is not running (review, 2026-11-18: both teardowns
 # left the guest running).
@@ -411,14 +425,17 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     # folder's media path in its saved state after the folder became $VmPath,
     # though Get-VMDvdDrive already reports the new path; starting it then fails
     # with "virtual disk support provider ... not found" (pre-oobe and
-    # answer-install.iso, 2026-11-18). Attaching the media again from $VmPath
-    # writes the path the saved state uses.
+    # answer-install.iso, 2026-11-18). Attaching the media again from where it
+    # is now writes the path the saved state uses. The same holds when the
+    # whole store moved (R:\11 to D:\11, 2026-11-19): the install ISO sits in
+    # the store root above $VmPath, so Find-RefMedia looks there too.
     foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path })) {
-        $here = Join-Path $root (Split-Path -Leaf $d.Path)
-        if (Test-Path -LiteralPath $here) { Set-VMDvdDrive -VMDvdDrive $d -Path $here }
+        $here = Find-RefMedia $d.Path $VmPath
+        if ($here) { Set-VMDvdDrive -VMDvdDrive $d -Path $here }
     }
+    $store = (Split-Path -Parent $root.TrimEnd('\')).TrimEnd('\') + '\'
     $id = (Get-VM -Name $Name).Id
-    foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })) {
+    foreach ($d in @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -and $_.Path.StartsWith($store, [StringComparison]::OrdinalIgnoreCase) })) {
         # Through cmd so a refusal is an exit code, not a PowerShell error record;
         # started from the Windows folder, since cmd refuses a WSL share as its
         # working directory.

@@ -30,7 +30,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 - Windows UI Automation (UIA): names, control types, automation ids, class names and bounding rectangles of every element.
 - [`docs/design/shell.md`](../../docs/design/shell.md), [`docs/design/controls.md`](../../docs/design/controls.md), [`docs/design/tokens.json`](../../docs/design/tokens.json): the spec the inventory corrects in §17.
 - [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): the pack the host tests of §1, §3 and §7 join as a nested suite.
-- Legal boundary: the inventory records names, positions, types, ids, shortcuts and numbers, with behaviour written in our own words. It never commits Microsoft icons, screenshots, sounds, fonts, wallpaper or help text; screenshots stay outside the repository in `R:\11\ref-shots\` (§3), with only their hash manifest committed. The rule and its checker are §4.
+- Legal boundary: the inventory records names, positions, types, ids, shortcuts and numbers, with behaviour written in our own words. It never commits Microsoft icons, screenshots, sounds, fonts, wallpaper or help text; screenshots stay outside the repository in `D:\11\ref-shots\` (§3), with only their hash manifest committed. The rule and its checker are §4.
 - Vendor verdict: the capture tool is a new host script on the `comtypes` UIA bindings (MIT). The completeness baselines of §5 are read from the reference machine's own files and Registry, plus the control list of the WinUI Gallery (MIT; read its LICENSE file before importing). Nothing else is vendored.
 - -> XREF: `TODO-07-ui-accessibility-automation-ime.md §1,§6` -- the semantic tree and automation transport that §16 reads to compare the built OS against the inventory
 - -> XREF: `TODO-18-ui-framework-engines.md §1` -- the engines the inventoried surfaces are built on; §15 assigns records to them
@@ -152,11 +152,11 @@ The record format and the checker every later section writes against. One JSON o
 Positions only mean something against one fixed machine. This section builds that machine and writes down what it is.
 
 > [!NOTE]
-> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `R:\11\ios-win11-ref\`, beside the image (operator choice, 2026-11-14).
+> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `R:\11\ios-win11-ref\`, beside the image (operator choice, 2026-11-14). The operator moved the whole store from `R:\11` to `D:\11` on 2026-11-19; the scripts default to `D:\11`.
 
 - [x] Write `scripts/inventory/ref-vm.ps1`: creates the Generation 2 VM `ios-win11-ref` from the ISO with an unattended answer file
   - 4 vCPU, 4 GiB (operator decision 2026-11-14, so the host stays usable during captures), 80 GiB dynamic disk, TPM enabled, no network after setup
-  - ISO: `R:\11\win11.iso`. VM path: `R:\11\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
+  - ISO: `D:\11\win11.iso`. VM path: `D:\11\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
   - The answer file makes one local account `ref` and declines every optional prompt
   - Two answer media: the install media (`autounattend.xml`, no secret) and the OOBE media (`oobe.xml` holding the `ref` password), made fresh from the DPAPI-protected password file for each run, readable only by the operator, detached and deleted afterwards (plan review)
   - The `ref` password is random, made on the host and kept as DPAPI `Export-Clixml` in the VM folder, never printed or committed; the guest's cached answer files are deleted before `clean` is taken
@@ -202,7 +202,7 @@ Positions only mean something against one fixed machine. This section builds tha
 One tool walks a surface's UI Automation tree and writes records. It reads structure and never reads what a person typed or chose.
 
 - [x] Provision the capture runtime offline, so `clean` holds Python and `comtypes` (filed by the §2 completion review)
-  - `runtime.json` pins both by SHA-256; `ref-vm.ps1` fetches them once to `R:\11\runtime` and installs them into `C:\ios\python`; recorded in `src/libs/PROVENANCE.md` and `CREDITS.md`
+  - `runtime.json` pins both by SHA-256; `ref-vm.ps1` fetches them once to `D:\11\runtime` and installs them into `C:\ios\python`; recorded in `src/libs/PROVENANCE.md` and `CREDITS.md`
 - [x] Write the guest tool `scripts/inventory/capture-ui.py` on `comtypes`: it refuses with exit 2, naming the value, when any value of the capture profile does not hold
   - The profile lives once, in `docs/design/inventory/profiles.json`, which `ref-vm.ps1` reads too
 - [x] Walk from the root element the surface module names and emit one record per element
@@ -214,7 +214,7 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 - [x] Add `--merge` to the host driver `scripts/inventory/capture.py`: hand-written fields carried by `id`, captured facts refreshed, unseen records dropped
   - A note that would land on an ambiguous id stops the merge (filed by the §3 plan review)
 - [x] Run `check-inventory.py` on the result before writing it; a file that fails is not published
-- [x] Save a screenshot per state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`, with `docs/design/inventory/shots.json` and `--verify-shots`
+- [x] Save a screenshot per state and profile to `D:\11\ref-shots\<surface>\<state>.<profile>.png`, with `docs/design/inventory/shots.json` and `--verify-shots`
 - [x] List elements UIA names no label for in `build/inventory/<surface>-unnamed.json` for a hand-written label
 - [x] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree and wire it into `scripts/test-tooling.sh`
 - [x] Commit: `"inventory: UI Automation capture tool"`
@@ -476,6 +476,9 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
 - [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)
   - The stand-in's brightness keys (`standin.asl` WMI0: an ACPI-WMI method that raises Notify (LCD0, 0x86)) move the level as a laptop's keys do, but on QEMU's display path Windows shows no indicator; WMI, powercfg and the shell hook message move the level silently too
+- [/] Recapture `session/secure` so it publishes its renamed `network-flyout` and `signed-in-desktop` shots (blocked: the ref credential, see below)
+  - Both files published `first-desktop` and `network` to one store path, so setup's shots replaced secure's; secure's stale entries were dropped from `shots.json`, `capture.py` now refuses a shared path and `--verify-shots` reports one as `shared` (2026-11-19)
+  - Blocked on `ref.clixml`, the ref account's credential, which the move of the store from `R:\11` to `D:\11` (2026-11-19) did not carry; done when `shots.json` holds both shots for `secure` and `--verify-shots` reports 0
 - [x] Commit: one commit per surface file; `inventory: boot, stop and recovery screens captured from the host` also republished `secure.json` and `setup.json`
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.
@@ -738,7 +741,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the credential prompt, the About dialog frame, and the "program not responding" and crash report dialogs
   - Record all dialog frames found under the dialog generations ledger entry of §6, with the one frame, margin scale and button order Impossible OS ships
   - Done when: `check-inventory.py --surface dialogs` passes; the seven message box button sets each have a record with their order, and every dialog carries the dialog generations `inconsistency` id.
-- [ ] Shared shot-store lock: `capture.py` publication and swap recovery hold a lock beside `/mnt/r/11/ref-shots`, so two checkouts cannot publish to one store at once (filed from section 27 review round 18).
+- [ ] Shared shot-store lock: `capture.py` publication and swap recovery hold a lock beside `/mnt/d/11/ref-shots`, so two checkouts cannot publish to one store at once (filed from section 27 review round 18).
 - [ ] Commit: `"inventory: file explorer and common dialogs inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
@@ -902,7 +905,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record text metrics per type ramp style as numbers: ascent, descent, line gap, and the advance width of each printable ASCII character and of 20 fixed test strings, so a metric-compatible font can be proven to lay out identically
   - Add `scripts/inventory/measure-motion.py`: records a surface into the scratch directory and writes one `motion` record
     - It records at the display's refresh rate, tracks one edge of the moving element, and writes duration, distance and the nearest cubic curve
-    - The recording is kept in `R:\11\ref-shots\motion\` with its frame timestamps and raw edge samples, hashed into `shots.json`, so a curve is re-fitted without the VM
+    - The recording is kept in `D:\11\ref-shots\motion\` with its frame timestamps and raw edge samples, hashed into `shots.json`, so a curve is re-fitted without the VM
   - Measure the motions
     - Window open, close, minimize, maximize and restore; Start, flyout and menu open and close; toast in and out; a notification card collapsing on dismissal; Task View and desktop switch
     - Hover and press on a button; the page transition in Settings; the tab switch underline; the progress ring's cycle

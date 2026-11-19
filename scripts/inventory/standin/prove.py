@@ -13,7 +13,7 @@ that page shows; the screenshot waits for it) and what the guest must report
 one job on the stand-in machine (run.py) opens each distinct page once, waits up
 to 120 s for its marker, takes the screenshot, then reads the facts. Each
 variant's verdicts are written before the next variant boots. A stand-in whose expectation holds gets its screenshot
-moved to the store (R:\\11\\ref-shots\\stand-ins\\<id>.png) and a `proof`
+moved to the store (D:\\11\\ref-shots\\stand-ins\\<id>.png) and a `proof`
 (file, SHA-256, size, date) in stand-ins.json; one that fails is named, keeps
 no proof, and the command exits 1. The `stand-in` rows of expected.json name
 these ids; inventory-report.py --campaign --check refuses one without a proof.
@@ -35,7 +35,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 STAND_INS = REPO / "docs" / "design" / "inventory" / "stand-ins.json"
-STORE = pathlib.Path("/mnt/r/11/ref-shots/stand-ins")
+STORE = pathlib.Path("/mnt/d/11/ref-shots/stand-ins")
 
 JOB = r"""param([string]$Out)
 $ErrorActionPreference = 'Stop'

@@ -36,7 +36,7 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 # On the Linux disk: QEMU over the Windows drive share is slow. derive.ps1 writes
-# R:\11\standin\standin.vhdx; `qemu-img convert -O qcow2` puts it here.
+# D:\11\standin\standin.vhdx; `qemu-img convert -O qcow2` puts it here.
 DISK = pathlib.Path.home() / ".local/share/ios-standin/standin.qcow2"
 GUEST_MB = 4096                    # the guest's memory
 MEMORY_MARGIN_MB = 1024            # left free for the host beside it
