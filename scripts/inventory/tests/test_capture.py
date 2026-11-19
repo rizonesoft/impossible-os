@@ -1309,24 +1309,45 @@ class Profile(unittest.TestCase):
         ps = (self._ps_functions((INV / "ref-host.ps1", ["Invoke-Step"]), (INV / "ref-common.ps1", ["Assert-RefBefore"]))
               + "$Name = 'x'; $NoSession = $false; $Out = 'o'; $shots = New-Object System.Collections.ArrayList; "
               "$script:t = [datetime]'2026-01-01'; function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
-              "function Write-Host { }; function Get-RefThumbnail { New-Object byte[] 20 }; "
-              "function Copy-Item($LiteralPath, $Destination, [switch]$Force) { $script:copied = (Split-Path $LiteralPath -Leaf) + '>' + (Split-Path $Destination -Leaf) }; "
-              # The colour shows on the third look, burst frame or wait poll.
-              "$script:looks = 0; function Test-ThumbnailColour { $script:looks++; $script:looks -ge 3 }; "
-              "function Save-Shot($n, $Until) { $script:t = $script:t.AddMilliseconds(100); "
+              "function Write-Host { }; function Get-RefThumbnail { New-Object byte[] 20 }; function Get-ThumbnailHash { 'same' }; "
+              "function Copy-Item($LiteralPath, $Destination, [switch]$Force) { $script:ev += 'copy:' + (Split-Path $LiteralPath -Leaf) }; "
+              # The colour shows from look number $from on, at a burst frame or
+              # a wait poll; every look and save is logged in order.
+              "function Test-ThumbnailColour { $script:looks++; $r = $script:looks -ge $script:from; $script:ev += 'look:' + $r; $r }; "
+              "function Save-Shot($n, $Until) { $script:t = $script:t.AddMilliseconds(100); $script:ev += 'save:' + $n; "
               "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 }; [void]$shots.Add([ordered]@{ name = $n; file = \"$n.png\"; exact = $script:exact }) }; "
               "$menu = [pscustomobject]@{ x = 1; y = 1; rgb = @(0, 0, 0) }; "
-              "foreach ($c in @(@{ count = 5; exact = $true }, @{ count = 5; exact = $false }, @{ count = 2; exact = $true })) { "
-              "$shots.Clear(); $script:looks = 0; $script:exact = $c.exact; $script:copied = 'none'; "
-              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $c.count; every = 0; cadence = 1; seconds = 30; until = $menu; as = 'page'; astimeout = 10 }); "
-              "(($shots | ForEach-Object { $_.name + ':' + $_.file }) -join ',') + ' ' + $script:copied }")
+              "foreach ($c in @(@{ count = 5; exact = $true; from = 3 }, @{ count = 5; exact = $false; from = 3 }, @{ count = 2; exact = $true; from = 3 }, @{ count = 2; exact = $true; from = 99 })) { "
+              "$shots.Clear(); $script:ev = @(); $script:looks = 0; $script:exact = $c.exact; $script:from = $c.from; "
+              "try { Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $c.count; every = 0; cadence = 1; seconds = 30; until = $menu; as = 'page'; astimeout = 1 }) } catch { $script:ev += 'threw' }; "
+              "$script:ev -join ',' }; "
+              # A still burst names the frame that held still the same way.
+              "$shots.Clear(); $script:ev = @(); $script:exact = $true; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'r'; count = 9; every = 0; cadence = 1; seconds = 30; still = 2; as = 'still' }); $script:ev -join ','")
         r = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-        # An exact frame that met the colour is the page; an inexact one, or a
-        # burst that ended first, waits for the colour and shoots the page.
-        self.assertEqual(lines, ["b-1:b-1.png,b-2:b-2.png,b-3:b-3.png,page:page.png b-3.png>page.png",
-                                 "b-1:b-1.png,b-2:b-2.png,b-3:b-3.png,page:page.png none",
-                                 "b-1:b-1.png,b-2:b-2.png,page:page.png none"], (r.stdout, r.stderr))
+        self.assertEqual(len(lines), 5, (r.stdout, r.stderr))
+        exact, inexact, early, never, still = lines
+        # The exact frame that met the colour is the page: no wait, no shot.
+        self.assertEqual(exact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,copy:b-3.png")
+        # Otherwise a wait poll that sees the colour comes after the burst's
+        # last look and before the page is shot.
+        self.assertEqual(inexact, "save:b-1,look:False,save:b-2,look:False,save:b-3,look:True,look:True,save:page")
+        self.assertEqual(early, "save:b-1,look:False,save:b-2,look:False,look:True,save:page")
+        # A colour that never shows times out and the page is never shot.
+        self.assertTrue(never.endswith(",threw") and "save:page" not in never, never)
+        # Frames 1 s apart, all the same: held 2 s at the third.
+        self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png")
+
+    def test_the_second_repair_phase_is_looked_for_only_after_the_first(self):
+        # A diagnosing frame before the first phase let the record say "then"
+        # for an order the shots did not show (review, 2026-11-19).
+        sc = load("host_session_boot", INV / "host" / "session-boot.py")
+        names = ["repair-10", "repair-3", "repair-5", "boot-1", "repair-x", "repair-12"]
+        self.assertEqual(sc.burst_frames(names, "repair"), ["repair-3", "repair-5", "repair-10", "repair-12"])
+        self.assertEqual(sc.burst_frames(names, "repair", "repair-5"), ["repair-10", "repair-12"])
+        src = (INV / "host" / "session-boot.py").read_text(encoding="utf-8")
+        self.assertIn('frames("repair", lambda i: diagnosing(i, mark), first=True, after=got[0])', src)
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a
@@ -3137,7 +3158,8 @@ class HostCapture(unittest.TestCase):
         # The stop error comes before Startup Repair: after a failed repair the
         # recovery pages change their layout, and a key path from the first
         # pages turned the VM off (2026-11-18).
-        self.assertLess(ops.index("nmi"), [s.get("name") for s in sc.STEPS].index("automatic-repair"))
+        takes = [s.get("as") or s.get("name") for s in sc.STEPS]          # a burst's as is the shot it takes
+        self.assertLess(ops.index("nmi"), takes.index("automatic-repair"))
 
     def test_the_first_sign_in_text_skips_the_desktop_and_spans_every_later_line(self):
         sc = load("host_session_secure", INV / "host" / "session-secure.py")

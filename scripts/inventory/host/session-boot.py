@@ -168,8 +168,10 @@ STEPS = [
     # burst keeps frames until that page holds still, so a repair that starts
     # late is still on them; a settle after a fixed burst kept none (review,
     # 2026-11-18).
-    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 0, "cadence": 3, "seconds": 240, "still": 5},
-    shot("automatic-repair"),
+    # The exact frame that held still is the failure page's shot (review,
+    # 2026-11-19: it was shot again, the same pixels).
+    key(ENTER), {"op": "burst", "name": "repair", "count": REPAIR_BURST, "every": 0, "cadence": 3, "seconds": 240, "still": 5,
+                 "as": "automatic-repair"},
     # After a failed repair the first page is More recovery options: Continue,
     # Quick machine recovery and Troubleshoot down the first column, Turn off
     # your PC beside Continue.
@@ -228,6 +230,15 @@ def band(img, region, test):
     while end < h and (lit_rows[end] or True in lit_rows[end + 1:end + 2]):
         end += 1
     return (x, y + top, w, end - top)
+
+
+def burst_frames(names, prefix, after=None):
+    """The frames of the burst named prefix among names, in burst order;
+    with after, only those after that frame."""
+    def number(n):
+        return int(n[len(prefix) + 1:])
+    got = sorted((n for n in names if n.startswith(prefix + "-") and n[len(prefix) + 1:].isdigit()), key=number)
+    return [n for n in got if after is None or number(n) > number(after)]
 
 
 def frames_word(n):
@@ -441,14 +452,13 @@ def records(shots, build, taken=None):
             raise core.Incomplete(f"{name}: drawn at 1920x1080, where the firmware's own mode was expected")
         return img
 
-    def frames(prefix, test, exact=True, first=False):
+    def frames(prefix, test, exact=True, first=False, after=None):
         """The burst frames whose screen passes test, in order. Geometry is
         measured only from exact frames (the mode held across the shot); a
         frame taken while the mode changed is skipped unless `exact` is False,
         for a caller that reads only its time. With `first`, only the first
-        match is looked for."""
-        names = sorted((n for n in shots if n.startswith(prefix + "-") and n[len(prefix) + 1:].isdigit()),
-                       key=lambda n: int(n[len(prefix) + 1:]))
+        match is looked for; with `after`, only frames after that one."""
+        names = burst_frames(shots, prefix, after)
         got = []
         for n in names:
             if (not exact or taken.get(n, {}).get("exact")) and test(shots[n]):
@@ -721,10 +731,11 @@ def records(shots, build, taken=None):
         raise core.Incomplete("repair burst: no Please wait frame (the logo and a label)")
     img = shots[got[0]]
     mark, label = repair_label(img, boot_logo)
-    # The second phase is published only when a frame shows it: at the
-    # display's mode, the logo again with a spinner and a label below
-    # (review, 2026-11-18: it was claimed from the first phase alone).
-    later = frames("repair", lambda i: diagnosing(i, mark), first=True)
+    # The second phase is published only when a frame after the first
+    # phase shows it: at the display's mode, the logo again with a spinner
+    # and a label below (review, 2026-11-18: it was claimed from the first
+    # phase alone; 2026-11-19: from a frame before it).
+    later = frames("repair", lambda i: diagnosing(i, mark), first=True, after=got[0])
     then = ", then, at the display's mode, the logo again with a spinner and a label below it" if later else ""
     rec("repair-progress", "state", "Startup Repair progress", "recovery-advanced", openedBy="Startup Repair",
         behaviour=f"A restart to the firmware's logo with a short label {place(img, label)}{then}, on black.")
