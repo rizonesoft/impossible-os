@@ -42,7 +42,7 @@ claude = ["astra"]
 [schedule]
 policy = "four-pass"
 pass_cap = 55
-no_progress_cap = 5
+no_progress_cap = 3
 blocking = ["P1", "P2"]
 
 [schedule.plan]
@@ -57,8 +57,16 @@ lenses = ["optimization"]
 [schedule.completion]
 lenses = ["plan-delivery", "record"]
 
+# Operator decision 2026-11-19: a reconciliation verifies that the named gaps are closed and the repair broke
+# nothing. Edge cases are hunted in the round; only kernel and boot repairs get the adversarial lenses again
+# (the conditional entry below). no_progress_cap went from 5 to 3 the same day.
 [schedule.reconciliation]
-lenses = ["adversarial", "integration", "plan-delivery", "record"]
+lenses = ["plan-delivery", "record"]
+
+[[schedule.conditional]]
+lenses = ["adversarial", "integration"]
+passes = ["reconciliation"]
+paths = ["src/kernel/", "include/kernel/", "src/boot/"]
 
 [[schedule.conditional]]
 lenses = ["concurrency", "bare-metal"]

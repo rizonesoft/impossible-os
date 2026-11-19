@@ -19,8 +19,10 @@ def _pin(text=GOOD):
 def test_the_repository_pin_holds():
     pin = _pin()
     assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6.2-astra")
-    assert (pin["pass_cap"], pin["no_progress_cap"]) == (55, 5)
+    assert (pin["pass_cap"], pin["no_progress_cap"]) == (55, 3)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
+    # A reconciliation verifies the named gaps; the adversarial lenses return only for kernel and boot repairs.
+    assert pin["lenses"]["reconciliation"] == ("plan-delivery", "record")
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
     assert {"adversarial", "consistency", "test-coverage"} <= set(pin["lenses"]["round"])
     # Performance is its own pass, never a lens of the round (the 2026-11-11 replay).
@@ -42,8 +44,8 @@ def test_the_repository_pin_holds():
     ("pass_cap = 55", 'pass_cap = "55"'),
     ("pass_cap = 55", "pass_cap = true"),
     ("pass_cap = 55\n", ""),
-    ("no_progress_cap = 5", "no_progress_cap = 56"),
-    ("no_progress_cap = 5", "no_progress_cap = 5\nseverity_stop_after = 2"),
+    ("no_progress_cap = 3", "no_progress_cap = 56"),
+    ("no_progress_cap = 3", "no_progress_cap = 3\nseverity_stop_after = 2"),
     ('lenses = ["plan"]', 'lenses = ["plan", "plan"]'),
     ('lenses = ["plan"]', 'lenses = ["made-up"]'),
     ('lenses = ["plan"]', "lenses = []"),
@@ -234,9 +236,9 @@ def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, caps
     import review_round_guard as guard
     monkeypatch.delenv("OVERNIGHT_REVIEW_ROUND_CEILING", raising=False)
     monkeypatch.delenv("OVERNIGHT_REVIEW_NOPROGRESS_CAP", raising=False)
-    assert (guard._noprogress_cap(), guard._ceiling()) == (5, 55)
+    assert (guard._noprogress_cap(), guard._ceiling()) == (3, 55)
     other = tmp_path / "reviewers.toml"
-    other.write_text(GOOD.replace("pass_cap = 55", "pass_cap = 33").replace("no_progress_cap = 5", "no_progress_cap = 2"))
+    other.write_text(GOOD.replace("pass_cap = 55", "pass_cap = 33").replace("no_progress_cap = 3", "no_progress_cap = 2"))
     assert guard._pin_caps(other) == (2, 33)
     # One call can still override, and a broken pin keeps the backstop alive and says so.
     monkeypatch.setenv("OVERNIGHT_REVIEW_ROUND_CEILING", "7")
