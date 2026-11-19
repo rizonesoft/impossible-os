@@ -3596,6 +3596,24 @@ class HostCapture(unittest.TestCase):
         self.assertEqual({k: v for k, v in owners.items() if len(v) > 1}, {})
         self.assertEqual({f for (s, _), fs in owners.items() for f in fs if s == "session"}, {"boot", "secure", "setup"})
 
+    def test_a_spinner_screen_is_measured_from_the_first_frame_with_its_dots(self):
+        # The rebuilt VM's restarting shot, one second after the click, held
+        # the label alone (2026-11-20); the burst's later frames have the dots.
+        sc = load("host_session_secure", INV / "host" / "session-secure.py")
+        w, h = 1920, 1080
+
+        def frame(*boxes):
+            data = bytearray(bytes(w * h * 3))
+            for x, y, bw, bh in boxes:
+                for yy in range(y, y + bh):
+                    data[(yy * w + x) * 3:(yy * w + x + bw) * 3] = b"\xff" * (bw * 3)
+            return (w, h, bytes(data))
+        word, dot = (907, 585, 106, 23), (950, 520, 8, 8)
+        self.assertEqual(sorted(sc.spinner_frame([frame(word), frame(word, dot), frame()], "restarting")), sorted([word, dot]))
+        with self.assertRaisesRegex(sc.core.Incomplete, r"restarting: no frame shows a spinner and its text \(pieces per frame: \[1, 0\]\)"):
+            sc.spinner_frame([frame(word), frame()], "restarting")
+        self.assertEqual(sc.SHOTS[-sc.SPIN_BURST:], [f"restarting-{i}" for i in range(1, sc.SPIN_BURST + 1)])
+
     def test_the_first_sign_in_text_skips_the_desktop_and_spans_every_later_line(self):
         sc = load("host_session_secure", INV / "host" / "session-secure.py")
         w, h = 400, 40

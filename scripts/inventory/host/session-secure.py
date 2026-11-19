@@ -86,6 +86,7 @@ def click(at):
 
 
 FIRST_BURST = 12
+SPIN_BURST = 4     # frames of the signing-out and restarting screens, 0.7 s apart
 
 
 def elevate(command, name):
@@ -131,21 +132,24 @@ STEPS = [
     # The credentials form of the elevation prompt, as other (a standard user).
     *elevate("cmd", "elevation-credentials"), key(ESC), wait(3), key(ESC), wait(1),
     # Sign out, then back in as ref.
-    {"op": "cad"}, wait(4), click((925, 474)), {"op": "burst", "name": "signing-out", "count": 4, "every": 0.7},
+    {"op": "cad"}, wait(4), click((925, 474)), {"op": "burst", "name": "signing-out", "count": SPIN_BURST, "every": 0.7},
     {"op": "settle", "sec": 3, "timeout": 90}, key(SPACE), wait(3), click(SECOND_ROW), wait(3),
     {"op": "secret"}, wait(2), key(ENTER), wait(12), {"op": "reconnect"},
     # A program that holds shut down, then Restart from the shut down dialog.
     {"op": "guest", "cmd": "cmd /c start \"\" C:\\ios\\blocker.exe"}, wait(4),
     chord(WIN, ord("D")), wait(2), chord(ALT, F4), wait(3), {"op": "text", "text": "r"}, wait(1), key(ENTER),
     wait(5), shot("apps-preventing"),
-    click((749, 756)), wait(1), shot("restarting"),
+    # A burst, as signing-out: one shot a second after the click caught the
+    # label before the spinner drew (2026-11-20).
+    click((749, 756)), {"op": "burst", "name": "restarting", "count": SPIN_BURST, "every": 0.7},
 ]
 
 SHOTS = ["lock", "secure", "typed", "wrong-password", "power-menu", "accessibility", "network-flyout", "sign-in-other",
          "locked-account", "password-expired", "change-password", "password-changed",
          *[f"first-sign-in-{i}" for i in range(1, FIRST_BURST + 1)], "signed-in-desktop", "security-options", "elevation-consent", "elevation-details",
-         "elevation-unknown", "elevation-credentials", "shut-down-dialog", "shut-down-list", "signing-out-1",
-         "apps-preventing", "restarting"]
+         "elevation-unknown", "elevation-credentials", "shut-down-dialog", "shut-down-list",
+         *[f"signing-out-{i}" for i in range(1, SPIN_BURST + 1)], "apps-preventing",
+         *[f"restarting-{i}" for i in range(1, SPIN_BURST + 1)]]
 
 
 def white(p):
@@ -254,6 +258,21 @@ def disc(img, cx, cy, what):
     if abs(size[0] - size[1]) > 2 or size[0] < 100:
         raise core.Incomplete(f"{what}: the account picture is {size[0]}x{size[1]}, not a disc")
     return (left, top, size[0], size[1])
+
+
+def spinner_frame(imgs, name):
+    """The ink boxes of the first frame that shows a spinner above its text
+    (two pieces or more): the spinner's dots can all be between draws, and the
+    label comes up before them (restarting, 2026-11-20)."""
+    seen = []
+    for img in imgs:
+        # The text is the lowest piece; the spinner is every dot above it,
+        # however far apart its animation has spread them.
+        got = core.ink_boxes(img, (700, 400, 520, 300), white, 12)
+        if len(got) >= 2:
+            return got
+        seen.append(len(got))
+    raise core.Incomplete(f"{name}: no frame shows a spinner and its text (pieces per frame: {seen})")
 
 
 def records(shots, build, taken=None):
@@ -470,13 +489,8 @@ def records(shots, build, taken=None):
     rec("apps-preventing.title", "control", "Title", ap, controlType="text", bounds=title)
     rec("apps-preventing.restart-anyway", "control", "Restart anyway button", ap, controlType="button", bounds=restart_anyway)
     rec("apps-preventing.cancel", "control", "Cancel button", ap, controlType="button", bounds=cancel)
-    for rid, label, shotname, length in (("signing-out", "Signing out", "signing-out-1", 11), ("restarting", "Restarting", "restarting", 10)):
-        img = shots[shotname]
-        # The text is the lowest piece; the spinner is every dot above it,
-        # however far apart its animation has spread them.
-        got = core.ink_boxes(img, (700, 400, 520, 300), white, 12)
-        if len(got) < 2:
-            raise core.Incomplete(f"{shotname}: {len(got)} pieces where a spinner and its text were expected: {got}")
+    for rid, label, length in (("signing-out", "Signing out", 11), ("restarting", "Restarting", 10)):
+        got = spinner_frame([shots[f"{rid}-{i}"] for i in range(1, SPIN_BURST + 1)], rid)
         *dots, text = sorted(got, key=lambda b: b[1] + b[3])
         spin = union(*dots)
         st = rec(rid, "state", label, root, bounds=screen,
