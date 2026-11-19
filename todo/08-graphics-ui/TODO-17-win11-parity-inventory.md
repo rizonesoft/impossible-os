@@ -74,7 +74,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |   6   | §6 Record Dispositions and Consistency Ledger                                               | §1                          |  [x]   |
 | 💎  |   7   | §7 Coverage Report and Ownership Check                                                      | §1, §5, §6                  |  [x]   |
 | 💎  |   8   | §8 Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts                            | §3, §19, §20, §22           |  [x]   |
-| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                          |  [ ]   |
+| 💎  |   9   | §9 Shell Surfaces Inventory: Windows, Session Screens and Overlays                          | §8                          |  [x]   |
 | 💎  |  10   | §10 Settings Inventory: Frame, System, Devices, Network and Personalization                 | §3, §19, §20, §21, §23, §27 |  [ ]   |
 | 💎  |  11   | §11 Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update | §10                         |  [ ]   |
 | 💎  |  12   | §12 File Explorer and Common Dialogs Inventory                                              | §9                          |  [ ]   |
@@ -478,6 +478,9 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [x] Commit: one commit per surface file; `inventory: boot, stop and recovery screens captured from the host` also republished `secure.json` and `setup.json`
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.
+
+> **Verified:** 2026-11-19 | commit `a3d17b0d8` | 7/9 items, the other 2 parked on bare metal by the section's Needs line | 251 tests OK, `check-inventory.py` 0 errors over 2838 records, `inventory-report.py --check` exit 0 and `--campaign` no longer lists session/boot, `session/boot.json` 113 records and 78 shots, captured live at 03:32 on 26300.9974; owners are §15's (97 boot records open in `--owners`)
+> **Quality reviewed:** 2026-11-19 | Codex: plan, round to the 55-pass cap, performance after each round, completion, reconciliation 2x | every P1 and P2 fixed or rejected with evidence, 0 open; the completion gaps beyond this walk filed as §28 | scope: N/A (host tooling, no kernel surface)
 
 ---
 
