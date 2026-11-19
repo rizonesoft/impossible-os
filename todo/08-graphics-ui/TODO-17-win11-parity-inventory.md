@@ -1247,7 +1247,7 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Take a checkpoint at each branch point, so each branch is captured from its own restore
 - [ ] Commit: `"inventory: recovery branches captured"`
 
-**Test checkpoint:** `check-inventory.py --surface session` passes; each branch page and the automatic entry's pages have a record and a shot in `boot.json`, and no reset or repair has changed the restored VM.
+**Test checkpoint:** `check-inventory.py --surface session` passes; each branch page and each of the automatic entry's pages has a `page` record in `session/boot.json` and a `session` state of its own in `shots.json`, whose PNG `capture.py --verify-shots` confirms; no reset or repair has changed the restored VM.
 
 ---
 
