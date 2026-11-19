@@ -654,7 +654,7 @@ def records(shots, build, taken=None):
     rec("boot-manager.stop-countdown", "gesture", "Stop the countdown", bm,
         behaviour="A key press (Down in this walk) removes the countdown line; the menu then waits for a choice.")
     for vk, lab, beh in (("Up, Down", "Move between entries", "Arrow keys move the focus up and down the tiles."),
-                         ("Tab", "Focus the options link", "Tab moves the focus from the tiles to the link and back."),
+                         ("Tab", "Focus the options link", "Tab moves the focus from the tiles to the options link."),
                          ("Enter", "Start the focused entry", "Enter starts the focused entry or opens the focused link.")):
         rec(f"boot-manager.{lab.lower().replace(' ', '-')}", "shortcut", lab, bm, shortcut=vk, behaviour=beh)
 

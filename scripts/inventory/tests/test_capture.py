@@ -2374,6 +2374,31 @@ class Serial(unittest.TestCase):
         self.assertEqual(sum("-Stop" in c for c in calls), 1)
         self.assertIn("interrupted; ref-run: ios-win11-ref is off", out.getvalue())
 
+    def test_an_interrupt_before_ref_run_starts_leaves_the_vm_alone(self):
+        # An interrupt while staging or converting a path restored the
+        # checkpoint of a VM no run had touched (review, 2026-11-19).
+        for where in ("copy", "winpath"):
+            calls = []
+            real = capture.subprocess.run, capture.WORK, capture.winpath, capture.shutil.copy
+
+            def run(cmd, **kw):
+                calls.append(cmd)
+                return capture.subprocess.CompletedProcess(cmd, 0, "", "")
+
+            def stop(*_):
+                raise KeyboardInterrupt
+            win = (lambda p: stop() if str(p).endswith("-in") else str(p)) if where == "winpath" else str
+            capture.subprocess.run, capture.WORK, capture.winpath = run, self.tmp, win
+            if where == "copy":
+                capture.shutil.copy = stop
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
+                    capture.ref_run("x", {"a.txt": __file__}, "cmd", 10)
+            finally:
+                capture.subprocess.run, capture.WORK, capture.winpath, capture.shutil.copy = real
+            self.assertEqual(calls, [], where)
+            self.assertEqual(list(self.tmp.glob("x-*-in")), [], where)
+
     def test_a_machine_profile_run_is_restored_to_its_own_checkpoint(self):
         # Recovery restored clean after a profile-<id> run (review, 2026-11-18).
         calls = []
@@ -3294,6 +3319,25 @@ class HostCapture(unittest.TestCase):
         self.assertEqual(stop.call_args[0][1], "pre-oobe")
         self.assertIn("interrupted; restored", said.getvalue())
         self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
+
+    def test_an_interrupt_before_ref_host_starts_leaves_the_vm_alone(self):
+        # An interrupt or timeout while wslpath converted a path ran the
+        # checkpoint recovery for a walk that never started (review, 2026-11-19).
+        for exc in (KeyboardInterrupt(), self.hc.subprocess.TimeoutExpired("wslpath", 1)):
+            seen = []
+
+            def win(p, exc=exc, seen=seen):       # only the first conversion fails
+                seen.append(p)
+                if len(seen) == 1:
+                    raise exc
+                return str(p)
+            with mock.patch.object(self.hc.subprocess, "run") as run, mock.patch.object(self.hc.capture, "WORK", self.tmp), \
+                    mock.patch.object(self.hc.capture, "winpath", win), \
+                    mock.patch.object(self.hc.capture, "stop_vm", return_value="restored") as stop, \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(type(exc)):
+                self.hc.run_host("x", [], "pre-oobe", 10, session=False)
+            self.assertEqual((run.call_count, stop.call_count), (0, 0), exc)
+            self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
 
     def test_the_stop_error_is_timed_to_the_first_exact_frame_without_it(self):
         # An inexact frame still showing the stop error was taken as its end,

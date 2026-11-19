@@ -80,20 +80,23 @@ def run_host(label, steps, checkpoint, timeout, session=True):
     plan.write_text(json.dumps(steps, indent=1), encoding="utf-8")
     runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
     try:
-        r = subprocess.run(runner + [capture.winpath(HERE / "ref-host.ps1"), "-Steps", capture.winpath(plan),
-                                     "-Out", capture.winpath(out), "-Checkpoint", checkpoint] + ([] if session else ["-NoSession"]),
-                           capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
-    except subprocess.TimeoutExpired:
-        # -Stop restores the checkpoint too: the killed walk's teardown never ran.
+        # Every path is converted before ref-host starts: an interrupt while
+        # wslpath runs restored the checkpoint of a VM no walk had touched
+        # (review, 2026-11-19). Only a launched ref-host is recovered.
+        argv = runner + [capture.winpath(HERE / "ref-host.ps1"), "-Steps", capture.winpath(plan),
+                         "-Out", capture.winpath(out), "-Checkpoint", checkpoint] + ([] if session else ["-NoSession"])
         stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
-        print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop, checkpoint))
-        return out, 3
-    except KeyboardInterrupt:
-        # subprocess.run has killed ref-host, whose finally may not have run, so
-        # the boot walk's fixture could outlive it (review, 2026-11-18).
-        stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
-        print("host-capture: interrupted; " + capture.stop_vm(stop, checkpoint))
-        raise
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
+        except subprocess.TimeoutExpired:
+            # -Stop restores the checkpoint too: the killed walk's teardown never ran.
+            print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop, checkpoint))
+            return out, 3
+        except KeyboardInterrupt:
+            # subprocess.run has killed ref-host, whose finally may not have run, so
+            # the boot walk's fixture could outlive it (review, 2026-11-18).
+            print("host-capture: interrupted; " + capture.stop_vm(stop, checkpoint))
+            raise
     finally:
         plan.unlink(missing_ok=True)
     if out.is_dir():         # ref-host refuses a folder that is not empty, so this comes after

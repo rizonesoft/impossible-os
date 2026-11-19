@@ -193,22 +193,26 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = WORK / f"{label}-{stamp}-in"
     out = WORK / f"{label}-{stamp}"
-    runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1")]
     try:
+        # Staging and every path conversion come before ref-run starts: an
+        # interrupt during either restored the checkpoint of a VM no run had
+        # touched (review, 2026-11-19). Only a launched ref-run is recovered.
+        runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1")]
         for rel, src in files.items():
             (stage / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, stage / rel)
-        r = subprocess.run(runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
-                                     "-Checkpoint", checkpoint, "-Command", cmd],
-                           capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
-    except subprocess.TimeoutExpired:
-        # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
-        print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner, checkpoint))
-        return out, 3
-    except KeyboardInterrupt:
-        # subprocess.run has killed the runner, whose own finally may not run.
-        print(f"{who}: interrupted; " + stop_vm(runner, checkpoint))
-        raise
+        argv = runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
+                         "-Checkpoint", checkpoint, "-Command", cmd]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
+        except subprocess.TimeoutExpired:
+            # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
+            print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner, checkpoint))
+            return out, 3
+        except KeyboardInterrupt:
+            # subprocess.run has killed the runner, whose own finally may not run.
+            print(f"{who}: interrupted; " + stop_vm(runner, checkpoint))
+            raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     print(r.stdout.replace("\r", "").strip())
