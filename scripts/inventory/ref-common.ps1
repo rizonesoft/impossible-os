@@ -253,14 +253,19 @@ function Test-RefIdentity($Session, [string]$Name) {
 # The notes belong to the VM: a rebuild makes a new VM, which has none until a
 # session verifies it. One checkpoint tree is one install, so the build the
 # guest reported in clean is pre-oobe's too.
+# The note is one ios-build= line; any other lines are the operator's and are
+# kept as they are (review, 2026-11-19: the whole field was replaced).
 function Set-RefBuildNote([string]$Name, [string]$Build) {
-    if ("$((Get-VM -Name $Name).Notes)" -ne "ios-build=$Build") { Set-VM -Name $Name -Notes "ios-build=$Build" }
+    $notes = "$((Get-VM -Name $Name).Notes)"
+    $lines = @($notes -split "\r?\n" | Where-Object { $_ -notmatch '^ios-build=' })
+    $want = (@("ios-build=$Build") + @($lines | Where-Object { $_ -ne '' })) -join "`n"
+    if ($notes -ne $want) { Set-VM -Name $Name -Notes $want }
 }
 
 function Test-RefBuildNote([string]$Name) {
     $want = (Get-RefIdentity).build
     $note = "$((Get-VM -Name $Name).Notes)"
-    if ($note -notmatch '^ios-build=(\S+)$') { return @("$Name has no verified build in its notes; a capture from clean records it") }
+    if ($note -notmatch '(?m)^ios-build=(\S+)\r?$') { return @("$Name has no verified build in its notes; a capture from clean records it") }
     if ($Matches[1] -ne $want) { return @("$Name was verified as build $($Matches[1]), reference.json says $want") }
     return @()
 }

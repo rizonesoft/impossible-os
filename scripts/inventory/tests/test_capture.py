@@ -1439,6 +1439,22 @@ class Profile(unittest.TestCase):
                                  "x was verified as build 26300.9000, reference.json says 26300.9974",
                                  "sets=2", "problems=0"], out.stderr)
 
+    def test_the_build_note_keeps_the_operators_own_notes(self):
+        # A match replaced the whole Notes field (review, 2026-11-19).
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Set-RefBuildNote", "Test-RefBuildNote"]))
+              + "function Get-RefIdentity { [pscustomobject]@{ build = '26300.9974' } }; "
+              "$script:notes = \"reference VM`nkeep this\"; $script:sets = 0; function Get-VM { [pscustomobject]@{ Notes = $script:notes } }; "
+              "function Set-VM { param($Name, $Notes) $script:notes = $Notes; $script:sets++ }; "
+              "Set-RefBuildNote 'x' '26300.9000'; ($script:notes -split \"`n\") -join '|'; @(Test-RefBuildNote 'x') -join '|'; "
+              "Set-RefBuildNote 'x' '26300.9974'; ($script:notes -split \"`n\") -join '|'; "
+              "Set-RefBuildNote 'x' '26300.9974'; 'sets=' + $script:sets; 'problems=' + @(Test-RefBuildNote 'x').Count")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines, ["ios-build=26300.9000|reference VM|keep this",
+                                 "x was verified as build 26300.9000, reference.json says 26300.9974",
+                                 "ios-build=26300.9974|reference VM|keep this", "sets=2", "problems=0"], out.stderr)
+
     def test_a_teardown_restore_leaves_the_vm_not_running(self):
         # Restore-RefCheckpoint started the VM, so both teardowns released the
         # lock with the guest running (review, 2026-11-18). A checkpoint taken
