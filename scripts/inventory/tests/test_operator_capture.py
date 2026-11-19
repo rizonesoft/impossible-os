@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -360,6 +361,14 @@ class Host(unittest.TestCase):
         self.assertIn("frame.ContentSize", helper)
         self.assertIn("op.Cancel()", helper)
         self.assertLess(helper.index("using (frame)"), helper.index("CreateCopyFromSurfaceAsync"))
+
+    def test_pages_open_after_mouse_input(self):
+        # A window opened while the keyboard was the last input draws a keyboard
+        # focus ring the reference does not have; placing the cursor is no input.
+        host = oc.HOST_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("SetCursorPos", host)
+        for opened in [m.start() for m in re.finditer(r"Start-Process \$Uri\[\$page\]", host)]:
+            self.assertIn("[W]::PointerTo(", host[max(0, opened - 200):opened])
 
     def test_saved_network_names_are_personal(self):
         with tempfile.TemporaryDirectory() as d:

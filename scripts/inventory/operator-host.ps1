@@ -44,7 +44,22 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
+  [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public MOUSEINPUT mi; }
+  [DllImport("user32.dll")] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  // The pointer moved to (x, y) as real mouse input, not only placed there: the
+  // last input is then the mouse, so a window opened after it draws no keyboard
+  // focus ring (the reference is captured with no keyboard in use).
+  public static void PointerTo(int x, int y) {
+    int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77), vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);   // SM_*VIRTUALSCREEN
+    var i = new INPUT[1];
+    i[0].type = 0;   // INPUT_MOUSE
+    i[0].mi.dx = (int)(((long)(x - vx) * 65535) / Math.Max(1, vw - 1));
+    i[0].mi.dy = (int)(((long)(y - vy) * 65535) / Math.Max(1, vh - 1));
+    i[0].mi.flags = 0x0001 | 0x4000 | 0x8000;   // MOVE | VIRTUALDESK | ABSOLUTE
+    if (SendInput(1, i, Marshal.SizeOf(typeof(INPUT))) != 1) throw new System.ComponentModel.Win32Exception();
+  }
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT p, uint f);
   [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr h, int t, out uint x, out uint y);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);
@@ -469,6 +484,8 @@ try {
     $first = $true
     foreach ($page in $Pages) {
         if (-not $Uri.ContainsKey($page)) { throw "unknown page $page" }
+        # Mouse input before the window opens, so it opens without a keyboard focus ring.
+        [W]::PointerTo($mon.X + $mon.Width - 2, $mon.Y + $mon.Height - 2)
         Start-Process $Uri[$page]
         $win = Settings-Window
         $h = [IntPtr]$win.Current.NativeWindowHandle
@@ -495,6 +512,7 @@ try {
             $win.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
             # This window gone (already gone is fine), so the window found next is the new one.
             Until 'close for the reopen' { -not [W]::IsWindow($h) }
+            [W]::PointerTo($mon.X + $mon.Width - 2, $mon.Y + $mon.Height - 2)
             Start-Process $Uri[$page]
             $win = Settings-Window
             $h = [IntPtr]$win.Current.NativeWindowHandle
@@ -503,7 +521,7 @@ try {
         Wait-Page $win $page
         [W]::SetForegroundWindow($h) | Out-Null
         # The pointer off the window: no hover state in the shot.
-        [W]::SetCursorPos($mon.X + $mon.Width - 2, $mon.Y + $mon.Height - 2) | Out-Null
+        [W]::PointerTo($mon.X + $mon.Width - 2, $mon.Y + $mon.Height - 2)
         # Its lists fill in after it opens: read until the content stops changing.
         $c = Content $win
         $deadline = (Get-Date).AddSeconds($WindowWait)
