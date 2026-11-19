@@ -353,7 +353,13 @@ class Host(unittest.TestCase):
         host = oc.HOST_SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn("CopyFromScreen", host)
         self.assertIn("[WindowCapture]::Capture(", host)
-        self.assertIn("public static byte[] Capture(", (oc.HERE / "window-capture.cs").read_text(encoding="utf-8"))
+        helper = (oc.HERE / "window-capture.cs").read_text(encoding="utf-8")
+        self.assertIn("public static byte[] Capture(", helper)
+        # A frame taken mid-resize is refused (its masks would be off), and a
+        # copy past its deadline is cancelled with its frame released.
+        self.assertIn("frame.ContentSize", helper)
+        self.assertIn("op.Cancel()", helper)
+        self.assertLess(helper.index("using (frame)"), helper.index("CreateCopyFromSurfaceAsync"))
 
     def test_saved_network_names_are_personal(self):
         with tempfile.TemporaryDirectory() as d:

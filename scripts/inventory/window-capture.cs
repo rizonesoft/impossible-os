@@ -69,28 +69,41 @@ public static class WindowCapture {
           System.Threading.Thread.Sleep(20);
         }
       }
-      var op = SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied);
-      while (op.Status == AsyncStatus.Started) {
-        if (DateTime.UtcNow > until) throw new Exception("the frame was not copied within " + timeoutMs + " ms");
-        System.Threading.Thread.Sleep(10);
-      }
-      if (op.Status != AsyncStatus.Completed) throw new Exception("the frame copy ended " + op.Status);
-      using (frame)
-      using (var bmp = op.GetResults())
-      using (var buf = bmp.LockBuffer(BitmapBufferAccessMode.Read))
-      using (var reference = buf.CreateReference()) {
-        width = bmp.PixelWidth; height = bmp.PixelHeight;
-        if (width != bounds.Right - bounds.Left || height != bounds.Bottom - bounds.Top)
-          throw new Exception("the frame is " + width + "x" + height + ", the window " + (bounds.Right - bounds.Left) + "x" + (bounds.Bottom - bounds.Top));
-        var plane = buf.GetPlaneDescription(0);
-        var bytes = new byte[width * height * 4];
-        unsafe {
-          byte* data; uint capacity;
-          ((IMemoryBufferByteAccess)reference).GetBuffer(out data, out capacity);
-          if ((long)plane.StartIndex + (long)plane.Stride * (height - 1) + width * 4 > capacity) throw new Exception("the frame buffer is smaller than its planes");
-          for (int y = 0; y < height; y++) Marshal.Copy((IntPtr)(data + plane.StartIndex + (long)plane.Stride * y), bytes, y * width * 4, width * 4);
+      using (frame) {
+        // The frame's own content size, the window's frame and the copied surface
+        // must all agree: a window resized while the frame was taken would put the
+        // tree's masks off the pixels they cover.
+        int fw = bounds.Right - bounds.Left, fh = bounds.Bottom - bounds.Top;
+        var content = frame.ContentSize;
+        if (content.Width != fw || content.Height != fh)
+          throw new Exception("the frame holds " + content.Width + "x" + content.Height + ", the window is " + fw + "x" + fh);
+        var op = SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied);
+        try {
+          while (op.Status == AsyncStatus.Started) {
+            if (DateTime.UtcNow > until) { op.Cancel(); throw new Exception("the frame was not copied within " + timeoutMs + " ms"); }
+            System.Threading.Thread.Sleep(10);
+          }
+          if (op.Status != AsyncStatus.Completed) throw new Exception("the frame copy ended " + op.Status);
+          using (var bmp = op.GetResults())
+          using (var buf = bmp.LockBuffer(BitmapBufferAccessMode.Read))
+          using (var reference = buf.CreateReference()) {
+            width = bmp.PixelWidth; height = bmp.PixelHeight;
+            if (width != fw || height != fh)
+              throw new Exception("the copied frame is " + width + "x" + height + ", the window " + fw + "x" + fh);
+            var plane = buf.GetPlaneDescription(0);
+            var bytes = new byte[width * height * 4];
+            unsafe {
+              byte* data; uint capacity;
+              ((IMemoryBufferByteAccess)reference).GetBuffer(out data, out capacity);
+              if ((long)plane.StartIndex + (long)plane.Stride * (height - 1) + width * 4 > capacity) throw new Exception("the frame buffer is smaller than its planes");
+              for (int y = 0; y < height; y++) Marshal.Copy((IntPtr)(data + plane.StartIndex + (long)plane.Stride * y), bytes, y * width * 4, width * 4);
+            }
+            return bytes;
+          }
+        } finally {
+          // Closed only once it has ended: a cancelled copy settles on its own.
+          if (op.Status != AsyncStatus.Started) op.Close();
         }
-        return bytes;
       }
     }
   }
