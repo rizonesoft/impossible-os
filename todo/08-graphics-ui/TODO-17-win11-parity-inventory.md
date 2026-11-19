@@ -94,6 +94,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  26   | §26 Service-State Fixtures: Network Switch and Page States                                  | §2, §20, §23                |  [ ]   |
 | 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [x]   |
 | 💎  |  28   | §28 Recovery Branches: Reset This PC and Automatic Repair                                   | §9                          |  [ ]   |
+| 💎  |  29   | §29 Host Captures: GPU Preferences and the Radio Flyouts                                    | §8, §27                     |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -543,8 +544,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Touchpad: every gesture group (taps, scroll and zoom, three-finger, four-finger, advanced gestures) with each list's fixed choices
   - Pen, Touch, AutoPlay and USB: every switch and list
   - Reconcile against the `settings` baseline
-    - A page absent on the VM because the hardware is absent is recorded as hardware-gated in `REFERENCE.md` and reached through its device stand-in of §19, or the physical capture of §19 where none exists
-  - Done when: `check-inventory.py --surface settings` passes; the touchpad gesture lists carry their fixed choices as `menuItem` records, and every hardware-gated page has records and a shot from §19's stand-in or physical capture.
+    - A page absent on the VM because the hardware is absent is recorded as hardware-gated in `REFERENCE.md` and reached through its device stand-in of §21, or the host capture of §27 and §29 (`settings/host.json`) where none exists
+  - Done when: `check-inventory.py --surface settings` passes; the touchpad gesture lists carry their fixed choices as `menuItem` records, and every hardware-gated page has records and a shot from §21's stand-in or the host capture in `settings/host.json`.
 - [ ] Settings: Network and Internet: writes `docs/design/inventory/settings/network.json`
   - The category page: the status header (connection name, properties, data usage) and the list of pages
   - Wi-Fi: the switch, show available networks, manage known networks and a network's page, hardware properties, random hardware addresses
@@ -1217,9 +1218,12 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
   - Its differences from the profile (three monitors, en-ZA format, the wallpaper tint in Mica) are stated on the surface record
 - [x] Commit: `"inventory: host captures"`
 
-**Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
+**Test checkpoint:** the `settings` `host` rows bluetooth, camera, graphics and wifi of `expected.json` have records and a screenshot taken on the host at the build `reference.json` names.
 
 > **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (55 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
+
+- -> XREF: §29 -- the host captures this section does not cover: the GPU preference states of the Graphics page and the Quick Settings Wi-Fi and Bluetooth flyouts (item: "Graphics GPU preferences captured" in §29)
+- -> XREF: §12 -- publication and swap recovery into the shared shot store still run without a store-wide lock across checkouts (item: "Shared shot-store lock" in §12)
 
 ---
 
@@ -1242,6 +1246,30 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Commit: `"inventory: recovery branches captured"`
 
 **Test checkpoint:** `check-inventory.py --surface session` passes; each branch page and each of the automatic entry's pages has a `page` record in `session/boot.json` and a `session` state of its own in `shots.json`, whose PNG `capture.py --verify-shots` confirms; no reset or repair has changed the restored VM.
+
+---
+
+## 29. Host Captures: GPU Preferences and the Radio Flyouts
+
+> **Spawned-by:** section 27 (review)
+
+**Needs:** operator
+
+**Design:** n/a -- records the reference, draws nothing
+
+**Inventory:** writes `docs/design/inventory/settings/host.json` and `docs/design/inventory/flyouts/host.json`
+
+> **User impact:** a user choosing which GPU an app runs on, or picking a network or a Bluetooth device from Quick Settings, meets surfaces the inventory has only as a guess: §27 captured the Graphics page closed, and the flyouts were recorded absent although the host has both radios.
+
+§27 captured the four Settings pages on the operator's host. This section captures, with the same host tooling, what those pages and the shell show behind one more click; it re-covers none of §27's records.
+
+- [ ] Graphics GPU preferences captured: Advanced graphics settings expanded (`graphics-advanced`) and the first app's options open (`graphics-app-options`), each with its choices recorded; or the host's lack of a GPU choice recorded as observed
+- [ ] Quick Settings Wi-Fi and Bluetooth flyouts captured on the host (`flyouts/quick-settings-wifi`, `flyouts/quick-settings-bluetooth`), every network and device name blanked as in §27
+  - Replaces §8's `absent-wifi` and `absent-bluetooth` equivalent records in `flyouts/quick-settings.json` with the captured tiles
+- [ ] Host polling deadlines measured on a `Stopwatch` instead of the wall clock, so a clock change cannot stretch a wait (filed from section 27 performance review)
+- [ ] Commit: `"inventory: host captures, GPU preferences and radio flyouts"`
+
+**Test checkpoint:** `inventory-report.py --campaign --check` reports no settings/graphics-advanced, settings/graphics-app-options, flyouts/quick-settings-wifi or flyouts/quick-settings-bluetooth row; `check-inventory.py` passes.
 
 ---
 

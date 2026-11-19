@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **994 of 2729 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **994 of 2730 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2040,189 +2040,190 @@ The network stack needs drivers and the kernel's I/O model but nothing from the 
 
 GDI, the compositor, fonts, text and the controls sit on the desktop foundation and are what every visible surface is drawn with, so they come before the shell and the apps.
 
-| Done | Section       | Deliverable                                                             | Needs | Items |
-| :--: | ------------- | ----------------------------------------------------------------------- | ----- | ----: |
-| [ ]  | `D08 T01 §1`  | Render-Target Allocator, Views, and Cached Layers                       | none  |     8 |
-| [ ]  | `D08 T01 §2`  | Clip, Transform, and State Stack                                        | none  |     7 |
-| [ ]  | `D08 T01 §3`  | Path, Stroke, Fill, and SVG-Ready Vector Raster Contract                | none  |     8 |
-| [ ]  | `D08 T01 §4`  | Theme-Aware Icon, Cursor, and Scalable Asset Pipeline                   | none  |    13 |
-| [ ]  | `D08 T01 §5`  | Thumbnail, Preview, and Multi-Size Asset Cache                          | none  |     9 |
-| [ ]  | `D07 T07 §5`  | Image Loading in Browser                                                | none  |     8 |
-| [x]  | `D07 T10 §6`  | Image Rendering                                                         | none  |     1 |
-| [x]  | `D07 T10 §7`  | Page Renderer                                                           | none  |     1 |
-| [x]  | `D07 T10 §8`  | PDF Viewer App                                                          | none  |     1 |
-| [ ]  | `D07 T10 §9`  | PDF from HTTP                                                           | none  |     6 |
-| [x]  | `D07 T10 §10` | PDF Forms Stub                                                          | none  |     1 |
-| [ ]  | `D08 T01 §6`  | Recorded Scene Lists and Deterministic Re-render                        | none  |     6 |
-| [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none  |     8 |
-| [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none  |    10 |
-| [ ]  | `D08 T01 §9`  | Missing Icons -- Detect, Draft-Generate, and Queue for Polish           | none  |     9 |
-| [ ]  | `D08 T01 §10` | Automatic Icon Polish and Promotion                                     | none  |    10 |
-| [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none  |    10 |
-| [ ]  | `D08 T02 §2`  | Fallback Chains, Emoji, and Color-Font Support                          | none  |     7 |
-| [ ]  | `D08 T02 §3`  | Shaping, Bidi, Line-Break, and Paragraph Layout Engine                  | none  |     7 |
-| [ ]  | `D08 T02 §4`  | Caret, Hit-Test, Selection, and Composition-Aware Text Editing Services | none  |     8 |
-| [ ]  | `D08 T02 §5`  | Desktop and Win32 Wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE`     | none  |     6 |
-| [ ]  | `D08 T02 §6`  | Persistent Text-Run Cache and No-FPU Steady-State Draw Path             | none  |     6 |
-| [ ]  | `D08 T02 §7`  | Vendor FreeType and HarfBuzz as the Rasterizer and Shaper               | none  |     5 |
-| [ ]  | `D08 T03 §1`  | `theme_t` Struct                                                        | none  |     5 |
-| [ ]  | `D08 T03 §2`  | `theme_get()` Singleton                                                 | none  |     5 |
-| [ ]  | `D08 T03 §3`  | Built-in Presets                                                        | none  |     4 |
-| [ ]  | `D08 T03 §4`  | Registry Load                                                           | none  |     4 |
-| [ ]  | `D08 T03 §5`  | Custom Accent Color                                                     | none  |     3 |
-| [ ]  | `D08 T03 §6`  | Migration Pass                                                          | none  |     8 |
-| [ ]  | `D08 T03 §7`  | Theme-Aware Shadow Rendering                                            | none  |     7 |
-| [ ]  | `D08 T03 §8`  | Hot-Reload                                                              | none  |     6 |
-| [ ]  | `D08 T03 §9`  | Fluent Token Corpus and Win11 Personalization Contract                  | none  |    10 |
-| [ ]  | `D08 T04 §1`  | Core Tween Engine                                                       | none  |     7 |
-| [ ]  | `D08 T04 §2`  | Easing Functions                                                        | none  |     9 |
-| [ ]  | `D08 T04 §3`  | Global Animation Manager                                                | none  |    12 |
-| [ ]  | `D08 T04 §4`  | Registry Controls                                                       | none  |     9 |
-| [ ]  | `D08 T04 §5`  | Window Transition Animations                                            | none  |    13 |
-| [ ]  | `D08 T04 §6`  | Spring Physics                                                          | none  |     8 |
-| [ ]  | `D08 T04 §7`  | Compositor Integration                                                  | none  |     7 |
-| [ ]  | `D08 T05 §1`  | Checkbox                                                                | none  |     9 |
-| [ ]  | `D08 T05 §2`  | Radio Button                                                            | none  |     8 |
-| [ ]  | `D08 T05 §3`  | Slider / TrackBar                                                       | none  |     7 |
-| [ ]  | `D08 T05 §4`  | Progress Bar                                                            | none  |     7 |
-| [ ]  | `D08 T05 §5`  | Dropdown / ComboBox                                                     | none  |    12 |
-| [ ]  | `D08 T05 §6`  | Tab Strip                                                               | none  |    11 |
-| [ ]  | `D08 T05 §7`  | Theming                                                                 | none  |     4 |
-| [ ]  | `D08 T05 §8`  | Accessibility Stubs                                                     | none  |     4 |
-| [ ]  | `D08 T05 §9`  | Overlay Scroll Bar (Collapse and Expand on Hover)                       | none  |     6 |
-| [ ]  | `D08 T06 §3`  | Toolbar                                                                 | none  |     9 |
-| [ ]  | `D08 T06 §4`  | MenuBar                                                                 | none  |    11 |
-| [ ]  | `D08 T06 §6`  | GroupBox + Separator                                                    | none  |     6 |
-| [ ]  | `D08 T06 §5`  | StatusBar                                                               | none  |     8 |
-| [ ]  | `D08 T06 §7`  | Tooltip Integration                                                     | none  |     8 |
-| [ ]  | `D08 T06 §1`  | ListView                                                                | none  |    14 |
-| [ ]  | `D08 T06 §2`  | TreeView                                                                | none  |    12 |
-| [ ]  | `D08 T06 §8`  | Dialog System                                                           | none  |    11 |
-| [ ]  | `D08 T06 §9`  | Info Bar Control                                                        | none  |     6 |
-| [ ]  | `D08 T07 §1`  | Semantic Node Tree, Roles, States, Values, and Action Descriptors       | none  |     8 |
-| [ ]  | `D08 T07 §2`  | Provider/Query API, Focus/Hit-Test Lookup, and Accessibility Events     | none  |     7 |
-| [ ]  | `D08 T07 §3`  | Inspect Bridge, Screen-Reader Hooks, and Automation Subscription Model  | none  |     6 |
-| [ ]  | `D08 T07 §4`  | IME and Text-Composition Framework                                      | none  |     6 |
-| [ ]  | `D08 T07 §5`  | Win32 and Platform-Service Wiring                                       | none  |     6 |
-| [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
-| [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
-| [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |    11 |
-| [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none  |     5 |
-| [ ]  | `D08 T17 §26` | Service-State Fixtures: Network Switch and Page States                  | none  |     4 |
-| [ ]  | `D08 T17 §28` | Recovery Branches: Reset This PC and Automatic Repair                   | none  |     5 |
-| [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
-| [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
-| [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none  |     6 |
-| [ ]  | `D08 T08 §4`  | Desktop Icons                                                           | none  |     8 |
-| [ ]  | `D08 T08 §5`  | Keyboard Shortcuts & Task Switching                                     | none  |     9 |
-| [ ]  | `D08 T08 §6`  | Alt+Tab Task Switcher                                                   | none  |     9 |
-| [ ]  | `D08 T08 §7`  | Drag and Drop                                                           | none  |     8 |
-| [ ]  | `D08 T08 §8`  | Compositor Performance                                                  | none  |     9 |
-| [ ]  | `D01 T14 §7`  | System-Wide Multi-Instance Spinner                                      | none  |     9 |
-| [ ]  | `D08 T09 §3`  | Wallpaper Engine                                                        | none  |     9 |
-| [ ]  | `D08 T09 §4`  | DPI Scaling                                                             | none  |     9 |
-| [ ]  | `D08 T09 §1`  | Context Menu Engine                                                     | none  |    11 |
-| [ ]  | `D06 T06 §7`  | Icon Right-Click Context Menu                                           | none  |     9 |
-| [ ]  | `D08 T09 §2`  | Desktop Right-Click Menu                                                | none  |    10 |
-| [x]  | `D06 T05 §2`  | Desktop Right-Click Context Menu                                        | none  |     1 |
-| [ ]  | `D08 T09 §5`  | Screenshot                                                              | none  |     8 |
-| [ ]  | `D08 T09 §6`  | Night Light                                                             | none  |     7 |
-| [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none  |     9 |
-| [ ]  | `D08 T09 §8`  | Quick Settings Panel                                                    | none  |    11 |
-| [ ]  | `D08 T09 §9`  | Virtual Desktops                                                        | none  |    11 |
-| [ ]  | `D08 T09 §10` | Quick Settings Pages, Pager and Edit Mode                               | none  |     6 |
-| [ ]  | `D08 T10 §1`  | Taskbar Window List                                                     | none  |    12 |
-| [x]  | `D06 T05 §3`  | Taskbar Window State Sync                                               | none  |     1 |
-| [ ]  | `D08 T10 §3`  | Aero Peek                                                               | none  |     9 |
-| [ ]  | `D08 T10 §4`  | Taskbar Progress Badges                                                 | none  |     7 |
-| [ ]  | `D08 T10 §5`  | Pinned Apps                                                             | none  |    10 |
-| [ ]  | `D08 T10 §2`  | Taskbar Button Context Menu                                             | none  |     7 |
-| [ ]  | `D08 T10 §6`  | Jump Lists                                                              | none  |     8 |
-| [ ]  | `D08 T10 §7`  | Taskbar Auto-Hide                                                       | none  |     9 |
-| [ ]  | `D08 T10 §8`  | Taskbar Customization                                                   | none  |     5 |
-| [ ]  | `D08 T10 §9`  | Taskbar on Every Display                                                | none  |     5 |
-| [ ]  | `D08 T11 §1`  | Start Menu Data Loading                                                 | none  |     9 |
-| [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none  |    10 |
-| [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none  |     6 |
-| [ ]  | `D08 T11 §4`  | System Tray Icons                                                       | none  |    10 |
-| [ ]  | `D08 T11 §5`  | Toast Notifications                                                     | none  |    11 |
-| [ ]  | `D08 T11 §6`  | Notification Center                                                     | none  |    11 |
-| [ ]  | `D08 T11 §7`  | Notification Settings                                                   | none  |     8 |
-| [ ]  | `D08 T11 §8`  | Search Filters, Result Actions and Options                              | none  |     5 |
-| [ ]  | `D08 T11 §9`  | Rich Toast Content and Toast Kinds                                      | none  |     6 |
-| [ ]  | `D08 T11 §10` | Notification Cards: Expand, Menu and Do Not Disturb                     | none  |     5 |
-| [ ]  | `D08 T12 §1`  | Kernel Time API                                                         | none  |    13 |
-| [ ]  | `D08 T12 §2`  | Time Formatting                                                         | none  |     6 |
-| [ ]  | `D08 T12 §5`  | Timezone Database                                                       | none  |     8 |
-| [ ]  | `D08 T12 §3`  | Taskbar Clock                                                           | none  |     9 |
-| [ ]  | `D08 T12 §4`  | Date/Time Control Panel                                                 | none  |     5 |
-| [ ]  | `D08 T12 §6`  | Monotonic Uptime Extension                                              | none  |     6 |
-| [ ]  | `D08 T13 §3`  | Build Pipeline                                                          | none  |     4 |
-| [ ]  | `D08 T13 §1`  | Boot Splash Renderer                                                    | none  |     6 |
-| [ ]  | `D08 T13 §2`  | Loading Spinner                                                         | none  |     5 |
-| [ ]  | `D08 T13 §4`  | Boot Progress Milestones                                                | none  |     6 |
-| [ ]  | `D08 T13 §5`  | F8 Boot Menu                                                            | none  |    11 |
-| [x]  | `D08 T13 §6`  | [MOVED] Crash Loop Protection                                           | none  |     1 |
-| [x]  | `D08 T13 §7`  | [MOVED] BSOD Auto-Restart Validation                                    | none  |     1 |
-| [ ]  | `D08 T14 §1`  | Win32 Shell Icon Index Map                                              | none  |     7 |
-| [ ]  | `D08 T14 §2`  | GDI Device Context Stubs                                                | none  |    13 |
-| [ ]  | `D08 T14 §3`  | GDI Drawing Functions                                                   | none  |    13 |
-| [ ]  | `D08 T14 §4`  | GDI Text Functions                                                      | none  |     7 |
-| [ ]  | `D08 T14 §5`  | USER32 Window Functions                                                 | none  |    13 |
-| [ ]  | `D08 T14 §6`  | USER32 Message Loop                                                     | none  |    13 |
-| [ ]  | `D08 T14 §7`  | USER32 Cursor, Icon & System Metrics                                    | none  |     9 |
-| [ ]  | `D08 T14 §8`  | USER32 Dialogs                                                          | none  |     8 |
-| [ ]  | `D08 T15 §1`  | Shadow SSDT Infrastructure (Table 1 Dispatch)                           | none  |     7 |
-| [ ]  | `D08 T15 §2`  | GDI Device Context (DC) Object Table                                    | none  |     8 |
-| [ ]  | `D08 T15 §3`  | GDI Drawing Syscalls                                                    | none  |    15 |
-| [ ]  | `D08 T15 §4`  | GDI Text and Font Syscalls                                              | none  |     9 |
-| [ ]  | `D08 T15 §5`  | GDI Bitmap and DIB Syscalls                                             | none  |     8 |
-| [ ]  | `D08 T15 §6`  | GDI Pen, Brush, and Region Syscalls                                     | none  |    11 |
-| [ ]  | `D08 T15 §7`  | USER Window Management Syscalls                                         | none  |    17 |
-| [ ]  | `D08 T15 §8`  | USER Message Queue Syscalls                                             | none  |    14 |
-| [ ]  | `D08 T15 §9`  | USER Input and Cursor Syscalls                                          | none  |    12 |
-| [ ]  | `D08 T15 §10` | USER Menu and Accelerator Syscalls                                      | none  |    11 |
-| [ ]  | `D08 T15 §11` | USER Clipboard Syscalls                                                 | none  |    11 |
-| [ ]  | `D08 T15 §12` | Migrate Legacy SYS_* to Shadow SSDT                                     | none  |     7 |
-| [ ]  | `D08 T15 §13` | GDI Path, Curve, and Extended Drawing                                   | none  |     9 |
-| [ ]  | `D08 T15 §14` | GDI Transform, Palette, and Color Management                            | none  |     6 |
-| [ ]  | `D08 T15 §15` | GDI Print and Metafile                                                  | none  |     5 |
-| [ ]  | `D08 T15 §16` | GDI Font Advanced                                                       | none  |     9 |
-| [ ]  | `D08 T15 §17` | GDI Extended Object Management                                          | none  |     6 |
-| [ ]  | `D08 T15 §18` | USER Window Properties, Styles, and Enumeration                         | none  |    10 |
-| [ ]  | `D08 T15 §19` | USER Dialog, Caret, and Drawing Helpers                                 | none  |     7 |
-| [ ]  | `D08 T15 §20` | USER Scrollbar                                                          | none  |     5 |
-| [ ]  | `D08 T15 §21` | USER Keyboard, IME, and Hook                                            | none  |     7 |
-| [ ]  | `D08 T15 §22` | USER DPI, Accessibility, and System Parameters                          | none  |     6 |
-| [ ]  | `D08 T15 §23` | USER Raw Input, Touch, and Gesture                                      | none  |     6 |
-| [ ]  | `D08 T15 §24` | USER Multi-Monitor and Display                                          | none  |     6 |
-| [ ]  | `D08 T15 §25` | USER Shell Integration                                                  | none  |     7 |
-| [ ]  | `D08 T15 §26` | GDI/USER DirectX and DXGI Kernel Integration                            | none  |    11 |
-| [ ]  | `D08 T15 §27` | Impossible OS Exclusive Graphics Extensions                             | none  |    14 |
-| [ ]  | `D08 T16 §1`  | Dispatch split and guard rails                                          | none  |     3 |
-| [ ]  | `D08 T16 §2`  | NTSTATUS and user-buffer rules                                          | none  |     2 |
-| [ ]  | `D08 T16 §3`  | Static asserts, headers, and audits                                     | none  |     2 |
-| [ ]  | `D08 T16 §4`  | User-mode index contract                                                | none  |     1 |
-| [ ]  | `D08 T16 §5`  | KeUserModeCallback integration review                                   | none  |     2 |
-| [ ]  | `D08 T18 §1`  | Element Tree and Property System                                        | none  |     9 |
-| [ ]  | `D08 T18 §2`  | Layout Engine: Measure and Arrange                                      | none  |     8 |
-| [ ]  | `D08 T18 §3`  | Layout Panels                                                           | none  |     8 |
-| [ ]  | `D08 T18 §4`  | Scrolling and Virtualization Engine                                     | none  |     8 |
-| [ ]  | `D08 T18 §5`  | Style, Template and Visual State Engine                                 | none  |     8 |
-| [ ]  | `D08 T18 §6`  | Theme Resource Resolution                                               | none  |     8 |
-| [ ]  | `D08 T18 §7`  | Routed Input, Focus and Keyboard Navigation                             | none  |     9 |
-| [ ]  | `D08 T18 §8`  | Pointer, Touch and Gesture Recognition                                  | none  |     8 |
-| [ ]  | `D08 T18 §9`  | Command Engine                                                          | none  |     8 |
-| [ ]  | `D08 T18 §10` | Data Binding and Observable Collections                                 | none  |     8 |
-| [ ]  | `D08 T18 §11` | UI Markup Compiler                                                      | none  |     8 |
-| [ ]  | `D08 T18 §12` | Composition Visual Tree                                                 | none  |     9 |
-| [ ]  | `D08 T18 §13` | Backdrop Materials Engine                                               | none  |     8 |
-| [ ]  | `D08 T18 §14` | Popup, Flyout and Light-Dismiss Layer                                   | none  |     9 |
-| [ ]  | `D08 T18 §15` | Navigation Framework                                                    | none  |     8 |
-| [ ]  | `D08 T18 §16` | Settings Platform                                                       | none  |     9 |
-| [ ]  | `D08 T18 §17` | Shell Namespace Engine                                                  | none  |     9 |
-| [ ]  | `D08 T18 §18` | Property and Column System                                              | none  |     8 |
-| [ ]  | `D08 T18 §19` | Shell Extension Points                                                  | none  |     9 |
+| Done | Section       | Deliverable                                                             | Needs    | Items |
+| :--: | ------------- | ----------------------------------------------------------------------- | -------- | ----: |
+| [ ]  | `D08 T01 §1`  | Render-Target Allocator, Views, and Cached Layers                       | none     |     8 |
+| [ ]  | `D08 T01 §2`  | Clip, Transform, and State Stack                                        | none     |     7 |
+| [ ]  | `D08 T01 §3`  | Path, Stroke, Fill, and SVG-Ready Vector Raster Contract                | none     |     8 |
+| [ ]  | `D08 T01 §4`  | Theme-Aware Icon, Cursor, and Scalable Asset Pipeline                   | none     |    13 |
+| [ ]  | `D08 T01 §5`  | Thumbnail, Preview, and Multi-Size Asset Cache                          | none     |     9 |
+| [ ]  | `D07 T07 §5`  | Image Loading in Browser                                                | none     |     8 |
+| [x]  | `D07 T10 §6`  | Image Rendering                                                         | none     |     1 |
+| [x]  | `D07 T10 §7`  | Page Renderer                                                           | none     |     1 |
+| [x]  | `D07 T10 §8`  | PDF Viewer App                                                          | none     |     1 |
+| [ ]  | `D07 T10 §9`  | PDF from HTTP                                                           | none     |     6 |
+| [x]  | `D07 T10 §10` | PDF Forms Stub                                                          | none     |     1 |
+| [ ]  | `D08 T01 §6`  | Recorded Scene Lists and Deterministic Re-render                        | none     |     6 |
+| [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none     |     8 |
+| [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none     |    10 |
+| [ ]  | `D08 T01 §9`  | Missing Icons -- Detect, Draft-Generate, and Queue for Polish           | none     |     9 |
+| [ ]  | `D08 T01 §10` | Automatic Icon Polish and Promotion                                     | none     |    10 |
+| [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none     |    10 |
+| [ ]  | `D08 T02 §2`  | Fallback Chains, Emoji, and Color-Font Support                          | none     |     7 |
+| [ ]  | `D08 T02 §3`  | Shaping, Bidi, Line-Break, and Paragraph Layout Engine                  | none     |     7 |
+| [ ]  | `D08 T02 §4`  | Caret, Hit-Test, Selection, and Composition-Aware Text Editing Services | none     |     8 |
+| [ ]  | `D08 T02 §5`  | Desktop and Win32 Wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE`     | none     |     6 |
+| [ ]  | `D08 T02 §6`  | Persistent Text-Run Cache and No-FPU Steady-State Draw Path             | none     |     6 |
+| [ ]  | `D08 T02 §7`  | Vendor FreeType and HarfBuzz as the Rasterizer and Shaper               | none     |     5 |
+| [ ]  | `D08 T03 §1`  | `theme_t` Struct                                                        | none     |     5 |
+| [ ]  | `D08 T03 §2`  | `theme_get()` Singleton                                                 | none     |     5 |
+| [ ]  | `D08 T03 §3`  | Built-in Presets                                                        | none     |     4 |
+| [ ]  | `D08 T03 §4`  | Registry Load                                                           | none     |     4 |
+| [ ]  | `D08 T03 §5`  | Custom Accent Color                                                     | none     |     3 |
+| [ ]  | `D08 T03 §6`  | Migration Pass                                                          | none     |     8 |
+| [ ]  | `D08 T03 §7`  | Theme-Aware Shadow Rendering                                            | none     |     7 |
+| [ ]  | `D08 T03 §8`  | Hot-Reload                                                              | none     |     6 |
+| [ ]  | `D08 T03 §9`  | Fluent Token Corpus and Win11 Personalization Contract                  | none     |    10 |
+| [ ]  | `D08 T04 §1`  | Core Tween Engine                                                       | none     |     7 |
+| [ ]  | `D08 T04 §2`  | Easing Functions                                                        | none     |     9 |
+| [ ]  | `D08 T04 §3`  | Global Animation Manager                                                | none     |    12 |
+| [ ]  | `D08 T04 §4`  | Registry Controls                                                       | none     |     9 |
+| [ ]  | `D08 T04 §5`  | Window Transition Animations                                            | none     |    13 |
+| [ ]  | `D08 T04 §6`  | Spring Physics                                                          | none     |     8 |
+| [ ]  | `D08 T04 §7`  | Compositor Integration                                                  | none     |     7 |
+| [ ]  | `D08 T05 §1`  | Checkbox                                                                | none     |     9 |
+| [ ]  | `D08 T05 §2`  | Radio Button                                                            | none     |     8 |
+| [ ]  | `D08 T05 §3`  | Slider / TrackBar                                                       | none     |     7 |
+| [ ]  | `D08 T05 §4`  | Progress Bar                                                            | none     |     7 |
+| [ ]  | `D08 T05 §5`  | Dropdown / ComboBox                                                     | none     |    12 |
+| [ ]  | `D08 T05 §6`  | Tab Strip                                                               | none     |    11 |
+| [ ]  | `D08 T05 §7`  | Theming                                                                 | none     |     4 |
+| [ ]  | `D08 T05 §8`  | Accessibility Stubs                                                     | none     |     4 |
+| [ ]  | `D08 T05 §9`  | Overlay Scroll Bar (Collapse and Expand on Hover)                       | none     |     6 |
+| [ ]  | `D08 T06 §3`  | Toolbar                                                                 | none     |     9 |
+| [ ]  | `D08 T06 §4`  | MenuBar                                                                 | none     |    11 |
+| [ ]  | `D08 T06 §6`  | GroupBox + Separator                                                    | none     |     6 |
+| [ ]  | `D08 T06 §5`  | StatusBar                                                               | none     |     8 |
+| [ ]  | `D08 T06 §7`  | Tooltip Integration                                                     | none     |     8 |
+| [ ]  | `D08 T06 §1`  | ListView                                                                | none     |    14 |
+| [ ]  | `D08 T06 §2`  | TreeView                                                                | none     |    12 |
+| [ ]  | `D08 T06 §8`  | Dialog System                                                           | none     |    11 |
+| [ ]  | `D08 T06 §9`  | Info Bar Control                                                        | none     |     6 |
+| [ ]  | `D08 T07 §1`  | Semantic Node Tree, Roles, States, Values, and Action Descriptors       | none     |     8 |
+| [ ]  | `D08 T07 §2`  | Provider/Query API, Focus/Hit-Test Lookup, and Accessibility Events     | none     |     7 |
+| [ ]  | `D08 T07 §3`  | Inspect Bridge, Screen-Reader Hooks, and Automation Subscription Model  | none     |     6 |
+| [ ]  | `D08 T07 §4`  | IME and Text-Composition Framework                                      | none     |     6 |
+| [ ]  | `D08 T07 §5`  | Win32 and Platform-Service Wiring                                       | none     |     6 |
+| [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none     |     6 |
+| [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none     |     8 |
+| [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none     |    11 |
+| [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none     |     5 |
+| [ ]  | `D08 T17 §26` | Service-State Fixtures: Network Switch and Page States                  | none     |     4 |
+| [ ]  | `D08 T17 §28` | Recovery Branches: Reset This PC and Automatic Repair                   | none     |     5 |
+| [ ]  | `D08 T17 §29` | Host Captures: GPU Preferences and the Radio Flyouts                    | operator |     4 |
+| [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none     |    11 |
+| [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none     |    11 |
+| [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none     |     6 |
+| [ ]  | `D08 T08 §4`  | Desktop Icons                                                           | none     |     8 |
+| [ ]  | `D08 T08 §5`  | Keyboard Shortcuts & Task Switching                                     | none     |     9 |
+| [ ]  | `D08 T08 §6`  | Alt+Tab Task Switcher                                                   | none     |     9 |
+| [ ]  | `D08 T08 §7`  | Drag and Drop                                                           | none     |     8 |
+| [ ]  | `D08 T08 §8`  | Compositor Performance                                                  | none     |     9 |
+| [ ]  | `D01 T14 §7`  | System-Wide Multi-Instance Spinner                                      | none     |     9 |
+| [ ]  | `D08 T09 §3`  | Wallpaper Engine                                                        | none     |     9 |
+| [ ]  | `D08 T09 §4`  | DPI Scaling                                                             | none     |     9 |
+| [ ]  | `D08 T09 §1`  | Context Menu Engine                                                     | none     |    11 |
+| [ ]  | `D06 T06 §7`  | Icon Right-Click Context Menu                                           | none     |     9 |
+| [ ]  | `D08 T09 §2`  | Desktop Right-Click Menu                                                | none     |    10 |
+| [x]  | `D06 T05 §2`  | Desktop Right-Click Context Menu                                        | none     |     1 |
+| [ ]  | `D08 T09 §5`  | Screenshot                                                              | none     |     8 |
+| [ ]  | `D08 T09 §6`  | Night Light                                                             | none     |     7 |
+| [ ]  | `D08 T09 §7`  | Focus / Do Not Disturb                                                  | none     |     9 |
+| [ ]  | `D08 T09 §8`  | Quick Settings Panel                                                    | none     |    11 |
+| [ ]  | `D08 T09 §9`  | Virtual Desktops                                                        | none     |    11 |
+| [ ]  | `D08 T09 §10` | Quick Settings Pages, Pager and Edit Mode                               | none     |     6 |
+| [ ]  | `D08 T10 §1`  | Taskbar Window List                                                     | none     |    12 |
+| [x]  | `D06 T05 §3`  | Taskbar Window State Sync                                               | none     |     1 |
+| [ ]  | `D08 T10 §3`  | Aero Peek                                                               | none     |     9 |
+| [ ]  | `D08 T10 §4`  | Taskbar Progress Badges                                                 | none     |     7 |
+| [ ]  | `D08 T10 §5`  | Pinned Apps                                                             | none     |    10 |
+| [ ]  | `D08 T10 §2`  | Taskbar Button Context Menu                                             | none     |     7 |
+| [ ]  | `D08 T10 §6`  | Jump Lists                                                              | none     |     8 |
+| [ ]  | `D08 T10 §7`  | Taskbar Auto-Hide                                                       | none     |     9 |
+| [ ]  | `D08 T10 §8`  | Taskbar Customization                                                   | none     |     5 |
+| [ ]  | `D08 T10 §9`  | Taskbar on Every Display                                                | none     |     5 |
+| [ ]  | `D08 T11 §1`  | Start Menu Data Loading                                                 | none     |     9 |
+| [ ]  | `D08 T11 §2`  | Start Menu Interaction                                                  | none     |    10 |
+| [ ]  | `D08 T11 §3`  | Start Menu Search                                                       | none     |     6 |
+| [ ]  | `D08 T11 §4`  | System Tray Icons                                                       | none     |    10 |
+| [ ]  | `D08 T11 §5`  | Toast Notifications                                                     | none     |    11 |
+| [ ]  | `D08 T11 §6`  | Notification Center                                                     | none     |    11 |
+| [ ]  | `D08 T11 §7`  | Notification Settings                                                   | none     |     8 |
+| [ ]  | `D08 T11 §8`  | Search Filters, Result Actions and Options                              | none     |     5 |
+| [ ]  | `D08 T11 §9`  | Rich Toast Content and Toast Kinds                                      | none     |     6 |
+| [ ]  | `D08 T11 §10` | Notification Cards: Expand, Menu and Do Not Disturb                     | none     |     5 |
+| [ ]  | `D08 T12 §1`  | Kernel Time API                                                         | none     |    13 |
+| [ ]  | `D08 T12 §2`  | Time Formatting                                                         | none     |     6 |
+| [ ]  | `D08 T12 §5`  | Timezone Database                                                       | none     |     8 |
+| [ ]  | `D08 T12 §3`  | Taskbar Clock                                                           | none     |     9 |
+| [ ]  | `D08 T12 §4`  | Date/Time Control Panel                                                 | none     |     5 |
+| [ ]  | `D08 T12 §6`  | Monotonic Uptime Extension                                              | none     |     6 |
+| [ ]  | `D08 T13 §3`  | Build Pipeline                                                          | none     |     4 |
+| [ ]  | `D08 T13 §1`  | Boot Splash Renderer                                                    | none     |     6 |
+| [ ]  | `D08 T13 §2`  | Loading Spinner                                                         | none     |     5 |
+| [ ]  | `D08 T13 §4`  | Boot Progress Milestones                                                | none     |     6 |
+| [ ]  | `D08 T13 §5`  | F8 Boot Menu                                                            | none     |    11 |
+| [x]  | `D08 T13 §6`  | [MOVED] Crash Loop Protection                                           | none     |     1 |
+| [x]  | `D08 T13 §7`  | [MOVED] BSOD Auto-Restart Validation                                    | none     |     1 |
+| [ ]  | `D08 T14 §1`  | Win32 Shell Icon Index Map                                              | none     |     7 |
+| [ ]  | `D08 T14 §2`  | GDI Device Context Stubs                                                | none     |    13 |
+| [ ]  | `D08 T14 §3`  | GDI Drawing Functions                                                   | none     |    13 |
+| [ ]  | `D08 T14 §4`  | GDI Text Functions                                                      | none     |     7 |
+| [ ]  | `D08 T14 §5`  | USER32 Window Functions                                                 | none     |    13 |
+| [ ]  | `D08 T14 §6`  | USER32 Message Loop                                                     | none     |    13 |
+| [ ]  | `D08 T14 §7`  | USER32 Cursor, Icon & System Metrics                                    | none     |     9 |
+| [ ]  | `D08 T14 §8`  | USER32 Dialogs                                                          | none     |     8 |
+| [ ]  | `D08 T15 §1`  | Shadow SSDT Infrastructure (Table 1 Dispatch)                           | none     |     7 |
+| [ ]  | `D08 T15 §2`  | GDI Device Context (DC) Object Table                                    | none     |     8 |
+| [ ]  | `D08 T15 §3`  | GDI Drawing Syscalls                                                    | none     |    15 |
+| [ ]  | `D08 T15 §4`  | GDI Text and Font Syscalls                                              | none     |     9 |
+| [ ]  | `D08 T15 §5`  | GDI Bitmap and DIB Syscalls                                             | none     |     8 |
+| [ ]  | `D08 T15 §6`  | GDI Pen, Brush, and Region Syscalls                                     | none     |    11 |
+| [ ]  | `D08 T15 §7`  | USER Window Management Syscalls                                         | none     |    17 |
+| [ ]  | `D08 T15 §8`  | USER Message Queue Syscalls                                             | none     |    14 |
+| [ ]  | `D08 T15 §9`  | USER Input and Cursor Syscalls                                          | none     |    12 |
+| [ ]  | `D08 T15 §10` | USER Menu and Accelerator Syscalls                                      | none     |    11 |
+| [ ]  | `D08 T15 §11` | USER Clipboard Syscalls                                                 | none     |    11 |
+| [ ]  | `D08 T15 §12` | Migrate Legacy SYS_* to Shadow SSDT                                     | none     |     7 |
+| [ ]  | `D08 T15 §13` | GDI Path, Curve, and Extended Drawing                                   | none     |     9 |
+| [ ]  | `D08 T15 §14` | GDI Transform, Palette, and Color Management                            | none     |     6 |
+| [ ]  | `D08 T15 §15` | GDI Print and Metafile                                                  | none     |     5 |
+| [ ]  | `D08 T15 §16` | GDI Font Advanced                                                       | none     |     9 |
+| [ ]  | `D08 T15 §17` | GDI Extended Object Management                                          | none     |     6 |
+| [ ]  | `D08 T15 §18` | USER Window Properties, Styles, and Enumeration                         | none     |    10 |
+| [ ]  | `D08 T15 §19` | USER Dialog, Caret, and Drawing Helpers                                 | none     |     7 |
+| [ ]  | `D08 T15 §20` | USER Scrollbar                                                          | none     |     5 |
+| [ ]  | `D08 T15 §21` | USER Keyboard, IME, and Hook                                            | none     |     7 |
+| [ ]  | `D08 T15 §22` | USER DPI, Accessibility, and System Parameters                          | none     |     6 |
+| [ ]  | `D08 T15 §23` | USER Raw Input, Touch, and Gesture                                      | none     |     6 |
+| [ ]  | `D08 T15 §24` | USER Multi-Monitor and Display                                          | none     |     6 |
+| [ ]  | `D08 T15 §25` | USER Shell Integration                                                  | none     |     7 |
+| [ ]  | `D08 T15 §26` | GDI/USER DirectX and DXGI Kernel Integration                            | none     |    11 |
+| [ ]  | `D08 T15 §27` | Impossible OS Exclusive Graphics Extensions                             | none     |    14 |
+| [ ]  | `D08 T16 §1`  | Dispatch split and guard rails                                          | none     |     3 |
+| [ ]  | `D08 T16 §2`  | NTSTATUS and user-buffer rules                                          | none     |     2 |
+| [ ]  | `D08 T16 §3`  | Static asserts, headers, and audits                                     | none     |     2 |
+| [ ]  | `D08 T16 §4`  | User-mode index contract                                                | none     |     1 |
+| [ ]  | `D08 T16 §5`  | KeUserModeCallback integration review                                   | none     |     2 |
+| [ ]  | `D08 T18 §1`  | Element Tree and Property System                                        | none     |     9 |
+| [ ]  | `D08 T18 §2`  | Layout Engine: Measure and Arrange                                      | none     |     8 |
+| [ ]  | `D08 T18 §3`  | Layout Panels                                                           | none     |     8 |
+| [ ]  | `D08 T18 §4`  | Scrolling and Virtualization Engine                                     | none     |     8 |
+| [ ]  | `D08 T18 §5`  | Style, Template and Visual State Engine                                 | none     |     8 |
+| [ ]  | `D08 T18 §6`  | Theme Resource Resolution                                               | none     |     8 |
+| [ ]  | `D08 T18 §7`  | Routed Input, Focus and Keyboard Navigation                             | none     |     9 |
+| [ ]  | `D08 T18 §8`  | Pointer, Touch and Gesture Recognition                                  | none     |     8 |
+| [ ]  | `D08 T18 §9`  | Command Engine                                                          | none     |     8 |
+| [ ]  | `D08 T18 §10` | Data Binding and Observable Collections                                 | none     |     8 |
+| [ ]  | `D08 T18 §11` | UI Markup Compiler                                                      | none     |     8 |
+| [ ]  | `D08 T18 §12` | Composition Visual Tree                                                 | none     |     9 |
+| [ ]  | `D08 T18 §13` | Backdrop Materials Engine                                               | none     |     8 |
+| [ ]  | `D08 T18 §14` | Popup, Flyout and Light-Dismiss Layer                                   | none     |     9 |
+| [ ]  | `D08 T18 §15` | Navigation Framework                                                    | none     |     8 |
+| [ ]  | `D08 T18 §16` | Settings Platform                                                       | none     |     9 |
+| [ ]  | `D08 T18 §17` | Shell Namespace Engine                                                  | none     |     9 |
+| [ ]  | `D08 T18 §18` | Property and Column System                                              | none     |     8 |
+| [ ]  | `D08 T18 §19` | Shell Extension Points                                                  | none     |     9 |
 
 ### Phase 9 -- Desktop shell
 
