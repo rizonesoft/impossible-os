@@ -126,6 +126,9 @@ def run_guest(surface, profile, timeout, fixture=False, prepare=None, standin=No
              f"surfaces/{module}.py": HERE / "surfaces" / f"{module}.py",
              "profiles.json": INVENTORY / "profiles.json",
              "probe-profile.ps1": HERE / "guest" / "probe-profile.ps1", "set-profile.ps1": HERE / "guest" / "set-profile.ps1"}
+    # Helpers several modules share (one surface's window, menus and panes); a
+    # module imports them by name, and capture-ui puts their folder on the path.
+    files.update({f"surfaces/shared/{p.name}": p for p in sorted((HERE / "surfaces" / "shared").glob("*.py"))})
     cmd = (f"python C:\\ios\\in\\capture-ui.py --surface {surface} --module {module} --profile {profile} --out C:\\ios\\out\\records.json "
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:

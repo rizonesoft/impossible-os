@@ -20,39 +20,24 @@ METRICS turns into records matching the known-folders and shell-commands
 baselines.
 """
 import collections
-import ctypes
 import json
 import time
-from ctypes import wintypes
 
 import capture_core as core
+import explorer_window as ew  # noqa: F401 - the shared helpers, by their module
+from explorer_window import (
+    DATE_VALUE, HOME, SAMPLE, SETTLE, TABS_TO_OVERFLOW, _root, at, close_all, close_menu, command_bar, descendants,
+    details_pane, esc_twice, focus_list, focused, fresh, in_bar, item, menu, new_tab, nothing, opened,
+    overflow, press_button, press_more, preview_pane, set_pane, shown_pane, tab_names, tab_row, tabs, title,
+    user32, window, windows)
 
 SURFACE = "explorer"
-# The guest is Windows; the tests load this module on Linux for its pure parts.
-user32 = getattr(ctypes, "WinDLL", None) and ctypes.WinDLL("user32", use_last_error=True)
 
-PLACE = (240, 140, 1200, 720)            # where the window is put: x, y, width, height
-TAB_ROW_POINT = (340, 18)                # from the window's corner: the tab row right of the new-tab button
 NARROW = (240, 140, 640, 720)            # narrow enough that the breadcrumb hides its first segments
-SETTLE = 1.5
-WAIT = 20
-SAMPLE = "C:\\Users\\ref\\Documents\\Explorer sample"
 ARCHIVE = SAMPLE + "\\Sample archive.zip"
 BIN = "shell:RecycleBinFolder"
-HOME = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}"   # Home, the folder a new tab opens on
-SPEC = {"className": "CabinetWClass"}
-SW_RESTORE = 9
-TABS_TO_OVERFLOW = 14                    # tabs that no longer fit the placed window's tab row
-MENU_DEPTH = 6                           # levels from a focused entry up to its menu
 SUGGEST_KEYS = ("d", "o")                # typed into the edit form: Documents, Downloads and more start so
 SPLIT_TRIES, SPLIT_WAIT = 3, 5                # a segment list is asked to open this often, waited for this long
-KEY_TRIES = 3                            # clicks that may be needed before Windows hands the window the foreground
-CLOUD_ENTRY, CLOUD_WAIT = "OneDrive", 300   # the navigation pane's cloud entry, and how long sign-in may take to add it
-# The class each side pane always has; the preview pane's reading module is
-# there only with a file selected (2026-11-19).
-PANES = {"details": "DetailsPaneHwndHostClass", "preview": "PreviewThumbnailInner"}
-PANE_KEYS = {"details": "alt+shift+p", "preview": "alt+p"}
-LIST_EMPTY_OFFSET = 20                   # px above the item list's bottom edge: below the sample folder's rows
 LIST_DEPTH, REGION_DEPTH = 12, 16        # levels searched for the address list, and up from the focus for its row
 # The frame's rows, by the automation id or class name of the element that holds each.
 REGIONS = {"TabView": "tab row", "NavigationCommands": "navigation buttons", "PART_AutoSuggestBox": "address bar",
@@ -77,221 +62,17 @@ LABELS = [({"controlType": "Image", "className": "Image"}, "Icon"),
           ({"automationId": "FileExplorerSearchBox"}, "Search box"),
           ({"automationId": "FileExplorerCommandBar"}, "Command bar"),
           ({"automationId": "FileExplorerSecondaryCommandBar"}, "Pane button"),
-          ({"automationId": "SuggestionsList"}, "Address list")]
+          ({"automationId": "SuggestionsList"}, "Address list"),
+          (DATE_VALUE, "Date")]
+VALUES = [DATE_VALUE]
 
 _m = {}                                  # measured by the unpublished scenes, read by METRICS
-_root = {}                               # the element the open scene's opener found, which its walks read
 
 
 # ------------------------------------------------------------- the window --
 
-def window(ctx):
-    return ctx.find_window(timeout=WAIT, foreground=False, **SPEC)
-
-
-def hwnd(ctx):
-    return window(ctx).el.CurrentNativeWindowHandle
-
-
-def place(ctx, rect=PLACE):
-    h = hwnd(ctx)
-    user32.ShowWindow(h, SW_RESTORE)
-    user32.SetWindowPos(h, 0, *rect, 0x0004)                              # SWP_NOZORDER
-    time.sleep(SETTLE)
-    # Windows refuses SetForegroundWindow from a process in the background, and
-    # then the keys a scene presses reach the desktop (2026-11-19: Alt-D focused
-    # the desktop's Recycle Bin); a click on an empty part of the tab row is a
-    # user's activation.
-    x, y = rect[0] + TAB_ROW_POINT[0], rect[1] + TAB_ROW_POINT[1]
-    for _ in range(KEY_TRIES):
-        ctx.click_at(x, y)
-        time.sleep(SETTLE)
-        if user32.GetForegroundWindow() == h:
-            return
-    raise core.Incomplete("the File Explorer window did not come to the foreground")
-
-
-def navigate(ctx, target):
-    """Send the window to `target` (a path or a shell: name) the way its address
-    bar does, through the window's own browser object, and wait until it is idle."""
-    ctx.powershell(NAVIGATE % (hwnd(ctx), target.replace("'", "''")))
-    time.sleep(SETTLE)
-
-
-NAVIGATE = r"""
-$w = @((New-Object -ComObject Shell.Application).Windows() | Where-Object { $_.HWND -eq %d })[0]
-if (-not $w) { throw 'the File Explorer window is not a shell window' }
-$w.Navigate2('%s')
-$t0 = Get-Date
-do { Start-Sleep -Milliseconds 200 } while ($w.Busy -and ((Get-Date) - $t0).TotalSeconds -lt 15)
-"""
-
-
-def close_all(ctx):
-    """Close every File Explorer window. Each folder tab is a shell window
-    object of its own and quits on its own: a window holding several tabs
-    ignores WM_CLOSE (2026-11-19, the tab scenes)."""
-    ctx.powershell("@((New-Object -ComObject Shell.Application).Windows()) | ForEach-Object { $_.Quit() }")
-    time.sleep(SETTLE)
-    # A Home tab is no shell window and stays (2026-11-19, the tab scenes):
-    # Ctrl-W closes the window's tabs one by one, the way a user would.
-    for _ in range(TABS_TO_OVERFLOW + 2):
-        if not windows(ctx):
-            return
-        h = hwnd(ctx)
-        place(ctx)
-        ctx.keys("ctrl+w")
-        time.sleep(0.5)
-        if user32.IsWindow(h) and not windows(ctx):
-            return
-    ctx.gone(**SPEC)
-
-
-def fresh(ctx, target=SAMPLE, rect=PLACE):
-    """One File Explorer window, placed, on `target`, with nothing selected
-    and neither side pane open. The panes are a setting File Explorer keeps
-    across windows, so a scene that opened one left it open for the next
-    (2026-11-19: the empty details pane scene toggled it shut)."""
-    if windows(ctx):
-        close_all(ctx)
-    ctx.launch("explorer.exe", SAMPLE)
-    window(ctx)
-    time.sleep(3)
-    place(ctx, rect)
-    cloud_entry(ctx)
-    set_pane(ctx, None)
-    if target != SAMPLE:
-        navigate(ctx, target)
-
-
-def cloud_entry(ctx):
-    """Wait for the navigation pane's cloud entry. OneDrive adds it some
-    minutes after sign-in, so the first scenes of a run lacked it and the
-    later ones had it (2026-11-19); a capture without it is not the reference."""
-    if _root.get("cloud"):
-        return
-    tree = in_bar(ctx, automationId="100", controlType="Tree")
-    ctx.find(within=tree, controlType="TreeItem", name=CLOUD_ENTRY, depth=3, timeout=CLOUD_WAIT)
-    _root["cloud"] = True
-
-
-def descendants(ctx, el, depth, skip=()):
-    """Every element under `el` to `depth` levels, from the raw view, without
-    going into an element whose class is in `skip`."""
-    out, level = [], [el]
-    for _ in range(depth):
-        level = [k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())
-                 if k.class_name not in skip]
-        out.extend(level)
-    return out
-
-
-def shown_pane(ctx):
-    """The side pane the window shows: "details", "preview" or None."""
-    tab = ctx.find(within=window(ctx), className="ShellTabWindowClass", depth=2)
-    names = {k.class_name for k in descendants(ctx, tab, 2)}
-    found = [pane for pane, cls in PANES.items() if cls in names]
-    return found[0] if found else None
-
-
-def set_pane(ctx, want):
-    """Open the details or the preview pane, or close both, with the pane's own
-    key; a key that shows one pane replaces the other."""
-    have = shown_pane(ctx)
-    if have == want:
-        return
-    ctx.keys(PANE_KEYS[want or have])
-    time.sleep(SETTLE * 2)
-    if shown_pane(ctx) != want:
-        raise core.Incomplete(f"the {want or have} pane key left the window showing {shown_pane(ctx) or 'no pane'}")
-
-
-def items(ctx):
-    return ctx.find(within=window(ctx), className="UIItemsView", depth=6)
-
-
-def item(ctx, name):
-    return ctx.find(within=items(ctx), controlType="ListItem", name=name, depth=2)
-
-
-def in_bar(ctx, **spec):
-    return ctx.find(within=window(ctx), depth=8, **spec)
-
-
-def nothing(ctx):
-    pass
-
 
 # -------------------------------------------------------------- openers --
-
-def at(target=SAMPLE, select=None, then=None, rect=PLACE):
-    def open_(ctx):
-        fresh(ctx, target, rect)
-        if select:
-            ctx.click(item(ctx, select))
-            time.sleep(SETTLE)
-        if then:
-            then(ctx)
-    return open_
-
-
-def command_bar(ctx):
-    return in_bar(ctx, automationId="FileExplorerCommandBar")
-
-
-def menu(ctx, kinds=("Menu",), wait=WAIT):
-    """The menu a command bar button or a breadcrumb opened: Explorer hosts it
-    inside its own window, so it is found from the entry that took the focus
-    (2026-11-19: no popup window opens, and the focus is on the first entry)."""
-    deadline = time.monotonic() + wait
-    while True:
-        el = ctx.live.uia.GetFocusedElement()
-        for _ in range(MENU_DEPTH):
-            w = ctx.live.wrap(el)
-            if w.control_type in kinds:
-                return w
-            up = ctx.live._parent(el)
-            if up is None:
-                break
-            el = up[1]
-        # The command bar's overflow opens with the focus left on its button
-        # (2026-11-19, "Less app bar"): the menu is then the one open in the window.
-        try:
-            return ctx.find(within=window(ctx), controlType="Menu", depth=12, timeout=0)
-        except core.Incomplete:
-            pass
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"no {' or '.join(kinds)} holds the focus within {wait} s (focus: {focused(ctx)})")
-        time.sleep(0.5)
-
-
-def press_more(ctx):
-    ctx.click(in_bar(ctx, automationId="MoreButton"))
-    _root["el"] = overflow(ctx)
-
-
-def press_button(**spec):
-    def then(ctx):
-        ctx.click(in_bar(ctx, **spec))
-        _root["el"] = menu(ctx)
-    return then
-
-
-def overflow(ctx):
-    """The command bar's See more list: a popup inside the window's island
-    (2026-11-19: a Window named Popup, OverflowPopup, holding the entries)."""
-    return ctx.find(within=window(ctx), automationId="OverflowPopup", depth=6)
-
-
-def opened(ctx):
-    """The root the scene's opener found: a list that keeps the focus only
-    until it is first read (2026-11-19, the address history) is not looked for again."""
-    return _root["el"]
-
-
-def close_menu(ctx):
-    ctx.keys("esc")
-    time.sleep(SETTLE)
 
 
 def open_split(ctx, el):
@@ -357,12 +138,6 @@ def address_list(ctx):
     return ctx.find(within=window(ctx), automationId="SuggestionsList", controlType="List", depth=12)
 
 
-def esc_twice(ctx):
-    ctx.keys("esc")
-    ctx.keys("esc")
-    time.sleep(SETTLE)
-
-
 def pane_menu(ctx):
     """Right-click the navigation pane below its last entry: the pane's own menu."""
     tree = in_bar(ctx, automationId="100", controlType="Tree")
@@ -372,23 +147,6 @@ def pane_menu(ctx):
     # A command bar flyout whose entries are all in its overflow list
     # (2026-11-19: an empty bar of 48 px and the five options under OverflowPopup).
     _root["el"] = overflow(ctx)
-
-
-def details_pane(ctx):
-    set_pane(ctx, "details")
-
-
-def preview_pane(ctx):
-    set_pane(ctx, "preview")
-
-
-def tab_row(ctx):
-    return in_bar(ctx, automationId="TabView")
-
-
-def new_tab(ctx):
-    ctx.keys("ctrl+t")
-    time.sleep(SETTLE)
 
 
 def many_tabs(ctx):
@@ -404,24 +162,6 @@ def many_tabs(ctx):
 
 
 # ------------------------------------------------------- measured scenes --
-
-def focused(ctx):
-    el = ctx.live.wrap(ctx.live.uia.GetFocusedElement())
-    return {"name": el.name, "automationId": el.automation_id, "className": el.class_name,
-            "controlType": el.control_type}
-
-
-def title(ctx):
-    return window(ctx).name
-
-
-def windows(ctx):
-    return sum(1 for w in ctx.live.children(ctx.live.uia.GetRootElement()) if core.matches(w, SPEC))
-
-
-def tabs(ctx):
-    return sum(1 for t in tab_row(ctx).children() if t.control_type == "List"
-               for _ in t.children())
 
 
 def address_list_open(ctx):
@@ -444,15 +184,6 @@ def focus_region(ctx):
             break
         el = up[1]
     return None
-
-
-def focus_list(ctx):
-    """Click the item list below its last row: the focus in the list, nothing
-    selected. Clicking an item that is already selected starts renaming it
-    (2026-11-19: Alt+P went into the rename box), so no key starts from that."""
-    x, y, w, h = items(ctx).bounds
-    ctx.click_at(x + w // 2, y + h - LIST_EMPTY_OFFSET)
-    time.sleep(0.5)
 
 
 def measure_keys(ctx):
@@ -521,10 +252,6 @@ def measure_keys(ctx):
     k["f6"] = {"stops": stops}
     _m["keys"] = k
     measure_tab_drag(ctx)
-
-
-def tab_names(ctx):
-    return [t.name for t in descendants(ctx, tab_row(ctx), 2) if t.control_type == "TabItem"]
 
 
 def drag(ctx, start, end):

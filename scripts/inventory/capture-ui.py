@@ -57,6 +57,8 @@ MIN_POLLS = 3           # and is always looked at this often: a provider busy an
 POLL_S = 0.2
 EXPAND_COLLAPSE = 10005
 INVOKE = 10000
+SCROLL_ITEM, ITEM_CONTAINER, VIRTUALIZED_ITEM = 10017, 10019, 10020
+PROP_NAME = 30005
 PROP_EC_AVAILABLE = 30028
 PROP_EC_STATE = 30070
 EXPANDED, COLLAPSED = 1, 0
@@ -488,10 +490,40 @@ class Context:
     def invoke(self, el):
         """Run an element's default action through its Invoke pattern (a menu
         entry that a synthesized click does not reach)."""
+        pattern = el.el.GetCurrentPattern(INVOKE)
+        # An element without the pattern hands back a null pointer, whose
+        # QueryInterface fails as "NULL COM pointer access" with no name in it
+        # (2026-11-19: File Explorer's Compact view, a toggle menu entry).
+        if not pattern:
+            raise core.Incomplete(f"{el.name or el.automation_id}: has no Invoke pattern")
         try:
-            el.el.GetCurrentPattern(INVOKE).QueryInterface(self.live.UIA.IUIAutomationInvokePattern).Invoke()
+            pattern.QueryInterface(self.live.UIA.IUIAutomationInvokePattern).Invoke()
         except self.live.COMError as exc:
             raise core.Incomplete(f"{el.name or el.automation_id}: Invoke failed ({exc})") from None
+        time.sleep(0.3)
+
+    def bring_into_view(self, container, name):
+        """The item `name` of a virtualized list made real and scrolled on screen:
+        an item off screen is not in the tree at all, so it cannot be found by a
+        walk (2026-11-19: the last of ten items in File Explorer's extra large
+        icons). Found through the list's ItemContainer pattern, by name."""
+        pattern = container.el.GetCurrentPattern(ITEM_CONTAINER)
+        if not pattern:
+            raise core.Incomplete(f"{container.name or container.automation_id}: has no ItemContainer pattern")
+        UIA = self.live.UIA
+        try:
+            item = pattern.QueryInterface(UIA.IUIAutomationItemContainerPattern).FindItemByProperty(None, PROP_NAME, name)
+            if not item:
+                raise core.Incomplete(f"{container.name or container.automation_id}: no item {name!r}")
+            virtual = item.GetCurrentPattern(VIRTUALIZED_ITEM)
+            if virtual:
+                virtual.QueryInterface(UIA.IUIAutomationVirtualizedItemPattern).Realize()
+            scroll = item.GetCurrentPattern(SCROLL_ITEM)
+            if not scroll:
+                raise core.Incomplete(f"{name}: has no ScrollItem pattern")
+            scroll.QueryInterface(UIA.IUIAutomationScrollItemPattern).ScrollIntoView()
+        except self.live.COMError as exc:
+            raise core.Incomplete(f"{name}: could not be brought into view ({exc})") from None
         time.sleep(0.3)
 
     def expand_only(self, el):
@@ -622,10 +654,17 @@ class Context:
         return ", ".join(f"{w.class_name}:{w.name[:30]!r}" for w in shown[:ON_SCREEN_MAX]) or "(none)"
 
 
+SHARED = HERE / "surfaces" / "shared"     # helpers several surface modules import by name
+
+
 def load_surface(name):
     path = HERE / "surfaces" / f"{name}.py"
     if not path.is_file():
         raise SystemExit(f"capture-ui: no surface module {path}")
+    # The embeddable Python's ._pth mode keeps every folder but its own off
+    # sys.path, so the shared helpers' folder is put there for the module's imports.
+    if str(SHARED) not in sys.path:
+        sys.path.insert(0, str(SHARED))
     return _load(f"surface_{core.slug(name).replace('-', '_')}", path)
 
 

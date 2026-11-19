@@ -2801,6 +2801,24 @@ class Modules(unittest.TestCase):
         self.assertNotIn("surfaces/notepad-smoke.py", seen["files"])
         self.assertIn("--surface notepad-smoke --module other ", seen["cmd"])
 
+    def test_the_shared_helpers_are_staged_with_every_module(self):
+        # A module may import a helper from surfaces/shared/; the guest has only what is staged.
+        seen = {}
+        real = capture.ref_run
+        capture.ref_run = lambda label, files, cmd, timeout, checkpoint: seen.update(files=files) or ("out", 0)
+        try:
+            capture.run_guest("notepad-smoke", "fhd-100", 60)
+        finally:
+            capture.ref_run = real
+        shared = sorted(p.name for p in (INV / "surfaces" / "shared").glob("*.py"))
+        self.assertTrue(shared)
+        for name in shared:
+            self.assertEqual(seen["files"][f"surfaces/shared/{name}"], INV / "surfaces" / "shared" / name)
+
+    def test_a_module_imports_its_shared_helper_the_way_the_guest_loads_it(self):
+        m = guest.load_surface("explorer-frame")
+        self.assertIs(m.ew, sys.modules["explorer_window"])
+
     def test_a_missing_module_is_refused_before_the_vm(self):
         real = capture.run_guest
         capture.run_guest = lambda *a, **k: self.fail("the guest ran")
@@ -2893,11 +2911,165 @@ class DesktopMetrics(unittest.TestCase):
         self.assertEqual(len(orders), len(set(orders)))
 
 
+class ExplorerMenu(unittest.TestCase):
+    """shared/explorer_window.py menu(): the open menu, never a closed one's."""
+
+    def setUp(self):
+        guest.load_surface("explorer-frame")
+        self.ew = sys.modules["explorer_window"]
+
+    def run_menu(self, tree):
+        el = lambda **kw: types.SimpleNamespace(**{"control_type": "Pane", "offscreen": False, **kw})
+        focus = el(control_type="ListItem")
+        live = types.SimpleNamespace(uia=types.SimpleNamespace(GetFocusedElement=lambda: focus),
+                                     wrap=lambda e: e, _parent=lambda e: None)
+        ctx = types.SimpleNamespace(live=live)
+        with mock.patch.object(self.ew, "window", lambda c: None), \
+             mock.patch.object(self.ew, "descendants", lambda c, root, depth, skip=(): tree(el)), \
+             mock.patch.object(self.ew, "focused", lambda c: {}), mock.patch.object(self.ew.time, "sleep", lambda s: None):
+            return self.ew.menu(ctx, wait=0)
+
+    def test_the_menu_on_screen_is_taken_over_a_closed_one(self):
+        got = self.run_menu(lambda el: [el(control_type="Menu", offscreen=True, name="stale"),
+                                        el(control_type="Menu", name="open")])
+        self.assertEqual(got.name, "open")
+
+    def test_only_a_closed_menu_is_no_menu(self):
+        with self.assertRaises(guest.core.Incomplete):
+            self.run_menu(lambda el: [el(control_type="Menu", offscreen=True, name="stale")])
+
+
+class ExplorerViews(unittest.TestCase):
+    """The views module's records from what its measured scenes saw."""
+
+    def setUp(self):
+        self.m = guest.load_surface("explorer-views")
+
+    def found(self):
+        one, long_ = self.m.ONE_LINE, self.m.LONG
+        # Two cells in a row and one below: the gaps are 7 and 9 px.
+        icons = {one: {"box": [422, 282, 105, 116], "label": [441, 380, 68, 16]},
+                 "Other": {"box": [534, 282, 105, 116], "label": [551, 380, 68, 16]},
+                 long_: {"box": [422, 407, 105, 131], "label": [441, 505, 68, 31]}}
+        rows = {one: {"box": [422, 307, 598, 24], "label": [444, 310, 236, 19]},
+                long_: {"box": [422, 335, 598, 24], "label": [444, 338, 236, 19]}}
+        return {slug: (icons if slug in self.m.ICON_MODES else rows) for slug, _l, _c in self.m.MODES}
+
+    def test_each_mode_gets_its_sizes(self):
+        got = {r["id"]: r for r in self.m.mode_metrics(self.found(), "normal")}
+        self.assertEqual(got["views.large-icons.icon-slot"]["measure"]["value"], 98)         # label top less cell top
+        self.assertEqual(got["views.large-icons.label-lines"]["measure"]["value"], 2)
+        self.assertEqual(got["views.large-icons.column-gap"]["measure"]["value"], 7)
+        self.assertEqual(got["views.large-icons.row-gap"]["measure"]["value"], 9)
+        self.assertEqual(got["views.details.icon-slot"]["measure"]["value"], 22)             # label left less cell left
+        self.assertEqual(got["views.details.row-gap"]["measure"]["value"], 4)
+        self.assertEqual(sum(1 for r in got.values() if r["kind"] == "state"), 8)
+        compact = {r["id"] for r in self.m.mode_metrics(self.found(), "compact")}
+        self.assertIn("views.details-compact.cell-height", compact)
+
+    def test_a_mode_whose_items_were_not_read_stops_the_capture(self):
+        found = self.found()
+        found["tiles"] = {}
+        with self.assertRaises(ValueError):
+            self.m.mode_metrics(found, "normal")
+
+    def test_the_new_folder_names_are_checked(self):
+        self.assertEqual(self.m.new_name_records(["New folder", "New folder (2)"])[0]["shortcut"], "Ctrl+Shift+N")
+        with self.assertRaises(ValueError):
+            self.m.new_name_records(["New folder"])
+
+    def test_the_info_tip_rows_come_from_the_tip(self):
+        r = self.m.tip_records(["Type: Text Document", "Size: 16 bytes", "Date modified: 11/19/2026 7:45 AM"])
+        self.assertTrue(r[0]["behaviour"].endswith("Type, Size, Date modified."))
+        with self.assertRaises(ValueError):
+            self.m.tip_records(["Sample document"])
+
+    def test_unnamed_elements_are_labelled_by_what_they_are(self):
+        for aid, label in (("GroupCheckbox", "Select all"), ("PART_ScrollPresenter", "Scroll area")):
+            el = types.SimpleNamespace(control_type="CheckBox", automation_id=aid, class_name="", name="")
+            given = next((lab for spec, lab in self.m.LABELS if core.matches(el, spec)), None)
+            self.assertEqual(given, label)
+
+    def test_a_measured_item_off_screen_is_brought_into_view(self):
+        shown = {self.m.ONE_LINE: {"box": [0, 0, 1, 1], "label": [0, 0, 1, 1]}}
+        brought = []
+
+        def bring(container, name):
+            brought.append((container, name))
+            shown[name] = {"box": [5, 5, 1, 1], "label": [5, 5, 1, 1]}
+        ctx = types.SimpleNamespace(bring_into_view=bring)
+        with mock.patch.object(self.m, "read_items", lambda c: dict(shown)), \
+                mock.patch.object(self.m, "items", lambda c: "list"):
+            now = self.m.read_measured(ctx)
+        self.assertEqual(brought, [("list", self.m.LONG)])
+        self.assertIn(self.m.LONG, now)
+
+    def test_ids_are_unique_across_metrics_and_hand_records(self):
+        recs = (self.m.mode_metrics(self.found(), "normal") + self.m.mode_metrics(self.found(), "compact")
+                + self.m.mode_key_records() + self.m.HAND)
+        ids = [r["id"] for r in recs]
+        self.assertEqual(len(ids), len(set(ids)))
+
+
+class Invoke(unittest.TestCase):
+    def test_an_element_without_the_invoke_pattern_is_named(self):
+        ctx = guest.Context.__new__(guest.Context)
+        el = types.SimpleNamespace(name="Compact view", automation_id="",
+                                   el=types.SimpleNamespace(GetCurrentPattern=lambda pid: None))
+        with self.assertRaisesRegex(guest.core.Incomplete, "Compact view: has no Invoke pattern"):
+            ctx.invoke(el)
+
+
+class BringIntoView(unittest.TestCase):
+    def ctx(self):
+        ctx = guest.Context.__new__(guest.Context)
+        ctx.live = types.SimpleNamespace(COMError=OSError, UIA=types.SimpleNamespace(
+            IUIAutomationItemContainerPattern="container", IUIAutomationVirtualizedItemPattern="virtual",
+            IUIAutomationScrollItemPattern="scroll"))
+        return ctx
+
+    def pattern(self, calls, kind, **methods):
+        return types.SimpleNamespace(QueryInterface=lambda iface: (calls.append((kind, iface)), types.SimpleNamespace(**methods))[1])
+
+    def test_an_off_screen_item_is_found_realized_and_scrolled(self):
+        calls = []
+        item = types.SimpleNamespace(GetCurrentPattern=lambda pid: {
+            guest.VIRTUALIZED_ITEM: self.pattern(calls, "v", Realize=lambda: calls.append("realize")),
+            guest.SCROLL_ITEM: self.pattern(calls, "s", ScrollIntoView=lambda: calls.append("scroll"))}.get(pid))
+        found = []
+        container = types.SimpleNamespace(name="Items View", automation_id="", el=types.SimpleNamespace(
+            GetCurrentPattern=lambda pid: self.pattern(calls, "c", FindItemByProperty=lambda start, prop, value: (
+                found.append((start, prop, value)), item)[1]) if pid == guest.ITEM_CONTAINER else None))
+        with mock.patch.object(guest.time, "sleep"):
+            self.ctx().bring_into_view(container, "Long name")
+        self.assertEqual(found, [(None, guest.PROP_NAME, "Long name")])
+        self.assertEqual([c for c in calls if isinstance(c, str)], ["realize", "scroll"])
+
+    def test_a_list_without_the_item_or_the_pattern_is_named(self):
+        bare = types.SimpleNamespace(name="Items View", automation_id="", el=types.SimpleNamespace(GetCurrentPattern=lambda pid: None))
+        with self.assertRaisesRegex(guest.core.Incomplete, "Items View: has no ItemContainer pattern"):
+            self.ctx().bring_into_view(bare, "x")
+        calls = []
+        empty = types.SimpleNamespace(name="Items View", automation_id="", el=types.SimpleNamespace(
+            GetCurrentPattern=lambda pid: self.pattern(calls, "c", FindItemByProperty=lambda *a: None)))
+        with self.assertRaisesRegex(guest.core.Incomplete, "no item 'x'"):
+            self.ctx().bring_into_view(empty, "x")
+
+
+class ScenePairs(unittest.TestCase):
+    def test_a_module_constant_of_the_wrong_shape_is_refused_by_name(self):
+        mod = types.SimpleNamespace(KINDS=[("general", "General items")])
+        with self.assertRaisesRegex(ValueError, "kinds holds"):
+            core.Scene(mod, slug="s", label="S", open=None, root=None, close=None)
+        ok = types.SimpleNamespace(KINDS=[({"controlType": "Pane"}, "region")])
+        self.assertEqual(core.Scene(ok, slug="s", label="S", open=None, root=None, close=None).kinds[0][1], "region")
+
+
 class ExplorerFrame(unittest.TestCase):
     """The File Explorer frame module's records from what its measured scenes saw."""
 
     def setUp(self):
-        self.m = load("surface_explorer_frame", INV / "surfaces" / "explorer-frame.py")
+        self.m = guest.load_surface("explorer-frame")
 
     @staticmethod
     def keys():
@@ -2915,6 +3087,12 @@ class ExplorerFrame(unittest.TestCase):
                 "alt+right": {"from": "Explorer sample", "to": "General items", "inside": "General items"},
                 "alt+up": {"from": "General items", "to": "Explorer sample", "start": "Explorer sample"},
                 "f6": {"stops": regions}}
+
+    def test_a_shown_date_is_a_live_value_and_its_label_is_not(self):
+        el = lambda name: types.SimpleNamespace(control_type="Text", automation_id="", class_name="TextBlock", name=name)
+        date = el("\u200e11/\u200e19/\u200e2026 \u200f\u200e7:45 AM")
+        self.assertEqual(core._segment(date, values=self.m.VALUES), "textblock")      # not 11-19-2026-7-45-am
+        self.assertEqual(core._segment(el("Date modified"), values=self.m.VALUES), "date-modified")
 
     def test_a_chord_is_named_the_way_the_records_write_keys(self):
         self.assertEqual([self.m.chord_name(c) for c in ("alt+shift+p", "f4", "ctrl+t")], ["Alt+Shift+P", "F4", "Ctrl+T"])

@@ -251,6 +251,76 @@
  },
  {
   "surface": "explorer",
+  "file": "views",
+  "state": "choose-details",
+  "profile": "fhd-100",
+  "width": 355,
+  "height": 457,
+  "size": 14119,
+  "sha256": "87a599ad5383281ac9f416c496fc195965c04d7cd7faa917a0932f2beb3e25a4"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "columns-documents",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 25,
+  "size": 1210,
+  "sha256": "822820a4fd02a9bc564e45890db7fa03b2be3bdce047180b71806ecee6d56ddc"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "columns-general",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 25,
+  "size": 1210,
+  "sha256": "822820a4fd02a9bc564e45890db7fa03b2be3bdce047180b71806ecee6d56ddc"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "columns-music",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 25,
+  "size": 1325,
+  "sha256": "6daa8977d71415fc40b4a50bf73504f67e69b365eee0506820f1ee200b382761"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "columns-pictures",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 25,
+  "size": 1206,
+  "sha256": "9a2e1bf967c6a4ebae21675465f915673824bb27258cf17dcfe7801c2679f239"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "columns-videos",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 25,
+  "size": 1221,
+  "sha256": "624b064792c2513dab5803b5a58a9832164aed08301c9d01119dd54128f64f57"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "compressed-folder",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 6594,
+  "sha256": "60cf54e74a8b8d0cf813927e94569c2552d508f752ee5b08edebf146d7ae9030"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "crumb-menu",
   "profile": "fhd-100",
@@ -291,6 +361,26 @@
  },
  {
   "surface": "explorer",
+  "file": "views",
+  "state": "details-view",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 24046,
+  "sha256": "b85a230e39899383f5ab2892dac9b28dc3c7833843f86f11aff70285e0efa750"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "empty-folder",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 4396,
+  "sha256": "3735d599528cd2f298e55bb516b86f4596de9b90184b61b2710ec35ce8c7572e"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "file-selected",
   "profile": "fhd-100",
@@ -298,6 +388,16 @@
   "height": 720,
   "size": 113357,
   "sha256": "1b2be78603f416d875f548e32ce09a39c9ff2b6c0b1c4da1d371fed44c95aa52"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "filter-list",
+  "profile": "fhd-100",
+  "width": 166,
+  "height": 69,
+  "size": 1449,
+  "sha256": "b843a8e8307eaf1316d544b719bdec0a3cedc64ee5017ff1fe15bdccb96c5de9"
  },
  {
   "surface": "explorer",
@@ -321,6 +421,46 @@
  },
  {
   "surface": "explorer",
+  "file": "views",
+  "state": "gallery",
+  "profile": "fhd-100",
+  "width": 970,
+  "height": 552,
+  "size": 72914,
+  "sha256": "63bcd171b4510a467b3d862ebbcbb35edb5db8a793139ea175d11c4da21cd7b9"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "grouped",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 557,
+  "size": 27489,
+  "sha256": "0f57150873d370cfecd044b666710e4133985e813d03ee500d3721343da2348c"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "header-menu",
+  "profile": "fhd-100",
+  "width": 216,
+  "height": 288,
+  "size": 2953,
+  "sha256": "219b08668f6a9901e26cbd475316a88962a556117e3d8e718a2335a34ba87362"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "home",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 35329,
+  "sha256": "b82c31050ee92a75c4777a5f545f4c8c8935eb33114698f0ead612eb9a0f59a1"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "home-command-bar",
   "profile": "fhd-100",
@@ -331,6 +471,16 @@
  },
  {
   "surface": "explorer",
+  "file": "views",
+  "state": "library",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 8727,
+  "sha256": "b4875008ed4a78e676b5294dd77334f820e49eca7c195ff8368ca828a5b34d32"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "navigation-pane-menu",
   "profile": "fhd-100",
@@ -338,6 +488,16 @@
   "height": 160,
   "size": 2671,
   "sha256": "83adf4ab6d5e483e5b2e874458bf4d9ea3b4f52a554c583a84aa3c832ad65b3d"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "network",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 524,
+  "size": 3178,
+  "sha256": "9f2bf1bf5d8b15f891b4a7aa0d4fef01255b516faa068afd00f971df3dd24c89"
  },
  {
   "surface": "explorer",
@@ -371,6 +531,16 @@
  },
  {
   "surface": "explorer",
+  "file": "views",
+  "state": "recycle-bin",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 6783,
+  "sha256": "b1134b1045a30f1cb6df2c8dbff46888427c094de02755fce20d97c9f120e529"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "recycle-bin-command-bar",
   "profile": "fhd-100",
@@ -378,6 +548,66 @@
   "height": 46,
   "size": 4847,
   "sha256": "2fb4e574105c6adaf893f1d9706f296d4293e14e269e9d5d6270b8aeaffc8737"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-command-bar",
+  "profile": "fhd-100",
+  "width": 903,
+  "height": 46,
+  "size": 4460,
+  "sha256": "cc83962ef45046d9c8ae619540df57c48aa62878c042e5c8452649fbdc4de3bc"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-options-menu",
+  "profile": "fhd-100",
+  "width": 265,
+  "height": 303,
+  "size": 8131,
+  "sha256": "2e0ec257fc3f8f7080f142272c392b3b76dd1d5adc2b9c1f563aba337c811ef2"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-options-menu.date-modified-open",
+  "profile": "fhd-100",
+  "width": 380,
+  "height": 255,
+  "size": 12137,
+  "sha256": "5a6270e87fed8577915f9280d8f8a0a211e564bd56775eaabfb08e15adc31689"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-options-menu.kind-open",
+  "profile": "fhd-100",
+  "width": 411,
+  "height": 732,
+  "size": 126700,
+  "sha256": "222975b092fa523eb00bd428ea88fcc2bb4e4479301760923733ffbafcff9e2d"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-options-menu.size-open",
+  "profile": "fhd-100",
+  "width": 442,
+  "height": 223,
+  "size": 12875,
+  "sha256": "b728b03615adf57defec5cf8c326372b246b0db2ae7826385928c3cabc2d3d24"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "search-results",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 583,
+  "size": 55861,
+  "sha256": "262e798503b3c73d72ab3ea3c4d42b0652e4e769ef524391156545fd08573a5b"
  },
  {
   "surface": "explorer",
@@ -428,6 +658,16 @@
   "height": 38,
   "size": 2484,
   "sha256": "cd725cc5d2fdf2315c9dc4452c382fb3643d2584d48dd894dc86082c2a65d1ed"
+ },
+ {
+  "surface": "explorer",
+  "file": "views",
+  "state": "this-pc",
+  "profile": "fhd-100",
+  "width": 1024,
+  "height": 552,
+  "size": 11834,
+  "sha256": "61e40063f567868fdd9af56fc58b9f89264286d94756ca2215d7bc37470972ab"
  },
  {
   "surface": "explorer",

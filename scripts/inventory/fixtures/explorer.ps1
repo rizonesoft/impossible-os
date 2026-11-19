@@ -78,6 +78,9 @@ if ($left.root -or $left.library -or @($left.bin).Count -or @($left.typed).Count
 
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $Root 'Sample document.txt') -Value 'Sample content' -Encoding ASCII
+# One word: a label that is one line in every view mode, even the narrow medium
+# icons cell, where every two-word name wraps (2026-11-19).
+Set-Content -LiteralPath (Join-Path $Root 'Notes.txt') -Value 'Sample content' -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $Root $LongName) -Value 'Sample content' -Encoding ASCII
 
 # An image of our own: a 64 px square in two colours.

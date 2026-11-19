@@ -544,6 +544,14 @@ class Scene:
         self.omit = tuple(spec.get("omit", getattr(mod, "OMIT", ())))
         self.count = spec.get("count")          # None: count a menu or context menu root's entries
         self.kinds = tuple(spec.get("kinds", getattr(mod, "KINDS", ())))
+        # Each is a list of (spec, value) pairs, spec a dict; a module constant
+        # of another shape under one of these names would fail deep in the walk
+        # (2026-11-19: a KINDS list of folder names gave "'str' object has no
+        # attribute 'items'"), so it is refused here, named.
+        for field in ("identity", "labels", "kinds"):
+            for pair in getattr(self, field):
+                if not (isinstance(pair, tuple | list) and len(pair) == 2 and isinstance(pair[0], dict)):
+                    raise ValueError(f"scene {self.slug!r}: {field} holds {pair!r}, not a (spec, value) pair")
 
 
 def scenes_of(mod):

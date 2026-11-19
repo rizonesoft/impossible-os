@@ -686,7 +686,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
 - [x] File Explorer Frame: `docs/design/inventory/explorer/frame.json` (969 records; every `known-folders` row matched or absent)
-- [ ] File Explorer Views and Columns: writes `docs/design/inventory/explorer/views.json`
+- [x] File Explorer Views and Columns: `docs/design/inventory/explorer/views.json` (693 records; 8 modes x 2 layouts measured, 5 folder kinds' columns)
   - Capture each view mode as `metric` records: cell size, icon size, label lines, spacing, and the compact view variant
     - Extra large, large, medium and small icons, list, details, tiles, content
   - Capture the details view: the header, the default columns per folder kind, and the "choose details" dialog
