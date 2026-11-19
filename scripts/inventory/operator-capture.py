@@ -530,6 +530,8 @@ def leaks(recs, personal):
     block the run on those."""
     out = []
     mark = core.slug(PLACEHOLDER)
+    part_of = {r["id"]: r["id"].rsplit(".", 1)[-1] for r in recs}
+    parent_of = {r["id"]: r.get("parent") for r in recs}
     for r in recs:
         if r["kind"] in ("surface", "page"):
             continue
@@ -538,7 +540,16 @@ def leaks(recs, personal):
         label = r.get("label", "")
         own = label.replace(PLACEHOLDER, "\0")
         if "uiaId" not in r:
-            part = r["id"].rsplit(".", 1)[-1]
+            part = part_of[r["id"]]
+            # A template and its controls are named for their list: the prefix
+            # is an ancestor's id part, checked on that ancestor's own record (or
+            # an automation ID), so only what this record adds is read here.
+            up, prefix = parent_of[r["id"]], ""
+            while up in part_of and not prefix:
+                if part.startswith(part_of[up] + "-"):
+                    prefix = part_of[up]
+                up = parent_of[up]
+            part = part[len(prefix) + 1:] if prefix else part
             if PLACEHOLDER in label:
                 part = "-".join(w for w in part.split("-") if w != mark)
             own += " " + part

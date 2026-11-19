@@ -330,6 +330,27 @@ class Host(unittest.TestCase):
         recs = oc.page_records("wifi", dump, "26300.9974", oc.personal_strings(dump["top"], names))
         self.assertFalse([r["id"] for r in recs if "home 5g" in str(r).casefold()])
 
+    def test_a_list_prefix_named_like_a_network_is_not_a_leak(self):
+        # A saved network called "WiFi": the adapter list's automation ID holds
+        # "wifi", and its template and controls carry that ID as their prefix.
+        entry = el("Group", "Pat's adapter", cls="NamedContainerAutomationPeer",
+                   kids=[el("Text", "Pat's adapter"), el("Button", "Hardware properties", aid="HwProps")])
+        top = window(el("List", aid="SystemSettings_Connections_Wifi_Adapter_List_ItemsControl", kids=[entry]))
+        dump = {"monitor": MON, "uri": "ms-settings:network-wifi", "top": top}
+        names = ["WiFi"]
+        recs = oc.page_records("wifi", dump, "26300.9974", oc.personal_strings(top, names))
+        self.assertTrue(any(r["id"].endswith("-wifi-adapter-list-itemscontrol-entry-hardware-properties") for r in recs))
+        self.assertEqual(oc.leaks(recs, names), [])
+        # A control below another control of the template carries the template's prefix.
+        child = next(r for r in recs if r["id"].endswith("-entry-hardware-properties"))
+        deep = {**child, "id": child["id"] + "-more", "label": "More", "parent": child["id"]}
+        deep["id"] = child["id"].replace("hardware-properties", "more")
+        self.assertEqual(oc.leaks(recs + [deep], names), [])
+        # What the record itself adds is still read: a control named for the network is caught.
+        child = next(r for r in recs if r["id"].endswith("-entry-hardware-properties"))
+        bad = {**child, "id": child["id"].replace("hardware-properties", "wifi-properties"), "label": "Properties"}
+        self.assertEqual(oc.leaks(recs + [bad], names), [bad["id"]])
+
 
 class Main(unittest.TestCase):
     def test_a_replay_does_not_query_the_live_build(self):
