@@ -1266,10 +1266,11 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Graphics GPU preferences captured: Advanced graphics settings expanded (`graphics-advanced`) and the first app's options open (`graphics-app-options`), each with its choices recorded; or the host's lack of a GPU choice recorded as observed
 - [ ] Quick Settings Wi-Fi and Bluetooth flyouts captured on the host (`flyouts/quick-settings-wifi`, `flyouts/quick-settings-bluetooth`), every network and device name blanked as in §27
   - Replaces §8's `absent-wifi` and `absent-bluetooth` equivalent records in `flyouts/quick-settings.json` with the captured tiles
+- [ ] Campaign rows matched to records by state: `inventory-report.py --campaign` accepts a row's `records` need only from records captured in that state, with a regression where the four shots exist and their records do not
 - [ ] Host polling deadlines measured on a `Stopwatch` instead of the wall clock, so a clock change cannot stretch a wait (filed from section 27 performance review)
 - [ ] Commit: `"inventory: host captures, GPU preferences and radio flyouts"`
 
-**Test checkpoint:** `inventory-report.py --campaign --check` reports no settings/graphics-advanced, settings/graphics-app-options, flyouts/quick-settings-wifi or flyouts/quick-settings-bluetooth row; `check-inventory.py` passes.
+**Test checkpoint:** each of the four states has its own records: the GPU choices (or the recorded observation that the host offers none) in `settings/host.json` for graphics-advanced and graphics-app-options, and the Wi-Fi network list and Bluetooth device list tiles in `flyouts/host.json`; with the state-matched campaign check, `inventory-report.py --campaign --check` reports none of the four rows, and `check-inventory.py` passes.
 
 ---
 

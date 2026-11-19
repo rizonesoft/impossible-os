@@ -2110,7 +2110,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T17 §25` | Service-State Fixtures: Delivered Updates                               | none     |     5 |
 | [ ]  | `D08 T17 §26` | Service-State Fixtures: Network Switch and Page States                  | none     |     4 |
 | [ ]  | `D08 T17 §28` | Recovery Branches: Reset This PC and Automatic Repair                   | none     |     5 |
-| [ ]  | `D08 T17 §29` | Host Captures: GPU Preferences and the Radio Flyouts                    | operator |     4 |
+| [ ]  | `D08 T17 §29` | Host Captures: GPU Preferences and the Radio Flyouts                    | operator |     5 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none     |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none     |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none     |     6 |
