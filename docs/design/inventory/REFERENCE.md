@@ -170,3 +170,65 @@ A row of a completeness baseline that the reference build lists but no surface s
 
 | Baseline | Row | Build | Reason |
 | -------- | --- | ----- | ------ |
+| `known-folders` | `{31c0dd25-9439-4f12-bf41-7ff4eda38722}` | 26300.9974 | 3D Objects: The shell namespace resolves `shell:3D Objects` to no folder on the reference account's profile. |
+| `known-folders` | `{b2c5e279-7add-439f-b28c-c41fe1bbf672}` | 26300.9974 | AppDataDesktop: The shell namespace resolves `shell:AppDataDesktop` to no folder on the reference account's profile. |
+| `known-folders` | `{7be16610-1f7f-44ac-bff0-83e15f2ffca1}` | 26300.9974 | AppDataDocuments: The shell namespace resolves `shell:AppDataDocuments` to no folder on the reference account's profile. |
+| `known-folders` | `{7cfbefbc-de1f-45aa-b843-a542ac536cc9}` | 26300.9974 | AppDataFavorites: The shell namespace resolves `shell:AppDataFavorites` to no folder on the reference account's profile. |
+| `known-folders` | `{559d40a3-a036-40fa-af61-84cb430a4d34}` | 26300.9974 | AppDataProgramData: The shell namespace resolves `shell:AppDataProgramData` to no folder on the reference account's profile. |
+| `known-folders` | `{7ad67899-66af-43ba-9156-6aad42e6c596}` | 26300.9974 | AppMods: The shell namespace resolves `shell:AppMods` to no folder on the reference account's profile. |
+| `known-folders` | `{ab5fb87b-7ce2-4f83-915d-550846c9537b}` | 26300.9974 | Camera Roll: The shell namespace resolves `shell:Camera Roll` to no folder on the reference account's profile. |
+| `known-folders` | `{2b20df75-1eda-4039-8097-38798227d5b7}` | 26300.9974 | CameraRollLibrary: The shell namespace resolves `shell:CameraRollLibrary` to no folder on the reference account's profile. |
+| `known-folders` | `{edc0fe71-98d8-4f4a-b920-c8dc133cb165}` | 26300.9974 | Captures: The shell namespace resolves `shell:Captures` to no folder on the reference account's profile. |
+| `known-folders` | `{a440879f-87a0-4f7d-b700-0207b966194a}` | 26300.9974 | Common Start Menu Places: The shell namespace resolves `shell:Common Start Menu Places` to no folder on the reference account's profile. |
+| `known-folders` | `{dbe8e08e-3053-4bbc-b183-2a7b2b191e59}` | 26300.9974 | Development Files: The shell namespace resolves `shell:Development Files` to no folder on the reference account's profile. |
+| `known-folders` | `{2a00375e-224c-49de-b8d1-440df7ef3ddc}` | 26300.9974 | LocalizedResourcesDir: The shell namespace resolves `shell:LocalizedResourcesDir` to no folder on the reference account's profile. |
+| `known-folders` | `{98ec0e18-2098-4d44-8644-66979315a281}` | 26300.9974 | MAPIFolder: The shell namespace resolves `shell:MAPIFolder` to no folder on the reference account's profile. |
+| `known-folders` | `{c1bae2d0-10df-4334-bedd-7aa20b227a9d}` | 26300.9974 | OEM Links: The shell namespace resolves `shell:OEM Links` to no folder on the reference account's profile. |
+| `known-folders` | `{767e6811-49cb-4273-87c2-20f355e1085b}` | 26300.9974 | OneDriveCameraRoll: The shell namespace resolves `shell:OneDriveCameraRoll` to no folder on the reference account's profile. |
+| `known-folders` | `{24d89e24-2f19-4534-9dde-6a6671fbb8fe}` | 26300.9974 | OneDriveDocuments: The shell namespace resolves `shell:OneDriveDocuments` to no folder on the reference account's profile. |
+| `known-folders` | `{c3f2459e-80d6-45dc-bfef-1f769f2be730}` | 26300.9974 | OneDriveMusic: The shell namespace resolves `shell:OneDriveMusic` to no folder on the reference account's profile. |
+| `known-folders` | `{339719b5-8c47-4894-94c2-d8f77add44a6}` | 26300.9974 | OneDrivePictures: The shell namespace resolves `shell:OneDrivePictures` to no folder on the reference account's profile. |
+| `known-folders` | `{2c36c0aa-5812-4b87-bfd0-4cd0dfb19b39}` | 26300.9974 | Original Images: The shell namespace resolves `shell:Original Images` to no folder on the reference account's profile. |
+| `known-folders` | `{69d2cf90-fc33-4fb7-9a0c-ebb0f0fcb43c}` | 26300.9974 | PhotoAlbums: The shell namespace resolves `shell:PhotoAlbums` to no folder on the reference account's profile. |
+| `known-folders` | `{de92c1c7-837f-4f69-a3bb-86e631204a23}` | 26300.9974 | Playlists: The shell namespace resolves `shell:Playlists` to no folder on the reference account's profile. |
+| `known-folders` | `{2f8b40c2-83ed-48ee-b383-a1f157ec6f9a}` | 26300.9974 | Recorded Calls: The shell namespace resolves `shell:Recorded Calls` to no folder on the reference account's profile. |
+| `known-folders` | `{1a6fdba2-f42d-4358-a798-b74d745926c5}` | 26300.9974 | RecordedTVLibrary: The shell namespace resolves `shell:RecordedTVLibrary` to no folder on the reference account's profile. |
+| `known-folders` | `{aaa8d5a5-f1d6-4259-baa8-78e7ef60835e}` | 26300.9974 | Roamed Tile Images: The shell namespace resolves `shell:Roamed Tile Images` to no folder on the reference account's profile. |
+| `known-folders` | `{3b193882-d3ad-4eab-965a-69829d1fb59f}` | 26300.9974 | SavedPictures: The shell namespace resolves `shell:SavedPictures` to no folder on the reference account's profile. |
+| `known-folders` | `{e25b5812-be88-4bd9-94b0-29233477b6c3}` | 26300.9974 | SavedPicturesLibrary: The shell namespace resolves `shell:SavedPicturesLibrary` to no folder on the reference account's profile. |
+| `known-folders` | `{b7bede81-df94-4682-a7d8-57a52620b86f}` | 26300.9974 | Screenshots: The shell namespace resolves `shell:Screenshots` to no folder on the reference account's profile. |
+| `known-folders` | `{0d4c3db6-03a3-462f-a0e6-08924c41b5d4}` | 26300.9974 | SearchHistoryFolder: The shell namespace resolves `shell:SearchHistoryFolder` to no folder on the reference account's profile. |
+| `known-folders` | `{7e636bfe-dfa9-4d5e-b456-d7b39851d8a9}` | 26300.9974 | SearchTemplatesFolder: The shell namespace resolves `shell:SearchTemplatesFolder` to no folder on the reference account's profile. |
+| `known-folders` | `{5cd7aee2-2219-4a67-b85d-6c9ce15660cb}` | 26300.9974 | UserProgramFiles: The shell namespace resolves `shell:UserProgramFiles` to no folder on the reference account's profile. |
+| `known-folders` | `{bcbd3057-ca5c-4622-b42d-bc56db0ae516}` | 26300.9974 | UserProgramFilesCommon: The shell namespace resolves `shell:UserProgramFilesCommon` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:3D Objects` | 26300.9974 | The shell namespace resolves `shell:3D Objects` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:AppDataDesktop` | 26300.9974 | The shell namespace resolves `shell:AppDataDesktop` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:AppDataDocuments` | 26300.9974 | The shell namespace resolves `shell:AppDataDocuments` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:AppDataFavorites` | 26300.9974 | The shell namespace resolves `shell:AppDataFavorites` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:AppDataProgramData` | 26300.9974 | The shell namespace resolves `shell:AppDataProgramData` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:AppMods` | 26300.9974 | The shell namespace resolves `shell:AppMods` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Camera Roll` | 26300.9974 | The shell namespace resolves `shell:Camera Roll` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:CameraRollLibrary` | 26300.9974 | The shell namespace resolves `shell:CameraRollLibrary` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Captures` | 26300.9974 | The shell namespace resolves `shell:Captures` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Common Start Menu Places` | 26300.9974 | The shell namespace resolves `shell:Common Start Menu Places` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Development Files` | 26300.9974 | The shell namespace resolves `shell:Development Files` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:LocalizedResourcesDir` | 26300.9974 | The shell namespace resolves `shell:LocalizedResourcesDir` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:MAPIFolder` | 26300.9974 | The shell namespace resolves `shell:MAPIFolder` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:OEM Links` | 26300.9974 | The shell namespace resolves `shell:OEM Links` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:OneDriveCameraRoll` | 26300.9974 | The shell namespace resolves `shell:OneDriveCameraRoll` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:OneDriveDocuments` | 26300.9974 | The shell namespace resolves `shell:OneDriveDocuments` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:OneDriveMusic` | 26300.9974 | The shell namespace resolves `shell:OneDriveMusic` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:OneDrivePictures` | 26300.9974 | The shell namespace resolves `shell:OneDrivePictures` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Original Images` | 26300.9974 | The shell namespace resolves `shell:Original Images` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:PhotoAlbums` | 26300.9974 | The shell namespace resolves `shell:PhotoAlbums` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Playlists` | 26300.9974 | The shell namespace resolves `shell:Playlists` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Recorded Calls` | 26300.9974 | The shell namespace resolves `shell:Recorded Calls` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:RecordedTVLibrary` | 26300.9974 | The shell namespace resolves `shell:RecordedTVLibrary` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Roamed Tile Images` | 26300.9974 | The shell namespace resolves `shell:Roamed Tile Images` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:SavedPictures` | 26300.9974 | The shell namespace resolves `shell:SavedPictures` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:SavedPicturesLibrary` | 26300.9974 | The shell namespace resolves `shell:SavedPicturesLibrary` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:Screenshots` | 26300.9974 | The shell namespace resolves `shell:Screenshots` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:SearchHistoryFolder` | 26300.9974 | The shell namespace resolves `shell:SearchHistoryFolder` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:SearchTemplatesFolder` | 26300.9974 | The shell namespace resolves `shell:SearchTemplatesFolder` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:UserProgramFiles` | 26300.9974 | The shell namespace resolves `shell:UserProgramFiles` to no folder on the reference account's profile. |
+| `shell-commands` | `folder:UserProgramFilesCommon` | 26300.9974 | The shell namespace resolves `shell:UserProgramFilesCommon` to no folder on the reference account's profile. |

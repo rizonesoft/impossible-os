@@ -684,20 +684,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
-- [ ] File Explorer Frame: writes `docs/design/inventory/explorer/frame.json`
-  - Capture the window's rows: the tab row, the navigation row, the command bar, the body and the status bar
-    - Tab row: tab size, close button, new tab button, tab overflow, drag to reorder and to tear out
-    - Navigation row: back, forward, up, refresh, address bar, search box
-  - Capture the address bar's two forms: breadcrumb segments with their drop-down lists and the overflow chevron, and the editable text form with its history list and autosuggest
-  - Capture the command bar in order, and how it changes with the selection and with the folder kind
-    - New and its menu, cut, copy, paste, rename, share, delete, Sort, View, Filter, the "see more" menu, and the Details or Preview toggle
-  - Capture the navigation pane: its entries, expand arrows, indent, the pin glyph, and the pane's own context menu and options
-    - Entries: Home, Gallery, the cloud entry, the pinned folders group, This PC, drives, Network, Linux
-    - Options: show all folders, expand to current folder, show libraries, show network, show This PC
-  - Capture the details pane and the preview pane: width, the splitter, the property rows frame, and the empty state
-  - Capture the status bar: item count, selected count and size, and the two view switch buttons
-  - Record by hand the keyboard map of the frame: Alt-D, Ctrl-L, Ctrl-E, Ctrl-T, Ctrl-W, Ctrl-N, Alt-arrows, Alt-P, Alt-Shift-P, F4, F6 pane order
-  - Done when: `check-inventory.py --surface explorer` passes; the command bar's entries are recorded for three selection cases (nothing, one file, one folder) and the navigation pane's top-level entries have a contiguous `order`.
+- [x] File Explorer Frame: `docs/design/inventory/explorer/frame.json` (969 records; every `known-folders` row matched or absent)
 - [ ] File Explorer Views and Columns: writes `docs/design/inventory/explorer/views.json`
   - Capture each view mode as `metric` records: cell size, icon size, label lines, spacing, and the compact view variant
     - Extra large, large, medium and small icons, list, details, tiles, content

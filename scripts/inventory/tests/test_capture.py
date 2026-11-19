@@ -2085,6 +2085,17 @@ class Displays(unittest.TestCase):
         for name in ("fhd-100-rtl", "wide-100", "tall-100", "qhd-200", "ime"):
             self.assertEqual(core.checkpoint_for(name, self.profiles), f"profile-{name}", name)
 
+    def test_a_chord_is_held_before_it_is_released(self):
+        # File Explorer's XAML reads the modifier state when it handles the
+        # letter: a chord sent down and up in one batch reached it with Alt
+        # and Ctrl already up (2026-11-19, Alt-D and Ctrl-T did nothing).
+        batches = []
+        with mock.patch.object(guest, "send_keys", lambda seq, what: batches.append(list(seq))), \
+                mock.patch.object(guest.time, "sleep", lambda s: None):
+            guest.keys("alt+d")
+        alt, d = guest.chord_codes("alt+d")
+        self.assertEqual(batches, [[(alt, 0), (d, 0)], [(d, 2), (alt, 2)]])
+
     def test_the_live_keys_are_the_same_in_both_tools(self):
         live = re.search(r"\$LiveKeys = (.*)", (INV / "ref-vm.ps1").read_text()).group(1)
         self.assertEqual(tuple(re.findall(r"'([A-Za-z]+)'", live)), core.LIVE_KEYS)
@@ -2879,6 +2890,75 @@ class DesktopMetrics(unittest.TestCase):
 
     def test_hand_records_and_metrics_do_not_share_an_order(self):
         orders = [m["order"] for m in self.desk.METRICS(self.cells())] + [h["order"] for h in self.desk.HAND]
+        self.assertEqual(len(orders), len(set(orders)))
+
+
+class ExplorerFrame(unittest.TestCase):
+    """The File Explorer frame module's records from what its measured scenes saw."""
+
+    def setUp(self):
+        self.m = load("surface_explorer_frame", INV / "surfaces" / "explorer-frame.py")
+
+    @staticmethod
+    def keys():
+        edit = {"name": "Address Bar", "controlType": "Edit"}
+        regions = ["item list", "navigation pane", "tab row", "item list"]
+        return {"alt+d": {"region": "address bar", "focus": edit, "list": False},
+                "ctrl+l": {"region": "address bar", "focus": edit, "list": False},
+                "ctrl+e": {"region": "search box", "focus": {"controlType": "Edit"}, "list": False},
+                "f4": {"region": "address bar", "focus": edit, "list": True},
+                "alt+p": {"opens": "preview", "then": None}, "alt+shift+p": {"opens": "details", "then": None},
+                "ctrl+t": {"tabs": [1, 2], "new": "Home"}, "ctrl+w": {"tabs": [2, 1]},
+                "swap": {"details-then-alt+p": "preview"},
+                "ctrl+n": {"windows": [1, 2]},
+                "alt+left": {"from": "General items", "to": "Explorer sample", "start": "Explorer sample"},
+                "alt+right": {"from": "Explorer sample", "to": "General items", "inside": "General items"},
+                "alt+up": {"from": "General items", "to": "Explorer sample", "start": "Explorer sample"},
+                "f6": {"stops": regions}}
+
+    def test_a_chord_is_named_the_way_the_records_write_keys(self):
+        self.assertEqual([self.m.chord_name(c) for c in ("alt+shift+p", "f4", "ctrl+t")], ["Alt+Shift+P", "F4", "Ctrl+T"])
+
+    def test_the_keyboard_map_is_written_from_the_measurement(self):
+        got = {r["shortcut"]: r for r in self.m.key_records(self.keys())}
+        self.assertEqual(len(got), 13)
+        self.assertIn("on Home", got["Ctrl+T"]["behaviour"])
+        self.assertTrue(got["F6"]["behaviour"].endswith("item list, navigation pane, tab row."), got["F6"]["behaviour"])
+
+    def test_a_key_that_did_not_do_its_job_stops_the_capture(self):
+        # The control: the same measurement with Alt+D leaving the focus in the list.
+        k = self.keys()
+        k["alt+d"]["region"] = "item list"
+        with self.assertRaises(ValueError):
+            self.m.key_records(k)
+        k = self.keys()
+        k["f6"]["stops"] = ["item list", "tab row", "navigation pane"]        # never came round
+        with self.assertRaises(ValueError):
+            self.m.key_records(k)
+
+    def test_each_opened_known_folder_matches_both_baselines(self):
+        known = [{"id": "{A}", "name": "Downloads"}, {"id": "{b}", "name": "Screenshots"}]     # the registry's own case
+        ns = [{"name": "Downloads", "opens": True, "title": "Downloads", "path": "C:\\Users\\ref\\Downloads"},
+              {"name": "Screenshots", "opens": False}]
+        got = {r["id"]: r for r in self.m.folder_records(ns, known)}
+        page = got["frame.known-folders.downloads"]
+        self.assertEqual(page["baselineId"], "known-folders:{a}")
+        self.assertEqual(page["behaviour"], "Opens %USERPROFILE%\\Downloads.")
+        self.assertEqual(got["frame.known-folders.downloads.shell-name"]["baselineId"], "shell-commands:folder:Downloads")
+        self.assertEqual(len(got), 3)                     # the group, the page and its name; Screenshots has none
+        with self.assertRaises(ValueError):
+            self.m.folder_records([], known)
+
+    def test_a_tab_drag_that_did_not_tear_out_stops_the_capture(self):
+        good = {"windows": [1, 2], "left": ["Explorer sample"]}
+        self.assertEqual(len(self.m.tab_drag_records(good)), 1)
+        for bad in ({**good, "windows": [1, 1]}, {**good, "left": ["Explorer sample", "Home"]}):
+            with self.assertRaises(ValueError):
+                self.m.tab_drag_records(bad)
+
+    def test_hand_records_and_measured_records_do_not_share_an_order(self):
+        orders = [r["order"] for r in self.m.key_records(self.keys())] + [h["order"] for h in self.m.HAND]
+        orders += [r["order"] for r in self.m.tab_drag_records({"windows": [1, 2], "left": ["a"]})]
         self.assertEqual(len(orders), len(set(orders)))
 
 

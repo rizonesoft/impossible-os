@@ -165,10 +165,18 @@ def send_keys(seq, what):
     time.sleep(0.3)
 
 
+KEY_HOLD = 0.05                # a chord's keys stay down this long before they are let go
+
+
 def keys(chord):
-    """Press a chord such as "alt+f4" or "esc" the way a keyboard does."""
+    """Press a chord such as "alt+f4" or "esc" the way a keyboard does: every
+    key down, a moment held, then up. Sent in one batch, the chord reached File
+    Explorer's XAML with the modifiers already up, which reads their state when
+    it handles the letter (2026-11-19: Alt-D and Ctrl-T did nothing)."""
     codes = chord_codes(chord)
-    send_keys([(c, 0) for c in codes] + [(c, 2) for c in reversed(codes)], chord)
+    send_keys([(c, 0) for c in codes], chord)
+    time.sleep(KEY_HOLD)
+    send_keys([(c, 2) for c in reversed(codes)], f"the release of {chord}")
 
 
 def hold(chord):
