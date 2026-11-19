@@ -59,6 +59,7 @@ PENDING = "operator-pending-restore.json"   # beside the run folder; operator-ho
 # every checkout shares, so two checkouts cannot both change the theme.
 HOST_LOCK = capture.WORK / "operator-host.lock"
 RESTORE_TIMEOUT = 300                  # deadline: ten registry values and a broadcast at 1 s a slow window
+PLACEHOLDER = "<personal>"             # what redaction puts in place of a personal string
 TASKBAR = 48                           # px: the taskbar strip at the bottom of the monitor at 96 dpi
 CONTENT_ID = "ItemsControlScrollViewer"   # the page's content, apart from the navigation pane
 ACCOUNT_ID = "UserProfileControlButton"   # the account header: name, email, picture
@@ -144,7 +145,8 @@ def _pattern(personal):
     return re.compile("|".join(re.escape(s) for s in sorted(personal, key=len, reverse=True)), re.I)
 
 
-def scrub(text, personal, placeholder="<personal>"):
+def scrub(text, personal, placeholder=None):
+    placeholder = PLACEHOLDER if placeholder is None else placeholder
     personal = tuple(s for s in personal if s)
     return _pattern(personal).sub(placeholder, text) if personal else text
 
@@ -329,12 +331,14 @@ def page_records(page, dump, build, personal):
                     return (eb[1] + scrolled, eb[1] + eb[3] + scrolled) if eb and not e.get("offscreen") else None
 
                 def same_entry(e, known):
-                    # The same title at an overlapping place on the page (either
-                    # place unknown: the title alone).
+                    # The same title at an overlapping place on the page (the
+                    # template's place unknown: the title alone).
                     title, place = known
                     here = span(e)
-                    return entry_title(e) == title and (place is None or here is None
-                                                        or (here[0] < place[1] and place[0] < here[1]))
+                    # A place known for the template needs this entry's place to
+                    # overlap it: an entry without bounds is not taken on its title.
+                    return entry_title(e) == title and (place is None
+                                                        or (here is not None and here[0] < place[1] and place[0] < here[1]))
                 if entries and (lkey not in templated or same_entry(entries[0], templated[lkey])):
                     # The template is the first entry first realized; in a later
                     # view the same entry is it again, so its bounds can be
@@ -503,12 +507,19 @@ def leaks(recs, personal):
     script's own text; a saved network named like a page ("WiFi") does not
     block the run on those."""
     out = []
+    mark = core.slug(PLACEHOLDER)
     for r in recs:
         if r["kind"] in ("surface", "page"):
             continue
-        own = r.get("label", "")
+        # The redactor's own placeholder is not read from this machine: taken
+        # out first, so a short name inside "<personal>" does not match it.
+        label = r.get("label", "")
+        own = label.replace(PLACEHOLDER, "\0")
         if "uiaId" not in r:
-            own += " " + r["id"].rsplit(".", 1)[-1]
+            part = r["id"].rsplit(".", 1)[-1]
+            if PLACEHOLDER in label:
+                part = "-".join(w for w in part.split("-") if w != mark)
+            own += " " + part
         if any(s.casefold() in own.casefold() or (core.slug(s) and core.slug(s) in own) for s in personal):
             out.append(r["id"])
     return out

@@ -148,6 +148,22 @@ class Records(unittest.TestCase):
         self.assertIn("Identify", labels)
         self.assertNotIn("Calibrate", labels)
 
+    def test_an_entry_without_bounds_is_not_taken_for_the_template_by_title(self):
+        def monitor(y, button):
+            c = card("Monitor", "m")
+            c["bounds"] = [-5149, y, 1000, 69]
+            c["children"].append(el("Button", button, aid=button.replace(" ", "")))
+            return c
+        top = window(el("List", aid="Displays", kids=[el("Group", kids=[monitor(900, "Identify")])]))
+        later = monitor(300, "Calibrate")
+        later["offscreen"] = True
+        later["bounds"] = None
+        end = el("Pane", aid=oc.CONTENT_ID, kids=[el("List", aid="Displays", kids=[el("Group", kids=[later])])])
+        end["scrolled"] = 1200
+        recs = oc.page_records("bluetooth", {"monitor": MON, "uri": "ms-settings:bluetooth", "top": top,
+                                             "views": [end]}, "26300.9974", oc.personal_strings(top, []))
+        self.assertNotIn("Calibrate", [r["label"] for r in recs])
+
     def test_a_control_is_a_child_of_its_card_and_an_expander_of_its_template(self):
         add = el("Button", "Add desktop app", aid="AddDesktopApp")
         cardn = el("Group", "Custom settings for applications", cls="NamedContainerAutomationPeer",
@@ -363,6 +379,14 @@ class Blanks(unittest.TestCase):
         self.assertFalse(oc.moved({"monitor": MON, "before": tree(612), "top": tree(612)}, []))
         self.assertTrue(oc.moved({"monitor": MON, "before": tree(612), "top": tree(684)}, []))
         self.assertTrue(oc.moved({"monitor": MON, "top": tree(612)}, []))
+
+    def test_the_leak_check_ignores_its_own_placeholder(self):
+        names = ["Al", "WORKSTATION"]
+        label = oc.scrub("Discoverable as “WORKSTATION”", names)
+        rec = {"id": "win11.settings.hardware.bluetooth.discoverable-as-personal", "kind": "control", "label": label}
+        self.assertEqual(oc.leaks([rec], names), [])
+        kept = {"id": "win11.settings.hardware.bluetooth.al-s-phone", "kind": "control", "label": "Al's phone"}
+        self.assertEqual(oc.leaks([kept], names), [kept["id"]])
 
     def test_redaction_never_matches_its_own_placeholder(self):
         names = ["personal", *"personal", *"PERSONAL"]
