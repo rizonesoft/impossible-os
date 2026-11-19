@@ -1398,6 +1398,8 @@ _tt_nested_py "$REPO_ROOT/tools/uefi-varstore/test_plant.py" uefi_varstore
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_campaign_icon.py" campaign_icon
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_run_desktop_icons.py" run_desktop_icons
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_abort_path_check.py" abort_path_check
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_optin_path_check.py" optin_path_check
 _tt_nested_x "$REPO_ROOT/scripts/tests/test_exit_reason_table.sh" exit_reason_table
@@ -1668,6 +1670,24 @@ if [ -f "$PLAN_TEST" ]; then
 else
     t_fail "scripts/tests/test_todo_plan.py not found"
 fi
+
+# The desktop run shortcuts' icons: the launcher kit's badge renderer
+# (scripts/tests/test_campaign_icon.py) and the badge each shortcut carries
+# (scripts/tests/test_run_desktop_icons.py).
+for _tt_icon in campaign_icon:test_campaign_icon run_desktop_icons:test_run_desktop_icons; do
+    _tt_icon_name="${_tt_icon%%:*}"; _tt_icon_file="scripts/tests/${_tt_icon#*:}.py"
+    if [ -f "$REPO_ROOT/$_tt_icon_file" ]; then
+        _tt_icon_out=$(_tt_nested_collect "$_tt_icon_name" python3 "$REPO_ROOT/$_tt_icon_file")
+        if [ "$?" = "0" ]; then
+            t_pass "$_tt_icon_file PASS ($(printf '%s\n' "$_tt_icon_out" | tail -1))"
+        else
+            t_fail "$_tt_icon_file FAIL ($(printf '%s\n' "$_tt_icon_out" | tail -3 | tr '\n' ' '))"
+            _tt_nested_fail_detail "${_tt_icon#*:}" "$_tt_icon_out"
+        fi
+    else
+        t_fail "$_tt_icon_file not found"
+    fi
+done
 
 # The crash smoke leg's screen verdict (scripts/smoke-screen.py): frames drawn
 # with the kernel's own console font, plus truncated and malformed captures.
