@@ -583,7 +583,8 @@ def records(shots, build, taken=None):
 
     size = {}
 
-    def tile_page(rid, label, name, choices, parent, *, back, opened, behaviour, title_band=(40, 90)):
+    def tile_page(rid, label, name, choices, parent, *, back, opened, behaviour, title_band=(40, 90),
+                  keys="arrow keys move the focus, Enter takes it"):
         img = full(name)
         ts = tiles(img, name, len(choices))
         title = union(*core.ink_boxes(img, (170, title_band[0], 1700, title_band[1]), white, 14))
@@ -606,7 +607,7 @@ def records(shots, build, taken=None):
         # The group encloses its buttons (tile, name and focus rectangle), not
         # only the icon squares (review, 2026-11-18).
         rec(f"{rid}.choices", "group", "Choices", page, bounds=union(*((t[0] - 12, t[1] - 12, w, h) for t in ts)), itemCount=len(choices),
-            behaviour="Tiles in columns of three, read down the first column then the next; arrow keys move the focus, Enter takes it.")
+            behaviour=f"Tiles in columns of three, read down the first column then the next; {keys}.")
         for (cid, clabel, disp, reason), t in zip(choices, ts):
             extra = {"disposition": disp} if disp else {}
             if reason:
@@ -625,6 +626,8 @@ def records(shots, build, taken=None):
     img, bm, ts, rings = tile_page("boot-manager", "Boot manager menu", "boot-manager",
                                    (("first", "First entry", None, None), ("second", "Second entry", None, None)), root, back=False,
                                    opened="Power on, when the boot manager lists more than one entry",
+                                   # The walk presses Down here and never Enter on a tile (review, 2026-11-19).
+                                   keys="Down moves the focus to the next tile",
                                    behaviour="Blue, the title at the top left, a countdown line, one tile per boot entry named by its description, and a link to the options at the bottom.")
     if not rings or rings[0][:2] != (ts[0][0] - 12, ts[0][1] - 12):
         raise core.Incomplete("boot-manager: the default entry is not the focused one")
@@ -643,7 +646,7 @@ def records(shots, build, taken=None):
     if not focus:
         raise core.Incomplete("boot-manager-link: no dotted focus rectangle around the options link after Tab")
     opts = rec("boot-manager.options", "control", "Change defaults or choose other options", bm, controlType="hyperlink", bounds=focus,
-               behaviour="A text link near the bottom left, wider than its text; Tab focuses it with a dotted white rectangle, these bounds, and Enter opens the options page.")
+               behaviour="A text link near the bottom left, wider than its text; Down and then Tab from the second tile focus it with a dotted white rectangle, these bounds, and Enter opens the options page.")
     rec("boot-manager.options.text", "control", "Text", opts, controlType="text", bounds=link,
         behaviour="The link's words in white, at the rectangle's left.")
     second = full("boot-manager-second")

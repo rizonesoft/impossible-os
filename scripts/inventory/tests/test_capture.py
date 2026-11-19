@@ -1345,18 +1345,27 @@ class Profile(unittest.TestCase):
 
     def test_the_boot_menu_shortcuts_name_only_the_keys_the_walk_sends(self):
         # The records claimed Up, Tab alone and Enter on a tile, which the
-        # walk never sends (review, 2026-11-19). Each record's keys are a run
-        # of key steps between the boot burst and the boot-options shot.
+        # walk never sends (review, 2026-11-19). Each shortcut is exactly the
+        # keys sent between the two shots that show its effect.
         sc = load("host_session_boot", INV / "host" / "session-boot.py")
         names = {"Down": sc.DOWN, "Up": sc.UP, "Tab": sc.TAB, "Enter": sc.ENTER}
-        steps = sc.STEPS[:next(i for i, st in enumerate(sc.STEPS) if st.get("name") == "boot-options")]
-        sent = [st["vk"] for st in steps if st["op"] == "key"]
+        between = {"move-to-the-next-entry": ("boot-manager", "boot-manager-second"),
+                   "focus-the-options-link": ("boot-manager-second", "boot-manager-link"),
+                   "open-the-focused-link": ("boot-manager-link", "boot-options")}
+        at = {(st.get("as") or st.get("name")): i for i, st in enumerate(sc.STEPS) if st["op"] in ("shot", "burst")}
+
+        def sent(a, b):
+            return [st["vk"] for st in sc.STEPS[at[a] + 1:at[b]] if st["op"] == "key"]
         records = [json.loads(line) for line in (INV.parent.parent / "docs/design/inventory/session/boot.json").read_text(encoding="utf-8").splitlines() if line.strip()]
-        menu = [r for r in records if r.get("parent") == "win11.session.boot.boot-manager" and r["kind"] == "shortcut"]
-        self.assertEqual(len(menu), 3)
-        for r in menu:
-            want = [names[k] for k in r["shortcut"].split(", ")]
-            self.assertTrue(any(sent[i:i + len(want)] == want for i in range(len(sent))), (r["shortcut"], sent))
+        menu = {r["id"].rsplit(".", 1)[1]: r for r in records if r.get("parent") == "win11.session.boot.boot-manager" and r["kind"] == "shortcut"}
+        self.assertEqual(sorted(menu), sorted(between))
+        for rid, (a, b) in between.items():
+            self.assertEqual([names[k] for k in menu[rid]["shortcut"].split(", ")], sent(a, b), rid)
+        # The tile group and the link credit no key the walk does not send.
+        group = next(r for r in records if r["id"] == "win11.session.boot.boot-manager.choices")
+        link = next(r for r in records if r["id"] == "win11.session.boot.boot-manager.options")
+        self.assertNotIn("Enter", group["behaviour"])
+        self.assertIn("Down and then Tab", link["behaviour"])
 
     def test_burst_frames_are_in_burst_order(self):
         # frames() reads the bursts through this; repair_phases relies on the
