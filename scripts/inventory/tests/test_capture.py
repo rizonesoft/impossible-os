@@ -3184,6 +3184,7 @@ class HostCapture(unittest.TestCase):
                 self.assertTrue(hasattr(sc, name), f"{path.name} has no {name}")
             shot_names = {s["name"] for s in sc.STEPS if s.get("op") == "shot"}
             shot_names |= {f"{s['name']}-{i}" for s in sc.STEPS if s.get("op") == "burst" for i in range(1, int(s["count"]) + 1)}
+            shot_names |= {s["as"] for s in sc.STEPS if s.get("op") == "burst" and s.get("as")}   # the page a burst ends on
             self.assertEqual(set(sc.SHOTS) - shot_names, set(), f"{path.name} publishes shots its steps never take")
             if not getattr(sc, "SESSION", True):
                 # ref-host refuses these without a session, so the run would stop at the first.
