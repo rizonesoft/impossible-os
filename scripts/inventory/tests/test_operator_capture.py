@@ -178,6 +178,20 @@ class Records(unittest.TestCase):
         self.assertEqual(by["Add desktop app"]["parent"], by["Custom settings for applications"]["id"])
         self.assertEqual(by["Show more settings"]["parent"], by["Entry"]["id"])
 
+    def test_template_ids_are_named_for_their_list_not_their_place(self):
+        def entry(title):
+            return el("Group", title, cls="NamedContainerAutomationPeer",
+                      kids=[el("Text", title), el("Button", "Remove", aid="RemoveButton")])
+        def ids(*lists):
+            recs = self.page(window(*[el("List", aid=aid, kids=[entry(t)] if t else []) for aid, t in lists]))
+            return {r["label"]: r["id"] for r in recs if r["label"] in ("Entry", "Remove")}, recs
+        _, both = ids(("Input", "Pat's mouse"), ("Audio", "Pat's speaker"))
+        audio_only, recs = ids(("Input", None), ("Audio", "Pat's speaker"))
+        self.assertTrue(audio_only["Entry"].endswith(".audio-entry"))
+        self.assertTrue(audio_only["Remove"].endswith(".audio-entry-remove"))
+        self.assertIn(audio_only["Entry"], [r["id"] for r in both])
+        self.assertIn(audio_only["Remove"], [r["id"] for r in both])
+
     def test_the_content_scroll_bar_is_not_a_page_record(self):
         bar = el("ScrollBar", "", cls="ScrollBar", kids=[el("Button", "Vertical Small Decrease")])
         recs = self.page(window(el("Button", "Add device", aid="AddDevice"), bar))
@@ -365,6 +379,20 @@ class Main(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 out = oc.carry_hand_fields(target, [new])
         self.assertEqual(out, [{**new, "inconsistency": "a note", "baselineId": "nosuchbaseline:row"}])
+
+    def test_a_recapture_keeps_a_persons_disposition(self):
+        rid = "win11.settings.hardware.bluetooth.bluetooth"
+        for kept in ({"disposition": "equivalent"}, {"disposition": "excluded", "reason": "not on this OS"}):
+            with tempfile.TemporaryDirectory() as d:
+                target = pathlib.Path(d) / "host.json"
+                target.write_text(json.dumps({"id": rid, "kind": "control", "label": "Bluetooth", **kept}) + "\n",
+                                  encoding="utf-8")
+                new = {"id": rid, "kind": "control", "label": "Bluetooth", "disposition": "build"}
+                fresh = {"id": "win11.settings.hardware.bluetooth.new", "kind": "control", "label": "New",
+                         "disposition": "build"}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    out = oc.carry_hand_fields(target, [new, fresh])
+            self.assertEqual(out, [{**new, **kept}, fresh])
 
     def test_a_subset_of_pages_publishes_nothing(self):
         with self.assertRaises(SystemExit) as e:

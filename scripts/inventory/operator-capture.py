@@ -287,6 +287,7 @@ def page_records(page, dump, build, personal):
     # A list is known by its id across the two trees; its template is its first
     # entry wherever that is first realized, and its count the most either showed.
     list_rid, list_count, templated, placed = {}, {}, {}, {}
+    entry_rid = {}   # list key -> its template's id
     for tree in (dump["top"], *(dump.get("views") or ())):
         content = find(tree, CONTENT_ID) if tree else None
         if not content:
@@ -417,12 +418,22 @@ def page_records(page, dump, build, personal):
             if id(n) in template:
                 rec["behaviour"] = "One entry of the list, recorded as its template; its title is this machine's."
             slug = core.slug(uia.removeprefix("SystemSettings_") if uia else label)[:60] or kind
+            # A template and what is in it are named for their list, not for
+            # their place on the page: a list with no entries this time does not
+            # hand its neighbour's ids (and a person's notes on them) to the next.
+            if id(n) in template:
+                lkey = template[id(n)][0]
+                slug = (list_rid[lkey].rsplit(".", 1)[-1] + "-entry") if lkey in list_rid else slug
+            elif owner_entry and owner_entry[0] in entry_rid:
+                slug = entry_rid[owner_entry[0]].rsplit(".", 1)[-1] + "-" + slug
             rid, i = f"{pid}.{slug}", 2
             while rid in used:
                 rid, i = f"{pid}.{slug}-{i}", i + 1
             used.add(rid)
             if ctype == "List":
                 list_rid[lists[id(n)]] = rid
+            if id(n) in template:
+                entry_rid[template[id(n)][0]] = rid
             # Its parent is the nearest record above it: the card, list or
             # template entry it belongs to, else the page.
             owner = next((rid_of[id(a)] for a in ancestors(n, ups, content) if id(a) in rid_of), pid)
@@ -501,9 +512,13 @@ def stale_pages(dumps, build):
 
 def carry_hand_fields(target, recs):
     """What a person wrote on the published records (a baseline match, an
-    inconsistency note) carried across by id, as capture.py --merge does; what
-    this script writes itself (behaviour, disposition) is refreshed."""
-    return capture.build_file(target, recs, {"complete": True}, True)
+    inconsistency note, a disposition) carried across by id, as capture.py
+    --merge does; the behaviour this script writes is refreshed."""
+    # A disposition is a person's decision once one is written: this script's
+    # "build" is only the default for a record that has none.
+    fresh = [{k: v for k, v in r.items() if k != "disposition"} for r in recs]
+    return [r if "disposition" in r else {**r, "disposition": "build"}
+            for r in capture.build_file(target, fresh, {"complete": True}, True)]
 
 
 def leaks(recs, personal):
