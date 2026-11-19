@@ -56,6 +56,9 @@ core = _core()
 
 SURFACE = "session"
 FILE = "boot"
+# The menu is the surface's state in the capture matrix (session/boot): the
+# boot walk has no page of that name, as secure and setup have theirs.
+CANONICAL = "boot-manager"
 PROFILE = "fhd-100"
 CHECKPOINT = "clean"
 TIMEOUT = 1800

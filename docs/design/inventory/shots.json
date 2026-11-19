@@ -888,6 +888,20 @@
  {
   "surface": "session",
   "file": "boot",
+  "state": "boot",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1080,
+  "size": 28640,
+  "sha256": "e43b66c6bda6d0b9b774f2487657176b2e09675a57472ed88b83f61a867e1ee8",
+  "depth": 16,
+  "sourceWidth": 1920,
+  "sourceHeight": 1080,
+  "exact": true
+ },
+ {
+  "surface": "session",
+  "file": "boot",
   "state": "boot-1",
   "profile": "fhd-100",
   "width": 1920,

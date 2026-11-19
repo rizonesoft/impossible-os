@@ -3359,6 +3359,31 @@ class HostCapture(unittest.TestCase):
         self.assertIn("interrupted; restored", said.getvalue())
         self.assertEqual(list(self.tmp.glob("*-steps.json")), [])
 
+    def test_a_scenario_publishes_its_canonical_shot_under_its_files_state(self):
+        # The capture matrix's session/boot row had no shot: the boot walk
+        # names none "boot" (review, 2026-11-19).
+        sc = types.SimpleNamespace(FILE="boot", PROFILE="fhd-100", CANONICAL="menu")
+        out, lay = self.tmp / "out", self.tmp / "lay"
+        out.mkdir()
+        lay.mkdir()
+        shots, images = {}, {}
+        for n, px in (("menu", b"m"), ("logo", b"l")):
+            (out / f"{n}.png").write_bytes(px)
+            shots[n] = {"file": f"{n}.png", "depth": 16, "modeBefore": [1920, 1080], "exact": True}
+            images[n] = (1920, 1080, b"")
+        states = self.hc.lay_out(sc, shots, images, out, lay)
+        self.assertEqual([s["file"] for s in states], ["menu.fhd-100.png", "logo.fhd-100.png", "boot.fhd-100.png"])
+        self.assertEqual((lay / "boot.fhd-100.png").read_bytes(), b"m")
+        self.assertEqual(states[2]["exact"], True)
+        # A walk with a shot of that name publishes it once.
+        shots["boot"], images["boot"] = dict(shots["logo"], file="logo.png"), images["logo"]
+        self.assertEqual([s["file"] for s in self.hc.lay_out(sc, shots, images, out, lay)].count("boot.fhd-100.png"), 1)
+        # The boot scenario names a shot it takes, for its file's matrix row.
+        boot = load("host_session_boot", INV / "host" / "session-boot.py")
+        self.assertIn(boot.CANONICAL, boot.SHOTS)
+        rows = json.loads((INV.parent.parent / "docs/design/inventory/expected.json").read_text(encoding="utf-8"))
+        self.assertIn((boot.SURFACE, boot.FILE), {(r["surface"], r["state"]) for r in rows})
+
     def test_an_interrupt_before_ref_host_starts_leaves_the_vm_alone(self):
         # An interrupt or timeout while wslpath converted a path ran the
         # checkpoint recovery for a walk that never started (review, 2026-11-19).

@@ -113,6 +113,28 @@ def run_host(label, steps, checkpoint, timeout, session=True):
 THUMBNAIL = 2
 
 
+def lay_out(sc, shots, images, out, lay):
+    """Copy each shot to <lay>/<state>.<profile>.png and return its manifest
+    entry. The capture matrix names one state per file (session/boot): secure
+    and setup walk a shot of that name, and a scenario that does not names
+    its CANONICAL shot, which is published under that state too (review,
+    2026-11-19: the boot file had none, and its matrix row stayed open)."""
+    pairs = [(n, n) for n in shots]
+    canon = getattr(sc, "CANONICAL", None)
+    if canon and sc.FILE not in shots:
+        pairs.append((sc.FILE, canon))
+    states = []
+    for state, n in pairs:
+        s = shots[n]
+        shutil.copyfile(out / s["file"], lay / f"{state}.{sc.PROFILE}.png")
+        # Output size from the image itself; source size and depth from the
+        # mode the video head reported (the host path is always 16-bit).
+        w, h = images[n][:2]
+        states.append({"file": f"{state}.{sc.PROFILE}.png", "width": w, "height": h, "depth": s["depth"],
+                       "sourceWidth": s["modeBefore"][0], "sourceHeight": s["modeBefore"][1], "exact": bool(s.get("exact"))})
+    return states
+
+
 def burst_frame(name, moving):
     """True when name is a numbered frame of one of the `moving` bursts:
     <burst>-<n>, never a still shot that merely shares the prefix."""
@@ -274,14 +296,7 @@ def publish(sc, out, rc, dry_run):
     # publish() takes screenshots from <out>/shots/<surface>/<state>.<profile>.png.
     lay = out / "shots" / sc.SURFACE
     lay.mkdir(parents=True, exist_ok=True)
-    states = []
-    for n, s in shots.items():
-        shutil.copyfile(out / s["file"], lay / f"{n}.{sc.PROFILE}.png")
-        # Output size from the image itself; source size and depth from the
-        # mode the video head reported (the host path is always 16-bit).
-        w, h = images[n][:2]
-        states.append({"file": f"{n}.{sc.PROFILE}.png", "width": w, "height": h, "depth": s["depth"],
-                       "sourceWidth": s["modeBefore"][0], "sourceHeight": s["modeBefore"][1], "exact": bool(s.get("exact"))})
+    states = lay_out(sc, shots, images, out, lay)
     try:
         capture.publish(capture.INVENTORY / rel, records, sc.SURFACE, out, states, capture.SHOTS_MANIFEST,
                         capture.STORE, profile=sc.PROFILE, file=sc.FILE)

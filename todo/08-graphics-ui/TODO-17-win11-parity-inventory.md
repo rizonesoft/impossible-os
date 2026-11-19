@@ -93,6 +93,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  25   | §25 Service-State Fixtures: Delivered Updates                                               | §2, §20, §23                |  [ ]   |
 | 💎  |  26   | §26 Service-State Fixtures: Network Switch and Page States                                  | §2, §20, §23                |  [ ]   |
 | 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [ ]   |
+| 💎  |  28   | §28 Recovery Branches: Reset This PC and Automatic Repair                                   | §9                          |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -467,12 +468,14 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [x] Lock, Sign-In and Secure Screens: `session/secure.json`, 89 hand records measured from host shots by `host-capture.py`; `check-inventory.py --surface session` passes
 - [x] First-Run Setup: `session/setup.json`, 61 hand records on the local-account path in order; the getting-ready time is a `metric` (fade curves are §14's recorder); check passes
 - [x] Boot, Stop and Recovery Screens: `session/boot.json`, 113 hand records from one walk from `clean`, proven 1:1 against a guest screenshot; check passes
+  - One walk from `clean`, restored at its end and on a failed step, stands in for a checkpoint per path; the menu is also published as the capture matrix's `boot` shot
+  - Reset this PC is captured to its first page, and Startup Repair is entered by hand: the reset branches and automatic repair's own entry are §28's
 - [x] Shell Overlays: `flyouts/overlays.json` with its laptop, IME and dual files, every state with a shot; `check-inventory.py --surface flyouts` passes
 - [/] Read the corner radius of a window, the Start panel, a flyout and a menu from the screen on real hardware into `chrome.json` (Needs: bare-metal)
   - The reference VM draws every corner square by Windows' own policy, so `chrome.json` holds Microsoft's published radii as hand records until this read
 - [/] Capture the brightness indicator into `overlays-laptop.json` on a real laptop panel (Needs: bare-metal)
   - The stand-in's brightness keys (`standin.asl` WMI0: an ACPI-WMI method that raises Notify (LCD0, 0x86)) move the level as a laptop's keys do, but on QEMU's display path Windows shows no indicator; WMI, powercfg and the shell hook message move the level silently too
-- [x] Commit: `"inventory: shell surfaces inventory captured"`, one commit per surface file
+- [x] Commit: one commit per surface file; `inventory: boot, stop and recovery screens captured from the host` also republished `secure.json` and `setup.json`
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and each of the nine files the items write exists and holds at least one canonical record line, counted per path, not per surface (`window/chrome.json`, `window/switching.json`, `session/secure.json`, `session/setup.json`, `session/boot.json`, `flyouts/overlays.json`, `flyouts/overlays-laptop.json`, `flyouts/overlays-ime.json`, `flyouts/overlays-dual.json`), after every capture has published, with a record count above zero; `session/setup-network.json` and `session/update-screens.json` are checked at §26 and §25. Platform: the reference VM for capture; the checker runs on Linux.
 
@@ -957,6 +960,9 @@ The step that turns records into precise work: every record ends up owned by exa
   - From `session/boot.json` (reconciled 2026-11-18 against `D01 T14`, `T15`, `T22`, `D08 T13`, `D01 T07`, `D10 T04`, `D02 T28`): no owner for the firmware logo, the Restarting screen, the recovery page tree, the repair progress and failure screens, Startup Settings, and the black stop layout
     - Natural owners: firmware logo and Restarting in `D08 T13`; the recovery pages and repair screens in `D01 T22 §7`; Startup Settings in `D08 T13 §5`; the stop layout in `D02 T28`, whose screen is blue with detail
     - Partial: the Safe mode build line is not in `D08 T13 §5`'s corner marks; the boot menu's options page maps to `D01 T07` hotkeys, not a page
+    - Differs: `D08 T13 §1` centres the logo at 40% and the spinner at 70% of the height, where the capture measures 50% and 78%
+    - Differs: `D08 T13 §5` draws red corner marks and starts no desktop, where Windows draws white marks over a Safe mode desktop
+    - Each difference takes a parity decision, or a ledger entry, when its records are assigned
 - [ ] Resolve any double ownership the capture finds (the 2026-11-14 audit moved the apps that had two homes into `11-apps` and left pointers behind)
   - Name one owner per app and turn the other into an XREF, never by deleting shipped work
 - [ ] Run `python3 scripts/todo-plan.py --sync` and rebuild the todo-graph cache after each surface, and commit one surface per commit
@@ -1220,6 +1226,28 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Commit: `"inventory: host captures"`
 
 **Test checkpoint:** every `host` row of `expected.json` has a record and a screenshot taken on the host at the build `reference.json` names.
+
+---
+
+## 28. Recovery Branches: Reset This PC and Automatic Repair
+
+> **Spawned-by:** section 9 (review)
+
+**Design:** n/a -- records the reference, draws nothing
+
+**Inventory:** writes `docs/design/inventory/session/boot.json` (the recovery records §9 captured, extended)
+
+> **User impact:** a user who resets a PC or whose PC fails to boot twice meets recovery pages no record describes, so ours would be built from a guess past Reset this PC's first page.
+
+§9's walk captures Reset this PC to its first page and reaches the repair failure page through Startup Repair chosen by hand. This section walks what follows each choice and the path a failed boot takes on its own. It re-covers none of §9's pages: a page both paths show is one record, reused by id once the shots prove it is the same.
+
+- [ ] Walk Reset this PC's Keep my files branch to its last page before a reset starts; each page a `page` with its choices
+- [ ] Walk the Remove everything branch the same way, stopping before any reset starts
+- [ ] Capture automatic repair's own entry: boots that fail twice from a restorable checkpoint, each page it shows recorded
+- [ ] Take a checkpoint at each branch point, so each branch is captured from its own restore
+- [ ] Commit: `"inventory: recovery branches captured"`
+
+**Test checkpoint:** `check-inventory.py --surface session` passes; each branch page and the automatic entry's pages have a record and a shot in `boot.json`, and no reset or repair has changed the restored VM.
 
 ---
 
