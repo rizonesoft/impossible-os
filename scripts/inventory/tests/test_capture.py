@@ -1343,29 +1343,33 @@ class Profile(unittest.TestCase):
         # Frames 1 s apart, all the same: held 2 s at the third.
         self.assertEqual(still, "save:r-1,save:r-2,save:r-3,copy:r-3.png>still.png r-3:r-3.png:True:Tr-3|still:still.png:True:Tr-3")
 
-    def test_the_boot_menu_shortcuts_name_only_the_keys_the_walk_sends(self):
-        # The records claimed Up, Tab alone and Enter on a tile, which the
-        # walk never sends (review, 2026-11-19). Each shortcut is exactly the
-        # keys sent between the two shots that show its effect.
+    def test_the_menus_credit_only_the_keys_the_walk_sends(self):
+        # The boot menu's records claimed Up, Tab alone and Enter on a tile,
+        # and every tile page the same arrow and Enter claim, walked or not
+        # (review, 2026-11-19). The generator derives both from the steps.
         sc = load("host_session_boot", INV / "host" / "session-boot.py")
-        names = {"Down": sc.DOWN, "Up": sc.UP, "Tab": sc.TAB, "Enter": sc.ENTER}
-        between = {"move-to-the-next-entry": ("boot-manager", "boot-manager-second"),
-                   "focus-the-options-link": ("boot-manager-second", "boot-manager-link"),
-                   "open-the-focused-link": ("boot-manager-link", "boot-options")}
-        at = {(st.get("as") or st.get("name")): i for i, st in enumerate(sc.STEPS) if st["op"] in ("shot", "burst")}
-
-        def sent(a, b):
-            return [st["vk"] for st in sc.STEPS[at[a] + 1:at[b]] if st["op"] == "key"]
-        records = [json.loads(line) for line in (INV.parent.parent / "docs/design/inventory/session/boot.json").read_text(encoding="utf-8").splitlines() if line.strip()]
-        menu = {r["id"].rsplit(".", 1)[1]: r for r in records if r.get("parent") == "win11.session.boot.boot-manager" and r["kind"] == "shortcut"}
-        self.assertEqual(sorted(menu), sorted(between))
-        for rid, (a, b) in between.items():
-            self.assertEqual([names[k] for k in menu[rid]["shortcut"].split(", ")], sent(a, b), rid)
-        # The tile group and the link credit no key the walk does not send.
-        group = next(r for r in records if r["id"] == "win11.session.boot.boot-manager.choices")
-        link = next(r for r in records if r["id"] == "win11.session.boot.boot-manager.options")
-        self.assertNotIn("Enter", group["behaviour"])
-        self.assertIn("Down and then Tab", link["behaviour"])
+        D, T, E, R = sc.DOWN, sc.TAB, sc.ENTER, sc.RIGHT
+        self.assertEqual([sc.keys_between(a, b) for _, a, b, _ in sc.BOOT_MENU_KEYS], [[D], [D, T], [E]])
+        self.assertEqual({n: sc.sent_after(n) for n in ("boot-manager", "boot-options", "recovery", "recovery-reset", "recovery-more")},
+                         {"boot-manager": [D], "boot-options": [D, D, E], "recovery": [R, E], "recovery-reset": [], "recovery-more": []})
+        self.assertEqual(sc.tile_keys("boot-manager"), "Down moves the focus")
+        self.assertEqual(sc.tile_keys("boot-options"), "Down moves the focus, Enter takes the focused tile")
+        self.assertIsNone(sc.tile_keys("recovery-reset"))        # Backspace, then the next page's keys
+        self.assertIsNone(sc.tile_keys("recovery-more"))         # the walk's last shot
+        # A page's keys end at its Enter, which leaves it, and before a
+        # Backspace, which goes back: later keys are another page's.
+        with mock.patch.object(sc, "STEPS", [sc.shot("a"), sc.key(D), sc.key(E), sc.key(R), sc.shot("b"),
+                                             sc.key(R), sc.key(sc.BACK), sc.key(D), sc.shot("c")]):
+            self.assertEqual((sc.sent_after("a"), sc.sent_after("b")), ([D, E], [R]))
+        # The published records are those the generator makes.
+        records = {r["id"]: r for r in (json.loads(line) for line in (INV.parent.parent / "docs/design/inventory/session/boot.json")
+                                       .read_text(encoding="utf-8").splitlines() if line.strip())}
+        base = "win11.session.boot."
+        self.assertEqual([records[f"{base}boot-manager.{lab.lower().replace(' ', '-')}"]["shortcut"] for lab, *_ in sc.BOOT_MENU_KEYS],
+                         ["Down", "Down, Tab", "Enter"])
+        self.assertNotIn("Enter", records[f"{base}boot-manager.choices"]["behaviour"])
+        self.assertNotIn("focus", records[f"{base}recovery-reset.choices"]["behaviour"])
+        self.assertIn("Down and then Tab from the second tile", records[f"{base}boot-manager.options"]["behaviour"])
 
     def test_burst_frames_are_in_burst_order(self):
         # frames() reads the bursts through this; repair_phases relies on the

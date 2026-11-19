@@ -178,6 +178,63 @@ STEPS = [
     key(ENTER), wait(8), shot("recovery-more"),
 ]
 
+KEY_NAMES = {UP: "Up", DOWN: "Down", LEFT: "Left", RIGHT: "Right", TAB: "Tab", ENTER: "Enter"}
+ARROWS = (UP, DOWN, LEFT, RIGHT)
+
+
+def step_at(name):
+    """The index of the step that takes the shot `name` (a burst's `as` too)."""
+    return next(i for i, st in enumerate(STEPS) if st["op"] in ("shot", "burst") and (st.get("as") or st.get("name")) == name)
+
+
+def sent_after(name):
+    """The keys the walk sends on the page shot as `name`: those before the
+    next shot, up to and with the first Enter (it leaves the page) and before
+    any Backspace (it goes back, so later keys are another page's)."""
+    out = []
+    for st in STEPS[step_at(name) + 1:]:
+        if st["op"] in ("shot", "burst"):
+            break
+        if st["op"] == "key":
+            if st["vk"] == BACK:
+                break
+            out.append(st["vk"])
+            if st["vk"] == ENTER:
+                break
+    return out
+
+
+def tile_keys(name):
+    """What a tile page's keys were seen to do, from the keys the walk sends
+    on it, or None when it sends none: each page published the same arrow and
+    Enter claim, walked or not (review, 2026-11-19)."""
+    sent = sent_after(name)
+    arrows = [KEY_NAMES[k] for k in dict.fromkeys(k for k in sent if k in ARROWS)]
+    parts = [f"{' and '.join(arrows)} move{'s' if len(arrows) == 1 else ''} the focus"] if arrows else []
+    if ENTER in sent:
+        parts.append("Enter takes the focused tile")
+    return ", ".join(parts) or None
+
+
+# The boot menu's shortcuts: each is exactly the keys sent between the two
+# shots that show its effect (review, 2026-11-19: Up, Tab alone and Enter on
+# a tile were claimed, and the walk sends none of them).
+BOOT_MENU_KEYS = (
+    ("Move to the next entry", "boot-manager", "boot-manager-second", "moves the focus from the first tile to the second"),
+    ("Focus the options link", "boot-manager-second", "boot-manager-link", "from the second tile put the focus on the options link"),
+    ("Open the focused link", "boot-manager-link", "boot-options", "on the focused options link opens the options page"),
+)
+
+
+def keys_between(a, b):
+    """The keys sent after the shot `a` and before the shot `b`."""
+    return [st["vk"] for st in STEPS[step_at(a) + 1:step_at(b)] if st["op"] == "key"]
+
+
+def key_names(vks):
+    return ", ".join(KEY_NAMES[k] for k in vks)
+
+
 # Bursts across a restart: a shot there may straddle a mode change.
 MOVING = ("boot-", "repair-", "stop-")
 # Bursts that end at the boot menu, so they may hold fewer frames than their count.
@@ -583,8 +640,7 @@ def records(shots, build, taken=None):
 
     size = {}
 
-    def tile_page(rid, label, name, choices, parent, *, back, opened, behaviour, title_band=(40, 90),
-                  keys="arrow keys move the focus, Enter takes it"):
+    def tile_page(rid, label, name, choices, parent, *, back, opened, behaviour, title_band=(40, 90)):
         img = full(name)
         ts = tiles(img, name, len(choices))
         title = union(*core.ink_boxes(img, (170, title_band[0], 1700, title_band[1]), white, 14))
@@ -607,7 +663,8 @@ def records(shots, build, taken=None):
         # The group encloses its buttons (tile, name and focus rectangle), not
         # only the icon squares (review, 2026-11-18).
         rec(f"{rid}.choices", "group", "Choices", page, bounds=union(*((t[0] - 12, t[1] - 12, w, h) for t in ts)), itemCount=len(choices),
-            behaviour=f"Tiles in columns of three, read down the first column then the next; {keys}.")
+            behaviour="Tiles in columns of three, read down the first column then the next"
+                      + (f"; in this walk {keys}." if (keys := tile_keys(name)) else "."))
         for (cid, clabel, disp, reason), t in zip(choices, ts):
             extra = {"disposition": disp} if disp else {}
             if reason:
@@ -626,8 +683,6 @@ def records(shots, build, taken=None):
     img, bm, ts, rings = tile_page("boot-manager", "Boot manager menu", "boot-manager",
                                    (("first", "First entry", None, None), ("second", "Second entry", None, None)), root, back=False,
                                    opened="Power on, when the boot manager lists more than one entry",
-                                   # The walk presses Down here and never Enter on a tile (review, 2026-11-19).
-                                   keys="Down moves the focus to the next tile",
                                    behaviour="Blue, the title at the top left, a countdown line, one tile per boot entry named by its description, and a link to the options at the bottom.")
     if not rings or rings[0][:2] != (ts[0][0] - 12, ts[0][1] - 12):
         raise core.Incomplete("boot-manager: the default entry is not the focused one")
@@ -646,7 +701,9 @@ def records(shots, build, taken=None):
     if not focus:
         raise core.Incomplete("boot-manager-link: no dotted focus rectangle around the options link after Tab")
     opts = rec("boot-manager.options", "control", "Change defaults or choose other options", bm, controlType="hyperlink", bounds=focus,
-               behaviour="A text link near the bottom left, wider than its text; Down and then Tab from the second tile focus it with a dotted white rectangle, these bounds, and Enter opens the options page.")
+               behaviour="A text link near the bottom left, wider than its text; "
+               + f"{' and then '.join(KEY_NAMES[k] for k in keys_between(*BOOT_MENU_KEYS[1][1:3]))} from the second tile focus it "
+               + "with a dotted white rectangle, these bounds, and Enter opens the options page.")
     rec("boot-manager.options.text", "control", "Text", opts, controlType="text", bounds=link,
         behaviour="The link's words in white, at the rectangle's left.")
     second = full("boot-manager-second")
@@ -656,12 +713,10 @@ def records(shots, build, taken=None):
         raise core.Incomplete("boot-manager-second: Down did not move the focus to the second entry")
     rec("boot-manager.stop-countdown", "gesture", "Stop the countdown", bm,
         behaviour="A key press (Down in this walk) removes the countdown line; the menu then waits for a choice.")
-    # Only the keys this walk sends, in the order it sends them: it never
-    # presses Up, Tab alone, or Enter on a tile (review, 2026-11-19).
-    for vk, lab, beh in (("Down", "Move to the next entry", "Down moves the focus from the first tile to the second."),
-                         ("Down, Tab", "Focus the options link", "From the second tile, Down and then Tab put the focus on the options link."),
-                         ("Enter", "Open the focused link", "Enter on the focused options link opens the options page.")):
-        rec(f"boot-manager.{lab.lower().replace(' ', '-')}", "shortcut", lab, bm, shortcut=vk, behaviour=beh)
+    for lab, before, after, does in BOOT_MENU_KEYS:
+        sent = keys_between(before, after)
+        rec(f"boot-manager.{lab.lower().replace(' ', '-')}", "shortcut", lab, bm, shortcut=key_names(sent),
+            behaviour=f"{' and then '.join(KEY_NAMES[k] for k in sent)} {does}.")
 
     tile_page("boot-options", "Boot manager options", "boot-options",
               (("timer", "Change the timer", None, None), ("default", "Choose a default operating system", None, None),
