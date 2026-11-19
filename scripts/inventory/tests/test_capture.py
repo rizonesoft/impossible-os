@@ -3371,7 +3371,9 @@ class HostCapture(unittest.TestCase):
         # walk's 13 px at every height.
         for tall, ok in ((7, False), (8, True), (20, True), (21, False)):
             got = sc.failure_rows(frame(black, rows[0], rows[1], (855, 653, 221, tall), (776, 653 + tall + 13, 379, 16)), logo)
-            self.assertEqual(got is not None, ok, tall)
+            self.assertEqual(got is not None, ok, f"reason {tall} px")
+            got = sc.failure_rows(frame(black, rows[0], rows[1], (855, 653, 221, 12), (776, 678, 379, tall)), logo)
+            self.assertEqual(got is not None, ok, f"log path {tall} px")
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], (662, 494, 300, 27), reason, path), logo))   # a short line
 
     def test_corner_marks_and_tile_descriptions_read_only_their_own_text(self):
