@@ -576,6 +576,16 @@ class Blanks(unittest.TestCase):
         self.assertEqual([x.strip() for x in out.stdout.splitlines() if x.strip()],
                          ["error: the page did not scroll from 40 percent", "sets=1"], out.stderr)
 
+    def test_the_wifi_identity_is_read_after_the_theme_is_restored(self):
+        # Its WLAN calls have no deadline: a stalled service must not hold the
+        # capture theme on the operator's machine (review, 2026-11-20).
+        lines = oc.HOST_SCRIPT.read_text(encoding="utf-8").splitlines()
+        restore = next(i for i, x in enumerate(lines) if x.strip().startswith("Restore-Values $saved"))
+        write = [i for i, x in enumerate(lines) if "Write-Identity $ssids" in x]
+        self.assertEqual(len(write), 1)
+        self.assertGreater(write[0], restore)
+        self.assertIn("if ($captured) { Write-Identity $ssids }", lines[write[0]])
+
     def test_a_list_that_moved_while_the_page_was_copied_is_refused(self):
         def tree(y):
             entry = el("Group", "App", cls="NamedContainerAutomationPeer",

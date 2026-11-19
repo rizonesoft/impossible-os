@@ -481,6 +481,7 @@ function Write-Identity($earlier) {
                 ssids = $ssids; profiles = $profiles } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'identity.json') -Encoding UTF8
 }
+$captured = $false
 try {
     Put-Values ($Profile | ForEach-Object { [pscustomobject]@{ Path = $_[0]; Name = $_[1]; Type = $_[2]; Value = $_[3] } })
     # A Settings window from before the change keeps the old theme; none open is fine.
@@ -574,12 +575,16 @@ try {
         $before = $top = $views = $null   # written: free for the next page
         "captured $page"
     }
-    Write-Identity $ssids
+    $captured = $true
 }
 finally {
     Restore-Values $saved           # on failure too
     "restored the operator's theme and accent"
 }
+# After the restore: the Wi-Fi read has no deadline of its own, and a WLAN
+# service that stalls must not hold the operator's theme (review, 2026-11-20).
+# Without identity.json nothing is published, so a run cut off here repeats.
+if ($captured) { Write-Identity $ssids }
 }
 finally {
     $Mutex.ReleaseMutex()
