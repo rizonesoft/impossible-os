@@ -3367,6 +3367,11 @@ class HostCapture(unittest.TestCase):
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1]), logo))               # no details
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1], reason), logo))       # no log path
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], rows[1], path), logo))         # no reason
+        # A detail line is 8 to 20 px tall; the gap between the two is the
+        # walk's 13 px at every height.
+        for tall, ok in ((7, False), (8, True), (20, True), (21, False)):
+            got = sc.failure_rows(frame(black, rows[0], rows[1], (855, 653, 221, tall), (776, 653 + tall + 13, 379, 16)), logo)
+            self.assertEqual(got is not None, ok, tall)
         self.assertIsNone(sc.failure_rows(frame(black, rows[0], (662, 494, 300, 27), reason, path), logo))   # a short line
 
     def test_corner_marks_and_tile_descriptions_read_only_their_own_text(self):

@@ -776,10 +776,10 @@ def records(shots, build, taken=None):
     if not rows:
         raise core.Incomplete(f"automatic-repair: not the failure page (two lines of text and the details under them): {rows_in(img, body(img), lit, 14)}")
     page = rec("automatic-repair", "page", "Repair failed", "repair-progress", bounds=SCREEN, openedBy="Startup Repair, when it cannot repair the PC; the reason shown in this walk, which runs with no network, is that it could not connect to the network",
-               behaviour="Black, centred text: what happened, how to go on, and two small grey lines with the reason and the log file's path.")
+               behaviour="Black, centred text: what happened, how to go on, and two smaller white lines with the reason and the log file's path.")
     for (cid, clab, beh), b in zip((("message", "Message", "A text slot of 56 characters in one line."),
                                      ("instruction", "Instruction", "A text slot of 51 characters naming Enter and a click."),
-                                     ("details", "Details", "Two small grey lines: the reason and the log file's path.")), rows):
+                                     ("details", "Details", "Two smaller white lines: the reason and the log file's path.")), rows):
         rec(f"automatic-repair.{cid}", "control", clab, page, controlType="text", bounds=b, behaviour=beh)
     rec("automatic-repair.go-on", "shortcut", "Show other recovery options", page, shortcut="Enter",
         behaviour="Enter or a click opens More recovery options.")
