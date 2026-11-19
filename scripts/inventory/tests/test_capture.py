@@ -1370,6 +1370,17 @@ class Profile(unittest.TestCase):
         self.assertNotIn("Enter", records[f"{base}boot-manager.choices"]["behaviour"])
         self.assertNotIn("focus", records[f"{base}recovery-reset.choices"]["behaviour"])
         self.assertIn("Down and then Tab from the second tile", records[f"{base}boot-manager.options"]["behaviour"])
+        # Backspace on a back button only where the walk sends it.
+        backs = sorted(r["id"] for r in records.values() if r["id"].endswith(".back") and "Backspace" in r.get("behaviour", ""))
+        self.assertEqual(backs, [f"{base}recovery-reset.back"])
+        self.assertEqual([n for n in ("boot-options", "recovery-troubleshoot", "recovery-reset", "recovery-advanced", "recovery-more")
+                          if sc.goes_back(n)], ["recovery-reset"])
+        with mock.patch.object(sc, "STEPS", [sc.shot("a"), sc.key(D), sc.key(E), sc.key(sc.BACK), sc.shot("b"), sc.key(sc.BACK)]):
+            self.assertEqual((sc.goes_back("a"), sc.goes_back("b")), (False, True))    # an Enter left it first; the last page
+        # No record credits a key or a click the walk does not send.
+        for r in records.values():
+            self.assertNotIn("function key", r.get("behaviour", ""), r["id"])
+        self.assertNotIn("Enter or a click", records[f"{base}automatic-repair.go-on"]["behaviour"])
 
     def test_burst_frames_are_in_burst_order(self):
         # frames() reads the bursts through this; repair_phases relies on the

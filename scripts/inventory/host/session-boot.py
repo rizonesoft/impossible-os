@@ -204,6 +204,17 @@ def sent_after(name):
     return out
 
 
+def goes_back(name):
+    """True when the walk leaves the page shot as `name` with Backspace: the
+    first Enter or Backspace sent on it before the next shot is Backspace."""
+    for st in STEPS[step_at(name) + 1:]:
+        if st["op"] in ("shot", "burst"):
+            return False
+        if st["op"] == "key" and st["vk"] in (ENTER, BACK):
+            return st["vk"] == BACK
+    return False
+
+
 def tile_keys(name):
     """What a tile page's keys were seen to do, from the keys the walk sends
     on it, or None when it sends none: each page published the same arrow and
@@ -657,7 +668,8 @@ def records(shots, build, taken=None):
         page = rec(rid, "page", label, parent, bounds=SCREEN, openedBy=opened, behaviour=behaviour)
         if back:
             rec(f"{rid}.back", "control", "Back button", page, controlType="button", bounds=arrow[0],
-                behaviour="A circled arrow left of the title; Backspace does the same.")
+                # Backspace is credited only where the walk sends it (review, 2026-11-19).
+                behaviour="A circled arrow left of the title" + ("; in this walk Backspace went back a page." if goes_back(name) else "."))
         rec(f"{rid}.title", "control", "Title", page, controlType="text", bounds=title)
         w, h = size.get("ring", (404, 134))
         # The group encloses its buttons (tile, name and focus rectangle), not
@@ -781,7 +793,7 @@ def records(shots, build, taken=None):
     page = rec("startup-settings", "page", "Startup Settings menu", "recovery-startup-settings", openedBy="Restart on the Startup Settings page",
                behaviour=f"A text menu on the recovery blue in the firmware's mode ({img[0]}x{img[1]}): title, an instruction, nine numbered lines {place(img, union(*numbered))}, and two footer lines; positions are fractions of that screen.")
     rec("startup-settings.options", "group", "Numbered options", page, itemCount=9,
-        behaviour="One line each, the number first; the number or function key of that line takes it.")
+        behaviour="One line each, the number first; in this walk 4 took its line.")
     for i, lab in enumerate(("Enable debugging", "Enable boot logging", "Enable low-resolution video", "Enable Safe Mode",
                              "Enable Safe Mode with Networking", "Enable Safe Mode with Command Prompt",
                              "Disable driver signature enforcement", "Disable early launch anti-malware protection",
@@ -867,7 +879,7 @@ def records(shots, build, taken=None):
                                      ("details", "Details", "Two smaller white lines: the reason and the log file's path.")), rows):
         rec(f"automatic-repair.{cid}", "control", clab, page, controlType="text", bounds=b, behaviour=beh)
     rec("automatic-repair.go-on", "shortcut", "Show other recovery options", page, shortcut="Enter",
-        behaviour="Enter or a click opens More recovery options.")
+        behaviour="Enter opens More recovery options; the instruction also names a click, which the walk does not try.")
     tile_page("recovery-more", "More recovery options", "recovery-more",
               (("continue", "Continue", None, None),
                ("quick", "Quick machine recovery", "excluded", "It looks for a fix on Microsoft's servers; Impossible OS has no such service and recovers from its own image."),
