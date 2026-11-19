@@ -51,9 +51,10 @@ TITLES = {"bluetooth": "Devices", "camera": "Cameras", "graphics": "Graphics", "
 ROOT = f"win11.{SURFACE}.hardware"
 HOST_SCRIPT = HERE / "operator-host.ps1"
 HOST_TIMEOUT = 600                     # deadline: four pages at about 15 s each, plus the theme change and restore
-IDENTITY_VERSION = 9   # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
-                       # shot bracketed by two tree reads, nothing shown above Settings, a fresh folder
-                       # per run, the profile's size, scale, text size and contrast recorded
+IDENTITY_VERSION = 10  # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
+                       # shot bracketed by two tree reads, the shot the Settings window's own pixels (no
+                       # other window can be in it), a fresh folder per run, the profile's size, scale,
+                       # text size and contrast recorded
 PENDING = "operator-pending-restore.json"   # beside the run folder; operator-host.ps1 writes and removes it
 # One host capture at a time on this machine: beside the pending-restore file
 # every checkout shares, so two checkouts cannot both change the theme.
@@ -527,7 +528,7 @@ def blanks(dump, personal):
 
 
 def moved(dump, personal):
-    """True when the tree read before the screen copy masks other pixels than
+    """True when the tree read before the shot masks other pixels than
     the one read after it (a list that changed while the page was copied), or
     the run did not read it."""
     before = dump.get("before")

@@ -20,7 +20,8 @@
 # and put back in a finally block, also on an error or a Ctrl-C. Each page
 # opens maximized on the monitor that has the profile's size and scale, and
 # leaves <out>\<page>.json (the window's UI Automation tree, raw view, at the
-# top of the page and scrolled to its end) and <out>\<page>.png (that monitor).
+# top of the page and scrolled to its end) and <out>\<page>.png (that monitor's
+# area, holding only the Settings window's own pixels).
 # Raw output names the operator (the account header, device and network
 # names): it stays in <out>, which is never published as it is.
 param(
@@ -47,35 +48,10 @@ public static class W {
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT p, uint f);
   [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr h, int t, out uint x, out uint y);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);
-  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);
-  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
-  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int n);
   public struct POINT { public int X; public int Y; }
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  // The class of every shown window above `h` in z-order that covers part of
-  // the given area (a window pinned on top of Settings would be in its shot).
-  // Hidden, minimized and cloaked windows show nothing and are skipped.
-  public static string[] Above(IntPtr h, int x, int y, int r, int b) {
-    var out_ = new System.Collections.Generic.List<string>();
-    for (IntPtr w = GetWindow(h, 3); w != IntPtr.Zero; w = GetWindow(w, 3)) {   // GW_HWNDPREV
-      if (!IsWindowVisible(w) || IsIconic(w)) continue;
-      int cloaked;
-      if (DwmGetWindowAttribute(w, 14, out cloaked, 4) == 0 && cloaked != 0) continue;   // DWMWA_CLOAKED
-      RECT rc;
-      var cls = new System.Text.StringBuilder(256);
-      GetClassName(w, cls, cls.Capacity);
-      // A window whose place cannot be read may cover the shot: named, so the capture stops.
-      if (!GetWindowRect(w, out rc)) { out_.Add(cls.ToString() + " (bounds unreadable)"); continue; }
-      if (rc.Right <= x || rc.Left >= r || rc.Bottom <= y || rc.Top >= b
-          || rc.Right <= rc.Left || rc.Bottom <= rc.Top) continue;
-      out_.Add(cls.ToString());
-    }
-    return out_.ToArray();
-  }
 }
 // The Wi-Fi names, read through the Native Wifi API: a profile name is UTF-16
 // and an SSID is its own bytes, so no code page can garble either (netsh's text
@@ -367,20 +343,42 @@ if ((Split-Path -Parent $Out).TrimEnd('\') -ne $Captures) { throw "-Out must be 
 $Pending = Join-Path $Captures 'operator-pending-restore.json'
 # Settings closed: a window opened under the capture theme keeps it until it closes.
 # None open is fine; one that does not exit within 10 s throws.
-# Two copies of the monitor, pixel for pixel above the taskbar strip (blanked in
-# every shot, and its clock may turn over between the copies).
-function Same-Pixels($a, $b) {
-    $r = New-Object System.Drawing.Rectangle 0, 0, $a.Width, ($a.Height - 48)
+# The shot is the Settings window's own pixels (Windows Graphics Capture), so no
+# other window, notification or overlay can be in it. The helper is compiled once
+# per source version into the capture root.
+function Load-WindowCapture {
+    $src = Join-Path $PSScriptRoot 'window-capture.cs'
+    $dll = Join-Path $Captures ('window-capture-' + (Get-FileHash -Algorithm SHA256 -LiteralPath $src).Hash.Substring(0, 16) + '.dll')
+    if (-not (Test-Path -LiteralPath $dll)) {
+        $fw = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
+        $md = Join-Path $env:SystemRoot 'System32\WinMetadata'
+        $log = & (Join-Path $fw 'csc.exe') /nologo /unsafe /target:library /optimize "/out:$dll.tmp" "/reference:$(Join-Path $fw 'System.Runtime.dll')" "/reference:$md\Windows.Foundation.winmd" "/reference:$md\Windows.Graphics.winmd" $src 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "the window-capture helper did not compile: $($log -join ' ')" }
+        Move-Item -LiteralPath "$dll.tmp" -Destination $dll -Force
+    }
+    [Reflection.Assembly]::LoadFile($dll) | Out-Null
+}
+
+# The window's pixels placed on a monitor-sized image where the window shows
+# them, so the shot and the tree share the monitor's coordinates; the rest (the
+# taskbar strip, blanked in every shot) stays black.
+function Shot($h) {
+    $w = 0; $ht = 0; $x = 0; $y = 0
+    $px = [WindowCapture]::Capture($h, 5000, [ref]$w, [ref]$ht, [ref]$x, [ref]$y)
+    $x -= $mon.X; $y -= $mon.Y
+    if ($x -lt 0 -or $y -lt 0 -or $x + $w -gt $mon.Width -or $y + $ht -gt $mon.Height) {
+        throw "the Settings frame (${w}x$ht at $x,$y) is not inside the monitor"
+    }
     $fmt = [System.Drawing.Imaging.PixelFormat]::Format32bppArgb
-    $da = $a.LockBits($r, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, $fmt)
-    $db = $b.LockBits($r, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, $fmt)
+    $bmp = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height, $fmt
+    $g = [System.Drawing.Graphics]::FromImage($bmp); $g.Clear([System.Drawing.Color]::Black); $g.Dispose()
+    $d = $bmp.LockBits([System.Drawing.Rectangle]::new($x, $y, $w, $ht), [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $fmt)
     try {
-        $n = $da.Stride * $r.Height
-        $xa = New-Object byte[] $n; $xb = New-Object byte[] $n
-        [System.Runtime.InteropServices.Marshal]::Copy($da.Scan0, $xa, 0, $n)
-        [System.Runtime.InteropServices.Marshal]::Copy($db.Scan0, $xb, 0, $n)
-        [System.Linq.Enumerable]::SequenceEqual([byte[]]$xa, [byte[]]$xb)
-    } finally { $a.UnlockBits($da); $b.UnlockBits($db) }
+        for ($r = 0; $r -lt $ht; $r++) {
+            [System.Runtime.InteropServices.Marshal]::Copy($px, $r * $w * 4, [IntPtr]($d.Scan0.ToInt64() + [long]$r * $d.Stride), $w * 4)
+        }
+    } finally { $bmp.UnlockBits($d) }
+    $bmp
 }
 
 function Close-Settings {
@@ -438,6 +436,7 @@ $access = Accessibility
 if ($access.textScale -ne $TextScale -or $access.highContrast -ne $Contrast) {
     throw "text size $($access.textScale)% and contrast '$($access.highContrast)' are not the capture profile's ($TextScale%, '$Contrast')"
 }
+Load-WindowCapture   # compiled before anything changes: a helper that cannot build stops the run here
 # A fresh folder per run: a retry into an old one could leave its tree beside a new shot.
 if (Test-Path -LiteralPath $Out) { throw "$Out exists already; every capture writes a new folder" }
 New-Item -ItemType Directory -Path $Out | Out-Null
@@ -459,7 +458,7 @@ function Write-Identity($earlier) {
     $names = [Wlan]::Names()
     $ssids = @(@($earlier) + @($names[0]) | Where-Object { $_ } | Select-Object -Unique)
     $profiles = @($names[1] | Where-Object { $_ } | Select-Object -Unique)
-    [ordered]@{ version = 9; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
+    [ordered]@{ version = 10; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
                 ssids = $ssids; profiles = $profiles } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'identity.json') -Encoding UTF8
 }
@@ -516,50 +515,32 @@ try {
             $alike = if (Same $last $now) { $alike + 1 } else { 0 }
             $last = $now
         }
-        # The shot copies the monitor, so Settings must be in front and cover it:
-        # otherwise another window's pixels, which no mask can find, are in it.
+        # Settings in front (an inactive window draws its inactive backdrop) and
+        # covering the monitor above the taskbar, as the reference shows it.
         $b = $win.Current.BoundingRectangle
         if ([W]::GetForegroundWindow() -ne $h) { throw "Settings is not the foreground window on $page" }
-        # Above it nothing may show over the shot; the taskbar strip is blanked in every shot.
-        $over = @([W]::Above($h, $mon.X, $mon.Y, $mon.Right, $mon.Bottom - 48))
-        if ($over) { throw "windows show above Settings on $page (classes: $($over -join ', ')); close or move them and run again" }
         if ($b.X -gt $mon.X -or $b.Y -gt $mon.Y -or $b.Right -lt $mon.Right -or $b.Bottom -lt $mon.Bottom - 48) {
             throw "Settings does not cover the monitor on $page ($b)"
         }
-        # The tree read before and after the screen copy, the copy kept only when the
-        # two agree: the masks come from the tree, so a list that changed between
-        # them would put them off the pixels they cover. Both go in the dump, and
-        # publication checks them again.
-        $bmp = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $again = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height
-        $g2 = [System.Drawing.Graphics]::FromImage($again)
-        # The occlusion check is repeated after each copy, and a second copy is
-        # taken after it: the first is kept only when the two are the same pixels.
-        # A window or a notification shown at the first copy is then either still
-        # there at the check (refused) or gone by the second copy (a difference),
-        # so nothing transient survives in the shot.
+        # The tree read before and after the shot, the shot kept only when the two
+        # agree and Settings stayed in front: the masks come from the tree, so a
+        # list that changed between them would put them off the pixels they cover.
+        # Both go in the dump, and publication checks them again.
         for ($try = 1; ; $try++) {
             $before = Snapshot $win
-            $g.CopyFromScreen($mon.X, $mon.Y, 0, 0, $bmp.Size)
+            $bmp = Shot $h
             $top = Snapshot $win
-            $covered = @([W]::Above($h, $mon.X, $mon.Y, $mon.Right, $mon.Bottom - 48))
             $front = [W]::GetForegroundWindow() -eq $h
-            $still = $false
-            if ($front -and -not $covered -and (Same $before $top)) {
-                $g2.CopyFromScreen($mon.X, $mon.Y, 0, 0, $again.Size)
-                $still = Same-Pixels $bmp $again
-                if ($still) { break }
-            }
+            if ($front -and (Same $before $top)) { break }
+            $bmp.Dispose()
             if ($try -ge 3) {
-                if (-not $front -or $covered) { throw "a window showed over Settings while $page was copied (classes: $($covered -join ', '))" }
-                throw "the $page page kept changing while it was copied"
+                if (-not $front) { throw "Settings lost the foreground while $page was taken" }
+                throw "the $page page kept changing while it was taken"
             }
             Start-Sleep -Seconds 2
         }
-        $g2.Dispose(); $again.Dispose()
         $bmp.Save((Join-Path $Out "$page.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-        $g.Dispose(); $bmp.Dispose()
+        $bmp.Dispose()
         $top.scrolled = Scrolled $c
         $views = Views $c
         [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height); dpi = $Dpi

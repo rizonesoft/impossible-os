@@ -346,11 +346,20 @@ class Host(unittest.TestCase):
                 mock.patch.object(oc.subprocess, "run", side_effect=AssertionError("launched")):
             oc.restore(pathlib.Path(work) / "operator-x")
 
+    def test_shot_is_the_window_own_pixels(self):
+        # A screen copy holds whatever shows over Settings (a notification, an
+        # overlay) and no check around it can be atomic: the shot is the window's
+        # own capture, compiled from the helper beside the host script.
+        host = oc.HOST_SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("CopyFromScreen", host)
+        self.assertIn("[WindowCapture]::Capture(", host)
+        self.assertIn("public static byte[] Capture(", (oc.HERE / "window-capture.cs").read_text(encoding="utf-8"))
+
     def test_saved_network_names_are_personal(self):
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "identity.json").write_text(
-                '{"version": 9, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
-                ' "ssids": "Pat Home 5G", "profiles": ["Pat Home"]}')
+                '{"version": %d, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
+                ' "ssids": "Pat Home 5G", "profiles": ["Pat Home"]}' % oc.IDENTITY_VERSION)
             names = oc.identity(pathlib.Path(d))
         self.assertIn("Pat Home 5G", names)
         dump = {"monitor": MON, "uri": "ms-settings:network-wifi",
