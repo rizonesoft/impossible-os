@@ -132,6 +132,22 @@ class Records(unittest.TestCase):
         lst = next(r for r in recs if r.get("controlType") == "list")
         self.assertIn("(3 seen on the operator's machine)", lst["behaviour"])
 
+    def test_a_second_entry_of_one_title_adds_nothing_to_the_template(self):
+        def monitor(y, button):
+            c = card("Monitor", "m")
+            c["bounds"] = [-5149, y, 1000, 69]
+            c["children"].append(el("Button", button, aid=button.replace(" ", "")))
+            return c
+        top = window(el("List", aid="Displays", kids=[el("Group", kids=[monitor(900, "Identify")])]))
+        end = el("Pane", aid=oc.CONTENT_ID, kids=[el("List", aid="Displays",
+                                                       kids=[el("Group", kids=[monitor(300, "Calibrate")])])])
+        end["scrolled"] = 1200                 # another Monitor, 600 px below the first
+        recs = oc.page_records("bluetooth", {"monitor": MON, "uri": "ms-settings:bluetooth", "top": top,
+                                             "views": [end]}, "26300.9974", oc.personal_strings(top, []))
+        labels = [r["label"] for r in recs]
+        self.assertIn("Identify", labels)
+        self.assertNotIn("Calibrate", labels)
+
     def test_a_control_is_a_child_of_its_card_and_an_expander_of_its_template(self):
         add = el("Button", "Add desktop app", aid="AddDesktopApp")
         cardn = el("Group", "Custom settings for applications", cls="NamedContainerAutomationPeer",
@@ -203,16 +219,17 @@ class Records(unittest.TestCase):
         self.assertEqual(oc.wrong_pages({"wifi": {"top": window()}}), {"wifi": "Devices"})
         crumb = el("Button", "Wi-Fi", cls="Microsoft.UI.Xaml.Controls.BreadcrumbBarItem")
         ok = el("Window", "Settings", kids=[crumb, el("Pane", aid=oc.CONTENT_ID)])
-        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON, "dpi": 96}}), {})
+        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON, "dpi": 96, "textScale": 100, "highContrast": "none"}}), {})
 
-    def test_a_page_read_at_another_scale_is_refused(self):
+    def test_a_page_read_at_another_scale_text_size_or_contrast_is_refused(self):
         crumb = el("Button", "Wi-Fi", cls="Microsoft.UI.Xaml.Controls.BreadcrumbBarItem")
         ok = el("Window", "Settings", kids=[crumb, el("Pane", aid=oc.CONTENT_ID)])
-        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON, "dpi": 120}}),
-                         {"wifi": "1920x1080 at 120 dpi"})
-        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": MON}}), {"wifi": "1920x1080 at None dpi"})
-        self.assertEqual(oc.wrong_pages({"wifi": {"top": ok, "monitor": [0, 0, 2560, 1440], "dpi": 96}}),
-                         {"wifi": "2560x1440 at 96 dpi"})
+        good = {"top": ok, "monitor": MON, "dpi": 96, "textScale": 100, "highContrast": "none"}
+        for change, why in (({"dpi": 120}, "dpi 120"), ({"dpi": None}, "dpi None"),
+                            ({"monitor": [0, 0, 2560, 1440]}, "width 2560, height 1440"),
+                            ({"textScale": 150}, "textScale 150"), ({"textScale": None}, "textScale None"),
+                            ({"highContrast": "High Contrast Black"}, "highContrast High Contrast Black")):
+            self.assertEqual(oc.wrong_pages({"wifi": good | change}), {"wifi": why})
 
     def test_a_run_without_its_identity_cannot_be_redacted(self):
         with tempfile.TemporaryDirectory() as d:
@@ -237,6 +254,8 @@ class Records(unittest.TestCase):
                         '{"version": 6, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                         ' "ssids": [], "profiles": ["Home"]}',
                         '{"version": 7, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
+                        ' "ssids": [], "profiles": ["Home"]}',
+                        '{"version": 8, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                         ' "ssids": [], "profiles": ["Home"]}'):
                 (pathlib.Path(d) / "identity.json").write_text(old)
                 with self.assertRaises(oc.core.Incomplete):
@@ -269,7 +288,7 @@ class Host(unittest.TestCase):
     def test_saved_network_names_are_personal(self):
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "identity.json").write_text(
-                '{"version": 8, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
+                '{"version": 9, "computer": "PAT-PC", "user": "pat", "profile": "C:\\\\Users\\\\pat",'
                 ' "ssids": "Pat Home 5G", "profiles": ["Pat Home"]}')
             names = oc.identity(pathlib.Path(d))
         self.assertIn("Pat Home 5G", names)

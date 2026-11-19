@@ -65,10 +65,12 @@ public static class W {
       int cloaked;
       if (DwmGetWindowAttribute(w, 14, out cloaked, 4) == 0 && cloaked != 0) continue;   // DWMWA_CLOAKED
       RECT rc;
-      if (!GetWindowRect(w, out rc) || rc.Right <= x || rc.Left >= r || rc.Bottom <= y || rc.Top >= b
-          || rc.Right <= rc.Left || rc.Bottom <= rc.Top) continue;
       var cls = new System.Text.StringBuilder(256);
       GetClassName(w, cls, cls.Capacity);
+      // A window whose place cannot be read may cover the shot: named, so the capture stops.
+      if (!GetWindowRect(w, out rc)) { out_.Add(cls.ToString() + " (bounds unreadable)"); continue; }
+      if (rc.Right <= x || rc.Left >= r || rc.Bottom <= y || rc.Top >= b
+          || rc.Right <= rc.Left || rc.Bottom <= rc.Top) continue;
       out_.Add(cls.ToString());
     }
     return out_.ToArray();
@@ -286,6 +288,21 @@ function Wait-Page($win, $page) {
     throw "Settings did not show the $page page ($($Title[$page])) within $WindowWait s"
 }
 
+# Text size and contrast theme, read as guest\probe-profile.ps1 reads them: no
+# TextScaleFactor is Windows' default 100, and a contrast theme is on when the
+# HighContrast flags carry HCF_HIGHCONTRASTON (its stored scheme name is enough
+# to refuse the run, so it is not translated here).
+function Accessibility {
+    $text = 100
+    $acc = 'HKCU:\Software\Microsoft\Accessibility'
+    if ((Test-Path -LiteralPath $acc) -and $null -ne (Get-Item -LiteralPath $acc).GetValue('TextScaleFactor')) {
+        $text = [int](Get-ItemPropertyValue -LiteralPath $acc -Name TextScaleFactor)
+    }
+    $hc = Get-ItemProperty 'HKCU:\Control Panel\Accessibility\HighContrast' -ErrorAction SilentlyContinue
+    $contrast = if ($hc -and ([int]$hc.Flags -band 1)) { [string]$hc.'High Contrast Scheme' } else { 'none' }
+    @{ textScale = $text; highContrast = $contrast }
+}
+
 function Build {
     $k = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     "$($k.CurrentBuild).$($k.UBR)"
@@ -398,6 +415,7 @@ if (-not $Pages) { throw 'no pages named' }
 $Pages = @($Pages | Select-Object -Unique)
 $build = Build
 $mon = Monitor
+$access = Accessibility
 # A fresh folder per run: a retry into an old one could leave its tree beside a new shot.
 if (Test-Path -LiteralPath $Out) { throw "$Out exists already; every capture writes a new folder" }
 New-Item -ItemType Directory -Path $Out | Out-Null
@@ -419,7 +437,7 @@ function Write-Identity($earlier) {
     $names = [Wlan]::Names()
     $ssids = @(@($earlier) + @($names[0]) | Where-Object { $_ } | Select-Object -Unique)
     $profiles = @($names[1] | Where-Object { $_ } | Select-Object -Unique)
-    [ordered]@{ version = 8; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
+    [ordered]@{ version = 9; computer = $env:COMPUTERNAME; user = $env:USERNAME; profile = $env:USERPROFILE
                 ssids = $ssids; profiles = $profiles } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'identity.json') -Encoding UTF8
 }
@@ -504,6 +522,7 @@ try {
         $top.scrolled = Scrolled $c
         $views = Views $c
         [ordered]@{ page = $page; uri = $Uri[$page]; build = $build; monitor = @($mon.X, $mon.Y, $mon.Width, $mon.Height); dpi = $Dpi
+                    textScale = $access.textScale; highContrast = $access.highContrast
                     before = $before; top = $top; views = $views } |
             ConvertTo-Json -Depth 100 -Compress | Set-Content -LiteralPath (Join-Path $Out "$page.json") -Encoding UTF8
         "captured $page"

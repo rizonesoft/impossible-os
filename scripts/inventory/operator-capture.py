@@ -51,10 +51,9 @@ TITLES = {"bluetooth": "Devices", "camera": "Cameras", "graphics": "Graphics", "
 ROOT = f"win11.{SURFACE}.hardware"
 HOST_SCRIPT = HERE / "operator-host.ps1"
 HOST_TIMEOUT = 600                     # deadline: four pages at about 15 s each, plus the theme change and restore
-IDENTITY_VERSION = 8   # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
+IDENTITY_VERSION = 9   # after the last page's Wi-Fi read, names read losslessly, views with their scroll,
                        # shot bracketed by two tree reads, nothing shown above Settings, a fresh folder
-                       # per run, the profile's size and scale recorded
-PROFILE_SIZE, PROFILE_DPI = (1920, 1080), 96   # fhd-100 in docs/design/inventory/profiles.json
+                       # per run, the profile's size, scale, text size and contrast recorded
 PENDING = "operator-pending-restore.json"   # beside the run folder; operator-host.ps1 writes and removes it
 # One host capture at a time on this machine: beside the pending-restore file
 # every checkout shares, so two checkouts cannot both change the theme.
@@ -175,6 +174,12 @@ def identity(out):
     return names + nets
 
 
+@functools.lru_cache(maxsize=None)
+def profile():
+    """The capture profile's settings (docs/design/inventory/profiles.json)."""
+    return json.loads((capture.INVENTORY / "profiles.json").read_text(encoding="utf-8"))[PROFILE]
+
+
 def wrong_pages(dumps):
     """Pages whose tree is not the page asked for (its title, its content)."""
     out = {}
@@ -183,9 +188,15 @@ def wrong_pages(dumps):
                   if n.get("className") == "Microsoft.UI.Xaml.Controls.BreadcrumbBarItem" and n.get("name")]
         if not crumbs or crumbs[-1] != TITLES[p] or not find(d["top"], CONTENT_ID):
             out[p] = crumbs[-1] if crumbs else None
-        elif tuple(d["monitor"][2:]) != PROFILE_SIZE or d.get("dpi") != PROFILE_DPI:
-            # Records and shot are published as the fhd-100 profile: read at another size or scale they are not.
-            out[p] = f"{d['monitor'][2]}x{d['monitor'][3]} at {d.get('dpi')} dpi"
+        else:
+            # Records and shot are published as the profile: read at another size,
+            # scale, text size or contrast theme they are not.
+            prof = profile()
+            seen = {"width": d["monitor"][2], "height": d["monitor"][3], "dpi": d.get("dpi"),
+                    "textScale": d.get("textScale"), "highContrast": d.get("highContrast")}
+            off = {k: v for k, v in seen.items() if v != prof[k]}
+            if off:
+                out[p] = ", ".join(f"{k} {v}" for k, v in off.items())
     return out
 
 
@@ -313,13 +324,25 @@ def page_records(page, dump, build, personal):
                     if eb and not e.get("offscreen"):
                         placed.setdefault(lkey, {}).setdefault(entry_title(e), []).append(
                             (eb[1] + scrolled, eb[1] + eb[3] + scrolled))
-                if entries and (lkey not in templated or entry_title(entries[0]) == templated[lkey]):
+                def span(e):
+                    eb = e.get("bounds")
+                    return (eb[1] + scrolled, eb[1] + eb[3] + scrolled) if eb and not e.get("offscreen") else None
+
+                def same_entry(e, known):
+                    # The same title at an overlapping place on the page (either
+                    # place unknown: the title alone).
+                    title, place = known
+                    here = span(e)
+                    return entry_title(e) == title and (place is None or here is None
+                                                        or (here[0] < place[1] and place[0] < here[1]))
+                if entries and (lkey not in templated or same_entry(entries[0], templated[lkey])):
                     # The template is the first entry first realized; in a later
-                    # view the same entry (by title) is it again, so its bounds
-                    # can be measured where it is whole.
+                    # view the same entry is it again, so its bounds can be
+                    # measured where it is whole.
                     first = entries[0]
-                    templated[lkey] = entry_title(first)
-                    template[id(first)] = (lkey, templated[lkey])
+                    known = templated.get(lkey)
+                    templated[lkey] = (entry_title(first), span(first) or (known[1] if known else None))
+                    template[id(first)] = (lkey, templated[lkey][0])
                     entries = entries[1:]
                 for k in entries:
                     for d, _ in walk(k):
