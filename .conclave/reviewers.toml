@@ -41,8 +41,15 @@ claude = ["astra"]
 
 [schedule]
 policy = "four-pass"
-pass_cap = 55
+pass_cap = 33
 no_progress_cap = 3
+# Operator decision 2026-11-19: a round is progress only when its worst finding is less severe than the last
+# round's, so a review that finds a fresh edge case on every fix stalls instead of running to the cap. A
+# section touching one of deep_paths keeps the earlier rule (any new finding is progress): boot and kernel
+# bugs are found late and cost most to find afterwards, and the file manager's copy, move and delete code
+# (todo/09-desktop-shell/TODO-09-file-manager.md) can lose the user's files. pass_cap went from 55 to 33 the
+# same day.
+deep_paths = ["src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops"]
 blocking = ["P1", "P2"]
 
 [schedule.plan]

@@ -115,6 +115,7 @@ def load_pin(path=PIN, data=None):
     keys = {"policy", "pass_cap", "no_progress_cap", "blocking", "plan", "rounds", "performance", "completion",
             "reconciliation"}
     conditional = schedule.pop("conditional", []) if isinstance(schedule, dict) else []
+    deep = schedule.pop("deep_paths", None) if isinstance(schedule, dict) else None
     _need(isinstance(schedule, dict) and set(schedule) == keys and schedule["policy"] == POLICY,
           f"[schedule] needs policy = \"{POLICY}\" and exactly {', '.join(sorted(keys))}")
     rounds = schedule["rounds"]
@@ -149,12 +150,20 @@ def load_pin(path=PIN, data=None):
         for kind in passes:
             _need(not set(names) & set(lenses[kind]), f"[[schedule.conditional]] repeats a lens {kind} always has")
         extra.append((names, tuple(passes), tuple(paths)))
+    # deep_paths (operator, 2026-11-19): a section touching one of these prefixes keeps the round guard's
+    # new-finding stall rule; every other section stalls when its worst finding stops getting less severe.
+    _need(deep is None or isinstance(deep, list) and all(
+          isinstance(p, str) and p and not p.startswith(("/", ".")) and ".." not in p.split("/") for p in deep)
+          and len(set(deep)) == len(deep),
+          "[schedule] deep_paths needs distinct repository-relative prefixes")
     pass_cap, no_progress = _cap(schedule, "pass_cap"), _cap(schedule, "no_progress_cap")
     _need(pass_cap >= 4, "[schedule] pass_cap must allow the four fixed passes")
     _need(no_progress <= pass_cap, "[schedule] no_progress_cap cannot exceed pass_cap")
     return {"reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
             "pass_cap": pass_cap, "no_progress_cap": no_progress, "blocking": tuple(blocking),
-            "lenses": lenses, "conditional": tuple(extra)}
+            "lenses": lenses, "conditional": tuple(extra),
+            # None when the pin names no deep_paths: unknown, so every section keeps the longer rule.
+            "deep_paths": None if deep is None else tuple(deep)}
 
 
 def lenses_for(pin, kind, changed_paths=()):

@@ -213,8 +213,9 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   observed live 2026-08-11 (TODO-06 section 41 round 2: obeying that verdict
   would have skipped rounds 3-8, every one of which found a real defect).
 - **Round counter (P2.3).** After each re-dispatch: `python3
-  .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress
-  <new|none>`. Exit 2 = CAPPED -> stop the loop, spin unresolved findings to a
+  .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --highest
+  <the reply's HIGHEST> --progress <new|none> --base <REVIEW_BASE>` (by severity outside the pin's
+  `deep_paths`, by new findings inside). Exit 2 = CAPPED -> stop the loop, spin unresolved findings to a
   concrete follow-up `[ ]` + XREF, advance. For rounds >= 4 (REQUIRED,
   `--status`), verify at file:line through ONE `review-evidence-mapper`
   dispatch, not inline re-reads.

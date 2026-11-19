@@ -19,10 +19,12 @@ def _pin(text=GOOD):
 def test_the_repository_pin_holds():
     pin = _pin()
     assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6.2-astra")
-    assert (pin["pass_cap"], pin["no_progress_cap"]) == (55, 3)
+    assert (pin["pass_cap"], pin["no_progress_cap"]) == (33, 3)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
     # A reconciliation verifies the named gaps; the adversarial lenses return only for kernel and boot repairs.
     assert pin["lenses"]["reconciliation"] == ("plan-delivery", "record")
+    # Boot and kernel keep the round guard's new-finding stall rule (operator, 2026-11-19).
+    assert pin["deep_paths"] == ("src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops")
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
     assert {"adversarial", "consistency", "test-coverage"} <= set(pin["lenses"]["round"])
     # Performance is its own pass, never a lens of the round (the 2026-11-11 replay).
@@ -38,13 +40,15 @@ def test_the_repository_pin_holds():
     ('cli = "codex"', 'cli = "agy"'),
     ('model = "gpt-6.2-astra"', 'model = "gpt-6.2-astra"\neffort = "high"'),
     ('policy = "four-pass"', 'policy = "three-pass"'),
-    ("pass_cap = 55", "pass_cap = 3"),
+    ("pass_cap = 33", "pass_cap = 3"),
     ('[schedule.performance]\nlenses = ["optimization"]\n', ""),
     ('[schedule.performance]\nlenses = ["optimization"]', '[schedule.performance]\nlenses = ["adversarial"]'),
-    ("pass_cap = 55", 'pass_cap = "55"'),
-    ("pass_cap = 55", "pass_cap = true"),
-    ("pass_cap = 55\n", ""),
+    ("pass_cap = 33", 'pass_cap = "33"'),
+    ("pass_cap = 33", "pass_cap = true"),
+    ("pass_cap = 33\n", ""),
     ("no_progress_cap = 3", "no_progress_cap = 56"),
+    ('deep_paths = ["src/boot/"', 'deep_paths = ["/src/boot/"'),
+    ('deep_paths = ["src/boot/"', 'deep_paths = ["src/kernel/"'),
     ("no_progress_cap = 3", "no_progress_cap = 3\nseverity_stop_after = 2"),
     ('lenses = ["plan"]', 'lenses = ["plan", "plan"]'),
     ('lenses = ["plan"]', 'lenses = ["made-up"]'),
@@ -231,15 +235,21 @@ def test_an_older_kind_is_dispatched_exactly_as_before(tmp_path):
     assert "LENS" not in prompt and prompt.endswith("Review it.")
 
 
+def test_a_pin_without_deep_paths_leaves_them_unknown():
+    """Codex review 2026-11-19: an absent key read as an empty list put every kernel section on the shorter rule."""
+    lines = [line for line in GOOD.splitlines(keepends=True) if not line.startswith("deep_paths")]
+    assert _pin("".join(lines))["deep_paths"] is None
+
+
 def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, capsys):
     sys.path.insert(0, str(REPO / ".claude/hooks"))
     import review_round_guard as guard
     monkeypatch.delenv("OVERNIGHT_REVIEW_ROUND_CEILING", raising=False)
     monkeypatch.delenv("OVERNIGHT_REVIEW_NOPROGRESS_CAP", raising=False)
-    assert (guard._noprogress_cap(), guard._ceiling()) == (3, 55)
+    assert (guard._noprogress_cap(), guard._ceiling()) == (3, 33)
     other = tmp_path / "reviewers.toml"
-    other.write_text(GOOD.replace("pass_cap = 55", "pass_cap = 33").replace("no_progress_cap = 3", "no_progress_cap = 2"))
-    assert guard._pin_caps(other) == (2, 33)
+    other.write_text(GOOD.replace("pass_cap = 33", "pass_cap = 40").replace("no_progress_cap = 3", "no_progress_cap = 2"))
+    assert guard._pin_caps(other) == (2, 40)
     # One call can still override, and a broken pin keeps the backstop alive and says so.
     monkeypatch.setenv("OVERNIGHT_REVIEW_ROUND_CEILING", "7")
     assert guard._ceiling() == 7
