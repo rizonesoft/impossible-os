@@ -516,12 +516,19 @@ try {
         # publication checks them again.
         $bmp = New-Object System.Drawing.Bitmap $mon.Width, $mon.Height
         $g = [System.Drawing.Graphics]::FromImage($bmp)
+        # The occlusion check is repeated after each copy too, so a window or a
+        # notification that showed up while it was taken sends it round again.
         for ($try = 1; ; $try++) {
             $before = Snapshot $win
             $g.CopyFromScreen($mon.X, $mon.Y, 0, 0, $bmp.Size)
             $top = Snapshot $win
-            if (Same $before $top) { break }
-            if ($try -ge 3) { throw "the $page page kept changing while it was copied" }
+            $covered = @([W]::Above($h, $mon.X, $mon.Y, $mon.Right, $mon.Bottom - 48))
+            $front = [W]::GetForegroundWindow() -eq $h
+            if ((Same $before $top) -and $front -and -not $covered) { break }
+            if ($try -ge 3) {
+                if (-not $front -or $covered) { throw "a window showed over Settings while $page was copied (classes: $($covered -join ', '))" }
+                throw "the $page page kept changing while it was copied"
+            }
             Start-Sleep -Seconds 2
         }
         $bmp.Save((Join-Path $Out "$page.png"), [System.Drawing.Imaging.ImageFormat]::Png)
