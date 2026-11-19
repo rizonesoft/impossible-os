@@ -1250,13 +1250,14 @@ class Profile(unittest.TestCase):
         # Calls take 50 ms: the thumbnail ends at 0.1 s, the mode read after
         # it meets the outage (0.12 to 0.8 s), so the shot takes its pixels
         # again after 0.8 s.
-        # Each thumbnail carries its own number in its first byte, and the
+        # Each thumbnail carries its own number in its first pixel (after the
+        # four-byte header Save-Thumbnail skips), and the
         # saved and kept frames must be the one taken after the outage.
         again = ("function Cost { 50 }; function Gone { $s = ($script:t - $t0).TotalSeconds; $s -ge 0.12 -and $s -lt 0.8 }; $script:at = @(); "
                  "function Invoke-CimMethod { Call; $script:at += ($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture); "
-                 "$b = New-Object byte[] 20; $b[0] = $script:at.Count; [pscustomobject]@{ ReturnValue = 0; ImageData = $b } }; "
-                 "function Save-Thumbnail($Bytes) { $script:saved = $Bytes[0] }; "
-                 "Save-Shot 'x'; '' + $script:ShotInterrupted + ' ' + ($script:at -join ';') + ' ' + $script:saved + ' ' + $script:LastShot.Bytes[0]")
+                 "$b = New-Object byte[] 20; $b[4] = $script:at.Count; [pscustomobject]@{ ReturnValue = 0; ImageData = $b } }; "
+                 "function Save-Thumbnail($Bytes) { $script:saved = $Bytes[4] }; "
+                 "Save-Shot 'x'; '' + $script:ShotInterrupted + ' ' + ($script:at -join ';') + ' ' + $script:saved + ' ' + $script:LastShot.Bytes[4]")
         fail = ("function Cost { 50 }; function Gone { $true }; function Write-Host($m) { $m }; Save-FailureShot 4; "
                 "($script:t - $t0).TotalSeconds.ToString([cultureinfo]::InvariantCulture)")
         got = {}
@@ -1286,6 +1287,46 @@ class Profile(unittest.TestCase):
         # quiet seconds are counted from 1.1, so it settles at 3.3 s or later.
         self.assertEqual(lines[0], "settled", (r.stdout, r.stderr))
         self.assertGreaterEqual(float(lines[-1]), 3.1, lines)
+
+    def test_every_identity_check_names_its_vm(self):
+        # derive.ps1 left the name out, and a match noted the build on a VM
+        # with an empty name (review, 2026-11-19).
+        for f in INV.rglob("*.ps1"):
+            for line in f.read_text(encoding="utf-8").splitlines():
+                if "Test-RefIdentity " in line and "function Test-RefIdentity" not in line:
+                    args = line.split("Test-RefIdentity ", 1)[1].split(")")[0].split()
+                    self.assertEqual(len(args), 2, f"{f.name}: {line.strip()}")
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Test-RefIdentity"]))
+              + "try { Test-RefIdentity $null '' } catch { $_.Exception.Message }")
+        r = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.stdout.strip(), "Test-RefIdentity: no VM name", (r.stdout, r.stderr))
+
+    def test_a_burst_names_its_exact_until_frame_as_the_page_shot(self):
+        # The boot menu was polled and shot again after the burst had its exact
+        # frame, while its 30 s countdown ran (review, 2026-11-19).
+        shell = self._powershell(INV / "ref-host.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-host.ps1", ["Invoke-Step"]), (INV / "ref-common.ps1", ["Assert-RefBefore"]))
+              + "$Name = 'x'; $NoSession = $false; $Out = 'o'; $shots = New-Object System.Collections.ArrayList; "
+              "$script:t = [datetime]'2026-01-01'; function Get-Date { $script:t }; function Start-Sleep([int]$Milliseconds) { $script:t = $script:t.AddMilliseconds($Milliseconds) }; "
+              "function Write-Host { }; function Get-RefThumbnail { New-Object byte[] 20 }; "
+              "function Copy-Item($LiteralPath, $Destination, [switch]$Force) { $script:copied = (Split-Path $LiteralPath -Leaf) + '>' + (Split-Path $Destination -Leaf) }; "
+              # The colour shows on the third look, burst frame or wait poll.
+              "$script:looks = 0; function Test-ThumbnailColour { $script:looks++; $script:looks -ge 3 }; "
+              "function Save-Shot($n, $Until) { $script:t = $script:t.AddMilliseconds(100); "
+              "$script:LastShot = @{ Bytes = (New-Object byte[] 20); Width = 4; Height = 2 }; [void]$shots.Add([ordered]@{ name = $n; file = \"$n.png\"; exact = $script:exact }) }; "
+              "$menu = [pscustomobject]@{ x = 1; y = 1; rgb = @(0, 0, 0) }; "
+              "foreach ($c in @(@{ count = 5; exact = $true }, @{ count = 5; exact = $false }, @{ count = 2; exact = $true })) { "
+              "$shots.Clear(); $script:looks = 0; $script:exact = $c.exact; $script:copied = 'none'; "
+              "Invoke-Step ([pscustomobject]@{ op = 'burst'; name = 'b'; count = $c.count; every = 0; cadence = 1; seconds = 30; until = $menu; as = 'page'; astimeout = 10 }); "
+              "(($shots | ForEach-Object { $_.name + ':' + $_.file }) -join ',') + ' ' + $script:copied }")
+        r = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+        # An exact frame that met the colour is the page; an inexact one, or a
+        # burst that ended first, waits for the colour and shoots the page.
+        self.assertEqual(lines, ["b-1:b-1.png,b-2:b-2.png,b-3:b-3.png,page:page.png b-3.png>page.png",
+                                 "b-1:b-1.png,b-2:b-2.png,b-3:b-3.png,page:page.png none",
+                                 "b-1:b-1.png,b-2:b-2.png,page:page.png none"], (r.stdout, r.stderr))
 
     def test_a_clock_step_cannot_stretch_a_burst_sleep(self):
         # The cadence sleep was the difference of two wall-clock readings, so a

@@ -232,6 +232,9 @@ function Get-RefIdentity() {
 
 # The guest's edition, version and build, read over the session.
 function Test-RefIdentity($Session, [string]$Name) {
+    # The name is where a match is noted; without it the note writer got an
+    # empty name (review, 2026-11-19: derive.ps1 left it out).
+    if (-not $Name) { throw 'Test-RefIdentity: no VM name' }
     $want = Get-RefIdentity
     $seen = Invoke-Command -Session $Session -ScriptBlock {
         $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'

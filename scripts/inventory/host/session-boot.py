@@ -129,11 +129,12 @@ STEPS = [
     # then confirmed before any key: its 30 s countdown is the walk's only
     # window, which a fixed burst could outrun (review, 2026-11-18), and the
     # mode alone comes back while Windows' spinner still shows.
-    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "cadence": 1, "seconds": BOOT_BURST, "until": MENU},
-    # A burst that ran out before the menu fails here, before minutes of
+    # The exact frame that met the menu's blue is the boot-manager shot, so the
+    # first key goes in at once (review, 2026-11-19). A burst that ran out
+    # before the menu waits 10 s for it and fails there, before minutes of
     # navigation a missing frame would waste (review, 2026-11-18).
-    {"op": "awaitcolour", **MENU, "timeout": 10},
-    shot("boot-manager"),
+    {"op": "burst", "name": "boot", "count": BOOT_BURST, "every": 0, "cadence": 1, "seconds": BOOT_BURST, "until": MENU,
+     "as": "boot-manager", "astimeout": 10},
     *keys(DOWN), shot("boot-manager-second"),
     *keys(DOWN, TAB), shot("boot-manager-link"),
     key(ENTER), wait(5), shot("boot-options"),

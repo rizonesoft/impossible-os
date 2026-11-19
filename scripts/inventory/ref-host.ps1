@@ -30,7 +30,7 @@ Steps, one object each, by "op":
   wait    {sec}               sleep
   awaitcolour {x, y, rgb, timeout[, width, height]}  wait until that pixel (in 1920 by 1080) shows rgb, within 16-bit rounding, at that mode if given
   shot    {name}              one shot at the current mode
-  burst   {name, count, every[, cadence, seconds, until, still]} count shots every `every` seconds, named <name>-<n>; cadence: shots start no closer than that; seconds: stop after that long; until: stop at a frame showing that pixel; still: stop once the screen has not changed for that long, and fail if it never holds still
+  burst   {name, count, every[, cadence, seconds, until, still, as, astimeout]} count shots every `every` seconds, named <name>-<n>; cadence: shots start no closer than that; seconds: stop after that long; until: stop at a frame showing that pixel; still: stop once the screen has not changed for that long, and fail if it never holds still; as: name the still shot of the page until found (the exact frame that met it, else a wait of astimeout s and a shot)
   settle  {sec, timeout}      wait until the screen has not changed for sec seconds
   reconnect {}               open a new PowerShell Direct session (after a sign-out or restart)
   user    {name, admin, flags} make a local account with a random password this run keeps in memory
@@ -250,7 +250,7 @@ function Invoke-Step($step) {
             # still: end once the screen has held still that long (the same
             # frame bytes), and fail if it never does within the burst.
             $end = if ($step.seconds) { (Get-Date).AddSeconds([double]$step.seconds) } else { [datetime]::MaxValue }
-            $held = $null; $since = $null; $stilled = $false; $saved = 0
+            $held = $null; $since = $null; $stilled = $false; $saved = 0; $met = $null
             for ($i = 1; $i -le [int]$step.count; $i++) {
                 if ((Get-Date) -ge $end) { break }
                 $began = Get-Date
@@ -277,7 +277,7 @@ function Invoke-Step($step) {
                 # until: end the burst at the first frame that shows that
                 # pixel, the boot menu's blue, whose 30 s countdown a fixed
                 # burst could outrun (review, 2026-11-18).
-                if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { break }
+                if ($step.until -and (Test-ThumbnailColour $script:LastShot.Bytes $script:LastShot.Width $script:LastShot.Height $step.until)) { $met = $shots[$shots.Count - 1]; break }
                 # No sleep after the last frame, and none past the end
                 # (review, 2026-11-18: the repair burst slept 3 s after its
                 # twelfth frame).
@@ -298,6 +298,23 @@ function Invoke-Step($step) {
             # 2026-11-19).
             if ($saved -eq 0) { throw "burst $($step.name): no frame within the burst" }
             if ($step.still -and -not $stilled) { throw "burst $($step.name): the screen did not hold still for $($step.still) s" }
+            # as: the still shot of the page the burst ended on. An exact
+            # frame that met until is that shot already, so the walk keys on
+            # at once; the boot menu's 30 s countdown is running (review,
+            # 2026-11-19: the menu was polled and shot again first). Without
+            # one, the page is awaited for up to astimeout seconds and shot.
+            if ($step.as) {
+                if ($met -and $met.exact) {
+                    Copy-Item -LiteralPath (Join-Path $Out $met.file) -Destination (Join-Path $Out "$($step.as).png") -Force
+                    $copy = [ordered]@{}; foreach ($k in $met.Keys) { $copy[$k] = $met[$k] }
+                    $copy.name = $step.as; $copy.file = "$($step.as).png"
+                    [void]$shots.Add($copy)
+                    Write-Host "ref-host: shot $($step.as) is $($met.name)"
+                } else {
+                    Invoke-Step ([pscustomobject]@{ op = 'awaitcolour'; x = $step.until.x; y = $step.until.y; rgb = $step.until.rgb; timeout = $step.astimeout })
+                    Save-Shot $step.as
+                }
+            }
         }
         'awaitcolour' {
             # Wait until the pixel at (x, y) shows rgb, within the 16-bit

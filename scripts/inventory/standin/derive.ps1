@@ -37,7 +37,7 @@ $mounted = $false
 $code = 3
 try {
     $s = Start-RefFrom $Name $VmPath 'clean'
-    $wrong = @(Test-RefIdentity $s)
+    $wrong = @(Test-RefIdentity $s $Name)
     if ($wrong.Count) { foreach ($w in $wrong) { Write-Host "derive: $w" }; $code = 5 }
     else {
         Invoke-Command -Session $s -ScriptBlock { New-Item -ItemType Directory -Path 'C:\ios\standin' -Force | Out-Null }
