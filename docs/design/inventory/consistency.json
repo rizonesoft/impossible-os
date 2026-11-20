@@ -53,9 +53,15 @@
   "id": "dialog-generations",
   "kind": "look",
   "question": "What frame does a dialog have?",
-  "variants": [],
-  "rule": "One dialog frame, one button order and one spacing scale, for every dialog.",
-  "reason": "The reference has property sheets, task dialogs and modern content dialogs, each with its own layout and button order."
+  "variants": [
+   "win11.explorer.file-properties",
+   "win11.dialogs.message-box-ok",
+   "win11.dialogs.task-dialog",
+   "win11.dialogs.open"
+  ],
+  "rule": "One dialog frame, one margin scale and one button order for every dialog: the design spec's dialog, a centred card 320 to 548 px wide with 24 px padding and an 80 px footer of right-aligned buttons, the default action first and Cancel last.",
+  "reason": "The reference has four dialog generations here: the property sheet, the message box, the task dialog and the Common Item Dialog, each with its own frame, margins and button layout.",
+  "design": "controls.md#dialog"
  },
  {
   "id": "title-bars",

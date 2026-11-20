@@ -726,7 +726,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the wizards: extract compressed folder, map network drive, add a network location, format, and the eject and "problem ejecting" messages
   - Capture Open with: the app list frame, the "always" and "just once" buttons, and the "choose another app" form
   - Done when: `check-inventory.py --surface explorer` passes; every property sheet tab is a `dialogTab` whose `itemCount` matches, and the Folder Options View tree has one `setting` per entry.
-- [ ] Common Dialogs: writes `docs/design/inventory/dialogs/common.json`
+- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (543 records; 31 dialogs, all seven message box button sets in order)
   - Capture the Open and Save dialogs
     - The embedded Explorer frame, the file name row, the type filter, the encoding or extra control slot, the button row
     - The overwrite prompt, and the multi-select and folder-pick variants
@@ -740,7 +740,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Record all dialog frames found under the dialog generations ledger entry of §6, with the one frame, margin scale and button order Impossible OS ships
   - Done when: `check-inventory.py --surface dialogs` passes; the seven message box button sets each have a record with their order, and every dialog carries the dialog generations `inconsistency` id.
 - [x] Shared shot-store lock: `capture.held()` takes `/mnt/d/11/ref-shots.lock` with the checkout lock in all four publishers.
-- [ ] Commit: `"inventory: file explorer and common dialogs inventory captured"` (one commit per surface file, the last one closes the section)
+- [x] Commit: one commit per surface file, the last one closes the section
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 

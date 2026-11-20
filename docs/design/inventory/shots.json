@@ -210,6 +210,316 @@
   "sha256": "52e171516b5101b07d260123c35bfc91643a4f766c7048342c31d5445f0d761e"
  },
  {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "about",
+  "profile": "fhd-100",
+  "width": 474,
+  "height": 430,
+  "size": 32651,
+  "sha256": "e840bec64e33c5b5804f09e7b654eb001f354640719748f2851c5e6f180352f1"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "browse-for-folder",
+  "profile": "fhd-100",
+  "width": 334,
+  "height": 383,
+  "size": 35478,
+  "sha256": "94ebefb6627d38af65cd724d882cf04cfa47cced61f0ff38a92a1f230adffdb7"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "color",
+  "profile": "fhd-100",
+  "width": 464,
+  "height": 379,
+  "size": 157977,
+  "sha256": "2a6a5837030082d3b71c7bae4c20239640cb95f95fdeaa89c67fb54b674f6dd8"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "color-custom",
+  "profile": "fhd-100",
+  "width": 464,
+  "height": 379,
+  "size": 48627,
+  "sha256": "7788e7106078ef3f8f4792c197ae1c993ece6bcf107121cc966a325ae12cf4be"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "confirm-save-as",
+  "profile": "fhd-100",
+  "width": 366,
+  "height": 140,
+  "size": 15313,
+  "sha256": "bf32531fae35b9fd4a33c3657ad3f2c4bc69f48b5e8afbce8f2b03ff50c75486"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "credential",
+  "profile": "fhd-100",
+  "width": 1920,
+  "height": 1032,
+  "size": 2346172,
+  "sha256": "f2bc538a070de188bd36de0c14fc9befc9661132b16fd313e309022c44da0d10"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "find",
+  "profile": "fhd-100",
+  "width": 370,
+  "height": 159,
+  "size": 13891,
+  "sha256": "db8d1c94cf32c40450dc3a0317bbaf3378a4acc8668577a630eb7e0959689ebc"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "font",
+  "profile": "fhd-100",
+  "width": 441,
+  "height": 478,
+  "size": 31812,
+  "sha256": "015cff47e75abce75e94d86bbd92b39eef869afd371297e0a026261c4f33fe79"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-abort-retry-ignore",
+  "profile": "fhd-100",
+  "width": 300,
+  "height": 159,
+  "size": 18162,
+  "sha256": "7d4014d2639dab84b79f2319c8a3214b377618448e802f14f591d5baf8d5b6a3"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-cancel-try-continue",
+  "profile": "fhd-100",
+  "width": 300,
+  "height": 159,
+  "size": 18260,
+  "sha256": "5ae7f67688fd41139af204ca2096e60af8d6aa95f9ead2e24c9815d75442a870"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-default-second",
+  "profile": "fhd-100",
+  "width": 216,
+  "height": 140,
+  "size": 13788,
+  "sha256": "63b18e9103134bdf10efbfdbbdb88df02f4eb5213f8c6d05a3efff9125ab6a9f"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-icon-error",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 21603,
+  "sha256": "5829cc5e321b14fc57f1220f4eaf53345a0065f4b57930c29720aeba4880bc29"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-icon-information",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16584,
+  "sha256": "086ee05b74865852aec0a1be55ffb68ec233f65a9a7a2b0cfec5ea183c383a21"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-icon-question",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16667,
+  "sha256": "764bd70703f47f6ac6c1adec24f1b2365755d15c5b8160d70695cfb0dae4a105"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-icon-warning",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 15973,
+  "sha256": "15665a01dd3d8be3f1ca85448ac34ebd5742b457cfd06867cc704698500a8b4e"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-long-text",
+  "profile": "fhd-100",
+  "width": 427,
+  "height": 244,
+  "size": 25681,
+  "sha256": "c28775fa93d02a8d528e0304b4a1f03a1ae3b198903785b23eb8af68fd997177"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-ok",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16584,
+  "sha256": "086ee05b74865852aec0a1be55ffb68ec233f65a9a7a2b0cfec5ea183c383a21"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-ok-cancel",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16888,
+  "sha256": "7d7821f48b71f8d2bc3f98ed909a887065622c3264c97e52b56a44e76f288b6d"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-retry-cancel",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16944,
+  "sha256": "3d970945905e79d70e2c8f0ad717009a194b1c154fdbd9209497a57659b37e49"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-yes-no",
+  "profile": "fhd-100",
+  "width": 237,
+  "height": 159,
+  "size": 16796,
+  "sha256": "de84b751c983fdbff1154413d938c9b45ce558fadc7288ebf203cbd77c839a4f"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "message-box-yes-no-cancel",
+  "profile": "fhd-100",
+  "width": 300,
+  "height": 159,
+  "size": 18076,
+  "sha256": "cbf4d893d30a11039d5a61e4f20b9844aa1b608d965d383a4ffc25878d845640"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "not-responding",
+  "profile": "fhd-100",
+  "width": 366,
+  "height": 207,
+  "size": 7202,
+  "sha256": "d97b46be1b69440f0172525cf61b67216b1b7cac0daa98b07230d4f6bbe1ec3a"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "open",
+  "profile": "fhd-100",
+  "width": 960,
+  "height": 540,
+  "size": 67889,
+  "sha256": "3609e4849c6508d504cababf3b5c36b827dc8b825f09f228d38e9b61c3eeca1c"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "open-several",
+  "profile": "fhd-100",
+  "width": 960,
+  "height": 540,
+  "size": 67891,
+  "sha256": "ef5b4c1a9c7972ec983dbc95a80680546f6a46d42f3fb0a305d7f7d602667370"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "page-setup",
+  "profile": "fhd-100",
+  "width": 376,
+  "height": 429,
+  "size": 28192,
+  "sha256": "a247e91a9b97b0366ebd714af9949aab653b8f733c4b8a908efec214bd11cb83"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "print",
+  "profile": "fhd-100",
+  "width": 474,
+  "height": 430,
+  "size": 31668,
+  "sha256": "417314726e9a3ecba9a2543407e6360abeaa024606ae8669fed794d8e01ab44e"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "print-modern",
+  "profile": "fhd-100",
+  "width": 474,
+  "height": 430,
+  "size": 13254,
+  "sha256": "49310cd8d70db6f73f39b2c6e2b99f0e9964069fd1ba3f666c588a6320f8097c"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "replace",
+  "profile": "fhd-100",
+  "width": 361,
+  "height": 192,
+  "size": 15709,
+  "sha256": "5ad373202ee2793fe3bef7a32397964f65edbc89e43526ecc29240a0bf966eb7"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "save-as",
+  "profile": "fhd-100",
+  "width": 960,
+  "height": 540,
+  "size": 63418,
+  "sha256": "ab8396b3bc64efd14a945b4a1c60ac1d2d3b86e9f55503ef5acfec0160599e48"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "select-folder",
+  "profile": "fhd-100",
+  "width": 960,
+  "height": 540,
+  "size": 52737,
+  "sha256": "1d6a8efb09600f4eb9506991f815df9bc36a7a5d0af3afe924914bf559f0b584"
+ },
+ {
+  "surface": "dialogs",
+  "file": "common",
+  "state": "task-dialog",
+  "profile": "fhd-100",
+  "width": 497,
+  "height": 438,
+  "size": 35104,
+  "sha256": "f302ac6182ba8afa0771dd636c257171eaa91f99290cec36038af039bd59c437"
+ },
+ {
   "surface": "explorer",
   "file": "dialogs",
   "state": "access-denied",
