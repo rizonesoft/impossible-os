@@ -136,6 +136,7 @@ def read_profile():
 # ---------------------------------------------------------------- input --
 VK = {"alt": 0x12, "ctrl": 0x11, "shift": 0x10, "win": 0x5B, "esc": 0x1B, "enter": 0x0D, "tab": 0x09,
       "space": 0x20, "semicolon": 0xBA, "period": 0xBE, "ime_on": 0x16, "pageup": 0x21, "pagedown": 0x22, "volume_mute": 0xAD, "volume_down": 0xAE, "volume_up": 0xAF, "down": 0x28, "up": 0x26, "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23,
+      "delete": 0x2E, "insert": 0x2D, "backspace": 0x08,
       **{f"f{n}": 0x6F + n for n in range(1, 13)}}
 
 
@@ -157,7 +158,16 @@ class INPUT(ctypes.Structure):
 
 
 def chord_codes(chord):
-    return [VK[k] if k in VK else ord(k.upper()) for k in chord.lower().split("+")]
+    """The virtual-key codes of a chord such as "ctrl+shift+n": a named key, or one character."""
+    out = []
+    for k in chord.lower().split("+"):
+        if k in VK:
+            out.append(VK[k])
+        elif len(k) == 1:
+            out.append(ord(k.upper()))
+        else:
+            raise ValueError(f"key {k!r} in {chord!r} is not one character or a named key ({', '.join(sorted(VK))})")
+    return out
 
 
 def send_keys(seq, what):
@@ -575,7 +585,7 @@ class Context:
         except subprocess.TimeoutExpired:
             raise core.Incomplete(f"a fixture script ran past {timeout} s") from None
         if r.returncode:
-            raise core.Incomplete(f"a fixture script failed ({r.returncode}): {(r.stderr or r.stdout).strip()[:300]}")
+            raise core.Incomplete(f"a fixture script failed ({r.returncode}): {script_reason(r.stdout, r.stderr)}")
         return r.stdout
 
     def gone(self, timeout=10, **spec):
@@ -744,7 +754,7 @@ def main(argv=None):
         return dict(surface=mod.SURFACE, build=build, profile=args.profile, session=session, root_slug=sc.slug,
                     root_label=sc.label, root_kind=sc.kind, environment_lists=sc.environment_lists,
                     values=sc.values, identity=sc.identity, expand=sc.expand, hosts=sc.hosts, labels=sc.labels,
-                    omit=sc.omit, count=sc.count, kinds=sc.kinds)
+                    omit=sc.omit, count=sc.count, kinds=sc.kinds, root_parent=sc.parent)
 
     def walk_scene(sc):
         # Each pass replaces this scene's screenshots from the pass before; an
@@ -780,11 +790,10 @@ def main(argv=None):
         meta.update(complete=True, passes=max(passes.values()), scenePasses=passes, records=len(records),
                     unnamed=cap.unnamed, ambiguous=cap.ambiguous, skipped=cap.skipped, states=cap.states)
         code = 0
-    except (core.Incomplete, live.COMError, ValueError) as exc:
-        # A UI Automation call that fails mid-walk (an element gone, a provider
-        # that stopped answering) leaves the capture unproven, never half-taken.
-        # A ValueError is a module whose authored records are malformed.
-        meta["incomplete"] = describe_failure(exc, isinstance(exc, live.COMError))
+    except Exception as exc:
+        meta["incomplete"], expected = failure_reason(exc, live.COMError)
+        if not expected:
+            raise
         print(f"capture-ui: incomplete: {meta['incomplete']}")
     finally:
         if args.meta:
@@ -793,6 +802,27 @@ def main(argv=None):
         print(f"capture-ui: {args.surface}: {meta['records']} records in {meta['passes']} walks, {len(meta['unnamed'])} unnamed, "
               f"{len(meta['ambiguous'])} ambiguous, {len(meta['states'])} screenshot(s)")
     return code
+
+
+def script_reason(stdout, stderr, limit=300):
+    """What a failed fixture script said: its error text, else what it printed.
+    A blank stderr (a lone newline) is no reason, and once hid a script's own
+    message on stdout (2026-11-20)."""
+    return (stderr.strip() or stdout.strip() or "it printed nothing")[:limit]
+
+
+def failure_reason(exc, com_error):
+    """(the reason the run is incomplete, whether the failure is an expected one).
+
+    A UI Automation call that fails mid-walk (an element gone, a provider that
+    stopped answering) leaves the capture unproven, never half-taken; a
+    ValueError is a module whose authored records are malformed. Anything else
+    is a defect in this tool or a surface module: the run is incomplete for that
+    reason, named, and the caller re-raises it so its traceback ends the run
+    (2026-11-20: a TypeError reached the host as "no reason given")."""
+    if isinstance(exc, (core.Incomplete, com_error, ValueError)):
+        return describe_failure(exc, isinstance(exc, com_error)), True
+    return f"{type(exc).__name__} in the capture: {describe_failure(exc, False)}", False
 
 
 def describe_failure(exc, uia):

@@ -714,7 +714,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - Extras: map network drive, eject, format, mount, extract all, empty Recycle Bin
   - Match every `shell-commands` baseline verb to a record or document it absent
   - Done when: `check-inventory.py --surface explorer` passes; each trigger has both its modern and classic `contextMenu` records carrying the same `inconsistency` id, and no `shell-commands` baseline row is unmatched.
-- [ ] File Explorer Dialogs: writes `docs/design/inventory/explorer/dialogs.json`
+- [x] File Explorer Dialogs: `docs/design/inventory/explorer/dialogs.json` (1155 records; 6 Properties sheets, 34 tabs, 29 View-tree settings)
   - Capture the Properties sheet for a file, a folder, a shortcut, a drive and several items: each tab with every control and the button row
     - Tabs: General, Shortcut, Security, Details, Previous Versions, Sharing, Customize, Tools, Hardware, Quota, Compatibility
   - Capture the dialogs the sheet opens: Advanced Attributes, Change Icon, the permissions editor and its advanced form, Remove Properties, the folder picture chooser

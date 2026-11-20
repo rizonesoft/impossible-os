@@ -282,6 +282,19 @@ class NeverData(unittest.TestCase):
         self.assertNotIn("itemCount", core.walk(core.FixtureElement(t), root_kind="region", **args).records[0])
         self.assertEqual(core.walk(core.FixtureElement(t), root_kind="region", count=True, **args).records[0]["itemCount"], 3)
 
+    def test_a_scene_root_can_name_its_parent(self):
+        t = node("General", "Pane", bounds=(0, 0, 100, 100), children=[node("Read-only", "CheckBox")])
+        args = dict(surface="s", build="1.2", profile="fhd-100", session="console", root_slug="sheet-general",
+                    root_label="General", root_kind="dialogTab")
+        root = core.walk(core.FixtureElement(t), root_parent="sheet", **args).records[0]
+        self.assertEqual(root["parent"], "win11.s.sheet")
+        self.assertNotIn("parent", core.walk(core.FixtureElement(t), **args).records[0])
+        noop = lambda ctx: None  # noqa: E731
+        self.assertEqual(core.Scene(None, slug="a", label="A", open=noop, root=noop, close=noop, parent="sheet").parent,
+                         "sheet")
+        with self.assertRaises(ValueError):
+            core.Scene(None, slug="a", label="A", open=noop, root=noop, close=noop, parent="Not a slug")
+
     def test_the_fixture_holds_no_help_text(self):
         names = [k.get("name", "") for k in flat(tree())]
         self.assertFalse([n for n in names if n.startswith("Local AI")])
@@ -428,6 +441,16 @@ class Identity(unittest.TestCase):
         # Names that spell "--" fold to one hyphen and so form their own pair.
         ids = [r["id"] for r in self.run_walk(t).records[1:]]
         self.assertEqual(ids, ["win11.s.r.twin--1", "win11.s.r.twin--2", "win11.s.r.twin-1--1", "win11.s.r.twin-1--2"])
+
+    def test_a_label_and_its_field_are_told_apart_by_type(self):
+        # A Win32 sheet names a field after the label before it (Size: and its value, 2026-11-20).
+        t = node("Root", "Window", children=[node("Size:", "Text"), node("Size:", "Edit"),
+                                             node("Read", "Text"), node("Read", "Image"), node("Read", "Image")])
+        cap = self.run_walk(t)
+        self.assertEqual([r["id"] for r in cap.records[1:]],
+                         ["win11.s.r.size-text", "win11.s.r.size-edit", "win11.s.r.read-text",
+                          "win11.s.r.read--1", "win11.s.r.read--2"])            # same-type twins stay positional
+        self.assertEqual(cap.ambiguous, ["win11.s.r.read--1", "win11.s.r.read--2"])
 
     def test_nth_names_twins_whose_order_is_their_identity(self):
         # The traditional touch keyboard's two Control keys share an id and a name.
@@ -938,6 +961,31 @@ class Profile(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(out.getvalue().strip(), "profile fhd-100: scaling is 125, expected 100")
         self.assertIsNone(guest.user32)          # nothing was opened
+
+    def test_a_failed_script_reports_what_it_printed(self):
+        self.assertEqual(guest.script_reason("the file is not held\r\n", "\r\n"), "the file is not held")
+        self.assertEqual(guest.script_reason("out", "Access is denied."), "Access is denied.")
+        self.assertEqual(guest.script_reason("", ""), "it printed nothing")
+
+    def test_a_chord_names_an_unknown_key(self):
+        self.assertEqual(guest.chord_codes("shift+delete"), [0x10, 0x2E])
+        self.assertEqual(guest.chord_codes("ctrl+c"), [0x11, ord("C")])
+        with self.assertRaises(ValueError) as ex:
+            guest.chord_codes("shift+del")
+        self.assertIn("key 'del' in 'shift+del'", str(ex.exception))
+
+    def test_a_defect_in_a_module_is_named_as_the_reason(self):
+        class Com(Exception):
+            pass
+        try:
+            None > 1                                   # noqa: B015 - the TypeError a module raised
+        except TypeError as exc:
+            reason, expected = guest.failure_reason(exc, Com)
+        self.assertFalse(expected)
+        self.assertTrue(reason.startswith("TypeError in the capture: "), reason)
+        self.assertIn("test_capture.py", reason)
+        reason, expected = guest.failure_reason(guest.core.Incomplete("no element"), Com)
+        self.assertEqual((reason, expected), ("no element", True))
 
     def test_a_slow_profile_application_is_a_named_failure(self):
         real = guest.subprocess.run
@@ -2649,6 +2697,15 @@ class Settle(unittest.TestCase):
         with self.assertRaises(core.Incomplete) as ex:
             core.settle(lambda: next(seq))
         self.assertIn(f"in {core.MAX_PASSES} walks", str(ex.exception))
+        self.assertIn("differ at 'a' (label)", str(ex.exception))
+
+    def test_the_failure_names_a_record_only_one_walk_has(self):
+        self.assertEqual(core.first_difference([{"id": "a"}], [{"id": "a"}, {"id": "b"}]),
+                         "'b', which only the last walk has")
+        self.assertEqual(core.first_difference([{"id": "a"}, {"id": "b"}], [{"id": "a"}]),
+                         "'b', which only the walk before has")
+        self.assertEqual(core.first_difference([{"id": "a"}, {"id": "b"}], [{"id": "b"}, {"id": "a"}]),
+                         "the order of their records")
 
     def walk_args(self):
         return dict(surface="notepad-smoke", build="26300.9711", profile="fhd-100", session="console", root_slug="window",
@@ -3229,6 +3286,252 @@ class ExplorerMenus(unittest.TestCase):
         out = {r["id"]: r["behaviour"] for r in self.m.icon_row_records(records)}
         self.assertEqual(out["menus.icon-row.cut"], "Shown on: document, folder.")
         self.assertEqual(out["menus.icon-row.paste"], "Shown on none of the triggers.")
+
+
+class ExplorerDialogs(unittest.TestCase):
+    """The File Explorer dialogs module: sheet views, scene coverage and fixture scripts."""
+
+    def setUp(self):
+        self.m = guest.load_surface("explorer-dialogs")
+
+    def test_the_address_path_names_no_id(self):
+        m = guest.load_surface("dialogs-common")
+        band = types.SimpleNamespace(name="Address: C:\\Users\\ref\\Documents", automation_id="1001",
+                                     class_name="ToolbarWindow32", control_type="ToolBar")
+        self.assertEqual(core._segment(band, m.IDENTITY, m.VALUES), "toolbarwindow32")
+        refresh = types.SimpleNamespace(name='Refresh "Documents" (F5)', automation_id="", class_name="",
+                                        control_type="Button")
+        version = types.SimpleNamespace(name="Version 26H2 (OS Build 26300.9974)", automation_id="",
+                                        class_name="Static", control_type="Text")
+        self.assertEqual(core._segment(refresh, m.IDENTITY, m.VALUES), "button")
+        self.assertEqual(core._segment(version, m.IDENTITY, m.VALUES), "static")
+
+    def test_a_property_value_names_no_id(self):
+        # The Details tab's value cells carry the machine's name and dates (2026-11-20).
+        cell = types.SimpleNamespace(name="IOS-REF (this PC)", automation_id="", class_name="", control_type="Text")
+        label = types.SimpleNamespace(name="Computer:", automation_id="", class_name="Static", control_type="Text")
+        self.assertEqual(core._segment(cell, self.m.IDENTITY, self.m.VALUES), "text")
+        self.assertEqual(core._segment(label, self.m.IDENTITY, self.m.VALUES), "computer")
+        free = types.SimpleNamespace(name="65,572,872,192 bytes", automation_id="14407", class_name="Static",
+                                     control_type="Text")
+        item = types.SimpleNamespace(name="Type: Text Document Size: 16 bytes", automation_id="", class_name="Static",
+                                     control_type="Text")
+        self.assertEqual(core._segment(free, self.m.IDENTITY, self.m.VALUES), "free-space-bytes")
+        self.assertEqual(core._segment(item, self.m.IDENTITY, self.m.VALUES), "item-details")
+        self.assertTrue(any(core.matches(free, v) for v in self.m.VALUES))   # its amount labels nothing
+
+    def view_records(self):
+        p = "win11.explorer.folder-options-view"
+        tree = f"{p}.advanced-settings-tree"
+        rec = lambda rid, parent, kind, order, ct: {"id": rid, "parent": parent, "kind": kind,  # noqa: E731
+                                                     "order": order, "controlType": ct}
+        return tree, [rec(tree, p, "control", 3, "tree"),
+                      rec(f"{tree}.nonclientverticalscrollbar", tree, "control", 0, "scrollbar"),
+                      rec(f"{tree}.files-and-folders", tree, "setting", 1, "treeitem"),
+                      rec(f"{tree}.files-and-folders.always-show-icons", f"{tree}.files-and-folders", "setting", 0,
+                          "treeitem")]
+
+    def test_closing_looks_again_after_its_last_pass(self):
+        dw = sys.modules["dialog_window"]
+        box = (101, "#32770", "Inventory sample")
+        looks = iter([[box]] * dw.CLOSE_PASSES + [[]])     # the last pass's button closed it
+        saved = dw.top_windows, dw.user32, dw.dismiss, dw.time.sleep, dw.describe
+        fake = types.SimpleNamespace(PostMessageW=lambda *a: 0, SetForegroundWindow=lambda *a: 0,
+                                     GetWindow=lambda *a: 0, GetForegroundWindow=lambda: 999)
+        keys = []
+        ctx = types.SimpleNamespace(keys=keys.append)
+        dw.top_windows, dw.user32, dw.dismiss = (lambda c: set(next(looks))), fake, (lambda c, h: None)
+        dw.time.sleep = lambda s: None
+        dw.describe = lambda w: w[1:]
+        dw._base["windows"] = set()
+        try:
+            dw.close_new_windows(ctx)                          # no raise: the window went
+            self.assertEqual(keys, [])                         # never a key to a window not in front
+            looks = iter([[box]] * (dw.CLOSE_PASSES + 1))
+            dw.dismiss = lambda c, h: ["Yes"]
+            with self.assertRaisesRegex(guest.core.Incomplete, r"no leave button among \{'Inventory sample': \['Yes'\]\}"):
+                dw.close_new_windows(ctx)
+        finally:
+            dw.top_windows, dw.user32, dw.dismiss, dw.time.sleep, dw.describe = saved
+            dw._base.clear()
+
+    def test_a_window_that_only_holds_a_tooltip_is_no_scene_window(self):
+        dw = sys.modules["dialog_window"]
+        el = lambda ct: types.SimpleNamespace(control_type=ct)  # noqa: E731
+        trees = {1: [el("Window"), el("ToolTip"), el("Text")],     # the Start button's tooltip (2026-11-20)
+                 2: [el("Window"), el("MenuItem"), el("Text")]}    # a flyout menu is a real window
+        live = types.SimpleNamespace(wrap=lambda h: types.SimpleNamespace(control_type="Window", h=h),
+                                     uia=types.SimpleNamespace(ElementFromHandle=lambda h: h), COMError=OSError)
+        ctx = types.SimpleNamespace(live=live)
+        saved = dw.descendants
+        dw.descendants = lambda c, e, depth: trees[e.h]
+        try:
+            self.assertTrue(dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost")))
+            self.assertFalse(dw.tooltip_only(ctx, (2, "Xaml_WindowedPopupClass", "PopupHost")))
+            self.assertFalse(dw.tooltip_only(ctx, (1, "#32770", "Inventory sample")))  # never read: not a host class
+        finally:
+            dw.descendants = saved
+
+    def test_dismiss_presses_an_enabled_button_only(self):
+        dw = sys.modules["dialog_window"]
+        pressed = []
+        btn = lambda name, enabled: types.SimpleNamespace(name=name, control_type="Button", enabled=enabled)  # noqa: E731
+        kids = [btn("Close", False), btn("Yes", True), btn("No", True)]
+        live = types.SimpleNamespace(wrap=lambda e: e, uia=types.SimpleNamespace(ElementFromHandle=lambda h: h),
+                                     COMError=OSError)
+        ctx = types.SimpleNamespace(live=live, invoke=lambda el: pressed.append(el.name))
+        saved = dw.descendants
+        dw.descendants = lambda c, el, depth: kids
+        try:
+            self.assertIsNone(dw.dismiss(ctx, 1))
+            self.assertEqual(pressed, ["No"])                  # not the disabled title bar Close
+            kids[:] = [btn("Close", False), btn("Yes", True)]
+            self.assertEqual(dw.dismiss(ctx, 1), ["Yes"])
+        finally:
+            dw.descendants = saved
+
+    def test_metrics_write_the_view_tree_rows_the_walk_could_not_see(self):
+        tree, records = self.view_records()
+        self.m._view_tree[:] = [(("Files and folders",), "TreeItem"),
+                                (("Files and folders", "Always show icons"), "TreeItem"),
+                                (("Files and folders", "Hidden files"), "TreeItem"),
+                                (("Files and folders", "Hidden files", "Show hidden files"), "RadioButton"),
+                                (("Navigation pane",), "TreeItem"),
+                                (("Navigation pane", "Show libraries"), "TreeItem")]
+        try:
+            out = {r["id"]: r for r in self.m.METRICS(records)}
+        finally:
+            self.m._view_tree.clear()
+        t = tree[len("win11.explorer."):]
+        self.assertEqual(sorted(out), sorted([f"{t}.files-and-folders.hidden-files",
+                                              f"{t}.files-and-folders.hidden-files.show-hidden-files",
+                                              f"{t}.navigation-pane", f"{t}.navigation-pane.show-libraries"]))
+        self.assertEqual(out[f"{t}.files-and-folders.hidden-files"]["order"], 1)   # after the walked row
+        self.assertEqual(out[f"{t}.navigation-pane"]["order"], 2)                  # after the scrollbar and first group
+        self.assertEqual(out[f"{t}.files-and-folders.hidden-files.show-hidden-files"]["kind"], "control")
+        self.assertEqual(out[f"{t}.navigation-pane.show-libraries"]["kind"], "setting")
+        guest.core.authored(list(out.values()), surface="explorer", build="1", source="uia")
+
+    def test_metrics_refuse_a_walked_row_away_from_its_computed_id(self):
+        _, records = self.view_records()
+        self.m._view_tree[:] = [(("Files and folders",), "TreeItem"), (("Files and folders", "Other"), "TreeItem")]
+        try:
+            with self.assertRaises(ValueError):
+                self.m.METRICS(records)
+        finally:
+            self.m._view_tree.clear()
+        with self.assertRaises(ValueError):           # a tree that was never read
+            self.m.METRICS(records)
+
+    class El:
+        def __init__(self, name, cls, bounds, kids=(), control_type=None):
+            self.name, self.class_name, self.bounds, self._kids = name, cls, bounds, list(kids)
+            self.control_type = control_type or cls
+
+        def children(self, limit=None):
+            return self._kids
+
+    def test_a_sheet_splits_into_its_page_and_its_frame_at_the_tab_control(self):
+        El = self.El
+        tab = El("", "SysTabControl32", (10, 30, 300, 400))
+        sheet = El("Notes Properties", "#32770", (0, 0, 320, 480), [
+            tab, El("General", "TabItem", (12, 32, 60, 20)), El("Read-only", "Button", (20, 300, 80, 20)),
+            El("OK", "Button", (100, 440, 70, 24)), El("", "TitleBar", (0, 0, 320, 30))])
+        page = [k.name for k in self.m.View(sheet, page=True).children()]
+        frame = [k.name for k in self.m.View(sheet, page=False).children()]
+        self.assertEqual(page, ["Read-only"])
+        self.assertEqual(frame, ["", "General", "OK", ""])
+        self.assertEqual(self.m.View(sheet, page=True).bounds, tab.bounds)
+
+    def test_a_sheet_without_one_tab_control_is_refused(self):
+        with self.assertRaises(guest.core.Incomplete):
+            self.m.View(self.El("x", "#32770", (0, 0, 1, 1)), page=True)
+
+    def test_every_tab_of_every_sheet_is_a_counted_scene(self):
+        scenes = {s["slug"]: s for s in self.m.SCENES}
+        self.assertEqual(len(scenes), len(self.m.SCENES))
+        tabs = [(slug, tab) for slug, _, _, _, tabs in self.m.SHEETS for tab in tabs]
+        tabs += [("folder-options", tab) for tab in self.m.FOLDER_OPTIONS_TABS]
+        for slug, tab in tabs:
+            base = slug if slug == "folder-options" else f"{slug}-properties"
+            scene = scenes[f"{base}-{guest.core.slug(tab)}"]
+            self.assertEqual((scene["kind"], scene.get("count")), ("dialogTab", True), scene["slug"])
+            # The schema requires a tab's parent: its own tab in the frame scene's strip.
+            self.assertEqual(scene["parent"], f"{base}.systabcontrol32.{guest.core.slug(tab)}", scene["slug"])
+        view = scenes["folder-options-view"]
+        self.assertIn(({"controlType": "TreeItem"}, "setting"), view["kinds"])
+
+    def test_the_hold_is_proven_and_the_cleanup_spares_itself(self):
+        script = self.m.hold_open("C:\\x\\Held file.txt")
+        self.assertIn("'-File','" + self.m.HOLDER + "'", script)
+        self.assertIn("'the file is not held'; exit 1", script)
+        self.assertTrue(script.rstrip().endswith("exit 0"), script[-80:])
+        self.assertIn("$_.ProcessId -ne $PID", self.m.REMOVE_WORK)
+        self.assertIn("inventory-hold", self.m.HOLDER)
+
+    def test_hand_records_are_authored_cleanly(self):
+        out = guest.core.authored(self.m.HAND, surface="explorer", build="1", source="hand")
+        self.assertEqual({r["parent"] for r in out} - {"win11.explorer.frame"}, {"win11.explorer.dialogs"})
+
+
+class DialogsCommon(unittest.TestCase):
+    """The common dialogs module: its scenes and the records it computes."""
+
+    def setUp(self):
+        self.m = guest.load_surface("dialogs-common")
+
+    def test_the_seven_button_sets_each_have_a_scene(self):
+        slugs = [s["slug"] for s in self.m.SCENES]
+        self.assertEqual(len(slugs), len(set(slugs)))
+        sets = [slug for slug in slugs if slug.startswith("message-box-") and "-icon-" not in slug
+                and slug not in ("message-box-default-second", "message-box-long-text")]
+        self.assertEqual(sets, [f"message-box-{s}" for s in ("ok", "ok-cancel", "yes-no", "yes-no-cancel",
+                                                              "retry-cancel", "abort-retry-ignore",
+                                                              "cancel-try-continue")])
+        self.assertTrue(all(s["kind"] == "dialog" for s in self.m.SCENES))
+
+    def metrics_input(self):
+        box = lambda w: {"bounds": {"x": 0, "y": 0, "width": w, "height": 150}}  # noqa: E731
+        return [dict(id="win11.dialogs.message-box-ok", **box(240)),
+                dict(id="win11.dialogs.message-box-long-text", **box(548))]
+
+    def test_metrics_give_the_long_text_width_and_each_icon_sound(self):
+        self.m._m["sounds"] = {"SystemHand": "Windows Foreground.wav", "SystemQuestion": None,
+                               "SystemExclamation": "Windows Background.wav", "SystemAsterisk": "Windows Background.wav"}
+        self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": 0}
+        try:
+            out = {r["id"]: r for r in self.m.METRICS(self.metrics_input())}
+        finally:
+            self.m._m.clear()
+        self.assertEqual(out["message-box-long-text.width"]["measure"]["value"], 548)
+        self.assertIn("240 px", out["message-box-long-text.width"]["behaviour"])
+        self.assertEqual(out["message-box-icon-error.sound"]["behaviour"],
+                         "Plays Windows Foreground.wav, the SystemHand event of the current scheme.")
+        self.assertIn("Plays nothing", out["message-box-icon-question.sound"]["behaviour"])
+        self.assertIn("DontShowUI is not set for the machine and 0 for the user", out["crash-report"]["behaviour"])
+        guest.core.authored(list(out.values()), surface="dialogs", build="1", source="uia:1")
+
+    def test_metrics_refuse_a_missing_box_or_scheme(self):
+        with self.assertRaises(ValueError):
+            self.m.METRICS(self.metrics_input()[:1])
+        with self.assertRaises(ValueError):
+            self.m.METRICS(self.metrics_input())
+
+    def test_metrics_refuse_a_crash_that_showed_a_window_or_stayed(self):
+        self.m._m["sounds"] = {e: None for e in self.m.ICON_EVENTS.values()}
+        try:
+            for crash in ({"windows": [("#32770", "x")], "running": 0, "HKLM": None, "HKCU": None},
+                          {"windows": [], "running": 1, "HKLM": None, "HKCU": None}):
+                self.m._m["crash"] = crash
+                with self.assertRaises(ValueError):
+                    self.m.METRICS(self.metrics_input())
+        finally:
+            self.m._m.clear()
+
+    def test_the_about_frame_refuses_an_owner_it_would_publish(self):
+        self.assertIn("exit 1", self.m.CHECK_OWNER)
+        self.assertIn('["ref", "", "Windows User", "user"]', self.m.CHECK_OWNER)
+        self.assertNotIn("Write-Output $v", self.m.CHECK_OWNER)
 
 
 class ExplorerFrame(unittest.TestCase):

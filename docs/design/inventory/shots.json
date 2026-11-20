@@ -211,6 +211,26 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "access-denied",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 230,
+  "size": 10113,
+  "sha256": "bc73f438bac27255c3731dbfead584a2485fac6314bc325aa6ed3a1682ac8e58"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "add-network-location",
+  "profile": "fhd-100",
+  "width": 609,
+  "height": 499,
+  "size": 11386,
+  "sha256": "be53024a7dc66e492acd56da64c3274cad8dea68bd3287259b4408e4cba74d19"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "address-edit",
   "profile": "fhd-100",
@@ -238,6 +258,26 @@
   "height": 120,
   "size": 2524,
   "sha256": "763b9446a2ab7bb6618e4064c9f7de2b2cdf407925195edd884c87f1266de981"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "advanced-attributes",
+  "profile": "fhd-100",
+  "width": 394,
+  "height": 301,
+  "size": 11486,
+  "sha256": "cdd4e950e912ab1e965d177ccf58fe1b5716a9b4e82446faa2235f4a7ae0bdda"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "advanced-security",
+  "profile": "fhd-100",
+  "width": 781,
+  "height": 527,
+  "size": 22158,
+  "sha256": "34625228f2d900efcd5c2836e01fc9476ba68fb6b32dbd5dd85bdaa6592e2860"
  },
  {
   "surface": "explorer",
@@ -338,6 +378,16 @@
   "height": 264,
   "size": 14219,
   "sha256": "7e8ae9c46d9f33033f6ecc5ed26b2fc20f9e654c65ceff2a022f5f82fbb6e9a0"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "change-icon",
+  "profile": "fhd-100",
+  "width": 306,
+  "height": 364,
+  "size": 30355,
+  "sha256": "d89d813f0ed3e27c3faf649a46c08b95952c8984a7c144ee41750db54693b87a"
  },
  {
   "surface": "explorer",
@@ -551,6 +601,36 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "copy-progress",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 172,
+  "size": 8981,
+  "sha256": "f7dd12bf5c2a35911e637ae6e97f8baca02cd020bc677db94ced5c17abcf5864"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "copy-progress-detailed",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 275,
+  "size": 8195,
+  "sha256": "ada80559889d8823025b8439793239db013e5ce0eb0e4933f04549c5f6338402"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "copy-progress-stacked",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 487,
+  "size": 12733,
+  "sha256": "132b959ad2b20c908c5da03a55e639dce8b2e8ce7785a3d2525c5e1def0e581f"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "crumb-menu",
   "profile": "fhd-100",
@@ -568,6 +648,26 @@
   "height": 320,
   "size": 4161,
   "sha256": "e45347a1edca32982c80e4ee691fa02f6cf4d681dfe7690d8e9dec8a69b8943b"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "delete-permanently",
+  "profile": "fhd-100",
+  "width": 496,
+  "height": 189,
+  "size": 8680,
+  "sha256": "f4e63cb027b3fd74dc72df7a401febde47d9853835a4cafc632f00010ebf8351"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "delete-to-recycle-bin",
+  "profile": "fhd-100",
+  "width": 496,
+  "height": 189,
+  "size": 9363,
+  "sha256": "286b279ec8cd4fa32026f3d7bf48808ee1a7393d5f76bd8d40470f9a73ec726a"
  },
  {
   "surface": "explorer",
@@ -701,6 +801,86 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties",
+  "profile": "fhd-100",
+  "width": 377,
+  "height": 506,
+  "size": 16697,
+  "sha256": "b50b2d9db47651860629639efe49e1714fba707bc64d6adf1bcd9289467fb814"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-general",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 11352,
+  "sha256": "7df91cc1c481d6a2b02ce9cd287206934a2143c5875577d30f1a181c50aa3248"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-hardware",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 8928,
+  "sha256": "4046b47314c4c567b6a6da0e7095853ac3d04b9eb1a65308db1951d7369b8160"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-previous-versions",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 8061,
+  "sha256": "bf32e2e29ebcade5a7051e5530d24dfb366b703a70332d07980b4c23eb5f9a82"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-quota",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 6197,
+  "sha256": "530a223290a8b9819c23e800294a0dd127c888d730b5259e53e0fda04c6ae882"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-security",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 12130,
+  "sha256": "8db0d07d97186370e18aabb697bf50b918b1c71d5891058251bf3184d78b3b8d"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-sharing",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 10545,
+  "sha256": "faa89128516324099f84147fb1bc4e84e20688e2529c5e4ddd0424ca9dce5a9d"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "drive-properties-tools",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 424,
+  "size": 9528,
+  "sha256": "741036544ed9509146881a7cf1275d582e47acd8e9f0d72f3ff57e295a023bb5"
+ },
+ {
+  "surface": "explorer",
   "file": "menus",
   "state": "drop-menu",
   "profile": "fhd-100",
@@ -751,6 +931,96 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "extract-wizard",
+  "profile": "fhd-100",
+  "width": 628,
+  "height": 461,
+  "size": 11387,
+  "sha256": "b2cd4edf294e465a1a1d4b57cb22e3f66d6987a85bd47a973c9a7d884e753d34"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-conflict",
+  "profile": "fhd-100",
+  "width": 542,
+  "height": 532,
+  "size": 13117,
+  "sha256": "1a0eafd5efbc2ca3a461abbe8038026d3e8a3adf0cc9e75814b9fc71b7fefb48"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-in-use",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 260,
+  "size": 9817,
+  "sha256": "9da7db504ddcc4bf03154a68404c902aa86811982c347eafbbbbbb5698f81cfa"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties",
+  "profile": "fhd-100",
+  "width": 419,
+  "height": 516,
+  "size": 32364,
+  "sha256": "cbd89997779359de872797e197c76a55d256f65fb3a5c41639ade240dc192c96"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties-details",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 8081,
+  "sha256": "bc364f4559da81a9aedcf6858b9a77bcc57d3782ca8d915f64633984d00ef258"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties-digital-signatures",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 6358,
+  "sha256": "ad03bbfe9a990ffc3f87ed7bb23a9016c9f5486d3695b32b77f6e3bdf66ea2fc"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties-general",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 10506,
+  "sha256": "6ce7161a5fc3b22dc345098f26c5ac874551dff1b3a1776b02dd7f0c86e86786"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties-previous-versions",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 7962,
+  "sha256": "7533044705f50ebc49ea31beefbe37eefca912d119ff5cd87a6d34a9a86b7ead"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "file-properties-security",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 11924,
+  "sha256": "09ae4c88e90a18b9f7fabf6907b7ae60215967c22f9d590e4833a202042104f6"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "file-selected",
   "profile": "fhd-100",
@@ -791,6 +1061,126 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-merge",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 313,
+  "size": 10982,
+  "sha256": "60753f3335808caa02a92e0ff6d010088d6eb9a1a5d8d35b0d7a913eefd7daf9"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-options",
+  "profile": "fhd-100",
+  "width": 396,
+  "height": 482,
+  "size": 25755,
+  "sha256": "5479596ebe6638963bc20dc239db0925faa41c1486e6d75e942b5b6bde4b43c6"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-options-general",
+  "profile": "fhd-100",
+  "width": 368,
+  "height": 400,
+  "size": 12560,
+  "sha256": "45e07f6cb03da93a9cfec14199c9a1b393b1fa835eabdd66780136e6354c75ee"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-options-search",
+  "profile": "fhd-100",
+  "width": 368,
+  "height": 400,
+  "size": 7097,
+  "sha256": "0cc1ac02666ad279a500663dfb94d01ae9cc9285e9abd6ac93c3ebd08b0c94e5"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-options-view",
+  "profile": "fhd-100",
+  "width": 368,
+  "height": 400,
+  "size": 13580,
+  "sha256": "846876327c9aa2dfe72f1a98d5953a15d1789a8d1ed3fd5ad9b1f41ce087d8de"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-picture",
+  "profile": "fhd-100",
+  "width": 960,
+  "height": 540,
+  "size": 40840,
+  "sha256": "221c8bf9e2c12d5b562f86c557f79c80672e0b5950e43dbfc7e1d0ba1c896c26"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties",
+  "profile": "fhd-100",
+  "width": 377,
+  "height": 488,
+  "size": 23857,
+  "sha256": "472bb42e1a6c9588d3f30ad70500fedd8d22e8b353e3bf3ccbde3dc365d32e12"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties-customize",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 406,
+  "size": 9430,
+  "sha256": "90c8da013fd106beb99936f78e29976155fbcca701c7ee5e236c0df7f578abee"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties-general",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 406,
+  "size": 9090,
+  "sha256": "46ddd552491f08cde66295db709b62caa644b1c46bb71018fdc1962efe189f91"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties-previous-versions",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 406,
+  "size": 7628,
+  "sha256": "3454eace75b5659407925abe550355c3127a2e1b724b99b3f86ec87867ff040e"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties-security",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 406,
+  "size": 11449,
+  "sha256": "527799a0a92842e172701a255385658c0c7c5f7e21d8eaa9b7c0c8ab90ddbb26"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "folder-properties-sharing",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 406,
+  "size": 10961,
+  "sha256": "9190f3c4c365c8f48cd37888edd4ff61d8454c2dd3ca1ad83e6d5ee3d4ea2780"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "folder-selected",
   "profile": "fhd-100",
@@ -798,6 +1188,16 @@
   "height": 720,
   "size": 90113,
   "sha256": "9380d6524fcc88c56855150091b672faa17eb4e395c846118735a17ac9688275"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "format",
+  "profile": "fhd-100",
+  "width": 267,
+  "height": 465,
+  "size": 10117,
+  "sha256": "635aab150b5173179a00dbc929c4231f9fd816700643670013543b7c473545a9"
  },
  {
   "surface": "explorer",
@@ -931,6 +1331,16 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "map-network-drive",
+  "profile": "fhd-100",
+  "width": 628,
+  "height": 461,
+  "size": 13552,
+  "sha256": "fff555bfdf9da93c314b5eb0289a5e4564d9cffc3f241f79eb1144569b784cbc"
+ },
+ {
+  "surface": "explorer",
   "file": "menus",
   "state": "navigation-menu",
   "profile": "fhd-100",
@@ -991,6 +1401,36 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "not-enough-space",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 245,
+  "size": 8760,
+  "sha256": "9932bad6ddf3bce2b8c0571d8c4c57f59ca87e79e513bd1a6736e40639972bf0"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "open-with",
+  "profile": "fhd-100",
+  "width": 449,
+  "height": 424,
+  "size": 14404,
+  "sha256": "a7e40e3aa469cdbb2485077980d9d5c67eea03323b046af2dbdfd7d76d2beeb6"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "permissions",
+  "profile": "fhd-100",
+  "width": 377,
+  "height": 457,
+  "size": 23448,
+  "sha256": "ec8a737e67ab9e8fba79963696855ba8c505b5310c5194b71418fe64d2ce881c"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "preview-pane",
   "profile": "fhd-100",
@@ -1038,6 +1478,76 @@
   "height": 65,
   "size": 4055,
   "sha256": "9f2da126a8e98af6924fa778c6494fbc24778c16bb0a8ec869ee398887501b6e"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties",
+  "profile": "fhd-100",
+  "width": 419,
+  "height": 573,
+  "size": 33057,
+  "sha256": "f9d0eddb5cd719440f2b1de833ad648cbf5eef61689d6417eb7b568abc7ee0a0"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-compatibility",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 14173,
+  "sha256": "dc3a7a70b109dd1011c4774138c216e1e88beb3fd99b46c1381979534bb42077"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-details",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 10971,
+  "sha256": "8bebf1067a03f518aacb6a0bf9e54e4d189bb23d551b8a90c2bc93c481bde2c2"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-digital-signatures",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 7500,
+  "sha256": "3980be62c343fd8666137d7a4dc1ee5fe0cb5ecdbe479f203ab5633429905629"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-general",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 10940,
+  "sha256": "c667fbbe43b3f83f3c4e3f968b48cd7877afbd6341f06a936deda9f2790a8643"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-previous-versions",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 8619,
+  "sha256": "8d923b3e3f57ad9ac80ff0051cf9738495fc6f4859628ea6fd2b795d8453ac21"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "program-properties-security",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 491,
+  "size": 12575,
+  "sha256": "840d5e777fffcd966a7dbcbd65d10c1460152a29f7c60c04edc14b20b853a605"
  },
  {
   "surface": "explorer",
@@ -1098,6 +1608,26 @@
   "height": 328,
   "size": 7500,
   "sha256": "d320555b1279623c65b47906b5455f4653a2ff83bf0ed5c955fab7dbd3a7968a"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "remove-properties",
+  "profile": "fhd-100",
+  "width": 355,
+  "height": 466,
+  "size": 26741,
+  "sha256": "9467bfa6fe45bb752e8f05d34e73fbb35117111c92c2ee0f7394ab34d4b27d15"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "replace-or-skip",
+  "profile": "fhd-100",
+  "width": 463,
+  "height": 313,
+  "size": 11073,
+  "sha256": "b9a9ee07392f2bb640a9c018f94cfe9d93a45404b239f9dd0c57db1093db712e"
  },
  {
   "surface": "explorer",
@@ -1271,6 +1801,36 @@
  },
  {
   "surface": "explorer",
+  "file": "dialogs",
+  "state": "several-properties",
+  "profile": "fhd-100",
+  "width": 377,
+  "height": 516,
+  "size": 24884,
+  "sha256": "1f464c1453a0cc85abfd03f11bfead3a875b8b414fe935030f90f898fa854093"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "several-properties-details",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 434,
+  "size": 6712,
+  "sha256": "e8c17dfba233319a07fa63c11146e55f1a4a8c623050fd299c5c60d34104b644"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "several-properties-general",
+  "profile": "fhd-100",
+  "width": 349,
+  "height": 434,
+  "size": 5587,
+  "sha256": "59349443888594d4e9d6d072585da49a88d7cac8682d68cdb4637581cc110fd6"
+ },
+ {
+  "surface": "explorer",
   "file": "menus",
   "state": "shortcut-menu",
   "profile": "fhd-100",
@@ -1308,6 +1868,76 @@
   "height": 65,
   "size": 3990,
   "sha256": "10eec13fa8c16e9e8e41f563008cda300c8ec406f7e94926ac5a26146adbccc1"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties",
+  "profile": "fhd-100",
+  "width": 419,
+  "height": 516,
+  "size": 30186,
+  "sha256": "0a0641f6df1be74932a3961ab024faa530d5430fc83888c868fda3fd4550ca25"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-details",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 8282,
+  "sha256": "0d142d02ca229a08c427b4c1ceedab23c4362e6082177ae691da62d82f66115e"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-digital-signatures",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 6484,
+  "sha256": "1079394883b4211bb154a1f8327254bc5afc0714d1f310bb3ea3a75923c21461"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-general",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 10975,
+  "sha256": "e42bffc1d6f8a4c33d22c001f5b18cb4de7ea305bb274c6db4447650367b21ba"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-previous-versions",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 8062,
+  "sha256": "0ea87a691a6d26584f1e9894f3b27b9dbe47e4329f81fd08d71717c0e481fd7f"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-security",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 12081,
+  "sha256": "77eb31d84471a6e21605a1d09083a199caeb9d98bf5156fc299819bcf0a3b478"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "shortcut-properties-shortcut",
+  "profile": "fhd-100",
+  "width": 391,
+  "height": 434,
+  "size": 8912,
+  "sha256": "2a3777504c799af9e083cb2dab9d13fe694c04add7bea6aea64b7a07c3f94d2f"
  },
  {
   "surface": "explorer",
@@ -1358,6 +1988,16 @@
   "height": 552,
   "size": 11834,
   "sha256": "61e40063f567868fdd9af56fc58b9f89264286d94756ca2215d7bc37470972ab"
+ },
+ {
+  "surface": "explorer",
+  "file": "dialogs",
+  "state": "too-large-for-recycle-bin",
+  "profile": "fhd-100",
+  "width": 496,
+  "height": 189,
+  "size": 9396,
+  "sha256": "d569fc1a59e9c4e149709713436119bb47ea5552da737a6d0ff79bb9751adaab"
  },
  {
   "surface": "explorer",

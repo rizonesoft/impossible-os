@@ -221,6 +221,26 @@ def _segment(el, identity=(), values=()):
     return name or slug(el.class_name) or slug(el.control_type) or "element"
 
 
+def typed_twins(segs, kids):
+    """Siblings that share a segment but not a control type are told apart by the
+    type (size-text, size-edit), which does not move when they are reordered: a
+    Win32 dialog names each field after the label before it, so the label and its
+    field share a name (2026-11-20, every Properties sheet). Twins of one type are
+    left as they are, for position to tell apart."""
+    groups = {}
+    for i, s in enumerate(segs):
+        groups.setdefault(s, []).append(i)
+    out = list(segs)
+    for s, where in groups.items():
+        if len(where) < 2:
+            continue
+        types = [slug(kids[i].control_type) or "element" for i in where]
+        for i, t in zip(where, types):
+            if types.count(t) == 1:
+                out[i] = f"{s}-{t}"
+    return out
+
+
 def outermost(found, parent_of):
     """The keys of `found` with no ancestor in `found`.
 
@@ -307,7 +327,7 @@ class Capture:
 
 def walk(root, *, surface, build, profile, session, root_slug, root_label, root_kind="surface",
          environment_lists=(), values=(), identity=(), shot=None, expand=True, hosts=(), labels=(),
-         omit=(), count=None, kinds=()):
+         omit=(), count=None, kinds=(), root_parent=None):
     """Capture one surface. Returns a Capture or raises Incomplete.
 
     session is the schema's session the capture ran in (session_type), written
@@ -334,6 +354,9 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
     omit names elements another file of the surface records (the taskbar's own
     buttons, inside the window the tray file walks): each is left out with its
     subtree, counted as skipped "elsewhere".
+
+    root_parent is the slug, below win11.<surface>., of the record the root
+    belongs under (a tab scene's dialog); None leaves the root top-level.
     """
     for _, seg in identity:
         if seg != slug(seg) or not seg:
@@ -438,6 +461,7 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
             # Only twins: a lone match keeps its own name.
             if len(hits) > 1 and len(hits) >= spec["nth"]:
                 segs[hits[spec["nth"] - 1]] = seg
+        segs = typed_twins(segs, kids)
         total = {}
         for s in segs:
             total[s] = total.get(s, 0) + 1
@@ -502,6 +526,8 @@ def walk(root, *, surface, build, profile, session, root_slug, root_label, root_
     root_record = cap.records[0]
     root_record["kind"] = root_kind
     root_record["label"] = root_label
+    if root_parent is not None:
+        root_record["parent"] = f"win11.{surface}.{root_parent}"
     # A menu that is the scene's root has its entries counted as an opened one
     # does; count=True does the same for another root of entries (a flyout card).
     if count if count is not None else root_kind in ("menu", "contextMenu"):
@@ -520,7 +546,7 @@ class Scene:
     """
 
     FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
-              "expand", "hosts", "labels", "omit", "count", "kinds")
+              "expand", "hosts", "labels", "omit", "count", "kinds", "parent")
 
     def __init__(self, mod, **spec):
         unknown = set(spec) - set(self.FIELDS)
@@ -544,6 +570,12 @@ class Scene:
         self.omit = tuple(spec.get("omit", getattr(mod, "OMIT", ())))
         self.count = spec.get("count")          # None: count a menu or context menu root's entries
         self.kinds = tuple(spec.get("kinds", getattr(mod, "KINDS", ())))
+        # The record the root belongs under, as a slug below win11.<surface>.: a
+        # tab scene's root is its dialog's tab, and the schema requires a dialogTab
+        # to name its parent (2026-11-20). None: the root is a top-level record.
+        self.parent = spec.get("parent")
+        if self.parent is not None and not all(p == slug(p) and p for p in self.parent.split(".")):
+            raise ValueError(f"scene {self.slug!r}: parent {self.parent!r} is not dotted slugs")
         # Each is a list of (spec, value) pairs, spec a dict; a module constant
         # of another shape under one of these names would fail deep in the walk
         # (2026-11-19: a KINDS list of folder names gave "'str' object has no
@@ -711,8 +743,26 @@ def settle(walk_once, max_passes=MAX_PASSES):
         cap = walk_once()
         if cap.records == prev.records:
             return cap, n
-        prev = cap
-    raise Incomplete(f"the surface did not repeat itself in {max_passes} walks")
+        last, prev = prev, cap
+    raise Incomplete(f"the surface did not repeat itself in {max_passes} walks; the last two differ at "
+                     f"{first_difference(last.records, cap.records)}")
+
+
+def first_difference(before, after):
+    """Where two walks' records first part: a record only one walk has, or the
+    fields of the first record whose values differ (2026-11-20: a bare "did not
+    repeat itself" left the Open With picker's moving part unnamed)."""
+    old = {r.get("id"): r for r in before}
+    new = {r.get("id"): r for r in after}
+    for rid in [r.get("id") for r in after] + [r.get("id") for r in before]:
+        if rid not in old:
+            return f"{rid!r}, which only the last walk has"
+        if rid not in new:
+            return f"{rid!r}, which only the walk before has"
+        if old[rid] != new[rid]:
+            keys = sorted(k for k in old[rid].keys() | new[rid].keys() if old[rid].get(k) != new[rid].get(k))
+            return f"{rid!r} ({', '.join(keys)})"
+    return "the order of their records"
 
 
 def confirm_dump(tree, cap, **walk_args):
