@@ -251,6 +251,96 @@
  },
  {
   "surface": "explorer",
+  "file": "menus",
+  "state": "archive-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 488,
+  "size": 14650,
+  "sha256": "3b8ac0481ca7be519ebb0424b3f630148f0ab0cb69c56bd16513c3252713108a"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "archive-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 533,
+  "height": 97,
+  "size": 7086,
+  "sha256": "f38d1d21afef8f45ceecaf483235473d48ad282b644ccf12a54d1c3e970706de"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "archive-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6710,
+  "sha256": "ef02fe1213e9b56016df4b42111883b9df345d5815e5665c90613da2d4fdfe49"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "archive-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4016,
+  "sha256": "61ff539ef8ae73e7f00ef5ca2c3f1079e3b6ecb71c00a4b2e53974d9acdf8373"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "background-menu",
+  "profile": "fhd-100",
+  "width": 268,
+  "height": 335,
+  "size": 11122,
+  "sha256": "4bfc4b42f06878e3d38e59d4f295c23e660c4e0d9c96e72760a90cd8360f7951"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "background-menu.arrange-open",
+  "profile": "fhd-100",
+  "width": 398,
+  "height": 196,
+  "size": 8258,
+  "sha256": "67e578db472cafcba130aa7c8d6b7d011f1181ccfd0c1b363262958fd44184bc"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "background-menu.groupby-open",
+  "profile": "fhd-100",
+  "width": 370,
+  "height": 231,
+  "size": 9723,
+  "sha256": "a2803196ce5d1ba4baa1b88388e96e058efaae4fa2657fa4645ab446a03e6264"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "background-menu.new-open",
+  "profile": "fhd-100",
+  "width": 483,
+  "height": 161,
+  "size": 10435,
+  "sha256": "a6592bdd657e91a18a28fb46537a69e57a22c9c764eb8968f6d1c7499e645ceb"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "background-menu.view-open",
+  "profile": "fhd-100",
+  "width": 529,
+  "height": 264,
+  "size": 14219,
+  "sha256": "7e8ae9c46d9f33033f6ecc5ed26b2fc20f9e654c65ceff2a022f5f82fbb6e9a0"
+ },
+ {
+  "surface": "explorer",
   "file": "views",
   "state": "choose-details",
   "profile": "fhd-100",
@@ -258,6 +348,146 @@
   "height": 457,
   "size": 14119,
   "sha256": "87a599ad5383281ac9f416c496fc195965c04d7cd7faa917a0932f2beb3e25a4"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-archive-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 508,
+  "size": 6923,
+  "sha256": "c1ae803383dd8fffd3f988f6dc359acd0d7d5042551133610a3d8afcbd5c1f66"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-background-menu",
+  "profile": "fhd-100",
+  "width": 234,
+  "height": 309,
+  "size": 4217,
+  "sha256": "9821a8bea05bb022d7011d4d00756e368c0cd965d9bc9ddd5a4ea52501cb0758"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-disc-image-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 453,
+  "size": 7611,
+  "sha256": "57a5ff0288f1fb7e426308cc5667ac3b616f03ec19b00dd23e30afcbbed3af1a"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-document-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 477,
+  "size": 7003,
+  "sha256": "0b108bc90889b10368edc2bad829f73595ee47fc0d600f8b4e2bc4a8f019b9b2"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-drive-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 381,
+  "size": 6144,
+  "sha256": "a1d16664fb78c09dd7ddaf816ab7581432a6ebd7abbdafb0d8a56928ac035324"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-folder-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 477,
+  "size": 7100,
+  "sha256": "d69adbfa65db58a5ec3d0cff79c6e020e738b23998a0eb0ef4f9bfdabf432448"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-image-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 611,
+  "size": 9660,
+  "sha256": "24267547c95634f3f114077e3411024467e31897770c06ec545ced95bffe51b3"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-library-menu",
+  "profile": "fhd-100",
+  "width": 274,
+  "height": 357,
+  "size": 5415,
+  "sha256": "862ecbf2d8fabdc3d0ce24ce38760bdd5814c8a3a6d657cb6c49c56e558fc760"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-navigation-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 412,
+  "size": 6594,
+  "sha256": "8591ac103563292047c709de44ced4616a00ddb065cdcf855822e00eba85f083"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-program-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 501,
+  "size": 8451,
+  "sha256": "7c183e9183ea7aa8120658e398e26c3fe67d067e9f4622663604d53a9180cdaa"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-recycled-menu",
+  "profile": "fhd-100",
+  "width": 166,
+  "height": 127,
+  "size": 1088,
+  "sha256": "9ed85e5377e39e0fce1475bb87b9841a79da314fad68b667a4657491e4d4fce1"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-removable-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 309,
+  "size": 4576,
+  "sha256": "58b927b2b39d206904d44e1b782cee39345ba6568412cd532daa16a241ba6433"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-several-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 429,
+  "size": 6272,
+  "sha256": "b4ccd38ef4cb5f7141e7d34d498c909e5b7d6e9ac816ad00a799f1d214c81f8f"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "classic-shortcut-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 477,
+  "size": 7075,
+  "sha256": "5e7c65710082cbe94123b089f68760efcb884de115e2a25aa4c572e9a70c874e"
  },
  {
   "surface": "explorer",
@@ -371,6 +601,116 @@
  },
  {
   "surface": "explorer",
+  "file": "menus",
+  "state": "disc-image-command-bar",
+  "profile": "fhd-100",
+  "width": 804,
+  "height": 46,
+  "size": 4457,
+  "sha256": "fdeca243fd5335121045b694f56642889b258479a27639c3a53d86f95b43862c"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "disc-image-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 410,
+  "size": 13057,
+  "sha256": "67c77905647d0ad3f97b421e0c5b142d9634b4c8e7ae26d9a9847dbcf1f8eac6"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "disc-image-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 533,
+  "height": 97,
+  "size": 6987,
+  "sha256": "33b4f8e809d76e0eb770dd121be99a152dea085b6adef58f9dbcb5644718195e"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "disc-image-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6925,
+  "sha256": "7757a22cc0a99b0fa4c6883b147256a9eb29b16ecadac62aeee03cfef2089e39"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "disc-image-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4203,
+  "sha256": "38e0618b56daae60a76eb0058cc77ec7bc7692d59ab20bf0d09f6cac41d77c0e"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "document-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 401,
+  "size": 13021,
+  "sha256": "5a447ad2643afccdce8abe980a956a48a2c94de6ede6ba6572ea667f512644e5"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "document-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 533,
+  "height": 97,
+  "size": 6547,
+  "sha256": "1516b5e900a09f3291953657ca7737d49e39932919edfa5a9e7bbb791076c2d5"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "document-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6925,
+  "sha256": "f5e636fb197818c927db3d00e44e7d95b1d0d4a55739105db6c1b97e2d85daab"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "document-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4203,
+  "sha256": "2ac17228f5cd6e80eb1385dd45c92b245146e50e253ac45590571eed7c8d74de"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "drive-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 360,
+  "size": 8727,
+  "sha256": "81e0dcddd7f9a4c0293676aebff47be073b0881f9c5db4e9eb15a229f0c9625a"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "drop-menu",
+  "profile": "fhd-100",
+  "width": 210,
+  "height": 103,
+  "size": 1184,
+  "sha256": "5af0f2f136ff200bf9c3c790b1bf17f88820b7ea0aac37f91a3c64ea27109aa9"
+ },
+ {
+  "surface": "explorer",
   "file": "views",
   "state": "empty-folder",
   "profile": "fhd-100",
@@ -378,6 +718,36 @@
   "height": 552,
   "size": 4396,
   "sha256": "3735d599528cd2f298e55bb516b86f4596de9b90184b61b2710ec35ce8c7572e"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "extended-background-menu",
+  "profile": "fhd-100",
+  "width": 274,
+  "height": 309,
+  "size": 4121,
+  "sha256": "f7ba8c21b4cd76fc2cc0003b509a29407d0f75209a82f6d7a1cde17f46d4e8ca"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "extended-drive-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 429,
+  "size": 6862,
+  "sha256": "22d489c926be8562eccf13b5dcd60d46d685d922b1403db0ad31905d4037c962"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "extended-folder-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 501,
+  "size": 7113,
+  "sha256": "2a7def46a7f2b3aec2f24095acb07bc5ab4275d04f1bae487644195d1d47bab4"
  },
  {
   "surface": "explorer",
@@ -398,6 +768,26 @@
   "height": 69,
   "size": 1449,
   "sha256": "b843a8e8307eaf1316d544b719bdec0a3cedc64ee5017ff1fe15bdccb96c5de9"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "folder-menu",
+  "profile": "fhd-100",
+  "width": 294,
+  "height": 401,
+  "size": 11520,
+  "sha256": "f7713ece66c2ed154e16592a804ec15d16331c6392984e8499e2425ccaef7f6d"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "folder-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 422,
+  "height": 129,
+  "size": 6643,
+  "sha256": "230481e4b12c6daf2066bbf48e102f8159148fcb41fc14085fafd650500c2d81"
  },
  {
   "surface": "explorer",
@@ -471,6 +861,56 @@
  },
  {
   "surface": "explorer",
+  "file": "menus",
+  "state": "image-menu",
+  "profile": "fhd-100",
+  "width": 331,
+  "height": 602,
+  "size": 17985,
+  "sha256": "c66e2627219e53ab43d029b13516c296412aa58533de99a08b16e9af3d9d40fc"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "image-menu.ai-actions-open",
+  "profile": "fhd-100",
+  "width": 468,
+  "height": 33,
+  "size": 2238,
+  "sha256": "401ed16bc0d79136df27757dfbee3606d2199ad90aa5daa972383924899c882b"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "image-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 536,
+  "height": 161,
+  "size": 10608,
+  "sha256": "3fc9dbeae3335f9a7263cdc93b15de7f218734cc10cee785b3fcd49f8e55f72c"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "image-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 459,
+  "height": 129,
+  "size": 6934,
+  "sha256": "cf77fe44cc13620aa6f45428ea9cd4516dea3cd59f63b68bb8303052879ddd71"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "image-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 65,
+  "size": 4346,
+  "sha256": "beded3055484b9e711b6c2e86757bf798f894ccdea9dfb75654d6c485cab3d11"
+ },
+ {
+  "surface": "explorer",
   "file": "views",
   "state": "library",
   "profile": "fhd-100",
@@ -478,6 +918,46 @@
   "height": 552,
   "size": 8727,
   "sha256": "b4875008ed4a78e676b5294dd77334f820e49eca7c195ff8368ca828a5b34d32"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "library-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 296,
+  "size": 7893,
+  "sha256": "0cd92c35f26b52e6e3f615ee444b0a33433bd8526194aa8923d3b330c9ebf7ba"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "navigation-menu",
+  "profile": "fhd-100",
+  "width": 316,
+  "height": 401,
+  "size": 10556,
+  "sha256": "ae4874ba25af9b305631ffb230734f42bc4b52af99b8264f9177c4df60a35ced"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "navigation-menu.new-open",
+  "profile": "fhd-100",
+  "width": 396,
+  "height": 33,
+  "size": 2184,
+  "sha256": "e8988ab6dcf5acd44e8ef2af9dd233c00c5aff9714ab8ef08809ad3323bf30cf"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "navigation-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 444,
+  "height": 129,
+  "size": 6481,
+  "sha256": "ddd4bb8c3d9a16804134b8a648b8270472b0d2cde4b5272b5645af25ae7446a3"
  },
  {
   "surface": "explorer",
@@ -531,6 +1011,36 @@
  },
  {
   "surface": "explorer",
+  "file": "menus",
+  "state": "program-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 433,
+  "size": 13770,
+  "sha256": "991cbe79309b7f6d72a0dc416c3b91ea2a96ed37a7668ae0f0478b1c7aa85078"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "program-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6904,
+  "sha256": "7d5738023af3b8b8b7360d447e21de9004afa18fb5c442697c150056718be68a"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "program-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4055,
+  "sha256": "9f2da126a8e98af6924fa778c6494fbc24778c16bb0a8ec869ee398887501b6e"
+ },
+ {
+  "surface": "explorer",
   "file": "views",
   "state": "recycle-bin",
   "profile": "fhd-100",
@@ -548,6 +1058,46 @@
   "height": 46,
   "size": 4847,
   "sha256": "2fb4e574105c6adaf893f1d9706f296d4293e14e269e9d5d6270b8aeaffc8737"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "recycled-menu",
+  "profile": "fhd-100",
+  "width": 271,
+  "height": 264,
+  "size": 6865,
+  "sha256": "727c85b955250c88dbce696a21d747cc7b22dd7b80f43f5134310a80b402313e"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "recycled-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 399,
+  "height": 129,
+  "size": 5945,
+  "sha256": "9a40c516015590195d5373aa3ec536360f9dc5a1ea0d31c0b39fe5fe48c1f740"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "recycled-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 396,
+  "height": 65,
+  "size": 3787,
+  "sha256": "5f2cd13dbf2e97da6a701aafac466e2adaf54b191d5d34493d08a825ceedfb0f"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "removable-menu",
+  "profile": "fhd-100",
+  "width": 278,
+  "height": 328,
+  "size": 7500,
+  "sha256": "d320555b1279623c65b47906b5455f4653a2ff83bf0ed5c955fab7dbd3a7968a"
  },
  {
   "surface": "explorer",
@@ -611,6 +1161,36 @@
  },
  {
   "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-archive",
+  "profile": "fhd-100",
+  "width": 158,
+  "height": 251,
+  "size": 4972,
+  "sha256": "8ce8538fb1274088e119e930354bb102b8273ad2c87e9d847850851920d26c25"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-disc-image",
+  "profile": "fhd-100",
+  "width": 174,
+  "height": 315,
+  "size": 6623,
+  "sha256": "b0e983ed7b35e71d5ab85cd8047d78d0f733f738659c69e97c35ea212c20f31d"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-drive",
+  "profile": "fhd-100",
+  "width": 212,
+  "height": 452,
+  "size": 9499,
+  "sha256": "2acebdbccb72b443c345b2cf57f5efe128f71bc04722ff3beeb5e3552d26c300"
+ },
+ {
+  "surface": "explorer",
   "file": "frame",
   "state": "see-more-menu",
   "profile": "fhd-100",
@@ -618,6 +1198,116 @@
   "height": 251,
   "size": 4938,
   "sha256": "3f3738d67479fc4d67ccce7c7413914db3a7c9f66ed0078e95349a21d020dfd6"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-recycle-bin",
+  "profile": "fhd-100",
+  "width": 158,
+  "height": 210,
+  "size": 3993,
+  "sha256": "433c6ac3248ecc69a4ff50ea999bcd940c7c25899b85c1351753c8fb1081d919"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-removable",
+  "profile": "fhd-100",
+  "width": 212,
+  "height": 347,
+  "size": 7710,
+  "sha256": "80db9af180e3734f23565dc970b0fe3e5986ca898e7d6cd55f63ba7ddea1c5f4"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "see-more-this-pc",
+  "profile": "fhd-100",
+  "width": 212,
+  "height": 452,
+  "size": 9499,
+  "sha256": "2acebdbccb72b443c345b2cf57f5efe128f71bc04722ff3beeb5e3552d26c300"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "send-to",
+  "profile": "fhd-100",
+  "width": 259,
+  "height": 130,
+  "size": 4493,
+  "sha256": "2a0724bedbe1d63de7c206f89f8435759fa30dcf75e67c8bef625072b45be115"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "several-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 369,
+  "size": 12412,
+  "sha256": "97d3adf2f864417f0a47bdc0aba4afb6af213816d9ddcbf73cad5d519add60f1"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "several-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6925,
+  "sha256": "f5e636fb197818c927db3d00e44e7d95b1d0d4a55739105db6c1b97e2d85daab"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "several-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 4199,
+  "sha256": "8ac58cd78c2e4333641fcb2ce06aab30f1f674fb7fa2ce3da8fc37630e691954"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "shortcut-menu",
+  "profile": "fhd-100",
+  "width": 328,
+  "height": 433,
+  "size": 13901,
+  "sha256": "473d35405b0b07e36d08c7db482168ad6f6ae97c96fd62b1d36023534b0fe625"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "shortcut-menu.openas-open",
+  "profile": "fhd-100",
+  "width": 533,
+  "height": 97,
+  "size": 6530,
+  "sha256": "c8c4f090d076c96ae33e774acb96178a7487970bbb3703a541453c0979a4266c"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "shortcut-menu.windows-compressto-open",
+  "profile": "fhd-100",
+  "width": 456,
+  "height": 129,
+  "size": 6904,
+  "sha256": "7d5738023af3b8b8b7360d447e21de9004afa18fb5c442697c150056718be68a"
+ },
+ {
+  "surface": "explorer",
+  "file": "menus",
+  "state": "shortcut-menu.windows-modernshareflyout-open",
+  "profile": "fhd-100",
+  "width": 453,
+  "height": 65,
+  "size": 3990,
+  "sha256": "10eec13fa8c16e9e8e41f563008cda300c8ec406f7e94926ac5a26146adbccc1"
  },
  {
   "surface": "explorer",

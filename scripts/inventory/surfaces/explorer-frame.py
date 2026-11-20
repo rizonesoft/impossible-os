@@ -26,7 +26,7 @@ import time
 import capture_core as core
 import explorer_window as ew  # noqa: F401 - the shared helpers, by their module
 from explorer_window import (
-    DATE_VALUE, HOME, SAMPLE, SETTLE, TABS_TO_OVERFLOW, _root, at, close_all, close_menu, command_bar, descendants,
+    DATE_VALUE, HOME, SAMPLE, SETTLE, TABS_TO_OVERFLOW, _root, at, close_all, close_menu, command_bar, descendants, drag,
     details_pane, esc_twice, focus_list, focused, fresh, in_bar, item, menu, new_tab, nothing, opened,
     overflow, press_button, press_more, preview_pane, set_pane, shown_pane, tab_names, tab_row, tabs, title,
     user32, window, windows)
@@ -47,8 +47,7 @@ REGIONS = {"TabView": "tab row", "NavigationCommands": "navigation buttons", "PA
            "DUIListView": "item list", "StatusBarModuleInner": "status bar",
            "DetailsPaneHwndHostClass": "details pane", "ReadingPaneModuleInner": "preview pane",
            "PreviewThumbnailInner": "preview pane"}
-DRAG_STEPS, TEAR_OUT = 24, 240           # a tab drag's pointer steps, and how far below the row a tab is dropped
-DRAG_HOVER = 0.8                         # seconds over the drop point before the button is let go
+TEAR_OUT = 240                           # how far below the row a dragged tab is dropped
 F6_STOPS = 8                             # F6 presses: more than the frame has panes, so the cycle shows
 
 # The items view is the views capture's; here it is one record.
@@ -256,24 +255,6 @@ def measure_keys(ctx):
     k["f6"] = {"stops": stops}
     _m["keys"] = k
     measure_tab_drag(ctx)
-
-
-def drag(ctx, start, end):
-    """Hold the left button at `start` and move to `end` in steps a drag listener sees."""
-    (x0, y0), (x1, y1) = start, end
-    ctx.hover_point(x0, y0)
-    user32.mouse_event(0x0002, 0, 0, 0, 0)                               # left button down
-    time.sleep(0.3)
-    # Relative moves only, as a mouse sends them: a warp of the pointer is no drag.
-    px, py = x0, y0
-    for step in range(1, DRAG_STEPS + 1):
-        nx, ny = x0 + (x1 - x0) * step // DRAG_STEPS, y0 + (y1 - y0) * step // DRAG_STEPS
-        user32.mouse_event(0x0001, nx - px, ny - py, 0, 0)               # MOUSEEVENTF_MOVE, relative
-        px, py = nx, ny
-        time.sleep(0.05)
-    time.sleep(DRAG_HOVER)                                               # over the target before the drop
-    user32.mouse_event(0x0004, 0, 0, 0, 0)                               # left button up
-    time.sleep(SETTLE)
 
 
 def measure_tab_drag(ctx):

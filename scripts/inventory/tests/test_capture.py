@@ -3136,6 +3136,75 @@ class ScenePairs(unittest.TestCase):
         self.assertEqual(core.Scene(ok, slug="s", label="S", open=None, root=None, close=None).kinds[0][1], "region")
 
 
+class ExplorerMenus(unittest.TestCase):
+    """The File Explorer context-menu module: classic menu texts and the verb table."""
+
+    def setUp(self):
+        self.m = guest.load_surface("explorer-menus")
+
+    def test_entry_text_gives_label_access_key_and_shortcut(self):
+        self.assertEqual(self.m.parse_entry("&Open\tCtrl+O"), ("Open", "O", "Ctrl+O"))
+        self.assertEqual(self.m.parse_entry("Cop&y as path"), ("Copy as path", "Y", None))
+        self.assertEqual(self.m.parse_entry("Save && close"), ("Save & close", None, None))
+        self.assertEqual(self.m.parse_entry("Cu&t"), ("Cut", "T", None))
+
+    def test_verb_table_merges_menus_and_marks_the_default(self):
+        entry = lambda t, d=False: {"text": t, "default": d, "submenu": False, "enabled": True}  # noqa: E731
+        classic = {"document": [entry("&Open", True), {"separator": True}, entry("Cu&t\tCtrl+X")],
+                   "folder": [entry("&Open", True), entry("Cu&t\tCtrl+X")],
+                   "send-to-parent": [entry("Ignored")]}
+        out = {r["id"]: r for r in self.m.verb_records(classic)}
+        self.assertNotIn("menus.verbs.ignored", out)
+        self.assertEqual(out["menus.verbs.cut"]["shortcut"], "Ctrl+X")
+        self.assertIn("default (bold) entry on document, folder", out["menus.verbs.open"]["behaviour"])
+        self.assertIn("Access key T", out["menus.verbs.cut"]["behaviour"])
+
+    def test_one_verb_written_two_ways_is_one_record(self):
+        entry = lambda t: {"text": t, "default": False, "submenu": False, "enabled": True}  # noqa: E731
+        out = [r for r in self.m.verb_records({"a": [entry("Open wit&h")], "b": [entry("Open wit&h...")]})
+               if r["kind"] == "menuItem"]
+        self.assertEqual([r["id"] for r in out], ["menus.verbs.open-with"])
+        self.assertIn("on different menus", out[0]["behaviour"])
+
+    def test_two_shortcuts_for_one_verb_are_refused(self):
+        entry = lambda t: {"text": t, "default": False, "submenu": False, "enabled": True}  # noqa: E731
+        with self.assertRaises(ValueError):
+            self.m.verb_records({"a": [entry("Cu&t\tCtrl+X")], "b": [entry("Cu&t\tShift+Del")]})
+
+    def test_registered_verbs_match_their_baseline_rows(self):
+        entry = {"text": "&Pin to Quick access", "default": False, "submenu": False, "enabled": True}
+        verbs = [{"class": "Drive", "verb": "pintohome", "label": "Pin to Quick access", "default": None},
+                 {"class": "*", "verb": "removeproperties", "label": None, "default": "Remove properties",
+                  "programmatic": True},
+                 {"class": "Directory", "verb": "Powershell", "label": "Open in Terminal", "default": None,
+                  "velocity": "12345"}]
+        verbs.append({"class": "Directory", "verb": "pinfolder", "label": "Pin to Quick access", "default": None,
+                      "appliesTo": "System.IsFolder"})
+        out = {r["id"]: r for r in self.m.registered_records(verbs, {"drive": [entry], "send-to-parent": [entry]})}
+        # The drive's menu shows its own label; a folder verb of the same name is not credited with it.
+        self.assertEqual(out["menus.registered.folder.pinfolder"]["kind"], "state")
+        self.assertIn("no item read met that condition", out["menus.registered.folder.pinfolder"]["behaviour"])
+        self.assertEqual(out["menus.registered.drive.pintohome"]["behaviour"], "Shown on drive.")
+        pin = out["menus.registered.drive.pintohome"]
+        self.assertEqual((pin["kind"], pin["baselineId"]), ("menuItem", "shell-commands:verb:Drive/pintohome"))
+        self.assertIn("ProgrammaticAccessOnly", out["menus.registered.all-files.removeproperties"]["behaviour"])
+        self.assertIn("12345", out["menus.registered.folder.powershell"]["behaviour"])
+        with self.assertRaises(ValueError):
+            self.m.registered_records([], {})
+
+    def test_icon_row_lists_the_triggers_that_show_each_button(self):
+        row = {"height": 48}
+        records = [{"id": "win11.explorer.document-menu.cut", "parent": "win11.explorer.document-menu", "bounds": row},
+                   {"id": "win11.explorer.folder-menu.cut", "parent": "win11.explorer.folder-menu", "bounds": row},
+                   {"id": "win11.explorer.classic-folder-menu.cut", "parent": "win11.explorer.classic-folder-menu",
+                    "bounds": row},
+                   {"id": "win11.explorer.document-menu.open", "parent": "win11.explorer.document-menu",
+                    "bounds": {"height": 32}}]
+        out = {r["id"]: r["behaviour"] for r in self.m.icon_row_records(records)}
+        self.assertEqual(out["menus.icon-row.cut"], "Shown on: document, folder.")
+        self.assertEqual(out["menus.icon-row.paste"], "Shown on none of the triggers.")
+
+
 class ExplorerFrame(unittest.TestCase):
     """The File Explorer frame module's records from what its measured scenes saw."""
 

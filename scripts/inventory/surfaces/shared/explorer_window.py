@@ -26,6 +26,10 @@ TABS_TO_OVERFLOW = 14                    # tabs that no longer fit the placed wi
 MENU_SEARCH_DEPTH = 12                   # levels from the window to an open flyout's menu
 MENU_SEARCH_SKIP = ("UIItemsView", "SysTreeView32")   # hundreds of rows, never a menu
 MENU_DEPTH = 6                           # levels from a focused entry up to its menu
+DRAG_STEPS = 24                          # pointer steps of a drag
+DRAG_HOVER = 0.8                         # seconds over the drop point before the button is let go
+# Down and up flags of mouse_event per button.
+DRAG_BUTTONS = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010)}
 KEY_TRIES = 3                            # clicks that may be needed before Windows hands the window the foreground
 CLOUD_ENTRY, CLOUD_WAIT = "OneDrive", 300   # the navigation pane's cloud entry, and how long sign-in may take to add it
 # The class each side pane always has; the preview pane's reading module is
@@ -306,3 +310,23 @@ def focus_list(ctx):
 
 def tab_names(ctx):
     return [t.name for t in descendants(ctx, tab_row(ctx), 2) if t.control_type == "TabItem"]
+
+
+def drag(ctx, start, end, button="left"):
+    """Hold a mouse button at `start` and move to `end` in steps a drag listener
+    sees, then let it go. A right-button drag ends in the drop menu."""
+    down, up = DRAG_BUTTONS[button]
+    (x0, y0), (x1, y1) = start, end
+    ctx.hover_point(x0, y0)
+    user32.mouse_event(down, 0, 0, 0, 0)
+    time.sleep(0.3)
+    # Relative moves only, as a mouse sends them: a warp of the pointer is no drag.
+    px, py = x0, y0
+    for step in range(1, DRAG_STEPS + 1):
+        nx, ny = x0 + (x1 - x0) * step // DRAG_STEPS, y0 + (y1 - y0) * step // DRAG_STEPS
+        user32.mouse_event(0x0001, nx - px, ny - py, 0, 0)               # MOUSEEVENTF_MOVE, relative
+        px, py = nx, ny
+        time.sleep(0.05)
+    time.sleep(DRAG_HOVER)                                               # over the target before the drop
+    user32.mouse_event(up, 0, 0, 0, 0)
+    time.sleep(SETTLE)
