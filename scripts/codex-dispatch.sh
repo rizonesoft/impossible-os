@@ -200,6 +200,22 @@ if [ "$PIN_KIND" = "1" ]; then
 
 This section was built while the reviewer was unavailable. Its whole change is: git diff $BASE_OID HEAD"
     fi
+    # A reconciliation reviews the newest repair, so it names the repair's two ends (operator, 2026-11-20): the
+    # last reviewed candidate, the head of this section's newest checked completion or reconciliation pass, and
+    # the repaired candidate, HEAD with the working tree. With no such pass on record there is no repair to name.
+    if [ "$KIND" = "reconciliation" ]; then
+        REPAIR_FROM="$(python3 "$PIN_TOOL" --repair-base "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
+            echo "[$SELF_NAME] BLOCK -- the last reviewed candidate of this section could not be read (reason above)" >&2; exit 2; }
+        if [ -z "$REPAIR_FROM" ]; then
+            echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
+            exit 2
+        fi
+        REPAIR_OID="$(git rev-parse --quiet --verify "${REPAIR_FROM}^{commit}" 2>/dev/null)" || {
+            echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history" >&2; exit 2; }
+        PROMPT="$PROMPT
+
+The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $(git rev-parse HEAD) with the working tree: git diff $REPAIR_OID"
+    fi
     PROMPT="$PROMPT
 
 $PIN_LENSES"

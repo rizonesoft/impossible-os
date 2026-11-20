@@ -14,12 +14,14 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --highest --transcript FILE          # the review's worst level: P1, P2, P3, none
     python3 scripts/review_pin.py --section TODO N                     # passes | older | new: the rules a section is on
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
-    python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
+    python3 scripts/review_pin.py --caps           # pass_cap, and no_progress_cap when the pin names one
+    python3 scripts/review_pin.py --repair-base TODO N --manifest FILE  # a reconciliation's last reviewed candidate
     python3 scripts/review_pin.py --owed-base TODO N                   # an owed section's recorded base, else empty
     --raw                                          # with --highest: the transcript is the review itself
 """
 import argparse
 import pathlib
+import re
 import sys
 import tomllib
 
@@ -57,6 +59,13 @@ LENSES = {
     "bare-metal": "What works under an emulator and fails on real hardware or real firmware?",
 }
 SEVERITIES = ("P1", "P2", "P3")
+# A lens the pin defines itself ([schedule.lenses], operator 2026-11-20): a lower-case name of its own.
+LENS_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+
+
+def _prompt_safe(text):
+    """True when text survives the companion's argument split: no quote and no word starting with two dashes."""
+    return "'" not in text and '"' not in text and not any(w.startswith("--") for w in text.split())
 
 
 class Refused(Exception):
@@ -68,12 +77,12 @@ def _need(ok, message):
         raise Refused(message)
 
 
-def _lenses(where, step):
+def _lenses(where, step, known=LENSES):
     _need(isinstance(step, dict) and set(step) == {"lenses"}, f"[schedule] {where} needs exactly lenses")
     names = step["lenses"]
     _need(isinstance(names, list) and names and all(isinstance(n, str) for n in names)
-          and len(set(names)) == len(names) and set(names) <= set(LENSES),
-          f"[schedule] {where} needs lenses = a list of distinct lenses from {', '.join(LENSES)}")
+          and len(set(names)) == len(names) and set(names) <= set(known),
+          f"[schedule] {where} needs lenses = a list of distinct lenses from {', '.join(known)}")
     return tuple(names)
 
 
@@ -84,7 +93,9 @@ def _cap(schedule, key):
 
 
 def load_pin(path=PIN, data=None):
-    """The validated pin as {'reviewer', 'cli', 'model', 'pass_cap', 'no_progress_cap', 'lenses': {kind: names}}."""
+    """The validated pin as {'reviewer', 'cli', 'model', 'pass_cap', 'no_progress_cap', 'blocking',
+    'lenses': {kind: names}, 'texts': {lens: question}, 'conditional', 'deep_paths'}. no_progress_cap is None when
+    the pin names none: a loop then ends only at pass_cap."""
     try:
         raw = data if data is not None else pathlib.Path(path).read_bytes()
         pin = tomllib.loads(raw.decode("utf-8"))
@@ -112,20 +123,29 @@ def load_pin(path=PIN, data=None):
           f"reviewer {name!r} needs exactly cli = \"codex\" and model (effort is the operator's Codex setting)")
 
     schedule = pin["schedule"]
-    keys = {"policy", "pass_cap", "no_progress_cap", "blocking", "plan", "rounds", "performance", "completion",
-            "reconciliation"}
+    keys = {"policy", "pass_cap", "blocking", "plan", "rounds", "performance", "completion", "reconciliation"}
     conditional = schedule.pop("conditional", []) if isinstance(schedule, dict) else []
     deep = schedule.pop("deep_paths", None) if isinstance(schedule, dict) else None
-    _need(isinstance(schedule, dict) and set(schedule) == keys and schedule["policy"] == POLICY,
-          f"[schedule] needs policy = \"{POLICY}\" and exactly {', '.join(sorted(keys))}")
+    custom = schedule.pop("lenses", {}) if isinstance(schedule, dict) else {}
+    has_stall = isinstance(schedule, dict) and "no_progress_cap" in schedule
+    _need(isinstance(schedule, dict) and set(schedule) - {"no_progress_cap"} == keys and schedule["policy"] == POLICY,
+          f"[schedule] needs policy = \"{POLICY}\" and exactly {', '.join(sorted(keys))} (no_progress_cap optional)")
+    # The pin's own lenses: a new name each, never a built-in redefined, with a question the companion's
+    # argument split leaves whole.
+    _need(isinstance(custom, dict) and all(
+          isinstance(k, str) and LENS_NAME.fullmatch(k) and k not in LENSES
+          and isinstance(v, str) and v.strip() and _prompt_safe(v) for k, v in custom.items()),
+          "[schedule.lenses] needs name = question pairs: a new lower-case name each, never a built-in lens, "
+          "and a question with no quote and no word starting with two dashes")
+    texts = {**LENSES, **custom}
     rounds = schedule["rounds"]
     _need(isinstance(rounds, list) and len(rounds) == 1, f"[schedule] with policy = \"{POLICY}\" needs one round")
     lenses = {
-        "plan": _lenses("plan", schedule["plan"]),
-        "round": _lenses("rounds", rounds[0]),
-        "performance": _lenses("performance", schedule["performance"]),
-        "completion": _lenses("completion", schedule["completion"]),
-        "reconciliation": _lenses("reconciliation", schedule["reconciliation"]),
+        "plan": _lenses("plan", schedule["plan"], texts),
+        "round": _lenses("rounds", rounds[0], texts),
+        "performance": _lenses("performance", schedule["performance"], texts),
+        "completion": _lenses("completion", schedule["completion"], texts),
+        "reconciliation": _lenses("reconciliation", schedule["reconciliation"], texts),
     }
     owners = [name for kind in ("plan", "round", "performance", "completion") for name in lenses[kind]]
     _need(len(set(owners)) == len(owners),
@@ -139,7 +159,7 @@ def load_pin(path=PIN, data=None):
     for entry in conditional:
         _need(isinstance(entry, dict) and set(entry) == {"lenses", "passes", "paths"},
               "[[schedule.conditional]] needs exactly lenses, passes and paths")
-        names = _lenses("conditional", {"lenses": entry["lenses"]})
+        names = _lenses("conditional", {"lenses": entry["lenses"]}, texts)
         passes, paths = entry["passes"], entry["paths"]
         _need(isinstance(passes, list) and passes and set(passes) <= set(SECTION_KINDS)
               and len(set(passes)) == len(passes),
@@ -156,12 +176,17 @@ def load_pin(path=PIN, data=None):
           isinstance(p, str) and p and not p.startswith(("/", ".")) and ".." not in p.split("/") for p in deep)
           and len(set(deep)) == len(deep),
           "[schedule] deep_paths needs distinct repository-relative prefixes")
-    pass_cap, no_progress = _cap(schedule, "pass_cap"), _cap(schedule, "no_progress_cap")
+    used = {n for names in lenses.values() for n in names} | {n for names, _, _ in extra for n in names}
+    _need(set(custom) <= used, f"[schedule.lenses] defines a lens no pass uses: {', '.join(sorted(set(custom) - used))}")
+    pass_cap = _cap(schedule, "pass_cap")
+    no_progress = _cap(schedule, "no_progress_cap") if has_stall else None
     _need(pass_cap >= 4, "[schedule] pass_cap must allow the four fixed passes")
-    _need(no_progress <= pass_cap, "[schedule] no_progress_cap cannot exceed pass_cap")
+    _need(no_progress is None or no_progress <= pass_cap, "[schedule] no_progress_cap cannot exceed pass_cap")
+    # deep_paths only chooses which stall rule a section is on; with no stall cap it would decide nothing.
+    _need(deep is None or no_progress is not None, "[schedule] deep_paths shapes the no_progress_cap rule; it needs one")
     return {"reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
             "pass_cap": pass_cap, "no_progress_cap": no_progress, "blocking": tuple(blocking),
-            "lenses": lenses, "conditional": tuple(extra),
+            "lenses": lenses, "texts": texts, "conditional": tuple(extra),
             # None when the pin names no deep_paths: unknown, so every section keeps the longer rule.
             "deep_paths": None if deep is None else tuple(deep)}
 
@@ -206,7 +231,7 @@ def lens_block(pin, kind, changed_paths=()):
     names = lenses_for(pin, kind, changed_paths)
     lines = ["Review through these lenses only, each as its own verdict. End with one line per lens, exactly",
              "`LENS <name>: clean` or `LENS <name>: findings`. A lens with no line makes the pass incomplete."]
-    lines += [f"- {name}: {LENSES[name]}" for name in names]
+    lines += [f"- {name}: {pin['texts'][name]}" for name in names]
     lines += ["Tag every finding P1, P2 or P3 and end with `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or",
               "`HIGHEST: none`."]
     return "\n".join(lines)
@@ -351,6 +376,31 @@ def section_status(root, todo, section):
     return ("new", "")
 
 
+def repair_base(manifest, todo, section):
+    """The last reviewed candidate a reconciliation's repair starts from: the head of the section's newest
+    checked completion or reconciliation pass in the manifest, in the order the passes were recorded.
+    "" when the section has none (no completion has returned gaps yet). A manifest that cannot be read raises
+    Refused: a guessed start would show the reviewer the wrong repair."""
+    import json
+    try:
+        lines = pathlib.Path(manifest).read_text().splitlines()
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Refused(f"{manifest} cannot be read: {exc}") from exc
+    head = ""
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
+                and e.get("kind") in ("completion", "reconciliation") and e.get("pass_checked") is True \
+                and e.get("rc") == 0 and isinstance(e.get("head"), str) and e["head"]:
+            head = e["head"]
+    return head
+
+
 def check_codex_model(pin, config=CODEX_CONFIG):
     """Refuse when Codex is configured for a model other than the pinned one. The pin never sets it by flag."""
     try:
@@ -372,6 +422,8 @@ def main(argv=None):
     group.add_argument("--highest", action="store_true")
     group.add_argument("--section", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--owed-base", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--repair-base", nargs=2, metavar=("TODO", "N"))
+    parser.add_argument("--manifest")
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--root", default=str(REPO))
     parser.add_argument("--transcript")
@@ -390,6 +442,10 @@ def main(argv=None):
         if args.owed_base:
             # The recorded base of a section built during an outage, or nothing when it is not owed.
             print(section_base(args.root, args.owed_base[0], args.owed_base[1], ""))
+            return 0
+        if args.repair_base:
+            _need(args.manifest, "--repair-base needs --manifest FILE")
+            print(repair_base(args.manifest, args.repair_base[0], args.repair_base[1]))
             return 0
         if args.section:
             status, base = section_status(args.root, args.section[0], args.section[1])
@@ -421,7 +477,8 @@ def main(argv=None):
         elif args.lenses:
             print(lens_block(pin, args.lenses, paths))
         else:
-            print(f"pass_cap {pin['pass_cap']}\nno_progress_cap {pin['no_progress_cap']}")
+            print(f"pass_cap {pin['pass_cap']}"
+                  + (f"\nno_progress_cap {pin['no_progress_cap']}" if pin["no_progress_cap"] is not None else ""))
     except Refused as exc:
         print(f"review-pin: {exc}", file=sys.stderr)
         return 2

@@ -19,12 +19,15 @@ def _pin(text=GOOD):
 def test_the_repository_pin_holds():
     pin = _pin()
     assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6.2-astra")
-    assert (pin["pass_cap"], pin["no_progress_cap"]) == (33, 3)
+    # No stall cap (owner, 2026-11-20): a loop ends clean or at pass_cap.
+    assert (pin["pass_cap"], pin["no_progress_cap"], pin["deep_paths"]) == (33, None, None)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
-    # A reconciliation verifies the named gaps; the adversarial lenses return only for kernel and boot repairs.
-    assert pin["lenses"]["reconciliation"] == ("plan-delivery", "record")
-    # Boot and kernel keep the round guard's new-finding stall rule (operator, 2026-11-19).
-    assert pin["deep_paths"] == ("src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops")
+    # Every reconciliation checks the named gaps and attacks the newest repair; kernel and boot add the full lenses.
+    assert pin["lenses"]["reconciliation"] == ("plan-delivery", "record", "repair-adversarial", "repair-integration")
+    assert rp.lenses_for(pin, "reconciliation", ["src/kernel/a.c"])[4:] == ("adversarial", "integration",
+                                                                          "concurrency", "bare-metal")
+    assert rp.lenses_for(pin, "reconciliation", ["src/desktop/a.c"]) == pin["lenses"]["reconciliation"]
+    assert pin["blocking"] == ("P1", "P2")
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
     assert {"adversarial", "consistency", "test-coverage"} <= set(pin["lenses"]["round"])
     # Performance is its own pass, never a lens of the round (the 2026-11-11 replay).
@@ -46,10 +49,17 @@ def test_the_repository_pin_holds():
     ("pass_cap = 33", 'pass_cap = "33"'),
     ("pass_cap = 33", "pass_cap = true"),
     ("pass_cap = 33\n", ""),
-    ("no_progress_cap = 3", "no_progress_cap = 56"),
-    ('deep_paths = ["src/boot/"', 'deep_paths = ["/src/boot/"'),
-    ('deep_paths = ["src/boot/"', 'deep_paths = ["src/kernel/"'),
-    ("no_progress_cap = 3", "no_progress_cap = 3\nseverity_stop_after = 2"),
+    ("pass_cap = 33\n", "pass_cap = 33\nno_progress_cap = 56\n"),
+    ("pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\ndeep_paths = ["/src/boot/"]\n'),
+    ("pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\ndeep_paths = ["src/kernel/", "src/kernel/"]\n'),
+    ("pass_cap = 33\n", 'pass_cap = 33\ndeep_paths = ["src/kernel/"]\n'),
+    ("pass_cap = 33\n", "pass_cap = 33\nseverity_stop_after = 2\n"),
+    ("[schedule.lenses]\n", '[schedule.lenses]\nadversarial = "Redefined?"\n'),
+    ("[schedule.lenses]\n", '[schedule.lenses]\nunused-lens = "Nobody asks this?"\n'),
+    ("[schedule.lenses]\n", '[schedule.lenses]\nBad_Name = "Asked?"\n'),
+    ("[schedule.lenses]\n", "[schedule.lenses]\nquoted = \"Is it 'quoted'?\"\n"),
+    ("[schedule.lenses]\n", '[schedule.lenses]\nflagged = "Does --force break it?"\n'),
+    ("[schedule.lenses]\n", '[schedule.lenses]\nempty = "  "\n'),
     ('lenses = ["plan"]', 'lenses = ["plan", "plan"]'),
     ('lenses = ["plan"]', 'lenses = ["made-up"]'),
     ('lenses = ["plan"]', "lenses = []"),
@@ -235,10 +245,63 @@ def test_an_older_kind_is_dispatched_exactly_as_before(tmp_path):
     assert "LENS" not in prompt and prompt.endswith("Review it.")
 
 
-def test_a_pin_without_deep_paths_leaves_them_unknown():
+def test_a_pin_with_a_stall_cap_and_no_deep_paths_leaves_them_unknown():
     """Codex review 2026-11-19: an absent key read as an empty list put every kernel section on the shorter rule."""
-    lines = [line for line in GOOD.splitlines(keepends=True) if not line.startswith("deep_paths")]
-    assert _pin("".join(lines))["deep_paths"] is None
+    pin = _pin(GOOD.replace("pass_cap = 33\n", "pass_cap = 33\nno_progress_cap = 3\n", 1))
+    assert (pin["no_progress_cap"], pin["deep_paths"]) == (3, None)
+
+
+def test_a_pin_lens_is_asked_like_a_built_in_one():
+    pin = _pin()
+    block = rp.lens_block(pin, "reconciliation", ["src/apps/a.c"])
+    assert "- repair-adversarial: In the newest repair only" in block and "- record: " in block
+    done = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["reconciliation"]) + "\nHIGHEST: none\n"
+    assert rp.missing_lens_verdicts(pin, "reconciliation", done, ["src/apps/a.c"]) == ()
+    assert rp.missing_lens_verdicts(pin, "reconciliation", "LENS record: clean\n", ["src/apps/a.c"]) == (
+        "plan-delivery", "repair-adversarial", "repair-integration")
+
+
+def test_the_caps_name_no_stall_cap_when_the_pin_has_none(capsys):
+    assert rp.main(["--caps"]) == 0
+    assert capsys.readouterr().out == "pass_cap 33\n"
+
+
+def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md"):
+    import json
+    return json.dumps({"kind": kind, "todo": todo, "section": section, "head": head, "pass_checked": checked, "rc": rc})
+
+
+def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconciliation(tmp_path):
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / "manifest.jsonl"
+    assert rp.repair_base(manifest, todo, 99) == ""                         # no manifest yet
+    manifest.write_text("\n".join([
+        _receipt("completion", "aaa"), _receipt("round", "bbb"),             # a round is not where a repair starts
+        _receipt("reconciliation", "ccc"), _receipt("reconciliation", "ddd", checked=False),
+        _receipt("completion", "eee", rc=3), _receipt("completion", "fff", section=98),
+        "not json"]) + "\n")
+    assert rp.repair_base(manifest, todo, 99) == "ccc"
+    assert rp.repair_base(manifest, todo, 97) == ""
+
+
+def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
+    import subprocess
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["reconciliation"]) + "\nHIGHEST: none\n"
+    done, prompt = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    assert done.returncode == 2 and "a reconciliation follows a completion" in done.stderr, done.stderr
+    last = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", last) + "\n")
+    done, prompt = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    assert done.returncode == 0, done.stderr
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
+    named = f"The newest repair runs from the last reviewed candidate, {last}, to the repaired candidate, HEAD {head}"
+    assert named in prompt and prompt.index(named) < prompt.index("- repair-adversarial: ")
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", "0" * 40) + "\n")
+    done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
 
 
 def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, capsys):
@@ -246,10 +309,16 @@ def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, caps
     import review_round_guard as guard
     monkeypatch.delenv("OVERNIGHT_REVIEW_ROUND_CEILING", raising=False)
     monkeypatch.delenv("OVERNIGHT_REVIEW_NOPROGRESS_CAP", raising=False)
-    assert (guard._noprogress_cap(), guard._ceiling()) == (3, 33)
+    assert (guard._noprogress_cap(), guard._ceiling()) == (None, 33)       # no stall cap (owner, 2026-11-20)
     other = tmp_path / "reviewers.toml"
-    other.write_text(GOOD.replace("pass_cap = 33", "pass_cap = 40").replace("no_progress_cap = 3", "no_progress_cap = 2"))
+    other.write_text(GOOD.replace("pass_cap = 33\n", "pass_cap = 40\nno_progress_cap = 2\n"))
     assert guard._pin_caps(other) == (2, 40)
+    # With no stall cap a chain of equal-severity passes runs on; only pass_cap ends it.
+    state = tmp_path / "rounds"
+    for _ in range(10):
+        _c, _s, capped, _r = guard.bump(state, "S", False, None, 33, "P2")
+        assert not capped
+    assert guard.bump(tmp_path / "r2", "S", False, None, 1, "P2")[2]
     # One call can still override, and a broken pin keeps the backstop alive and says so.
     monkeypatch.setenv("OVERNIGHT_REVIEW_ROUND_CEILING", "7")
     assert guard._ceiling() == 7

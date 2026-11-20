@@ -7,8 +7,11 @@ finds genuine concurrency/integrity bugs late (round 14+) is more valuable
 than one capped early on a fixed count. A hard round-count cap would ship
 unfixed HIGH-severity bugs just because the review ran "too long".
 
-So the backstop fires on **stalled progress**, not round count. What counts as progress depends on the
-section (operator, 2026-11-19):
+Since 2026-11-20 (owner decision) the pin names no `no_progress_cap`: a repair chain runs until it is clean
+or reaches `pass_cap`, and every reconciliation reviews the newest repair adversarially, so a stall rule is no
+longer needed to stop a review that re-attacks the whole section. A pin that names a cap gets the rules below.
+When it does, the backstop fires on **stalled progress**, not round count. What counts as progress depends on
+the section (operator, 2026-11-19):
   - A section touching one of the pin's `deep_paths` (boot, kernel, file operations): a round that finds anything NEW is
     progress, and K consecutive rounds with nothing new STOP the loop (`no_progress_cap`).
   - Every other section: a round is progress only when its worst finding (`--highest`, the reply's
@@ -48,7 +51,7 @@ Both numbers come from the reviewer pin (.conclave/reviewers.toml: pass_cap and
 no_progress_cap). Env OVERNIGHT_REVIEW_NOPROGRESS_CAP and
 OVERNIGHT_REVIEW_ROUND_CEILING override them for one call. A pin that cannot be
 read leaves the built-in 5 and 33, takes every section as deep, and says so on stderr: the backstop must keep
-working when the pin is broken. Optional --state PATH (testability). Stdlib only.
+working when the pin is broken. Optional --state PATH and --pin PATH (testability). Stdlib only.
 """
 from __future__ import annotations
 
@@ -69,8 +72,9 @@ ALL_DEEP = None  # deep_paths when the pin cannot be read: every section keeps t
 DEEP = "deep"  # the state's rule marker for a round counted by the new-finding rule
 
 
-def _pin_caps(pin_path: Path | None = None) -> tuple[int, int]:
-    """(no_progress_cap, pass_cap) from the reviewer pin, or the built-in pair when it cannot be read."""
+def _pin_caps(pin_path: Path | None = None) -> tuple[int | None, int]:
+    """(no_progress_cap, pass_cap) from the reviewer pin, or the built-in pair when it cannot be read.
+    no_progress_cap is None when the pin names none: nothing stalls, pass_cap still ends the loop."""
     return _pin(pin_path)[:2]
 
 
@@ -96,12 +100,15 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _noprogress_cap() -> int:
-    return _env_int("OVERNIGHT_REVIEW_NOPROGRESS_CAP", _pin_caps()[0])
+def _noprogress_cap(pin_path: Path | None = None) -> int | None:
+    pinned = _pin_caps(pin_path)[0]
+    if pinned is None and not os.environ.get("OVERNIGHT_REVIEW_NOPROGRESS_CAP", "").strip():
+        return None
+    return _env_int("OVERNIGHT_REVIEW_NOPROGRESS_CAP", pinned if pinned is not None else BUILTIN_NOPROGRESS_CAP)
 
 
-def _ceiling() -> int:
-    return _env_int("OVERNIGHT_REVIEW_ROUND_CEILING", _pin_caps()[1])
+def _ceiling(pin_path: Path | None = None) -> int:
+    return _env_int("OVERNIGHT_REVIEW_ROUND_CEILING", _pin_caps(pin_path)[1])
 
 
 def _read(state: Path) -> tuple[str, int, int, str]:
@@ -169,7 +176,7 @@ def is_deep(paths, deep_paths) -> bool:
 
 
 def bump(state: Path, slice_id: str, progress_new: bool,
-         noprogress_cap: int, ceiling: int, highest: str | None = None) -> tuple[int, int, bool, str]:
+         noprogress_cap: int | None, ceiling: int, highest: str | None = None) -> tuple[int, int, bool, str]:
     """Count a round. Returns (count, streak, capped, reason).
 
     highest None: the new-finding rule (a deep section), progress_new decides. Otherwise the severity rule:
@@ -189,7 +196,7 @@ def bump(state: Path, slice_id: str, progress_new: bool,
     base = 0 if switched else prev_streak
     streak = 0 if moved else (base + 1 if same else 1)
     _write(state, slice_id, count, streak, mark)
-    if streak >= noprogress_cap:
+    if noprogress_cap is not None and streak >= noprogress_cap:
         what = "no new finding" if highest is None else "a worst finding no less severe than the last"
         return count, streak, True, f"{streak} consecutive rounds with {what}"
     if count >= ceiling:
@@ -203,12 +210,13 @@ def main(argv: list) -> int:
     state = DEFAULT_STATE
     if "--state" in argv:
         state = Path(argv[argv.index("--state") + 1])
-    noprogress_cap, ceiling = _noprogress_cap(), _ceiling()
-    deep_paths = _pin()[2]
+    pin_path = Path(argv[argv.index("--pin") + 1]) if "--pin" in argv else None
+    noprogress_cap, ceiling = _noprogress_cap(pin_path), _ceiling(pin_path)
+    deep_paths = _pin(pin_path)[2]
 
     if "--reset" in argv:
         _write(state, "", 0, 0, "")
-        print(f"review-round counter reset (no-progress cap {noprogress_cap}, ceiling {ceiling})")
+        print(f"review-round counter reset (no-progress cap {noprogress_cap or 'none'}, ceiling {ceiling})")
         return 0
     if "--bump" in argv:
         i = argv.index("--bump")
@@ -228,13 +236,16 @@ def main(argv: list) -> int:
         deep = highest is None or is_deep(section_paths(Path(listed) if listed else None, base), deep_paths)
         count, streak, capped, reason = bump(state, slice_id, progress_new, noprogress_cap, ceiling,
                                              None if deep else highest)
-        rule = "new-finding rule, deep section" if deep else "severity rule"
-        tag = f"CAPPED: {reason}" if capped else f"no-progress streak {streak}/{noprogress_cap}"
+        rule = ("no stall cap" if noprogress_cap is None
+                else "new-finding rule, deep section" if deep else "severity rule")
+        tag = (f"CAPPED: {reason}" if capped else "counted against pass_cap" if noprogress_cap is None
+               else f"no-progress streak {streak}/{noprogress_cap}")
         print(f"review round {count} for {slice_id} ({tag}; {rule}; ceiling {ceiling})")
         return 2 if capped else 0
     if "--status" in argv:
         s, c, st, _ = _read(state)
-        print(f"slice {s or '(none)'}: round {c}, no-progress streak {st}/{noprogress_cap}, ceiling {ceiling}")
+        stall = "no stall cap" if noprogress_cap is None else f"no-progress streak {st}/{noprogress_cap}"
+        print(f"slice {s or '(none)'}: round {c}, {stall}, ceiling {ceiling}")
         return 0
     print("usage: review_round_guard.py [--bump SLICE --highest P1|P2|P3|none [--progress new|none] "
           "[--base REVIEW_BASE | --paths-file FILE] | --status | --reset] [--state PATH] [--selftest]",

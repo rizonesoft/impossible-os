@@ -17,7 +17,8 @@
 # the round, the performance pass and the completion pass each ended below a blocking level on the candidate being
 # stamped.
 # A completion that returns gaps is repaired and followed by a reconciliation pass (kind reconciliation), up to
-# pass_cap returned passes per section in all. no_progress_cap ends a loop whose passes stop finding anything new.
+# pass_cap returned passes per section in all. pass_cap is the only cap on a loop (no_progress_cap removed
+# 2026-11-20, see [schedule]).
 # Each lens has one owner: the round hunts defects, the completion pass checks delivery and the record.
 # Findings are tagged P1, P2 or P3. Only the levels in `blocking` hold the stamp; the rest are filed as tracked
 # items and spend no further passes. A [[schedule.conditional]] entry adds its lenses to the named passes only
@@ -42,14 +43,11 @@ claude = ["astra"]
 [schedule]
 policy = "four-pass"
 pass_cap = 33
-no_progress_cap = 3
-# Operator decision 2026-11-19: a round is progress only when its worst finding is less severe than the last
-# round's, so a review that finds a fresh edge case on every fix stalls instead of running to the cap. A
-# section touching one of deep_paths keeps the earlier rule (any new finding is progress): boot and kernel
-# bugs are found late and cost most to find afterwards, and the file manager's copy, move and delete code
-# (todo/09-desktop-shell/TODO-09-file-manager.md) can lose the user's files. pass_cap went from 55 to 33 the
-# same day.
-deep_paths = ["src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops"]
+# Owner decision 2026-11-20: no stall cap. The 2026-11-19 rule (no_progress_cap = 3, progress by severity outside
+# deep_paths) ended desktop, shell, apps, user and site repair chains after three passes whose worst finding did
+# not fall, so a chain stopped for want of progress rather than for being clean. A loop now ends when its passes
+# come back below `blocking`, or at pass_cap (33 since 2026-11-19). deep_paths chose between the two stall rules
+# and went with them. Keeping chains short is the reconciliation's job: it reviews the newest repair only.
 blocking = ["P1", "P2"]
 
 [schedule.plan]
@@ -64,11 +62,19 @@ lenses = ["optimization"]
 [schedule.completion]
 lenses = ["plan-delivery", "record"]
 
-# Operator decision 2026-11-19: a reconciliation verifies that the named gaps are closed and the repair broke
-# nothing. Edge cases are hunted in the round; only kernel and boot repairs get the adversarial lenses again
-# (the conditional entry below). no_progress_cap went from 5 to 3 the same day.
+# Owner decision 2026-11-20: every reconciliation, in every part of the tree, also attacks the newest repair:
+# plan-delivery and record check that the named gaps are closed, repair-adversarial and repair-integration hunt
+# the bugs the repair itself brings in. Both are scoped to the repair (the dispatcher names the last reviewed
+# candidate and the repaired candidate), so a reconciliation never re-attacks the whole section, which is what
+# grew 15 to 19 pass chains before 2026-11-19. Kernel and boot repairs keep full adversarial and integration
+# on top (the conditional entry below). Effort is the operator's Codex setting, as for every pass.
 [schedule.reconciliation]
-lenses = ["plan-delivery", "record"]
+lenses = ["plan-delivery", "record", "repair-adversarial", "repair-integration"]
+
+# The pin's own lenses (owner decision 2026-11-20), each a question for the newest repair only.
+[schedule.lenses]
+repair-adversarial = "In the newest repair only (the last reviewed candidate to the repaired candidate, both named above): how does the newest repair fail on hostile input, races, aborts, cancellation, automation or links? Code an earlier pass reviewed and the repair left unchanged is out of scope."
+repair-integration = "In the newest repair only (the last reviewed candidate to the repaired candidate, both named above): what does the newest repair break in a caller, a contract, another component or an installed copy?"
 
 [[schedule.conditional]]
 lenses = ["adversarial", "integration"]

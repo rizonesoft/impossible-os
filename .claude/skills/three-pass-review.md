@@ -10,9 +10,9 @@ How a section is reviewed under the reviewer pin, [`.conclave/reviewers.toml`](.
 | `round` | after the build and its gates pass | every lens in the pin, each with its own verdict | the built candidate |
 | `performance` | with the round | the optimization lens alone, on the hot paths the body names | the built candidate |
 | `completion` | after the findings of both are fixed and the gates rerun | did the section deliver its plan, and does the record match | the final candidate |
-| `reconciliation` | only after a completion that returned gaps | are the named gaps closed, with nothing reopened | the repaired candidate |
+| `reconciliation` | only after a completion that returned gaps | are the named gaps closed, and how does the newest repair itself fail or break a caller | the repaired candidate |
 
-A clean section costs four passes. Performance is its own pass because a round carrying an optimization lens found one of four known performance defects when replayed (the spec's Replay section). The round and the performance pass are dispatched again after their findings are fixed, until each comes back below a blocking level. Every returned pass counts toward `pass_cap` (33); `no_progress_cap` (3) passes in a row without progress end the loop: for a section touching the pin's `deep_paths` (boot, kernel, file operations) progress is a new finding, for every other section it is a worst finding less severe than the last pass's (operator, 2026-11-19). At `pass_cap` the stamp no longer needs a clean round, but the performance pass and the last pass must still read the final candidate and end below a blocking level; file what the last round found as a follow-up item. Bump the counter after each returned pass: `python3 .claude/hooks/review_round_guard.py --bump '<todo-path>#<section>' --highest <the reply's HIGHEST> --progress <new|none> --base <REVIEW_BASE>`.
+A clean section costs four passes. Performance is its own pass because a round carrying an optimization lens found one of four known performance defects when replayed (the spec's Replay section). The round and the performance pass are dispatched again after their findings are fixed, until each comes back below a blocking level. Every returned pass counts toward `pass_cap` (33), the only cap on a loop: since 2026-11-20 (owner decision) the pin names no `no_progress_cap`, so a chain ends when its passes come back below a blocking level or at `pass_cap`, never because its worst finding stopped falling (the 2026-11-19 stall rule ended desktop, shell, apps, user and site repair chains after three equal-severity passes). At `pass_cap` the stamp no longer needs a clean round, but the performance pass and the last pass must still read the final candidate and end below a blocking level; file what the last round found as a follow-up item. Bump the counter after each returned pass: `python3 .claude/hooks/review_round_guard.py --bump '<todo-path>#<section>' --highest <the reply's HIGHEST> --progress <new|none> --base <REVIEW_BASE>`.
 
 ## Dispatch
 
@@ -81,8 +81,10 @@ The candidate is <base>..HEAD. Compare it with the section text and its checklis
 
 ```
 [review-kind: reconciliation] <todo-path> section <N>
-The completion pass at <completion-sha> returned these gaps: <the gaps, one a line>. The repair is <completion-sha>..HEAD. For each gap say whether it is closed, and report anything the repair reopened, each with file:line. End with RECONCILIATION: complete or RECONCILIATION: gaps.
+The completion pass at <completion-sha> returned these gaps: <the gaps, one a line>. For each gap say whether it is closed, and report anything the repair reopened, each with file:line. End with RECONCILIATION: complete or RECONCILIATION: gaps.
 ```
+
+The wrapper names the newest repair itself: it runs from the last reviewed candidate (the head of the section's newest checked completion or reconciliation pass in the reviews manifest) to HEAD with the working tree, and a reconciliation with no such pass on record is refused. Every reconciliation, in every part of the tree, carries `repair-adversarial` and `repair-integration` beside `plan-delivery` and `record` (owner decision 2026-11-20): both ask only about that repair, so a reconciliation hunts the bugs the repair brought in without re-attacking the whole section. Kernel and boot repairs also get the full `adversarial`, `integration`, `concurrency` and `bare-metal` lenses.
 
 ## The stamp
 

@@ -12,6 +12,13 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 SCRIPT = HERE.parents[2] / ".claude" / "hooks" / "review_round_guard.py"
+# The repository pin names no stall cap since 2026-11-20 (owner); these tests cover the stall rules a pin that
+# names one gets, so they read a fixture pin with the 2026-11-19 cap and deep_paths.
+_FIXTURE_DIR = tempfile.mkdtemp(prefix="round-guard-pin-")
+PIN = pathlib.Path(_FIXTURE_DIR) / "reviewers.toml"
+PIN.write_text((HERE.parents[2] / ".conclave" / "reviewers.toml").read_text().replace(
+    "pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\n'
+    'deep_paths = ["src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops"]\n', 1))
 
 
 def _bump(state, slice_id, progress, highest="P2", paths=("src/kernel/sched.c",)):
@@ -21,7 +28,7 @@ def _bump(state, slice_id, progress, highest="P2", paths=("src/kernel/sched.c",)
     listed = pathlib.Path(state).with_suffix(".paths")
     listed.write_text("".join(f"{p}\n" for p in paths))
     r = subprocess.run([sys.executable, str(SCRIPT), "--bump", slice_id, "--highest", highest,
-                        "--progress", progress, "--paths-file", str(listed), "--state", str(state)],
+                        "--progress", progress, "--paths-file", str(listed), "--state", str(state), "--pin", str(PIN)],
                        text=True, capture_output=True,
                        env={**os.environ, "OVERNIGHT_REVIEW_NOPROGRESS_CAP": "3"})
     return r.returncode, r.stdout
@@ -93,7 +100,7 @@ def test_a_kernel_section_keeps_the_new_finding_rule():
 
 def _raw(state, *args):
     env = {k: v for k, v in os.environ.items() if k != "REVIEW_BASE"}
-    r = subprocess.run([sys.executable, str(SCRIPT), "--bump", "S", *args, "--state", str(state)],
+    r = subprocess.run([sys.executable, str(SCRIPT), "--bump", "S", *args, "--state", str(state), "--pin", str(PIN)],
                        text=True, capture_output=True, env={**env, "OVERNIGHT_REVIEW_NOPROGRESS_CAP": "3"})
     return r.returncode, r.stdout, r.stderr
 
@@ -145,6 +152,19 @@ def test_a_switch_to_the_deep_rule_starts_its_streak_again():
         assert rc == 0 and "streak 1/" in out, out
 
 
+def test_the_repository_pin_lets_a_repair_chain_run_to_pass_cap():
+    """Owner decision 2026-11-20: no stall cap, so equal-severity passes on app code never stop the chain."""
+    with tempfile.TemporaryDirectory() as d:
+        st = pathlib.Path(d) / "rr"
+        listed = pathlib.Path(d) / "paths"
+        listed.write_text("src/apps/notepad/notepad.c\n")
+        env = {k: v for k, v in os.environ.items() if k not in ("OVERNIGHT_REVIEW_NOPROGRESS_CAP", "REVIEW_BASE")}
+        for i in range(8):
+            r = subprocess.run([sys.executable, str(SCRIPT), "--bump", "S", "--highest", "P2", "--progress", "none",
+                                "--paths-file", str(listed), "--state", str(st)], text=True, capture_output=True, env=env)
+            assert r.returncode == 0 and "no stall cap" in r.stdout, r.stdout + r.stderr
+
+
 if __name__ == "__main__":
     test_builtin_selftest_passes()
     test_productive_review_never_caps()
@@ -159,4 +179,5 @@ if __name__ == "__main__":
     test_a_dotted_kernel_path_is_deep()
     test_a_worse_severity_is_no_progress()
     test_a_switch_to_the_deep_rule_starts_its_streak_again()
+    test_the_repository_pin_lets_a_repair_chain_run_to_pass_cap()
     print("PASS: review-round-guard")
