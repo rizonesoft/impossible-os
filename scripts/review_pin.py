@@ -376,11 +376,19 @@ def section_status(root, todo, section):
     return ("new", "")
 
 
+# The worktree digest the dispatcher records for a candidate with nothing uncommitted: sha256 of no output.
+CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
 def repair_base(manifest, todo, section):
     """The last reviewed candidate a reconciliation's repair starts from: the head of the section's newest
     checked completion or reconciliation pass in the manifest, in the order the passes were recorded.
-    "" when the section has none (no completion has returned gaps yet). A manifest that cannot be read raises
-    Refused: a guessed start would show the reviewer the wrong repair."""
+    "" when the section has none (no completion has returned gaps yet).
+
+    Refused, never guessed, when the start would show the reviewer the wrong repair: a manifest that cannot be
+    read; a line after that pass that cannot be read and names this TODO (it may be a newer pass of the
+    section, as the commit gate treats it); or a pass that read uncommitted changes, which `git diff <head>`
+    could not show (review, 2026-11-20). Whether the head is on HEAD's history the dispatcher checks."""
     import json
     try:
         lines = pathlib.Path(manifest).read_text().splitlines()
@@ -388,17 +396,26 @@ def repair_base(manifest, todo, section):
         return ""
     except (OSError, UnicodeDecodeError) as exc:
         raise Refused(f"{manifest} cannot be read: {exc}") from exc
-    head = ""
+    found, unreadable_after = None, False
     for line in lines:
         try:
             e = json.loads(line)
         except ValueError:
+            unreadable_after = unreadable_after or (found is not None and todo in line)
             continue
         if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
                 and e.get("kind") in ("completion", "reconciliation") and e.get("pass_checked") is True \
                 and e.get("rc") == 0 and isinstance(e.get("head"), str) and e["head"]:
-            head = e["head"]
-    return head
+            found, unreadable_after = e, False
+    if found is None:
+        return ""
+    if unreadable_after:
+        raise Refused(f"{manifest} has an unreadable line after the newest checked pass of {todo} section {section}; "
+                      "it may be a newer pass, so the repair's start is unknown")
+    if found.get("worktree_sha256") != CLEAN_WORKTREE:
+        raise Refused(f"the newest checked {found['kind']} of {todo} section {section} read uncommitted changes at "
+                      f"{found['head'][:10]}; dispatch the completion again on a committed candidate")
+    return found["head"]
 
 
 def check_codex_model(pin, config=CODEX_CONFIG):

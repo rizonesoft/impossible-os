@@ -266,9 +266,11 @@ def test_the_caps_name_no_stall_cap_when_the_pin_has_none(capsys):
     assert capsys.readouterr().out == "pass_cap 33\n"
 
 
-def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md"):
+def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md",
+             worktree=rp.CLEAN_WORKTREE):
     import json
-    return json.dumps({"kind": kind, "todo": todo, "section": section, "head": head, "pass_checked": checked, "rc": rc})
+    return json.dumps({"kind": kind, "todo": todo, "section": section, "head": head, "pass_checked": checked, "rc": rc,
+                       "worktree_sha256": worktree})
 
 
 def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconciliation(tmp_path):
@@ -282,6 +284,16 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
         "not json"]) + "\n")
     assert rp.repair_base(manifest, todo, 99) == "ccc"
     assert rp.repair_base(manifest, todo, 97) == ""
+    # Review 2026-11-20: a newer line that cannot be read and names this TODO may be a newer pass of the section.
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + _receipt("reconciliation", "bbb")[:-30] + "\n")
+    with pytest.raises(rp.Refused, match="unreadable line"):
+        rp.repair_base(manifest, todo, 99)
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"todo": "todo/other.md", "kin' + "\n")
+    assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
+    # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.
+    manifest.write_text(_receipt("completion", "aaa", worktree="0" * 64) + "\n")
+    with pytest.raises(rp.Refused, match="uncommitted changes"):
+        rp.repair_base(manifest, todo, 99)
 
 
 def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
@@ -300,6 +312,12 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     named = f"The newest repair runs from the last reviewed candidate, {last}, to the repaired candidate, HEAD {head}"
     assert named in prompt and prompt.index(named) < prompt.index("- repair-adversarial: ")
     (reviews / "manifest.jsonl").write_text(_receipt("completion", "0" * 40) + "\n")
+    done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
+    # Review 2026-11-20: a commit that exists but was left behind by a reset or rebase is no start either.
+    off = subprocess.run(["git", "commit-tree", "HEAD^{tree}", "-m", "off-history fixture"], capture_output=True,
+                         text=True, cwd=str(REPO), check=True).stdout.strip()
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", off) + "\n")
     done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
 

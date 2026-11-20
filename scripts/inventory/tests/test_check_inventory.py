@@ -868,6 +868,11 @@ class Decisions(unittest.TestCase):
                            "which is not a built page", *args)
         self.assertEqual(decide(with_placement("win11.control-panel.frame.sound", "win11.settings.frame.sound"),
                                 "--surface", "control-panel").returncode, 0)
+        # Review 2026-11-20: a page with no build decision yet is no built page, from the source surface too.
+        undecided = with_placement("win11.control-panel.frame.sound", "win11.settings.frame.sound")
+        page = next(r for r in undecided["settings/a.json"] if r["id"] == "win11.settings.frame.sound")
+        page.pop("disposition", None)
+        self.assertIn("which is not a built page", run(undecided, "--surface", "control-panel", "--allow-undecided").stdout)
 
     def test_the_shipped_settings_home_carries_its_placement_map(self):
         # shell.md sends a Control Panel-only setting with no related link to settings-home.placement; section 13

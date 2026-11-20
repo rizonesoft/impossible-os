@@ -874,7 +874,9 @@ def check(root, surface=None, allow_undecided=False, design_root=None, complete=
                         f"{name}: placement maps {source}, which is not a record of the replaced home")
             if page in records:
                 home = home_of(name, page)
-                if records[page][2]["kind"] != "page" or unbuilt(page) or home is None or disposition(home) in GONE:
+                # A page with no build decision yet is not a built page, whichever surface is checked.
+                if records[page][2]["kind"] != "page" or disposition(page) is None or unbuilt(page) \
+                        or home is None or disposition(home) in GONE:
                     err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement sends {source} to {page}, which is not a built page")
 
     for rid, (path, n, obj, mine) in records.items():

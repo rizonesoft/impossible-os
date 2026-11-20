@@ -210,8 +210,9 @@ This section was built while the reviewer was unavailable. Its whole change is: 
             echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
             exit 2
         fi
-        REPAIR_OID="$(git rev-parse --quiet --verify "${REPAIR_FROM}^{commit}" 2>/dev/null)" || {
-            echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history" >&2; exit 2; }
+        REPAIR_OID="$(git rev-parse --quiet --verify "${REPAIR_FROM}^{commit}" 2>/dev/null)" \
+            && git merge-base --is-ancestor "$REPAIR_OID" HEAD 2>/dev/null || {
+            echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history (a reset or rebase left its receipt behind); dispatch the completion again" >&2; exit 2; }
         PROMPT="$PROMPT
 
 The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $(git rev-parse HEAD) with the working tree: git diff $REPAIR_OID"
