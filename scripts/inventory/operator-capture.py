@@ -632,10 +632,10 @@ def main(argv=None):
     if isinstance(out, int):
         return out
     try:
-        with capture.exclusive(capture.LOCK):
+        with capture.held():
             return check_and_publish(args, pages, out)
-    except BlockingIOError:
-        print(f"operator-capture: another capture holds {capture.LOCK}; the run is kept: "
+    except BlockingIOError as exc:
+        print(f"operator-capture: {exc}; the run is kept: "
               f"publish it later with --from {out}")
         return 4
 

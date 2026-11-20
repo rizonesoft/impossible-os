@@ -739,7 +739,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the credential prompt, the About dialog frame, and the "program not responding" and crash report dialogs
   - Record all dialog frames found under the dialog generations ledger entry of §6, with the one frame, margin scale and button order Impossible OS ships
   - Done when: `check-inventory.py --surface dialogs` passes; the seven message box button sets each have a record with their order, and every dialog carries the dialog generations `inconsistency` id.
-- [ ] Shared shot-store lock: `capture.py` publication and swap recovery hold a lock beside `/mnt/d/11/ref-shots`, so two checkouts cannot publish to one store at once (filed from section 27 review round 18).
+- [x] Shared shot-store lock: `capture.held()` takes `/mnt/d/11/ref-shots.lock` with the checkout lock in all four publishers.
 - [ ] Commit: `"inventory: file explorer and common dialogs inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.

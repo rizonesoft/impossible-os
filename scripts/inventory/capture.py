@@ -11,7 +11,8 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
 1. Stages capture-ui.py, capture_core.py, the surface module and profiles.json,
    and runs capture-ui.py on a fresh restore of clean (of profile-<id> for a
    machine profile, which ref-vm.ps1 -Derive takes).
-   One capture runs at a time (build/inventory/capture.lock, exit 4 when held),
+   One capture runs at a time (build/inventory/capture.lock, and D:\\11\\ref-shots.lock
+   for every checkout that shares the shot store; exit 4 when either is held),
    and ref-run gets its timeout plus a margin before the host gives up and runs
    ref-run -Stop, which turns the VM off only when no live run holds it.
 2. Refuses a capture that says it is incomplete (exit 3): nothing is published
@@ -86,6 +87,9 @@ RUN_MARGIN = 1800
 STANDIN_STOP_GRACE = 120   # run.py's own teardown: QEMU's 30 s grace, twice, plus the reap
 LOCK = REPO / "build" / "inventory" / "capture.lock"
 JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap, rolled back by the next run
+# The shot store is shared by every checkout on this machine; this lock beside it
+# keeps two checkouts from publishing to it, or recovering into it, at once.
+STORE_LOCK = STORE.with_name(STORE.name + ".lock")
 
 
 def winpath(p):
@@ -495,6 +499,23 @@ def exclusive(path):
         yield
 
 
+@contextlib.contextmanager
+def held():
+    """The checkout's capture lock, then the shot store's: what publication and
+    swap recovery run under. Raises BlockingIOError naming the lock another job
+    holds. With no drive under the store (a CI runner) there is no shared store
+    to guard, and a publication into it fails on its own."""
+    with contextlib.ExitStack() as stack:
+        for path in (LOCK, STORE_LOCK):
+            if path is STORE_LOCK and not path.parent.is_dir():
+                continue
+            try:
+                stack.enter_context(exclusive(path))
+            except BlockingIOError:
+                raise BlockingIOError(f"another job holds {path}") from None
+        yield
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--surface")
@@ -549,10 +570,10 @@ def main(argv=None):
     # publication rollback), instead of dying with the VM running.
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        with exclusive(LOCK):
+        with held():
             return capture_and_publish(args)
-    except BlockingIOError:
-        print(f"capture: another capture holds {LOCK}; run one at a time")
+    except BlockingIOError as exc:
+        print(f"capture: {exc}; run one at a time")
         return 4
 
 

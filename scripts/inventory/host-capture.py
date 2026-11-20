@@ -239,7 +239,7 @@ def main(argv=None):
     if args.earlier is not None and not (args.earlier / "shots.json").is_file():
         ap.error(f"--from {args.earlier}: no shots.json there")
     try:
-        with capture.exclusive(capture.LOCK):
+        with capture.held():
             if capture.recover(capture.JOURNAL):
                 print("host-capture: rolled back a publication that was interrupted; the previous one is restored")
             if args.earlier is not None:
@@ -247,8 +247,8 @@ def main(argv=None):
             else:
                 out, rc = run_host(args.scenario, sc.STEPS, sc.CHECKPOINT, sc.TIMEOUT, getattr(sc, "SESSION", True))
             return publish(sc, out, rc, args.dry_run)
-    except BlockingIOError:
-        print(f"host-capture: another capture holds {capture.LOCK}; run one at a time")
+    except BlockingIOError as exc:
+        print(f"host-capture: {exc}; run one at a time")
         return 4
 
 

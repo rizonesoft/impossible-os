@@ -2437,6 +2437,32 @@ class Serial(unittest.TestCase):
         with capture.exclusive(lock):              # released again
             pass
 
+    def test_a_checkout_is_refused_while_another_holds_the_shot_store(self):
+        # Two checkouts have two capture locks but one shot store: the store's
+        # own lock is what keeps their publications apart.
+        real = capture.LOCK, capture.STORE_LOCK
+        capture.LOCK, capture.STORE_LOCK = self.tmp / "a" / "capture.lock", self.tmp / "ref-shots.lock"
+        try:
+            with capture.exclusive(capture.STORE_LOCK):          # the other checkout's run
+                with self.assertRaisesRegex(BlockingIOError, "ref-shots.lock"):
+                    with capture.held():
+                        pass
+                with capture.exclusive(capture.LOCK):             # this checkout's lock was let go
+                    pass
+            with capture.held():
+                pass
+        finally:
+            capture.LOCK, capture.STORE_LOCK = real
+
+    def test_no_store_drive_means_only_the_checkout_lock(self):
+        real = capture.LOCK, capture.STORE_LOCK
+        capture.LOCK, capture.STORE_LOCK = self.tmp / "capture.lock", self.tmp / "absent" / "ref-shots.lock"
+        try:
+            with capture.held():
+                self.assertFalse(capture.STORE_LOCK.parent.exists())
+        finally:
+            capture.LOCK, capture.STORE_LOCK = real
+
     def test_the_host_deadline_covers_the_guest_and_stops_the_vm_after(self):
         calls = []
         real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath

@@ -191,10 +191,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        with capture.exclusive(capture.LOCK):
+        with capture.held():
             return run(args)
-    except BlockingIOError:
-        print(f"baselines: another VM job holds {capture.LOCK}; run one at a time")
+    except BlockingIOError as exc:
+        print(f"baselines: {exc}; run one at a time")
         return 4
 
 
