@@ -313,6 +313,11 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
     manifest.write_text(_receipt("completion", "aaa") + "\n" + stamp_cut + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
+    # Another TODO's write cut after its section, then this TODO's append cut inside the opening ts key.
+    short = _receipt("completion", "zzz", todo="todo/other.md").split(', "head"')[0] + '{"ts'
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + short + "\n")
+    with pytest.raises(rp.Refused, match="unreadable line"):
+        rp.repair_base(manifest, todo, 99)
     manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec' + "\n")
     assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
     # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.

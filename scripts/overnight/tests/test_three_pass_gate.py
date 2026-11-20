@@ -336,6 +336,9 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     stamp_cut = '{"ts": 1795170000' + other.replace('"pas', '"pass_checked": true}')
     ok, why = _judge(root, manifest_tail=stamp_cut, **_good(h))
     assert not ok and "cannot be read past a line" in why, why
+    # Another TODO's write cut after its section, this TODO's append cut inside the opening ts key.
+    ok, why = _judge(root, manifest_tail=other.split(', "rc"')[0] + '{"ts', **_good(h))
+    assert not ok and "cannot be read past a line" in why, why
 
 
 def test_passes_dispatched_again_after_old_corruption_are_accepted(tmp_path):

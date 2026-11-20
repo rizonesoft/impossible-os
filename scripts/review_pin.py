@@ -383,13 +383,15 @@ _RECEIPT_HEAD = re.compile(r'\{"ts": \d+, "kind": "[a-z-]+", "todo": "((?:[^"\\]
 def unreadable_line_may_be(line, todo):
     """Whether a manifest line that cannot be parsed may be a receipt for `todo`.
 
-    An allowlist (review, 2026-11-20, after three shapes on this boundary): the line belongs to another TODO
-    only when, from its first byte, it is the head of exactly one receipt in the dispatcher's field order with
-    a whole todo value naming another TODO. A torn start, a second object glued on, a missing field or a cut
+    An allowlist (review, 2026-11-20, after shapes kept appearing on this boundary): the line belongs to another
+    TODO only when the whole line is a possible prefix of one receipt: from its first byte the head of a receipt
+    in the dispatcher's field order, with a whole todo value naming another TODO, and no second object begun. A torn start, a second object glued on, a missing field or a cut
     inside the value all may be this TODO's. Shared by repair_base and the commit gate's receipt reader."""
     import json
     m = _RECEIPT_HEAD.match(line)
-    if m is None or line.count('{"ts": ') != 1 or "}{" in line:
+    # A receipt is one flat object whose values hold no brace, so a line that is one receipt's prefix has exactly
+    # one: its first byte. A second, however short what follows it, is another write that began on this line.
+    if m is None or line.count("{") != 1:
         return True
     try:
         named = json.loads(f'"{m.group(1)}"')
