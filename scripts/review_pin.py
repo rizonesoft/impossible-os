@@ -376,6 +376,25 @@ def section_status(root, todo, section):
     return ("new", "")
 
 
+_TODO_FIELD = re.compile(r'"todo": "((?:[^"\\]|\\.)*)"')
+
+
+def unreadable_line_may_be(line, todo):
+    """Whether a manifest line that cannot be parsed may be a receipt for `todo`: unless its todo value is
+    there whole (closing quote included) and names another TODO. A line cut before the field, inside the value
+    or just before its closing quote may be this TODO's. Shared by repair_base and the commit gate's
+    receipt reader (review, 2026-11-20)."""
+    import json
+    m = _TODO_FIELD.search(line)
+    if m is None:
+        return True
+    try:
+        named = json.loads(f'"{m.group(1)}"')
+    except ValueError:
+        return True
+    return named == todo
+
+
 # The worktree digest the dispatcher records for a candidate with nothing uncommitted: sha256 of no output.
 CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
@@ -401,10 +420,7 @@ def repair_base(manifest, todo, section):
         try:
             e = json.loads(line)
         except ValueError:
-            # The commit gate's rule (section_commit_gate._pass_receipts): a line cut short counts as this
-            # TODO's unless its complete todo field names another, since the dispatcher writes kind before todo.
-            maybe_mine = '"todo": "' not in line or f'"todo": "{todo}"' in line
-            unreadable_after = unreadable_after or (found is not None and maybe_mine)
+            unreadable_after = unreadable_after or (found is not None and unreadable_line_may_be(line, todo))
             continue
         if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
                 and e.get("kind") in ("completion", "reconciliation") and e.get("pass_checked") is True \

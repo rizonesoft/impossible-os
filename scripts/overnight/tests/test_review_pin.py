@@ -292,6 +292,14 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
     manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "reconciliation", "to' + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
+    # Review 2026-11-20: a cut inside the todo value, or just before its closing quote, may be this TODO too.
+    for cut in (f'{{"ts": 1, "kind": "reconciliation", "todo": "{todo[:12]}',
+                f'{{"ts": 1, "kind": "reconciliation", "todo": "{todo}'):
+        manifest.write_text(_receipt("completion", "aaa") + "\n" + cut + "\n")
+        with pytest.raises(rp.Refused, match="unreadable line"):
+            rp.repair_base(manifest, todo, 99)
+    assert rp.unreadable_line_may_be('{"todo": "todo/other.md", "kin', todo) is False
+    assert rp.unreadable_line_may_be(f'{{"todo": "{todo}", "kin', todo) is True
     manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"todo": "todo/other.md", "kin' + "\n")
     assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
     # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.

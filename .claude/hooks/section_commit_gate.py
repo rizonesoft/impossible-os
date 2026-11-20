@@ -2460,7 +2460,7 @@ def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bo
         try:
             e = json.loads(line)
         except ValueError:
-            if '"todo": "' not in line or f'"todo": "{todo}"' in line:
+            if _unreadable_line_may_be(root, line, todo):
                 return (found, False)
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") not in _PASS_KINDS:
@@ -2469,6 +2469,20 @@ def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bo
             continue
         found.setdefault(e["kind"], (e, age))
     return (found, True)
+
+
+def _unreadable_line_may_be(root: Path, line: str, todo: str) -> bool:
+    """review_pin.unreadable_line_may_be: a damaged line is another TODO's only when its whole todo value says
+    so (a cut inside the value revived an older receipt, review 2026-11-20). When the module cannot be loaded,
+    every damaged line may be this TODO's: the gate stays shut rather than trust an older receipt."""
+    scripts = str(root / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import review_pin
+        return review_pin.unreadable_line_may_be(line, todo)
+    except Exception:
+        return True
 
 
 def _pass_cap(root: Path) -> int | None:

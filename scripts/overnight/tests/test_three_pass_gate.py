@@ -324,6 +324,10 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     # An unreadable line that names another TODO is not this one's.
     other = '{"kind": "completion", "todo": "todo/00-x/TODO-02-other.md", "section": 7, "rc": 0, "pas'
     assert _judge(root, manifest_tail=other + "\n", **_good(h)) == (True, "")
+    # Cut inside the todo value, or just before its closing quote: it may still be this one's (review 2026-11-20).
+    for cut in ('{"kind": "completion", "todo": "' + TODO[:8], '{"kind": "completion", "todo": "' + TODO):
+        ok, why = _judge(root, manifest_tail=cut, **_good(h))
+        assert not ok and "cannot be read past a line" in why, (cut, why)
 
 
 def test_passes_dispatched_again_after_old_corruption_are_accepted(tmp_path):
