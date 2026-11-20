@@ -60,6 +60,10 @@ scripts/overnight/
 # that exercise it (test_staged_tree.py, test_hook_git_env.py).
 .githooks/lib/staged-tree.sh
 .githooks/lib/isolate-git-env.sh
+# The hooks that call it and decide whether the suite runs at all (2026-11-20, a reconciliation
+# replay of section 43): a change to that wiring alone ran no suite at commit or push.
+.githooks/pre-commit
+.githooks/pre-push
 
 # SHARED GATE MACHINERY (2026-07-28). The manifest listed the gate FILES but
 # not the helpers that decide whether a gate applies, so a one-line change here

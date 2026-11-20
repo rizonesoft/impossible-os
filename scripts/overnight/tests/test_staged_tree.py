@@ -310,7 +310,8 @@ def test_a_nested_stage_is_stopped_with_the_outer_one():
 def test_the_helper_is_in_the_control_plane():
     """A change to the helper alone must run the suite that tests it."""
     repo = pathlib.Path(__file__).resolve().parents[3]
-    for rel in (".githooks/lib/staged-tree.sh", ".githooks/lib/isolate-git-env.sh"):
+    for rel in (".githooks/lib/staged-tree.sh", ".githooks/lib/isolate-git-env.sh",
+                ".githooks/pre-commit", ".githooks/pre-push"):        # the wiring that runs it, too
         assert (repo / rel).is_file(), rel
         r = subprocess.run(["bash", str(repo / "scripts/overnight/control-plane-match.sh")], input=rel + "\n",
                            capture_output=True, text=True, timeout=30, cwd=str(repo))

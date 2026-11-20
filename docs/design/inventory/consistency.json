@@ -78,9 +78,10 @@
   "kind": "home",
   "question": "Where does a setting live?",
   "variants": [],
-  "rule": "Settings is the one program and holds every setting. No Control Panel window is built; its name and entry points open the matching Settings page. A Control Panel-only setting joins the Settings page whose captured related-settings link opens it, in a group at the foot of that page.",
+  "rule": "Settings is the one program and holds every setting. No Control Panel window is built; its name and entry points open the matching Settings page. A Control Panel-only setting joins the Settings page whose captured related-settings link opens it, in a group at the foot of that page. With no such link, it joins the page its Control Panel category maps to in placement, filled when the Control Panel frame is captured.",
   "reason": "The reference reaches the same setting in Settings and in Control Panel with two layouts, and keeps some settings only in Control Panel or an old property sheet.",
-  "design": "shell.md#settings-and-control-panel-frame"
+  "design": "shell.md#settings-and-control-panel-frame",
+  "placement": {}
  },
  {
   "id": "hello-enrolment",

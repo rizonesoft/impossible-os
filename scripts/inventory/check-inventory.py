@@ -843,13 +843,38 @@ def check(root, surface=None, allow_undecided=False, design_root=None, complete=
             return "whose place or parent names no record"
         return None
 
-    if surface is None:
-        for name, entry in ledger.items():
-            for source, page in entry.get("placement", {}).items():
-                for rid in (source, page):
-                    if rid not in records:
-                        err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement names {rid}, which is no record")
-                if page in records and (records[page][2]["kind"] != "page" or unbuilt(page)):
+    def home_of(name, rid):
+        """The variant of ledger entry `name` that `rid` is, or sits under; None when it is under none."""
+        on_walk = set()
+        node = rid
+        while node in records and node not in on_walk:
+            if node in variants[name]:
+                return node
+            on_walk.add(node)
+            node = records[node][2].get("parent")
+        return None
+
+    # A placement is checked wherever its source or its page is in scope, so the Control Panel capture's
+    # own checkpoint (--surface control-panel) catches a bad map, not only a whole-tree run (2026-11-20).
+    # The source is a record of the replaced home and the page a built page of the home that replaces it:
+    # a well-formed pair from the wrong surfaces would still leave the category with no lookup.
+    for name, entry in ledger.items():
+        for source, page in entry.get("placement", {}).items():
+            # An id names its surface (win11.<surface>.<path>), so a pair whose record is missing is still in scope.
+            if surface is not None and not any(records[r][3] if r in records else r.split(".")[1:2] == [surface]
+                                               for r in (source, page)):
+                continue
+            for rid in (source, page):
+                if rid not in records:
+                    err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement names {rid}, which is no record")
+            if source in records:
+                home = home_of(name, source)
+                if home is None or disposition(home) not in GONE:
+                    err(root / LEDGER_FILE, 1, "ledger-placement",
+                        f"{name}: placement maps {source}, which is not a record of the replaced home")
+            if page in records:
+                home = home_of(name, page)
+                if records[page][2]["kind"] != "page" or unbuilt(page) or home is None or disposition(home) in GONE:
                     err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement sends {source} to {page}, which is not a built page")
 
     for rid, (path, n, obj, mine) in records.items():

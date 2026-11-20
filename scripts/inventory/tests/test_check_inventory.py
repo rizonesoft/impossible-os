@@ -850,6 +850,33 @@ class Decisions(unittest.TestCase):
                    "which is not a built page")
         self.fails(with_placement("win11.control-panel.frame.sound", "not an id"), "ledger: home: placement")
 
+    def test_a_placement_pairs_the_replaced_home_with_the_built_one_in_every_scope(self):
+        # Reconciliation replay of section 6 (2026-11-20): a pair from the wrong surfaces passed, and the Control
+        # Panel capture's own scoped check skipped the map, a missing category included.
+        def with_placement(source, page):
+            files = panel()
+            files["consistency.json"] = ledger(entry("home", "win11.settings.frame", "win11.control-panel.frame", kind="home",
+                                                     design="shell.md#settings-frame", placement={source: page}))
+            return files
+        self.fails(with_placement("win11.settings.frame.sound.volume", "win11.settings.frame.sound"),
+                   "placement maps win11.settings.frame.sound.volume, which is not a record of the replaced home")
+        for args in ((), ("--surface", "control-panel")):
+            with self.subTest(args=args):
+                self.fails(with_placement("win11.control-panel.frame.gone", "win11.settings.frame.sound"),
+                           "ledger-placement: home: placement names win11.control-panel.frame.gone, which is no record", *args)
+                self.fails(with_placement("win11.control-panel.frame.sound", "win11.control-panel.frame"),
+                           "which is not a built page", *args)
+        self.assertEqual(decide(with_placement("win11.control-panel.frame.sound", "win11.settings.frame.sound"),
+                                "--surface", "control-panel").returncode, 0)
+
+    def test_the_shipped_settings_home_carries_its_placement_map(self):
+        # shell.md sends a Control Panel-only setting with no related link to settings-home.placement; section 13
+        # fills it from the captured categories, and the key exists before then so the documented lookup resolves.
+        shipped = json.loads((REPO / "docs/design/inventory/consistency.json").read_text(encoding="utf-8"))
+        entries = shipped if isinstance(shipped, list) else next(v for v in shipped.values() if isinstance(v, list))
+        home = next(e for e in entries if e.get("id") == "settings-home")
+        self.assertIsInstance(home.get("placement"), dict)
+
     def test_a_long_chain_is_walked_in_linear_time(self):
         import time
         lines = [rec("win11.taskbar.deep", kind="surface", itemCount=1, disposition="replaced", inconsistency="deep")]
