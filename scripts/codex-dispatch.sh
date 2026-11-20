@@ -148,7 +148,7 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
-PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""
+PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
@@ -210,12 +210,15 @@ This section was built while the reviewer was unavailable. Its whole change is: 
             echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
             exit 2
         fi
+        # HEAD is read once: the ancestry check, the prompt and (below) the receipt name the same candidate.
+        REPAIR_HEAD="$(git rev-parse --quiet --verify 'HEAD^{commit}' 2>/dev/null)" || {
+            echo "[$SELF_NAME] BLOCK -- HEAD could not be read" >&2; exit 2; }
         REPAIR_OID="$(git rev-parse --quiet --verify "${REPAIR_FROM}^{commit}" 2>/dev/null)" \
-            && git merge-base --is-ancestor "$REPAIR_OID" HEAD 2>/dev/null || {
+            && git merge-base --is-ancestor "$REPAIR_OID" "$REPAIR_HEAD" 2>/dev/null || {
             echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history (a reset or rebase left its receipt behind); dispatch the completion again" >&2; exit 2; }
         PROMPT="$PROMPT
 
-The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $(git rev-parse HEAD) with the working tree: git diff $REPAIR_OID"
+The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the working tree: git diff $REPAIR_OID"
     fi
     PROMPT="$PROMPT
 
@@ -236,6 +239,10 @@ if [ -n "$LOG_FILE" ]; then
     # commit made by another caller during the review would be named as the
     # one reviewed, and the commit gate would bind the pass to it.
     TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    if [ -n "${REPAIR_HEAD:-}" ] && [ "$TREE_HEAD" != "$REPAIR_HEAD" ]; then
+        echo "[$SELF_NAME] BLOCK -- HEAD moved from ${REPAIR_HEAD:0:10} to ${TREE_HEAD:0:10} while the reconciliation was prepared; dispatch it again" >&2
+        exit 2
+    fi
     TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
     node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"

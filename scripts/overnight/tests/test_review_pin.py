@@ -281,11 +281,15 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
         _receipt("completion", "aaa"), _receipt("round", "bbb"),             # a round is not where a repair starts
         _receipt("reconciliation", "ccc"), _receipt("reconciliation", "ddd", checked=False),
         _receipt("completion", "eee", rc=3), _receipt("completion", "fff", section=98),
-        "not json"]) + "\n")
+        '{"todo": "todo/other.md", "not json']) + "\n")
     assert rp.repair_base(manifest, todo, 99) == "ccc"
     assert rp.repair_base(manifest, todo, 97) == ""
     # Review 2026-11-20: a newer line that cannot be read and names this TODO may be a newer pass of the section.
     manifest.write_text(_receipt("completion", "aaa") + "\n" + _receipt("reconciliation", "bbb")[:-30] + "\n")
+    with pytest.raises(rp.Refused, match="unreadable line"):
+        rp.repair_base(manifest, todo, 99)
+    # The dispatcher writes kind before todo: a newer line cut before its todo field may be this TODO's.
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "reconciliation", "to' + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
     manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"todo": "todo/other.md", "kin' + "\n")

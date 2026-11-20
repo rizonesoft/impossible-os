@@ -401,7 +401,10 @@ def repair_base(manifest, todo, section):
         try:
             e = json.loads(line)
         except ValueError:
-            unreadable_after = unreadable_after or (found is not None and todo in line)
+            # The commit gate's rule (section_commit_gate._pass_receipts): a line cut short counts as this
+            # TODO's unless its complete todo field names another, since the dispatcher writes kind before todo.
+            maybe_mine = '"todo": "' not in line or f'"todo": "{todo}"' in line
+            unreadable_after = unreadable_after or (found is not None and maybe_mine)
             continue
         if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
                 and e.get("kind") in ("completion", "reconciliation") and e.get("pass_checked") is True \
