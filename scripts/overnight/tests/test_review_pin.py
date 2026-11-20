@@ -300,6 +300,13 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
             rp.repair_base(manifest, todo, 99)
     assert rp.unreadable_line_may_be('{"todo": "todo/other.md", "kin', todo) is False
     assert rp.unreadable_line_may_be(f'{{"todo": "{todo}", "kin', todo) is True
+    # Review 2026-11-20: another TODO's receipt that lost its newline, with this TODO's appended to it.
+    glued = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + _receipt("completion", "bbb")
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + glued + "\n")
+    with pytest.raises(rp.Refused, match="unreadable line"):
+        rp.repair_base(manifest, todo, 99)
+    torn = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + '{"ts": 2, "kind": "completion"'
+    assert rp.unreadable_line_may_be(torn, todo) is True
     manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"todo": "todo/other.md", "kin' + "\n")
     assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
     # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.

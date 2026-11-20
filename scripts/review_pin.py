@@ -385,6 +385,10 @@ def unreadable_line_may_be(line, todo):
     or just before its closing quote may be this TODO's. Shared by repair_base and the commit gate's
     receipt reader (review, 2026-11-20)."""
     import json
+    # A torn receipt with the next append glued onto it holds two receipts, and the first todo field says
+    # nothing about the second: a line with any sign of more than one receipt may be this TODO's.
+    if line.count('"todo": "') != 1 or line.count('"kind": "') > 1 or "}{" in line:
+        return True
     m = _TODO_FIELD.search(line)
     if m is None:
         return True

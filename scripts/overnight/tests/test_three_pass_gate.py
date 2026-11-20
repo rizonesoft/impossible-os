@@ -328,6 +328,10 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     for cut in ('{"kind": "completion", "todo": "' + TODO[:8], '{"kind": "completion", "todo": "' + TODO):
         ok, why = _judge(root, manifest_tail=cut, **_good(h))
         assert not ok and "cannot be read past a line" in why, (cut, why)
+    # Another TODO's receipt torn before its newline, with this TODO's newer one glued on (review 2026-11-20).
+    glued = other + '"}{"kind": "completion", "todo": "' + TODO + '", "section": 7, "rc": 0, "highest": "P2"}'
+    ok, why = _judge(root, manifest_tail=glued, **_good(h))
+    assert not ok and "cannot be read past a line" in why, why
 
 
 def test_passes_dispatched_again_after_old_corruption_are_accepted(tmp_path):
