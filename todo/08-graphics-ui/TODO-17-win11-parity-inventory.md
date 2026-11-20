@@ -1223,6 +1223,9 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 **Test checkpoint:** the `settings` `host` rows bluetooth, camera, graphics and wifi of `expected.json` have records and a screenshot taken on the host at the build `reference.json` names.
 
 > **Test runner:** `python3 -m pytest -q scripts/inventory/tests/test_operator_capture.py` (62 passed) | validation: `inventory-report.py --campaign --check` reports no settings/bluetooth, camera, graphics or wifi row
+>
+> **Verified:** 2026-11-20 | commit `a2c2d9a51` | 3/3 items | 83 records and 4 shots published from an unattended operator-host run at 26300.9974; `capture.py --verify-shots` 0 missing, changed or shared; 62 tests pass
+> **Quality reviewed:** 2026-11-20 | Codex 64 passes (pass cap 33 reached; final wave: round, performance 5x, completion 4x) | final wave 2H+3M fixed (unplaced text mask, shot bound to its tree, stalled scroll, Wi-Fi read after the restore, oversized page refused up front), 3M rejected (broadcast deadline under SMTO_ABORTIFHUNG, lock over local redaction, scroll settle wait that realizes virtualized rows), 0 open | scope: N/A (host tooling, no kernel surface)
 
 - -> XREF: §29 -- the host captures this section does not cover: the GPU preference states of the Graphics page and the Quick Settings Wi-Fi and Bluetooth flyouts (item: "Graphics GPU preferences captured" in §29)
 - -> XREF: §12 -- publication and swap recovery into the shared shot store still run without a store-wide lock across checkouts (item: "Shared shot-store lock" in §12)
@@ -1259,20 +1262,22 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 
 **Design:** n/a -- records the reference, draws nothing
 
-**Inventory:** writes `docs/design/inventory/settings/host.json` and `docs/design/inventory/flyouts/host.json`
+**Inventory:** writes `docs/design/inventory/settings/host-gpu.json` and `docs/design/inventory/flyouts/host.json`
 
 > **User impact:** a user choosing which GPU an app runs on, or picking a network or a Bluetooth device from Quick Settings, meets surfaces the inventory has only as a guess: §27 captured the Graphics page closed, and the flyouts were recorded absent although the host has both radios.
 
 §27 captured the four Settings pages on the operator's host. This section captures, with the same host tooling, what those pages and the shell show behind one more click; it re-covers none of §27's records.
 
 - [ ] Graphics GPU preferences captured: Advanced graphics settings expanded (`graphics-advanced`) and the first app's options open (`graphics-app-options`), each with its choices recorded; or the host's lack of a GPU choice recorded as observed
+- [ ] GPU states published to their own record file, `settings/host-gpu.json`: a §27 retake replaces `settings/host.json` whole and would drop them (filed from section 27 plan pass, 2026-11-20)
+  - Done when a four-page §27 retake leaves both GPU states with their records and shots
 - [ ] Quick Settings Wi-Fi and Bluetooth flyouts captured on the host (`flyouts/quick-settings-wifi`, `flyouts/quick-settings-bluetooth`), every network and device name blanked as in §27
   - Replaces §8's `absent-wifi` and `absent-bluetooth` equivalent records in `flyouts/quick-settings.json` with the captured tiles
 - [ ] Campaign rows matched to records by state: `inventory-report.py --campaign` accepts a row's `records` need only from records captured in that state, with a regression where the four shots exist and their records do not
 - [ ] Host polling deadlines measured on a `Stopwatch` instead of the wall clock, so a clock change cannot stretch a wait (filed from section 27 performance review)
 - [ ] Commit: `"inventory: host captures, GPU preferences and radio flyouts"`
 
-**Test checkpoint:** each of the four states has its own records: the GPU choices (or the recorded observation that the host offers none) in `settings/host.json` for graphics-advanced and graphics-app-options, and the Wi-Fi network list and Bluetooth device list tiles in `flyouts/host.json`; with the state-matched campaign check, `inventory-report.py --campaign --check` reports none of the four rows, and `check-inventory.py` passes.
+**Test checkpoint:** each of the four states has its own records: the GPU choices (or the recorded observation that the host offers none) in `settings/host-gpu.json` for graphics-advanced and graphics-app-options, still there after a §27 retake, and the Wi-Fi network list and Bluetooth device list tiles in `flyouts/host.json`; with the state-matched campaign check, `inventory-report.py --campaign --check` reports none of the four rows, and `check-inventory.py` passes.
 
 ---
 
