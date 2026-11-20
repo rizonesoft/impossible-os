@@ -452,6 +452,17 @@ class Identity(unittest.TestCase):
                           "win11.s.r.read--1", "win11.s.r.read--2"])            # same-type twins stay positional
         self.assertEqual(cap.ambiguous, ["win11.s.r.read--1", "win11.s.r.read--2"])
 
+    def test_a_typed_twin_never_takes_a_siblings_id(self):
+        # Before typed twins, the button alone was "size-edit"; it keeps that id and its note (review, 2026-11-20).
+        t = node("Root", "Window", children=[node("Size", "Text"), node("Size", "Edit"), node("Size edit", "Button")])
+        ids = [r["id"] for r in self.run_walk(t).records[1:]]
+        self.assertEqual(ids, ["win11.s.r.size-text", "win11.s.r.size", "win11.s.r.size-edit"])
+        old = [{"id": "win11.s.r.size-edit", "label": "Size edit", "behaviour": "Opens the size editor."}]
+        new = [{"id": i, "label": "x"} for i in ids]
+        out, dropped = core.merge(old, new, [])
+        self.assertEqual(dropped, [])
+        self.assertEqual(out[2]["behaviour"], "Opens the size editor.")
+
     def test_nth_names_twins_whose_order_is_their_identity(self):
         # The traditional touch keyboard's two Control keys share an id and a name.
         keys = [node("Control", "Button", "switchCtl"), node("Space", "Button", "39"), node("Control", "Button", "switchCtl")]
@@ -3319,6 +3330,18 @@ class ExplorerDialogs(unittest.TestCase):
         self.assertEqual(core._segment(free, self.m.IDENTITY, self.m.VALUES), "free-space-bytes")
         self.assertEqual(core._segment(item, self.m.IDENTITY, self.m.VALUES), "item-details")
         self.assertTrue(any(core.matches(free, v) for v in self.m.VALUES))   # its amount labels nothing
+        progress = types.SimpleNamespace(name="Paused - 32% complete", automation_id="eltSummary", class_name="Element",
+                                         control_type="Text")
+        self.assertTrue(any(core.matches(progress, v) for v in self.m.VALUES))
+        tile = types.SimpleNamespace(name="Copying 1 item from A to B - Paused - 36% complete", automation_id="eltTile1",
+                                     class_name="Element", control_type="Group")
+        self.assertTrue(any(core.matches(tile, v) for v in self.m.VALUES))
+        # The installed apps and the pinned folders are frames with no rows (review, 2026-11-20).
+        group = types.SimpleNamespace(name="Default app", automation_id="", class_name="ListViewHeaderItem",
+                                      control_type="Group")
+        tree = types.SimpleNamespace(name="Navigation Pane", automation_id="100", class_name="SysTreeView32",
+                                     control_type="Tree")
+        self.assertTrue(all(any(core.matches(x, v) for v in self.m.ENVIRONMENT_LISTS) for x in (group, tree)))
 
     def view_records(self):
         p = "win11.explorer.folder-options-view"
@@ -3355,22 +3378,72 @@ class ExplorerDialogs(unittest.TestCase):
             dw.top_windows, dw.user32, dw.dismiss, dw.time.sleep, dw.describe = saved
             dw._base.clear()
 
+    def tooltip_ctx(self, trees):
+        """A ctx whose UIA tree is `trees`: {handle: (control_type, [children])}."""
+        def el(ct, kids=()):
+            return types.SimpleNamespace(control_type=ct, el=list(kids))
+        def build(spec):
+            ct, kids = spec
+            return el(ct, [build(k) for k in kids])
+        roots = {h: build(spec) for h, spec in trees.items()}
+        live = types.SimpleNamespace(wrap=lambda h: roots[h], uia=types.SimpleNamespace(
+            ElementFromHandle=lambda h: h, CreateTrueCondition=lambda: None),
+            children=lambda e, cond: e, COMError=OSError)
+        return types.SimpleNamespace(live=live)
+
     def test_a_window_that_only_holds_a_tooltip_is_no_scene_window(self):
         dw = sys.modules["dialog_window"]
-        el = lambda ct: types.SimpleNamespace(control_type=ct)  # noqa: E731
-        trees = {1: [el("Window"), el("ToolTip"), el("Text")],     # the Start button's tooltip (2026-11-20)
-                 2: [el("Window"), el("MenuItem"), el("Text")]}    # a flyout menu is a real window
-        live = types.SimpleNamespace(wrap=lambda h: types.SimpleNamespace(control_type="Window", h=h),
-                                     uia=types.SimpleNamespace(ElementFromHandle=lambda h: h), COMError=OSError)
-        ctx = types.SimpleNamespace(live=live)
-        saved = dw.descendants
-        dw.descendants = lambda c, e, depth: trees[e.h]
+        tip = ("ToolTip", [("Text", [])])
+        ctx = self.tooltip_ctx({
+            1: ("Window", [tip, ("Text", [])]),                                    # the Start button's tooltip (2026-11-20)
+            2: ("Window", [("MenuItem", []), ("Text", [])]),                       # a flyout menu is a real window
+            3: ("Window", [tip, ("Pane", [("Pane", [("Button", [])])])]),         # a button two panes down (review)
+            4: ("Window", [("Pane", [("Pane", [("Pane", [("Pane", [("Pane", [("Pane", [("Pane", [("Pane", [tip])])])])])])])])]),
+            5: ("Window", [("Text", [])])})                                        # no tooltip at all
+        self.assertTrue(dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost")))
+        self.assertFalse(dw.tooltip_only(ctx, (2, "Xaml_WindowedPopupClass", "PopupHost")))
+        self.assertFalse(dw.tooltip_only(ctx, (3, "Xaml_WindowedPopupClass", "PopupHost")))
+        self.assertFalse(dw.tooltip_only(ctx, (4, "Xaml_WindowedPopupClass", "PopupHost")))  # past TOOLTIP_DEPTH
+        self.assertFalse(dw.tooltip_only(ctx, (5, "Xaml_WindowedPopupClass", "PopupHost")))
+        self.assertFalse(dw.tooltip_only(ctx, (1, "#32770", "Inventory sample")))       # not a host class
+
+    def test_a_settling_look_is_bounded(self):
+        dw = sys.modules["dialog_window"]
+        kid = types.SimpleNamespace(control_type="ListItem", name="App", bounds=(0, 0, 1, 1), el=[])
+        el = types.SimpleNamespace(name="Open with", class_name="", el=[kid, kid, kid])
+        live = types.SimpleNamespace(children=lambda e, cond: e, uia=types.SimpleNamespace(CreateTrueCondition=lambda: None))
+        saved = dw.core.MAX_RECORDS
+        dw.core.MAX_RECORDS = 2
         try:
-            self.assertTrue(dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost")))
-            self.assertFalse(dw.tooltip_only(ctx, (2, "Xaml_WindowedPopupClass", "PopupHost")))
-            self.assertFalse(dw.tooltip_only(ctx, (1, "#32770", "Inventory sample")))  # never read: not a host class
+            with self.assertRaises(dw.core.Incomplete):
+                dw.quiet(types.SimpleNamespace(live=live), el)
         finally:
-            dw.descendants = saved
+            dw.core.MAX_RECORDS = saved
+
+    def test_a_renamed_window_is_not_a_new_one(self):
+        dw = sys.modules["dialog_window"]
+        before = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "Untitled - Notepad")}
+        now = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "*Untitled - Notepad"), (12, "#32770", "Save As")}
+        live = types.SimpleNamespace(wrap=lambda h: ("wrapped", h), uia=types.SimpleNamespace(ElementFromHandle=lambda h: h))
+        saved = dw.top_windows
+        dw.top_windows = lambda ctx: now
+        try:
+            self.assertEqual(dw.appeared(types.SimpleNamespace(live=live), before, wait=0), ("wrapped", 12))
+        finally:
+            dw.top_windows = saved
+
+    def test_two_lists_naming_one_window_give_one_entry(self):
+        dw = sys.modules["dialog_window"]
+        uia_w = types.SimpleNamespace(offscreen=False, class_name="#32770", name="Open (UIA)",
+                                      el=types.SimpleNamespace(CurrentNativeWindowHandle=7))
+        live = types.SimpleNamespace(children=lambda root, cond: [uia_w], uia=types.SimpleNamespace(
+            GetRootElement=lambda: None, CreateTrueCondition=lambda: None))
+        saved = dw.win32_windows, dw.tooltip_only
+        dw.win32_windows, dw.tooltip_only = (lambda: {(7, "#32770", "Open")}), (lambda ctx, w: False)
+        try:
+            self.assertEqual(dw.top_windows(types.SimpleNamespace(live=live)), {(7, "#32770", "Open")})
+        finally:
+            dw.win32_windows, dw.tooltip_only = saved
 
     def test_dismiss_presses_an_enabled_button_only(self):
         dw = sys.modules["dialog_window"]
@@ -3499,6 +3572,7 @@ class DialogsCommon(unittest.TestCase):
         self.m._m["sounds"] = {"SystemHand": "Windows Foreground.wav", "SystemQuestion": None,
                                "SystemExclamation": "Windows Background.wav", "SystemAsterisk": "Windows Background.wav"}
         self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": 0}
+        self.m._m["print"] = {"className": "#32770", "title": "Print"}
         try:
             out = {r["id"]: r for r in self.m.METRICS(self.metrics_input())}
         finally:
@@ -3509,6 +3583,7 @@ class DialogsCommon(unittest.TestCase):
                          "Plays Windows Foreground.wav, the SystemHand event of the current scheme.")
         self.assertIn("Plays nothing", out["message-box-icon-question.sound"]["behaviour"])
         self.assertIn("DontShowUI is not set for the machine and 0 for the user", out["crash-report"]["behaviour"])
+        self.assertIn("opens the classic Print dialog", out["print-modern"]["behaviour"])
         guest.core.authored(list(out.values()), surface="dialogs", build="1", source="uia:1")
 
     def test_metrics_refuse_a_missing_box_or_scheme(self):
@@ -3527,6 +3602,21 @@ class DialogsCommon(unittest.TestCase):
                     self.m.METRICS(self.metrics_input())
         finally:
             self.m._m.clear()
+
+    def test_metrics_refuse_a_print_window_that_is_not_the_classic_dialog(self):
+        # A modern Print window must be walked as a scene, not summarised (review, 2026-11-20).
+        self.m._m["sounds"] = {e: None for e in self.m.ICON_EVENTS.values()}
+        self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": None}
+        try:
+            for shown in (None, {"className": "Microsoft.UI.Content.DesktopChildSiteBridge", "title": "Print"}):
+                self.m._m.pop("print", None)
+                if shown:
+                    self.m._m["print"] = shown
+                with self.assertRaises(ValueError):
+                    self.m.METRICS(self.metrics_input())
+        finally:
+            self.m._m.clear()
+        self.assertNotIn("print-modern", [s["slug"] for s in self.m.SCENES])
 
     def test_the_about_frame_refuses_an_owner_it_would_publish(self):
         self.assertIn("exit 1", self.m.CHECK_OWNER)

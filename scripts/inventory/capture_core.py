@@ -226,18 +226,26 @@ def typed_twins(segs, kids):
     type (size-text, size-edit), which does not move when they are reordered: a
     Win32 dialog names each field after the label before it, so the label and its
     field share a name (2026-11-20, every Properties sheet). Twins of one type are
-    left as they are, for position to tell apart."""
+    left as they are, for position to tell apart, and so is a twin whose typed
+    segment another sibling already holds (a "Size edit" button beside a Size
+    label and field): taking it would move that sibling's id and its notes."""
     groups = {}
     for i, s in enumerate(segs):
         groups.setdefault(s, []).append(i)
+    taken = set(segs)
     out = list(segs)
     for s, where in groups.items():
         if len(where) < 2:
             continue
         types = [slug(kids[i].control_type) or "element" for i in where]
+        count = {}
+        for t in types:
+            count[t] = count.get(t, 0) + 1
         for i, t in zip(where, types):
-            if types.count(t) == 1:
-                out[i] = f"{s}-{t}"
+            typed = f"{s}-{t}"
+            if count[t] == 1 and typed not in taken:
+                out[i] = typed
+                taken.add(typed)
     return out
 
 

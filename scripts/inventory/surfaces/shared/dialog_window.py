@@ -22,6 +22,7 @@ OWNER_DEPTH = 8                          # owner chains followed when ordering w
 DISMISS = ("Cancel", "Close", "No", "Ignore", "OK")  # the buttons that leave a dialog without acting, the safest first
 QUIET_GAP = 1.5                          # s between two looks that must agree
 QUIET_WAIT = 30                          # s for a window to stop changing
+QUIET_DEPTH = 6                          # levels a settling look reads
 SM_CXSCREEN = 0
 PARK_INSET = 8                           # px in from the primary screen's top-right corner: no surface sits there
 if user32:
@@ -79,12 +80,14 @@ def top_windows(ctx):
     UI Automation's root leaves out a dialog its owner holds (Customize's Browse),
     and Win32's visible windows leave out the Open With picker, which UI
     Automation lists at the root (both 2026-11-20). A window that only holds a
-    tooltip is left out: help text, which the walk never records either."""
-    out = win32_windows()
+    tooltip is left out: help text, which the walk never records either. One
+    entry per handle: the two lists can name a window differently, and a handle,
+    not its title, is what makes it a window."""
+    out = {w[0]: w for w in win32_windows()}
     for w in ctx.live.children(ctx.live.uia.GetRootElement(), ctx.live.uia.CreateTrueCondition()):
         if not w.offscreen:
-            out.add((w.el.CurrentNativeWindowHandle, w.class_name, w.name))
-    return {w for w in out if not tooltip_only(ctx, w)}
+            out.setdefault(w.el.CurrentNativeWindowHandle, (w.el.CurrentNativeWindowHandle, w.class_name, w.name))
+    return {w for w in out.values() if not tooltip_only(ctx, w)}
 
 
 # The window classes that host a tooltip: the classic control, and the XAML popup
@@ -93,18 +96,36 @@ def top_windows(ctx):
 TOOLTIP_HOSTS = ("tooltips_class32", "Xaml_WindowedPopupClass")
 
 
+TOOLTIP_DEPTH = 8                        # levels read under a tooltip host before it counts as a real window
+CONTAINERS = ("Window", "Pane", "Text")
+
+
 def tooltip_only(ctx, window):
-    """Whether a top-level window holds nothing but a tooltip (core.NEVER's rule)."""
+    """Whether a top-level window holds nothing but a tooltip (core.NEVER's rule):
+    every branch is read to its end, through containers, and any other control,
+    or a branch deeper than TOOLTIP_DEPTH, makes it a real window."""
     if window[1] not in TOOLTIP_HOSTS:
         return False
     try:
         el = ctx.live.wrap(ctx.live.uia.ElementFromHandle(window[0]))
         if el.control_type in core.NEVER:
             return True
-        content = [k for k in descendants(ctx, el, 2) if k.control_type not in ("Window", "Pane", "Text")]
+        tips, level = 0, [el]
+        for _ in range(TOOLTIP_DEPTH):
+            below = []
+            for k in (k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())):
+                if k.control_type in core.NEVER:
+                    tips += 1                 # a tooltip's own text is the tooltip
+                elif k.control_type in CONTAINERS:
+                    below.append(k)
+                else:
+                    return False
+            if not below:
+                return tips > 0
+            level = below
+        return False                          # not read to its end: treat it as real
     except (ctx.live.COMError, core.Incomplete):
         return False                          # gone meanwhile: the next look decides
-    return bool(content) and all(k.control_type in core.NEVER for k in content)
 
 
 def baseline(ctx):
@@ -121,8 +142,9 @@ def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",)):
     """The top-level window that was not there before an action (the one whose
     title is not known ahead: Open with, a wizard). Refused when none or several appear."""
     deadline = time.monotonic() + wait
+    known = {w[0] for w in before}            # by handle: a renamed window is not a new one
     while True:
-        new = [w for w in top_windows(ctx) - before if w[1] not in skip]
+        new = [w for w in top_windows(ctx) if w[0] not in known and w[1] not in skip]
         if len(new) == 1:
             return ctx.live.wrap(ctx.live.uia.ElementFromHandle(new[0][0]))
         if time.monotonic() > deadline:
@@ -247,13 +269,25 @@ def press(ctx, within, click=False, **spec):
 def quiet(ctx, el):
     """Wait until a window's layout stops changing: the Open With picker fills its
     app groups in for several seconds after it shows (2026-11-20)."""
+    deadline = time.monotonic() + QUIET_WAIT
+
     def look():
-        return sorted((k.control_type, k.name, tuple(k.bounds)) for k in descendants(ctx, el, 6))
-    deadline, prev = time.monotonic() + QUIET_WAIT, look()
+        # Bounded like the walk: no more than MAX_RECORDS elements, and the deadline
+        # is checked between levels, so one look cannot outlast the wait.
+        out, level = [], [el]
+        for _ in range(QUIET_DEPTH):
+            level = [k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())]
+            out.extend((k.control_type, k.name, tuple(k.bounds)) for k in level)
+            if len(out) > core.MAX_RECORDS:
+                raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
+            if time.monotonic() > deadline or not level:
+                break
+        return sorted(out)
+    prev = look()
     while time.monotonic() < deadline:
         time.sleep(QUIET_GAP)
         now = look()
-        if now == prev:
+        if now == prev and time.monotonic() <= deadline:
             return
         prev = now
     raise core.Incomplete(f"{el.name or el.class_name!r} kept changing for {QUIET_WAIT} s")

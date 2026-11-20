@@ -8,8 +8,8 @@ Common Dialogs item). Writes docs/design/inventory/dialogs/common.json:
 Each scene starts shared/dialog_host.py, which shows one dialog the way an
 application asks Windows for it (GetOpenFileName, ChooseColor, MessageBox,
 TaskDialogIndirect and the rest) from a process with comctl32 v6, and walks
-the window that appears. The modern print dialog is Notepad's. The sounds a
-message box plays are read from the sound scheme in the registry.
+the window that appears. Notepad's Print is measured: it shows the classic
+dialog on the reference. The sounds a message box plays are read from the sound scheme in the registry.
 """
 import json
 import pathlib
@@ -55,12 +55,14 @@ WM_SYSCOMMAND, SC_CLOSE = 0x0112, 0xF060
 GHOST_WAIT = 8                           # s: Windows calls a window hung after 5 s without messages
 NOTEPAD_WAIT = 30
 WER_WAIT = 30                            # s for Windows Error Reporting to show its dialog
+CLASSIC_PRINT = "#32770"                 # the Win32 dialog class PrintDlgEx shows
 END_HOSTS = r"""
 function Hosts { @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" | Where-Object { $_.CommandLine -like '*dialog_host.py*' }) }
 # A host can end between the listing and the stop (its dialog closed): the check
 # after the loop is what proves none is left, not the stop's own result.
-foreach ($p in Hosts) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch [Microsoft.PowerShell.Commands.ProcessCommandException] { } }
-Start-Sleep 1
+$found = Hosts
+foreach ($p in $found) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch [Microsoft.PowerShell.Commands.ProcessCommandException] { } }
+if ($found.Count) { Start-Sleep 1 }
 if ((Hosts).Count) { Write-Output ('dialog hosts still running: ' + (Hosts).Count); exit 1 }
 exit 0
 """
@@ -185,8 +187,13 @@ def measure_crash(ctx):
     _m["crash"] = {"windows": shown, "running": running, **json.loads(ctx.powershell(READ_WER))}
 
 
-def modern_print(ctx):
-    """Notepad's Print dialog: the modern one, with its preview."""
+def measure_print(ctx):
+    """Which Print dialog Notepad's Ctrl+P shows. On the reference it is the classic
+    one (#32770, the Print scene's frame; review 2026-11-20 found the two records
+    alike), so this is a measurement, not a scene; METRICS refuses any other class,
+    because a modern dialog must then be walked as a scene."""
+    if "print" in _m:
+        return
     baseline(ctx)
     before = top_windows(ctx)
     ctx.launch("notepad.exe")
@@ -194,7 +201,9 @@ def modern_print(ctx):
     ctx.click(notepad)
     before = top_windows(ctx)
     ctx.keys("ctrl+p")
-    _root["el"] = appeared(ctx, before, wait=NOTEPAD_WAIT)
+    shown = appeared(ctx, before, wait=NOTEPAD_WAIT)
+    _m["print"] = {"className": shown.class_name, "title": shown.name}
+    close_new_windows(ctx)
 
 
 def scene(slug, label, opener):
@@ -206,6 +215,7 @@ def measured_then(kind):
     def opener(ctx):
         read_sounds(ctx)
         measure_crash(ctx)
+        measure_print(ctx)
         host(kind)(ctx)
     return opener
 
@@ -230,7 +240,6 @@ SCENES += [
     scene("replace", "Replace", host("replace")),
     scene("page-setup", "Page Setup", host("page-setup")),
     scene("print", "Print", host("print")),
-    scene("print-modern", "Print: the modern dialog", modern_print),
     scene("task-dialog", "Task dialog", host("task-dialog")),
     scene("credential", "Windows Security: credentials", host("credential")),
     scene("about", "About", host("about", check=check_owner)),
@@ -265,6 +274,15 @@ def METRICS(records):
         raise ValueError(f"a crash showed {crash['windows']}: walk it as a scene")
     if crash["running"]:
         raise ValueError(f"{crash['running']} crashed host(s) were still running {WER_WAIT} s after the crash")
+
+    shown = _m.get("print")
+    if shown is None:
+        raise ValueError("Notepad's Print was not measured")
+    if shown["className"] != CLASSIC_PRINT:
+        raise ValueError(f"Notepad's Print showed {shown}: walk it as a scene")
+    out.append({"id": "print-modern", "kind": "state", "label": "Print from Notepad", "order": 901,
+                "behaviour": f"Notepad's Print (Ctrl+P) opens the classic Print dialog ({CLASSIC_PRINT}, the "
+                             "frame of the Print scene) on the reference build; no modern Print dialog is shown."})
 
     def setting(v):
         return "not set" if v is None else str(v)

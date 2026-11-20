@@ -714,7 +714,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - Extras: map network drive, eject, format, mount, extract all, empty Recycle Bin
   - Match every `shell-commands` baseline verb to a record or document it absent
   - Done when: `check-inventory.py --surface explorer` passes; each trigger has both its modern and classic `contextMenu` records carrying the same `inconsistency` id, and no `shell-commands` baseline row is unmatched.
-- [x] File Explorer Dialogs: `docs/design/inventory/explorer/dialogs.json` (1155 records; 6 Properties sheets, 34 tabs, 29 View-tree settings)
+- [x] File Explorer Dialogs: `docs/design/inventory/explorer/dialogs.json` (1136 records; 6 Properties sheets, 34 tabs, 29 View-tree settings)
   - Capture the Properties sheet for a file, a folder, a shortcut, a drive and several items: each tab with every control and the button row
     - Tabs: General, Shortcut, Security, Details, Previous Versions, Sharing, Customize, Tools, Hardware, Quota, Compatibility
   - Capture the dialogs the sheet opens: Advanced Attributes, Change Icon, the permissions editor and its advanced form, Remove Properties, the folder picture chooser
@@ -726,13 +726,13 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the wizards: extract compressed folder, map network drive, add a network location, format, and the eject and "problem ejecting" messages
   - Capture Open with: the app list frame, the "always" and "just once" buttons, and the "choose another app" form
   - Done when: `check-inventory.py --surface explorer` passes; every property sheet tab is a `dialogTab` whose `itemCount` matches, and the Folder Options View tree has one `setting` per entry.
-- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (543 records; 31 dialogs, all seven message box button sets in order)
+- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (504 records; 30 dialogs, all seven message box button sets in order)
   - Capture the Open and Save dialogs
     - The embedded Explorer frame, the file name row, the type filter, the encoding or extra control slot, the button row
     - The overwrite prompt, and the multi-select and folder-pick variants
   - Capture the older dialogs still shipped
     - Browse for Folder (tree form), the classic colour dialog (basic grid, custom grid, the picker), the font dialog (three lists, effects, sample, script), Find and Replace, Page Setup
-  - Capture the Print dialogs: the classic one (printer list frame, range, copies, the preferences button) and the modern one (preview side, settings side, more settings)
+  - Capture the Print dialogs: the classic one (printer list frame, range, copies, the preferences button); Notepad's Print is measured as showing that same dialog, and the modern one moves to §13 (Photos' Print)
   - Capture the message box: the four icons as roles, the button sets, default button, the width rule for long text, and the sound each plays
     - Button sets: OK, OK Cancel, Yes No, Yes No Cancel, Retry Cancel, Abort Retry Ignore, Cancel Try Continue
   - Capture the task dialog: main instruction, content, command links, radio buttons, the verification check box, the expander, the footer, and the progress bar
@@ -840,6 +840,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - Toolbar: pen, highlighter, eraser, ruler, crop, text actions, shapes, undo, redo, save, copy, share
   - Photos: the navigation list, the gallery grid, the viewer's toolbar and film strip, the info pane, and the editor's tabs with each control
     - Editor tabs: crop, adjust, filter as names, mark-up; cloud sources get their disposition
+  - Photos' Print: the modern Print dialog (preview side, settings side, More settings), which Notepad does not show on the reference build (XREF: §12 Common Dialogs, the `print-modern` state record)
   - Media Player: the navigation list, the library views, the now playing page, the transport bar in order, the mini player, the equalizer, and the settings page
   - Clock: the five pages (focus sessions, timer, alarm, stopwatch, world clock), each page's cards and add or edit dialogs
   - Sound Recorder and Sticky Notes: the recording list, the waveform frame and transport; the note window's toolbar and the notes list, with sync given its disposition

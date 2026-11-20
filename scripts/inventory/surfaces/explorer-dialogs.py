@@ -25,8 +25,12 @@ ADDRESS_PATH = {"className": "ToolbarWindow32", "namePrefix": "Address: "}
 # Lists whose rows are this machine's data, kept as a frame with no rows: the
 # users and groups an access list names (they carry the machine's name), the disks,
 # the icons a file holds, a file's signers and their dates, the address band's
-# folders, and the file lists (as the frame module keeps them).
+# folders, the folder chooser's tree (Quick access pins), the Open With groups
+# (the installed apps; its Store and browse links stay), and the file lists (as
+# the frame module keeps them).
 ENVIRONMENT_LISTS = [ADDRESS_PATH,
+                     {"className": "SysTreeView32", "name": "Navigation Pane"},
+                     {"className": "ListViewHeaderItem"},
                      {"className": "SysListView32", "name": "Embedded Signatures"},
                      {"className": "SysListView32", "name": "Catalog Signatures"},
                      {"className": "SysListView32", "name": "Group or user names:"},
@@ -43,9 +47,17 @@ PROPERTY_VALUE = {"controlType": "Text", "className": ""}
 BYTES, SIZE = {"className": "Static", "nameSuffix": " bytes"}, {"nameSuffix": " GB"}
 ITEM_LINE = {"className": "Static", "namePrefix": "Type: "}
 REFRESH = {"controlType": "Button", "namePrefix": "Refresh \""}
-# A conflict tile's icon is named with the item's full path.
+# A conflict tile's icon is named with the item's full path; the copy dialogs'
+# other fields hold the item's date, size and properties, the space left, and the
+# operation's progress, which differ on every run.
 ITEM_ICON = {"automationId": "eltItemIcon"}
-VALUES = [PROPERTY_VALUE, BYTES, SIZE, ITEM_LINE, ADDRESS_PATH, REFRESH, ITEM_ICON]
+OPERATION_VALUES = {"eltItemDate": "Date", "eltItemSize": "Size", "eltItemProps": "Item details",
+                    "eltItemsRemaining": "Items remaining", "eltRateChart_New": "Progress chart",
+                    "eltSummary": "Progress"}
+# An operation's tile is named for the operation and its progress so far.
+OPERATION_TILE = {"automationIdPrefix": "eltTile", "nameSuffix": "% complete"}
+VALUES = [PROPERTY_VALUE, BYTES, SIZE, ITEM_LINE, ADDRESS_PATH, REFRESH, ITEM_ICON, OPERATION_TILE,
+          *({"automationId": a} for a in OPERATION_VALUES)]
 # Look-alike siblings named for what they are, from their dialog control ids
 # (resource ids, fixed for the dialog): the shortcut's two unnamed fields, the
 # two signature lists' Details buttons, and the delete prompt's warning icon.
@@ -65,7 +77,8 @@ IDENTITY = [({"controlType": "Edit", "automationId": "102", "name": ""}, "shortc
             ({"className": "Static", "automationId": "14410"}, "capacity-size"),
             ({"className": "Button", "automationId": "14411"}, "capacity-button")]
 LABELS = [(PROPERTY_VALUE, "Property value"), (BYTES, "Bytes"), (SIZE, "Size"), (ITEM_LINE, "Item details"),
-          (ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (ITEM_ICON, "Item icon")]
+          (ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (ITEM_ICON, "Item icon"), (OPERATION_TILE, "Operation"),
+          *(({"automationId": a}, label) for a, label in OPERATION_VALUES.items())]
 
 DIALOG = "#32770"
 THIS_PC = "shell:MyComputerFolder"
