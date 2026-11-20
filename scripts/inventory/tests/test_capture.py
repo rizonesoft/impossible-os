@@ -3159,6 +3159,13 @@ class ExplorerFrame(unittest.TestCase):
                 "alt+up": {"from": "General items", "to": "Explorer sample", "start": "Explorer sample"},
                 "f6": {"stops": regions}}
 
+    def test_live_values_name_no_id(self):
+        def el(name):
+            return types.SimpleNamespace(control_type="Text", automation_id="", class_name="TextBlock", name=name)
+        for name, seg in (("Explorer sample (13 items)", "folder-summary"), ("\u200e11/\u200e19/\u200e2026 7:23 AM", "modified-date")):
+            self.assertEqual(core._segment(el(name), self.m.IDENTITY, self.m.VALUES), seg)
+            self.assertTrue(any(core.matches(el(name), v) for v in self.m.VALUES))
+
     def test_a_shown_date_is_a_live_value_and_its_label_is_not(self):
         el = lambda name: types.SimpleNamespace(control_type="Text", automation_id="", class_name="TextBlock", name=name)
         date = el("\u200e11/\u200e19/\u200e2026 \u200f\u200e7:45 AM")

@@ -54,6 +54,8 @@ F6_STOPS = 8                             # F6 presses: more than the frame has p
 # The items view is the views capture's; here it is one record.
 ENVIRONMENT_LISTS = [{"className": "UIItemsView"}]
 # The command bar's buttons are an image and a label; the image needs no name.
+# The details pane's line naming the folder and its item count, "Explorer sample (13 items)".
+FOLDER_SUMMARY = {"className": "TextBlock", "nameSuffix": " items)"}
 LABELS = [({"controlType": "Image", "className": "Image"}, "Icon"),
           # The frame's rows carry an automation id and no name.
           ({"automationId": "TabView"}, "Tab row"), ({"automationId": "TabListView"}, "Tabs"),
@@ -63,8 +65,10 @@ LABELS = [({"controlType": "Image", "className": "Image"}, "Icon"),
           ({"automationId": "FileExplorerCommandBar"}, "Command bar"),
           ({"automationId": "FileExplorerSecondaryCommandBar"}, "Pane button"),
           ({"automationId": "SuggestionsList"}, "Address list"),
-          (DATE_VALUE, "Date")]
-VALUES = [DATE_VALUE]
+          (DATE_VALUE, "Date"), (FOLDER_SUMMARY, "Folder summary")]
+# Live values: their text changes with the clock and the folder, so it names no id.
+VALUES = [DATE_VALUE, FOLDER_SUMMARY]
+IDENTITY = [(DATE_VALUE, "modified-date"), (FOLDER_SUMMARY, "folder-summary")]
 
 _m = {}                                  # measured by the unpublished scenes, read by METRICS
 
