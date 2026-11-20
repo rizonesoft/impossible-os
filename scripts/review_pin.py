@@ -376,21 +376,20 @@ def section_status(root, todo, section):
     return ("new", "")
 
 
-_TODO_FIELD = re.compile(r'"todo": "((?:[^"\\]|\\.)*)"')
+# The head of one receipt as scripts/overnight/manifest-line.py writes it: ts, then kind, then todo.
+_RECEIPT_HEAD = re.compile(r'\{"ts": \d+, "kind": "[a-z-]+", "todo": "((?:[^"\\]|\\.)*)"')
 
 
 def unreadable_line_may_be(line, todo):
-    """Whether a manifest line that cannot be parsed may be a receipt for `todo`: unless its todo value is
-    there whole (closing quote included) and names another TODO. A line cut before the field, inside the value
-    or just before its closing quote may be this TODO's. Shared by repair_base and the commit gate's
-    receipt reader (review, 2026-11-20)."""
+    """Whether a manifest line that cannot be parsed may be a receipt for `todo`.
+
+    An allowlist (review, 2026-11-20, after three shapes on this boundary): the line belongs to another TODO
+    only when, from its first byte, it is the head of exactly one receipt in the dispatcher's field order with
+    a whole todo value naming another TODO. A torn start, a second object glued on, a missing field or a cut
+    inside the value all may be this TODO's. Shared by repair_base and the commit gate's receipt reader."""
     import json
-    # A torn receipt with the next append glued onto it holds two receipts, and the first todo field says
-    # nothing about the second: a line with any sign of more than one receipt may be this TODO's.
-    if line.count('"todo": "') != 1 or line.count('"kind": "') > 1 or "}{" in line:
-        return True
-    m = _TODO_FIELD.search(line)
-    if m is None:
+    m = _RECEIPT_HEAD.match(line)
+    if m is None or line.count('{"ts": ') != 1 or "}{" in line:
         return True
     try:
         named = json.loads(f'"{m.group(1)}"')

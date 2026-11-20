@@ -269,8 +269,9 @@ def test_the_caps_name_no_stall_cap_when_the_pin_has_none(capsys):
 def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md",
              worktree=rp.CLEAN_WORKTREE):
     import json
-    return json.dumps({"kind": kind, "todo": todo, "section": section, "head": head, "pass_checked": checked, "rc": rc,
-                       "worktree_sha256": worktree})
+    # The dispatcher's field order (manifest-line.py): ts, kind, todo first.
+    return json.dumps({"ts": 1795170000, "kind": kind, "todo": todo, "section": section, "head": head,
+                       "pass_checked": checked, "rc": rc, "worktree_sha256": worktree})
 
 
 def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconciliation(tmp_path):
@@ -281,7 +282,7 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
         _receipt("completion", "aaa"), _receipt("round", "bbb"),             # a round is not where a repair starts
         _receipt("reconciliation", "ccc"), _receipt("reconciliation", "ddd", checked=False),
         _receipt("completion", "eee", rc=3), _receipt("completion", "fff", section=98),
-        '{"todo": "todo/other.md", "not json']) + "\n")
+        '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "not json']) + "\n")
     assert rp.repair_base(manifest, todo, 99) == "ccc"
     assert rp.repair_base(manifest, todo, 97) == ""
     # Review 2026-11-20: a newer line that cannot be read and names this TODO may be a newer pass of the section.
@@ -298,8 +299,8 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
         manifest.write_text(_receipt("completion", "aaa") + "\n" + cut + "\n")
         with pytest.raises(rp.Refused, match="unreadable line"):
             rp.repair_base(manifest, todo, 99)
-    assert rp.unreadable_line_may_be('{"todo": "todo/other.md", "kin', todo) is False
-    assert rp.unreadable_line_may_be(f'{{"todo": "{todo}", "kin', todo) is True
+    assert rp.unreadable_line_may_be('{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec', todo) is False
+    assert rp.unreadable_line_may_be(f'{{"ts": 1, "kind": "completion", "todo": "{todo}", "sec', todo) is True
     # Review 2026-11-20: another TODO's receipt that lost its newline, with this TODO's appended to it.
     glued = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + _receipt("completion", "bbb")
     manifest.write_text(_receipt("completion", "aaa") + "\n" + glued + "\n")
@@ -307,7 +308,12 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
         rp.repair_base(manifest, todo, 99)
     torn = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + '{"ts": 2, "kind": "completion"'
     assert rp.unreadable_line_may_be(torn, todo) is True
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"todo": "todo/other.md", "kin' + "\n")
+    # This TODO's receipt torn inside its timestamp, another TODO's complete receipt appended to it.
+    stamp_cut = '{"ts": 1795170000' + _receipt("completion", "zzz", todo="todo/other.md")
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + stamp_cut + "\n")
+    with pytest.raises(rp.Refused, match="unreadable line"):
+        rp.repair_base(manifest, todo, 99)
+    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec' + "\n")
     assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
     # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.
     manifest.write_text(_receipt("completion", "aaa", worktree="0" * 64) + "\n")

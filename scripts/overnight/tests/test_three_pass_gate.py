@@ -322,7 +322,7 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     ok, why = _judge(root, manifest_tail='{"ts": 17943', **_good(h))
     assert not ok and "cannot be read past a line" in why, why
     # An unreadable line that names another TODO is not this one's.
-    other = '{"kind": "completion", "todo": "todo/00-x/TODO-02-other.md", "section": 7, "rc": 0, "pas'
+    other = '{"ts": 1795170000, "kind": "completion", "todo": "todo/00-x/TODO-02-other.md", "section": 7, "rc": 0, "pas'
     assert _judge(root, manifest_tail=other + "\n", **_good(h)) == (True, "")
     # Cut inside the todo value, or just before its closing quote: it may still be this one's (review 2026-11-20).
     for cut in ('{"kind": "completion", "todo": "' + TODO[:8], '{"kind": "completion", "todo": "' + TODO):
@@ -331,6 +331,10 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     # Another TODO's receipt torn before its newline, with this TODO's newer one glued on (review 2026-11-20).
     glued = other + '"}{"kind": "completion", "todo": "' + TODO + '", "section": 7, "rc": 0, "highest": "P2"}'
     ok, why = _judge(root, manifest_tail=glued, **_good(h))
+    assert not ok and "cannot be read past a line" in why, why
+    # This TODO's newer receipt torn inside its timestamp, another TODO's appended to it (review 2026-11-20).
+    stamp_cut = '{"ts": 1795170000' + other.replace('"pas', '"pass_checked": true}')
+    ok, why = _judge(root, manifest_tail=stamp_cut, **_good(h))
     assert not ok and "cannot be read past a line" in why, why
 
 
