@@ -274,14 +274,23 @@ def quiet(ctx, el):
     def look():
         # Bounded like the walk: no more than MAX_RECORDS elements, and the deadline
         # is checked between levels, so one look cannot outlast the wait.
+        # Each parent's children are charged as they come, with what is left of
+        # the budget passed down, and the deadline is checked before every fetch.
         out, level = [], [el]
         for _ in range(QUIET_DEPTH):
-            level = [k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())]
-            out.extend((k.control_type, k.name, tuple(k.bounds)) for k in level)
-            if len(out) > core.MAX_RECORDS:
-                raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
-            if time.monotonic() > deadline or not level:
+            below = []
+            for e in level:
+                if time.monotonic() > deadline:
+                    return sorted(out)
+                left = core.MAX_RECORDS - len(out)
+                if left <= 0:
+                    raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
+                kids = ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition(), left)
+                out.extend((k.control_type, k.name, tuple(k.bounds)) for k in kids)
+                below.extend(kids)
+            if not below:
                 break
+            level = below
         return sorted(out)
     prev = look()
     while time.monotonic() < deadline:

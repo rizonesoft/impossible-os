@@ -687,7 +687,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 One item is one surface: write its capture module, run it in the reference VM, hand-write the fields the tool cannot read, and commit that surface's file once `check-inventory.py --surface <name>` passes. The section is reviewed and pushed once, after its last surface (operator decision 2026-11-14: capture work is grouped so each group is one review).
 
 - [x] File Explorer Frame: `docs/design/inventory/explorer/frame.json` (969 records; every `known-folders` row matched or absent)
-- [x] File Explorer Views and Columns: `docs/design/inventory/explorer/views.json` (693 records; 8 modes x 2 layouts measured, 5 folder kinds' columns)
+- [x] File Explorer Views and Columns: `docs/design/inventory/explorer/views.json` (725 records; 8 modes x 2 layouts measured with icon size, 5 folder kinds' columns)
   - Capture each view mode as `metric` records: cell size, icon size, label lines, spacing, and the compact view variant
     - Extra large, large, medium and small icons, list, details, tiles, content
   - Capture the details view: the header, the default columns per folder kind, and the "choose details" dialog
@@ -714,7 +714,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
     - Extras: map network drive, eject, format, mount, extract all, empty Recycle Bin
   - Match every `shell-commands` baseline verb to a record or document it absent
   - Done when: `check-inventory.py --surface explorer` passes; each trigger has both its modern and classic `contextMenu` records carrying the same `inconsistency` id, and no `shell-commands` baseline row is unmatched.
-- [x] File Explorer Dialogs: `docs/design/inventory/explorer/dialogs.json` (1136 records; 6 Properties sheets, 34 tabs, 29 View-tree settings)
+- [x] File Explorer Dialogs: `docs/design/inventory/explorer/dialogs.json` (1133 records; 6 Properties sheets, 34 tabs, 29 View-tree settings)
   - Capture the Properties sheet for a file, a folder, a shortcut, a drive and several items: each tab with every control and the button row
     - Tabs: General, Shortcut, Security, Details, Previous Versions, Sharing, Customize, Tools, Hardware, Quota, Compatibility
   - Capture the dialogs the sheet opens: Advanced Attributes, Change Icon, the permissions editor and its advanced form, Remove Properties, the folder picture chooser
@@ -726,7 +726,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the wizards: extract compressed folder, map network drive, add a network location, format, and the eject and "problem ejecting" messages
   - Capture Open with: the app list frame, the "always" and "just once" buttons, and the "choose another app" form
   - Done when: `check-inventory.py --surface explorer` passes; every property sheet tab is a `dialogTab` whose `itemCount` matches, and the Folder Options View tree has one `setting` per entry.
-- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (504 records; 30 dialogs, all seven message box button sets in order)
+- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (509 records; 30 dialogs, all seven message box button sets in order)
   - Capture the Open and Save dialogs
     - The embedded Explorer frame, the file name row, the type filter, the encoding or extra control slot, the button row
     - The overwrite prompt, and the multi-select and folder-pick variants

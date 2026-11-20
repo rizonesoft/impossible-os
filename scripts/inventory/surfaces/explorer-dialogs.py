@@ -11,6 +11,7 @@ a tab control: its frame and button row are one `dialog` scene (the tab pages
 left out), and each tab is a `dialogTab` scene rooted at that tab's page, so
 its itemCount is the page's own controls.
 """
+import re
 import time
 
 import capture_core as core
@@ -47,16 +48,24 @@ PROPERTY_VALUE = {"controlType": "Text", "className": ""}
 BYTES, SIZE = {"className": "Static", "nameSuffix": " bytes"}, {"nameSuffix": " GB"}
 ITEM_LINE = {"className": "Static", "namePrefix": "Type: "}
 REFRESH = {"controlType": "Button", "namePrefix": "Refresh \""}
+UP = {"controlType": "Button", "namePrefix": "Up to \""}       # names the parent folder
+# A wizard's page host is named, and its automation id set, from a GUID made at run
+# time (the extract wizard's changed between two captures, 2026-11-20).
+WIZARD_PAGE = {"className": "Win32PropSheetPageHost"}
+# Confirm Folder Replace names the folder's creation time twice.
+MERGE_DATE = {"namePrefix": "Date created: "}
+MERGE_QUESTION = {"namePrefix": "Do you still want to merge the folder created on "}
 # A conflict tile's icon is named with the item's full path; the copy dialogs'
 # other fields hold the item's date, size and properties, the space left, and the
 # operation's progress, which differ on every run.
 ITEM_ICON = {"automationId": "eltItemIcon"}
 OPERATION_VALUES = {"eltItemDate": "Date", "eltItemSize": "Size", "eltItemProps": "Item details",
                     "eltItemsRemaining": "Items remaining", "eltRateChart_New": "Progress chart",
-                    "eltSummary": "Progress"}
+                    "eltSummary": "Progress", "eltTimeRemaining": "Time remaining"}
 # An operation's tile is named for the operation and its progress so far.
 OPERATION_TILE = {"automationIdPrefix": "eltTile", "nameSuffix": "% complete"}
-VALUES = [PROPERTY_VALUE, BYTES, SIZE, ITEM_LINE, ADDRESS_PATH, REFRESH, ITEM_ICON, OPERATION_TILE,
+VALUES = [PROPERTY_VALUE, BYTES, SIZE, ITEM_LINE, ADDRESS_PATH, REFRESH, UP, WIZARD_PAGE, MERGE_DATE, MERGE_QUESTION,
+          ITEM_ICON, OPERATION_TILE,
           *({"automationId": a} for a in OPERATION_VALUES)]
 # Look-alike siblings named for what they are, from their dialog control ids
 # (resource ids, fixed for the dialog): the shortcut's two unnamed fields, the
@@ -67,6 +76,9 @@ IDENTITY = [({"controlType": "Edit", "automationId": "102", "name": ""}, "shortc
             ({"controlType": "Button", "name": "Details", "automationId": "102"}, "catalog-signature-details"),
             ({"controlType": "Image", "className": "Static", "automationId": "12297"}, "warning-icon"),
             (ITEM_LINE, "item-details"),
+            (WIZARD_PAGE, "page"),
+            (MERGE_DATE, "date-created"),
+            (MERGE_QUESTION, "merge-question"),
             # The drive's General tab: each amount by the row it sits on.
             ({"className": "Static", "automationId": "14406"}, "used-space-bytes"),
             ({"className": "Static", "automationId": "14405"}, "used-space-size"),
@@ -77,7 +89,9 @@ IDENTITY = [({"controlType": "Edit", "automationId": "102", "name": ""}, "shortc
             ({"className": "Static", "automationId": "14410"}, "capacity-size"),
             ({"className": "Button", "automationId": "14411"}, "capacity-button")]
 LABELS = [(PROPERTY_VALUE, "Property value"), (BYTES, "Bytes"), (SIZE, "Size"), (ITEM_LINE, "Item details"),
-          (ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (ITEM_ICON, "Item icon"), (OPERATION_TILE, "Operation"),
+          (ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (UP, "Up"), (WIZARD_PAGE, "Page"), (MERGE_DATE, "Date created"),
+          (MERGE_QUESTION, "Merge question"), (ITEM_ICON, "Item icon"),
+          (OPERATION_TILE, "Operation"),
           *(({"automationId": a}, label) for a, label in OPERATION_VALUES.items())]
 
 DIALOG = "#32770"
@@ -505,13 +519,46 @@ def open_conflict(compare=False):
     return opener
 
 
+# Windows 11 hides the folder merge prompt by default ("Hide folder merge
+# conflicts", on): the scene turns it off for its copy and back to the default
+# on close. The child files differ, so no file conflict stands in for it.
+SHOW_MERGE = r"""
+Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideMergeConflicts -Value 0 -Type DWord
+"""
+HIDE_MERGE = r"""
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideMergeConflicts -ErrorAction SilentlyContinue
+"""
+MERGE_TEXT = "already contains a folder named"
+# The prompt's message sits in elements the control view does not list
+# (2026-11-20), so the opener keeps its lines and METRICS records them, each
+# creation time replaced by what it is.
+MERGE_LINES = (MERGE_TEXT, "If any files have the same names", "Do you still want to merge")
+WHEN = re.compile(r"\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}( [AP]M)?")
+DIRECTION_MARKS = dict.fromkeys(map(ord, "\u200e\u200f"))   # Windows wraps the date's parts in them
+_merge_text = []
+
+
 def open_folder_merge(ctx):
-    """A folder copied onto a folder of the same name that already holds one of its files."""
-    work(ctx, "New-Item -ItemType Directory -Path '%s\\General items' -Force | Out-Null\n"
-              "Copy-Item -LiteralPath '%s\\General items\\Sample item 1.txt' -Destination '%s\\General items'\n"
-              % (WORK, SAMPLE, WORK))
+    """A folder copied onto a folder of the same name: Confirm Folder Replace."""
+    work(ctx, SHOW_MERGE + "New-Item -ItemType Directory -Path '%s\\General items' -Force | Out-Null\n"
+              "Set-Content -LiteralPath '%s\\General items\\Other item.txt' -Value 'Other item'\n" % (WORK, WORK))
     before = copy_into(ctx, SAMPLE, ["General items"], WORK)
-    _root["el"] = operation_window(ctx, before)
+    win = operation_window(ctx, before)
+    time.sleep(SETTLE)
+    names = [k.name for k in descendants(ctx, win, 6)]
+    # One element can hold every paragraph (2026-11-20): keep each text once.
+    texts = list(dict.fromkeys(n for n in names if n and any(key in n for key in MERGE_LINES)))
+    if not all(any(key in t for t in texts) for key in MERGE_LINES):
+        raise core.Incomplete(f"the folder copy showed no folder merge prompt: {names[:40]}")
+    _merge_text[:] = texts
+    _root["el"] = win
+
+
+def close_folder_merge(ctx):
+    try:
+        close_operation(ctx)
+    finally:
+        ctx.powershell(HIDE_MERGE)
 
 
 HOLDER = "C:\\Users\\ref\\AppData\\Local\\Temp\\inventory-hold.ps1"   # its name is the marker REMOVE_WORK ends
@@ -617,7 +664,7 @@ OPERATIONS = [
     ("copy-progress-stacked", "File operation: two at once", open_copy_progress(True, stacked=True)),
     ("replace-or-skip", "Replace or Skip Files", open_conflict()),
     ("file-conflict", "File Conflict: the compare chooser", open_conflict(compare=True)),
-    ("folder-merge", "A folder copied onto a folder of its name", open_folder_merge),
+    ("folder-merge", "A folder copied onto a folder of its name", open_folder_merge, close_folder_merge),
     ("file-in-use", "File In Use", open_in_use),
     ("access-denied", "File Access Denied", open_access_denied, close_access_denied),
     ("delete-to-recycle-bin", "Delete File: to the Recycle Bin", open_delete(False)),
@@ -633,7 +680,10 @@ for slug, label, opener, *close in OPERATIONS:
 # capture runs as the reference account, an administrator), detached on close.
 SMALL_DISK = "C:\\Users\\ref\\AppData\\Local\\Temp\\inventory-small.vhdx"
 SMALL_LETTER = "S"
+# The letter must be free before the disk is made, and the volume on it must be
+# the disk's own: a letter another volume holds would take the copy and the format.
 MAKE_SMALL = r"""
+if (Test-Path '%s:\') { throw '%s: is in use: the small volume needs that letter free' }
 $script = Join-Path $env:TEMP 'inventory-small.txt'
 @"
 create vdisk file="%s" maximum=16 type=fixed
@@ -643,10 +693,12 @@ create partition primary
 format fs=fat quick label=Small
 assign letter=%s
 "@ | Set-Content -LiteralPath $script -Encoding ASCII
-diskpart /s $script | Out-Null
-if (-not (Test-Path '%s:\')) { throw 'the small volume was not made (diskpart needs an administrator)' }
+$out = diskpart /s $script
+if ($LASTEXITCODE) { throw ('diskpart could not make the small volume (it needs an administrator): ' + ($out -join ' ')) }
+$part = Get-DiskImage -ImagePath '%s' | Get-Disk | Get-Partition | Where-Object DriveLetter -eq '%s'
+if (-not $part) { throw '%s: is not the small volume' }
 fsutil file createnew '%s\Large file.bin' 33554432 | Out-Null
-""" % (SMALL_DISK, SMALL_DISK, SMALL_LETTER, SMALL_LETTER, WORK)
+""" % (SMALL_LETTER, SMALL_LETTER, SMALL_DISK, SMALL_DISK, SMALL_LETTER, SMALL_DISK, SMALL_LETTER, SMALL_LETTER, WORK)
 REMOVE_SMALL = r"""
 if (Test-Path -LiteralPath '%s') {
     $script = Join-Path $env:TEMP 'inventory-small-off.txt'
@@ -674,6 +726,24 @@ SCENES.append(dict(slug="not-enough-space", label="Not enough space", kind="dial
                    close=close_no_space, expand=False))
 
 def METRICS(records):
+    return view_metrics(records) + merge_message(records)
+
+
+def merge_message(records):
+    """Confirm Folder Replace's message, read by the opener."""
+    if not any(r["id"] == f"win11.{SURFACE}.folder-merge" for r in records):
+        return []
+    text = " ".join(" ".join(t.translate(DIRECTION_MARKS).split()) for t in _merge_text)
+    if not all(key in text for key in MERGE_LINES):
+        raise ValueError(f"the folder merge prompt's message was not read: {text!r}")
+    text = WHEN.sub("(the folder's creation time)", text)
+    if re.search(r"\d", text):
+        raise ValueError(f"the folder merge message still holds a number: {text!r}")
+    return [{"id": "folder-merge.message", "parent": "folder-merge", "kind": "state", "label": "Folder merge message",
+             "order": 900, "behaviour": text}]
+
+
+def view_metrics(records):
     """The View tab's advanced settings the walk could not reach: each entry of the
     tree is one fixed setting (a radio choice under one is a control), placed where
     the walk would have placed it. The rows the walk did see must sit at the ids

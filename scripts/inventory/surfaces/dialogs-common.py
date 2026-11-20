@@ -17,8 +17,8 @@ import sys
 import time
 
 import capture_core as core
-from dialog_window import appeared, baseline, close_new_windows, top_windows, user32
-from explorer_window import _root, opened
+from dialog_window import DIALOG_WAIT, appeared, baseline, close_new_windows, top_windows, user32
+from explorer_window import SETTLE, _root, descendants, opened
 
 SURFACE = "dialogs"
 # Lists whose rows are this machine's data, kept as a frame with no rows: the
@@ -33,8 +33,9 @@ ENVIRONMENT_LISTS = [{"className": "ToolbarWindow32", "namePrefix": "Address: "}
 ADDRESS_PATH = {"className": "ToolbarWindow32", "namePrefix": "Address: "}
 # Refresh names the open folder; the About box names the reference build.
 REFRESH = {"controlType": "Button", "namePrefix": "Refresh \""}
+UP = {"controlType": "Button", "namePrefix": "Up to \""}       # names the parent folder
 VERSION = {"controlType": "Text", "namePrefix": "Version "}
-VALUES = [ADDRESS_PATH, REFRESH, VERSION]
+VALUES = [ADDRESS_PATH, REFRESH, UP, VERSION]
 # Look-alike siblings named for what they are: the Save As labels (one automation
 # id for both), and the colour and page-setup pictures by their dialog control ids.
 IDENTITY = [({"automationId": "SaveDialogLabel", "name": "File name:"}, "file-name-label"),
@@ -47,7 +48,7 @@ IDENTITY = [({"automationId": "SaveDialogLabel", "name": "File name:"}, "file-na
             ({"className": "Static", "automationId": "1080"}, "page-preview"),
             ({"className": "Static", "automationId": "1081"}, "preview-right-shadow"),
             ({"className": "Static", "automationId": "1082"}, "preview-bottom-shadow")]
-LABELS = [(ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (VERSION, "Version")]
+LABELS = [(ADDRESS_PATH, "Address"), (REFRESH, "Refresh"), (UP, "Up"), (VERSION, "Version")]
 
 HOST = pathlib.Path(__file__).resolve().parent / "shared" / "dialog_host.py"
 CAPTION = "Inventory sample"
@@ -56,6 +57,10 @@ GHOST_WAIT = 8                           # s: Windows calls a window hung after 
 NOTEPAD_WAIT = 30
 WER_WAIT = 30                            # s for Windows Error Reporting to show its dialog
 CLASSIC_PRINT = "#32770"                 # the Win32 dialog class PrintDlgEx shows
+# Controls of the classic Print dialog the Print scene walked (common.json).
+CLASSIC_PRINT_CONTROLS = (("Button", "Preferences"), ("Button", "Find Printer..."), ("Button", "Print"),
+                          ("List", "Folder View"))
+HOST_EXIT_WAIT = 3                       # s for a dialog host to end once its dialog closed
 END_HOSTS = r"""
 function Hosts { @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" | Where-Object { $_.CommandLine -like '*dialog_host.py*' }) }
 # A host can end between the listing and the stop (its dialog closed): the check
@@ -115,22 +120,52 @@ BUTTON_SETS = [("ok", "OK"), ("ok-cancel", "OK, Cancel"), ("yes-no", "Yes, No"),
                ("abort-retry-ignore", "Abort, Retry, Ignore"), ("cancel-try-continue", "Cancel, Try Again, Continue")]
 
 
-def host(kind, check=None):
-    """Start dialog_host.py with `kind` and take the window it shows."""
+_hosts = []                              # the dialog hosts this scene started (Popen handles)
+
+
+def host(kind, check=None, ready=None):
+    """Start dialog_host.py with `kind` and take the window it shows; `ready`
+    waits for what the window must hold before it is walked."""
     def opener(ctx):
         baseline(ctx)
         if check:
             check(ctx)
         before = top_windows(ctx)
-        ctx.launch(sys.executable, str(HOST), kind)
+        _hosts.append(ctx.launch(sys.executable, str(HOST), kind))
         _root["el"] = appeared(ctx, before)
+        if ready:
+            ready(ctx, _root["el"])
     return opener
 
 
 def close_scene(ctx):
-    """Close what the scene opened, then end any dialog host still running."""
+    """Close what the scene opened, then end any dialog host still running. A
+    host that exited with its dialog needs no process query; one still running,
+    or a scene that started its host some other way, gets END_HOSTS."""
     close_new_windows(ctx)
-    ctx.powershell(END_HOSTS)
+    started = list(_hosts)
+    _hosts.clear()
+    deadline = time.monotonic() + HOST_EXIT_WAIT
+    while started and any(p.poll() is None for p in started) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if not started or any(p.poll() is None for p in started):
+        ctx.powershell(END_HOSTS)
+
+
+# The credential prompt fills its fields in after it shows (2026-11-20: one
+# capture held only the frame, the captions and Cancel).
+CREDENTIAL_FIELDS = ("EditField_0", "PasswordField_1", "OkButton")
+
+
+def credential_ready(ctx, el):
+    deadline = time.monotonic() + DIALOG_WAIT
+    while True:
+        have = {k.automation_id for k in descendants(ctx, el, 4)}
+        if all(a in have for a in CREDENTIAL_FIELDS):
+            return
+        if time.monotonic() > deadline:
+            raise core.Incomplete(f"the credential prompt never showed {sorted(set(CREDENTIAL_FIELDS) - have)}")
+        time.sleep(0.5)
 
 
 def read_sounds(ctx):
@@ -177,9 +212,10 @@ def measure_crash(ctx):
     before = top_windows(ctx)
     ctx.launch(sys.executable, str(HOST), "crash")
     deadline, shown = time.monotonic() + WER_WAIT, []
+    known = {w[0] for w in before}            # by handle, as appeared(): a renamed window is not a new one
     while time.monotonic() < deadline and not shown:
         time.sleep(1)
-        shown = sorted(w[1:] for w in top_windows(ctx) - before if w[1] != "CabinetWClass")
+        shown = sorted(w[1:] for w in top_windows(ctx) if w[0] not in known and w[1] != "CabinetWClass")
     if shown:
         close_new_windows(ctx)
     running = int(ctx.powershell(COUNT_HOSTS).strip())   # before the cleanup, which would end a held one
@@ -202,7 +238,10 @@ def measure_print(ctx):
     before = top_windows(ctx)
     ctx.keys("ctrl+p")
     shown = appeared(ctx, before, wait=NOTEPAD_WAIT)
-    _m["print"] = {"className": shown.class_name, "title": shown.name}
+    time.sleep(SETTLE)
+    controls = sorted({(k.control_type, k.name) for k in descendants(ctx, shown, 6)
+                       if (k.control_type, k.name) in CLASSIC_PRINT_CONTROLS})
+    _m["print"] = {"className": shown.class_name, "title": shown.name, "controls": controls}
     close_new_windows(ctx)
 
 
@@ -241,7 +280,7 @@ SCENES += [
     scene("page-setup", "Page Setup", host("page-setup")),
     scene("print", "Print", host("print")),
     scene("task-dialog", "Task dialog", host("task-dialog")),
-    scene("credential", "Windows Security: credentials", host("credential")),
+    scene("credential", "Windows Security: credentials", host("credential", ready=credential_ready)),
     scene("about", "About", host("about", check=check_owner)),
     scene("not-responding", "A program is not responding", not_responding),
 ]
@@ -278,8 +317,11 @@ def METRICS(records):
     shown = _m.get("print")
     if shown is None:
         raise ValueError("Notepad's Print was not measured")
-    if shown["className"] != CLASSIC_PRINT:
-        raise ValueError(f"Notepad's Print showed {shown}: walk it as a scene")
+    # The classic dialog is told by its own controls, not its class alone: every
+    # Win32 dialog is #32770 (an error box would pass on the class).
+    if shown["className"] != CLASSIC_PRINT or shown["title"] != "Print" or \
+            {tuple(c) for c in shown["controls"]} != set(CLASSIC_PRINT_CONTROLS):
+        raise ValueError(f"Notepad's Print showed {shown}, not the classic Print dialog: walk it as a scene")
     out.append({"id": "print-modern", "kind": "state", "label": "Print from Notepad", "order": 901,
                 "behaviour": f"Notepad's Print (Ctrl+P) opens the classic Print dialog ({CLASSIC_PRINT}, the "
                              "frame of the Print scene) on the reference build; no modern Print dialog is shown."})

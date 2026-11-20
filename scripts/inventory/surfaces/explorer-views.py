@@ -18,6 +18,7 @@ folder's placeholder names, and an item's info tip. METRICS turns them into
 records. The Sort and Group by menus are the frame's (explorer/frame.json,
 sort-menu); the selection model and the drag feedback are hand records.
 """
+import collections
 import time
 
 import capture_core as core
@@ -252,6 +253,49 @@ def read_items(ctx):
     return out
 
 
+# UI Automation exposes no icon element (an item holds only its text fields,
+# 2026-11-20), so the icon is measured from the pixels of the long-named item's
+# icon slot: not selected, and with the pointer moved off the view, not hovered.
+ICON_DIFF = 24                           # a channel this far from the slot's commonest colour is artwork
+POINTER_REST = (10, 10)
+LINE_SHARE = 0.9                         # of a row's width: a line, not artwork
+
+
+def icon_bounds(rows):
+    """The artwork in a block of (r, g, b) rows: (x, y, w, h) of what differs from
+    the block's commonest colour, or None. A row that differs nearly all the way
+    across is a separator line, not artwork (the content view rules its rows,
+    2026-11-20)."""
+    bg = collections.Counter(p for r in rows for p in r).most_common(1)[0][0]
+    xs, ys = [], []
+    for y, r in enumerate(rows):
+        hit = [x for x, p in enumerate(r) if max(abs(a - b) for a, b in zip(p, bg)) > ICON_DIFF]
+        if len(hit) >= LINE_SHARE * len(r):
+            continue
+        xs.extend(hit)
+        ys.extend([y] * len(hit))
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+
+
+def icon_slot(entry, slug):
+    """The part of an item that holds its icon: above the label in the icon
+    modes, before it elsewhere."""
+    x, y, w, h = entry["box"]
+    lx, ly = entry["label"][:2]
+    return (x, y, w, ly - y) if slug in ICON_MODES else (x, y, lx - x, h)
+
+
+def read_icon(ctx, entry, slug):
+    sx, sy, sw, sh = icon_slot(entry, slug)
+    found = icon_bounds(ctx.pixels(sx, sy, sw, sh))
+    # Artwork touching the slot's edge is cut off, or the slot holds more than the icon.
+    if not found or found[0] == 0 or found[1] == 0 or found[0] + found[2] == sw or found[1] + found[3] == sh:
+        raise core.Incomplete(f"{slug}: no whole icon in the slot {[sx, sy, sw, sh]}: {found}")
+    return [sx + found[0], sy + found[1], found[2], found[3]]
+
+
 def read_measured(ctx):
     """read_items with the two measured items on screen: the list is virtualized,
     so an item scrolled out of view is missing until it is brought back
@@ -323,6 +367,9 @@ def measure_modes(ctx):
             # mode before mean the key did not take.
             if now[ONE_LINE]["box"] == last[ONE_LINE]["box"]:
                 raise core.Incomplete(f"{chord} left the view as it was ({variant}): {now[ONE_LINE]['box']}")
+            ctx.hover_point(*POINTER_REST)
+            time.sleep(0.5)
+            now[LONG]["icon"] = read_icon(ctx, now[LONG], slug)
             got[variant][slug] = last = now
     _m["modes"] = got
 
@@ -432,7 +479,7 @@ def mode_metrics(found, variant):
     for n, (slug, label, chord) in enumerate(MODES):
         its = found.get(slug) or {}
         one, long_ = its.get(ONE_LINE), its.get(LONG)
-        if not one or not one["label"] or not long_ or not long_["label"]:
+        if not one or not one["label"] or not long_ or not long_["label"] or not long_.get("icon"):
             raise ValueError(f"{slug} ({variant}): the one-line or the long-named item was not read: "
                              f"{ONE_LINE}={one}, long={long_}, read {sorted(its)}")
         x, y, w, h = one["box"]
@@ -446,6 +493,8 @@ def mode_metrics(found, variant):
         below = sorted((b for b in boxes if b[0] == x and b[1] > y), key=lambda b: b[1])
         rows = [("cell-width", "cell width", w), ("cell-height", "cell height", h),
                 ("icon-slot", "space above the label" if slug in ICON_MODES else "space before the label", slot),
+                ("icon-width", "icon artwork width", long_["icon"][2]),
+                ("icon-height", "icon artwork height", long_["icon"][3]),
                 ("label-line-height", "label line height", lh), ("label-lines", "label lines at most", lines)]
         if col_gaps:
             rows.append(("column-gap", "gap between cells in a row", min(col_gaps)))

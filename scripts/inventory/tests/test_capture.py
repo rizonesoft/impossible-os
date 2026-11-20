@@ -3115,9 +3115,9 @@ class ExplorerViews(unittest.TestCase):
         # Two cells in a row and one below: the gaps are 7 and 9 px.
         icons = {one: {"box": [422, 282, 105, 116], "label": [441, 380, 68, 16]},
                  "Other": {"box": [534, 282, 105, 116], "label": [551, 380, 68, 16]},
-                 long_: {"box": [422, 407, 105, 131], "label": [441, 505, 68, 31]}}
+                 long_: {"box": [422, 407, 105, 131], "label": [441, 505, 68, 31], "icon": [446, 420, 36, 48]}}
         rows = {one: {"box": [422, 307, 598, 24], "label": [444, 310, 236, 19]},
-                long_: {"box": [422, 335, 598, 24], "label": [444, 338, 236, 19]}}
+                long_: {"box": [422, 335, 598, 24], "label": [444, 338, 236, 19], "icon": [426, 339, 12, 16]}}
         return {slug: (icons if slug in self.m.ICON_MODES else rows) for slug, _l, _c in self.m.MODES}
 
     def test_each_mode_gets_its_sizes(self):
@@ -3128,6 +3128,8 @@ class ExplorerViews(unittest.TestCase):
         self.assertEqual(got["views.large-icons.row-gap"]["measure"]["value"], 9)
         self.assertEqual(got["views.details.icon-slot"]["measure"]["value"], 22)             # label left less cell left
         self.assertEqual(got["views.details.row-gap"]["measure"]["value"], 4)
+        self.assertEqual(got["views.large-icons.icon-height"]["measure"]["value"], 48)
+        self.assertEqual(got["views.details.icon-width"]["measure"]["value"], 12)
         self.assertEqual(sum(1 for r in got.values() if r["kind"] == "state"), 8)
         compact = {r["id"] for r in self.m.mode_metrics(self.found(), "compact")}
         self.assertIn("views.details-compact.cell-height", compact)
@@ -3137,6 +3139,27 @@ class ExplorerViews(unittest.TestCase):
         found["tiles"] = {}
         with self.assertRaises(ValueError):
             self.m.mode_metrics(found, "normal")
+        found = self.found()
+        found["tiles"] = {k: {kk: vv for kk, vv in v.items() if kk != "icon"} for k, v in found["tiles"].items()}
+        with self.assertRaises(ValueError):                          # no icon measured
+            self.m.mode_metrics(found, "normal")
+
+    def test_an_icon_is_the_artwork_in_its_slot(self):
+        bg, ink = (255, 255, 255), (40, 90, 200)
+        rows = [[ink if 3 <= x < 9 and 2 <= y < 12 else bg for x in range(14)] for y in range(16)]
+        self.assertEqual(self.m.icon_bounds(rows), (3, 2, 6, 10))
+        self.assertIsNone(self.m.icon_bounds([[bg] * 4] * 4))
+        ruled = [[ink if (y in (0, 15) and x >= 1) or (3 <= x < 9 and 2 <= y < 12) else bg for x in range(14)]
+                 for y in range(16)]                                           # the content view's row lines
+        self.assertEqual(self.m.icon_bounds(ruled), (3, 2, 6, 10))
+        ctx = types.SimpleNamespace(pixels=lambda x, y, w, h: rows)
+        entry = {"box": [100, 50, 14, 16], "label": [114, 50, 40, 16]}
+        self.assertEqual(self.m.read_icon(ctx, entry, "details"), [103, 52, 6, 10])
+        cut = [[ink if x < 9 else bg for x in range(14)] for y in range(16)]   # artwork running off the slot
+        with self.assertRaises(self.m.core.Incomplete):
+            self.m.read_icon(types.SimpleNamespace(pixels=lambda x, y, w, h: cut), entry, "details")
+        self.assertEqual(self.m.icon_slot({"box": [0, 0, 105, 131], "label": [19, 98, 68, 31]}, "large-icons"),
+                         (0, 0, 105, 98))
 
     def test_the_new_folder_names_are_checked(self):
         self.assertEqual(self.m.new_name_records(["New folder", "New folder (2)"])[0]["shortcut"], "Ctrl+Shift+N")
@@ -3342,6 +3365,28 @@ class ExplorerDialogs(unittest.TestCase):
         tree = types.SimpleNamespace(name="Navigation Pane", automation_id="100", class_name="SysTreeView32",
                                      control_type="Tree")
         self.assertTrue(all(any(core.matches(x, v) for v in self.m.ENVIRONMENT_LISTS) for x in (group, tree)))
+        # The Up button names the parent, a wizard page its run-time GUID, the
+        # estimate its time (review, 2026-11-20): none of them may reach an id.
+        up = types.SimpleNamespace(name='Up to "Explorer sample" (Alt + Up Arrow)', automation_id="", class_name="",
+                                   control_type="Button")
+        page = types.SimpleNamespace(name="{2E505C65-F784-4044-A4D5-10DC3DFF2F5F}",
+                                     automation_id="{2E505C65-F784-4044-A4D5-10DC3DFF2F5F}",
+                                     class_name="Win32PropSheetPageHost", control_type="Pane")
+        other = types.SimpleNamespace(name="{1C7014FA-5CC2-4FAF-ABA4-BA677E6650A2}",
+                                      automation_id="{1C7014FA-5CC2-4FAF-ABA4-BA677E6650A2}",
+                                      class_name="Win32PropSheetPageHost", control_type="Pane")
+        eta = types.SimpleNamespace(name="About 2 minutes", automation_id="eltTimeRemaining", class_name="Element",
+                                    control_type="Text")
+        self.assertEqual(core._segment(page, self.m.IDENTITY, self.m.VALUES), "page")
+        self.assertEqual(core._segment(other, self.m.IDENTITY, self.m.VALUES), "page")
+        self.assertNotIn("explorer", core._segment(up, self.m.IDENTITY, self.m.VALUES))
+        self.assertTrue(all(any(core.matches(x, v) for v in self.m.VALUES) for x in (up, page, eta)))
+        made = types.SimpleNamespace(name="Date created: 11/20/2026 9:51 PM", automation_id="", class_name="",
+                                     control_type="Text")
+        ask = types.SimpleNamespace(name="Do you still want to merge the folder created on 11/20/2026 9:51 PM with this one?",
+                                    automation_id="", class_name="", control_type="Text")
+        self.assertEqual([core._segment(x, self.m.IDENTITY, self.m.VALUES) for x in (made, ask)],
+                         ["date-created", "merge-question"])
 
     def view_records(self):
         p = "win11.explorer.folder-options-view"
@@ -3409,9 +3454,18 @@ class ExplorerDialogs(unittest.TestCase):
 
     def test_a_settling_look_is_bounded(self):
         dw = sys.modules["dialog_window"]
+        # Two branches, each within the budget, that together pass it (review, 2026-11-20).
         kid = types.SimpleNamespace(control_type="ListItem", name="App", bounds=(0, 0, 1, 1), el=[])
-        el = types.SimpleNamespace(name="Open with", class_name="", el=[kid, kid, kid])
-        live = types.SimpleNamespace(children=lambda e, cond: e, uia=types.SimpleNamespace(CreateTrueCondition=lambda: None))
+        branch = types.SimpleNamespace(control_type="Group", name="Apps", bounds=(0, 0, 1, 1), el=[kid])
+        el = types.SimpleNamespace(name="Open with", class_name="", el=[branch, branch])
+        asked = []
+
+        def children(e, cond, limit):
+            asked.append(limit)
+            if len(e) > limit:
+                raise dw.core.Incomplete("over")
+            return e
+        live = types.SimpleNamespace(children=children, uia=types.SimpleNamespace(CreateTrueCondition=lambda: None))
         saved = dw.core.MAX_RECORDS
         dw.core.MAX_RECORDS = 2
         try:
@@ -3419,6 +3473,7 @@ class ExplorerDialogs(unittest.TestCase):
                 dw.quiet(types.SimpleNamespace(live=live), el)
         finally:
             dw.core.MAX_RECORDS = saved
+        self.assertEqual(asked, [2])                            # the second level is refused before any fetch
 
     def test_a_renamed_window_is_not_a_new_one(self):
         dw = sys.modules["dialog_window"]
@@ -3484,6 +3539,33 @@ class ExplorerDialogs(unittest.TestCase):
         self.assertEqual(out[f"{t}.files-and-folders.hidden-files.show-hidden-files"]["kind"], "control")
         self.assertEqual(out[f"{t}.navigation-pane.show-libraries"]["kind"], "setting")
         guest.core.authored(list(out.values()), surface="explorer", build="1", source="uia")
+
+    def test_the_folder_merge_message_is_recorded_without_its_time(self):
+        merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
+        self.assertEqual(self.m.merge_message([]), [])                         # no merge scene, no message
+        with self.assertRaises(ValueError):                                     # the scene ran, its message was not read
+            self.m.merge_message([merge])
+        # One element, three paragraphs, the time wrapped in direction marks (the 2026-11-20 capture).
+        self.m._merge_text[:] = ["This destination already contains a folder named 'General items'.\r\n\r\n"
+                                 "If any files have the same names, you will be asked if you want to replace those files."
+                                 "\r\n\r\nDo you still want to merge the folder created on "
+                                 "\u200e11/\u200e20/\u200e2026 \u200f\u200e11:00 PM with this one?"]
+        try:
+            rec = self.m.merge_message([merge])[0]
+        finally:
+            self.m._merge_text.clear()
+        self.assertEqual(rec["parent"], "folder-merge")
+        self.assertEqual(rec["behaviour"], "This destination already contains a folder named 'General items'. If any "
+                         "files have the same names, you will be asked if you want to replace those files. Do you still "
+                         "want to merge the folder created on (the folder's creation time) with this one?")
+        self.m._merge_text[:] = ["This destination already contains a folder named 'General items'. If any files "
+                                 "have the same names. Do you still want to merge the folder created on 2026-11-20?"]
+        try:
+            with self.assertRaises(ValueError):                                 # a time the pattern did not know
+                self.m.merge_message([merge])
+        finally:
+            self.m._merge_text.clear()
+        guest.core.authored([rec], surface="explorer", build="1", source="uia")
 
     def test_metrics_refuse_a_walked_row_away_from_its_computed_id(self):
         _, records = self.view_records()
@@ -3572,7 +3654,7 @@ class DialogsCommon(unittest.TestCase):
         self.m._m["sounds"] = {"SystemHand": "Windows Foreground.wav", "SystemQuestion": None,
                                "SystemExclamation": "Windows Background.wav", "SystemAsterisk": "Windows Background.wav"}
         self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": 0}
-        self.m._m["print"] = {"className": "#32770", "title": "Print"}
+        self.m._m["print"] = {"className": "#32770", "title": "Print", "controls": list(self.m.CLASSIC_PRINT_CONTROLS)}
         try:
             out = {r["id"]: r for r in self.m.METRICS(self.metrics_input())}
         finally:
@@ -3608,7 +3690,10 @@ class DialogsCommon(unittest.TestCase):
         self.m._m["sounds"] = {e: None for e in self.m.ICON_EVENTS.values()}
         self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": None}
         try:
-            for shown in (None, {"className": "Microsoft.UI.Content.DesktopChildSiteBridge", "title": "Print"}):
+            classic = [list(c) for c in self.m.CLASSIC_PRINT_CONTROLS]
+            for shown in (None, {"className": "Microsoft.UI.Content.DesktopChildSiteBridge", "title": "Print", "controls": []},
+                          {"className": "#32770", "title": "Notepad", "controls": [["Button", "OK"]]},   # an error box
+                          {"className": "#32770", "title": "Print", "controls": classic[:2]}):
                 self.m._m.pop("print", None)
                 if shown:
                     self.m._m["print"] = shown
@@ -3617,6 +3702,34 @@ class DialogsCommon(unittest.TestCase):
         finally:
             self.m._m.clear()
         self.assertNotIn("print-modern", [s["slug"] for s in self.m.SCENES])
+
+    def test_the_credential_prompt_waits_for_its_fields(self):
+        kids = [types.SimpleNamespace(automation_id=a) for a in ("CloseButton", "CancelButton")]
+        saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
+        self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth: kids), 0
+        try:
+            with self.assertRaises(self.m.core.Incomplete):           # the partial frame of 2026-11-20
+                self.m.credential_ready(None, None)
+            kids.extend(types.SimpleNamespace(automation_id=a) for a in self.m.CREDENTIAL_FIELDS)
+            self.m.credential_ready(None, None)
+        finally:
+            self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
+
+    def test_a_host_that_exited_needs_no_process_query(self):
+        ran = []
+        ctx = types.SimpleNamespace(powershell=lambda script: ran.append(script))
+        saved = self.m.close_new_windows
+        self.m.close_new_windows = lambda ctx: None
+        try:
+            self.m._hosts[:] = [types.SimpleNamespace(poll=lambda: 0)]
+            self.m.close_scene(ctx)
+            self.assertEqual(ran, [])
+            self.m._hosts[:] = []                                   # a scene that started no host through host()
+            self.m.close_scene(ctx)
+            self.assertEqual(ran, [self.m.END_HOSTS])
+        finally:
+            self.m.close_new_windows = saved
+            self.m._hosts.clear()
 
     def test_the_about_frame_refuses_an_owner_it_would_publish(self):
         self.assertIn("exit 1", self.m.CHECK_OWNER)
