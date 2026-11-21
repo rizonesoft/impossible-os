@@ -31,7 +31,7 @@ title: "TODO-02 -- AI Development System"
 2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/skills/`, `.codex/skills/`, `.other-tool/skills/` etc.).
 3. **External reviewers return findings, never edits.** Codex review output is information the active orchestrator reads and judges. Each finding is verified at file:line and classified Fix / Reject / Accept-XREF before action.
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, don't fork the doctrine.
-5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, and every lane passes the same gates and the same Astra review. External reviewers return findings only.
+5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, an attended Claude repair session in its own worktree is the one writer outside the lanes, and every writer passes the same gates and the same Astra review. External reviewers return findings only.
 
 > [!IMPORTANT]
 > **Current state:** The repository's AI surface today is `CLAUDE.md`, `.claude/settings.json`, and `.claude/skills/`. Codex participates only in review mode: finding-only, received through review discipline. The failed interchangeable-driver approach and the local Codex overnight runner are retired.

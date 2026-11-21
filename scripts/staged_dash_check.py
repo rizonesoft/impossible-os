@@ -3,70 +3,96 @@
 
 The dash rule (CLAUDE.md "Code Style: ASCII Dashes") was enforced only by
 Claude's edit hook, which binds no other lane. This check runs from
-.githooks/pre-commit, so it binds every lane that commits. It reads only the
+.githooks/pre-commit, so it binds every lane that commits. It refuses only
 lines the commit ADDS: the 2026-11-21 tree still holds dashes in about 225
-older files, which are not swept, and an untouched line is never refused.
+older files, which are not swept, and an untouched, moved or renamed line is
+never refused.
+
+No diff text is read, so no diff setting (prefixes, context, inter-hunk
+context, textconv), pathspec mode or file name can change the answer. One
+`git diff --cached --raw -z -M` names each staged file with its old and new
+blob (a rename or copy pairs with its source), one `git cat-file --batch`
+reads the blobs, and a dash line counts as added when the new blob holds more
+copies of that exact line than the old one did. Lines split on LF only.
 
 Generated files are exempt: their text is copied from sources this check has
 already judged (todo/implementation-plan.md copies TODO titles).
 
-No patch text is parsed. Paths come from NUL-separated --name-only, added
-line numbers from hunk headers only, and line text from the staged blob split
-on LF, so no diff display setting, file name or file content can change what
-is read.
-
 Exit 0 when clean, 1 with one line per hit, 2 when the staged changes cannot
 be read. SKIP_DASH_CHECK=1 skips it.
 """
+import collections
 import os
 import subprocess
 import sys
 
 DASHES = (chr(0x2013).encode(), chr(0x2014).encode())
 GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
+NULL_OID = "0" * 40
 TIMEOUT = 60
+BLOB_MODES = {"100644", "100755", "120000"}
 
 
-def _git(*args) -> bytes:
-    return subprocess.run(["git", *args], capture_output=True, timeout=TIMEOUT, check=True).stdout
+def staged_changes(raw: bytes) -> list:
+    """(old_oid, new_oid, path) per staged text-or-link file from --raw -z."""
+    out, parts, i = [], raw.split(b"\0"), 0
+    while i < len(parts):
+        head = parts[i].decode("ascii", "replace")
+        if not head.startswith(":"):
+            i += 1
+            continue
+        fields = head[1:].split(" ")
+        status = fields[4][:1] if len(fields) > 4 else ""
+        two = status in ("R", "C")
+        path_raw = parts[i + 2] if two else parts[i + 1]
+        i += 3 if two else 2
+        old_mode, new_mode, old, new = fields[0], fields[1], fields[2], fields[3]
+        if status == "D" or new_mode not in BLOB_MODES:
+            continue                                       # deleted, or a submodule
+        if old_mode not in BLOB_MODES:
+            old = NULL_OID                                 # was nothing, or a submodule
+        out.append((old, new, path_raw.decode("utf-8", "surrogateescape")))
+    return out
 
 
-def added_line_numbers(patch: bytes) -> list:
-    """Line numbers (1-based, in the staged file) a -U0 diff says were added.
+def read_blobs(oids: list) -> dict:
+    want = sorted({o for o in oids if o != NULL_OID})
+    if not want:
+        return {}
+    res = subprocess.run(["git", "cat-file", "--batch"], input=("\n".join(want) + "\n").encode(),
+                         capture_output=True, timeout=TIMEOUT, check=True).stdout
+    blobs, pos = {}, 0
+    for oid in want:
+        nl = res.index(b"\n", pos)
+        header = res[pos:nl].split(b" ")
+        size = int(header[2])
+        blobs[oid] = res[nl + 1:nl + 1 + size]
+        pos = nl + 1 + size + 1
+    return blobs
 
-    Only the `@@ -a,b +c,d @@` headers are read: every content line of a patch
-    starts with +, - or space, so a header is the only line starting with @@,
-    and its counts do not depend on any diff display setting."""
+
+def added_dash_lines(old: bytes, new: bytes) -> list:
+    """1-based line numbers in `new` holding a dash line `old` did not have as often."""
+    budget = collections.Counter(ln for ln in old.split(b"\n") if any(d in ln for d in DASHES))
     out = []
-    for raw in patch.split(b"\n"):
-        if not raw.startswith(b"@@ "):
-            continue
-        try:
-            start, _, count = raw.split(b" ")[2][1:].partition(b",")
-            first, n = int(start), int(count) if count else 1
-        except (IndexError, ValueError):
-            continue
-        out.extend(range(first, first + n))
+    for n, ln in enumerate(new.split(b"\n"), 1):
+        if any(d in ln for d in DASHES):
+            if budget[ln] > 0:
+                budget[ln] -= 1
+            else:
+                out.append(n)
     return out
 
 
 def hits() -> list:
+    raw = subprocess.run(["git", "diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff"],
+                         capture_output=True, timeout=TIMEOUT, check=True).stdout
+    changes = [c for c in staged_changes(raw) if c[2] not in GENERATED]
+    blobs = read_blobs([o for c in changes for o in c[:2]])
     found = []
-    for raw in _git("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT").split(b"\0"):
-        if not raw:
-            continue
-        path = raw.decode("utf-8", "surrogateescape")
-        if path in GENERATED:
-            continue
-        patch = _git("diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--no-textconv",
-                     "--", ":(literal)" + path)
-        wanted = added_line_numbers(patch)
-        if not wanted:
-            continue                                     # binary, or nothing added
-        lines = _git("cat-file", "blob", ":" + path).split(b"\n")   # LF only, as git counts
-        for n in wanted:
-            if 0 < n <= len(lines) and any(d in lines[n - 1] for d in DASHES):
-                found.append((path, n))
+    for old, new, path in changes:
+        for n in added_dash_lines(blobs.get(old, b""), blobs.get(new, b"")):
+            found.append((path, n))
     return found
 
 
@@ -75,7 +101,7 @@ def main() -> int:
         return 0
     try:
         found = hits()
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
         print(f"[dash-check] the staged changes could not be read: {exc}", file=sys.stderr)
         return 2
     for path, line in found:
