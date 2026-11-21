@@ -48,7 +48,8 @@ pass_cap = 55
 # deep_paths) ended desktop, shell, apps, user and site repair chains after three passes whose worst finding did
 # not fall, so a chain stopped for want of progress rather than for being clean. A loop now ends when its passes
 # come back below `blocking`, or at pass_cap (55 since 2026-11-21, operator; 33 from 2026-11-19). deep_paths chose between the two stall rules
-# and went with them. Keeping chains short is the reconciliation's job: it reviews the newest repair only.
+# and went with them. Every pass reviews the whole section (operator, 2026-11-21); a reconciliation starts at the
+# newest repair.
 blocking = ["P1", "P2", "P3"]
 
 [schedule.plan]
@@ -65,17 +66,19 @@ lenses = ["plan-delivery", "record"]
 
 # Owner decision 2026-11-20: every reconciliation, in every part of the tree, also attacks the newest repair:
 # plan-delivery and record check that the named gaps are closed, repair-adversarial and repair-integration hunt
-# the bugs the repair itself brings in. Both are scoped to the repair (the dispatcher names the last reviewed
-# candidate and the repaired candidate), so a reconciliation never re-attacks the whole section, which is what
-# grew 15 to 19 pass chains before 2026-11-19. Kernel and boot repairs keep full adversarial and integration
-# on top (the conditional entry below). Effort is the operator's Codex setting, as for every pass.
+# the bugs the repair itself brings in. Both start at the repair (the dispatcher names the last reviewed
+# candidate and the repaired candidate) and then cover the whole section, whose range the dispatcher names too:
+# every pass reviews the whole section (operator, 2026-11-21; from 2026-11-20 to then a reconciliation read the
+# repair only). Kernel and boot repairs keep full adversarial and integration on top (the conditional entry
+# below). Effort is the operator's Codex setting, as for every pass.
 [schedule.reconciliation]
 lenses = ["plan-delivery", "record", "repair-adversarial", "repair-integration"]
 
-# The pin's own lenses (owner decision 2026-11-20), each a question for the newest repair only.
+# The pin's own lenses (owner decision 2026-11-20): each starts at the newest repair and covers the whole section
+# (operator, 2026-11-21: every pass reviews the whole section).
 [schedule.lenses]
-repair-adversarial = "In the newest repair only (the last reviewed candidate to the repaired candidate, both named above): how does the newest repair fail on hostile input, races, aborts, cancellation, automation or links? Code an earlier pass reviewed and the repair left unchanged is out of scope."
-repair-integration = "In the newest repair only (the last reviewed candidate to the repaired candidate, both named above): what does the newest repair break in a caller, a contract, another component or an installed copy?"
+repair-adversarial = "Starting with the newest repair (the last reviewed candidate to the repaired candidate, both named above) and then across the whole section: how does it fail on hostile input, races, aborts, cancellation, automation or links?"
+repair-integration = "Starting with the newest repair (the last reviewed candidate to the repaired candidate, both named above) and then across the whole section: what does it break in a caller, a contract, another component or an installed copy?"
 
 [[schedule.conditional]]
 lenses = ["adversarial", "integration"]

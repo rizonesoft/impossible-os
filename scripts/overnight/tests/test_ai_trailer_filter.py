@@ -104,3 +104,14 @@ def test_an_exception_covers_its_own_commit_and_no_other_with_its_prefix(tmp_pat
     rc, out = _scan(tmp_path, [(fake, b"subject\n\nCo-authored-by: S <s@example.org>\n"),
                                ("c6b30e0f625c344393b262697af4aa67decb1b41", b"s\n\nCo-authored-by: S <s@x>\n")])
     assert rc == 1 and "found 1 post-anchor commit(s)" in out and fake[:12] in out, out[-2000:]
+
+
+def test_whitespace_before_the_colon_is_still_the_key(tmp_path):
+    """git parses `Co-Authored-By : x` as the trailer `Co-Authored-By: x`."""
+    import os
+    for line in ("Co-Authored-By : x", "Assisted-by\t: y"):
+        r = subprocess.run(["bash", str(SUITE), "--ai-trailers"], input=f"s\n\n{line}\n", capture_output=True,
+                           text=True, timeout=30, env=dict(os.environ))
+        assert r.stdout.strip() == line, r
+    rc, out = _scan(tmp_path, [("8" * 40, b"subject\n\nCo-Authored-By : S <s@example.org>\n")])
+    assert rc == 1 and "found 1 post-anchor commit(s)" in out, out[-2000:]

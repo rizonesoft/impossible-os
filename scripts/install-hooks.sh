@@ -132,9 +132,9 @@ prune_legacy_symlinks() {
     local removed=0 target wt link
     target="$LEGACY_HOOKS/pre-push"
     if [ -L "$target" ]; then
-        link="$(readlink -f "$target")"
+        link="$(readlink -- "$target")"                   # never fails on a link, even a dangling one
         while IFS= read -r wt; do
-            if [ "$link" = "$(readlink -f "${wt#worktree }/scripts/hooks/pre-push")" ]; then
+            if [ "$link" = "${wt#worktree }/scripts/hooks/pre-push" ]; then
                 rm "$target"
                 removed=1
                 break
@@ -146,13 +146,23 @@ prune_legacy_symlinks() {
 }
 
 remove_all() {
-    local current
-    current="$(git -C "$PROJECT" config --get core.hooksPath 2>/dev/null || true)"
-    if [ -n "$current" ]; then
-        git -C "$PROJECT" config --unset core.hooksPath || true
+    # Only the value this installer writes is removed: the repository's own
+    # .githooks, set in this repository's config. A custom directory, or a
+    # value inherited from global or system config, is the operator's.
+    local current rc=0
+    current="$(git -C "$PROJECT" config --local --get core.hooksPath)" || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then         # 1 means unset; anything else is a config git cannot read
+        echo "core.hooksPath could not be read (git config exit $rc)" >&2
+        return 1
+    fi
+    if [ "$current" = ".githooks" ]; then
+        git -C "$PROJECT" config --local --unset core.hooksPath \
+            || { echo "core.hooksPath could not be unset" >&2; return 1; }
         echo "Unset: core.hooksPath (was: $current)"
+    elif [ -n "$current" ]; then
+        echo "core.hooksPath is $current, not this installer's .githooks: left as it is."
     else
-        echo "core.hooksPath already unset."
+        echo "core.hooksPath is not set in this repository."
     fi
     disable_pre_push
     prune_legacy_symlinks

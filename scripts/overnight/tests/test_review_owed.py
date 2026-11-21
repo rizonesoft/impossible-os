@@ -239,7 +239,7 @@ def test_an_owed_section_is_not_picked_while_the_reviewer_is_down(tmp_path, monk
     blocked, recovered = st.owed_reviews(root)
     assert blocked == {(TODO, 7)} and recovered == []
     assert st.runnable_sections(cache[0], per, [(TODO, 8)], blocked) == [8]
-    assert st.section_list(cache[0], per, [(TODO, 8)], (blocked, []))[0] == \
+    assert next(s for s in st.section_list(cache[0], per, [(TODO, 8)], (blocked, [])) if s["n"] == 7) == \
         {"n": 7, "class": st.NEEDS_WORK, "waiting": True, "review_owed": True}
     # A section that is owed but not built yet is the one being built: it stays runnable.
     cache[0]["sections"][0]["status"] = "/"
@@ -302,7 +302,7 @@ def test_the_work_packet_never_names_an_owed_section_and_names_a_recovered_one_f
     _reviewer(root, down=True)
     _state(root, (TODO, 7))
     sections = st.section_list(cache[0], per, [], st.owed_reviews(root))
-    assert [s.get("review_owed", False) for s in sections] == [True, False]
+    assert [(s["n"], s.get("review_owed", False)) for s in sections] == [(8, False), (7, True)]   # work order
     assert advance._next_section(sections)["n"] == 8
     # Every open section owed: the packet names none.
     cache[0]["sections"][1]["status"] = "x"
@@ -312,7 +312,7 @@ def test_the_work_packet_never_names_an_owed_section_and_names_a_recovered_one_f
     _reviewer(root, down=False)
     _state(root, (TODO, 8))
     sections = st.section_list(cache[0], per, [], st.owed_reviews(root))
-    assert [s.get("review_first", False) for s in sections] == [False, True]
+    assert [(s["n"], s.get("review_first", False)) for s in sections] == [(8, True), (7, False)]  # work order
     assert advance._next_section(sections)["n"] == 8
     # With nothing owed the packet is what it always was.
     (root / ".claude/state/review-owed.json").unlink()

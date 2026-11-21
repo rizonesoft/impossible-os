@@ -221,7 +221,8 @@ def refused(per_parent: list, reader) -> list:
         olds = [old] + [index[path] for index in others]
         gained = min(n - reader.count(o) for o in olds)
         if gained > 0:
-            exact, copies = name_lines([reader.text(o) for o in olds], reader.text(new))
+            exact, copies = name_lines([reader.text(o) for o in dict.fromkeys(olds) if reader.count(o)],
+                                       reader.text(new))
             found.append((path, gained, exact, copies))
     return found
 
@@ -271,21 +272,27 @@ def outgoing(updates: list, remote: str = "") -> list:
     """(label, per-parent changes) for every commit the (old, new) ref updates
     send, merges included, each commit once however many refs carry it: one
     rev-list per update, then one `diff-tree --stdin` fed one line per parent.
-    A new ref takes every commit the destination remote's tracking refs do not
-    hold, and nothing below a remote oid this push names (the destination
-    has those commits, whatever its tracking refs say); a push by URL falls
-    back to every remote's tracking refs."""
-    if not updates:
+    A deletion (new is the null id) sends nothing. Every walk stops at every
+    remote oid the push names, a deletion's included: the destination holds
+    those commits. A new ref also stops at the destination's tracking refs
+    when the destination is a configured remote; a push by URL has no
+    tracking refs of its own, so only the named oids bound it. With no
+    destination at all (a manual --range) every remote's tracking refs do."""
+    if not any(new != NULL_OID for _old, new in updates):
         return []
     known = sorted({old for old, _new in updates if old != NULL_OID})
-    named = any(old == NULL_OID for old, _new in updates) and bool(remote) and subprocess.run(
-        ["git", "config", "--get", f"remote.{remote}.url"], capture_output=True, timeout=TIMEOUT).returncode == 0
+    if not remote:
+        tracking = ["--remotes"]
+    elif any(old == NULL_OID and new != NULL_OID for old, new in updates) and subprocess.run(
+            ["git", "config", "--get", f"remote.{remote}.url"], capture_output=True, timeout=TIMEOUT).returncode == 0:
+        tracking = [f"--remotes={remote}"]
+    else:
+        tracking = []
     pairs, seen = [], set()                               # (commit, parent or None), in input order
     for old, new in updates:
-        if old != NULL_OID:
-            span = [f"{old}..{new}"]
-        else:
-            span = ["--ignore-missing", new, "--not", f"--remotes={remote}" if named else "--remotes", *known]
+        if new == NULL_OID:
+            continue
+        span = ["--ignore-missing", new, "--not", *(tracking if old == NULL_OID else []), *known]
         for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
             commit, *parents = line.split()
             if commit in seen:
@@ -310,8 +317,9 @@ def outgoing(updates: list, remote: str = "") -> list:
 
 def push_updates(lines: str) -> list:
     """(remote old, local new) per ref a push updates, from pre-push's stdin
-    (`<local ref> <local oid> <remote ref> <remote oid>`); a deletion sends
-    nothing and is left out. git separates records by LF and fields by an
+    (`<local ref> <local oid> <remote ref> <remote oid>`). A deletion is kept,
+    with the null id as its new: it sends nothing, but its remote oid is a
+    commit the destination holds. git separates records by LF and fields by an
     ASCII space. The local ref is the source as typed and can hold a space
     (`HEAD@{0 seconds ago}`); the other three fields cannot, so they are
     taken from the right. Any other whitespace belongs to its field."""
@@ -322,8 +330,7 @@ def push_updates(lines: str) -> list:
             if fields:
                 raise ValueError(f"pre-push gave an unreadable line: {line!r}")
             continue
-        if fields[1] != NULL_OID:
-            updates.append((fields[3], fields[1]))
+        updates.append((fields[3], fields[1]))
     return updates
 
 

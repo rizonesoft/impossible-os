@@ -344,7 +344,7 @@ something moved `main` from outside the run.
   (`superpowers:systematic-debugging`), fix, push.
 - CI unreachable is a NOTE in the JSON, never a blocker.
 
-For each `## N.` section in Implementation-Order order, classify it with
+For each `## N.` section, in the work order `--classify` lists them (plan row order), classify it with
 `python3 .claude/hooks/sequencer_triage.py --classify <file>`:
 
 **Per-section efficiency discipline (every expensive turn must carry new

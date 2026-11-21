@@ -99,7 +99,7 @@ done
 # and one after a scissors line all pass in turn; a line test has no block to
 # get wrong. On the gate's whole range it matches only the two grandfathered
 # commits below.
-AI_TRAILER_RE='^[[:space:]]*(co-authored-by|assisted-by|ai-author):'
+AI_TRAILER_RE='^[[:space:]]*(co-authored-by|assisted-by|ai-author)[[:blank:]]*:'
 forbidden_trailers() {
     local rc=0
     LC_ALL=C grep -iE "$AI_TRAILER_RE" || rc=$?             # C: case folds ASCII keys alike in every locale

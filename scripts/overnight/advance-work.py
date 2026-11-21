@@ -72,11 +72,13 @@ def _next_section(sections):
     only its review) comes first in file order, then the rest in plan row
     order: the plan's row order is the build order inside a file as well."""
     open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK" and not s.get("review_owed")]
+    first = next((s for s in open_secs if s.get("review_first")), None)
+    if first:
+        return first
     runnable = [s for s in open_secs if not s.get("waiting")]
-    runnable.sort(key=lambda s: (s.get("plan_order") is not None, s.get("plan_order") or 0))   # stable: file order within a tie
-    return (next((s for s in open_secs if s.get("review_first")), None)
-            or next(iter(runnable), None)
-            or next(iter(open_secs), None))
+    if runnable:                                           # min() keeps the first of equal keys: file order
+        return min(runnable, key=lambda s: (s.get("plan_order") is not None, s.get("plan_order") or 0))
+    return next(iter(open_secs), None)
 
 
 def _cursor_disagreement(state: dict, todo, nxt_sec) -> dict | None:

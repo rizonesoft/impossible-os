@@ -92,5 +92,24 @@ def test_classify_marks_each_buildable_section_with_its_plan_row():
     per = [(48, t.NEEDS_WORK), (49, t.NEEDS_WORK), (60, t.NEEDS_WORK), (70, t.NEEDS_WORK)]
     ready = [("todo/b.md", 1), ("todo/a.md", 48), ("todo/a.md", 60), ("todo/a.md", 49)]
     out = {s["n"]: s for s in t.section_list(entry, per, ready)}
-    assert (out[48]["plan_order"], out[60]["plan_order"], out[49]["plan_order"]) == (1, 2, 3)
+    assert (out[48]["plan_order"], out[60]["plan_order"], out[49]["plan_order"]) == (0, 1, 2)   # place among this file's rows
     assert "plan_order" not in out[70]                            # shipped: owes only its review, goes first
+
+
+def test_the_classify_array_is_in_work_order_so_every_reader_picks_the_same_section():
+    """run_phase_guard derives its cursor from the first open section of the array; the packet picks with
+    _next_section. Both must name the same one."""
+    import importlib.util
+    hook = pathlib.Path(__file__).resolve().parents[3] / ".claude/hooks/sequencer_triage.py"
+    spec = importlib.util.spec_from_file_location("_triage_for_work_order", hook)
+    t = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(t)
+    entry = {"file_path": "todo/a.md", "sections": [{"n": 1, "status": "x"}, {"n": 49, "status": " "},
+                                                    {"n": 52, "status": " "}, {"n": 60, "status": " "},
+                                                    {"n": 61, "status": " "}]}
+    per = [(1, t.DONE), (49, t.NEEDS_WORK), (52, t.NEEDS_WORK), (60, t.NEEDS_WORK), (61, t.NEEDS_WORK)]
+    ready = [("todo/a.md", 60), ("todo/a.md", 61), ("todo/a.md", 49)]
+    secs = t.section_list(entry, per, ready)
+    assert [s["n"] for s in secs] == [60, 61, 49, 52, 1]
+    first_open = next(s["n"] for s in secs if s["class"] == "NEEDS_WORK")     # run_phase_guard's derivation
+    assert first_open == _mod()._next_section(secs)["n"] == 60

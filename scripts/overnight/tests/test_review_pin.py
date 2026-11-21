@@ -269,7 +269,8 @@ def test_a_pin_with_a_stall_cap_and_no_deep_paths_leaves_them_unknown():
 def test_a_pin_lens_is_asked_like_a_built_in_one():
     pin = _pin()
     block = rp.lens_block(pin, "reconciliation", ["src/apps/a.c"])
-    assert "- repair-adversarial: In the newest repair only" in block and "- record: " in block
+    assert "- repair-adversarial: Starting with the newest repair" in block and "- record: " in block
+    assert "across the whole section" in block
     done = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["reconciliation"]) + "\nHIGHEST: none\n"
     assert rp.missing_lens_verdicts(pin, "reconciliation", done, ["src/apps/a.c"]) == ()
     assert rp.missing_lens_verdicts(pin, "reconciliation", "LENS record: clean\n", ["src/apps/a.c"]) == (
@@ -356,6 +357,7 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
     named = f"The newest repair runs from the last reviewed candidate, {last}, to the repaired candidate, HEAD {head}"
     assert named in prompt and prompt.index(named) < prompt.index("- repair-adversarial: ")
+    assert "then review the whole section: git diff " in prompt         # every pass reads the whole section
     (reviews / "manifest.jsonl").write_text(_receipt("completion", "0" * 40) + "\n")
     done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr

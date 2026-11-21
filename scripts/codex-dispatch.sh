@@ -222,7 +222,7 @@ This section was built while the reviewer was unavailable. Its whole change is: 
             echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history (a reset or rebase left its receipt behind); dispatch the completion again" >&2; exit 2; }
         PROMPT="$PROMPT
 
-The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the working tree: git diff $REPAIR_OID"
+The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the working tree: git diff $REPAIR_OID. Look there first, then review the whole section: git diff $BASE_OID HEAD"
     fi
     PROMPT="$PROMPT
 

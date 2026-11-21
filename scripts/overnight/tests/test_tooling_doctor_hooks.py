@@ -107,3 +107,36 @@ def test_remove_from_a_linked_worktree_prunes_the_primary_checkouts_legacy_link(
     assert r.returncode == 0, r
     assert not legacy.is_symlink(), r.stdout
     assert (root / ".githooks/pre-push").is_file()
+
+
+def _plain_repo(tmp_path):
+    root = tmp_path / "p"
+    (root / "scripts/hooks").mkdir(parents=True)
+    shutil.copy(REPO / "scripts/install-hooks.sh", root / "scripts/install-hooks.sh")
+    (root / "scripts/hooks/pre-push").write_text("#!/bin/sh\n")
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True, timeout=30, env=_env())
+    return root
+
+
+def test_remove_keeps_a_dangling_operator_link_and_finishes(tmp_path):
+    root = _plain_repo(tmp_path)
+    subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=root, check=True, timeout=30, env=_env())
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(tmp_path / "gone/dir/pre-push")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0 and "Git hooks removed" in r.stdout, r
+    assert link.is_symlink()
+
+
+def test_remove_leaves_a_hooks_path_it_did_not_write(tmp_path):
+    root = _plain_repo(tmp_path)
+    subprocess.run(["git", "config", "core.hooksPath", "my-hooks"], cwd=root, check=True, timeout=30, env=_env())
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0 and "left as it is" in r.stdout, r
+    got = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=root, capture_output=True, text=True,
+                         timeout=30, env=_env()).stdout.strip()
+    assert got == "my-hooks"

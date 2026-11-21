@@ -510,7 +510,16 @@ def _owed_reviews(root):
     return (frozenset(), owed) if done.returncode == 0 else (frozenset(), [])
 
 
-def runnable_sections(entry, per, ready, blocked=frozenset()):
+def _plan_view(entry, ready):
+    """(status by section, this file's ready sections in plan order or None
+    when the plan cannot answer), read once for a file."""
+    status = {s.get("n"): (s.get("status") or "").strip() for s in entry.get("sections") or []}
+    if ready is None:
+        return status, None
+    return status, [n for f, n in ready if f == entry["file_path"]]
+
+
+def runnable_sections(entry, per, ready, blocked=frozenset(), view=None):
     """NEEDS_WORK sections of one file that the run may start now, in file order.
 
     `blocked` holds (file, n) of built sections whose review is owed while the reviewer is down: not runnable.
@@ -520,8 +529,8 @@ def runnable_sections(entry, per, ready, blocked=frozenset()):
     section, an in-progress [/] included (it can still hold implementation
     work), is runnable only when the plan lists it as buildable. With no plan
     answer, every NEEDS_WORK section is runnable."""
-    status = {s.get("n"): (s.get("status") or "").strip() for s in entry.get("sections") or []}
-    ready_here = None if ready is None else {n for f, n in ready if f == entry["file_path"]}
+    status, ordered = view or _plan_view(entry, ready)
+    ready_here = None if ordered is None else set(ordered)
     out = []
     for n, cls in per:
         if cls != NEEDS_WORK:
@@ -563,19 +572,40 @@ def section_list(entry, per, ready, owed=None):
     the section to work, ahead of every other runnable one.
 
     A section the plan lists as buildable now carries `plan_order`, its place
-    among the plan's rows: the plan's hand-written row order is the build
-    order inside a file too, so a consumer picks by it rather than by section
-    number. A shipped section owing only its review has none and goes first."""
+    among this file's plan rows: the plan's hand-written row order is the build
+    order inside a file too. The array is in work order, so its first open
+    section is the one to work, for every reader (the packet, and the run
+    cursor run_phase_guard derives): the `review_first` debt, then the
+    runnable sections (a shipped one owing only its review first, then the
+    rest by plan row), then the waiting ones, then the owed ones, then the
+    sections with nothing to do, each group in file order."""
     blocked, recovered = owed or (frozenset(), [])
-    rank = {n: i for i, (f, n) in enumerate(ready or []) if f == entry["file_path"]}
-    built = {s.get("n") for s in entry.get("sections") or [] if (s.get("status") or "").strip() == "x"}
-    runnable = set(runnable_sections(entry, per, ready, blocked))
+    view = _plan_view(entry, ready)
+    status, ordered = view
+    rank = {n: i for i, n in enumerate(ordered or [])}
+    built = {n for n, st in status.items() if st == "x"}
+    runnable = set(runnable_sections(entry, per, ready, blocked, view))
     first = next((n for f, n in recovered if f == entry["file_path"] and (n, NEEDS_WORK) in per), None)
-    return [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {}),
+    out = [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {}),
              **({"review_owed": True} if c == NEEDS_WORK and n in built and (entry["file_path"], n) in blocked else {}),
              **({"review_first": True} if n == first else {}),
              **({"plan_order": rank[n]} if c == NEEDS_WORK and n in runnable and n in rank and n not in built else {})}
             for n, c in per]
+    return sorted(out, key=_work_order)
+
+
+def _work_order(s):
+    """Sort key putting `section_list`'s array in the order sections are worked (sorted() keeps file order
+    within a group)."""
+    if s["class"] != NEEDS_WORK:
+        return (5, 0)
+    if s.get("review_first"):
+        return (0, 0)
+    if s.get("review_owed"):
+        return (4, 0)
+    if s.get("waiting"):
+        return (3, 0)
+    return (1, 0) if "plan_order" not in s else (2, s["plan_order"])
 
 
 def pick_next(cache, root, ready="unset", want_ready=False):

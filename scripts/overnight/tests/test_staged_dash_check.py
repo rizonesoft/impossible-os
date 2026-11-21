@@ -427,7 +427,9 @@ def test_a_new_ref_is_judged_against_the_destination_remote(tmp_path):
     r = _run(root, "--range", m.NULL_OID, tip, "origin")
     assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
     assert _run(root, "--range", m.NULL_OID, tip, "mirror").returncode == 0
-    assert _run(root, "--range", m.NULL_OID, tip, "https://example.org/r.git").returncode == 0
+    # A URL has no tracking refs of its own: origin's or mirror's copy says nothing about that repository.
+    r = _run(root, "--range", m.NULL_OID, tip, "https://example.org/r.git")
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
 
 
 def test_a_merge_the_user_commits_is_judged_once_by_commit_msg(tmp_path):
@@ -519,6 +521,7 @@ def test_a_new_ref_to_a_second_remote_judges_what_that_remote_lacks(tmp_path, mo
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
     tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
     _git(root, "update-ref", "refs/remotes/origin/main", tip)
     _git(root, "remote", "add", "second", str(tmp_path / "second.git"))
     stdin = f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n"
@@ -549,23 +552,26 @@ def test_a_real_dry_run_push_with_a_spaced_source_reaches_every_check_intact(tmp
     hook.write_text('#!/usr/bin/env bash\nset -uo pipefail\nREPO_ROOT="$(git rev-parse --show-toplevel)"\n'
                     '. "$REPO_ROOT/.githooks/lib/push-records.sh"\n. "$REPO_ROOT/.githooks/lib/dash-gate.sh"\n'
                     'STDIN_DATA="$(cat)"\nPUSH_RECORDS="$(push_records <<< "$STDIN_DATA")"\n'
-                    'while read -r _l loid rref roid; do echo "REC $loid $rref $roid" >&2; done <<< "$PUSH_RECORDS"\n'
+                    "while IFS=' ' read -r _l loid rref roid; do echo \"REC $loid $rref $roid\" >&2; done"
+                    ' <<< "$PUSH_RECORDS"\n'
                     'dash_push_gate "${1:-}" <<< "$STDIN_DATA" || exit 1\n')
     hook.chmod(0o755)
     bare = tmp_path / "origin.git"
     _git(tmp_path, "init", "-q", "--bare", str(bare))
     _git(root, "remote", "add", "origin", str(bare))
     _git(root, "config", "core.hooksPath", ".githooks")
-    push = ["git", "push", "--dry-run", "origin", "HEAD@{0 seconds ago}:refs/heads/main"]
     tip = _git(root, "rev-parse", "HEAD")
-    r = subprocess.run(push, cwd=root, capture_output=True, text=True, timeout=120, env=_clean_env())
-    assert r.returncode == 0 and f"REC {tip} refs/heads/main {m.NULL_OID}" in r.stderr, r.stdout + r.stderr
+    for source in ("HEAD@{0 seconds ago}", "HEAD@{0\tseconds ago}"):     # a space, and a tab git keeps as typed
+        r = _run_tree(["git", "push", "--dry-run", "origin", f"{source}:refs/heads/main"], root)
+        assert r.returncode == 0 and f"REC {tip} refs/heads/main {m.NULL_OID}" in r.stderr, r.stdout + r.stderr
+    push = ["git", "push", "--dry-run", "origin", "HEAD@{0\tseconds ago}:refs/heads/main"]
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
-    r = subprocess.run(push, cwd=root, capture_output=True, text=True, timeout=120, env=_clean_env())
+    r = _run_tree(push, root)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
     shipped = (REPO / ".githooks/pre-push").read_text()
     assert shipped.count('done <<< "$PUSH_RECORDS"') == 6 and 'done <<< "$STDIN_DATA"' not in shipped
+    assert shipped.count("while IFS=' ' read -r ") == 6 and "while read -r " not in shipped
     assert 'dash_push_gate "${1:-}" <<< "$STDIN_DATA"' in shipped
 
 
@@ -602,7 +608,72 @@ def test_an_ordinary_commit_is_refused_by_the_shipped_pre_commit_hook(tmp_path):
     _git(root, "config", "core.hooksPath", ".githooks")
     before = _git(root, "rev-parse", "HEAD")
     _stage(root, {"doc.md": "new " + DASH + "\n"})
-    r = subprocess.run(["git", "commit", "-q", "-m", "dash"], cwd=root, capture_output=True, text=True, timeout=120,
-                       env=_clean_env())
+    r = _run_tree(["git", "commit", "-q", "-m", "dash"], root)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
     assert _git(root, "rev-parse", "HEAD") == before
+
+
+def _run_tree(cmd, cwd, timeout=120):
+    """Run a command that starts hooks in its own process group, and stop the
+    whole group on timeout, so no hook or checker outlives the test."""
+    import signal
+    proc = subprocess.Popen(cmd, cwd=cwd, env=_clean_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)                 # anything the hook left in its group
+        except ProcessLookupError:
+            pass
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def test_a_deleted_refs_remote_oid_bounds_every_walk(tmp_path, monkeypatch):
+    """Renaming a tag sends nothing: the deletion names the commit the destination holds."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "old " + DASH + "\n"})
+    _commit(root, "historic dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    stdin = f"(delete) {m.NULL_OID} refs/tags/old {tip}\nrefs/tags/new {tip} refs/tags/new {m.NULL_OID}\n"
+    r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
+                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r
+    assert m.push_updates(stdin) == [(tip, m.NULL_OID), (m.NULL_OID, tip)]
+
+
+def test_an_existing_ref_walks_nothing_another_ref_already_holds(tmp_path, monkeypatch):
+    """Two refs fast-forward to one tip from unequal old tips: only the commits past the newer one are sent."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "old " + DASH + "\n"})
+    _commit(root, "historic dash")
+    newer = _git(root, "rev-parse", "HEAD")
+    older = _git(root, "rev-parse", "HEAD~1")
+    _stage(root, {"clean.md": "plain\n"})
+    _commit(root, "clean")
+    tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    stdin = f"refs/heads/main {tip} refs/heads/main {newer}\nrefs/heads/side {tip} refs/heads/side {older}\n"
+    _production_git_in(root, monkeypatch)
+    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), "origin")]
+    assert labels == [f"commit {tip[:12]}: "], labels
+
+
+def test_a_refusal_reads_only_the_parents_that_hold_a_dash(tmp_path):
+    reads = []
+
+    class Reader:
+        def count(self, oid):
+            return {"new": 1, "bin": 0, "dash": 0}[oid]
+
+        def text(self, oid):
+            reads.append(oid)
+            return ("x " + DASH + "\n").encode()
+
+    found = m.refused([[("bin", "new", "f.md")], [("bin", "new", "f.md")]], Reader())
+    assert [f[0] for f in found] == ["f.md"] and reads == ["new"], reads
