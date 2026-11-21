@@ -1475,9 +1475,15 @@ def _claim_receipts(root: Path, state_path: Path, cmd: str) -> list:
             return []
         try:
             credited = json.loads(ledger.read_text())
-            credited = [str(j) for j in credited] if isinstance(credited, list) else []
-        except (OSError, ValueError):  # fail-direction: a missing ledger credits nothing twice within the window
+        except FileNotFoundError:
             credited = []
+        except (OSError, ValueError):  # fail-direction: an unreadable ledger cannot prove a row unspent
+            sys.stderr.write("[codex-review-state] WARN: credited-receipts.json is unreadable; nothing credited.\n")
+            return []
+        if not isinstance(credited, list):
+            sys.stderr.write("[codex-review-state] WARN: credited-receipts.json is malformed; nothing credited.\n")
+            return []
+        credited = [str(j) for j in credited]
         seen = set(credited)
         rows = []
         for row in reversed(_manifest_tail(root)):
@@ -1691,8 +1697,11 @@ def main() -> int:
         state["review_kind"] = review_kind or ""
         state["todo_path"] = todo_path
         state["section"] = section.lstrip("§")
-        # One claimed receipt is what this call launched: the shared record
-        # names that review, never a refused leg the command line led with.
+        # A wrapper call's record names only what its receipts say it launched:
+        # one receipt names that review; several name no single target (each
+        # is stamped from its own row below), never a refused leading leg.
+        if _wrapper and len(_matched) > 1:
+            state["review_kind"], state["todo_path"], state["section"] = "bundle", "", ""
         if len(_matched) == 1:
             _r = _matched[0]
             state["review_kind"] = str(_r.get("kind") or "")
@@ -1745,6 +1754,10 @@ def main() -> int:
             review_kind and todo_path and review_kind not in SECTION_PASS_KINDS
             and (not state.get("background_dispatch") or is_broker)
         )
+        if _wrapper:
+            # Eligibility is per claimed row (decided in the loop below), never
+            # from the prompt the command line happened to lead with.
+            stamp_attempted = bool(_matched) and (not state.get("background_dispatch") or is_broker)
         # A wrapper review is stamped from the receipt row of each log it
         # launched (that row's own kind, TODO and section), so in a bundle a
         # refused leg earns nothing and a launched one cannot lend its stamp.

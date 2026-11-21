@@ -46,8 +46,9 @@ def _hook(root, command, stdout="", stderr=""):
     payload = {"tool_name": "Bash", "session_id": "s", "tool_input": {"command": command},
                "tool_response": {"stdout": stdout, "stderr": stderr}}
     env = {k: v for k, v in os.environ.items() if not k.startswith("SKIP_")}
-    subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
-                   cwd=root, env=env, capture_output=True, timeout=60)
+    r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
+                       cwd=root, env=env, capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stderr          # a refusal is handled, never a crash
     state = root / ".claude/state/last-codex-review.json"
     stamps = root / ".claude/state/last-review-stamps.json"
     return (json.loads(state.read_text()) if state.exists() else None,
@@ -371,3 +372,24 @@ def test_the_limit_reports_124_even_when_it_missed_the_term_window(tmp_path):
             os.killpg(int(pg.read_text().strip()), signal.SIGKILL)
         except (OSError, ValueError):  # the group is already gone: the expected case
             pass
+
+
+
+def test_an_unreadable_ledger_credits_nothing(tmp_path):
+    root = _repo(tmp_path)
+    _row(root, "adversarial", "/x/a.out")
+    (root / ".claude/state/credited-receipts.json").write_text("{not json")
+    state, stamps = _hook(root, _dispatch("adversarial"))
+    assert state is None and stamps == {}, (state, stamps)
+    assert (root / ".claude/state/credited-receipts.json").read_text() == "{not json"
+
+
+def test_two_launched_legs_after_a_refused_one_are_each_stamped_and_name_no_single_target(tmp_path):
+    root = _repo(tmp_path)
+    cmd = (_dispatch("round") + " extra; " + _dispatch("adversarial") + "; " + _dispatch("perf"))
+    _row(root, "adversarial", "/x/a.out")
+    _row(root, "perf", "/x/p.out")
+    state, stamps = _hook(root, cmd)
+    assert state["review_kind"] == "bundle" and state["log_file"] == "", state
+    e = stamps.get(TODO, {})
+    assert isinstance(e.get("adversarial"), int) and isinstance(e.get("perf"), int), e

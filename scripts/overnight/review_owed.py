@@ -100,7 +100,7 @@ def _module(name, path):
     return mod
 
 
-def mark_failed_dispatch(root):
+def mark_failed_dispatch(root, todo, section):
     """Mark the unreceived dispatch record as the confirmed outage's (see `add`), under the recorder's lock and
     only when that record's own log ended in a backend failure. A record another dispatch published meanwhile,
     or one with no single log, is left pending (it is then received by hand). Nothing to mark is fine."""
@@ -113,6 +113,8 @@ def mark_failed_dispatch(root):
     def _mark(state):
         if state.get("received") is True or state.get("outage_debt") is True:
             return None
+        if str(state.get("todo_path") or "") != todo or str(state.get("section") or "") != str(section):
+            return None   # another section's review: its own obligation stands
         log = str(state.get("log_file") or "")
         if not log or leg_state(pathlib.Path(log))[0] != "outage":
             return None
@@ -239,7 +241,7 @@ def main(argv=None):
                 # dispatch record that failed with it is marked as the first one was.
                 down, _why = outage(root, args.now)
                 if down:
-                    mark_failed_dispatch(root)
+                    mark_failed_dispatch(root, args.todo, args.section)
                 return 0
             if verified:
                 return refuse(f"{args.todo} section {args.section} is already stamped; it owes no review")
@@ -255,7 +257,7 @@ def main(argv=None):
                 return refuse(f"the section's plan pass was dispatched at {base[:10]}, which is not in this history")
             records.append({"todo": args.todo, "section": args.section, "base": base, "since": int(time.time())})
             save(root, records)
-            mark_failed_dispatch(root)
+            mark_failed_dispatch(root, args.todo, args.section)
             print(f"review owed: {args.todo} section {args.section} from {base[:10]}; build it, commit it, move on")
             return 0
         if not listed:

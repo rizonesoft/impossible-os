@@ -469,7 +469,7 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
     # unreceived; with nothing recorded, the section's unpushed commit and that state both refuse a rollover.
     failed = str(fx / ".claude/overnight/reviews/leg-0.out")      # the dispatch's own log, failed at the backend
     review.write_text(json.dumps({"received": False, "trigger": "a dispatch that failed at the backend",
-                                  "log_file": failed}))
+                                  "todo_path": todo, "section": "1", "log_file": failed}))
     r = _rollover(fx)
     assert "1 commit(s) not pushed" in r.stderr and "outstanding Codex review not yet received" in r.stderr, r.stderr
     # The outage is confirmed and the section recorded as owed: recording it is what marks the failed
@@ -479,7 +479,7 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
                           capture_output=True, text=True, timeout=60)
     assert owed.returncode == 0, owed.stderr
     assert json.loads(review.read_text()) == {"received": False, "trigger": "a dispatch that failed at the backend",
-                                              "log_file": failed, "outage_debt": True}
+                                              "todo_path": todo, "section": "1", "log_file": failed, "outage_debt": True}
     r = _rollover(fx)
     assert "not pushed" not in r.stderr and "outstanding Codex review" not in r.stderr, r.stderr
     # The reviewer comes back and a review is dispatched: a fresh record, with no mark. It is held to the rule
@@ -493,21 +493,23 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
     # marks nothing.
     again = [sys.executable, str(SCRIPT), "--root", str(fx), "add", "--todo", todo, "--section", "1"]
     base = json.loads((fx / ".claude/state/review-owed.json").read_text())[0]["base"]
-    review.write_text(json.dumps({"received": False, "log_file": failed}))
+    review.write_text(json.dumps({"received": False, "todo_path": todo, "section": "1", "log_file": failed}))
     _reviewer(fx, down=False)
     assert subprocess.run(again, capture_output=True, text=True, timeout=60).returncode == 0
     assert "outage_debt" not in json.loads(review.read_text())
     assert "outstanding Codex review not yet received" in _rollover(fx).stderr
     _reviewer(fx, down=True)
     assert subprocess.run(again, capture_output=True, text=True, timeout=60).returncode == 0
-    assert json.loads(review.read_text()) == {"received": False, "log_file": failed, "outage_debt": True}
+    assert json.loads(review.read_text()) == {"received": False, "todo_path": todo, "section": "1", "log_file": failed, "outage_debt": True}
     assert json.loads((fx / ".claude/state/review-owed.json").read_text())[0]["base"] == base
     assert "outstanding Codex review" not in _rollover(fx).stderr
     # A review another session dispatched meanwhile (its own log still running, or one with no single log)
     # is never marked as the outage's: it stays pending.
     live = fx / ".claude/overnight/reviews/other-round.out"
     live.write_text("working\n")
-    for rec in ({"received": False, "log_file": str(live)}, {"received": False, "log_file": ""}):
+    for rec in ({"received": False, "log_file": str(live)}, {"received": False, "log_file": ""},
+                # another section's review that also failed at the backend keeps its own obligation
+                {"received": False, "todo_path": todo, "section": "9", "log_file": failed}):
         review.write_text(json.dumps(rec))
         assert subprocess.run(again, capture_output=True, text=True, timeout=60).returncode == 0
         assert "outage_debt" not in json.loads(review.read_text()), rec
