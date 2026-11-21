@@ -662,7 +662,7 @@ def measure(args, pages):
 
 
 def check_and_publish(args, pages, out):
-    if capture.recover(capture.JOURNAL):
+    if capture.recover_pending():
         print("operator-capture: rolled back a publication that was interrupted; the previous one is restored")
     build = json.loads((capture.INVENTORY / "reference.json").read_text(encoding="utf-8"))["build"]
     try:
@@ -727,7 +727,7 @@ def check_and_publish(args, pages, out):
         print(f"operator-capture: dry run, {len(recs)} records checked, redacted shots in {lay}; nothing published")
         return 0
     capture.publish(capture.INVENTORY / rel_path, recs, SURFACE, out, states, capture.SHOTS_MANIFEST,
-                    capture.STORE, profile=PROFILE, file=FILE, journal=capture.JOURNAL)
+                    capture.STORE, profile=PROFILE, file=FILE)
     print(f"operator-capture: published {len(recs)} records and {len(states)} shots to {capture.INVENTORY / rel_path}")
     return 0
 

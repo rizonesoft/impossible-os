@@ -154,7 +154,7 @@ def publish(files, journal):
 
 
 def run(args):
-    if capture.recover(capture.JOURNAL):
+    if capture.recover_pending():
         print("baselines: rolled back a publication that was interrupted; the previous one is restored")
     build = json.loads((INVENTORY / "reference.json").read_text(encoding="utf-8"))["build"]
     files = {"read-baselines.py": HERE / "guest" / "read-baselines.py", "baseline_core.py": HERE / "baseline_core.py"}

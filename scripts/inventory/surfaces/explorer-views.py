@@ -115,13 +115,23 @@ def column(ctx, name):
     return ctx.find(within=header(ctx), controlType="SplitButton", name=name, depth=2)
 
 
+def owned_windows(ctx):
+    """The windows the File Explorer window owns, from one look for it: none
+    while it is not there (the caller's poll has its own deadline)."""
+    try:
+        return descendants(ctx, window(ctx, wait=0), 1)
+    except core.Incomplete:
+        return []
+
+
 def owned(ctx, wait=10, **spec):
     """A window the File Explorer window owns (a dialog, a drop-down): UI
     Automation lists it under its owner, not the desktop, and in the raw view
     only (2026-11-19, Choose Details)."""
     deadline = time.monotonic() + wait
     while True:
-        for k in descendants(ctx, window(ctx), 1):
+        # One look at the owner per poll: its own 20 s wait would outlast this one.
+        for k in owned_windows(ctx):
             if k.class_name not in OWNED_SKIP and core.matches(k, spec):
                 return k
         if time.monotonic() > deadline:
@@ -410,8 +420,10 @@ def measure_tip(ctx):
     while True:
         # A tooltip is a window File Explorer owns, so UI Automation may list
         # it under the File Explorer window as well as on the desktop.
-        tops = list(ctx.live.children(ctx.live.uia.GetRootElement())) + descendants(ctx, window(ctx), 1)
+        tops = list(ctx.live.children(ctx.live.uia.GetRootElement()))
         tip = next((w for w in tops if w.control_type == "ToolTip" and w.name), None)
+        if tip is None:
+            tip = next((w for w in owned_windows(ctx) if w.control_type == "ToolTip" and w.name), None)
         if tip is not None:
             break
         if time.monotonic() > deadline:

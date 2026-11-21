@@ -45,8 +45,9 @@ DATE_VALUE = {"className": "TextBlock", "namePrefix": "\u200e"}
 _root = {}                               # the element the open scene's opener found, which its walks read
 
 
-def window(ctx):
-    return ctx.find_window(timeout=WAIT, foreground=False, **SPEC)
+def window(ctx, wait=WAIT):
+    """The File Explorer window; wait=0 is one look, for a poll with its own deadline."""
+    return ctx.find_window(timeout=wait, foreground=False, **SPEC)
 
 
 def hwnd(ctx):
@@ -140,11 +141,24 @@ def cloud_entry(ctx):
 def descendants(ctx, el, depth, skip=()):
     """Every element under `el` to `depth` levels, from the raw view, without
     going into an element whose class is in `skip`."""
-    out, level = [], [el]
+    # One budget for the whole look, charged as each parent's children come and
+    # before the skip filter, as the walk's is (review, 2026-11-21): a wide tree
+    # is refused rather than read whole.
+    out, level, fetched = [], [el], 0
+    cond = ctx.live.uia.CreateTrueCondition()
     for _ in range(depth):
-        level = [k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())
-                 if k.class_name not in skip]
-        out.extend(level)
+        below = []
+        for e in level:
+            left = core.MAX_RECORDS - fetched
+            if left <= 0:
+                raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
+            kids = ctx.live.children(e.el, cond, left)
+            fetched += len(kids)
+            below.extend(k for k in kids if k.class_name not in skip)
+        out.extend(below)
+        if not below:
+            break
+        level = below
     return out
 
 

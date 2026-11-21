@@ -139,6 +139,64 @@ def folder_picker():
     ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtbl[VT_RELEASE])(dialog)
 
 
+# The Save dialog with an application's own control: IFileDialogCustomize adds a
+# labelled Encoding selector, the slot Notepad fills (section 12's extra control).
+CLSID_FILE_SAVE_DIALOG = "{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}"
+IID_IFILE_SAVE_DIALOG = "{84BCCD23-5FDE-4CDB-AEA4-AF64B83D78AB}"
+IID_IFILE_DIALOG_CUSTOMIZE = "{E6FDD21A-163F-4975-9C8C-A69F1BA37034}"
+IID_ISHELL_ITEM = "{43826D1E-E718-42EE-BC55-A1E261C37BFE}"
+# IFileDialog: SetFileTypes (4), SetFolder (12), SetFileName (15).
+VT_SET_FILE_TYPES, VT_SET_FOLDER, VT_SET_FILE_NAME, VT_QUERY_INTERFACE = 4, 12, 15, 0
+# IFileDialogCustomize: AddComboBox (6), AddControlItem (19),
+# SetSelectedControlItem (25), StartVisualGroup (26), EndVisualGroup (27).
+VT_ADD_COMBO, VT_ADD_ITEM, VT_SELECT_ITEM, VT_START_GROUP, VT_END_GROUP = 6, 19, 25, 26, 27
+ENCODING_GROUP, ENCODING_COMBO = 1, 2
+ENCODING_LABEL = "Encoding:"
+ENCODINGS = ("UTF-8", "UTF-8 with BOM", "UTF-16 LE", "UTF-16 BE", "ANSI")
+
+
+class COMDLG_FILTERSPEC(ctypes.Structure):
+    _fields_ = [("pszName", wintypes.LPCWSTR), ("pszSpec", wintypes.LPCWSTR)]
+
+
+shell32.SHCreateItemFromParsingName.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(GUID),
+                                                ctypes.POINTER(ctypes.c_void_p)]
+
+
+def com_method(obj, index, *argtypes, restype=ctypes.HRESULT):
+    vtbl = ctypes.cast(ctypes.cast(obj, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+    return lambda *args: ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(vtbl[index])(obj, *args)
+
+
+def save_with_encoding():
+    ole32.CoInitialize(None)
+    dialog, custom, folder = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(ctypes.byref(GUID(CLSID_FILE_SAVE_DIALOG)), None, CLSCTX_INPROC_SERVER,
+                                ctypes.byref(GUID(IID_IFILE_SAVE_DIALOG)), ctypes.byref(dialog))
+    if hr:
+        raise SystemExit(f"dialog_host: CoCreateInstance(FileSaveDialog) failed: {hr & 0xFFFFFFFF:#x}")
+    com_method(dialog, VT_QUERY_INTERFACE, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))(
+        ctypes.byref(GUID(IID_IFILE_DIALOG_CUSTOMIZE)), ctypes.byref(custom))
+    specs = (COMDLG_FILTERSPEC * 2)(COMDLG_FILTERSPEC("Text documents (*.txt)", "*.txt"),
+                                    COMDLG_FILTERSPEC("All files (*.*)", "*.*"))
+    com_method(dialog, VT_SET_FILE_TYPES, wintypes.UINT, ctypes.c_void_p)(2, specs)
+    shell32.SHCreateItemFromParsingName(SAMPLE, None, ctypes.byref(GUID(IID_ISHELL_ITEM)), ctypes.byref(folder))
+    com_method(dialog, VT_SET_FOLDER, ctypes.c_void_p)(folder)
+    com_method(dialog, VT_SET_FILE_NAME, wintypes.LPCWSTR)("Notes.txt")
+    com_method(custom, VT_START_GROUP, wintypes.DWORD, wintypes.LPCWSTR)(ENCODING_GROUP, ENCODING_LABEL)
+    com_method(custom, VT_ADD_COMBO, wintypes.DWORD)(ENCODING_COMBO)
+    for n, name in enumerate(ENCODINGS):
+        com_method(custom, VT_ADD_ITEM, wintypes.DWORD, wintypes.DWORD, wintypes.LPCWSTR)(ENCODING_COMBO, n, name)
+    com_method(custom, VT_SELECT_ITEM, wintypes.DWORD, wintypes.DWORD)(ENCODING_COMBO, 0)
+    com_method(custom, VT_END_GROUP)()
+    try:
+        com_method(dialog, VT_SHOW, wintypes.HWND)(None)
+    except OSError:
+        pass                              # cancelled: HRESULT_FROM_WIN32(ERROR_CANCELLED)
+    for obj in (folder, custom, dialog):
+        com_method(obj, VT_RELEASE, restype=wintypes.ULONG)()
+
+
 class BROWSEINFOW(ctypes.Structure):
     _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p), ("pszDisplayName", wintypes.LPWSTR),
                 ("lpszTitle", wintypes.LPCWSTR), ("ulFlags", wintypes.UINT), ("lpfn", ctypes.c_void_p),
@@ -388,7 +446,8 @@ def crash():
 
 KINDS = {
     "open": lambda: file_dialog(), "open-multi": lambda: file_dialog(multi=True),
-    "save": lambda: file_dialog(save=True, name="Notes.txt"), "folder-pick": folder_picker,
+    "save": lambda: file_dialog(save=True, name="Notes.txt"), "save-encoding": save_with_encoding,
+    "folder-pick": folder_picker,
     "browse-folder": browse_for_folder, "color": lambda: color(False), "color-full": lambda: color(True),
     "font": font, "find": lambda: find_replace(False), "replace": lambda: find_replace(True),
     "page-setup": page_setup, "print": print_dialog, "task-dialog": task_dialog, "credential": credential,

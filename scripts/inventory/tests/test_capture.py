@@ -1978,6 +1978,44 @@ capture.publish(t / "inventory" / "notepad-smoke" / "window.json", [{{"id": "win
         self.assertEqual(leftovers, [])
         self.assertFalse(capture.recover(self.journal))   # nothing left to do
 
+    def test_a_swap_killed_in_one_checkout_is_rolled_back_by_another(self):
+        # Checkout A dies mid-swap, publishing with the default journal (beside
+        # the shared store); checkout B's next run must find it and roll it back
+        # before it publishes, so A has nothing left to undo later (review, 2026-11-21).
+        self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
+        shot = self.store / "notepad-smoke" / "rest.fhd-100.png"
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, shot)}
+        script = f"""
+import importlib.util, os, pathlib
+spec = importlib.util.spec_from_file_location("capture_host", {str(INV / "capture.py")!r})
+capture = importlib.util.module_from_spec(spec); spec.loader.exec_module(capture)
+real = os.replace
+def dying(src, dst):
+    if str(dst).endswith(".old") and "window.json" in str(dst):
+        real(src, dst)
+        os._exit(9)
+    return real(src, dst)
+capture.os.replace = dying
+capture.JOURNAL = pathlib.Path({str(self.tmp / "a" / "publish.journal")!r})
+t = pathlib.Path({str(self.tmp)!r})
+capture.publish(t / "inventory" / "notepad-smoke" / "window.json", [{{"id": "win11.notepad-smoke.window", "label": "New"}}],
+                "notepad-smoke", t / "out", {self.STATE!r}, t / "shots.json", t / "store", profile="fhd-100")
+"""
+        r = capture.subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 9, r.stderr)
+        shared = capture.journal_for(self.store)
+        self.assertTrue(shared.exists())
+        self.assertFalse((self.tmp / "a" / "publish.journal").exists())        # nothing private to checkout A
+        saved = capture.STORE, capture.JOURNAL
+        capture.STORE, capture.JOURNAL = self.store, self.tmp / "b" / "publish.journal"   # checkout B's run
+        try:
+            self.assertTrue(capture.recover_pending())
+            self.assertFalse(capture.recover_pending())
+        finally:
+            capture.STORE, capture.JOURNAL = saved
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(shared.exists())
+
     def test_a_failed_record_write_leaves_the_file_whole(self):
         core.write_records(self.tmp / "r.json", [{"id": "a"}])
         real = json.dumps
@@ -3076,6 +3114,40 @@ class DesktopMetrics(unittest.TestCase):
         self.assertEqual(len(orders), len(set(orders)))
 
 
+class ExplorerDescendants(unittest.TestCase):
+    """shared/explorer_window.py descendants(): one element budget for the look."""
+
+    def setUp(self):
+        guest.load_surface("explorer-frame")
+        self.ew = sys.modules["explorer_window"]
+
+    def test_wide_branches_together_are_refused(self):
+        # Two branches, each within the budget, that together pass it (review, 2026-11-21).
+        leaf = lambda: types.SimpleNamespace(class_name="Leaf", name="x", el=[])   # noqa: E731
+        branch = types.SimpleNamespace(class_name="Group", name="g", el=[leaf(), leaf()])
+        root = types.SimpleNamespace(class_name="Root", name="r", el=[branch, branch])
+        asked = []
+
+        def children(e, cond, limit):
+            asked.append(limit)
+            if len(e) > limit:
+                raise self.ew.core.Incomplete("over")
+            return e
+        ctx = types.SimpleNamespace(live=types.SimpleNamespace(
+            children=children, uia=types.SimpleNamespace(CreateTrueCondition=lambda: None)))
+        saved = self.ew.core.MAX_RECORDS
+        self.ew.core.MAX_RECORDS = 5
+        try:
+            with self.assertRaises(self.ew.core.Incomplete):
+                self.ew.descendants(ctx, root, 3)
+            self.assertEqual(asked, [5, 3, 1])         # what was left, after each fetch was charged
+            self.assertEqual(len(self.ew.descendants(ctx, root, 1)), 2)
+            skipped = self.ew.descendants(ctx, root, 2, skip=("Group",))
+            self.assertEqual(skipped, [])               # a skipped parent's children are never fetched
+        finally:
+            self.ew.core.MAX_RECORDS = saved
+
+
 class ExplorerMenu(unittest.TestCase):
     """shared/explorer_window.py menu(): the open menu, never a closed one's."""
 
@@ -3177,6 +3249,17 @@ class ExplorerViews(unittest.TestCase):
             el = types.SimpleNamespace(control_type="CheckBox", automation_id=aid, class_name="", name="")
             given = next((lab for spec, lab in self.m.LABELS if core.matches(el, spec)), None)
             self.assertEqual(given, label)
+
+    def test_an_owner_lookup_is_one_look(self):
+        # The info tip and owned-window polls have their own deadlines (review, 2026-11-21).
+        waits = []
+
+        def window(ctx, wait=20):
+            waits.append(wait)
+            raise self.m.core.Incomplete("no File Explorer window")
+        with mock.patch.object(self.m, "window", window):
+            self.assertEqual(self.m.owned_windows(None), [])
+        self.assertEqual(waits, [0])
 
     def test_a_measured_item_off_screen_is_brought_into_view(self):
         shown = {self.m.ONE_LINE: {"box": [0, 0, 1, 1], "label": [0, 0, 1, 1]}}
@@ -3540,6 +3623,15 @@ class ExplorerDialogs(unittest.TestCase):
         self.assertEqual(out[f"{t}.navigation-pane.show-libraries"]["kind"], "setting")
         guest.core.authored(list(out.values()), surface="explorer", build="1", source="uia")
 
+    def test_the_merge_setting_is_put_back_as_it_was(self):
+        # Saved once (absent, 0 or 1) before the override, restored exactly (review, 2026-11-21).
+        show, hide = self.m.SHOW_MERGE, self.m.HIDE_MERGE
+        self.assertLess(show.index("Test-Path -LiteralPath $saved"), show.index("-Value 0"))
+        self.assertIn("'absent'", show)
+        self.assertIn("if ($v -eq 'absent') { Remove-ItemProperty", hide)
+        self.assertIn("-Value ([int]$v)", hide)
+        self.assertIn("Remove-Item -LiteralPath $saved", hide)
+
     def test_the_folder_merge_message_is_recorded_without_its_time(self):
         merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
         self.assertEqual(self.m.merge_message([]), [])                         # no merge scene, no message
@@ -3653,7 +3745,7 @@ class DialogsCommon(unittest.TestCase):
     def test_metrics_give_the_long_text_width_and_each_icon_sound(self):
         self.m._m["sounds"] = {"SystemHand": "Windows Foreground.wav", "SystemQuestion": None,
                                "SystemExclamation": "Windows Background.wav", "SystemAsterisk": "Windows Background.wav"}
-        self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": 0}
+        self.m._m["crash"] = {"windows": [], "running": 0, "exit": 0xC0000602, "HKLM": None, "HKCU": 0}
         self.m._m["print"] = {"className": "#32770", "title": "Print", "controls": list(self.m.CLASSIC_PRINT_CONTROLS)}
         try:
             out = {r["id"]: r for r in self.m.METRICS(self.metrics_input())}
@@ -3678,7 +3770,9 @@ class DialogsCommon(unittest.TestCase):
         self.m._m["sounds"] = {e: None for e in self.m.ICON_EVENTS.values()}
         try:
             for crash in ({"windows": [("#32770", "x")], "running": 0, "HKLM": None, "HKCU": None},
-                          {"windows": [], "running": 1, "HKLM": None, "HKCU": None}):
+                          {"windows": [], "running": 1, "HKLM": None, "HKCU": None},
+                          # a host that died of a Python error before it raised (review, 2026-11-21)
+                          {"windows": [], "running": 0, "exit": 1, "HKLM": None, "HKCU": None}):
                 self.m._m["crash"] = crash
                 with self.assertRaises(ValueError):
                     self.m.METRICS(self.metrics_input())
@@ -3688,7 +3782,7 @@ class DialogsCommon(unittest.TestCase):
     def test_metrics_refuse_a_print_window_that_is_not_the_classic_dialog(self):
         # A modern Print window must be walked as a scene, not summarised (review, 2026-11-20).
         self.m._m["sounds"] = {e: None for e in self.m.ICON_EVENTS.values()}
-        self.m._m["crash"] = {"windows": [], "running": 0, "HKLM": None, "HKCU": None}
+        self.m._m["crash"] = {"windows": [], "running": 0, "exit": 0xC0000602, "HKLM": None, "HKCU": None}
         try:
             classic = [list(c) for c in self.m.CLASSIC_PRINT_CONTROLS]
             for shown in (None, {"className": "Microsoft.UI.Content.DesktopChildSiteBridge", "title": "Print", "controls": []},
@@ -3714,6 +3808,19 @@ class DialogsCommon(unittest.TestCase):
             self.m.credential_ready(None, None)
         finally:
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
+
+    def test_the_encoding_slot_is_waited_for(self):
+        kids = [types.SimpleNamespace(control_type="Edit", name="File name:")]
+        saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
+        self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth: kids), 0
+        try:
+            with self.assertRaises(self.m.core.Incomplete):           # an uncustomised dialog
+                self.m.encoding_ready(None, None)
+            kids.append(types.SimpleNamespace(control_type="ComboBox", name="Encoding:"))
+            self.m.encoding_ready(None, None)
+        finally:
+            self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
+        self.assertIn("save-as-encoding", [sc["slug"] for sc in self.m.SCENES])
 
     def test_a_host_that_exited_needs_no_process_query(self):
         ran = []

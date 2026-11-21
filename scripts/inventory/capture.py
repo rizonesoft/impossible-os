@@ -86,10 +86,29 @@ WORK = pathlib.Path("/mnt/d/11/captures")
 RUN_MARGIN = 1800
 STANDIN_STOP_GRACE = 120   # run.py's own teardown: QEMU's 30 s grace, twice, plus the reap
 LOCK = REPO / "build" / "inventory" / "capture.lock"
-JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap, rolled back by the next run
+JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap of checkout files only (baselines)
 # The shot store is shared by every checkout on this machine; this lock beside it
 # keeps two checkouts from publishing to it, or recovering into it, at once.
 STORE_LOCK = STORE.with_name(STORE.name + ".lock")
+
+
+def journal_for(store):
+    """Where a swap into `store` journals itself: beside the shared store, so the
+    next run from ANY checkout finds and rolls back a swap another one was killed
+    in (review, 2026-11-21: a per-checkout journal let a second checkout publish
+    over a half-swapped shot, which the first one's later rollback then undid).
+    With no drive under the store (a CI runner) there is nothing shared, and the
+    checkout's journal serves."""
+    return store.with_name(store.name + ".journal") if store.parent.is_dir() else JOURNAL
+
+
+def recover_pending():
+    """Roll back every unfinished swap this run could meet: the shared store's
+    and the checkout's. Call under held(). True when one was rolled back."""
+    found = False
+    for journal in dict.fromkeys((journal_for(STORE), JOURNAL)):
+        found = recover(journal) or found
+    return found
 
 
 def winpath(p):
@@ -399,7 +418,7 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
     record file the screenshots belong to when the target is not that file
     (an observation file <file>.<profile>.json belongs to <file>).
     """
-    journal = journal or JOURNAL
+    journal = journal or journal_for(store)
     names = [s["file"] for s in states]
     if len(set(names)) != len(names):
         raise OSError(f"two screenshots of {surface} share a file name; nothing staged")
@@ -578,7 +597,7 @@ def main(argv=None):
 
 
 def capture_and_publish(args):
-    if recover(JOURNAL):
+    if recover_pending():
         print("capture: rolled back a publication that was interrupted; the previous one is restored")
     out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare, args.standin,
                         module=args.module)

@@ -726,7 +726,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the wizards: extract compressed folder, map network drive, add a network location, format, and the eject and "problem ejecting" messages
   - Capture Open with: the app list frame, the "always" and "just once" buttons, and the "choose another app" form
   - Done when: `check-inventory.py --surface explorer` passes; every property sheet tab is a `dialogTab` whose `itemCount` matches, and the Folder Options View tree has one `setting` per entry.
-- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (509 records; 30 dialogs, all seven message box button sets in order)
+- [x] Common Dialogs: `docs/design/inventory/dialogs/common.json` (553 records; 31 dialogs, the Save dialog with an application's Encoding control, all seven message box button sets in order)
   - Capture the Open and Save dialogs
     - The embedded Explorer frame, the file name row, the type filter, the encoding or extra control slot, the button row
     - The overwrite prompt, and the multi-select and folder-pick variants

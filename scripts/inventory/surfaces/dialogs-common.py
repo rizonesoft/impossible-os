@@ -60,6 +60,8 @@ CLASSIC_PRINT = "#32770"                 # the Win32 dialog class PrintDlgEx sho
 # Controls of the classic Print dialog the Print scene walked (common.json).
 CLASSIC_PRINT_CONTROLS = (("Button", "Preferences"), ("Button", "Find Printer..."), ("Button", "Print"),
                           ("List", "Folder View"))
+# RaiseFailFastException with no record ends the process with STATUS_FAIL_FAST_EXCEPTION.
+FAIL_FAST_EXIT = 0xC0000602
 HOST_EXIT_WAIT = 3                       # s for a dialog host to end once its dialog closed
 END_HOSTS = r"""
 function Hosts { @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" | Where-Object { $_.CommandLine -like '*dialog_host.py*' }) }
@@ -157,6 +159,23 @@ def close_scene(ctx):
 CREDENTIAL_FIELDS = ("EditField_0", "PasswordField_1", "OkButton")
 
 
+# The application's own control in the Save dialog (dialog_host's save-encoding):
+# a combo box under the label it was added with.
+ENCODING_LABEL = "Encoding:"
+
+
+def encoding_ready(ctx, el):
+    deadline = time.monotonic() + DIALOG_WAIT
+    while True:
+        kids = descendants(ctx, el, 8)
+        if any(k.control_type == "ComboBox" and ENCODING_LABEL.rstrip(":") in (k.name or "") for k in kids):
+            return
+        if time.monotonic() > deadline:
+            raise core.Incomplete("the Save dialog showed no Encoding combo box: "
+                                  f"{sorted({(k.control_type, k.name) for k in kids if k.name})[:40]}")
+        time.sleep(0.5)
+
+
 def credential_ready(ctx, el):
     deadline = time.monotonic() + DIALOG_WAIT
     while True:
@@ -210,7 +229,7 @@ def measure_crash(ctx):
         return
     baseline(ctx)
     before = top_windows(ctx)
-    ctx.launch(sys.executable, str(HOST), "crash")
+    proc = ctx.launch(sys.executable, str(HOST), "crash")
     deadline, shown = time.monotonic() + WER_WAIT, []
     known = {w[0] for w in before}            # by handle, as appeared(): a renamed window is not a new one
     while time.monotonic() < deadline and not shown:
@@ -219,8 +238,9 @@ def measure_crash(ctx):
     if shown:
         close_new_windows(ctx)
     running = int(ctx.powershell(COUNT_HOSTS).strip())   # before the cleanup, which would end a held one
+    exit_code = proc.poll()                               # the host's own status: did it reach the fail-fast?
     ctx.powershell(END_HOSTS)
-    _m["crash"] = {"windows": shown, "running": running, **json.loads(ctx.powershell(READ_WER))}
+    _m["crash"] = {"windows": shown, "running": running, "exit": exit_code, **json.loads(ctx.powershell(READ_WER))}
 
 
 def measure_print(ctx):
@@ -269,6 +289,7 @@ SCENES += [
     scene("open", "Open", host("open")),
     scene("open-several", "Open: several files", host("open-multi")),
     scene("save-as", "Save As", host("save")),
+    scene("save-as-encoding", "Save As with an application's Encoding control", host("save-encoding", ready=encoding_ready)),
     scene("confirm-save-as", "Confirm Save As", save_overwrite),
     scene("select-folder", "Select Folder", host("folder-pick")),
     scene("browse-for-folder", "Browse For Folder", host("browse-folder")),
@@ -313,6 +334,10 @@ def METRICS(records):
         raise ValueError(f"a crash showed {crash['windows']}: walk it as a scene")
     if crash["running"]:
         raise ValueError(f"{crash['running']} crashed host(s) were still running {WER_WAIT} s after the crash")
+    # A host that failed before it raised (a Python error at start-up) leaves
+    # the same empty screen; only the fail-fast status shows the crash happened.
+    if crash.get("exit") != FAIL_FAST_EXIT:
+        raise ValueError(f"the crash host ended with {crash.get('exit')!r}, not the fail-fast status {FAIL_FAST_EXIT:#x}")
 
     shown = _m.get("print")
     if shown is None:

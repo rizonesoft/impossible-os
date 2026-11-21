@@ -520,14 +520,29 @@ def open_conflict(compare=False):
 
 
 # Windows 11 hides the folder merge prompt by default ("Hide folder merge
-# conflicts", on): the scene turns it off for its copy and back to the default
-# on close. The child files differ, so no file conflict stands in for it.
+# conflicts", on): the scene turns it off for its copy and restores what it
+# was on close. The child files differ, so no file conflict stands in for it.
+# The value it held is kept in a file first (not overwritten by a rerun after a
+# kill, which would save the scene's own 0) and put back exactly: absent, 0 or 1.
+MERGE_KEY = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
+MERGE_SAVED = "$env:TEMP\\inventory-merge.txt"
 SHOW_MERGE = r"""
-Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideMergeConflicts -Value 0 -Type DWord
-"""
+$saved = "%s"
+if (-not (Test-Path -LiteralPath $saved)) {
+    $v = (Get-ItemProperty -Path '%s' -Name HideMergeConflicts -ErrorAction SilentlyContinue).HideMergeConflicts
+    $(if ($null -eq $v) { 'absent' } else { [string]$v }) | Set-Content -LiteralPath $saved -Encoding ASCII
+}
+Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value 0 -Type DWord
+""" % (MERGE_SAVED, MERGE_KEY, MERGE_KEY)
 HIDE_MERGE = r"""
-Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideMergeConflicts -ErrorAction SilentlyContinue
-"""
+$saved = "%s"
+if (Test-Path -LiteralPath $saved) {
+    $v = (Get-Content -LiteralPath $saved -Raw).Trim()
+    if ($v -eq 'absent') { Remove-ItemProperty -Path '%s' -Name HideMergeConflicts -ErrorAction SilentlyContinue }
+    else { Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value ([int]$v) -Type DWord }
+    Remove-Item -LiteralPath $saved -Force
+}
+""" % (MERGE_SAVED, MERGE_KEY, MERGE_KEY)
 MERGE_TEXT = "already contains a folder named"
 # The prompt's message sits in elements the control view does not list
 # (2026-11-20), so the opener keeps its lines and METRICS records them, each

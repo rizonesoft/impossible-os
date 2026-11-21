@@ -177,7 +177,10 @@ def send_keys(seq, what):
     time.sleep(0.3)
 
 
-KEY_HOLD = 0.05                # a chord's keys stay down this long before they are let go
+# A chord's keys stay down for send_keys' 0.3 s settle plus KEY_HOLD, 0.35 s in
+# all: the timing every published capture was taken with (review, 2026-11-21,
+# asked for 0.05 s; shortening it would change every surface's input unverified).
+KEY_HOLD = 0.05
 
 
 def keys(chord):

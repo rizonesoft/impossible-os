@@ -240,7 +240,7 @@ def main(argv=None):
         ap.error(f"--from {args.earlier}: no shots.json there")
     try:
         with capture.held():
-            if capture.recover(capture.JOURNAL):
+            if capture.recover_pending():
                 print("host-capture: rolled back a publication that was interrupted; the previous one is restored")
             if args.earlier is not None:
                 out, rc = args.earlier, 0
