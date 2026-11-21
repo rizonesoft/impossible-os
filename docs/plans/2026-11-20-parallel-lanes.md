@@ -47,3 +47,36 @@ All in [TODO-08](../../todo/00-infrastructure/TODO-08-automation-hardening.md):
 | 59 | The pilot (`**Needs:** operator`) |
 
 The review-machinery ideas measured on 2026-11-20 are TODO-08 sections 60 to 67: atomic receipts, a P2 with a failing test, blocking per path, a redesign pass on repeated findings, repair-only re-dispatches, tools in front of lenses, lens yield, and the push wait overlapping the next plan review.
+
+## Operator runbook
+
+Check progress at any time with `grep -A11 "Two engines, one gate set" todo/implementation-plan.md`, which prints the twelve lanes rows (the box column: `[x]` done, `[/]` started or parked, `[ ]` not started).
+
+### Stage 1: the run builds the lanes
+
+1. Start the run with the "Impossible OS - Start run" shortcut. It begins with the first lanes section, "Two engines, one gate set".
+2. Leave it working through §48 to §58. Start no lane yet: until §53 there is nothing to start, and until §56 nothing watches a lane.
+
+### Stage 2: the frozen-file step (§54)
+
+3. Once §53 shows `[x]`, the run parks §54 (`scripts/run.sh` is frozen) and goes on with §55. Open the "Impossible OS (Claude)" shortcut and say: "Do the section The run knows its lanes". That session works in a separate worktree and pushes to main; the run keeps going.
+
+### Stage 3: get ready
+
+4. Wait until §48 to §58 all show `[x]`. The run then parks §59 (the pilot is yours) and works on the review sections §60 to §67, which is expected.
+5. Open the "Antigravity (WSL)" shortcut once and confirm agy is signed in, then close it.
+6. Run `bash scripts/run-desktop.sh install` once. The desktop gains Start, Watch and Stop for Userland, Neon A and Neon B.
+
+### Stage 4: the pilot, one lane at a time
+
+7. With main running, open "Neon A - Start". Keep "Neon A - Watch" open beside it.
+8. Wait until Neon A has shipped one section (its push green in CI) with no toast and no fault in `bash scripts/lane.sh status`.
+9. Open "Userland - Start" and wait for one clean userland section the same way.
+10. Open "Neon B - Start". It commits nothing; its first reports appear in `~/.local/state/impossible-os/agy/done/`.
+11. When all four lanes have run clean, open the "Impossible OS (Claude)" shortcut and say: "The lanes pilot passed, close the Lanes pilot section".
+
+### Every day after that
+
+- Always start main first; start any extra lane whenever you want. A lane refuses to start without main and its tab says why.
+- Stop a single lane with its Stop shortcut; it never stops mid-push. Stopping main asks about running lanes first.
+- A toast means a lane fault. Open that lane's Watch shortcut, read the reason, then fix it or ask Claude. Lanes are never restarted for you.
