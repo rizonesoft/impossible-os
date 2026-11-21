@@ -1,4 +1,4 @@
-"""The zero-trailer gate reads trailer keys the way git does: without regard to case."""
+"""The zero-trailer gate refuses a line that starts with a forbidden key, in any case, wherever it sits."""
 import subprocess
 from pathlib import Path
 
@@ -22,3 +22,11 @@ def test_other_trailers_and_prose_are_not():
 
 def test_a_divider_line_does_not_hide_the_trailers():
     assert _trailers("subject\n\nnotes\n\n---\n\nverification\n\nCo-Authored-By: Someone <s@example.org>\n")
+
+
+def test_no_divider_or_scissors_line_hides_a_trailer_on_either_side():
+    scissors = "# ------------------------ >8 ------------------------"
+    for message in (f"subject\n\nnotes\n\n{scissors}\n\nCo-authored-by: S <s@example.org>\n",
+                    "subject\n\nAssisted-by: TOOL:MODEL\n\n---\n\nverification notes\n",
+                    "subject\n\nbody\n    co-authored-by: S <s@example.org>\nmore body\n"):
+        assert _trailers(message), message

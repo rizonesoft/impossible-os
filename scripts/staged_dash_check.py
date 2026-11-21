@@ -216,9 +216,24 @@ def judge(commits: list) -> list:
     return out
 
 
+def merge_heads() -> list:
+    """The other parents of a merge being committed (MERGE_HEAD), or none."""
+    path = _git("rev-parse", "--git-path", "MERGE_HEAD").decode().strip()
+    try:
+        with open(path, encoding="ascii") as f:
+            return f.read().split()
+    except FileNotFoundError:
+        return []                                          # fail-direction: no merge is in progress
+
+
 def staged() -> list:
-    raw = _git("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
-    return [("", [changes_from_raw(raw)])]
+    """The staged change against HEAD and, while a merge is being committed,
+    against each other parent too, so a resolution is judged as the push
+    check judges the merge commit: on what it adds over every parent."""
+    diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
+    per_parent = [changes_from_raw(_git(*diff))]
+    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in merge_heads()]
+    return [("", per_parent)]
 
 
 def outgoing(old: str, new: str) -> list:

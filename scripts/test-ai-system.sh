@@ -34,8 +34,9 @@ test-ai-system.sh -- AI workflow regression pack
 Usage:
   bash scripts/test-ai-system.sh              Run the full regression pack
   bash scripts/test-ai-system.sh --quiet      Summary line only
-  bash scripts/test-ai-system.sh --ai-trailers  Print the forbidden trailers of
-                                              the commit message on stdin
+  bash scripts/test-ai-system.sh --ai-trailers  Print the lines of the commit
+                                              message on stdin that carry a
+                                              forbidden attribution key
   bash scripts/test-ai-system.sh --help
 
 What this tests (12 check groups; owned by TODO-02 sections 1-8):
@@ -86,17 +87,22 @@ EOF
 done
 
 # The forbidden-trailer test, shared by check_zero_trailer_policy and the
-# --ai-trailers mode its regression drives. `git interpret-trailers --parse`
-# is git's own definition of a trailer; git reads trailer keys without regard
-# to case, so the match ignores case too (a lowercase co-authored-by once
-# passed this gate), and --no-divider keeps a `---` line in a commit message
-# from being read as the start of a patch that hides the trailers after it.
+# --ai-trailers mode its regression drives. Any line of the message that
+# starts with a forbidden key, in any case and wherever it sits, is refused.
+# It used `git interpret-trailers --parse` until 2026-11-21, whose idea of the
+# trailer block (the last paragraph, cut at a `---` divider or a scissors
+# line) let a lowercase key, a trailer after a divider, one before a divider
+# and one after a scissors line all pass in turn; a line test has no block to
+# get wrong. On the gate's whole range it matches only the two grandfathered
+# commits below.
 forbidden_trailers() {
-    git interpret-trailers --parse --no-divider 2>/dev/null | grep -iE '^(co-authored-by|assisted-by|ai-author):' || true
+    local rc=0
+    grep -iE '^[[:space:]]*(co-authored-by|assisted-by|ai-author):' || rc=$?
+    [ "$rc" -le 1 ]                                        # 1 is grep's "no line matched", the clean answer
 }
 if [ "$TRAILERS_ONLY" = 1 ]; then
     forbidden_trailers
-    exit 0
+    exit $?
 fi
 
 # ---- Colors ----
@@ -342,11 +348,8 @@ check_zero_trailer_policy() {
     else
         range="HEAD"
     fi
-    # Parse trailers via `git interpret-trailers --parse` per commit. This is
-    # the Git-official definition of "trailer" (last paragraph, RFC-822-style
-    # "Key: value" lines). Unlike regex-on-raw-body it ignores
-    # Co-Authored-By: occurrences inside code blocks or quoted diffs, and is
-    # robust to arbitrary body content (no awk multi-char RS hazard).
+    # Each commit's whole message goes through forbidden_trailers (above): a
+    # line that starts with a forbidden key fails, wherever it sits.
     local trailer_hits=""
     local commit
     while IFS= read -r commit; do

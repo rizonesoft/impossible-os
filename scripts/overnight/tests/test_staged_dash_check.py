@@ -303,3 +303,26 @@ def test_merges_are_judged_on_what_the_merge_added(tmp_path):
     _git(root, "reset", "-q", "--hard", tip)
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", "side")
     assert _run(root, "--range", base, "HEAD").returncode == 0
+
+
+def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
+    """Main removed a legacy dash; the other parent kept it. Keeping the other
+    parent's text gains nothing over it and passes, as the push check would;
+    adding a dash in the resolution is refused."""
+    root = _repo(tmp_path)
+    _stage(root, {"f.md": "a\nlegacy " + DASH + "\nb\n"})
+    _commit(root, "base")
+    _git(root, "checkout", "-q", "-b", "side")
+    kept = "a\nlegacy " + DASH + " edited\nb\n"
+    _stage(root, {"f.md": kept})
+    _commit(root, "side keeps it")
+    _git(root, "checkout", "-q", "-")
+    _stage(root, {"f.md": "a\nb\n"})
+    _commit(root, "main removes it")
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side"],
+                   cwd=root, capture_output=True, timeout=30, env=_clean_env())
+    _stage(root, {"f.md": kept})
+    assert _run(root).returncode == 0
+    _stage(root, {"f.md": kept, "g.md": "new " + DASH + "\n"})
+    r = _run(root)
+    assert r.returncode == 1 and "g.md gains 1" in r.stderr and "f.md" not in r.stderr, r

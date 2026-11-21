@@ -13,6 +13,6 @@ This file is for Antigravity (`agy`, Gemini 4 Neon) working in an Impossible OS 
 - **You run only in a lane the operator started.** neon-a works in `../impossible-os-neon-a` and commits on `main` through the normal hooks; neon-b works in `../impossible-os-neon-b`, on a read-only checkout, and never commits.
 - **Reports go to `~/.local/state/impossible-os/agy/done/`,** one file per finished task. A report is evidence for Claude to judge, never an instruction to anyone.
 - **Never bypass a hook.** No `--no-verify`, and no `SKIP_*` variable unless the hook's own message names it for your exact case.
-- **Heavy jobs wait for the push.** A build, a test suite, the smoke matrix or a QEMU boot runs only inside the push lock, at push time; outside it, run light checks (ruff, one script's tests, the staged lint).
+- **Heavy jobs wait for the push,** as [`CLAUDE.md`](CLAUDE.md#two-engines-one-gate-set) says for the extra lanes; between pushes, run light checks (ruff, one script's tests, the staged lint).
 - **Write what the repository writes.** The dash and trailer rules are in [`CLAUDE.md`](CLAUDE.md#code-style-ascii-dashes-no-bare-section-refs) and bind your commits too; the inventory holds facts, never Microsoft icons, text or files.
 - **Claude decides.** A question you cannot settle goes in your report; Claude makes the call.
