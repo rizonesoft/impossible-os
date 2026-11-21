@@ -349,13 +349,15 @@ check_zero_trailer_policy() {
     else
         range="HEAD"
     fi
-    # One `git log` streams every message in the range into awk (a 0x01 byte
-    # starts each commit), and AI_TRAILER_RE (above, shared with --ai-trailers)
-    # is tested against every line: a line that starts with a forbidden key
-    # fails, wherever it sits. Under pipefail a failed read fails the check,
-    # never passes it.
+    # One `git log` streams every message in the range into awk, and
+    # AI_TRAILER_RE (above, shared with --ai-trailers) is tested against every
+    # line: a line that starts with a forbidden key fails, wherever it sits.
+    # Each commit starts with a NUL, which git never stores in a message; tr
+    # makes that the 0x01 the awk program reads as a header, after turning any
+    # 0x01 a message holds into a space, so no message line can pose as one.
+    # Under pipefail a failed read fails the check, never passes it.
     local trailer_hits rc=0
-    trailer_hits=$(git log --format='%x01%H%n%B' "$range" | awk -v re="$AI_TRAILER_RE" '
+    trailer_hits=$(git log --format='%x00%H%n%B' "$range" | tr '\001\000' ' \001' | awk -v re="$AI_TRAILER_RE" '
         /^\001/ { h = substr($0, 2, 8); next }
         tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }') || rc=$?
     if [ "$rc" -ne 0 ]; then

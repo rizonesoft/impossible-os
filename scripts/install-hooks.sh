@@ -64,16 +64,17 @@ status() {
     else
         pre_push_state="disabled (no sentinel)"
     fi
-    # List only the always-on hooks; pre-push is always-present in .githooks/
-    # but is sentinel-gated, so including it here would misrepresent state.
+    # Every hook in .githooks/ runs on every commit or push; pre-push also
+    # carries an opt-in build/test step behind the sentinel.
     local always_on
-    always_on="$(ls "$HOOKS_DIR" 2>/dev/null | grep -vxF 'pre-push' | tr '\n' ' ')"
+    always_on="$(ls "$HOOKS_DIR" 2>/dev/null | grep -vxF 'lib' | tr '\n' ' ')"
     echo "Hooks path     : $configured (expected: .githooks)"
-    echo "Pre-push gate  : $pre_push_state"
     echo "Always-on hooks: $always_on"
-    echo "Opt-in hooks   : pre-push (gated by sentinel above)"
+    echo "Pre-push build/test step: $pre_push_state"
     echo
-    echo "Pre-push gate runs (when enabled):"
+    echo "Pre-push always runs: the dash check over outgoing commits, the identity check,"
+    echo "  the branch policy and the conditional suites (see .githooks/pre-push)."
+    echo "Pre-push build/test step runs (when enabled):"
     echo "  1. bash scripts/todo-graph/build-and-validate.sh --keep-cache (todo-graph CI gate)"
     echo "  2. bash scripts/build.sh (kernel + userland build)"
     echo "  3. bash scripts/test.sh (TCG unit tests)"

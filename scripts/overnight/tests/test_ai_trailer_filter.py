@@ -37,7 +37,7 @@ def test_a_failed_history_read_fails_the_gate(tmp_path):
     import os
     shim = tmp_path / "git"
     real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
-    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%x01%H%n%B" ] && exit 128; done\nexec {real} "$@"\n')
+    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%x00%H%n%B" ] && exit 128; done\nexec {real} "$@"\n')
     shim.chmod(0o755)
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
     r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
@@ -50,8 +50,24 @@ def test_the_history_scan_finds_a_mixed_case_key_after_a_divider(tmp_path):
     fake = "f" * 40
     real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
     shim = tmp_path / "git"
-    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x01%H%n%B" ]; then '
-                    f"printf '\\001{fake}\\nsubject\\n\\n---\\n\\nnotes\\n\\nco-AUTHORED-by: S <s@example.org>\\n'; "
+    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x00%H%n%B" ]; then '
+                    f"printf '\\000{fake}\\nsubject\\n\\n---\\n\\nnotes\\n\\nco-AUTHORED-by: S <s@example.org>\\n'; "
+                    f'exit 0; fi; done\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
+    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
+    out = r.stdout + r.stderr
+    assert r.returncode == 1 and "found 1 post-anchor commit(s)" in out and fake[:8] in out, out[-2000:]
+
+
+def test_a_message_line_holding_the_old_header_byte_hides_nothing(tmp_path):
+    """A message may hold a 0x01 byte; it must not pose as the next commit's header."""
+    import os
+    fake = "e" * 40
+    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
+    shim = tmp_path / "git"
+    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x00%H%n%B" ]; then '
+                    f"printf '\\000{fake}\\nsubject\\n\\n\\001\\n\\nAssisted-by: TOOL:MODEL\\n'; "
                     f'exit 0; fi; done\nexec {real} "$@"\n')
     shim.chmod(0o755)
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")

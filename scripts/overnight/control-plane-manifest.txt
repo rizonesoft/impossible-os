@@ -66,6 +66,11 @@ scripts/lib/review-prompt.sh
 # replay of section 43): a change to that wiring alone ran no suite at commit or push.
 .githooks/pre-commit
 .githooks/pre-push
+# The dash gate those hooks and commit-msg run (TODO-08 section 48): a change
+# to it alone ran no suite, though test_staged_dash_check.py covers it.
+.githooks/commit-msg
+.githooks/lib/dash-gate.sh
+scripts/staged_dash_check.py
 
 # SHARED GATE MACHINERY (2026-07-28). The manifest listed the gate FILES but
 # not the helpers that decide whether a gate applies, so a one-line change here

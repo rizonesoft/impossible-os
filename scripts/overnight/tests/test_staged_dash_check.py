@@ -326,6 +326,11 @@ def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
     _stage(root, {"f.md": kept, "g.md": "new " + DASH + "\n"})
     r = _run(root)
     assert r.returncode == 1 and "g.md gains 1" in r.stderr and "f.md" not in r.stderr, r
+    # the resolution keeps the other parent's line and adds one: only the added line is named
+    _stage(root, {"f.md": kept + "added " + DASH + "\n"})
+    r = _run(root)
+    assert r.returncode == 1 and "f.md gains 1" in r.stderr and "f.md:4 is a new" in r.stderr, r
+    assert "f.md:2" not in r.stderr, r
 
 
 def _hooked_repo(tmp_path):
@@ -379,3 +384,18 @@ def test_an_automatic_merge_that_keeps_the_other_parents_dash_passes(tmp_path):
     r = _auto_merge(root)
     assert r.returncode == 0, r
     assert len(_git(root, "rev-list", "--parents", "-1", "HEAD").split()) == 3
+
+
+def test_a_new_ref_is_judged_against_the_destination_remote(tmp_path):
+    """A commit another remote already tracks is still outgoing to this one."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "update-ref", "refs/remotes/mirror/main", tip)
+    _git(root, "update-ref", "refs/remotes/origin/main", "HEAD~1")
+    assert _run(root, "--range", m.NULL_OID, tip).returncode == 0      # no remote named: all remotes
+    r = _run(root, "--range", m.NULL_OID, tip, "origin")
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+    assert _run(root, "--range", m.NULL_OID, tip, "mirror").returncode == 0
+    assert _run(root, "--range", m.NULL_OID, tip, "https://example.org/r.git").returncode == 0

@@ -30,9 +30,12 @@ Generated files are exempt: their text is copied from sources this check has
 already judged (todo/implementation-plan.md copies TODO titles).
 
 Usage: staged_dash_check.py                 the staged change (pre-commit)
-       staged_dash_check.py --range OLD NEW  each commit in OLD..NEW;
-                                             OLD all zeros means every commit
-                                             of NEW not on a remote (pre-push)
+       staged_dash_check.py --range OLD NEW [REMOTE]
+                                             each commit in OLD..NEW; OLD all
+                                             zeros means every commit of NEW
+                                             that REMOTE's tracking refs (or,
+                                             without any, no remote's) hold
+                                             (pre-push)
 Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
 read. SKIP_DASH_CHECK=1 skips it.
 """
@@ -163,11 +166,16 @@ class BlobReader:
         return rc
 
 
-def name_lines(old_text, new_text):
-    """(exact, copies): dash lines of the new text no old line matches, and
-    every copy of an identical line that now appears more often."""
+def name_lines(old_texts, new_text):
+    """(exact, copies): dash lines of the new text that no parent holds, and
+    every copy of an identical line that now appears more often than in any
+    parent. A merge's line that one parent already had is never named new."""
     new_lines = dash_lines(new_text)
-    old_seen = collections.Counter(ln for _n, ln in dash_lines(old_text)) if old_text else collections.Counter()
+    old_seen = collections.Counter()
+    for text in old_texts:
+        if text:
+            for ln, k in collections.Counter(ln for _n, ln in dash_lines(text)).items():
+                old_seen[ln] = max(old_seen[ln], k)
     new_seen = collections.Counter(ln for _n, ln in new_lines)
     exact = [n for n, ln in new_lines if not old_seen[ln]]
     copies = [n for n, ln in new_lines if old_seen[ln] and new_seen[ln] > old_seen[ln]]
@@ -179,22 +187,23 @@ def refused(per_parent: list, reader) -> list:
     more dashes than before. `per_parent` holds one change list per parent
     (one for a commit or the staged change, several for a merge); a file is
     refused only when it gains over every parent, so a merge is judged on
-    what the merge itself added. A new blob with no dash is never compared."""
-    gains = []
-    for changes in per_parent:
-        g = {}
-        for old, new, path in changes:
-            n = reader.count(new)
-            if n and n > reader.count(old):
-                g[path] = (old, new, n - reader.count(old))
-        gains.append(g)
-    if not gains:
+    what the merge itself added. Only a path changed against every parent is
+    read, and a new blob with no dash is never compared."""
+    if not per_parent:
         return []
+    by_path = [{path: old for old, _new, path in changes} for changes in per_parent]
     found = []
-    for path, (old, new, _gain) in gains[0].items():
-        if all(path in g for g in gains[1:]):
-            exact, copies = name_lines(reader.text(old), reader.text(new))
-            found.append((path, min(g[path][2] for g in gains), exact, copies))
+    for old, new, path in per_parent[0]:
+        if not all(path in olds for olds in by_path[1:]):
+            continue
+        n = reader.count(new)
+        if not n:
+            continue
+        olds = [olds[path] for olds in by_path]
+        gained = min(n - reader.count(o) for o in olds)
+        if gained > 0:
+            exact, copies = name_lines([reader.text(o) for o in olds], reader.text(new))
+            found.append((path, gained, exact, copies))
     return found
 
 
@@ -236,10 +245,17 @@ def staged() -> list:
     return [("", per_parent)]
 
 
-def outgoing(old: str, new: str) -> list:
+def outgoing(old: str, new: str, remote: str = "") -> list:
     """(label, per-parent changes) for every outgoing commit, merges included,
-    from one rev-list and one `diff-tree --stdin` fed one line per parent."""
-    span = [new, "--not", "--remotes"] if old == NULL_OID else [f"{old}..{new}"]
+    from one rev-list and one `diff-tree --stdin` fed one line per parent. A
+    new ref takes every commit the destination remote's tracking refs do not
+    hold; a push by URL, or to a remote with none, falls back to all remotes."""
+    if old != NULL_OID:
+        span = [f"{old}..{new}"]
+    elif remote and _git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip():
+        span = [new, "--not", f"--remotes={remote}"]
+    else:
+        span = [new, "--not", "--remotes"]
     pairs = []                                            # (commit, parent or None), in input order
     for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
         commit, *parents = line.split()
@@ -278,12 +294,12 @@ def main(argv=None) -> int:
     if os.environ.get("SKIP_DASH_CHECK") == "1":
         return 0
     try:
-        if argv[:1] == ["--range"] and len(argv) == 3:
-            found = judge(outgoing(argv[1], argv[2]))
+        if argv[:1] == ["--range"] and len(argv) in (3, 4):
+            found = judge(outgoing(*argv[1:]))
         elif not argv:
             found = judge(staged())
         else:
-            print("usage: staged_dash_check.py [--range OLD NEW]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--range OLD NEW [REMOTE]]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)

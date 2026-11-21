@@ -3,7 +3,7 @@
 
 ## What is it?
 
-The AI development system is the set of files that tells Claude Code how to work in this repository: the doctrine, the skills, the harness hooks, the reviewer contract and the boundary on autonomous agents. It exists so that AI-assisted work follows one written rulebook with one owner per rule, instead of overlapping instructions that contradict each other. Claude Code is the only implementation tool; Codex is used only as a read-only reviewer. The detailed ownership map is [AI Development System reference](ai-system.md).
+The AI development system is the set of files that tells Claude Code how to work in this repository: the doctrine, the skills, the harness hooks, the reviewer contract and the boundary on autonomous agents. It exists so that AI-assisted work follows one written rulebook with one owner per rule, instead of overlapping instructions that contradict each other. Commits come only from the lanes the operator starts, under one gate set ([CLAUDE.md](../../CLAUDE.md#two-engines-one-gate-set)); Codex is used only as a read-only reviewer. The detailed ownership map is [AI Development System reference](ai-system.md).
 
 ## How does it work?
 
