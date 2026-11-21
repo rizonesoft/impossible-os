@@ -1614,6 +1614,22 @@ class ReleaseDocs(unittest.TestCase):
                                   staged=False, release=ref, ref="HEAD")
         return B.run(args)
 
+    def test_release_docs_never_carry_ads(self):
+        # A retained release is frozen, so ads in it could never be switched off again.
+        self.TEMPLATE = type(self).TEMPLATE + "%ADSENSE%%AD_UNIT%"
+        plain = self.project
+
+        def project(owner, historical):
+            raw = json.loads(plain(owner, historical))
+            raw.update(adsense_client="ca-pub-6605208886607337", adsense_docs_slot="42")
+            return json.dumps(raw)
+        self.project = project
+        self.fixture()
+        self.assertEqual(self.release("v1"), 0)
+        page = self.read("docs/v1/sub/page.html")
+        self.assertNotIn("adsbygoogle.js", page)
+        self.assertNotIn("<ins", page)
+
     def test_release_links_pin_to_the_tag_commit_after_main_deletes_the_file(self):
         self.fixture()
         self.assertEqual(self.release("v1"), 0)
@@ -3098,6 +3114,57 @@ class SitePolish(unittest.TestCase):
         self.assertTrue(desc.endswith("word..."))
         self.assertEqual(B.site_url(facts, "docs/index.html"), "https://site.invalid/docs/")
         self.assertNotIn("<time", B.render_page(tpl, facts, {}, page, ""))
+
+    def test_adsense_settings_validate_project_json(self):
+        def settings(client, slot=None):
+            errors: list[str] = []
+            got = B.adsense_settings({"_adsense_client": client, "_adsense_docs_slot": slot}, errors)
+            return got, errors
+        self.assertEqual(settings(None), (("", ""), []))                       # null is off
+        self.assertEqual(settings("ca-pub-6605208886607337"), (("ca-pub-6605208886607337", ""), []))
+        self.assertEqual(settings("ca-pub-6605208886607337", "1234567890"),
+                         (("ca-pub-6605208886607337", "1234567890"), []))
+        for bad in ("pub-6605208886607337", "ca-pub-660520888660733", "ca-pub-66052088866073371",
+                    "ca-pub-66052088866073\u0663\u0663", 6605208886607337, ""):
+            got, errors = settings(bad)
+            self.assertEqual(got, ("", ""), bad)
+            self.assertEqual(len(errors), 1, bad)
+        got, errors = settings("ca-pub-6605208886607337", "12ab")
+        self.assertEqual(got, ("ca-pub-6605208886607337", ""))
+        self.assertEqual(len(errors), 1)
+        got, errors = settings(None, "1234")                                   # a slot needs a client
+        self.assertEqual((got, len(errors)), (("", ""), 1))
+        self.assertEqual(B.ads_txt("ca-pub-6605208886607337"),
+                         b"google.com, pub-6605208886607337, DIRECT, f08c47fec0942fa0\n")
+
+    def test_adsense_renders_on_docs_pages_but_never_the_noindex_page(self):
+        tpl = (B.REPO_REAL / "gh-pages/docs-template.html").read_text(encoding="utf-8")   # the shipping template
+        page = B.Page(src=Path("docs/k/x.md"), rel="k/x.md", url="k/x.html", title="X", body="<p>b</p>")
+        base = dict(FACTS, site_url="https://site.invalid", name="OS")
+        off = B.render_page(tpl, base, {}, page)
+        self.assertNotIn("adsbygoogle.js", off)
+        self.assertNotIn("<ins", off)
+        loader = dict(base, _ads=("ca-pub-6605208886607337", ""))
+        out = B.render_page(tpl, loader, {}, page)
+        self.assertIn('<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'
+                      '?client=ca-pub-6605208886607337" crossorigin="anonymous"></script>', out)
+        self.assertNotIn("<ins", out)                                            # no unit without a slot
+        unit = B.render_page(tpl, dict(base, _ads=("ca-pub-6605208886607337", "42")), {}, page)
+        self.assertIn('data-ad-slot="42"', unit)
+        self.assertIn('<span class="ad-label">Advertisements</span>', unit)
+        self.assertLess(unit.index('<script async src="https://pagead2'), unit.index("</head>"))
+        self.assertLess(unit.index("</article>"), unit.index('<aside class="ad"'))
+        self.assertLess(unit.index('<aside class="ad"'), unit.index('<div class="page-foot">'))
+        self.assertLess(unit.index('<nav class="side"'), unit.index("<article>"))   # not beside the sidebar
+        for rel in ("k/index.md", "index.md", "coverage.md", "privacy.md"):     # navigation and policy pages
+            nav = B.Page(src=Path("docs/" + rel), rel=rel, url=B.page_url(rel), title="N", body="<p>b</p>")
+            out = B.render_page(tpl, dict(base, _ads=("ca-pub-6605208886607337", "42")), {}, nav)
+            self.assertNotIn("<ins", out, rel)
+            self.assertNotIn("adsbygoogle.js", out, rel)                         # nor Auto ads
+        page.noindex = True
+        hidden = B.render_page(tpl, dict(base, _ads=("ca-pub-6605208886607337", "42")), {}, page)
+        self.assertNotIn("adsbygoogle.js", hidden)
+        self.assertNotIn("<ins", hidden)
 
     def test_summary_is_the_first_top_level_paragraph(self):
         self.git("init", "-q")

@@ -9,6 +9,8 @@
   "donate_url": "https://www.paypal.com/donate/?hosted_button_id=YKAQFQPPNJEZQ",
   "release_date": "2028-08-08",
   "license": "GPL-3.0-only",
+  "adsense_client": "ca-pub-6605208886607337",
+  "adsense_docs_slot": null,
   "topics": [
     "operating-system",
     "os-development",

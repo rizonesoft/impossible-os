@@ -13,7 +13,7 @@ The documentation you are reading is generated from the Markdown files in the re
 - gives each page a canonical URL, Open Graph and Twitter card tags, and a description taken from its first paragraph, so a shared link previews with the page's own summary;
 - shows "Last updated" in the page footer: the date of the last commit on `main` that touched the page (`git log -1 --format=%cs`, with a merge that changed the page counting as that change);
 - turns `> [!NOTE]`-style alerts into callouts and ` ```mermaid ` blocks into diagrams;
-- writes the search index for the search box (see below), and `sitemap.xml` plus `robots.txt` for search engines. The sitemap lists every published page except those marked `noindex` (the 404 page), each with its source file's last commit date as `lastmod`.
+- writes the search index for the search box (see below), `sitemap.xml` plus `robots.txt` for search engines, and `ads.txt` when advertising is on (see [Advertising](#advertising)). The sitemap lists every published page except those marked `noindex` (the 404 page), each with its source file's last commit date as `lastmod`.
 
 Dates need full history. In a shallow clone the check still runs, with a warning and no dates, but writing the site is refused, because the same commit would then publish different bytes.
 
@@ -167,3 +167,7 @@ The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-docum
 ## How does this compare with Windows and Linux?
 
 The Linux kernel builds its documentation with Sphinx from `Documentation/` in the source tree, and dead references there are warnings rather than failures. Microsoft publishes Windows documentation on Microsoft Learn from separate repositories. Impossible OS keeps docs beside the code like Linux, and additionally fails the build on dead links and stale facts.
+
+## Advertising
+
+The docs pages carry Google AdSense, switched by two `project.json` facts. `adsense_client` (`ca-pub-` and 16 digits) adds Google's loader to the `<head>` of every docs content page, and makes the build write `ads.txt` at the site root, which is also how Google verifies the site; `null` turns advertising off everywhere. `adsense_docs_slot` (the ad unit's number, created in AdSense after the site is approved) places one labelled unit between the article and the page footer, away from the sidebar, the table of contents and the edit link, `null` places none. Section indexes, the coverage table, the privacy page and the noindex search page load no AdSense at all, because AdSense forbids ads on navigation screens and Auto ads would otherwise reach them. Retained release docs carry no ads: they are frozen when retained, so `null` could never switch them off. The landing, design and error pages never carry ads. A malformed value fails the build. The [privacy page](../privacy.md) lists every third party a visit reaches; keep it current when a service is added. Consent for the EEA, the UK and Switzerland is Google's own certified consent message, configured in AdSense under Privacy & messaging, not in this tree.
