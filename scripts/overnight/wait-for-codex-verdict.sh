@@ -83,10 +83,18 @@ fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
 ACT_DIR=".claude/state/waiter-activity"
 
+# A review ends only when the dispatcher's own "Turn completed (rc=N)" line is
+# the LAST non-empty line of its log: the companion prints "[codex] Turn
+# completed." before its verdict, and a review can quote an earlier run's line.
+_log_done() {
+    [ -f "$1" ] && grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -n 1 \
+        | grep -qE '^Turn completed \(rc=[0-9]+\)[[:space:]]*$'
+}
+
 _all_done() {
     local f
     for f in "${LOGS[@]}"; do
-        [ -f "$f" ] && grep -qE '^Turn completed \(rc=[0-9]+\)' "$f" 2>/dev/null || return 1
+        _log_done "$f" || return 1
     done
     return 0
 }
@@ -119,7 +127,7 @@ any_stale=0
 any_missing=0
 pending=()
 for f in "${LOGS[@]}"; do
-    if { [ -f "$f" ] && grep -qE '^Turn completed \(rc=[0-9]+\)' "$f" 2>/dev/null; }; then
+    if _log_done "$f"; then
         continue
     fi
     pending+=("$f")

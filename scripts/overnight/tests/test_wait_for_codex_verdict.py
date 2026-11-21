@@ -52,6 +52,16 @@ def test_companion_progress_line_is_not_the_terminal_sentinel():
         assert "STILL RUNNING" in r.stdout
 
 
+def test_quoted_terminal_line_inside_a_live_log_is_not_done():
+    # A review that quotes a previous run's terminal line is still running:
+    # only the LAST non-empty line of the log ends a wait.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("Turn completed (rc=0)\nreview still running\n")
+        r = _run(log, maxw=1)
+        assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+
+
 def test_no_sentinel_returns_still_running():
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"

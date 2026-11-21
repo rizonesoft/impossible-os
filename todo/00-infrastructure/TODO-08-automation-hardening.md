@@ -1253,8 +1253,8 @@ Every review reads one section. Nothing reads a finished file as a whole, so a d
   - Its result is a `Cross-section review:` line in the TODO, so a clean pass, a retry and a resumed close-out reuse it instead of paying again.
   - Review fixes: a FAIL outranks REOPENED; a filed section reports REOPENED, not CLOSED; source fixes commit apart from the TODO-only close-out.
   - Dispositions are written `pending` and change only once the work exists; `rejected` is one of them; both pilot files carry their record line.
-  - The line is written `in flight` with the broker's log at launch, resumed through the verdict waiter (a stale, missing, crashed or cancelled review redispatches; an interruption costs at most one extra pass); TODO-07's early run is labelled a pilot so its close-out still gets the pass, and a filing names its section number while still pending.
-  - Found here and fixed at the waiter: `wait-for-codex-verdict.sh` took the companion's mid-log `[codex] Turn completed.` as done; only the dispatcher's `Turn completed (rc=N)` now ends a wait (499029e1c, with a regression test).
+  - The line is written `in flight since <time>` before dispatch; the attempts are the broker manifest's entries after it, written before each launch, so any interruption finds them; at most two passes per file; TODO-07's early run is labelled a pilot so its close-out still gets the pass, and a filing names its section number while still pending.
+  - Found here and fixed at the waiter: `wait-for-codex-verdict.sh` took the companion's mid-log `[codex] Turn completed.` as done; only the dispatcher's `Turn completed (rc=N)`, as the log's last non-empty line, now ends a wait (499029e1c and its follow-up, with regression tests); the background fallback waits on `status --wait`.
 - [x] Not needed: the first file returned 3, so the step is kept.
 - [x] Second run, 2026-11-21, on 01-boot-platform/TODO-03 (24 sections): 1 P1 and 2 P2, all verified, filed as its §25 (item: "The post-EBS error dwell has its own TSC deadline").
 - [x] Committed as 24dab6136.
