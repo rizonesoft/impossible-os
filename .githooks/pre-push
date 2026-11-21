@@ -47,11 +47,7 @@ fi
 # commits without it, so each outgoing commit is judged here too.
 # shellcheck source=.githooks/lib/dash-gate.sh
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
-while read -r _dsl _dsloid _dsr _dsroid; do
-  [ -n "${_dsloid:-}" ] || continue
-  [ "$_dsloid" = "0000000000000000000000000000000000000000" ] && continue   # a ref deletion
-  dash_push_gate "$_dsroid" "$_dsloid" "${1:-}" || exit 1
-done <<< "$STDIN_DATA"
+dash_push_gate "${1:-}" <<< "$STDIN_DATA" || exit 1
 
 # ---- Branch policy: main + gh-pages only -------------------------------------
 #
@@ -103,8 +99,8 @@ fi
 
 # Files changed across every non-delete ref update in this push.
 pushed_files() {
-  local lref loid rref roid base
-  while read -r lref loid rref roid; do
+  local _lref loid rref roid base
+  while read -r _lref loid rref roid; do
     [ -n "${loid:-}" ] || continue
     case "$loid" in *[!0]*) : ;; *) continue ;; esac   # local oid all-zero => deletion, skip
     case "${roid:-}" in

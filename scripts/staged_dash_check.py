@@ -35,7 +35,9 @@ Usage: staged_dash_check.py                 the staged change (pre-commit)
                                              zeros means every commit of NEW
                                              that REMOTE's tracking refs (or,
                                              without any, no remote's) hold
-                                             (pre-push)
+                                             (by hand)
+       staged_dash_check.py --push REMOTE   every ref pre-push's stdin names,
+                                             each commit once (pre-push)
 Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
 read. SKIP_DASH_CHECK=1 skips it.
 """
@@ -113,8 +115,10 @@ def dash_count(text) -> int:
 
 
 def dash_lines(text: bytes) -> list:
-    """(line number, line) for each LF-delimited line holding a dash."""
-    return [(n, ln) for n, ln in enumerate(text.split(b"\n"), 1) if any(d in ln for d in DASHES)]
+    """(line number, line) for each line holding a dash; a CR before the LF is
+    not part of the line, so a change of line endings never names one new."""
+    return [(n, ln.removesuffix(b"\r")) for n, ln in enumerate(text.split(b"\n"), 1)
+            if any(d in ln for d in DASHES)]
 
 
 class BlobReader:
@@ -245,24 +249,28 @@ def staged() -> list:
     return [("", per_parent)]
 
 
-def outgoing(old: str, new: str, remote: str = "") -> list:
-    """(label, per-parent changes) for every outgoing commit, merges included,
-    from one rev-list and one `diff-tree --stdin` fed one line per parent. A
-    new ref takes every commit the destination remote's tracking refs do not
+def outgoing(updates: list, remote: str = "") -> list:
+    """(label, per-parent changes) for every commit the (old, new) ref updates
+    send, merges included, each commit once however many refs carry it: one
+    rev-list per update, then one `diff-tree --stdin` fed one line per parent.
+    A new ref takes every commit the destination remote's tracking refs do not
     hold; a push by URL, or to a remote with none, falls back to all remotes."""
-    if old != NULL_OID:
-        span = [f"{old}..{new}"]
-    elif remote and _git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip():
-        span = [new, "--not", f"--remotes={remote}"]
-    else:
-        span = [new, "--not", "--remotes"]
-    pairs = []                                            # (commit, parent or None), in input order
-    for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
-        commit, *parents = line.split()
-        if parents:
-            pairs.extend((commit, p) for p in parents)
+    tracked = bool(remote) and bool(_git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip())
+    pairs, seen = [], set()                               # (commit, parent or None), in input order
+    for old, new in updates:
+        if old != NULL_OID:
+            span = [f"{old}..{new}"]
         else:
-            pairs.append((commit, None))
+            span = [new, "--not", f"--remotes={remote}" if tracked else "--remotes"]
+        for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
+            commit, *parents = line.split()
+            if commit in seen:
+                continue
+            seen.add(commit)
+            if parents:
+                pairs.extend((commit, p) for p in parents)
+            else:
+                pairs.append((commit, None))
     if not pairs:
         return []
     feed = "".join(f"{c} {p}\n" if p else f"{c}\n" for c, p in pairs).encode()
@@ -274,6 +282,22 @@ def outgoing(old: str, new: str, remote: str = "") -> list:
     for (commit, _p), (_h, changes) in zip(pairs, blocks):
         commits.setdefault(commit, []).append(changes)
     return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()]
+
+
+def push_updates(lines: str) -> list:
+    """(remote old, local new) per ref a push updates, from pre-push's stdin
+    (`<local ref> <local oid> <remote ref> <remote oid>`); a deletion sends
+    nothing and is left out."""
+    updates = []
+    for line in lines.splitlines():
+        fields = line.split()
+        if len(fields) != 4:
+            if fields:
+                raise ValueError(f"pre-push gave an unreadable line: {line!r}")
+            continue
+        if fields[1] != NULL_OID:
+            updates.append((fields[3], fields[1]))
+    return updates
 
 
 def report(found: list) -> None:
@@ -295,11 +319,13 @@ def main(argv=None) -> int:
         return 0
     try:
         if argv[:1] == ["--range"] and len(argv) in (3, 4):
-            found = judge(outgoing(*argv[1:]))
+            found = judge(outgoing([(argv[1], argv[2])], *argv[3:]))
+        elif argv[:1] == ["--push"] and len(argv) == 2:
+            found = judge(outgoing(push_updates(sys.stdin.read()), argv[1]))
         elif not argv:
             found = judge(staged())
         else:
-            print("usage: staged_dash_check.py [--range OLD NEW [REMOTE]]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)

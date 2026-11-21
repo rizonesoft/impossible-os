@@ -34,6 +34,8 @@ def _repo(tmp_path):
     root = tmp_path / "r"
     root.mkdir(parents=True)
     _git(root, "init", "-q")
+    _git(root, "config", "user.name", "t")       # no fixture git step may need the caller's identity
+    _git(root, "config", "user.email", "t@t")
     _commit(root, "base", "--allow-empty")
     return root
 
@@ -265,7 +267,7 @@ def test_the_hook_gates_print_their_guidance_under_errexit(tmp_path):
         fake = tmp_path / str(rc)
         (fake / "scripts").mkdir(parents=True)
         (fake / "scripts/staged_dash_check.py").write_text(f"import sys\nsys.exit({rc})\n", encoding="utf-8")
-        for call in ("dash_gate", "dash_push_gate 1111 2222"):
+        for call in ("dash_gate", "dash_push_gate origin < /dev/null"):
             r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{GATE}"; {call} || exit 7'],
                                capture_output=True, text=True, timeout=30, env=_clean_env())
             assert r.returncode == 7 and expect in r.stdout, (call, r)
@@ -323,6 +325,7 @@ def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
     _commit(root, "main removes it")
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side"],
                    cwd=root, capture_output=True, timeout=30, env=_clean_env())
+    assert _git(root, "rev-parse", "MERGE_HEAD") == _git(root, "rev-parse", "side")
     _stage(root, {"f.md": kept})
     assert _run(root).returncode == 0
     _stage(root, {"f.md": kept, "g.md": "new " + DASH + "\n"})
@@ -417,6 +420,7 @@ def test_a_merge_the_user_commits_is_judged_once_by_commit_msg(tmp_path):
     _stage(root, {"f.md": "main\n"})
     _commit(root, "main")
     subprocess.run(["git", "merge", "-q", "side"], cwd=root, capture_output=True, timeout=30, env=_clean_env())
+    assert _git(root, "rev-parse", "MERGE_HEAD") == _git(root, "rev-parse", "side")
     _stage(root, {"f.md": "resolved " + DASH + "\n"})
     held = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
                           env=_clean_env())
@@ -429,3 +433,34 @@ def test_a_merge_the_user_commits_is_judged_once_by_commit_msg(tmp_path):
     plain = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
                            env=_clean_env())
     assert plain.returncode == 1 and "g.md gains 1" in plain.stderr, plain
+
+
+def test_a_change_of_line_endings_names_only_the_added_line(tmp_path):
+    root = _repo(tmp_path)
+    _stage(root, {"f.md": "legacy " + DASH + "\nplain\n"})
+    _commit(root, "base")
+    (root / "f.md").write_bytes(("legacy " + DASH + "\r\nadded " + DASH + "\r\nplain\r\n").encode())
+    _git(root, "add", "f.md")
+    r = _run(root)
+    assert r.returncode == 1 and "f.md gains 1" in r.stderr and "f.md:2 is a new" in r.stderr, r
+    assert "f.md:1" not in r.stderr, r
+
+
+def test_one_push_reads_a_commit_two_refs_carry_once(tmp_path, monkeypatch):
+    """A branch and a new tag on the same tip: each outgoing commit is judged once."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    base = _git(root, "rev-parse", "HEAD~1")
+    stdin = f"refs/heads/main {tip} refs/heads/main {base}\nrefs/tags/v1 {tip} refs/tags/v1 {m.NULL_OID}\n"
+    stdin += f"(delete) {m.NULL_OID} refs/heads/old {base}\n"
+    r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
+                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1 and r.stderr.count("doc.md gains 1") == 1, r
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(m, "_git", lambda *a, **k: subprocess.run(["git", *a], input=k.get("stdin"), cwd=root,
+                                                                   capture_output=True, check=True,
+                                                                   env=_clean_env()).stdout)
+    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), "origin")]
+    assert len(labels) == len(set(labels)) and sum(tip[:12] in label for label in labels) == 1, labels

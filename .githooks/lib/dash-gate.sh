@@ -25,11 +25,11 @@ dash_gate() {
 
 # The same rule over each outgoing commit, from .githooks/pre-push: a rebase
 # that resolves a conflict commits without running pre-commit. $1 is the
-# remote's old OID (all zeros for a new ref), $2 the local OID being pushed,
-# $3 the remote's name (a new ref is judged against what that remote holds).
+# remote's name (a new ref is judged against what that remote holds) and
+# stdin is pre-push's own, one line per ref; a commit two refs carry is read once.
 dash_push_gate() {
     local rc=0
-    python3 "$REPO_ROOT/scripts/staged_dash_check.py" --range "$1" "$2" "${3:-}" || rc=$?
+    python3 "$REPO_ROOT/scripts/staged_dash_check.py" --push "${1:-}" || rc=$?
     if [ "$rc" -eq 1 ]; then
         echo -e "\033[31m[pre-push] an outgoing commit adds a Unicode dash (above); amend it before pushing\033[0m"
         echo "  Opt-out (last resort): SKIP_DASH_CHECK=1 git push ..."
