@@ -115,6 +115,56 @@ def test_an_anchored_hook_keeps_the_work_tree_root_from_a_subdirectory():
         assert seen == wt, (seen, wt)
 
 
+def _lint_view_from_a_worktree_commit(d: pathlib.Path, anchor: bool) -> dict[str, str]:
+    """What a pre-commit lint sees from a linked worktree, for a path-limited commit.
+
+    WHY (2026-11-21): Checks 40 and 41 build a snapshot of the staged tree in a temp
+    directory and run git there. The 2026-11-11 anchor pinned GIT_WORK_TREE but kept
+    GIT_DIR, and an exported GIT_DIR overrides discovery, so `git -C <snapshot>` read
+    the real repository: the TODO graph build refused every worktree commit as "the
+    corpus git history moved". The lint needs the commit's index and nothing else.
+    """
+    main = d / "main"
+    _git("init", "-q", str(main), cwd=d)
+    (main / "a").write_text("0\n")
+    _git("add", "a", cwd=main)
+    _git("commit", "-q", "-m", "0", cwd=main)
+    snap = d / "snapshot"
+    snap.mkdir()
+    hooks = d / "hooks"
+    hooks.mkdir()
+    source = f'. "{HELPER}"\nanchor_git_env\n' if anchor else ""
+    hook = hooks / "pre-commit"
+    hook.write_text(
+        f'#!/bin/bash\n{source}'
+        f'git -C "{snap}" rev-parse --git-dir > "{d}/snapshot-git" 2>/dev/null || echo none > "{d}/snapshot-git"\n'
+        f'mkdir -p sub\ngit -C sub rev-parse --show-toplevel > "{d}/toplevel"\n'
+        f'(cd sub && git diff --cached --name-only) > "{d}/staged"\n')
+    hook.chmod(0o755)
+    _git("config", "core.hooksPath", str(hooks), cwd=main)
+    wt = d / "wt"
+    _git("worktree", "add", "-q", "--detach", str(wt), cwd=main)
+    (wt / "a").write_text("1\n")
+    (wt / "b").write_text("1\n")
+    _git("add", "b", cwd=wt)
+    _git("commit", "-q", "-m", "1", "--", "a", cwd=wt)  # path-limited: git stages into a temporary index
+    return {k: (d / k).read_text().strip() for k in ("snapshot-git", "toplevel", "staged")} | {"wt": str(wt.resolve())}
+
+
+def test_the_control_a_kept_git_dir_reaches_the_real_repo_from_a_snapshot():
+    with tempfile.TemporaryDirectory() as d:
+        seen = _lint_view_from_a_worktree_commit(pathlib.Path(d).resolve(), anchor=False)
+        assert seen["snapshot-git"] != "none", seen
+
+
+def test_an_anchored_lint_reads_the_commit_index_and_leaves_snapshots_alone():
+    with tempfile.TemporaryDirectory() as d:
+        seen = _lint_view_from_a_worktree_commit(pathlib.Path(d).resolve(), anchor=True)
+        assert seen["snapshot-git"] == "none", f"a snapshot reached a repository: {seen}"
+        assert seen["toplevel"] == seen["wt"], seen
+        assert seen["staged"] == "a", f"the lint lost the path-limited commit's index: {seen}"
+
+
 def test_pre_commit_anchors_before_the_lint():
     commit = (REPO / ".githooks/pre-commit").read_text()
     assert commit.index("\nanchor_git_env\n") < commit.index('bash "$REPO_ROOT/scripts/lint.sh"')

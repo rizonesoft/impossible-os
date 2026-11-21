@@ -133,6 +133,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | --                         |  [ ]   |
 | ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
+| ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1865,6 +1866,19 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 - [ ] Commit: `"review: the push wait overlaps the next plan review"`
 
 **Test checkpoint:** during `push-wait` a plan dispatch is allowed and every other edit or dispatch is refused.
+
+
+## 68. Coverage lint passes inside a worktree commit
+
+> **Spawned-by:** root
+> **User impact:** every TODO or docs commit made from a linked worktree was refused by Checks 40 and 41, and the pre-commit hook clears `SKIP_LINT_*`, so no attended session beside the run could commit.
+
+Built and Astra-reviewed 2026-11-21 in the GitHub session; the review-todo-section pass and its stamps are still owed. Found 2026-11-21 committing from `../impossible-os-gh`, the second time this class reopened (the first was 2026-11-11). Git exports `GIT_DIR` to hooks in a linked worktree, and an exported `GIT_DIR` overrides discovery, so `git -C <staged snapshot>` read the real repository and the TODO graph build refused with "the corpus git history moved". The 2026-11-11 fix pinned `GIT_WORK_TREE` and kept `GIT_DIR`; this one keeps only the commit's index.
+
+- [x] `anchor_git_env` keeps only `GIT_INDEX_FILE` and drops `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_PREFIX`; `test_hook_git_env.py` covers the snapshot, subdirectory and path-limited index cases with a control
+- [x] Commit: `"hooks: the pre-commit lint finds its repository by discovery, not GIT_DIR"`
+
+**Test checkpoint:** `test_an_anchored_lint_reads_the_commit_index_and_leaves_snapshots_alone` fails on the 2026-11-11 anchor and passes after.
 
 
 ## Format Quick Reference

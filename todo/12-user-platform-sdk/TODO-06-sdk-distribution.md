@@ -69,7 +69,8 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 | 5    | Unit test framework (`itest.h`)                  | ⭐    | §1 headers; `TODO-01 §8` host-side test pattern            |
 | 6    | Debugger enhancements (call stack, disasm)       | 💎    | `D10T12 §2` base debugger; ELF/PE symbol tables            |
 | 7    | IxUI starter templates (`ixui-new`)              | ⭐    | §1 SDK; TCC (`D10T09 §5`); §3 samples as template basis    |
-| 8    | SDK release pipeline (`release-sdk.sh`)          | ⭐    | §1 zip + SHA-256; GitHub CLI; Registry SDK version         |
+| 8    | SDK release pipeline (`release-sdk.sh`)          | ⭐    | §1 zip + SHA-256; GitHub CLI; Registry SDK version; §9     |
+| 9    | User-space runtime licensing (linking exception) | 💎    | none                                                       |
 
 ---
 
@@ -309,6 +310,21 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
   - On yes: download ZIP, verify SHA-256, extract to `C:\Impossible\Include\` + `C:\Impossible\Bin\`, update `HKLM\SYSTEM\SDK\InstalledVersion`
 - [ ] **`HKLM\SYSTEM\SDK\InstalledVersion`**: string value e.g. `"1.2.0"`; written by SDK installer; read by `sdk-update` + `sdk-info` shell commands
 - [ ] **`sdk-info` shell command**: prints `Installed SDK: v{version}`, `Headers: C:\Impossible\Include\`, `Libs: C:\Impossible\Lib\`, `Compiler: tcc.exe v{tcc-version}`
+
+---
+
+## 9. User-Space Runtime Licensing
+
+> **Spawned-by:** root
+
+**Needs:** owner-decision
+
+Filed 2026-11-21 from GitHub issue #5 (rizonesoft/impossible-os#5). The kernel stays GPL-3.0-only, and a program that only runs on it is not bound by it. A program that links the SDK's runtime (`libc.lib`, the Win32 import libraries and DLLs, `libixui.a`) would be, so today no closed-source app can be built against the SDK. Settle this before §8 publishes an SDK.
+
+- [ ] Owner decides the runtime licence: a GPL-3.0 linking exception modelled on the GCC Runtime Library Exception, or MPL-2.0 / LGPL-3.0 for the runtime libraries only; record it with its reversal cost in `todo/answers.md`.
+- [ ] Confirm every vendored library the runtime links (`src/libs/PROVENANCE.md`) permits the chosen licence.
+- [ ] Apply it: the exception or licence text in the tree, SPDX headers on the runtime sources, and `CREDITS.md` plus the §1 SDK ZIP carry it.
+- [ ] Publish a licensing page under `docs/sdk/` that says what an app author may ship, and answer issue #5 with a link.
 
 ---
 

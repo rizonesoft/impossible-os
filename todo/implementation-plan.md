@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **995 of 2751 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **995 of 2753 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -335,6 +335,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §45` | A reviewer outage leaves a review owed and the run continues                                                          | none       |     7 |
 | [x]  | `D00 T08 §46` | The second reviewer's switched-off machinery is removed                                                               | none       |     8 |
 | [ ]  | `D00 T08 §47` | The Bash safety guards read commands with a shell grammar                                                             | none       |     8 |
+| [/]  | `D00 T08 §68` | Coverage lint passes inside a worktree commit                                                                         | none       |     2 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none       |    10 |
 | [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator   |    11 |
 | [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none       |    11 |
@@ -2651,74 +2652,75 @@ The bundled applications are the proof that the platform beneath them is complet
 
 The kernel libraries, the process ABI, ntdll, the Win32 subsystem in user mode, the SDK and the compatibility matrix turn the system into one that runs other people's programs. They need nearly everything before them.
 
-| Done | Section       | Deliverable                                                                 | Needs | Items |
-| :--: | ------------- | --------------------------------------------------------------------------- | ----- | ----: |
-| [ ]  | `D12 T01 §1`  | String Library Consolidation                                                | none  |     8 |
-| [ ]  | `D12 T01 §2`  | Math Library Extension                                                      | none  |     4 |
-| [ ]  | `D12 T01 §4`  | monocypher + CSPRNG + SYS_GETRANDOM                                         | none  |     5 |
-| [ ]  | `D11 T12 §4`  | Archive Manager                                                             | none  |    10 |
-| [ ]  | `D11 T12 §5`  | ZIP Shell Integration                                                       | none  |     6 |
-| [ ]  | `D12 T01 §3`  | miniz (ZIP Writer + Stream Extension)                                       | none  |     4 |
-| [ ]  | `D12 T01 §5`  | cJSON                                                                       | none  |     4 |
-| [ ]  | `D12 T01 §6`  | Mbed TLS Subset                                                             | none  |     5 |
-| [ ]  | `D12 T01 §7`  | STB Consolidation + `stb_image_write`                                       | none  |     5 |
-| [ ]  | `D12 T01 §8`  | Library Integration Tests + README                                          | none  |     2 |
-| [ ]  | `D12 T02 §1`  | Per-Process Environ Storage (SDK Contract)                                  | none  |     4 |
-| [ ]  | `D12 T02 §2`  | System Default Variables                                                    | none  |     2 |
-| [ ]  | `D12 T02 §3`  | `%VAR%` Expansion + `env_expand_path`                                       | none  |     4 |
-| [ ]  | `D12 T02 §4`  | SYS_GETENV / SYS_SETENV / SYS_UNSETENV                                      | none  |     6 |
-| [ ]  | `D12 T02 §5`  | PATH-Based Command Lookup + Session Cache                                   | none  |     5 |
-| [ ]  | `D12 T02 §8`  | `set` / `echo` / `env` / `where` Shell Commands                             | none  |     9 |
-| [ ]  | `D12 T03 §1`  | ELF Relocation Engine                                                       | none  |     5 |
-| [ ]  | `D12 T03 §2`  | Kernel Module Format `.kmod`                                                | none  |     5 |
-| [ ]  | `D12 T03 §3`  | Kernel Module Loader                                                        | none  |     6 |
-| [ ]  | `D12 T03 §4`  | Kernel Symbol Export (`EXPORT_SYMBOL`)                                      | none  |     5 |
-| [ ]  | `D12 T03 §7`  | Module Hot-Swap (Stretch)                                                   | none  |     3 |
-| [ ]  | `D12 T03 §8`  | `lsmod` / `insmod` / `rmmod` / `modprobe` Shell Commands                    | none  |     5 |
-| [ ]  | `D12 T05 §1`  | Win32 Subsystem Architecture + Message Queue                                | none  |     8 |
-| [ ]  | `D12 T05 §8`  | Common Dialog Boxes                                                         | none  |     4 |
-| [ ]  | `D12 T06 §1`  | SDK Packaging (`make sdk`)                                                  | none  |     5 |
-| [ ]  | `D12 T06 §2`  | SDK Documentation (`gendoc.c`)                                              | none  |     5 |
-| [ ]  | `D12 T06 §3`  | Code Samples                                                                | none  |     8 |
-| [ ]  | `D12 T06 §4`  | Sampling Profiler                                                           | none  |     6 |
-| [ ]  | `D12 T06 §5`  | Unit Test Framework (`itest.h`)                                             | none  |     5 |
-| [ ]  | `D12 T06 §6`  | Debugger Enhancements                                                       | none  |     5 |
-| [ ]  | `D12 T06 §7`  | IxUI Starter Templates (`ixui-new`)                                         | none  |     6 |
-| [ ]  | `D12 T06 §8`  | SDK Release Pipeline                                                        | none  |     5 |
-| [ ]  | `D12 T07 §1`  | API Coverage Tracker                                                        | none  |     4 |
-| [ ]  | `D12 T07 §2`  | Bring-Up Ladder Framework                                                   | none  |     4 |
-| [ ]  | `D12 T07 §3`  | Tier 1 -- Process Exit Only                                                 | none  |     4 |
-| [ ]  | `D12 T07 §4`  | Tier 2 -- Console I/O                                                       | none  |     4 |
-| [ ]  | `D12 T07 §6`  | Tier 4 -- Process & Registry                                                | none  |     4 |
-| [ ]  | `D12 T07 §7`  | Tier 5 -- Memory & Sync                                                     | none  |     4 |
-| [ ]  | `D12 T07 §5`  | Tier 3 -- File I/O                                                          | none  |     4 |
-| [ ]  | `D12 T07 §10` | Tier 8 -- Extended Win32 Surface                                            | none  |     4 |
-| [ ]  | `D12 T07 §11` | Stub Call Log Analysis                                                      | none  |     3 |
-| [ ]  | `D12 T03 §6`  | GOT / PLT Lazy Binding                                                      | none  |     4 |
-| [ ]  | `D12 T03 §5`  | `dlopen` / `dlsym` for Linux Compat                                         | none  |     5 |
-| [ ]  | `D12 T04 §1`  | ntdll.dll Structure + TEB / PEB Extensions                                  | none  |     6 |
-| [ ]  | `D12 T02 §6`  | argv / argc Process ABI + `cmd_tokenize`                                    | none  |     4 |
-| [ ]  | `D12 T02 §7`  | Shell `.profile` Startup Script                                             | none  |     5 |
-| [ ]  | `D12 T04 §2`  | RtlHeap Process Heap Allocator                                              | none  |     7 |
-| [ ]  | `D12 T04 §3`  | LdrLoadDll (PE DLL Loader)                                                  | none  |     7 |
-| [ ]  | `D12 T04 §4`  | Thread-Local Storage (TLS)                                                  | none  |     5 |
-| [ ]  | `D12 T04 §5`  | Vectored Exception Handling (VEH)                                           | none  |    16 |
-| [ ]  | `D12 T04 §6`  | Process Startup (CRT0)                                                      | none  |     6 |
-| [ ]  | `D12 T04 §7`  | User-Mode libc Shims                                                        | none  |    17 |
-| [ ]  | `D12 T04 §8`  | Fiber API                                                                   | none  |     5 |
-| [ ]  | `D12 T04 §9`  | Local Atom Tables (RtlAtomTable)                                            | none  |     5 |
-| [ ]  | `D12 T04 §10` | WNF User Runtime (RtlPublish / RtlSubscribe)                                | none  |     7 |
-| [ ]  | `D12 T05 §2`  | Window Class Registry + Built-in Classes                                    | none  |     8 |
-| [ ]  | `D12 T05 §3`  | WndProc Dispatch + DefWindowProc                                            | none  |     6 |
-| [ ]  | `D12 T05 §4`  | Win32 Painting Model (HDC + Dirty Rect)                                     | none  |     9 |
-| [ ]  | `D12 T05 §5`  | Message Filters + Accelerator Tables                                        | none  |     4 |
-| [ ]  | `D12 T05 §6`  | Window Subclassing + Property Store                                         | none  |     4 |
-| [ ]  | `D12 T05 §7`  | Inter-Process Window Messaging                                              | none  |     6 |
-| [ ]  | `D12 T05 §9`  | Win11 Visual Opt-In Surface: `dwmapi`, `uxtheme`, Personalization Broadcast | none  |     6 |
-| [ ]  | `D12 T07 §8`  | Tier 6 -- MessageBox & Basic GUI                                            | none  |     3 |
-| [ ]  | `D12 T07 §9`  | Tier 7 -- Full Win32 Window + Controls                                      | none  |     3 |
-| [ ]  | `D12 T07 §12` | CI Compatibility Gate                                                       | none  |     4 |
-| [ ]  | `D12 T07 §13` | Tier 9 -- WinRT + DirectX + WinUI 3 / Windows App SDK Apps                  | none  |     5 |
+| Done | Section       | Deliverable                                                                 | Needs          | Items |
+| :--: | ------------- | --------------------------------------------------------------------------- | -------------- | ----: |
+| [ ]  | `D12 T01 §1`  | String Library Consolidation                                                | none           |     8 |
+| [ ]  | `D12 T01 §2`  | Math Library Extension                                                      | none           |     4 |
+| [ ]  | `D12 T01 §4`  | monocypher + CSPRNG + SYS_GETRANDOM                                         | none           |     5 |
+| [ ]  | `D11 T12 §4`  | Archive Manager                                                             | none           |    10 |
+| [ ]  | `D11 T12 §5`  | ZIP Shell Integration                                                       | none           |     6 |
+| [ ]  | `D12 T01 §3`  | miniz (ZIP Writer + Stream Extension)                                       | none           |     4 |
+| [ ]  | `D12 T01 §5`  | cJSON                                                                       | none           |     4 |
+| [ ]  | `D12 T01 §6`  | Mbed TLS Subset                                                             | none           |     5 |
+| [ ]  | `D12 T01 §7`  | STB Consolidation + `stb_image_write`                                       | none           |     5 |
+| [ ]  | `D12 T01 §8`  | Library Integration Tests + README                                          | none           |     2 |
+| [ ]  | `D12 T02 §1`  | Per-Process Environ Storage (SDK Contract)                                  | none           |     4 |
+| [ ]  | `D12 T02 §2`  | System Default Variables                                                    | none           |     2 |
+| [ ]  | `D12 T02 §3`  | `%VAR%` Expansion + `env_expand_path`                                       | none           |     4 |
+| [ ]  | `D12 T02 §4`  | SYS_GETENV / SYS_SETENV / SYS_UNSETENV                                      | none           |     6 |
+| [ ]  | `D12 T02 §5`  | PATH-Based Command Lookup + Session Cache                                   | none           |     5 |
+| [ ]  | `D12 T02 §8`  | `set` / `echo` / `env` / `where` Shell Commands                             | none           |     9 |
+| [ ]  | `D12 T03 §1`  | ELF Relocation Engine                                                       | none           |     5 |
+| [ ]  | `D12 T03 §2`  | Kernel Module Format `.kmod`                                                | none           |     5 |
+| [ ]  | `D12 T03 §3`  | Kernel Module Loader                                                        | none           |     6 |
+| [ ]  | `D12 T03 §4`  | Kernel Symbol Export (`EXPORT_SYMBOL`)                                      | none           |     5 |
+| [ ]  | `D12 T03 §7`  | Module Hot-Swap (Stretch)                                                   | none           |     3 |
+| [ ]  | `D12 T03 §8`  | `lsmod` / `insmod` / `rmmod` / `modprobe` Shell Commands                    | none           |     5 |
+| [ ]  | `D12 T05 §1`  | Win32 Subsystem Architecture + Message Queue                                | none           |     8 |
+| [ ]  | `D12 T05 §8`  | Common Dialog Boxes                                                         | none           |     4 |
+| [ ]  | `D12 T06 §1`  | SDK Packaging (`make sdk`)                                                  | none           |     5 |
+| [ ]  | `D12 T06 §2`  | SDK Documentation (`gendoc.c`)                                              | none           |     5 |
+| [ ]  | `D12 T06 §3`  | Code Samples                                                                | none           |     8 |
+| [ ]  | `D12 T06 §4`  | Sampling Profiler                                                           | none           |     6 |
+| [ ]  | `D12 T06 §5`  | Unit Test Framework (`itest.h`)                                             | none           |     5 |
+| [ ]  | `D12 T06 §6`  | Debugger Enhancements                                                       | none           |     5 |
+| [ ]  | `D12 T06 §7`  | IxUI Starter Templates (`ixui-new`)                                         | none           |     6 |
+| [ ]  | `D12 T06 §9`  | User-Space Runtime Licensing                                                | owner-decision |     4 |
+| [ ]  | `D12 T06 §8`  | SDK Release Pipeline                                                        | none           |     5 |
+| [ ]  | `D12 T07 §1`  | API Coverage Tracker                                                        | none           |     4 |
+| [ ]  | `D12 T07 §2`  | Bring-Up Ladder Framework                                                   | none           |     4 |
+| [ ]  | `D12 T07 §3`  | Tier 1 -- Process Exit Only                                                 | none           |     4 |
+| [ ]  | `D12 T07 §4`  | Tier 2 -- Console I/O                                                       | none           |     4 |
+| [ ]  | `D12 T07 §6`  | Tier 4 -- Process & Registry                                                | none           |     4 |
+| [ ]  | `D12 T07 §7`  | Tier 5 -- Memory & Sync                                                     | none           |     4 |
+| [ ]  | `D12 T07 §5`  | Tier 3 -- File I/O                                                          | none           |     4 |
+| [ ]  | `D12 T07 §10` | Tier 8 -- Extended Win32 Surface                                            | none           |     4 |
+| [ ]  | `D12 T07 §11` | Stub Call Log Analysis                                                      | none           |     3 |
+| [ ]  | `D12 T03 §6`  | GOT / PLT Lazy Binding                                                      | none           |     4 |
+| [ ]  | `D12 T03 §5`  | `dlopen` / `dlsym` for Linux Compat                                         | none           |     5 |
+| [ ]  | `D12 T04 §1`  | ntdll.dll Structure + TEB / PEB Extensions                                  | none           |     6 |
+| [ ]  | `D12 T02 §6`  | argv / argc Process ABI + `cmd_tokenize`                                    | none           |     4 |
+| [ ]  | `D12 T02 §7`  | Shell `.profile` Startup Script                                             | none           |     5 |
+| [ ]  | `D12 T04 §2`  | RtlHeap Process Heap Allocator                                              | none           |     7 |
+| [ ]  | `D12 T04 §3`  | LdrLoadDll (PE DLL Loader)                                                  | none           |     7 |
+| [ ]  | `D12 T04 §4`  | Thread-Local Storage (TLS)                                                  | none           |     5 |
+| [ ]  | `D12 T04 §5`  | Vectored Exception Handling (VEH)                                           | none           |    16 |
+| [ ]  | `D12 T04 §6`  | Process Startup (CRT0)                                                      | none           |     6 |
+| [ ]  | `D12 T04 §7`  | User-Mode libc Shims                                                        | none           |    17 |
+| [ ]  | `D12 T04 §8`  | Fiber API                                                                   | none           |     5 |
+| [ ]  | `D12 T04 §9`  | Local Atom Tables (RtlAtomTable)                                            | none           |     5 |
+| [ ]  | `D12 T04 §10` | WNF User Runtime (RtlPublish / RtlSubscribe)                                | none           |     7 |
+| [ ]  | `D12 T05 §2`  | Window Class Registry + Built-in Classes                                    | none           |     8 |
+| [ ]  | `D12 T05 §3`  | WndProc Dispatch + DefWindowProc                                            | none           |     6 |
+| [ ]  | `D12 T05 §4`  | Win32 Painting Model (HDC + Dirty Rect)                                     | none           |     9 |
+| [ ]  | `D12 T05 §5`  | Message Filters + Accelerator Tables                                        | none           |     4 |
+| [ ]  | `D12 T05 §6`  | Window Subclassing + Property Store                                         | none           |     4 |
+| [ ]  | `D12 T05 §7`  | Inter-Process Window Messaging                                              | none           |     6 |
+| [ ]  | `D12 T05 §9`  | Win11 Visual Opt-In Surface: `dwmapi`, `uxtheme`, Personalization Broadcast | none           |     6 |
+| [ ]  | `D12 T07 §8`  | Tier 6 -- MessageBox & Basic GUI                                            | none           |     3 |
+| [ ]  | `D12 T07 §9`  | Tier 7 -- Full Win32 Window + Controls                                      | none           |     3 |
+| [ ]  | `D12 T07 §12` | CI Compatibility Gate                                                       | none           |     4 |
+| [ ]  | `D12 T07 §13` | Tier 9 -- WinRT + DirectX + WinUI 3 / Windows App SDK Apps                  | none           |     5 |
 
 ### Phase 13 -- Tools and accessories
 

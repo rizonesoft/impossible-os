@@ -12,14 +12,14 @@ isolate_git_env() {
 }
 
 # The lint step keeps the hook's index (a path-limited commit stages into a temporary
-# one), so it cannot be isolated. From a linked worktree git exports GIT_DIR with no
-# GIT_WORK_TREE, and git then takes the CURRENT directory as the work tree root: a call
-# made from todo/ scoped `.` to the whole repository, and the TODO graph build refused
-# every commit there as "the corpus git history moved" (2026-11-11). A hook starts at
-# the work tree root, so pin it before anything changes directory.
+# one), so it cannot be isolated, but the index is ALL it needs. From a linked worktree
+# git also exports GIT_DIR, and an exported GIT_DIR overrides discovery everywhere:
+# with no GIT_WORK_TREE a call from todo/ took todo/ for the work tree (2026-11-11),
+# and with one pinned, a call from a staged-tree snapshot in a temp directory still
+# read the real repository (Checks 40 and 41, 2026-11-21). Both refused every worktree
+# commit as "the corpus git history moved". So keep only GIT_INDEX_FILE (git resolves a
+# relative one against the work tree top, so a tool that changes directory still finds
+# it) and let every git call find its repository from where it runs, as in a plain shell.
 anchor_git_env() {
-  if [ -n "${GIT_DIR:-}" ] && [ -z "${GIT_WORK_TREE:-}" ]; then
-    GIT_WORK_TREE="$(pwd -P)"
-    export GIT_WORK_TREE
-  fi
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_PREFIX
 }
