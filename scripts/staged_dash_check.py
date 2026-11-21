@@ -43,8 +43,9 @@ def staged_changes(raw: bytes) -> list:
     """(old_oid, new_oid, path) per staged regular file or link from --raw -z.
 
     A deleted file keeps its old blob (its lines may move elsewhere) with a
-    null new blob; a submodule has no blob. A change touching a generated
-    file on either side is left out whole, so it neither adds nor lends."""
+    null new blob; a submodule has no blob. The generated-file exemption
+    applies to each side alone: a generated source lends no lines and a
+    generated destination adds none, so a rename out of one is still read."""
     out, parts, i = [], raw.split(b"\0"), 0
     while i < len(parts):
         head = parts[i].decode("ascii", "replace")
@@ -57,43 +58,70 @@ def staged_changes(raw: bytes) -> list:
         src = parts[i + 1].decode("utf-8", "surrogateescape")
         path = parts[i + 2].decode("utf-8", "surrogateescape") if two else src
         i += 3 if two else 2
-        if src in GENERATED or path in GENERATED:
-            continue
         old_mode, new_mode, old, new = fields[0], fields[1], fields[2], fields[3]
-        if old_mode not in BLOB_MODES:
-            old = NULL_OID
-        if new_mode not in BLOB_MODES or status == "D":
-            new = NULL_OID
+        if old_mode not in BLOB_MODES or src in GENERATED:
+            old = NULL_OID                                 # a generated source lends nothing
+        if new_mode not in BLOB_MODES or status == "D" or path in GENERATED:
+            new = NULL_OID                                 # a generated destination adds nothing
         if old == new:
             continue                                       # identical content, or nothing to read
         out.append((old, new, path))
     return out
 
 
-def is_binary(blob: bytes) -> bool:
-    """Git's own test: a NUL in the first 8000 bytes."""
-    return b"\0" in blob[:8000]
+UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+
+
+def as_text(blob: bytes):
+    """The blob as UTF-8 text bytes, or None for a binary blob.
+
+    A BOM-marked UTF-16 file (a PowerShell script saved by Windows) is text
+    and is decoded; otherwise git's own test applies: a NUL in the first 8000
+    bytes means binary."""
+    if blob[:2] in UTF16_BOMS:
+        try:
+            return blob.decode("utf-16").encode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return None if b"\0" in blob[:8000] else blob
+
+
+class _DashFinder:
+    """The next dash at or after a position. Each dash's next hit is cached
+    and searched for again only once the position passes it, so the whole
+    text is scanned once per dash."""
+
+    def __init__(self, text: bytes):
+        self.text, self.next = text, [text.find(d) for d in DASHES]
+
+    def at_or_after(self, pos: int) -> int:
+        for i, d in enumerate(DASHES):
+            if self.next[i] != -1 and self.next[i] < pos:
+                self.next[i] = self.text.find(d, pos)
+        live = [n for n in self.next if n != -1]
+        return min(live) if live else -1
 
 
 def dash_lines(blob: bytes) -> list:
     """(line number, line) for each LF-delimited text line holding a dash.
 
-    Only the lines that hold a dash are copied: the blob is searched for the
-    dash bytes and each hit's line is cut out by its LF bounds."""
-    if is_binary(blob):
+    Only the lines that hold a dash are copied. The search jumps from a hit
+    to the end of its line, so a line with many dashes is scanned once."""
+    text = as_text(blob)
+    if text is None:
         return []
-    starts = set()
-    for d in DASHES:
-        at = blob.find(d)
-        while at != -1:
-            starts.add(blob.rfind(b"\n", 0, at) + 1)
-            at = blob.find(d, at + 1)
-    out, line_no, pos = [], 1, 0
-    for start in sorted(starts):
-        line_no += blob.count(b"\n", pos, start)
-        pos = start
-        end = blob.find(b"\n", start)
-        out.append((line_no, blob[start:] if end == -1 else blob[start:end]))
+    finder = _DashFinder(text)
+    out, line_no, pos, at = [], 1, 0, finder.at_or_after(0)
+    while at != -1:
+        nl = text.rfind(b"\n", pos, at)
+        start = nl + 1 if nl != -1 else pos
+        line_no += text.count(b"\n", pos, start)
+        end = text.find(b"\n", at)
+        out.append((line_no, text[start:] if end == -1 else text[start:end]))
+        if end == -1:
+            break
+        pos, line_no = end + 1, line_no + 1
+        at = finder.at_or_after(pos)
     return out
 
 

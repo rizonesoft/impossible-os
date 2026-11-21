@@ -183,3 +183,46 @@ def test_a_short_blob_read_is_an_error_not_clean():
         assert "short" in str(exc)
     else:
         raise AssertionError("a truncated blob was accepted")
+
+
+def test_a_rename_out_of_a_generated_file_and_a_utf16_script_are_read(tmp_path):
+    root = _repo(tmp_path)
+    body = "".join(f"count line {i}\n" for i in range(40))
+    (root / "COUNT.md").write_text(body, encoding="utf-8")
+    (root / "old.ps1").write_bytes(("Write-Output 'legacy " + DASH + "'\r\n").encode("utf-16"))
+    _git(root, "add", "-A")
+    _commit(root, "base")
+    _git(root, "mv", "COUNT.md", "snapshot.md")
+    (root / "snapshot.md").write_text(body + "added " + DASH + " sentence\n", encoding="utf-8")
+    (root / "old.ps1").write_bytes(("Write-Output 'legacy " + DASH + "'\r\nWrite-Output 'new "
+                                    + DASH + "'\r\n").encode("utf-16"))
+    _git(root, "add", "-A")
+    r = _run(root)
+    assert r.returncode == 1 and "snapshot.md:41" in r.stderr and "old.ps1:2" in r.stderr, r
+    assert "old.ps1:1" not in r.stderr, r
+
+
+def test_dash_lines_finds_each_line_once_on_a_long_dashed_line():
+    sys.path.insert(0, str(CHECK.parent))
+    import staged_dash_check as m
+    en, em = chr(0x2013), chr(0x2014)
+    long_line = ("x" + en + "y" + em) * 2000
+    blob = ("first\n" + long_line + "\nmid\nlast " + em + "\n").encode()
+    assert [n for n, _ln in m.dash_lines(blob)] == [2, 4]
+
+
+def test_a_nonzero_reader_exit_fails_the_check(monkeypatch):
+    sys.path.insert(0, str(CHECK.parent))
+    import staged_dash_check as m
+    monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, stdout=b":100644 100644 " + b"1" * 40 + b" " + b"2" * 40 + b" M\0f.md\0"))
+
+    class Reader:
+        def dash_lines(self, oid):
+            return []
+
+        def close(self):
+            return 128
+
+    monkeypatch.setattr(m, "BlobReader", Reader)
+    assert m.main() == 2
