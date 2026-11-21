@@ -59,9 +59,11 @@ STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
 LOGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --max)          MAX="${2:-}"; shift 2 ;;
+        --max)          [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --max needs a value" >&2; exit 2; }
+                        MAX="$2"; shift 2 ;;
         --max=*)        MAX="${1#--max=}"; shift ;;
-        --stale-secs)   STALE="${2:-}"; shift 2 ;;
+        --stale-secs)   [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --stale-secs needs a value" >&2; exit 2; }
+                        STALE="$2"; shift 2 ;;
         --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
         *)
             # J2a: a BARE number that is not a file is almost always a misused
@@ -106,8 +108,10 @@ _all_done() {
 mkdir -p "$ACT_DIR" 2>/dev/null || true
 _first_seen() {
     local side; side="$ACT_DIR/$(printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-16)"
-    [ -f "$side" ] || date +%s > "$side" 2>/dev/null || true
-    cat "$side" 2>/dev/null || date +%s
+    # A sighting that cannot be kept reads as the epoch, so a missing log is
+    # reported MISSING at once rather than looking newly launched forever.
+    [ -f "$side" ] || date +%s > "$side" 2>/dev/null || { echo 0; return; }
+    cat "$side" 2>/dev/null || echo 0
 }
 _silent_for() {
     local now; now=$(date +%s)

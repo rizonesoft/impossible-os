@@ -47,8 +47,11 @@ def manifest(d, legs, now):
         rcs = re.findall(r"^Turn completed \(rc=(\d+)\)\s*$", content, re.M)
         if rcs:
             Path(str(log) + ".done").write_text(rcs[-1] + "\n")
-        lines.append(json.dumps({"ts": int(now - age), "kind": "adversarial", "logFile": str(log),
-                                 **(extra[0] if extra else {})}))
+        row = dict(extra[0]) if extra else {}
+        finished_age = row.pop("_finished_age", None)
+        if finished_age is not None and Path(str(log) + ".done").exists():
+            os.utime(str(log) + ".done", (now - finished_age, now - finished_age))
+        lines.append(json.dumps({"ts": int(now - age), "kind": "adversarial", "logFile": str(log), **row}))
     m = Path(d) / "manifest.jsonl"
     m.write_text("\n".join(lines) + "\n")
     return m
@@ -76,6 +79,9 @@ CASES = [
     # A brokered review writes the broker's row and, from its own job, a receipt
     # naming that job as parent: one failed attempt, not two.
     ("one failed brokered review is one attempt", [(OUTAGE, 120), (OUTAGE, 119, {"parent": "detached:a"})], 0),
+    # Overlapping reviews: the first launched finished LAST and succeeded.
+    ("a success that finished last clears two earlier-finishing failures",
+     [(OK, 300, {"_finished_age": 5}), (OUTAGE, 200, {"_finished_age": 60}), (OUTAGE, 100, {"_finished_age": 30})], 0),
     ("two failed brokered reviews refuse", [(OUTAGE, 120), (OUTAGE, 119, {"parent": "detached:a"}),
                                             (OUTAGE, 60), (OUTAGE, 59, {"parent": "detached:b"})], 75),
 ]

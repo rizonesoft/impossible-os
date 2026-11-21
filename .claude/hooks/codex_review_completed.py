@@ -790,12 +790,14 @@ def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
             f"that does not exist on disk. Recording anyway; the gate "
             f"will not match a non-existent path.\n"
         )
-    # The section is read from the first line, after its TODO path, with the
+    # The section is read from that line, after its TODO path, with the
     # precedence of scripts/lib/review-prompt.sh: a whole-file review followed
     # by an inventory that numbers sections ("section 5 depends on section 3")
     # is no section's review.
-    first = next((ln for ln in prompt.splitlines() if ln.strip()), "")
-    rest = first.split(".md", 1)[1] if ".md" in first else ""
+    # The line that first names the path: the marker line, or the `Target:`
+    # line of the fixed templates that put the marker alone on line one.
+    first = next((ln for ln in prompt.splitlines() if chosen in ln), "")
+    rest = first.split(chosen, 1)[1] if chosen in first else ""
     sm = (_SECTION_LEAD_RE.match(rest) or _SECTION_S_LEAD_RE.match(rest)
           or _SECTION_ANY_RE.search(rest))
     section = f"§{sm.group(1)}" if sm else ""
@@ -1003,7 +1005,9 @@ def _record_stamp(
             # section. This is the stale-value half of the 2026-07-31 defect
             # above -- the parser fix stops it arising, this stops it mattering
             # if any other prompt shape ever fails to parse.
-            entry.pop(f"{kind}_section", None)
+            # Written as "" (not removed), so the gate reads an explicit
+            # whole-file review and never falls back to the shared section.
+            entry[f"{kind}_section"] = ""
         if dispatch_head_sha:
             entry[f"{kind}_head"] = dispatch_head_sha
         # Preserve any unexpected keys but ensure the three canonical

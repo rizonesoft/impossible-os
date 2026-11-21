@@ -82,6 +82,26 @@ def test_the_recorder_reads_the_section_from_the_first_line_only():
     assert crc._detect_todo_path(head + " section 7" + body, REPO)[1] == SIGN + "7"
     assert crc._detect_todo_path(head + " s4 sleep" + body, REPO)[1] == SIGN + "4"
     assert crc._detect_todo_path(head + " (see section 9)" + body, REPO)[1] == SIGN + "9"
+    # The fixed templates once put the marker alone on line one, the target on line two.
+    two = "[review-kind: adversarial]\nTarget: todo/00-x/TODO-01-x.md section 35\nFiles in scope: a\n"
+    assert crc._detect_todo_path(two, REPO)[1] == SIGN + "35"
+
+
+def test_the_shipped_templates_name_path_and_section_on_the_marker_line():
+    text = (REPO / ".claude/skills/review-todo-section/codex-prompt-template.md").read_text(encoding="utf-8")
+    import re as _re
+    markers = _re.findall(r"^\[review-kind: (?:adversarial|consistency|perf)\][^\n]*$", text, _re.M)
+    assert markers and all("section <" in m for m in markers if "bash " not in m), markers
+
+
+def test_the_first_line_parser_is_linear_on_a_long_whitespace_prefix():
+    import time
+    lib = REPO / "scripts/lib/review-prompt.sh"
+    prompt = "\n" + " " * 120000 + "[review-kind: round] todo/a.md section 3\nbody"
+    t = time.time()
+    r = subprocess.run(["bash", "-c", f". {lib}; review_prompt_first_line \"$1\"", "_", prompt],
+                       capture_output=True, text=True, timeout=30)
+    assert r.stdout == " " * 120000 + "[review-kind: round] todo/a.md section 3" and time.time() - t < 1.5
 
 
 if __name__ == "__main__":

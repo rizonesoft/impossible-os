@@ -134,6 +134,20 @@ def test_section_binding_still_fails_closed():
         assert ("bound to " + SEC + "19") in msg, msg
 
 
+def test_a_whole_file_review_never_borrows_the_shared_section():
+    """The recorder writes an explicit "" for a sectionless review; the gate must
+    not fall back to the shared `section` an earlier section review left."""
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d = _fixture(t, age_min=5, section="")
+        f = d / ".claude/state/last-review-stamps.json"
+        data = json.loads(f.read_text())
+        data["todo/x.md"]["section"] = "22"
+        f.write_text(json.dumps(data))
+        ok, msg = _check(mod, d)
+        assert not ok, msg
+
+
 def test_refusal_names_the_actual_reason():
     """The misdirection is the expensive part, not the refusal.
 

@@ -313,7 +313,7 @@ fi
 # No writable reviews directory. A marked review would leave no receipt and no
 # done file, so nothing could find or credit it: refuse it before it runs.
 if [ "$KIND" != "direct" ]; then
-    echo "[$SELF_NAME] REFUSED: no writable reviews directory ($REVIEWS_DIR) to keep this review's transcript and receipt" >&2
+    echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR) to keep this review's transcript and receipt" >&2
     exit 2
 fi
 exec node "$COMPANION" adversarial-review -- "$PROMPT"

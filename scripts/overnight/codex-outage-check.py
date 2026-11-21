@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -59,7 +60,10 @@ def check(manifest: Path, window: int, threshold: int, now: float):
         lines = manifest.read_text(errors="replace").splitlines()
     except OSError:
         return True, ""
-    streak, sigs = 0, []
+    # Completed attempts launched within the window, newest FINISH first:
+    # reviews overlap, so the one that finished last says how the backend is
+    # now, whichever was launched first.
+    attempts = []
     for line in reversed(lines[-200:]):
         try:
             rec = json.loads(line)
@@ -72,13 +76,22 @@ def check(manifest: Path, window: int, threshold: int, now: float):
         # attempt as the broker's row: count each attempt once.
         if rec.get("parent"):
             continue
-        state, sig = leg_state(Path(rec.get("logFile", "")))
+        log = Path(rec.get("logFile", ""))
+        state, sig = leg_state(log)
         if state == "running":
             continue
+        try:
+            finished = os.stat(str(log) + ".done").st_mtime
+        except OSError:  # fail-direction: an unreadable time orders the attempt by its launch
+            finished = float(ts)
+        attempts.append((finished, float(ts), state, sig, rec.get("kind", "?")))
+    attempts.sort(reverse=True)
+    streak, sigs = 0, []
+    for _finished, _ts, state, sig, kind in attempts:
         if state != "outage":
             break
         streak += 1
-        sigs.append(f"{rec.get('kind', '?')}: {sig}")
+        sigs.append(f"{kind}: {sig}")
         if streak >= threshold:
             return False, (f"the last {streak} completed Codex legs (within {window // 60} min) failed at the "
                            f"backend: " + "; ".join(sigs))

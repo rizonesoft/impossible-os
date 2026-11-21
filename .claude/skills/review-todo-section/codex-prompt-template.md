@@ -58,8 +58,7 @@ random but are deterministic.
 
 ```bash
 PROMPT=$(cat <<'EOF'
-[review-kind: adversarial]
-Target: todo/<domain>/TODO-XX-<slug>.md §<N>
+[review-kind: adversarial] todo/<domain>/TODO-XX-<slug>.md section <N>
 Files in scope: <paths>
 
 <body, free to use apostrophes / backticks / parens>
@@ -93,8 +92,7 @@ some terminal contexts; the marker regex tolerates `section N` as well).
 ### Template: adversarial (step 5)
 
 ```
-[review-kind: adversarial]
-Target: <TODO_PATH> §<SECTION_NUM>
+[review-kind: adversarial] <TODO_PATH> section <SECTION_NUM>
 Files in scope: <comma-separated paths>
 
 Adversarial review angles (mandatory; cover ALL):
@@ -120,8 +118,7 @@ a concrete defect.
 ### Template: consistency (step 8a)
 
 ```
-[review-kind: consistency]
-Target: <TODO_PATH> §<SECTION_NUM>
+[review-kind: consistency] <TODO_PATH> section <SECTION_NUM>
 Files in scope: <comma-separated paths>
 
 Consistency audit angles (mandatory; cover ALL):
@@ -141,8 +138,7 @@ require touching code outside the listed files.
 ### Template: perf (step 8b)
 
 ```
-[review-kind: perf]
-Target: <TODO_PATH> §<SECTION_NUM>
+[review-kind: perf] <TODO_PATH> section <SECTION_NUM>
 Files in scope: <comma-separated paths>
 
 Performance audit angles (mandatory; cover ALL):

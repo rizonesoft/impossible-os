@@ -4325,7 +4325,7 @@ def _step13_impl_adversarial_check(
             # shared `section`; when the live path knows the flipped
             # section, missing or mismatched section evidence fails closed.
             recorded_section = _normalize_section_id(
-                entry.get(f"{tag}_section") or entry.get("section", "")
+                (entry[f"{tag}_section"] if f"{tag}_section" in entry else entry.get("section", ""))
             )
             if not recorded_section or recorded_section != required_section:
                 continue
@@ -4355,7 +4355,7 @@ def _step13_impl_adversarial_check(
             if not isinstance(ts, int):
                 continue
             rec = _normalize_section_id(
-                entry.get(f"{tag}_section") or entry.get("section", ""))
+                (entry[f"{tag}_section"] if f"{tag}_section" in entry else entry.get("section", "")))
             if not rec:
                 seen.append(f"`{tag}` recorded with NO section binding")
                 continue

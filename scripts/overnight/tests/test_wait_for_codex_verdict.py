@@ -132,6 +132,22 @@ def test_stale_flagged_after_no_growth():
         assert "STALE" in r2.stdout and "no growth" in r2.stdout
 
 
+def test_a_trailing_option_without_a_value_is_refused_at_once():
+    for opt in ("--max", "--stale-secs"):
+        r = subprocess.run(["bash", str(TOOL), "x.log", opt], capture_output=True, text=True, timeout=10)
+        assert r.returncode == 2 and "needs a value" in r.stderr, (opt, r.returncode, r.stderr)
+
+
+def test_a_missing_log_whose_sighting_cannot_be_kept_is_missing_at_once():
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        state = pathlib.Path(d) / ".claude/state"
+        state.mkdir(parents=True)
+        (state / "waiter-first-seen").write_text("")     # a file where the directory goes
+        r = _run(pathlib.Path(d) / "never.out", maxw=1, stale=300, cwd=d)
+        assert r.returncode == 5, (r.returncode, r.stdout)
+
+
 def test_a_log_silent_from_the_start_is_stale_in_the_same_call():
     # B2: the first sighting is sampled when the wait starts, not when it ends.
     with tempfile.TemporaryDirectory() as d:
