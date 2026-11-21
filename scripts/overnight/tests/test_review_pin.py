@@ -420,9 +420,10 @@ def test_a_later_pass_with_no_base_starts_where_the_section_did(tmp_path):
     full = "\n".join(f"LENS {n}: clean" for n in ("adversarial", "integration", "source-defect", "consistency",
                                                   "quality", "test-coverage", "design", "concurrency",
                                                   "bare-metal")) + "\nHIGHEST: none\n"
-    done, _prompt = _dispatch(tmp_path, "round", full, base="", reviews_dir=reviews)
+    done, prompt = _dispatch(tmp_path, "round", full, base="", reviews_dir=reviews)
     receipt = json.loads((reviews / "manifest.jsonl").read_text().splitlines()[-1])
     assert receipt["kind"] == "round" and receipt["base"] == start, (receipt, done.stderr)
+    assert f"This pass reviews the whole section: git diff {start} {receipt['head']}" in prompt, prompt[-400:]
 
 
 def test_refusal_a_candidate_that_moves_while_the_pass_is_prepared_is_not_dispatched(tmp_path):
@@ -1036,3 +1037,89 @@ def test_a_raw_transcript_is_read_whole_for_its_worst_level(tmp_path, capsys):
     assert rp.main(["--highest", "--raw", "--transcript", str(review)]) == 0
     assert capsys.readouterr().out.strip() == "P2"
     assert rp.main(["--highest", "--transcript", str(review)]) == 1     # no Codex heading: no response to read
+
+
+def _tmp_repo(tmp_path):
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "core.hooksPath=/dev/null", *args], capture_output=True, text=True,
+                              timeout=60, check=True).stdout.strip()
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "one")
+    return repo, git
+
+
+def _dispatch_in(repo, tmp_path, kind, review, base, extra_env=None):
+    import os
+    import subprocess
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION)
+    (tmp_path / "review.txt").write_text(review)
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+           "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt"),
+           "REVIEW_BASE": base, **(extra_env or {})}
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                           f"[review-kind: {kind}] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=120, cwd=str(repo), env=env)
+    prompt = (tmp_path / "prompt.txt").read_text() if (tmp_path / "prompt.txt").exists() else ""
+    return done, prompt
+
+
+def test_refusal_a_plan_left_behind_by_a_rewrite_is_not_the_section_start(tmp_path):
+    repo, git = _tmp_repo(tmp_path)
+    git("checkout", "-q", "-b", "side")
+    git("commit", "-q", "--allow-empty", "-m", "side")
+    stale = git("rev-parse", "HEAD")
+    git("checkout", "-q", "-")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text(_receipt("plan", stale, todo="todo/x.md", section=9) + "\n")
+    done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "")
+    assert done.returncode == 2 and "not on the candidate's history" in done.stderr, done.stderr
+    assert prompt == ""
+
+
+def test_refusal_an_edit_to_an_untracked_file_while_the_pass_is_prepared_is_seen(tmp_path):
+    """The candidate fingerprint reads file contents: an untracked file edited in place changes no status."""
+    import os
+    import shutil as sh
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "notes.txt").write_text("one\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in *" --lenses "*) echo two >> "{repo}/notes.txt" ;; esac\n'
+                                    f'exec "{sh.which("python3")}" "$@"\n')
+    (bindir / "python3").chmod(0o755)
+    done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD",
+                                {"PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert done.returncode == 2 and "candidate changed while the round pass was prepared" in done.stderr, done.stderr
+
+
+def test_an_untracked_kernel_source_decides_the_lenses(tmp_path):
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "src/kernel").mkdir(parents=True)
+    (repo / "src/kernel/new.c").write_text("int x;\n")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
+    assert "- concurrency: " in prompt and "- bare-metal: " in prompt, prompt[-600:]
+
+
+def test_refusal_an_unreadable_line_after_the_newest_plan_leaves_the_start_unknown(tmp_path):
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / "manifest.jsonl"
+    torn = _receipt("plan", "b" * 40)[:60]
+    manifest.write_text(_receipt("plan", "a" * 40) + "\n" + torn + "\n")
+    with pytest.raises(rp.Refused):
+        rp.section_start(manifest, todo, 99)
+    manifest.write_text(_receipt("plan", "a" * 40) + "\n" + torn + "\n" + _receipt("plan", "c" * 40) + "\n")
+    assert rp.section_start(manifest, todo, 99) == "c" * 40
+
+
+def test_the_manifest_is_read_from_its_end_in_blocks(tmp_path):
+    manifest = tmp_path / "m.jsonl"
+    rows = [f"row {i} " + "x" * (i % 5) for i in range(40)]
+    manifest.write_text("\n".join(rows) + "\n")
+    assert list(rp._newest_first(manifest, block=7)) == rows[::-1]

@@ -154,6 +154,29 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
 fi
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""; REPAIR_FROM=""; CAND_HEAD=""; CAND_WORK=""
 EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+# This dispatcher's own transcripts, excluded from what it fingerprints when the reviews directory sits in the
+# tree: the transcript appears before the reviewer starts and grows while it runs.
+reviews_exclude() {
+    REVIEWS_EXCL=()
+    local top rdir
+    top="$(cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null && pwd -P)" || return 0
+    rdir="$(cd "$REVIEWS_DIR" 2>/dev/null && pwd -P)" || return 0
+    case "$rdir/" in "$top"/*) REVIEWS_EXCL=(":(top,exclude)${rdir#"$top"/}") ;; esac
+}
+# The working tree's bytes against HEAD: tracked changes as a binary patch, every status line, and the content
+# of every untracked file, so an in-place edit of a modified binary or an untracked file changes it. A clean
+# tree hashes nothing, which is the clean digest review_pin.py checks for.
+work_snapshot() {
+    local top
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo unknown; return; }
+    reviews_exclude
+    {
+        git -C "$top" diff HEAD --binary --no-ext-diff --no-textconv -- 2>/dev/null
+        git -C "$top" status --porcelain -z --untracked-files=all -- ':(top)' "${REVIEWS_EXCL[@]}" 2>/dev/null
+        git -C "$top" ls-files -z -o --exclude-standard -- ':(top)' "${REVIEWS_EXCL[@]}" 2>/dev/null \
+            | xargs -0 -r git -C "$top" hash-object -- 2>/dev/null
+    } | sha256sum | cut -d' ' -f1
+}
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
@@ -174,13 +197,7 @@ if [ "$PIN_KIND" = "1" ]; then
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
     CAND_HEAD="$(git rev-parse --quiet --verify 'HEAD^{commit}' 2>/dev/null)" || {
         echo "[$SELF_NAME] BLOCK -- HEAD could not be read" >&2; exit 2; }
-    # The working tree as the reviewer will read it, less this dispatcher's own transcript: the reviews
-    # directory, when it sits inside the tree, gains that file before the reviewer starts.
-    PREP_EXCLUDE=()
-    _top="$(git rev-parse --show-toplevel 2>/dev/null)" && _rdir="$(cd "$REVIEWS_DIR" 2>/dev/null && pwd -P)" \
-        && case "$_rdir/" in "$(cd "$_top" && pwd -P)"/*) PREP_EXCLUDE=(":(top,exclude)${_rdir#"$(cd "$_top" && pwd -P)"/}") ;; esac
-    prep_work() { { git diff HEAD -- 2>/dev/null; git status --porcelain -- ':(top)' "${PREP_EXCLUDE[@]}" 2>/dev/null; } | sha256sum | cut -d' ' -f1; }
-    CAND_WORK="$(prep_work)"
+    CAND_WORK="$(work_snapshot)"
     # The changed files decide the conditional lenses, so a base that cannot
     # be read refuses the pass: an empty list would drop those lenses silently.
     # A section built while the reviewer was down starts at its recorded base, the commit before its code
@@ -243,7 +260,17 @@ if [ "$PIN_KIND" = "1" ]; then
         BASE_OID="$(git rev-parse --quiet --verify "${SECTION_START}^{commit}" 2>/dev/null)" || {
             echo "[$SELF_NAME] BLOCK -- the section's recorded start ${SECTION_START:0:10} is not a commit here" >&2; exit 2; }
     fi
-    { git diff --name-only "$BASE_OID" "$CAND_HEAD" && git diff --name-only "$CAND_HEAD"; } > "$PATHS_FILE.all" 2>/dev/null || {
+    # Every base after the plan is on the candidate's own history: a plan or completion receipt left behind
+    # by a reset or rebase would compare unrelated snapshots.
+    if [ "$KIND" != "plan" ] && [ "$BASE_OID" != "$EMPTY_TREE_OID" ] \
+            && ! git merge-base --is-ancestor "$BASE_OID" "$CAND_HEAD" 2>/dev/null; then
+        echo "[$SELF_NAME] BLOCK -- the section base ${BASE_OID:0:10} is not on the candidate's history (a reset or rebase left it behind); give REVIEW_BASE=<the commit before the section's code>" >&2
+        exit 2
+    fi
+    # Untracked files are part of the candidate too: a new kernel or UI source decides its lenses.
+    reviews_exclude
+    { git diff --name-only "$BASE_OID" "$CAND_HEAD" && git diff --name-only "$CAND_HEAD" \
+        && git -C "$(git rev-parse --show-toplevel)" ls-files -o --exclude-standard -- ':(top)' "${REVIEWS_EXCL[@]}"; } > "$PATHS_FILE.all" 2>/dev/null || {
         rm -f "$PATHS_FILE.all"
         echo "[$SELF_NAME] BLOCK -- the changed files of this pass could not be listed" >&2; exit 2; }
     sort -u "$PATHS_FILE.all" > "$PATHS_FILE"; rm -f "$PATHS_FILE.all"
@@ -253,6 +280,11 @@ if [ "$PIN_KIND" = "1" ]; then
         PROMPT="$PROMPT
 
 This section was built while the reviewer was unavailable. Its whole change is: git diff $BASE_OID HEAD"
+    elif [ "$KIND" = "round" ] || [ "$KIND" = "performance" ] || [ "$KIND" = "completion" ]; then
+        # The receipt names this range, so the reviewer is shown it, never left to a default diff.
+        PROMPT="$PROMPT
+
+This pass reviews the whole section: git diff $BASE_OID $CAND_HEAD, the candidate HEAD $CAND_HEAD, plus the working tree (git diff $CAND_HEAD)."
     fi
     # A reconciliation reviews the newest repair, so it names the repair's two ends (operator, 2026-11-20): the
     # last reviewed candidate, the head of this section's newest checked completion or reconciliation pass, and
@@ -297,8 +329,8 @@ if [ -n "$LOG_FILE" ]; then
     # commit made by another caller during the review would be named as the
     # one reviewed, and the commit gate would bind the pass to it.
     TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
-    if [ -n "${CAND_HEAD:-}" ] && { [ "$TREE_HEAD" != "$CAND_HEAD" ] || [ "$(prep_work)" != "$CAND_WORK" ]; }; then
+    TREE_WORK="$(work_snapshot)"
+    if [ -n "${CAND_HEAD:-}" ] && { [ "$TREE_HEAD" != "$CAND_HEAD" ] || [ "$TREE_WORK" != "$CAND_WORK" ]; }; then
         echo "[$SELF_NAME] BLOCK -- the candidate changed while the $KIND pass was prepared (HEAD ${CAND_HEAD:0:10} -> ${TREE_HEAD:0:10}, or the working tree moved); dispatch it again" >&2
         exit 2
     fi
@@ -313,7 +345,7 @@ if [ -n "$LOG_FILE" ]; then
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-        NOW_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
+        NOW_WORK="$(work_snapshot)"
         if [ "$NOW_HEAD" != "$TREE_HEAD" ] || [ "$NOW_WORK" != "$TREE_WORK" ]; then
             rc=3
             echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_HEAD:0:10}, or the working tree moved)" \

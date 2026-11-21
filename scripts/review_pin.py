@@ -427,34 +427,61 @@ def unreadable_line_may_be(line, todo):
 CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
-def _manifest_lines(manifest):
-    """The reviews manifest one line at a time, never the whole history at once (it only grows). A missing
-    manifest has no lines; one that cannot be read is refused."""
+def _newest_first(manifest, block=1 << 16):
+    """The reviews manifest one line at a time from its end, so a lookup of the newest receipt stops there
+    instead of decoding the whole history (it only grows). A missing manifest has no lines; one that cannot
+    be read is refused."""
     try:
-        with open(manifest, encoding="utf-8") as fh:
-            for line in fh:
-                yield line.rstrip("\n")
+        fh = open(manifest, "rb")
     except FileNotFoundError:
         return
-    except (OSError, UnicodeDecodeError) as exc:
+    except OSError as exc:
         raise Refused(f"{manifest} cannot be read: {exc}") from exc
+    with fh:
+        try:
+            pos = fh.seek(0, 2)
+            carry = b""
+            while pos > 0:
+                step = min(block, pos)
+                pos -= step
+                fh.seek(pos)
+                parts = (fh.read(step) + carry).split(b"\n")
+                carry = parts[0]
+                for raw in reversed(parts[1:]):
+                    if raw:
+                        yield raw.decode("utf-8")
+            if carry:
+                yield carry.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise Refused(f"{manifest} cannot be read: {exc}") from exc
+
+
+def _newest(manifest, todo, section, kinds, what):
+    """The newest checked receipt of `kinds` for the section, or None. An unreadable line newer than it that
+    may belong to this TODO refuses: it may be a newer pass, so the answer is unknown."""
+    import json
+    unsure = False
+    for line in _newest_first(manifest):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            unsure = unsure or unreadable_line_may_be(line, todo)
+            continue
+        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
+                and e.get("kind") in kinds and e.get("pass_checked") is True and e.get("rc") == 0 \
+                and isinstance(e.get("head"), str) and e["head"]:
+            if unsure:
+                raise Refused(f"{manifest} has an unreadable line after the newest checked {e['kind']} of {todo} "
+                              f"section {section}; it may be a newer pass, so {what} is unknown")
+            return e
+    return None
 
 
 def section_start(manifest, todo, section):
     """Where a section's code starts: the candidate of its newest checked plan pass in `manifest` (the commit
     before the code, REVIEW_BASE), or "" when no plan pass is on record there."""
-    import json
-    start = ""
-    for line in _manifest_lines(manifest):
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
-                and e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
-                and isinstance(e.get("head"), str) and e["head"]:
-            start = e["head"]
-    return start
+    found = _newest(manifest, todo, section, ("plan",), "the section's start")
+    return found["head"] if found else ""
 
 
 def repair_base(manifest, todo, section, field="head"):
@@ -466,23 +493,9 @@ def repair_base(manifest, todo, section, field="head"):
     read; a line after that pass that cannot be read and names this TODO (it may be a newer pass of the
     section, as the commit gate treats it); or a pass that read uncommitted changes, which `git diff <head>`
     could not show (review, 2026-11-20). Whether the head is on HEAD's history the dispatcher checks."""
-    import json
-    found, unreadable_after = None, False
-    for line in _manifest_lines(manifest):
-        try:
-            e = json.loads(line)
-        except ValueError:
-            unreadable_after = unreadable_after or (found is not None and unreadable_line_may_be(line, todo))
-            continue
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
-                and e.get("kind") in ("completion", "reconciliation") and e.get("pass_checked") is True \
-                and e.get("rc") == 0 and isinstance(e.get("head"), str) and e["head"]:
-            found, unreadable_after = e, False
+    found = _newest(manifest, todo, section, ("completion", "reconciliation"), "the repair's start")
     if found is None:
         return ""
-    if unreadable_after:
-        raise Refused(f"{manifest} has an unreadable line after the newest checked pass of {todo} section {section}; "
-                      "it may be a newer pass, so the repair's start is unknown")
     if found.get("worktree_sha256") != CLEAN_WORKTREE:
         raise Refused(f"the newest checked {found['kind']} of {todo} section {section} read uncommitted changes at "
                       f"{found['head'][:10]}; dispatch the completion again on a committed candidate")

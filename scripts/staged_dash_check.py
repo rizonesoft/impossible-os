@@ -229,12 +229,15 @@ def name_lines(old_texts, new_text):
     """(exact, copies): dash lines of the new text that no parent holds, and
     every copy of an identical line that now appears more often than in any
     parent. A merge's line that one parent already had is never named new."""
-    new_lines = dash_lines(new_text)
+    return _name(((dash_lines(t) if t else []) for t in old_texts), dash_lines(new_text))
+
+
+def _name(old_line_lists, new_lines):
+    """name_lines over dash lines already extracted, one list per parent."""
     old_seen = collections.Counter()
-    for text in old_texts:
-        if text:
-            for ln, k in collections.Counter(ln for _n, ln in dash_lines(text)).items():
-                old_seen[ln] = max(old_seen[ln], k)
+    for found in old_line_lists:
+        for ln, k in collections.Counter(ln for _n, ln in found).items():
+            old_seen[ln] = max(old_seen[ln], k)
     new_seen = collections.Counter(ln for _n, ln in new_lines)
     exact = [n for n, ln in new_lines if not old_seen[ln]]
     copies = [n for n, ln in new_lines if old_seen[ln] and new_seen[ln] > old_seen[ln]]
@@ -249,8 +252,16 @@ def refused(per_parent: list, reader, lines=None) -> list:
     what the merge itself added. Only a path changed against every parent is
     read, and a new blob with no dash is never compared. `lines` caches the
     named lines by (new blob, dash-bearing parent blobs), which alone decide
-    them, so the same refused change at many paths is diagnosed once."""
+    them, so the same refused change at many paths is diagnosed once, and
+    each blob's dash lines once, so a series of refused edits to one file
+    reads each version once."""
     lines = {} if lines is None else lines
+
+    def blob(oid):                                         # a blob's dash lines, whichever side it is on
+        if ("blob", oid) not in lines:
+            lines["blob", oid] = dash_lines(reader.text(oid))
+        return lines["blob", oid]
+
     if not per_parent:
         return []
     others = [{path: old for old, _new, path in changes} for changes in per_parent[1:]]
@@ -270,7 +281,7 @@ def refused(per_parent: list, reader, lines=None) -> list:
         if gained > 0:
             parents = tuple(o for o in dict.fromkeys(olds) if reader.count(o))
             if (new, parents) not in lines:
-                lines[new, parents] = name_lines((reader.text(o) for o in parents), reader.text(new))
+                lines[new, parents] = _name(map(blob, parents), blob(new))
             exact, copies = lines[new, parents]
             found.append((path, gained, exact, copies))
     return found
@@ -331,6 +342,73 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     return [("", per_parent)]
 
 
+class _Cancelled(BaseException):
+    """Ctrl-C or SIGTERM reached the checker while a bounded command ran."""
+
+
+def _end_group(proc) -> None:
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:                             # the group has already exited: nothing to end
+        pass
+    proc.communicate()
+
+
+def _bounded(cmd: list, what: str) -> tuple:
+    """(exit status, stdout) of `cmd`, run in its own process group that is ended whole on timeout, on
+    Ctrl-C and on SIGTERM: a stalled transport (ssh, a credential helper) is a child of git and would outlive
+    an end of git alone. The signals are caught before the group starts and held until it is registered, so
+    no moment leaves it running unowned; a cancellation then ends the group and is delivered again to the
+    caller's own handler. An error names `what`, never the command: the URL in it can carry a token."""
+    import signal
+    st = {"proc": None, "hold": True, "pending": 0}
+
+    def on_signal(signum, _frame):
+        if st["hold"]:
+            st["pending"] = st["pending"] or signum        # not registered, or being ended: deliver later
+            return
+        raise _Cancelled(signum)
+
+    watched = [signal.SIGTERM]
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        watched.append(signal.SIGINT)                      # an ignored SIGINT (a background caller) stays ignored
+    previous = {sig: signal.signal(sig, on_signal) for sig in watched}
+
+    def restore():
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+    def redeliver(signum):
+        restore()
+        signal.raise_signal(signum)
+        raise SystemExit(128 + signum)                     # the caller's handler returned: still a cancellation
+
+    try:
+        st["proc"] = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      stdin=subprocess.DEVNULL, env=_git_env(),
+                                      start_new_session=True)  # LIFECYCLE-WAIVER: waited on here, never left running
+        st["hold"] = False
+        if st["pending"]:
+            raise _Cancelled(st["pending"])
+        out, _err = st["proc"].communicate(timeout=TIMEOUT)
+        st["hold"] = True
+    except BaseException as exc:
+        st["hold"] = True
+        if st["proc"] is not None:
+            _end_group(st["proc"])
+        if isinstance(exc, _Cancelled):
+            redeliver(exc.args[0])
+        restore()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise ValueError(f"{what} did not answer within {TIMEOUT} s") from None
+        raise
+    if st["pending"]:                                      # arrived after the command finished
+        redeliver(st["pending"])
+    restore()
+    return st["proc"].returncode, out
+
+
 def destination_oids(dest: str) -> set:
     """Every object id the push destination advertises (`git ls-remote`: its
     branches, tags, peeled tags and HEAD). `dest` is the URL git pushes to,
@@ -340,44 +418,16 @@ def destination_oids(dest: str) -> set:
     if dest.startswith("-"):
         raise ValueError("the push destination reads as an option")
     # pre-push hands over the URL after git's rewrites; ls-remote applies url.*.insteadOf again, and a second
-    # matching rule would list another repository's refs. That is refused, never followed.
-    again = subprocess.run(["git", "ls-remote", "--get-url", "--end-of-options", dest], capture_output=True,
-                           timeout=TIMEOUT, env=_git_env())
-    if again.returncode != 0 or again.stdout.rstrip(b"\n") != dest.encode():
+    # matching rule would list another repository's refs. That is refused, never followed. git ends the URL it
+    # prints with one LF; a local path can itself end in LF, so the comparison takes exactly that one.
+    rc, again = _bounded(["git", "ls-remote", "--get-url", "--end-of-options", dest],
+                         "the push URL check (git ls-remote --get-url)")
+    if rc != 0 or again != os.fsencode(dest) + b"\n":
         raise ValueError("a url.*.insteadOf rule rewrites the push URL again, so the destination's refs cannot "
                          "be listed safely; make the rewrite rules not chain")
-    import signal
-    # Its own process group, ended whole on timeout, on Ctrl-C and on SIGTERM: a stalled transport (ssh, a
-    # credential helper) is a child of git and would outlive an end of git alone. Nothing here names the URL,
-    # which can carry a token.
-    proc = subprocess.Popen(["git", "ls-remote", "--end-of-options", dest], stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, env=_git_env(),
-                            start_new_session=True)  # LIFECYCLE-WAIVER: waited on here, never left running
-
-    def _end_group():
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:                         # the group has already exited: nothing to end
-            pass
-        proc.communicate()
-
-    def _on_term(signum, _frame):
-        raise KeyboardInterrupt(signum)
-
-    previous = signal.getsignal(signal.SIGTERM)
-    signal.signal(signal.SIGTERM, _on_term)
-    try:
-        out, _err = proc.communicate(timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        _end_group()
-        raise ValueError(f"the destination did not list its refs within {TIMEOUT} s (git ls-remote)") from None
-    except BaseException:                                  # Ctrl-C or SIGTERM: end the group, then go on ending
-        _end_group()
-        raise
-    finally:
-        signal.signal(signal.SIGTERM, previous)
-    if proc.returncode != 0:
-        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {proc.returncode})")
+    rc, out = _bounded(["git", "ls-remote", "--end-of-options", dest], "the destination (git ls-remote)")
+    if rc != 0:
+        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {rc})")
     return {line.split("\t", 1)[0] for line in out.decode("ascii", "replace").splitlines() if line.strip()}
 
 
@@ -435,9 +485,19 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     bounds = [o for o in held if types.get(o) in ("commit", "tag")]
     missing = sum(1 for o in held if types.get(o, "missing") == "missing")
     feed = "".join(t + "\n" for t in tips) + "".join("^" + o + "\n" for o in bounds)
+    walked = [line.split() for line in
+              _git("rev-list", "--reverse", "--parents", "--stdin", stdin=feed.encode()).decode().splitlines()]
+    # rev-list shows a shallow boundary as a root. Its stored parents decide: a commit the walk was bounded by
+    # is judged against them; any other means outgoing history this clone does not have.
+    stored = _stored_parents([c for c, *ps in walked if not ps])
     pairs = []                                                     # (commit, parent or None), oldest first
-    for line in _git("rev-list", "--reverse", "--parents", "--stdin", stdin=feed.encode()).decode().splitlines():
-        commit, *parents = line.split()
+    for commit, *parents in walked:
+        if not parents and stored.get(commit):
+            if any(p not in held for p in stored[commit]):
+                raise ValueError(f"the history is shallow at commit {commit[:12]}: commits before it are not in this "
+                             "clone, so they cannot be judged; deepen it (git fetch --deepen=N, or --unshallow) "
+                             "and push again")
+            parents = stored[commit]
         if parents:
             pairs.extend((commit, p) for p in parents)
         else:
@@ -453,6 +513,25 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     for (commit, _p), (_h, changes) in zip(pairs, blocks):
         commits.setdefault(commit, []).append(changes)
     return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()], missing
+
+
+def _stored_parents(commits: list) -> dict:
+    """{commit: [parent, ...]} as each commit object stores them, for the few commits rev-list showed as
+    roots: a shallow boundary is shown parentless though its object names its parents."""
+    if not commits:
+        return {}
+    out = _git("cat-file", "--batch", stdin="".join(c + "\n" for c in commits).encode())
+    found, pos = {}, 0
+    for c in commits:
+        nl = out.index(b"\n", pos)
+        header = out[pos:nl].split()
+        if len(header) != 3 or header[1] != b"commit":
+            raise ValueError(f"commit {c} could not be read")
+        size = int(header[2])
+        head = out[nl + 1:nl + 1 + size].split(b"\n\n", 1)[0]
+        found[c] = [ln[7:].decode() for ln in head.split(b"\n") if ln.startswith(b"parent ")]
+        pos = nl + 1 + size + 1
+    return found
 
 
 def push_updates(lines: str) -> list:

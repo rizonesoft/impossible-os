@@ -52,12 +52,27 @@ HOOKS_DIR="$PROJECT/.githooks"
 SENTINEL="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path .impossible-os-prepush 2>/dev/null || echo "$PROJECT/.git/.impossible-os-prepush")"
 # core.hooksPath as git reads it, exactly. --null keeps every byte, a trailing
 # newline included, which a plain command substitution would strip; the NUL
-# is turned into \001 so the substitution has nothing to strip. With no scope
-# option it is the effective value (the last one git reads); with --local or
-# --worktree, that scope's own. A value git cannot read compares unequal, so
-# every caller fails closed.
+# is turned into \001 so the substitution has nothing to strip. It is the
+# effective value (the last one git reads). A value git cannot read compares
+# unequal, so every caller fails closed.
 hooks_path_raw() {
-    git -C "$PROJECT" config "$@" --null --get core.hooksPath | tr '\0' '\001'
+    git -C "$PROJECT" config --null --get core.hooksPath | tr '\0' '\001'
+}
+# The effective value and the scope git takes it from, in one read: sets
+# HP_SCOPE (empty when the key is absent) and HP_VALUE. Exit 1 from git is
+# "not set"; anything else is an error and returns non-zero.
+hooks_path_scoped() {
+    local scoped rc=0
+    HP_SCOPE="" HP_VALUE=""
+    scoped="$(set -o pipefail; git -C "$PROJECT" config --show-scope --null --get core.hooksPath | tr '\0' '\001')" || rc=$?
+    if [ "$rc" -gt 1 ]; then
+        echo "core.hooksPath could not be read (git config exit $rc)" >&2
+        return 1
+    fi
+    [ -n "$scoped" ] || return 0
+    HP_SCOPE="${scoped%%$'\001'*}"
+    HP_VALUE="${scoped#*$'\001'}"
+    HP_VALUE="${HP_VALUE%$'\001'}"
 }
 hooks_path_is_ours() {
     [ "$(hooks_path_raw)" = $'.githooks\001' ]
@@ -79,9 +94,6 @@ hooks_path_shown() {
     else
         printf '%q\n' "$raw"
     fi
-}
-worktree_config_on() {
-    [ "$(git -C "$PROJECT" config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]
 }
 
 usage() {
@@ -118,18 +130,25 @@ set_hooks_path() {
         echo "ERROR: $HOOKS_DIR not found -- are you in the repo root?"
         exit 1
     fi
-    # The setting is written where git reads it from: a worktree-scoped value (extensions.worktreeConfig)
-    # outranks the repository's, so writing the repository's alone would report success while git keeps
-    # using the other directory. The effective value is checked after the write.
-    if hooks_path_is_ours; then
+    # The setting is written where git reads it from, decided before anything is written: a worktree-scoped
+    # value (extensions.worktreeConfig) outranks the repository's, so writing the repository's alone would
+    # report success while git keeps using the other directory; a value given on the command line or in the
+    # environment outranks every file, so writing any would change what sibling worktrees and later commands
+    # run and still not take effect here. The effective value is checked after the write.
+    hooks_path_scoped || exit 1
+    if [ "$HP_VALUE" = ".githooks" ]; then
         echo "Already configured: core.hooksPath = .githooks"
         return 0
     fi
-    if worktree_config_on && [ -n "$(hooks_path_raw --worktree)" ]; then
-        git -C "$PROJECT" config --worktree core.hooksPath .githooks
-    else
-        git -C "$PROJECT" config --local core.hooksPath .githooks
-    fi
+    case "$HP_SCOPE" in
+        command)
+            echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; nothing written" >&2
+            exit 1 ;;
+        worktree)
+            git -C "$PROJECT" config --worktree core.hooksPath .githooks ;;
+        *)
+            git -C "$PROJECT" config --local core.hooksPath .githooks ;;
+    esac
     if ! hooks_path_is_ours; then
         echo "core.hooksPath is still not .githooks after writing it (a higher-priority value wins); nothing enabled" >&2
         exit 1
@@ -196,24 +215,16 @@ remove_all() {
     # worktree's own setting keeps sibling worktrees' gates; a custom
     # directory, or a value inherited from global or system config, is the
     # operator's.
-    local scoped scope raw rc=0
-    # One read gives the scope git takes it from and the exact value; exit 1 is "not set", anything else an error.
-    scoped="$(set -o pipefail; git -C "$PROJECT" config --show-scope --null --get core.hooksPath | tr '\0' '\001')" || rc=$?
-    if [ "$rc" -gt 1 ]; then
-        echo "core.hooksPath could not be read (git config exit $rc)" >&2; return 1
-    fi
-    if [ -z "$scoped" ]; then
+    hooks_path_scoped || return 1
+    if [ -z "$HP_SCOPE" ]; then
         echo "core.hooksPath is not set."
     else
-        scope="${scoped%%$'\001'*}"
-        raw="${scoped#*$'\001'}"
-        raw="${raw%$'\001'}"
-        if [ "$raw" = ".githooks" ] && { [ "$scope" = "local" ] || [ "$scope" = "worktree" ]; }; then
-            git -C "$PROJECT" config "--$scope" --fixed-value --unset core.hooksPath .githooks \
-                || { echo "core.hooksPath could not be unset ($scope config)" >&2; return 1; }
-            echo "Unset: core.hooksPath ($scope config, was: .githooks)"
+        if [ "$HP_VALUE" = ".githooks" ] && { [ "$HP_SCOPE" = "local" ] || [ "$HP_SCOPE" = "worktree" ]; }; then
+            git -C "$PROJECT" config "--$HP_SCOPE" --fixed-value --unset core.hooksPath .githooks \
+                || { echo "core.hooksPath could not be unset ($HP_SCOPE config)" >&2; return 1; }
+            echo "Unset: core.hooksPath ($HP_SCOPE config, was: .githooks)"
         else
-            echo "core.hooksPath is $(hooks_path_shown) in $scope config, not this installer's .githooks here: left as it is."
+            echo "core.hooksPath is $(hooks_path_shown) in $HP_SCOPE config, not this installer's .githooks here: left as it is."
         fi
     fi
     disable_pre_push

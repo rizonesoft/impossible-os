@@ -68,7 +68,8 @@ Always-on hooks once `core.hooksPath=.githooks` is set:
 `.git/.impossible-os-prepush` sentinel exists. On push it runs
 `bash scripts/build.sh` then `bash scripts/test.sh`; any failure blocks
 the push with a pointer at the manual re-run command. Skip it at your
-discretion -- GitHub Actions remains the mandatory gate at PR time.
+discretion: GitHub Actions runs on every push to `main` and remains the
+mandatory gate.
 Disable with `bash scripts/install-hooks.sh --disable-pre-push`.
 
 Full lifecycle reference:

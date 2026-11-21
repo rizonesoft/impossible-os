@@ -42,6 +42,15 @@ def _sub(cmd, *, cwd=None, input=None, env=None, timeout=120, check=False, captu
                             stderr=subprocess.PIPE if capture_output else None, start_new_session=True)
     try:
         out, err = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # SIGTERM first, so a checker ends the transport group it started in its own session (which this
+        # killpg cannot reach); SIGKILL after a bounded wait.
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=5)
+        except (ProcessLookupError, subprocess.TimeoutExpired):  # gone already, or ignoring it: SIGKILL below
+            pass
+        raise
     finally:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -951,3 +960,124 @@ def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
     _git(root, "replace", head, fake)
     r = _sub(["git", "commit", "-q", "--allow-empty", "-m", "dash"], cwd=root, text=True)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
+
+
+def _marker():
+    """A sleep length unique to this test run, so a stand-in left by another run never reads as this one's."""
+    import uuid
+    return f"4321.{uuid.uuid4().int % 10 ** 12}"
+
+
+def _no_process_runs(marker, seconds=5):
+    """True once no process's command line holds `marker` (within `seconds`)."""
+    import time
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        alive = []
+        for d in Path("/proc").iterdir():
+            if d.name.isdigit():
+                try:
+                    if marker.encode() in (d / "cmdline").read_bytes() and _helper_state(int(d.name)) not in ("Z", "X", ""):
+                        alive.append(d.name)
+                except OSError:                            # the process ended while it was read
+                    pass
+        if not alive:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_stalled_url_check_never_prints_the_url(tmp_path, monkeypatch, capsys):
+    """The first command that takes the URL is bounded the same way: its timeout names no URL."""
+    root = _repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    mark = _marker()
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" --get-url "*) exec sleep {mark} ;; esac\nexec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    _production_git_in(root, monkeypatch)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setattr(m, "TIMEOUT", 1)
+    with pytest.raises(ValueError) as err:
+        m.destination_oids("https://user:SECRET-TOKEN@example.invalid/x.git")
+    out = capsys.readouterr()
+    assert "SECRET-TOKEN" not in str(err.value) + out.out + out.err and "within 1 s" in str(err.value)
+    assert _no_process_runs(mark)
+
+
+def test_a_local_destination_ending_in_lf_is_not_a_rewrite(tmp_path):
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    dest = _dest(tmp_path, root, "d.git\n")
+    r = _push_check(root, dest, f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+
+
+def test_a_cancellation_while_the_group_starts_still_ends_it(tmp_path):
+    """SIGTERM landing before the group is registered is held, then ends the group and the checker."""
+    mark = _marker()
+    code = ("import os, signal, subprocess, importlib.util\n"
+            f"spec = importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
+            "c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
+            "real = subprocess.Popen\n"
+            "def popen(*a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    return real(*a, **k)\n"
+            "c.subprocess.Popen = popen\n"
+            f"c._bounded(['sh', '-c', 'exec sleep {mark}'], 'a stand-in')\n")
+    proc = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=_clean_env(), capture_output=True,
+                          timeout=30)
+    assert proc.returncode == -15, proc                                  # the cancellation reaches the caller
+    assert _no_process_runs(mark)
+
+
+def test_a_fixture_timeout_lets_the_checker_end_its_transport(tmp_path):
+    """The fixture's own timeout sends SIGTERM first, so the checker ends the group it started."""
+    root = _repo(tmp_path)
+    helper = tmp_path / "helper.sh"
+    mark = _marker()
+    helper.write_text(f"#!/bin/sh\nexec sleep {mark}\n")
+    helper.chmod(0o755)
+    code = (f"import importlib.util\nspec = importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
+            "c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
+            f"c.destination_oids('ext::{helper} x')\n")
+    env = _clean_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "protocol.ext.allow",
+                      "GIT_CONFIG_VALUE_0": "always"})
+    with pytest.raises(subprocess.TimeoutExpired):
+        _sub([sys.executable, "-c", code], cwd=root, env=env, timeout=3)
+    assert _no_process_runs(mark)
+
+
+def test_a_shallow_boundary_is_judged_against_its_stored_parent(tmp_path):
+    """rev-list shows a shallow boundary as a root; judged as one, its inherited dashes would read as new."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "old " + DASH + "\n"})
+    _commit(root, "the dash, already there")
+    parent = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"other.md": "plain\n"})
+    _commit(root, "plain change")
+    tip = _git(root, "rev-parse", "HEAD")
+    (root / ".git/shallow").write_text(tip + "\n")
+    assert _run(root, "--range", parent, tip).returncode == 0
+    r = _run(root, "--range", m.NULL_OID, tip)                          # the history before it would go unjudged
+    assert r.returncode == 2 and "shallow" in r.stderr, r
+
+
+def test_a_series_of_refused_edits_reads_each_version_once():
+    texts = []
+
+    class Reader:
+        def count(self, oid):
+            return {"v0": 0, "v1": 1, "v2": 2}[oid]
+
+        def text(self, oid):
+            texts.append(oid)
+            return "".join(f"line {i} {DASH}\n" for i in range(self.count(oid))).encode()
+
+    lines = {}
+    assert m.refused([[("v0", "v1", "f.md")]], Reader(), lines)
+    assert m.refused([[("v1", "v2", "f.md")]], Reader(), lines)
+    assert sorted(texts) == ["v1", "v2"], texts                         # v1 read once, as child then parent

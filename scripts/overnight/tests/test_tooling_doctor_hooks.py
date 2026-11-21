@@ -275,3 +275,12 @@ def test_status_shows_an_empty_hooks_path_as_set_not_unset(tmp_path):
     status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
                             text=True, timeout=60, env=_env())
     assert "Hooks path     : <unset> (expected: .githooks)" in status.stdout, status.stdout
+
+
+def test_install_refuses_a_command_line_value_before_writing_any_file(tmp_path):
+    root = _plain_repo(tmp_path)
+    env = {**_env(), "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/custom"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=env)
+    assert r.returncode != 0 and "outranks every config file" in r.stderr, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1   # nothing written

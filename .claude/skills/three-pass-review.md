@@ -24,7 +24,7 @@ REVIEW_BASE=<sha the section started from> bash scripts/codex-dispatch.sh '[revi
 ```
 
 - The marker is written once, as the first thing on the first line. Any other spelling is refused.
-- `REVIEW_BASE` decides the lenses that depend on the changed files (`concurrency` and `bare-metal` for kernel and boot paths, `design` for drawn UI). Without it the base is `HEAD~1`, which is wrong for a section of more than one commit.
+- `REVIEW_BASE` is the commit before the section's code; it decides the lenses that depend on the changed files (`concurrency` and `bare-metal` for kernel and boot paths, `design` for drawn UI) and the range the reviewer is shown. A plan pass without it uses `HEAD~1`, for the lenses only. A later pass without it starts at the section's newest checked plan pass and is refused when none is on record; an owed section uses its recorded base and a reconciliation the base its completion reviewed, and either refuses a `REVIEW_BASE` naming another commit. Every base must be an ancestor of the candidate.
 - The wrapper appends the lenses and the verdict line each one owes. Do not write them into the body.
 - In the background, send the same prompt through `scripts/overnight/review-broker-codex-dispatch.sh` (with `REVIEW_BASE` set the same way): its detached job runs `scripts/codex-dispatch.sh`, so the pass is checked and receipted exactly as a foreground one, and its log ends `Turn completed (rc=N)` with the wrapper's exit status.
 - The first line names the TODO and the section (`todo/<path>.md section <N>`). The commit gate finds a pass by them.
