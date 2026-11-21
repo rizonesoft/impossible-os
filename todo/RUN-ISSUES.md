@@ -17,6 +17,11 @@ Scheduled work is not kept here. On 2026-11-11 nine items moved to `00-infrastru
 - [ ] `SEQ-TEARDOWN` is a text match, so the guard CLI's `clear` has no enforcement of its own
   - `python3 .claude/hooks/run_phase_guard.py $(printf cl; printf ear)` is not refused. The owner is the CLI verb, which only `run.sh stop` and a person should reach. Do not narrow the text match: three review rounds broke every narrowing.
 
+### Operator only: repository settings on GitHub, which the run never changes
+
+- [ ] `docs-release.yml` cannot publish: a repository ruleset forbids creating refs, so its first push of `docs-releases` and tag `docs-releases-root` is refused (GH013, "creations being restricted", runs 44516180310, 44728573543, 44896771652)
+  - Done when the ruleset excludes those two refs from its creation restriction (or the operator picks another home for frozen release docs) and the workflow's next run is green.
+
 ### Watch: questions a number answers, not tasks
 
 - [ ] Sections shipped per day. About 7 a day on 2026-11-11, against 1,649 open sections and a plan that grows; one push per section with a CI wait adds about 25 minutes a section. Read `supervisor-state.json` after a week before tuning anything.
