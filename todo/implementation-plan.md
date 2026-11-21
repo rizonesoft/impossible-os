@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **995 of 2730 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **995 of 2750 sections complete (36%).** 123 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -38,6 +38,26 @@ Everything later is proven by these gates, so they come first: the build and ana
 
 | Done | Section       | Deliverable                                                                                                           | Needs      | Items |
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ---------- | ----: |
+| [ ]  | `D00 T08 §48` | Two engines, one gate set: the lane policy                                                                            | none       |     4 |
+| [ ]  | `D00 T08 §49` | The lane map and the commit check                                                                                     | none       |     5 |
+| [ ]  | `D00 T08 §50` | Section claims on origin                                                                                              | none       |     4 |
+| [ ]  | `D00 T08 §51` | One push queue for every lane                                                                                         | none       |     3 |
+| [ ]  | `D00 T08 §52` | Extra lanes stay light                                                                                                | none       |     4 |
+| [ ]  | `D00 T08 §53` | The lane command and the userland lane                                                                                | none       |     5 |
+| [ ]  | `D00 T08 §54` | The run knows its lanes                                                                                               | attended   |     2 |
+| [ ]  | `D00 T08 §55` | The Neon driver and its task queue                                                                                    | none       |     6 |
+| [ ]  | `D00 T08 §56` | No lane fault is silent                                                                                               | none       |     3 |
+| [ ]  | `D00 T08 §57` | Desktop shortcuts for the lanes                                                                                       | none       |     3 |
+| [ ]  | `D00 T08 §58` | Ready UI surfaces go to Neon                                                                                          | none       |     4 |
+| [ ]  | `D00 T08 §59` | Lanes pilot                                                                                                           | operator   |     2 |
+| [ ]  | `D00 T08 §60` | Review receipts are written atomically                                                                                | none       |     3 |
+| [ ]  | `D00 T08 §61` | A P2 comes with a failing test                                                                                        | none       |     2 |
+| [ ]  | `D00 T08 §62` | Blocking level per path                                                                                               | none       |     2 |
+| [ ]  | `D00 T08 §63` | A repeated finding dispatches a redesign pass                                                                         | none       |     2 |
+| [ ]  | `D00 T08 §64` | Re-dispatched passes review only the repair                                                                           | none       |     2 |
+| [ ]  | `D00 T08 §65` | Tools run in front of the review lenses                                                                               | none       |     2 |
+| [ ]  | `D00 T08 §66` | Lens yield is measured                                                                                                | none       |     3 |
+| [ ]  | `D00 T08 §67` | The push wait overlaps the next plan review                                                                           | none       |     2 |
 | [x]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none       |    12 |
 | [x]  | `D08 T17 §2`  | Reference Build and Capture Profile                                                                                   | none       |    14 |
 | [x]  | `D08 T17 §4`  | Microsoft-Free Rule                                                                                                   | none       |     8 |

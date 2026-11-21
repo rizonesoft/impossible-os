@@ -113,6 +113,26 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [x]   |
 | ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [x]   |
 | ⭐  |  47   |   §47   | The Bash safety guards read commands with a shell grammar                                        | §32                        |  [ ]   |
+| ⭐  |  48   |   §48   | Two engines, one gate set: the lane policy                                                       | --                         |  [ ]   |
+| ⭐  |  49   |   §49   | The lane map and the commit check                                                                | §48                        |  [ ]   |
+| ⭐  |  50   |   §50   | Section claims on origin                                                                         | §49                        |  [ ]   |
+| ⭐  |  51   |   §51   | One push queue for every lane                                                                    | §49                        |  [ ]   |
+| ⭐  |  52   |   §52   | Extra lanes stay light                                                                           | §51                        |  [ ]   |
+| ⭐  |  53   |   §53   | The lane command and the userland lane                                                           | §50, §51, §52              |  [ ]   |
+| ⭐  |  54   |   §54   | The run knows its lanes                                                                          | §53                        |  [ ]   |
+| ⭐  |  55   |   §55   | The Neon driver and its task queue                                                               | §53                        |  [ ]   |
+| ⭐  |  56   |   §56   | No lane fault is silent                                                                          | §53, §55                   |  [ ]   |
+| ⭐  |  57   |   §57   | Desktop shortcuts for the lanes                                                                  | §53                        |  [ ]   |
+| ⭐  |  58   |   §58   | Ready UI surfaces go to Neon                                                                     | §55                        |  [ ]   |
+| ⭐  |  59   |   §59   | Lanes pilot                                                                                      | §54, §56, §57              |  [ ]   |
+| ⭐  |  60   |   §60   | Review receipts are written atomically                                                           | --                         |  [ ]   |
+| ⭐  |  61   |   §61   | A P2 comes with a failing test                                                                   | --                         |  [ ]   |
+| ⭐  |  62   |   §62   | Blocking level per path                                                                          | --                         |  [ ]   |
+| ⭐  |  63   |   §63   | A repeated finding dispatches a redesign pass                                                    | --                         |  [ ]   |
+| ⭐  |  64   |   §64   | Re-dispatched passes review only the repair                                                      | --                         |  [ ]   |
+| ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | --                         |  [ ]   |
+| ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
+| ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1584,6 +1604,257 @@ Section 32 made the guards read the command behind reserved words, case arms, su
 **Test checkpoint:** `test_guard_compound.py` refuses every shape listed above in both guards and allows its harmless twin; `run-all.sh` passes.
 
 -> XREF: section 32 (item: "The Bash safety guards judge the command behind shell grammar and redirections")
+
+
+## 48. Two engines, one gate set: the lane policy
+
+> **Spawned-by:** root
+> **User impact:** the operator wants Antigravity (Gemini 4 Neon) and a second Claude session working beside the run, and today the policy allows only interactive, human-authored commits.
+
+Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/plans/2026-11-20-parallel-lanes.md). Four lanes: main (the run), userland (Claude), neon-a (agy, commits) and neon-b (agy, reports only). Every lane is started by the operator; main runs alone or with any subset of the other three.
+
+- [ ] CLAUDE.md "Autonomous-agent boundary" becomes "Two engines, one gate set": only operator-started lanes may commit, and a rule that binds every lane lives in `.githooks/` or CI, never only in `.claude/hooks/`
+- [ ] `docs/infrastructure/ai-system.md` matches the new policy
+- [ ] An `AGENTS.md` section and a new `GEMINI.md`: lanes, gates, no heavy jobs outside the push lock, where reports go, no Microsoft icons or text
+- [ ] Commit: `"lanes: two engines, one gate set"`
+
+**Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean.
+
+## 49. The lane map and the commit check
+
+> **Spawned-by:** root
+> **User impact:** two lanes editing the same directory produce a conflict nobody sees until a push fails.
+
+A lane reserves its directories only while it is live; when it is off, main takes its sections.
+
+- [ ] `.conclave/lanes.toml` names each lane's engine, model, worktree, directories, output (commits or reports) and resource limits
+- [ ] A live lane writes `~/.local/state/impossible-os/lanes/<lane>.json` (pid, heartbeat time, current task)
+- [ ] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
+- [ ] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
+- [ ] Commit: `"lanes: the lane map and the commit check"`
+
+**Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file always passes.
+
+## 50. Section claims on origin
+
+> **Spawned-by:** root
+> **User impact:** two lanes can start the same section and waste a section's work each.
+
+- [ ] A lane claims a section by creating `refs/claims/<address>` on origin; creating an existing ref is refused, so origin decides a race; the claim is released after green CI
+- [ ] A claimed section is never picked by another lane, even after its owner stops
+- [ ] `scripts/lane.sh release <claim>` releases a claim by hand; a stale claim is reported
+- [ ] Commit: `"lanes: section claims on origin"`
+
+**Test checkpoint:** two lanes race for one claim and exactly one wins; a claim older than its limit is reported.
+
+## 51. One push queue for every lane
+
+> **Spawned-by:** root
+> **User impact:** two lanes pushing at once break the one-push-to-green rule and turn `main` red.
+
+- [ ] One flock at `~/.local/state/impossible-os/push.lock`, held from rebase through the gates, the push and `scripts/overnight/ci-wait.py` to green
+- [ ] After a rebase the generated files are rebuilt: `todo-plan.py --sync`, the todo-graph cache, `scripts/site/build.py --sync`
+- [ ] Commit: `"lanes: one push queue for every lane"`
+
+**Test checkpoint:** a second lane queues and rebases onto the first lane's push; a dead holder's lock is released.
+
+## 52. Extra lanes stay light
+
+> **Spawned-by:** root
+> **User impact:** three extra lanes running builds and QEMU at once starve the host and the run.
+
+Operator decision 2026-11-20: the extra lanes do nothing resource-intensive. Heavy jobs run once per section, at push time, through bosun's single slot.
+
+- [ ] Each extra lane runs under `systemd-run --user --scope` with `MemoryHigh`, `MemoryMax` and `CPUWeight` from `lanes.toml`
+- [ ] `scripts/overnight/run-artifact.sh` and the bosun wrapper refuse a build, suite, smoke matrix or QEMU job from an extra lane that does not hold the push lock, saying it runs at push time
+- [ ] neon-a runs with an agy settings file that denies build, test and QEMU commands; neon-b runs with `--mode plan` on a read-only worktree
+- [ ] Commit: `"lanes: extra lanes stay light"`
+
+**Test checkpoint:** a heavy job from an extra lane is refused outside the push lock and allowed inside it.
+
+## 53. The lane command and the userland lane
+
+> **Spawned-by:** root
+> **User impact:** the operator starts, watches and stops each lane on its own, whenever they want, and a lane that cannot start says why.
+
+- [ ] `scripts/lane.sh <lane> start|watch|stop|status`; `status` with no lane prints all four
+- [ ] Start refuses loudly unless main is running, the worktree exists and is clean on main, the engine is installed and signed in, and the lane is not already live
+- [ ] The worktrees `../impossible-os-userland`, `../impossible-os-neon-a` and `../impossible-os-neon-b` (neon-b detached at `origin/main`, refreshed before each task)
+- [ ] The userland lane reuses `scripts/overnight/run-common.sh` with its own session name and worktree, and owns `user/`, `src/apps/` and `src/shell/`
+- [ ] Commit: `"lanes: the lane command and the userland lane"`
+
+**Test checkpoint:** each refusal names its reason; a userland lane starts beside main and ships one section with no clash.
+
+## 54. The run knows its lanes
+
+**Needs:** attended
+
+> **Spawned-by:** root
+> **User impact:** stopping main while lanes run would leave them without the heartbeat that watches them.
+
+`scripts/run.sh` is a frozen file (`.claude/hooks/gate.py`), so this edit is made in an attended session.
+
+- [ ] `scripts/run.sh status` reads the live lane records; `stop` asks about running lanes and stops them at a safe point first
+- [ ] Commit: `"run: the run knows its lanes"`
+
+**Test checkpoint:** `run.sh stop` with a live lane asks first and never stops a lane holding the push lock.
+
+## 55. The Neon driver and its task queue
+
+> **Spawned-by:** root
+> **User impact:** Neon is kept busy on what it does best (the 1M-token context, reading images and video) and its output is checked by scripts, never trusted on its word.
+
+Operator decisions 2026-11-20: Neon never designs, never makes the final SMP or ABI call and never reviews; Astra reviews every lane. Queue order: Claude's blocked requests, prep packages for the Claude lanes' next three sections, lane sections and ready surfaces, standing sweeps.
+
+- [ ] Queue at `~/.local/state/impossible-os/agy/{pending,running,done,parked}/`; a task is claimed by atomic rename, in the queue order above; neon-b never takes lane work
+- [ ] The driver runs agy headless and judges only by exit codes and the task schema, then commits through the push queue (neon-a) or files a report in `done/` (neon-b)
+  - `agy -p --model gemini-4-neon-high --output-format json --json-schema <task schema> --print-timeout <limit>`
+- [ ] Output that fails the schema goes back to pending; the third failure parks the task with its reason
+- [ ] The Claude lanes queue prep tasks for their next three sections from `todo-plan.py --next` and check what they read at file:line
+- [ ] Standing sweep tasks: roadmap (duplicates, dead XREFs, prose that contradicts code), doc freshness, spec digests
+- [ ] Commit: `"lanes: the Neon driver and its task queue"`
+
+**Test checkpoint:** claim by rename, schema failure, parking after three failures and the queue order each have a test.
+
+## 56. No lane fault is silent
+
+> **Spawned-by:** root
+> **User impact:** a lane that dies or stalls must be seen by the operator, never discovered hours later.
+
+A run never restarts itself, so lanes are reported, never auto-restarted. Main keeps its existing heartbeat restart.
+
+- [ ] Main's heartbeat checks every live lane for: dead, stalled, idle with work waiting, stale claim, push lock held too long, parked task
+- [ ] Each fault raises a Windows toast, a line in `lane.sh status` and an entry in `.claude/overnight/run-health.json`
+- [ ] Commit: `"lanes: no lane fault is silent"`
+
+**Test checkpoint:** each fault above fires all three alerts.
+
+## 57. Desktop shortcuts for the lanes
+
+> **Spawned-by:** root
+> **User impact:** the operator starts main first, then any lane from the desktop.
+
+- [ ] `scripts/run-desktop.sh <verb> [lane]`; Stop asks first and never stops a lane mid-push
+- [ ] `install` adds Start, Watch and Stop for Userland, Neon A and Neon B, each with a lane badge from `scripts/campaign-icon.py`; the three main shortcuts are unchanged
+- [ ] Commit: `"lanes: desktop shortcuts for the lanes"`
+
+**Test checkpoint:** `run-desktop.sh` tests cover the lane verbs; each shortcut opens and a refusal keeps its tab open with the reason.
+
+## 58. Ready UI surfaces go to Neon
+
+**Design:** n/a -- task routing and a done check; the surfaces Neon builds take their design from their own sections' **Design:** lines
+
+> **Spawned-by:** root
+> **User impact:** Neon builds a Windows 11 surface only when its capture is complete, so the 1:1 work is checked against the reference, not remembered.
+
+Ships now and stays idle until [the UI framework engines](../08-graphics-ui/TODO-18-ui-framework-engines.md) and [the component library](../08-graphics-ui/TODO-19-fluent-component-library.md) are built. Claude keeps the engines, the component library, the consistency-ledger rules and the frosted glass.
+
+- [ ] The inventory checker marks a surface ready once all its states are captured, its ledger rules are settled, its tokens exist and its components are built
+- [ ] A screenshot diff (a QEMU render at push time against the capture, under a threshold) is a ready surface's done condition
+- [ ] A Neon task for a surface that is not ready is refused; icon and text records never enter a Neon task
+- [ ] Commit: `"lanes: ready UI surfaces go to Neon"`
+
+**Test checkpoint:** a surface that is not ready is refused; the diff passes and fails correctly on fixtures.
+
+-> XREF: [the Windows 11 parity inventory](../08-graphics-ui/TODO-17-win11-parity-inventory.md) (item: "Coverage Report and Ownership Check")
+
+## 59. Lanes pilot
+
+**Needs:** operator
+
+> **Spawned-by:** root
+> **User impact:** the lanes are proven by a real run before all four go live.
+
+The operator starts the lanes; the run never starts agy or another lane.
+
+- [ ] Main plus neon-a until one section ships with no clash
+- [ ] Add userland, then neon-b once that is clean
+
+**Test checkpoint:** `bash scripts/lane.sh status` and `run-health.json` show no clash and no fault over the pilot.
+
+## 60. Review receipts are written atomically
+
+> **Spawned-by:** root
+> **User impact:** a torn receipt line can lose or misattribute a review pass; today the reader tolerates them instead of the writer preventing them.
+
+Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant reader guards a failure the writer can remove.
+
+- [ ] `scripts/overnight/manifest-line.py` takes a lock, writes the line whole and fsyncs
+- [ ] A strict reader; `unreadable_line_may_be` and `_RECEIPT_HEAD` are removed from `scripts/review_pin.py`
+- [ ] Commit: `"review: receipts are written atomically"`
+
+**Test checkpoint:** concurrent writers leave only whole lines; a malformed line fails the reader loudly.
+
+## 61. A P2 comes with a failing test
+
+> **Spawned-by:** root
+> **User impact:** review chains run long on findings that are never reproduced (median 22 passes a section against 4 for a clean one; 224 of 746 round passes ended on P2).
+
+- [ ] The review prompt asks a P2 for Repro, Expect and Actual; one that cannot be reproduced is recorded as a tracked P3
+- [ ] Commit: `"review: a P2 comes with a failing test"`
+
+**Test checkpoint:** a P2 without a repro is graded P3 by `review_pin.py`; one with a repro still blocks.
+
+## 62. Blocking level per path
+
+> **Spawned-by:** root
+> **User impact:** machinery that only the run uses is held to the kernel's blocking level.
+
+- [ ] `[[schedule.blocking]]` in `.conclave/reviewers.toml` sets the blocking level by path; run-only machinery blocks on P1 only, and a gate that passes falsely counts as P1
+- [ ] Commit: `"review: blocking level per path"`
+
+**Test checkpoint:** `review_pin.py` blocks a P2 under `src/` and passes one under a run-only path.
+
+## 63. A repeated finding dispatches a redesign pass
+
+> **Spawned-by:** root
+> **User impact:** 76% of consecutive round pairs re-flag the same file; patching case by case keeps the chain going.
+
+- [ ] The third consecutive finding on one function dispatches a `redesign` pass instead of another round
+- [ ] Commit: `"review: a repeated finding dispatches a redesign pass"`
+
+**Test checkpoint:** three hits on one function produce a `redesign` kind; hits on different functions do not.
+
+## 64. Re-dispatched passes review only the repair
+
+> **Spawned-by:** root
+> **User impact:** a re-dispatched round re-reads the whole section and finds new issues outside what was fixed.
+
+- [ ] A re-dispatched round or performance pass is scoped to the repair diff and the code it reaches
+- [ ] Commit: `"review: re-dispatched passes review only the repair"`
+
+**Test checkpoint:** a re-dispatch prompt names only the repair range.
+
+## 65. Tools run in front of the review lenses
+
+> **Spawned-by:** root
+> **User impact:** the reviewer spends passes on findings a linter, fuzzer or mutation test would report for free.
+
+- [ ] ruff, clang-tidy, the fuzz targets and mutation testing run on the changed paths before a round, and their findings go into the prompt
+- [ ] Commit: `"review: tools run in front of the review lenses"`
+
+**Test checkpoint:** a seeded lint finding appears in the round prompt.
+
+## 66. Lens yield is measured
+
+> **Spawned-by:** root
+> **User impact:** lenses that never find a real defect still cost a pass each.
+
+- [ ] Each finding's verdict (fixed, rejected, accepted) is stored with its lens
+- [ ] `scripts/overnight/lens-yield.py` scores each lens
+- [ ] Commit: `"review: lens yield is measured"`
+
+**Test checkpoint:** `lens-yield.py` scores a fixture manifest correctly.
+
+## 67. The push wait overlaps the next plan review
+
+> **Spawned-by:** root
+> **User impact:** the run idles for the whole CI wait after each push.
+
+- [ ] A `push-wait` phase that may only dispatch the next section's plan review while CI runs
+- [ ] Commit: `"review: the push wait overlaps the next plan review"`
+
+**Test checkpoint:** during `push-wait` a plan dispatch is allowed and every other edit or dispatch is refused.
 
 
 ## Format Quick Reference
