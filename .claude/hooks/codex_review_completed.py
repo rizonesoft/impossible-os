@@ -58,6 +58,7 @@ Owner: TODO-08-automation-hardening section 3.
 import hashlib
 import datetime as _dt
 import json
+import collections
 import os
 import re
 import shlex
@@ -1315,17 +1316,17 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
         # of it (an alias could carry another attempt's .done).
         rp = Path(rec_log) if os.path.isabs(rec_log) else root / rec_log
         if _out_is_clean(root, rp):
-            with _StateLock(state_path):
-                cur = _load_state(state_path)
-                if not isinstance(cur, dict) or cur.get("received") is True \
-                        or cur.get("timestamp_ns") != rec_ts or (cur.get("log_file") or "") != rec_log:
-                    return    # another dispatch's record replaced this one meanwhile
+            def _mark(cur):
+                if cur.get("received") is True or cur.get("timestamp_ns") != rec_ts \
+                        or (cur.get("log_file") or "") != rec_log:
+                    return None    # another dispatch's record replaced this one meanwhile
                 cur["received"] = True
                 cur["received_timestamp_ns"] = time.time_ns()
                 cur["received_via"] = "auto-clean-broker-completion (C-RECV)"
-                ok, _err = _write_atomic(state_path, cur)
-            if ok:
-                _append_history(root, cur)
+                return cur
+            done = _update_state(state_path, _mark)
+            if done is not None:
+                _append_history(root, done)
                 _debug_log(root, "auto_receive_clean", kind=rec_kind, out=str(rp))
             return
 
@@ -1353,16 +1354,22 @@ class _StateLock:
     def __init__(self, state_path: Path):
         self.path = state_path.with_name(state_path.name + ".lock")
         self.fd = None
+        self.held = False    # acquired, or no fcntl on this platform (nothing to race)
 
     def __enter__(self):
         try:
             import fcntl
+        except ImportError:
+            self.held = True
+            return self
+        try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
             deadline = time.monotonic() + 2.0
             while True:
                 try:
                     fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.held = True
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:
@@ -1381,6 +1388,69 @@ class _StateLock:
             except OSError:
                 pass
         return False
+
+
+def _publish_trigger(state_path: Path, state: dict) -> tuple[bool, str]:
+    """Publish a fully built trigger record ONCE, never over a newer one."""
+    with _StateLock(state_path):
+        cur = _load_state(state_path)
+        if isinstance(cur, dict) and isinstance(cur.get("timestamp_ns"), int) \
+                and isinstance(state.get("timestamp_ns"), int) and cur["timestamp_ns"] > state["timestamp_ns"]:
+            return (True, "a newer trigger is already recorded; kept it")
+        return _write_atomic(state_path, state)
+
+
+def _update_state(state_path: Path, change) -> dict | None:
+    """Every non-trigger writer of the record: re-read it under the lock, let
+    `change` return the new record (or None to leave it), write it. Without the
+    lock nothing is written, so a pending review stays pending: the safe side."""
+    with _StateLock(state_path) as lk:
+        if not lk.held:
+            return None
+        cur = _load_state(state_path)
+        if not isinstance(cur, dict):
+            return None
+        new = change(dict(cur))
+        if new is None:
+            return None
+        ok, _err = _write_atomic(state_path, new)
+        return new if ok else None
+
+
+# Positive evidence that a wrapper launched a review: the broker prints one
+# {"kind", "jobId", "logFile"} line per job it registered, and the direct
+# dispatcher announces the transcript it created once nothing can refuse any
+# more. A refusal prints neither, whatever else the output quotes.
+_DIRECT_LAUNCH_RE = re.compile(r"^\[codex-dispatch\] (?:transcript: (\S+)|launched: (\S+))\s*$")
+
+
+def _launched_kinds(payload: dict) -> list:
+    resp = payload.get("tool_response")
+    if isinstance(resp, dict):
+        text = "\n".join(str(resp.get(k) or "") for k in ("stdout", "stderr", "output"))
+    else:
+        text = str(resp or "")
+    kinds = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith("{") and '"logFile"' in s:
+            try:
+                rec = json.loads(s)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("logFile"), str):
+                kinds.append(str(rec.get("kind") or ""))
+            continue
+        m = _DIRECT_LAUNCH_RE.match(s)
+        if m:
+            k = _out_kind_from_name(Path(m.group(1)).name) if m.group(1) else m.group(2)
+            kinds.append(k[:-len("-direct")] if k.endswith("-direct") else k)
+    return kinds
+
+
+def _is_wrapper_dispatch(cmd: str) -> bool:
+    return bool(cmd) and ("codex-dispatch.sh" in cmd or _cd.is_review_broker_dispatch(cmd)) \
+        and "codex-bg-dispatch.sh" not in cmd
 
 
 def _response_log_file(payload: dict) -> str:
@@ -1446,7 +1516,11 @@ def main() -> int:
         return 0  # outside git repo, nothing to track
     state_path = _state_path(root)
     now_ns = time.time_ns()
-    if kind == "trigger" and _dispatch_was_refused(payload):
+    _ti = payload.get("tool_input") or {}
+    _cmd = str(_ti.get("command") or "") if isinstance(_ti, dict) else ""
+    _wrapper = _is_wrapper_dispatch(_cmd)
+    _launched = _launched_kinds(payload) if _wrapper else []
+    if kind == "trigger" and ((_wrapper and not _launched) or (not _wrapper and _dispatch_was_refused(payload))):
         # Refused at argv time: no review ran. Recording it would open a
         # reception obligation and stamp a review that never happened.
         sys.stderr.write(
@@ -1536,16 +1610,6 @@ def main() -> int:
         # path swallowed an OSError -- the H1 fix from the section-24
         # review pipeline. The write itself remains best-effort; we add
         # honest diagnosis, not new failure modes.
-        with _StateLock(state_path):
-            write_ok, write_err = _write_atomic(state_path, state)
-        _debug_log(
-            root, "trigger_state_write",
-            classifier_kind=kind,
-            classifier_label=label[:120],
-            last_codex_review_write_ok=write_ok,
-            last_codex_review_write_path=str(state_path),
-            error=write_err,
-        )
         # §5 four-dispatch tracking. Best-effort: extract prompt and
         # detect (kind, todo_path). Both must resolve for the dispatch
         # to count toward the four-dispatch gate. Failures are silent
@@ -1592,8 +1656,17 @@ def main() -> int:
         # tell apart: no log binding, so auto-receive leaves it to triage.
         if raw_cmd and len(list(_all_dispatch_targets(raw_cmd, root))) > 1:
             state["log_file"] = ""
-        with _StateLock(state_path):
-            _write_atomic(state_path, state)
+        # One publication of the finished record (never a preliminary one a
+        # later trigger could be overwritten by), never over a newer trigger.
+        write_ok, write_err = _publish_trigger(state_path, state)
+        _debug_log(
+            root, "trigger_state_write",
+            classifier_kind=kind,
+            classifier_label=label[:120],
+            last_codex_review_write_ok=write_ok,
+            last_codex_review_write_path=str(state_path),
+            error=write_err,
+        )
         # A pass of the reviewer pin earns no stamp here. The commit gate judges
         # it from the receipt scripts/codex-dispatch.sh writes when the pass has
         # been checked; a stamp written now, when the dispatch has only started,
@@ -1602,19 +1675,40 @@ def main() -> int:
             review_kind and todo_path and review_kind not in SECTION_PASS_KINDS
             and (not state.get("background_dispatch") or is_broker)
         )
+        # A wrapper stamps only the targets its launch lines account for: in a
+        # bundle where one leg was refused, the refused kind earns nothing.
+        _targets = [(review_kind, todo_path, section)] + [
+            t for t in _all_dispatch_targets(raw_cmd, root) if (t[0], t[1]) != (review_kind, todo_path)]
+        _left = collections.Counter(_launched)
+
+        def _launched_target(k):
+            if not _wrapper or len(_launched) >= len(_targets):
+                return True
+            if _left[k] > 0:
+                _left[k] -= 1
+                return True
+            return False
+
+        stamp_ok, stamp_err = False, ""
+        # The command-level eligibility (broker / non-background, a non-pass
+        # kind) decides whether this invocation may stamp at all; each target
+        # of a bundle is then stamped on its own launch evidence.
+        may_stamp = stamp_attempted
+        if stamp_attempted and not _launched_target(review_kind):
+            stamp_attempted, stamp_err = False, "skipped (this leg was refused)"
         if stamp_attempted:
             stamp_ok, stamp_err = _record_stamp(
                 root, todo_path, section, review_kind, now_ns,
                 dispatch_head_sha=head_at_dispatch,
             )
-            # A bundled wave stamps EVERY kind it dispatched, not just the
-            # leading one -- see _all_dispatch_targets. The command-level
-            # eligibility above (broker / non-background) already decided
-            # that this invocation may stamp at all; this only fans the
-            # decision out across the dispatches the same command carries.
+        if may_stamp:
+            # A bundled wave stamps EVERY kind it launched, not just the
+            # leading one -- see _all_dispatch_targets.
             _seen_targets = {(review_kind, todo_path)}
             for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
                 if (_k, _tp) in _seen_targets or _k in SECTION_PASS_KINDS:
+                    continue
+                if not _launched_target(_k):
                     continue
                 _seen_targets.add((_k, _tp))
                 _ok2, _err2 = _record_stamp(
@@ -1626,6 +1720,8 @@ def main() -> int:
                     review_kind=_k, todo_path=_tp, section=_sec,
                     stamp_attempted=True, stamp_write_ok=_ok2, error=_err2,
                 )
+        if stamp_attempted or stamp_err:
+            pass
         elif state.get("background_dispatch"):
             stamp_ok = False
             stamp_err = "skipped (non-broker background dispatch is not review proof)"
@@ -1643,14 +1739,15 @@ def main() -> int:
         )
         return 0
     # kind == "receive"
-    state = _load_state(state_path)
+    def _recv(cur):
+        cur["received"] = True
+        cur["received_timestamp_ns"] = now_ns
+        return cur
+    # No prior trigger (or no lock to arbitrate with) -> a no-op; the skill is
+    # harmless to invoke standalone.
+    state = _update_state(state_path, _recv)
     if state is None:
-        # No prior trigger; receive is a no-op (the skill is harmless
-        # to invoke standalone).
         return 0
-    state["received"] = True
-    state["received_timestamp_ns"] = now_ns
-    _write_atomic(state_path, state)
     # Mirror to ring-buffer history so section_commit_gate can fall back
     # to "any recent received review whose blobs match" when blob SHAs
     # drift between staged-tree restages.

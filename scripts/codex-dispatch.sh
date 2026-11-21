@@ -238,7 +238,6 @@ else
     LOG_FILE=""
 fi
 if [ -n "$LOG_FILE" ]; then
-    echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     set -o pipefail
     # The candidate is identified BEFORE the reviewer runs. Read afterwards, a
     # commit made by another caller during the review would be named as the
@@ -253,6 +252,9 @@ if [ -n "$LOG_FILE" ]; then
     # The receipt's ts is the LAUNCH time, as the broker's row is: the outage
     # check selects attempts by when they started.
     LAUNCH_TS="$(date +%s)"
+    # The launch line: printed once nothing can refuse any more. The recorder
+    # takes it (or the broker's {logFile} line) as the proof a review started.
+    echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
@@ -319,4 +321,5 @@ if [ "$KIND" != "direct" ]; then
     echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR) to keep this review's transcript and receipt" >&2
     exit 2
 fi
+echo "[codex-dispatch] launched: $KIND" >&2
 exec node "$COMPANION" adversarial-review -- "$PROMPT"

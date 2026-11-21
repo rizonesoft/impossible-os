@@ -2110,8 +2110,11 @@ def _crashed_broker_legs(root: Path, todo: str, entry: dict) -> list[str]:
             # (its .done), or a review longer than five minutes escapes.
             try:
                 fin = os.stat(str(e.get("logFile") or "") + ".done").st_mtime
-            except OSError:  # fail-direction: no status yet is placed by launch, then judged incomplete
-                fin = float(e.get("ts") or 0)
+            except OSError:
+                # fail-direction: a dispatcher that publishes a status and has
+                # none is judged now, whatever its age (incomplete); an older
+                # row without that contract is placed by its launch.
+                fin = float("inf") if e.get("done_file") else float(e.get("ts") or 0)
             if fin * 1_000_000_000 < ts - 300_000_000_000:
                 continue
             try:
@@ -3398,19 +3401,16 @@ def _reset_review_state(root: Path) -> None:
     state_path = root / ".claude" / "state" / "last-codex-review.json"
     if not state_path.exists():
         return  # nothing to invalidate
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
-        return  # malformed; leave alone -- next gate will fail closed anyway
-    if not isinstance(state, dict):
-        return
-    if state.get("received") is not True:
-        return  # already not-received, nothing to do
-    state["received"] = False
-    state["skipped_section_commit"] = True
-    # Use the §3 hook's atomic writer so per-process tmp paths avoid
-    # the race documented in codex_review_completed._write_atomic.
-    crc._write_atomic(state_path, state)
+
+    def _invalidate(state):
+        if state.get("received") is not True:
+            return None  # already not-received, nothing to do
+        state["received"] = False
+        state["skipped_section_commit"] = True
+        return state
+    # The hook's locked re-read-and-write, shared with every other writer of
+    # the record, so a trigger published meanwhile is never replaced.
+    crc._update_state(state_path, _invalidate)
 
 
 def _emit_block(reason_label: str, details: list[str], head: str = "") -> None:

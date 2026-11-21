@@ -7984,7 +7984,7 @@ rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
       "$CRSW_REPO/.claude/state/codex-review-debug.jsonl" \
       "$CRSW_REPO/.claude/state/last-review-stamps.json"
 cat > "$CRSW_TMP/p_wrapper.json" <<'JSON'
-{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md wrapper attribution'"}}
+{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md wrapper attribution'"},"tool_response":{"stderr":"[codex-dispatch] transcript: /r/20260101-000000-1-adversarial-direct.out\n"}}
 JSON
 ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py < "$CRSW_TMP/p_wrapper.json" >/dev/null 2>&1 )
 CRSW_WRAPPER_OK=$(python3 - "$CRSW_REPO" <<'PYEOF'

@@ -191,6 +191,18 @@ def test_a_failed_foreground_leg_longer_than_five_minutes_still_blocks():
         assert any("adversarial" in b for b in bad), bad
 
 
+def test_a_long_foreground_leg_whose_status_was_never_published_blocks():
+    todo = "todo/x/TODO-1.md"
+    with tempfile.TemporaryDirectory() as d:
+        root = _broker_fixture(d, todo, {"adversarial": "crash"})
+        mf = root / ".claude/overnight/reviews/manifest.jsonl"
+        row = json.loads(mf.read_text().splitlines()[0])
+        row.update(ts=int(time.time()) - 360, done_file=True)
+        mf.write_text(json.dumps(row) + "\n")
+        bad = scg._crashed_broker_legs(root, todo, {"adversarial": time.time_ns()})
+        assert any("adversarial" in b for b in bad), bad
+
+
 def test_completion_check_fails_open_when_it_cannot_prove_a_crash():
     """A gate that cannot read its evidence must never block a commit."""
     todo = "todo/x/TODO-1.md"
