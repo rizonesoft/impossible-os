@@ -5,14 +5,17 @@
 #
 # Canonical hook path: .githooks/ (set via core.hooksPath). Once configured,
 # git runs every executable in .githooks/ that matches a hook name; the
-# .git/hooks/ directory is ignored. The repo ships four hooks:
+# .git/hooks/ directory is ignored. The repo ships five hooks:
 #   - .githooks/pre-commit   always-on: lints staged .c/.h; blocks commit
-#                            on lint failure.
+#                            on lint failure or a file that gains a dash.
+#   - .githooks/commit-msg   always-on: the dash check for a merge that
+#                            `git merge` commits without pre-commit.
 #   - .githooks/prepare-commit-msg  always-on: refuses a git commit that
 #                            skipped pre-commit (--no-verify in any spelling).
 #   - .githooks/post-commit  always-on: regenerates COUNT.md (core code +
 #                            supporting text counts), amends commit.
-#   - .githooks/pre-push     opt-in: delegates to scripts/hooks/pre-push
+#   - .githooks/pre-push     always-on dash check over outgoing commits;
+#                            opt-in: delegates to scripts/hooks/pre-push
 #                            (full build + test.sh) when
 #                            .git/.impossible-os-prepush sentinel exists;
 #                            no-ops otherwise.

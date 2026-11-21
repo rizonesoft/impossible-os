@@ -42,3 +42,19 @@ def test_a_failed_history_read_fails_the_gate(tmp_path):
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
     r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
     assert r.returncode == 1 and "zero-trailer scan read the history" in r.stdout + r.stderr, r.stdout[-2000:]
+
+
+def test_the_history_scan_finds_a_mixed_case_key_after_a_divider(tmp_path):
+    """Drives the suite's own history scanner, not the --ai-trailers filter."""
+    import os
+    fake = "f" * 40
+    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
+    shim = tmp_path / "git"
+    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x01%H%n%B" ]; then '
+                    f"printf '\\001{fake}\\nsubject\\n\\n---\\n\\nnotes\\n\\nco-AUTHORED-by: S <s@example.org>\\n'; "
+                    f'exit 0; fi; done\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
+    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
+    out = r.stdout + r.stderr
+    assert r.returncode == 1 and "found 1 post-anchor commit(s)" in out and fake[:8] in out, out[-2000:]

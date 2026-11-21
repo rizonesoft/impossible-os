@@ -349,20 +349,19 @@ check_zero_trailer_policy() {
     else
         range="HEAD"
     fi
-    # One `git log` reads every message in the range (a 0x01 byte starts each
-    # commit), and AI_TRAILER_RE (above, shared with --ai-trailers) is tested
-    # against every line: a line that starts with a forbidden key fails,
-    # wherever it sits. A failed read fails the check, never passes it.
-    local history rc=0
-    history=$(git log --format='%x01%H%n%B' "$range") || rc=$?
+    # One `git log` streams every message in the range into awk (a 0x01 byte
+    # starts each commit), and AI_TRAILER_RE (above, shared with --ai-trailers)
+    # is tested against every line: a line that starts with a forbidden key
+    # fails, wherever it sits. Under pipefail a failed read fails the check,
+    # never passes it.
+    local trailer_hits rc=0
+    trailer_hits=$(git log --format='%x01%H%n%B' "$range" | awk -v re="$AI_TRAILER_RE" '
+        /^\001/ { h = substr($0, 2, 8); next }
+        tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }') || rc=$?
     if [ "$rc" -ne 0 ]; then
         t_fail "zero-trailer scan read the history" "git log over $range exited $rc; no commit was checked"
         return
     fi
-    local trailer_hits
-    trailer_hits=$(printf '%s\n' "$history" | awk -v re="$AI_TRAILER_RE" '
-        /^\001/ { h = substr($0, 2, 8); next }
-        tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }')
     # Filter out declared exceptions.
     local real_hits=""
     for hit in $trailer_hits; do
