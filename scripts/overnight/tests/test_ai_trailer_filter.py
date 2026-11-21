@@ -32,61 +32,56 @@ def test_no_divider_or_scissors_line_hides_a_trailer_on_either_side():
         assert _trailers(message), message
 
 
-def test_a_failed_history_read_fails_the_gate(tmp_path):
-    """The history scan's own git log fails: the suite must report it, not pass."""
+def _scan(tmp_path, records=None, fail=False):
+    """Run the production history scan (--zero-trailers) with its `git log`
+    answered by a shim: `records` are (commit ID, message bytes) pairs."""
     import os
-    shim = tmp_path / "git"
     real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
-    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%x00%H%n%B" ] && exit 128; done\nexec {real} "$@"\n')
+    data = tmp_path / "log.bin"
+    data.write_bytes(b"".join(c.encode() + b"\n" + body + b"\0" for c, body in records or []))
+    answer = "exit 128" if fail else f'cat "{data}"; exit 0'
+    shim = tmp_path / "git"
+    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%H%n%B" ] && {{ {answer}; }}; done\n'
+                    f'exec {real} "$@"\n')
     shim.chmod(0o755)
     env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
-    assert r.returncode == 1 and "zero-trailer scan read the history" in r.stdout + r.stderr, r.stdout[-2000:]
+    r = subprocess.run(["bash", str(SUITE), "--zero-trailers"], capture_output=True, text=True, timeout=120, env=env)
+    return r.returncode, r.stdout + r.stderr
+
+
+def test_a_failed_history_read_fails_the_gate(tmp_path):
+    """The history scan's own git log fails: the suite must report it, not pass."""
+    rc, out = _scan(tmp_path, fail=True)
+    assert rc == 1 and "zero-trailer scan read the history" in out, out[-2000:]
 
 
 def test_the_history_scan_finds_a_mixed_case_key_after_a_divider(tmp_path):
     """Drives the suite's own history scanner, not the --ai-trailers filter."""
-    import os
     fake = "f" * 40
-    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
-    shim = tmp_path / "git"
-    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x00%H%n%B" ]; then '
-                    f"printf '\\000{fake}\\nsubject\\n\\n---\\n\\nnotes\\n\\nco-AUTHORED-by: S <s@example.org>\\n'; "
-                    f'exit 0; fi; done\nexec {real} "$@"\n')
-    shim.chmod(0o755)
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
-    out = r.stdout + r.stderr
-    assert r.returncode == 1 and "found 1 post-anchor commit(s)" in out and fake[:8] in out, out[-2000:]
+    rc, out = _scan(tmp_path, [(fake, b"subject\n\n---\n\nnotes\n\nco-AUTHORED-by: S <s@example.org>\n")])
+    assert rc == 1 and "found 1 post-anchor commit(s)" in out and fake[:12] in out, out[-2000:]
 
 
-def test_a_message_line_holding_the_old_header_byte_hides_nothing(tmp_path):
-    """A message may hold a 0x01 byte; it must not pose as the next commit's header."""
-    import os
-    fake = "e" * 40
-    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
-    shim = tmp_path / "git"
-    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x00%H%n%B" ]; then '
-                    f"printf '\\000{fake}\\nsubject\\n\\n\\001\\n\\nAssisted-by: TOOL:MODEL\\n'; "
-                    f'exit 0; fi; done\nexec {real} "$@"\n')
-    shim.chmod(0o755)
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
-    out = r.stdout + r.stderr
-    assert r.returncode == 1 and "found 1 post-anchor commit(s)" in out and fake[:8] in out, out[-2000:]
+def test_a_control_byte_is_read_as_the_filter_reads_it(tmp_path):
+    """The scan never rewrites a byte: a line starting with 0x01 before a key
+    is not a trailer, to the filter or the scan; a real one beside it is."""
+    line = "\x01AI-Author: S <s@example.org>\n"
+    assert _trailers(f"subject\n\n{line}") == ""
+    rc, out = _scan(tmp_path, [("e" * 40, b"subject\n\n" + line.encode())])
+    assert rc == 0 and "no NEW AI-attribution trailers" in out, out[-2000:]
+    rc, out = _scan(tmp_path, [("d" * 40, b"subject\n\n" + line.encode() + b"\nAssisted-by: TOOL:MODEL\n")])
+    assert rc == 1 and "found 1 post-anchor commit(s)" in out and "d" * 12 in out, out[-2000:]
+
+
+def test_each_commit_is_named_once_and_records_stay_apart(tmp_path):
+    two = b"subject\n\nCo-authored-by: A <a@example.org>\nAssisted-by: TOOL:MODEL\n"
+    rc, out = _scan(tmp_path, [("a" * 40, two), ("b" * 40, b"clean\n"), ("c" * 40, b"x\n\nai-author: m\n")])
+    assert rc == 1 and "found 2 post-anchor commit(s)" in out and "b" * 12 not in out, out[-2000:]
 
 
 def test_an_exception_covers_its_own_commit_and_no_other_with_its_prefix(tmp_path):
     """The grandfathered commits are named by full ID; a commit sharing a prefix is refused."""
-    import os
     fake = "c6b30e0f" + "0" * 32
-    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
-    shim = tmp_path / "git"
-    shim.write_text('#!/bin/bash\nfor a in "$@"; do if [ "$a" = "--format=%x00%H%n%B" ]; then '
-                    f"printf '\\000{fake}\\nsubject\\n\\nCo-authored-by: S <s@example.org>\\n'; "
-                    f'exit 0; fi; done\nexec {real} "$@"\n')
-    shim.chmod(0o755)
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
-    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
-    out = r.stdout + r.stderr
-    assert r.returncode == 1 and "found 1 post-anchor commit(s)" in out and fake[:12] in out, out[-2000:]
+    rc, out = _scan(tmp_path, [(fake, b"subject\n\nCo-authored-by: S <s@example.org>\n"),
+                               ("c6b30e0f625c344393b262697af4aa67decb1b41", b"s\n\nCo-authored-by: S <s@x>\n")])
+    assert rc == 1 and "found 1 post-anchor commit(s)" in out and fake[:12] in out, out[-2000:]

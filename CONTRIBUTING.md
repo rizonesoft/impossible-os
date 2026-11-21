@@ -51,12 +51,18 @@ bash scripts/install-hooks.sh --remove     # undo all of the above
 
 Always-on hooks once `core.hooksPath=.githooks` is set:
 - [`.githooks/pre-commit`](.githooks/pre-commit) -- lints staged `.c`/`.h`,
-  enforces the test-file live-call ban, exits in under a millisecond when
-  no C files are staged.
+  enforces the test-file live-call ban, and refuses any staged file that
+  gains an en or em dash (documentation commits included).
+- [`.githooks/commit-msg`](.githooks/commit-msg) -- the same dash check for
+  a merge, judged against every parent.
 - [`.githooks/post-commit`](.githooks/post-commit) -- regenerates
   [`COUNT.md`](COUNT.md) and amends the commit. Silent on success.
 
-**Opt-in** pre-push gate (`--with-pre-push` or `--enable-pre-push`):
+- [`.githooks/pre-push`](.githooks/pre-push) -- always refuses a push to a
+  branch other than `main` or `gh-pages`, a test-fixture identity, and an
+  outgoing commit that adds a dash.
+
+**Opt-in** pre-push build/test step (`--with-pre-push` or `--enable-pre-push`):
 [`.githooks/pre-push`](.githooks/pre-push) delegates to
 [`scripts/hooks/pre-push`](scripts/hooks/pre-push) when the
 `.git/.impossible-os-prepush` sentinel exists. On push it runs

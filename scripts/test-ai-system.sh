@@ -25,6 +25,7 @@ cd "$REPO_ROOT"
 
 QUIET=0
 TRAILERS_ONLY=0
+ZERO_TRAILERS_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
@@ -37,6 +38,8 @@ Usage:
   bash scripts/test-ai-system.sh --ai-trailers  Print the lines of the commit
                                               message on stdin that carry a
                                               forbidden attribution key
+  bash scripts/test-ai-system.sh --zero-trailers  Run only the zero-trailer
+                                              policy check (its history scan)
   bash scripts/test-ai-system.sh --help
 
 What this tests (12 check groups; owned by TODO-02 sections 1-8):
@@ -79,6 +82,7 @@ EOF
             ;;
         --quiet) QUIET=1 ;;
         --ai-trailers) TRAILERS_ONLY=1 ;;
+        --zero-trailers) ZERO_TRAILERS_ONLY=1 ;;
         *)
             echo "Unknown option: $arg" >&2
             exit 1
@@ -349,17 +353,16 @@ check_zero_trailer_policy() {
     else
         range="HEAD"
     fi
-    # One `git log` streams every message in the range into awk, and
-    # AI_TRAILER_RE (above, shared with --ai-trailers) is tested against every
-    # line: a line that starts with a forbidden key fails, wherever it sits.
-    # Each commit starts with a NUL, which git never stores in a message; tr
-    # makes that the 0x01 the awk program reads as a header, after turning any
-    # 0x01 a message holds into a space, so no message line can pose as one.
-    # Under pipefail a failed read fails the check, never passes it.
+    # One `git log -z` streams every message in the range into awk, one
+    # NUL-separated record per commit (git never stores a NUL in a message):
+    # the record's first line is its ID, and AI_TRAILER_RE (above, shared with
+    # --ai-trailers) is tested against every other line, byte for byte as
+    # --ai-trailers sees it. A line that starts with a forbidden key fails,
+    # wherever it sits. Under pipefail a failed read fails the check.
     local trailer_hits rc=0
-    trailer_hits=$(git log --format='%x00%H%n%B' "$range" | tr '\001\000' ' \001' | awk -v re="$AI_TRAILER_RE" '
-        /^\001/ { h = substr($0, 2); next }
-        tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }') || rc=$?
+    trailer_hits=$(git log -z --format='%H%n%B' "$range" | awk -v RS='\0' -v re="$AI_TRAILER_RE" '
+        { n = split($0, line, "\n")
+          for (i = 2; i <= n; i++) if (tolower(line[i]) ~ re) { printf " %s", line[1]; break } }') || rc=$?
     if [ "$rc" -ne 0 ]; then
         t_fail "zero-trailer scan read the history" "git log over $range exited $rc; no commit was checked"
         return
@@ -778,6 +781,9 @@ check_copilot_retired() {
 [ "$QUIET" = "0" ] && echo -e "${CYAN}Impossible OS -- AI workflow regression pack${NC}"
 [ "$QUIET" = "0" ] && echo -e "${DIM}Covering TODO-02 §1-§8 doctrine, catalog, hierarchy, and policy surfaces.${NC}"
 
+if [ "$ZERO_TRAILERS_ONLY" = 1 ]; then
+    check_zero_trailer_policy
+else
 check_authority_hierarchy
 check_claude_code_only
 check_agents_md
@@ -791,6 +797,7 @@ check_no_cursor_residue
 check_no_parallel_skill_trees
 check_hook_json_parse
 check_copilot_retired
+fi
 
 # ---- Summary ----
 echo ""

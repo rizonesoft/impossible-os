@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 MODE="prose"
+GROUP=""
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
@@ -35,6 +36,9 @@ Usage:
   bash scripts/tooling-doctor.sh              Prose report (default)
   bash scripts/tooling-doctor.sh --json       Machine-readable JSON report
   bash scripts/tooling-doctor.sh --quiet      One-line summary only
+  bash scripts/tooling-doctor.sh --group=NAME Run one group only (toolchain,
+                                              wrappers, hooks, workflows,
+                                              runtime, host_profile, docs)
   bash scripts/tooling-doctor.sh --help       Show this help
 
 Exit codes:
@@ -59,6 +63,8 @@ EOF
             ;;
         --json)   MODE="json" ;;
         --quiet)  MODE="quiet" ;;
+        --group=toolchain|--group=wrappers|--group=hooks|--group=workflows|--group=runtime|--group=host_profile|--group=docs)
+                  GROUP="${arg#--group=}" ;;
         *)
             echo "Unknown option: $arg" >&2
             echo "Try --help." >&2
@@ -228,7 +234,7 @@ check_hooks() {
     # The label is install-hooks.sh --status's own; a status without it is a
     # drift between the two scripts, reported rather than left out.
     local prepush_state
-    prepush_state=$(echo "$status_out" | awk -F': ' '/^Pre-push build\/test step/{print $2}')
+    prepush_state=$(printf '%s\n' "$status_out" | sed -n 's|^Pre-push build/test step: ||p' | head -1)
     if [ -n "$prepush_state" ]; then
         record hooks pass "pre-push build/test step" \
             "$prepush_state" \
@@ -458,13 +464,17 @@ check_docs() {
 # Run all checks
 # ============================================================================
 
-check_toolchain
-check_wrappers
-check_hooks
-check_workflows
-check_runtime
-check_host_profile
-check_docs
+if [ -n "$GROUP" ]; then
+    "check_$GROUP"
+else
+    check_toolchain
+    check_wrappers
+    check_hooks
+    check_workflows
+    check_runtime
+    check_host_profile
+    check_docs
+fi
 
 # ============================================================================
 # Output

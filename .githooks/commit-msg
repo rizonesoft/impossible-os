@@ -9,8 +9,8 @@
 # pre-commit, so the hook does nothing without MERGE_HEAD. `--no-verify` skips it, as it skips
 # pre-commit; the gate names its own opt-out.
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$(git rev-parse --git-path MERGE_HEAD)" ] || exit 0
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=.githooks/lib/dash-gate.sh
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
 dash_gate

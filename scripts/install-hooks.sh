@@ -123,7 +123,9 @@ disable_pre_push() {
 prune_legacy_symlinks() {
     # Early versions of this script symlinked hooks into .git/hooks/. Since
     # core.hooksPath=.githooks makes .git/hooks/ inert, leftover symlinks
-    # are harmless but confusing -- clean them on --remove.
+    # are harmless but confusing -- clean them on --remove. Only a link to
+    # this repository's own legacy hook is ours: a link to anything else is
+    # the operator's, and unsetting core.hooksPath gives it back to them.
     [ -d "$LEGACY_HOOKS" ] || return 0
     local removed=0
     for hook in "$LEGACY_SRC"/*; do
@@ -131,7 +133,7 @@ prune_legacy_symlinks() {
         local name target
         name="$(basename "$hook")"
         target="$LEGACY_HOOKS/$name"
-        if [ -L "$target" ]; then
+        if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$hook")" ]; then
             rm "$target"
             removed=$((removed + 1))
         fi

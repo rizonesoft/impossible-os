@@ -9,7 +9,7 @@
 # the guidance below.
 dash_gate() {
     local rc=0
-    python3 "$REPO_ROOT/scripts/staged_dash_check.py" || rc=$?
+    python3 "$REPO_ROOT/scripts/staged_dash_check.py" "$@" || rc=$?
     if [ "$rc" -eq 1 ]; then
         echo -e "\033[31mPre-commit: a staged line adds a Unicode dash (above)\033[0m"
         echo "  This check compares with HEAD (and MERGE_HEAD): git does not tell a hook that it is amending."
@@ -45,5 +45,5 @@ dash_push_gate() {
 # commit is judged here, before the message is written.
 dash_commit_gate() {
     [ -f "$(git rev-parse --git-path MERGE_HEAD)" ] && return 0
-    dash_gate
+    dash_gate --no-merge
 }

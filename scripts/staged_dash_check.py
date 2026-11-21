@@ -195,15 +195,15 @@ def refused(per_parent: list, reader) -> list:
     read, and a new blob with no dash is never compared."""
     if not per_parent:
         return []
-    by_path = [{path: old for old, _new, path in changes} for changes in per_parent]
+    others = [{path: old for old, _new, path in changes} for changes in per_parent[1:]]
     found = []
     for old, new, path in per_parent[0]:
-        if not all(path in olds for olds in by_path[1:]):
+        if not all(path in index for index in others):
             continue
         n = reader.count(new)
         if not n:
             continue
-        olds = [olds[path] for olds in by_path]
+        olds = [old] + [index[path] for index in others]
         gained = min(n - reader.count(o) for o in olds)
         if gained > 0:
             exact, copies = name_lines([reader.text(o) for o in olds], reader.text(new))
@@ -239,13 +239,14 @@ def merge_heads() -> list:
         return []                                          # fail-direction: no merge is in progress
 
 
-def staged() -> list:
+def staged(merging: bool = True) -> list:
     """The staged change against HEAD and, while a merge is being committed,
     against each other parent too, so a resolution is judged as the push
-    check judges the merge commit: on what it adds over every parent."""
+    check judges the merge commit: on what it adds over every parent.
+    `merging=False` is pre-commit's call, which has already seen no MERGE_HEAD."""
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
     per_parent = [changes_from_raw(_git(*diff))]
-    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in merge_heads()]
+    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in (merge_heads() if merging else [])]
     return [("", per_parent)]
 
 
@@ -255,7 +256,10 @@ def outgoing(updates: list, remote: str = "") -> list:
     rev-list per update, then one `diff-tree --stdin` fed one line per parent.
     A new ref takes every commit the destination remote's tracking refs do not
     hold; a push by URL, or to a remote with none, falls back to all remotes."""
-    tracked = bool(remote) and bool(_git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip())
+    if not updates:
+        return []
+    tracked = (bool(remote) and any(old == NULL_OID for old, _new in updates)
+               and bool(_git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip()))
     pairs, seen = [], set()                               # (commit, parent or None), in input order
     for old, new in updates:
         if old != NULL_OID:
@@ -326,8 +330,10 @@ def main(argv=None) -> int:
             found = judge(outgoing(push_updates(sys.stdin.read()), argv[1]))
         elif not argv:
             found = judge(staged())
+        elif argv == ["--no-merge"]:
+            found = judge(staged(merging=False))
         else:
-            print("usage: staged_dash_check.py [--range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--no-merge | --range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)

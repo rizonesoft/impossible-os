@@ -9,7 +9,7 @@ HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "pre-p
 
 
 def _hooks(root):
-    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json"], cwd=root,
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
                        capture_output=True, text=True, timeout=120)
     return {c["name"]: c for c in json.loads(r.stdout)["checks"] if c["group"] == "hooks"}
 
@@ -49,6 +49,9 @@ def test_the_build_step_sentinel_does_not_depend_on_the_callers_directory(tmp_pa
     status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
                             text=True, timeout=60, env=env)
     assert "Pre-push build/test step: ENABLED" in status.stdout, status.stdout
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    step = _hooks(root)["pre-push build/test step"]
+    assert step["detail"] == f"ENABLED (sentinel: {root / '.git/.impossible-os-prepush'})", step
 
 
 def test_remove_prunes_a_legacy_symlink_while_hooks_path_is_set(tmp_path):
@@ -60,11 +63,16 @@ def test_remove_prunes_a_legacy_symlink_while_hooks_path_is_set(tmp_path):
     env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("GIT_")}
     subprocess.run(["git", "init", "-q"], cwd=root, check=True, timeout=30, env=env)
     subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=root, check=True, timeout=30, env=env)
+    (root / "scripts/hooks/post-commit").write_text("#!/bin/sh\n")
     legacy = root / ".git/hooks/pre-push"
     legacy.parent.mkdir(exist_ok=True)
     legacy.symlink_to(root / "scripts/hooks/pre-push")
+    theirs = root / ".git/hooks/post-commit"
+    (tmp_path / "operator-hook").write_text("#!/bin/sh\n")
+    theirs.symlink_to(tmp_path / "operator-hook")
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=env)
     assert r.returncode == 0, r
     assert not legacy.is_symlink(), r.stdout
+    assert theirs.is_symlink(), "a link to the operator's own hook is not ours to remove"
     assert (root / ".githooks/pre-push").is_file()

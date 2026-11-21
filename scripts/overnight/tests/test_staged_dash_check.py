@@ -59,11 +59,28 @@ def _stage(root, files):
     _git(root, "add", "-A")
 
 
-def test_an_added_dash_is_refused_and_named(tmp_path):
+@pytest.mark.parametrize("dash", [chr(0x2013), chr(0x2014)])
+def test_an_added_dash_is_refused_and_named(tmp_path, dash):
     root = _repo(tmp_path)
-    _stage(root, {"a.md": "ok\nbad " + DASH + " line\n"})
+    _stage(root, {"a.md": "ok\nbad " + dash + " line\n"})
     r = _run(root)
     assert r.returncode == 1 and "a.md:2" in r.stderr, r
+
+
+def test_exchanging_one_dash_for_the_other_passes(tmp_path):
+    root = _repo(tmp_path)
+    _stage(root, {"a.md": "x " + chr(0x2014) + " y\n"})
+    _commit(root, "base")
+    _stage(root, {"a.md": "x " + chr(0x2013) + " y\n"})
+    assert _run(root).returncode == 0
+
+
+def test_pre_commit_does_not_look_for_a_merge_it_already_ruled_out(monkeypatch):
+    def no(*_a):
+        raise AssertionError("merge_heads read on the --no-merge path")
+    monkeypatch.setattr(m, "merge_heads", no)
+    monkeypatch.setattr(m, "_git", lambda *a, **k: b"")
+    assert m.staged(merging=False) == [("", [[]])]
 
 
 def test_an_old_dash_on_an_untouched_line_and_a_generated_file_pass(tmp_path):
