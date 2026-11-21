@@ -34,7 +34,7 @@ title: "TODO-02 -- AI Development System"
 5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, an attended Claude repair session in its own worktree is the one writer outside the lanes, and every writer passes the same gates and the same Astra review. External reviewers return findings only.
 
 > [!IMPORTANT]
-> **Current state:** The repository's AI surface today is `CLAUDE.md`, `.claude/settings.json`, and `.claude/skills/`. Codex participates only in review mode: finding-only, received through review discipline. The failed interchangeable-driver approach and the local Codex overnight runner are retired.
+> **Current state:** The repository's AI surface today is `CLAUDE.md`, `.claude/settings.json`, and `.claude/skills/`. Codex reviews in read-only mode, finding-only and received through review discipline; its one writing use is the attended `task --write` rescue, where the operator reviews the diff and authors the commit ([CLAUDE.md Model Roles](../../CLAUDE.md#model-roles)). The failed interchangeable-driver approach and the local Codex overnight runner are retired.
 
 ## Inputs
 

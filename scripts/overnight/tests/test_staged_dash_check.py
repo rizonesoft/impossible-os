@@ -264,3 +264,33 @@ def test_an_undecodable_utf16_file_is_a_read_error():
         assert "UTF-16" in str(exc)
     else:
         raise AssertionError("a truncated UTF-16 file read as clean")
+
+
+def test_a_move_plus_a_copy_names_both_destinations_in_either_order(tmp_path):
+    for first, second in (("a.md", "b.md"), ("b.md", "a.md")):
+        (tmp_path / first[0]).mkdir()
+        root = _repo(tmp_path / first[0])
+        legacy = "legacy " + DASH + " row\n"
+        (root / "src.md").write_text("keep\n" + legacy, encoding="utf-8")
+        (root / "a.md").write_text("a\n", encoding="utf-8")
+        (root / "b.md").write_text("b\nb\n", encoding="utf-8")
+        _git(root, "add", "-A")
+        _commit(root, "base")
+        (root / "src.md").write_text("keep\n", encoding="utf-8")
+        (root / first).write_text((root / first).read_text() + legacy, encoding="utf-8")
+        (root / second).write_text((root / second).read_text() + legacy, encoding="utf-8")
+        _git(root, "add", "-A")
+        r = _run(root)
+        assert r.returncode == 1 and "1 added line(s)" in r.stderr, r
+        assert "a.md:2" in r.stderr and "b.md:3" in r.stderr, r
+
+
+def test_the_hook_prints_its_guidance_under_errexit(tmp_path):
+    gate = REPO / ".githooks/lib/dash-gate.sh"
+    for rc, expect in ((1, "SKIP_DASH_CHECK=1"), (2, "could not read")):
+        fake = tmp_path / str(rc)
+        (fake / "scripts").mkdir(parents=True)
+        (fake / "scripts/staged_dash_check.py").write_text(f"import sys\nsys.exit({rc})\n", encoding="utf-8")
+        r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{gate}"; dash_gate || exit 7'],
+                           capture_output=True, text=True, timeout=30, env=_clean_env())
+        assert r.returncode == 7 and expect in r.stdout, r

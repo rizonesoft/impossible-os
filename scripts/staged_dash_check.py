@@ -173,13 +173,14 @@ class BlobReader:
 
 
 def added_dash_lines(changes: list, lines_of) -> list:
-    """(path, candidate line numbers, count) for each run of dash lines the change adds.
+    """(candidate (path, line) pairs, count) for each dash line text the change adds.
 
     Each file is matched against its own old blob first, so an untouched line
     is never blamed for a copy elsewhere. Lines left over in the change's old
     blobs (moved out, or out of a deleted file) then cover the same lines
-    appearing in other files. When identical lines make the new copy
-    ambiguous, every candidate is named. Old blobs are read only for files
+    appearing in other files, grouped by text so no destination is preferred.
+    When identical lines make the new copy ambiguous, every candidate in every
+    file is named. Old blobs are read only for files
     whose new blob holds a dash, and the rest only if something is unmatched."""
     pending, matched = [], set()
     for i, (old, new, path) in enumerate(changes):
@@ -197,19 +198,38 @@ def added_dash_lines(changes: list, lines_of) -> list:
                 pending.append([path, ln, numbers, excess, kept[ln] > 0])
     if not pending:
         return []
-    pool = collections.Counter()
-    for i, (old, new, _path) in enumerate(changes):
-        if old != NULL_OID:
-            lines = [ln for _n, ln in lines_of(old)]
-            if i in matched:
-                lines = (collections.Counter(lines) - collections.Counter(ln for _n, ln in lines_of(new))).elements()
-            pool.update(lines)
+    need = collections.Counter()
+    for entry in pending:
+        need[entry[1]] += entry[3]
+    covered = collections.Counter()
+
+    def lend(lines) -> bool:
+        """Credit old lines toward the pending ones; True once all are covered."""
+        for ln in lines:
+            if need[ln] > covered[ln]:
+                covered[ln] += 1
+        return all(covered[ln] >= n for ln, n in need.items())
+
+    done = False
+    for i, (old, new, _path) in enumerate(changes):         # leftovers of files already read
+        if i in matched and old != NULL_OID:
+            left = collections.Counter(ln for _n, ln in lines_of(old)) - collections.Counter(
+                ln for _n, ln in lines_of(new))
+            if lend(left.elements()):
+                done = True
+                break
+    if not done:
+        for i, (old, _new, _path) in enumerate(changes):    # old blobs not read yet
+            if i not in matched and old != NULL_OID and lend(ln for _n, ln in lines_of(old)):
+                break
+    groups = collections.defaultdict(list)
+    for path, ln, numbers, _excess, _shared in pending:
+        groups[ln].extend((path, n) for n in numbers)
     found = []
-    for path, ln, numbers, excess, _shared in pending:
-        take = min(pool[ln], excess)
-        pool[ln] -= take
-        if excess - take > 0:
-            found.append((path, tuple(numbers), excess - take))
+    for ln, candidates in groups.items():
+        excess = need[ln] - covered[ln]
+        if excess > 0:
+            found.append((tuple(candidates), excess))
     return found
 
 
@@ -238,13 +258,13 @@ def main() -> int:
         print(f"[dash-check] the staged changes could not be read: {exc}", file=sys.stderr)
         return 2
     fix = "rewrite it with a comma, colon, parentheses or a full stop"
-    for path, numbers, count in found:
-        if count == len(numbers):
-            for n in numbers:
+    for candidates, count in found:
+        if count == len(candidates):
+            for path, n in candidates:
                 print(f"[dash-check] {path}:{n} adds a Unicode en or em dash; {fix}", file=sys.stderr)
         else:
-            where = ", ".join(f"{path}:{n}" for n in numbers)
-            print(f"[dash-check] {path} adds {count} line(s) with a Unicode en or em dash; identical lines make "
+            where = ", ".join(f"{path}:{n}" for path, n in candidates)
+            print(f"[dash-check] {count} added line(s) hold a Unicode en or em dash; identical lines make "
                   f"the new copy one of {where}; {fix}", file=sys.stderr)
     return 1 if found else 0
 
