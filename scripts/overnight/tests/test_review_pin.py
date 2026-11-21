@@ -181,7 +181,8 @@ def test_every_pass_carries_the_meaning_of_each_level():
         for level in rp.SEVERITIES:
             assert f"- {level}: {rp.SEVERITY_TEXTS[level]}" in block, (kind, level)
         assert rp.SEVERITY_RULE in block, kind
-        assert "a finding with no such scenario is P3" in block, kind
+        assert "A finding with no reachable trigger is P3." in block, kind
+        assert "legal CPU and interrupt orderings" in block, kind      # a rare race is never graded down
     assert set(rp.SEVERITY_TEXTS) == set(rp.SEVERITIES)
 
 
