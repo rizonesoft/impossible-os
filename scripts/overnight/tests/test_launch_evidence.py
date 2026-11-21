@@ -335,3 +335,39 @@ def test_the_direct_receipt_hashes_the_callers_prompt(tmp_path):
     rows = [json.loads(x) for x in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
     want = hashlib.sha256(prompt.encode()).hexdigest()
     assert rows and rows[-1]["prompt_sha256"] == want, (rows[-1:], want)
+
+
+def test_a_quoted_wrapper_path_with_a_space_still_needs_its_receipt(tmp_path):
+    cmd = "false && bash '/opt/my tools/scripts/codex-dispatch.sh' " + shlex.quote(_prompt("adversarial"))
+    state, stamps = _hook(_repo(tmp_path), cmd)
+    assert state is None and stamps == {}, (state, stamps)
+
+
+def test_the_heredoc_template_claims_its_receipt(tmp_path):
+    root = _repo(tmp_path)
+    body = _prompt("adversarial")
+    _row(root, "adversarial", "/x/h.out", prompt=body)        # the dispatcher hashed $PROMPT, newline stripped
+    cmd = "PROMPT=$(cat <<'EOF'\n" + body + "\nEOF\n)\nbash scripts/codex-dispatch.sh \"$PROMPT\""
+    state, stamps = _hook(root, cmd)
+    assert state and state["log_file"] == "/x/h.out", state
+
+
+def test_the_limit_reports_124_even_when_it_missed_the_term_window(tmp_path):
+    import signal
+    import time
+    pg = tmp_path / "pgid"
+    proc = subprocess.Popen(["bash", str(LIMIT), "2", f"echo $$ > {pg}; sleep 30"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.5)
+        os.kill(proc.pid, signal.SIGSTOP)          # the supervisor sleeps through TERM and the deadline
+        time.sleep(3.5)
+        os.kill(proc.pid, signal.SIGCONT)
+        assert proc.wait(timeout=20) == 124
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            os.killpg(int(pg.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):  # the group is already gone: the expected case
+            pass

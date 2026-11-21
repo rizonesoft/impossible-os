@@ -43,6 +43,7 @@ limited=0
 while alive; do
     now=$(uptime_s)
     if [ "$now" -ge "$end" ]; then
+        limited=1          # the limit ended it, even when TERM's window was missed
         kill -KILL -- "-$pid" 2>/dev/null
         break
     fi

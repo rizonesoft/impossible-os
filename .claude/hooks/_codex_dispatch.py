@@ -96,15 +96,18 @@ def _harvest_heredoc_vars(cmd):
     treat as the start of an unterminated heredoc, killing every
     later Codex invocation token).
 
-    Body strings have trailing newlines preserved -- the kind
-    extractor only inspects the first non-blank line.
+    Body strings lose their trailing newlines, as `$(...)` does, so the
+    body is byte-identical to the value the dispatcher is passed.
     """
     if not isinstance(cmd, str) or "<<" not in cmd or "=$(" not in cmd:
         return (cmd, {})
     out = {}
 
     def _replace(m):
-        out[m.group(1)] = m.group(3)
+        # A command substitution drops every trailing newline, so the value
+        # the variable holds (what the dispatcher receives and hashes) is the
+        # body without them.
+        out[m.group(1)] = m.group(3).rstrip("\n")
         return ""  # strip the whole block; keep newlines around it
 
     stripped = _HEREDOC_VAR_RE.sub(_replace, cmd)

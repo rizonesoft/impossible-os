@@ -1001,7 +1001,7 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 ## 26. Cross-Section Policy, Menu and Loader-Variable Seams
 
 > **Spawned-by:** root
-> **Found by:** 00-infrastructure/TODO-08 §35, a cross-section review of this closed file (2026-11-12).
+> **Found by:** 00-infrastructure/TODO-08 §35, the cross-section pilot run on this file while 8 rows were parked, before its close-out (2026-11-12).
 > **User impact:** when every entry has used its tries the menu cannot be opened even with F11, a watchdog rollback can throw away the one entry that would boot, and `bootctl list` offers entries the loader refuses to start.
 
 Each defect needs two or more sections to see: every section's own review passed. Found by one Codex adversarial pass over the whole file.

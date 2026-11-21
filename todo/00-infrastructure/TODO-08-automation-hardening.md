@@ -134,6 +134,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
+| ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1879,6 +1880,23 @@ Built and Astra-reviewed 2026-11-21 in the GitHub session; the review-todo-secti
 - [x] Commit: `"hooks: the pre-commit lint finds its repository by discovery, not GIT_DIR"`
 
 **Test checkpoint:** `test_an_anchored_lint_reads_the_commit_index_and_leaves_snapshots_alone` fails on the 2026-11-11 anchor and passes after.
+
+
+## 69. Review attempts are bound end to end
+
+> **Spawned-by:** section 35 (review)
+> **User impact:** the recorder now credits only a dispatcher's receipt (§35), but the steps around it still key on the newest row of a kind, on live files read at hook time, or on text in a transcript, so a review can still be credited to the wrong attempt or code.
+
+Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the receipt mechanism §35 replaced. -> XREF: [§35](#35-cross-section-review-of-a-closed-todo-file)
+
+- [ ] The stamp gate checks the `.done` of the attempt each stamp was claimed from, not the newest same-kind row
+- [ ] Changed-file blobs are captured at dispatch and carried in the receipt, not read when the hook runs
+- [ ] An outage is read from the companion's terminal error, not any signature quoted in the transcript
+- [ ] A manifest row without `done_file` reads as pending or owing a redispatch, never as complete from log text
+- [ ] The broker opens the transcript before it registers the row, and the recorder claims only confirmed launches
+- [ ] The recorder parses the command once and spends one deadline across its locks and stamps; a 130 KB prompt publishes within the hook limit
+
+**Test checkpoint:** each item has a regression that fails on the 2026-11-21 code.
 
 
 ## Format Quick Reference

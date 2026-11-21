@@ -1425,14 +1425,16 @@ _WRAPPERS = ("codex-dispatch.sh", "review-broker-codex-dispatch.sh")
 
 
 def _invoked_scripts(cmd: str) -> set:
-    """Basenames of the words a command line runs or passes, with every quoted
-    prompt kept as ONE word, so a script named inside a prompt is not one."""
+    """Basenames of the words a command line runs or passes."""
     import shlex
     try:
         toks = shlex.split(cmd)
     except ValueError:
         toks = cmd.split()
-    return {os.path.basename(t.rstrip(";&|")) for t in toks if "\n" not in t and " " not in t}
+    # Every word counts, a quoted path with a space included. A prompt whose
+    # last word happens to name a wrapper only makes the call receipt-judged,
+    # and with no receipt it is not recorded: the safe direction.
+    return {os.path.basename(t.rstrip(";&|")) for t in toks}
 
 
 def _is_wrapper_dispatch(cmd: str) -> bool:
