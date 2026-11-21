@@ -12,6 +12,7 @@ by a newer multi-kind trigger, falls back to the received-review HISTORY and
 accepts only if a genuinely-received review blob-covers the current staged tree.
 Every acceptance stays content-bound (blob SHA), so nothing is loosened.
 """
+import re
 import importlib.util
 import json
 import pathlib
@@ -319,9 +320,13 @@ def _rec(root, kind="re-adversarial", received=False, ts=None):
         "received_timestamp_ns": None}))
 
 
-def _out_file(root, kind, body):
+def _out_file(root, kind, body, done=True):
+    """A finished log carries the dispatcher's <log>.done, from its last terminal line."""
     p = root / f".claude/overnight/reviews/20260714-000000-{kind}.out"
     p.write_text(body)
+    rcs = re.findall(r"^Turn completed \(rc=(\d+)\)\s*$", body, re.M)
+    if done and rcs:
+        pathlib.Path(str(p) + ".done").write_text(rcs[-1] + "\n")
     return p
 
 
@@ -336,6 +341,14 @@ def _poll(root, out_path):
 # the broker terminal sentinel as the FINAL line.
 _CLEAN = ('{"verdict":"approve","summary":"no issues"}\n'
           'No material findings.\nTurn completed (rc=0)\n')
+
+
+def test_crecv_a_live_log_is_never_auto_received():
+    # A live review whose latest line looks terminal has no <log>.done yet.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial", _CLEAN, done=False)
+        assert _poll(root, out)["received"] is False
 
 
 def test_crecv_clean_completion_auto_receives():

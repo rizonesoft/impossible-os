@@ -34,20 +34,22 @@ from pathlib import Path
 
 OUTAGE_RE = re.compile(
     r"Codex error: (unexpected status \d{3}|stream disconnected before completion|Selected model is at capacity)")
-DONE_RE = re.compile(r"^Turn completed \(rc=(\d+)\)\s*$", re.M)
 
 
 def leg_state(log: Path):
     """('ok'|'outage'|'other'|'running', signature) for one leg's artifact."""
+    # The dispatcher's <log>.done holds the exit status once the review has
+    # exited; until then the leg is running, whatever its log says.
+    try:
+        rc = Path(str(log) + ".done").read_text().strip()
+    except OSError:
+        return "running", ""
+    if rc == "0":
+        return "ok", ""
     try:
         text = log.read_text(errors="replace")
     except OSError:
         return "other", ""
-    m = DONE_RE.findall(text)
-    if not m:
-        return "running", ""
-    if m[-1] == "0":
-        return "ok", ""
     o = OUTAGE_RE.findall(text)
     return ("outage", o[-1]) if o else ("other", "")
 

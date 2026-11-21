@@ -55,6 +55,7 @@ def _reviewer(root, down, now=None):
         log = reviews / f"leg-{n}.out"
         log.write_text(("Codex error: unexpected status 503\nTurn completed (rc=1)\n") if down
                        else "all good\nTurn completed (rc=0)\n")
+        (reviews / f"leg-{n}.out.done").write_text("1\n" if down else "0\n")  # the dispatcher's status
         lines.append(json.dumps({"ts": now - n, "kind": "plan", "todo": "todo/other.md", "logFile": str(log)}))
     (reviews / "manifest.jsonl").write_text("\n".join(reversed(lines)) + "\n")
 

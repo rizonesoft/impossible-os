@@ -484,6 +484,15 @@ def test_a_pass_whose_receipt_cannot_be_written_is_not_published_as_success(tmp_
     assert len(dones) == 1 and dones[0].read_text().strip() == "3"
 
 
+def test_a_prompt_larger_than_a_pipe_reaches_dispatch(tmp_path):
+    """The first line is read without a pipe, so a whole-file inventory cannot SIGPIPE the wrapper."""
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    done, prompt = _dispatch(tmp_path, "completion", full, body="inventory line\n" * 8000)
+    assert done.returncode == 0, (done.returncode, done.stderr[-400:])
+    assert prompt.count("inventory line") == 8000
+
+
 def test_refusal_a_pass_names_its_todo_and_section(tmp_path):
     for first in ("[review-kind: round] just some words", "[review-kind: round] todo/x.md with no section"):
         done, prompt = _dispatch(tmp_path, "round", "x", marker=first.split("]")[0] + "]",

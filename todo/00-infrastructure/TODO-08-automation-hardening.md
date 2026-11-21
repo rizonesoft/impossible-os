@@ -1255,7 +1255,7 @@ Every review reads one section. Nothing reads a finished file as a whole, so a d
   - Dispositions are written `pending` and change only once the work exists; `rejected` is one of them; both pilot files carry their record line.
   - The line is written when the review returns; a close-out interrupted before that dispatches again, an accepted cost of one review; TODO-07's early run is labelled a pilot so its close-out still gets the pass, and a filing names its section number while still pending.
   - Found here and fixed at the waiter: `wait-for-codex-verdict.sh` took the companion's mid-log `[codex] Turn completed.` as done; now only the dispatcher's `<log>.done` file, written after the review exits, ends a wait (both dispatchers write it; regression tests for the companion line and a quoted line); the background fallback waits on `status --wait` and reads `result`.
-  - The review envelope reads the same status: `.done` first, transcript after, and never a companion progress line; a pass whose receipt cannot be written reports rc 3.
+  - Every reader takes that status, never log text: the envelope, the auto-receive hook and the outage check; a review with no receipt reports rc 3; the waiter dates silence by the log's mtime; a large prompt no longer breaks the dispatchers.
 - [x] Not needed: the first file returned 3, so the step is kept.
 - [x] Second run, 2026-11-21, on 01-boot-platform/TODO-03 (24 sections): 1 P1 and 2 P2, all verified, filed as its §25 (item: "The post-EBS error dwell has its own TSC deadline").
 - [x] Committed as 24dab6136.

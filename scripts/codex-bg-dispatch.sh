@@ -31,7 +31,12 @@ if [[ $# -ne 1 ]]; then
 fi
 
 PROMPT="$1"
-FIRST_LINE="$(printf '%s\n' "$PROMPT" | sed -n '/[^[:space:]]/{p;q;}')"
+# The first nonblank line, read without a pipe: under pipefail an early-exiting
+# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
+FIRST_LINE=""
+while IFS= read -r _line; do
+    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
+done <<< "$PROMPT"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]+(design|adversarial-impl|adversarial|consistency|perf|test-coverage|gap-audit|re-adversarial)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
     echo "Usage: $0 <prompt>" >&2
     echo "Example: $0 '[review-kind: design] todo/XX/TODO-NN-name.md section N -- Plan: ...'" >&2
@@ -59,6 +64,6 @@ echo "$OUTPUT"
 echo ""
 JOB_ID="$(printf '%s' "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("jobId",""))' 2>/dev/null || true)"
 if [[ -n "$JOB_ID" ]]; then
-    echo "Poll: node \"$COMPANION\" status \"$JOB_ID\" --wait --timeout-ms 240000"
+    echo "Poll (Bash tool timeout: 300000): node \"$COMPANION\" status \"$JOB_ID\" --wait --timeout-ms 240000"
     echo "Status only: node \"$COMPANION\" status \"$JOB_ID\""
 fi

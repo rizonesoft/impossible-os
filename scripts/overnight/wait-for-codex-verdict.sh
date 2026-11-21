@@ -81,7 +81,7 @@ if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null \
     exit 2
 fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
-ACT_DIR=".claude/state/waiter-activity"
+ACT_DIR=".claude/state/waiter-first-seen"
 
 # A review ends only when its dispatcher has written <log>.done (the exit
 # status, written atomically after the review process exited). Log text never
@@ -99,15 +99,33 @@ _all_done() {
     return 0
 }
 
-# B2: a log seen for the first time is sampled when the wait STARTS, so a review
-# silent from launch is reported STALE at the end of this call, not only at
-# the end of the next one (a 540-second wait otherwise took about 18 minutes).
+# B2 activity. An existing log's silence is measured from its own mtime (when
+# it last grew), so a review silent since launch is STALE as soon as the
+# threshold passes, within this call. A path that does not exist yet has its
+# first sighting recorded in a sidecar, which survives re-invocations.
 mkdir -p "$ACT_DIR" 2>/dev/null || true
-for f in "${LOGS[@]}"; do
-    [ -f "$f" ] || continue
-    side="$ACT_DIR/$(printf '%s' "$f" | md5sum 2>/dev/null | cut -c1-16)"
-    [ -f "$side" ] || printf '%s %s\n' "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" "$(date +%s)" > "$side" 2>/dev/null || true
-done
+_first_seen() {
+    local side; side="$ACT_DIR/$(printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-16)"
+    [ -f "$side" ] || date +%s > "$side" 2>/dev/null || true
+    cat "$side" 2>/dev/null || date +%s
+}
+_silent_for() {
+    local now; now=$(date +%s)
+    if [ -f "$1" ]; then
+        echo $(( now - $(stat -c %Y "$1" 2>/dev/null || echo "$now") ))
+    else
+        echo $(( now - $(_first_seen "$1") ))
+    fi
+}
+_any_silent() {
+    local f
+    for f in "${LOGS[@]}"; do
+        _log_done "$f" && continue
+        [ "$(_silent_for "$f")" -ge "$STALE" ] && return 0
+    done
+    return 1
+}
+for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
 
 elapsed=0
 while [ "$elapsed" -lt "$MAX" ]; do
@@ -123,40 +141,22 @@ while [ "$elapsed" -lt "$MAX" ]; do
         echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
         exit 0
     fi
+    _any_silent && break
     dur=$POLL
     [ $((MAX - elapsed)) -lt "$POLL" ] && dur=$((MAX - elapsed))
     sleep "$dur"
     elapsed=$((elapsed + dur))
 done
 
-# B2 activity report: for each still-pending log, track byte size across
-# re-invocations in a sidecar and report how long since it last grew.
-mkdir -p "$ACT_DIR" 2>/dev/null || true
-now=$(date +%s)
 any_stale=0
 any_missing=0
 pending=()
 for f in "${LOGS[@]}"; do
-    if _log_done "$f"; then
-        continue
-    fi
+    _log_done "$f" && continue
     pending+=("$f")
     size=0
-    [ -f "$f" ] && size=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || size=0
-    key=$(printf '%s' "$f" | md5sum 2>/dev/null | cut -c1-16)
-    side="$ACT_DIR/$key"
-    prev_size=-1
-    growth_ts="$now"
-    if [ -f "$side" ]; then
-        read -r prev_size growth_ts < "$side" 2>/dev/null || { prev_size=-1; growth_ts="$now"; }
-    fi
-    [ -n "${prev_size:-}" ] || prev_size=-1
-    [ -n "${growth_ts:-}" ] || growth_ts="$now"
-    if [ "$size" -gt "$prev_size" ] 2>/dev/null; then
-        growth_ts="$now"          # grew since last check -> reset the stall clock
-    fi
-    printf '%s %s\n' "$size" "$growth_ts" > "$side" 2>/dev/null || true
-    stalled=$(( now - growth_ts ))
+    [ -f "$f" ] && size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+    stalled=$(_silent_for "$f")
     if [ "$stalled" -ge "$STALE" ] && [ ! -f "$f" ]; then
         any_missing=1
         printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \

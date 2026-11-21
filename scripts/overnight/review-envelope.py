@@ -82,8 +82,9 @@ def leg_summary(entry: dict) -> dict:
         if rc_all:
             out["complete"] = True
             out["rc"] = int(rc_all[-1])
-        if (out["rc"] is not None and out["rc"] != 0) or \
-                any(sig in text for sig in CRASH_SIGNATURES):
+        if out["rc"] is not None:
+            out["crashed"] = out["rc"] != 0
+        elif any(sig in text for sig in CRASH_SIGNATURES):
             out["crashed"] = True
     lines = text.splitlines()
     findings = [ln.strip()[:400] for ln in lines if FINDING_RE.match(ln)]

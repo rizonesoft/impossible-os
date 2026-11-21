@@ -148,9 +148,9 @@ def test_growth_resets_stall_clock():
         log.write_text("chunk1\n")
         r1 = _run(log, maxw=1, stale=5, cwd=d)
         assert r1.returncode == 3
-        time.sleep(2)
-        log.write_text("chunk1\nchunk2 more streamed output\n")   # GREW
-        r2 = _run(log, maxw=1, stale=1, cwd=d)
+        time.sleep(4)                                  # silent past stale=3 ...
+        log.write_text("chunk1\nchunk2 more streamed output\n")   # ... then GREW
+        r2 = _run(log, maxw=1, stale=3, cwd=d)
         assert r2.returncode == 3, (r2.returncode, r2.stdout)     # not stale
         assert "running:" in r2.stdout
 

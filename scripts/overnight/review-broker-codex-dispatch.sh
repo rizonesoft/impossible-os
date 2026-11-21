@@ -55,7 +55,12 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 PROMPT="$1"
-FIRST_LINE="$(printf '%s\n' "$PROMPT" | sed -n '/[^[:space:]]/{p;q;}')"
+# The first nonblank line, read without a pipe: under pipefail an early-exiting
+# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
+FIRST_LINE=""
+while IFS= read -r _line; do
+    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
+done <<< "$PROMPT"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
     echo "ERROR: first nonblank prompt line must be '[review-kind: <kind>] <todo-path> ...'" >&2
     exit 2

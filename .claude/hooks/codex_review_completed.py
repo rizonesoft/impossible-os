@@ -1205,11 +1205,13 @@ def _out_is_clean(root: Path, out_path: Path) -> bool:
         text = out_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return False
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return False
-    # (F2) broker terminal sentinel must be the LAST line and rc==0.
-    if not re.match(r"^Turn completed \(rc=0\)$", lines[-1].strip()):
+    # (F2) the review has ended with exit 0 only when its dispatcher has
+    # published <log>.done holding 0; no line of the log can say so, since a
+    # live review can print one that looks like the terminal line.
+    try:
+        if Path(str(out_path) + ".done").read_text().strip() != "0":
+            return False
+    except (OSError, ValueError):
         return False
     # (F3) authoritative structured verdict must be approve-class.
     verdicts = _VERDICT_RE.findall(text)
@@ -1222,7 +1224,7 @@ def _out_is_clean(root: Path, out_path: Path) -> bool:
             "review_envelope_recv", str(root / "scripts/overnight/review-envelope.py"))
         env = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(env)
-        leg = env.leg_summary({"logFile": str(out_path)})
+        leg = env.leg_summary({"logFile": str(out_path), "done_file": True})
     except Exception:
         return False
     if leg.get("crashed") or leg.get("findings"):

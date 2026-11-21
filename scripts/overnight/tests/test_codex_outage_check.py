@@ -9,6 +9,7 @@ errors) never count.
 
 Run: python3 scripts/overnight/tests/test_codex_outage_check.py
 """
+import re
 import json
 import os
 import subprocess
@@ -39,10 +40,13 @@ def manifest(d, legs, now):
     lines = []
     for i, (content, age) in enumerate(legs):
         if isinstance(content, Path):
-            log = content
-        else:
-            log = Path(d) / f"leg{i}.out"
-            log.write_text(content)
+            content = content.read_text(errors="replace")
+        log = Path(d) / f"leg{i}.out"
+        log.write_text(content)
+        # What the dispatcher publishes once the review exits; a live leg has none.
+        rcs = re.findall(r"^Turn completed \(rc=(\d+)\)\s*$", content, re.M)
+        if rcs:
+            Path(str(log) + ".done").write_text(rcs[-1] + "\n")
         lines.append(json.dumps({"ts": int(now - age), "kind": "adversarial", "logFile": str(log)}))
     m = Path(d) / "manifest.jsonl"
     m.write_text("\n".join(lines) + "\n")

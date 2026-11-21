@@ -120,7 +120,12 @@ export CODEX_REVIEWER_DISPATCH=1
 # dispatch routes can no longer disagree about what happened.
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
 REVIEWS_DIR="${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}"
-FIRST_LINE="$(printf '%s\n' "$PROMPT" | sed -n '/[^[:space:]]/{p;q;}')"
+# The first nonblank line, read without a pipe: under pipefail an early-exiting
+# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
+FIRST_LINE=""
+while IFS= read -r _line; do
+    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
+done <<< "$PROMPT"
 KIND="direct"
 if [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\] ]]; then
     KIND="${BASH_REMATCH[1],,}"
@@ -292,13 +297,16 @@ if [ -n "$LOG_FILE" ]; then
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
         || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
-             # A pass with no receipt cannot be credited: report it incomplete
-             # (rc 3, dispatched again), never as the review's own success.
-             [ "$PIN_KIND" = "1" ] && rc=3; }
+             # A review with no receipt cannot be credited or found: report it
+             # incomplete (rc 3, dispatched again), never as its own success.
+             rc=3; }
     # Published LAST, after the receipt: the waiter ends on this file, never on
     # log text (a live review can print a line that looks like the one above),
     # and whoever it releases reads the receipt next.
-    echo "$rc" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
+    if ! { echo "$rc" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"; }; then
+        echo "[$SELF_NAME] could not publish $LOG_FILE.done; a waiter on this log will report it stale" >&2
+        exit 75
+    fi
     exit "$rc"
 fi
 # No writable reviews directory: behave exactly as before (nothing retained).
