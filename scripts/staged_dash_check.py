@@ -124,9 +124,25 @@ def _str_dashes(text: str) -> int:
 
 def dash_lines(text: bytes) -> list:
     """(line number, line) for each line holding a dash; a CR before the LF is
-    not part of the line, so a change of line endings never names one new."""
-    return [(n, ln.removesuffix(b"\r")) for n, ln in enumerate(text.split(b"\n"), 1)
-            if any(d in ln for d in DASHES)]
+    not part of the line, so a change of line endings never names one new.
+    Only dash-bearing lines are built: a large file with one dash allocates
+    one line, not all of them."""
+    hits = set()
+    for d in DASHES:
+        at = text.find(d)
+        while at >= 0:
+            hits.add(at)
+            at = text.find(d, at + 1)
+    out, line_no, counted_to, last_start = [], 1, 0, -1
+    for at in sorted(hits):
+        start = text.rfind(b"\n", 0, at) + 1
+        if start == last_start:
+            continue
+        line_no += text.count(b"\n", counted_to, start)
+        counted_to = last_start = start
+        end = text.find(b"\n", at)
+        out.append((line_no, text[start:len(text) if end < 0 else end].removesuffix(b"\r")))
+    return out
 
 
 class BlobReader:
@@ -210,6 +226,13 @@ class BlobReader:
         data = self.proc.stdout.read(size)
         self._end(oid, size - len(data))
         return data
+
+    def abort(self) -> None:
+        """End cat-file at once: after a failed read its output is never consumed, so a graceful close would
+        wait for a producer that cannot finish."""
+        self.proc.kill()
+        self.proc.wait()
+        self.timer.cancel()
 
     def close(self) -> int:
         try:
@@ -312,8 +335,10 @@ def judge(commits: list) -> list:
     reader, lines = BlobReader(), {}
     try:
         out = [(label, hits) for label, per_parent in commits if (hits := refused(per_parent, reader, lines))]
-    finally:
-        rc = reader.close()
+    except BaseException:
+        reader.abort()
+        raise
+    rc = reader.close()
     if rc != 0:
         raise ValueError(f"cat-file exited {rc}")
     return out
@@ -375,14 +400,20 @@ def _bounded(cmd: list, what: str) -> tuple:
         watched.append(signal.SIGINT)                      # an ignored SIGINT (a background caller) stays ignored
     previous = {sig: signal.signal(sig, on_signal) for sig in watched}
 
-    def restore():
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
-
-    def redeliver(signum):
-        restore()
-        signal.raise_signal(signum)
-        raise SystemExit(128 + signum)                     # the caller's handler returned: still a cancellation
+    def finish(signum=0):
+        """Put the caller's handlers back with the watched signals blocked, so none that arrives meanwhile is
+        recorded here and lost; one held by the block reaches the caller's handler as the mask lifts, and one
+        recorded earlier (or this cancellation) is delivered again."""
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
+        try:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            signum = signum or st["pending"]
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old)
+        if signum:
+            signal.raise_signal(signum)
+            raise SystemExit(128 + signum)                 # the caller's handler returned: still a cancellation
 
     try:
         st["proc"] = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -397,15 +428,11 @@ def _bounded(cmd: list, what: str) -> tuple:
         st["hold"] = True
         if st["proc"] is not None:
             _end_group(st["proc"])
-        if isinstance(exc, _Cancelled):
-            redeliver(exc.args[0])
-        restore()
+        finish(exc.args[0] if isinstance(exc, _Cancelled) else 0)
         if isinstance(exc, subprocess.TimeoutExpired):
             raise ValueError(f"{what} did not answer within {TIMEOUT} s") from None
         raise
-    if st["pending"]:                                      # arrived after the command finished
-        redeliver(st["pending"])
-    restore()
+    finish()
     return st["proc"].returncode, out
 
 
@@ -487,16 +514,18 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     feed = "".join(t + "\n" for t in tips) + "".join("^" + o + "\n" for o in bounds)
     walked = [line.split() for line in
               _git("rev-list", "--reverse", "--parents", "--stdin", stdin=feed.encode()).decode().splitlines()]
-    # rev-list shows a shallow boundary as a root. Its stored parents decide: a commit the walk was bounded by
-    # is judged against them; any other means outgoing history this clone does not have.
+    # rev-list shows a shallow boundary as a root. Its stored parents decide: a boundary whose parents the
+    # destination already has (advertised, or reachable from what it advertises) and this clone holds is judged
+    # against them; any other means outgoing history this clone cannot judge.
     stored = _stored_parents([c for c, *ps in walked if not ps])
+    unjudged = _unjudged_parents({p for ps in stored.values() for p in ps}, held, bounds)
     pairs = []                                                     # (commit, parent or None), oldest first
     for commit, *parents in walked:
         if not parents and stored.get(commit):
-            if any(p not in held for p in stored[commit]):
+            if any(p in unjudged for p in stored[commit]):
                 raise ValueError(f"the history is shallow at commit {commit[:12]}: commits before it are not in this "
-                             "clone, so they cannot be judged; deepen it (git fetch --deepen=N, or --unshallow) "
-                             "and push again")
+                                 "clone, so they cannot be judged; deepen it (git fetch --deepen=N, or --unshallow) "
+                                 "and push again")
             parents = stored[commit]
         if parents:
             pairs.extend((commit, p) for p in parents)
@@ -513,6 +542,21 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     for (commit, _p), (_h, changes) in zip(pairs, blocks):
         commits.setdefault(commit, []).append(changes)
     return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()], missing
+
+
+def _unjudged_parents(parents: set, held: set, bounds: list) -> set:
+    """The parents of shallow boundaries that cannot stand as a comparison: missing from this clone, or not
+    held by the destination (neither advertised nor reachable from a commit it advertises)."""
+    if not parents:
+        return set()
+    types = _object_types(sorted(parents))
+    absent = {p for p in parents if types.get(p) != "commit"}
+    loose = sorted(p for p in parents - absent if p not in held)
+    if not loose or not bounds:
+        return absent | set(loose)
+    feed = "".join(p + "\n" for p in loose) + "--not\n" + "".join(b + "\n" for b in bounds)
+    beyond = set(_git("rev-list", "--stdin", stdin=feed.encode()).decode().split())
+    return absent | {p for p in loose if p in beyond}
 
 
 def _stored_parents(commits: list) -> dict:

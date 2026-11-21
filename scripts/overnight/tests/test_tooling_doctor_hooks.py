@@ -284,3 +284,13 @@ def test_install_refuses_a_command_line_value_before_writing_any_file(tmp_path):
                        env=env)
     assert r.returncode != 0 and "outranks every config file" in r.stderr, r
     assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1   # nothing written
+
+
+def test_install_refuses_a_command_line_githooks_over_an_unset_value(tmp_path):
+    root = _plain_repo(tmp_path)
+    env = {**_env(), "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": ".githooks"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--with-pre-push"], cwd=root, capture_output=True,
+                       text=True, timeout=60, env=env)
+    assert r.returncode != 0 and "outranks every config file" in r.stderr, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1
+    assert not list(root.joinpath(".git").glob(".impossible-os-prepush"))          # no sentinel either

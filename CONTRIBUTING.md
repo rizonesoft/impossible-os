@@ -50,9 +50,12 @@ bash scripts/install-hooks.sh --remove     # undo all of the above
 ```
 
 Always-on hooks once `core.hooksPath=.githooks` is set:
-- [`.githooks/pre-commit`](.githooks/pre-commit) -- lints staged `.c`/`.h`,
-  enforces the test-file live-call ban, and refuses any staged file that
-  gains an en or em dash (documentation commits included).
+- [`.githooks/pre-commit`](.githooks/pre-commit) -- runs the repository
+  lint (`scripts/lint.sh`), enforces the test-file live-call ban, and
+  refuses any staged file that gains an en or em dash (documentation
+  commits included).
+- [`.githooks/prepare-commit-msg`](.githooks/prepare-commit-msg) -- refuses
+  a commit made with `--no-verify`, which would skip every other gate.
 - [`.githooks/commit-msg`](.githooks/commit-msg) -- the same dash check for
   a merge, judged against every parent.
 - [`.githooks/post-commit`](.githooks/post-commit) -- regenerates

@@ -1123,3 +1123,85 @@ def test_the_manifest_is_read_from_its_end_in_blocks(tmp_path):
     rows = [f"row {i} " + "x" * (i % 5) for i in range(40)]
     manifest.write_text("\n".join(rows) + "\n")
     assert list(rp._newest_first(manifest, block=7)) == rows[::-1]
+
+
+def _snapshot(repo, extra_env=None, timeout=30):
+    import os
+    import subprocess
+    return subprocess.run([sys.executable, str(REPO / "scripts/review_candidate.py"), "snapshot"], cwd=str(repo),
+                          capture_output=True, text=True, timeout=timeout, env={**os.environ, **(extra_env or {})})
+
+
+def test_a_link_to_a_fifo_is_fingerprinted_without_opening_it(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    os.mkfifo(tmp_path / "pipe")
+    os.symlink(tmp_path / "pipe", repo / "link")
+    os.mkfifo(repo / "own-pipe")
+    done = _snapshot(repo)
+    assert done.returncode == 0 and len(done.stdout.strip()) == 64, done
+
+
+def test_a_retargeted_link_changes_the_fingerprint(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    (tmp_path / "a").write_text("same\n")
+    (tmp_path / "b").write_text("same\n")
+    os.symlink(tmp_path / "a", repo / "link")
+    first = _snapshot(repo).stdout
+    os.unlink(repo / "link")
+    os.symlink(tmp_path / "b", repo / "link")
+    assert _snapshot(repo).stdout != first
+
+
+def test_refusal_an_unreadable_untracked_file_refuses_the_fingerprint(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("one\n")
+    (repo / "b.txt").write_text("two\n")
+    os.chmod(repo / "a.txt", 0)
+    try:
+        if os.access(repo / "a.txt", os.R_OK):
+            pytest.skip("running with privileges that read any file")
+        done = _snapshot(repo)
+    finally:
+        os.chmod(repo / "a.txt", 0o644)
+    assert done.returncode == 2 and "a.txt" in done.stderr, done
+
+
+def test_literal_pathspecs_from_the_environment_change_nothing(tmp_path):
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "src/kernel").mkdir(parents=True)
+    (repo / "src/kernel/new.c").write_text("int x;\n")
+    plain = _snapshot(repo).stdout
+    assert _snapshot(repo, {"GIT_LITERAL_PATHSPECS": "1"}).stdout == plain
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD", {"GIT_LITERAL_PATHSPECS": "1"})
+    assert "- concurrency: " in prompt and "src/kernel/new.c" in prompt, prompt[-600:]
+
+
+def test_a_non_ascii_name_and_a_rename_out_of_the_kernel_keep_the_kernel_lenses(tmp_path):
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "src/kernel").mkdir(parents=True)
+    (repo / "src/kernel/old.c").write_text("int x;\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "kernel file")
+    base = git("rev-parse", "HEAD")
+    git("mv", "src/kernel/old.c", "elsewhere.c")
+    git("commit", "-q", "-m", "moved out")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", base)
+    assert "- concurrency: " in prompt and "- bare-metal: " in prompt, prompt[-600:]
+    repo2 = tmp_path / "second"
+    repo2.mkdir()
+    import shutil
+    shutil.move(str(repo), str(repo2 / "repo"))
+    (repo2 / "repo/src/kernel").mkdir(parents=True, exist_ok=True)
+    (repo2 / "repo/src/kernel/caf\u00e9.c").write_text("int y;\n")
+    _done, prompt = _dispatch_in(repo2 / "repo", repo2, "round", "HIGHEST: none\n", "HEAD")
+    assert "- concurrency: " in prompt, prompt[-600:]
+
+
+def test_an_untracked_file_is_named_to_the_reviewer(tmp_path):
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "fresh.py").write_text("x = 1\n")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
+    assert "appear in no diff; read each one:\nfresh.py" in prompt, prompt[-600:]

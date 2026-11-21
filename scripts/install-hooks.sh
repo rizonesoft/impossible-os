@@ -136,14 +136,17 @@ set_hooks_path() {
     # environment outranks every file, so writing any would change what sibling worktrees and later commands
     # run and still not take effect here. The effective value is checked after the write.
     hooks_path_scoped || exit 1
+    # Checked first: a value from the command line or the environment, even .githooks itself, says nothing
+    # about what the next plain git command reads.
+    if [ "$HP_SCOPE" = "command" ]; then
+        echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; run the installer without it (nothing written)" >&2
+        exit 1
+    fi
     if [ "$HP_VALUE" = ".githooks" ]; then
         echo "Already configured: core.hooksPath = .githooks"
         return 0
     fi
     case "$HP_SCOPE" in
-        command)
-            echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; nothing written" >&2
-            exit 1 ;;
         worktree)
             git -C "$PROJECT" config --worktree core.hooksPath .githooks ;;
         *)

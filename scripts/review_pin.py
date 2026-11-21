@@ -545,7 +545,9 @@ def main(argv=None):
         paths = ()
         if args.paths_file:
             try:
-                paths = tuple(p for p in pathlib.Path(args.paths_file).read_text().splitlines() if p)
+                # NUL-separated, as scripts/review_candidate.py writes it: a path may hold any other byte.
+                raw = pathlib.Path(args.paths_file).read_bytes()
+                paths = tuple(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
             except OSError as exc:
                 raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
         if args.owed_base:

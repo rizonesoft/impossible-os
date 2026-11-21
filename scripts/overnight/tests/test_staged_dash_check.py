@@ -963,9 +963,22 @@ def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
 
 
 def _marker():
-    """A sleep length unique to this test run, so a stand-in left by another run never reads as this one's."""
+    """A sleep length unique to this test run, so a stand-in left by another run never reads as this one's,
+    and short (about a minute), so one this test fails to end outlives it only briefly."""
     import uuid
-    return f"4321.{uuid.uuid4().int % 10 ** 12}"
+    return f"61.{uuid.uuid4().int % 10 ** 12}"
+
+
+def _reap(marker):
+    """End every stand-in whose command line holds `marker`: the fixture owns them, whatever the checker did."""
+    import signal
+    for d in Path("/proc").iterdir():
+        if d.name.isdigit():
+            try:
+                if marker.encode() in (d / "cmdline").read_bytes():
+                    os.kill(int(d.name), signal.SIGKILL)
+            except (OSError, ProcessLookupError):          # it ended while it was read: nothing to reap
+                pass
 
 
 def _no_process_runs(marker, seconds=5):
@@ -999,11 +1012,14 @@ def test_a_stalled_url_check_never_prints_the_url(tmp_path, monkeypatch, capsys)
     _production_git_in(root, monkeypatch)
     monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
     monkeypatch.setattr(m, "TIMEOUT", 1)
-    with pytest.raises(ValueError) as err:
-        m.destination_oids("https://user:SECRET-TOKEN@example.invalid/x.git")
-    out = capsys.readouterr()
-    assert "SECRET-TOKEN" not in str(err.value) + out.out + out.err and "within 1 s" in str(err.value)
-    assert _no_process_runs(mark)
+    try:
+        with pytest.raises(ValueError) as err:
+            m.destination_oids("https://user:SECRET-TOKEN@example.invalid/x.git")
+        out = capsys.readouterr()
+        assert "SECRET-TOKEN" not in str(err.value) + out.out + out.err and "within 1 s" in str(err.value)
+        assert _no_process_runs(mark)
+    finally:
+        _reap(mark)
 
 
 def test_a_local_destination_ending_in_lf_is_not_a_rewrite(tmp_path):
@@ -1028,10 +1044,12 @@ def test_a_cancellation_while_the_group_starts_still_ends_it(tmp_path):
             "    return real(*a, **k)\n"
             "c.subprocess.Popen = popen\n"
             f"c._bounded(['sh', '-c', 'exec sleep {mark}'], 'a stand-in')\n")
-    proc = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=_clean_env(), capture_output=True,
-                          timeout=30)
-    assert proc.returncode == -15, proc                                  # the cancellation reaches the caller
-    assert _no_process_runs(mark)
+    try:
+        proc = _sub([sys.executable, "-c", code], cwd=tmp_path, env=_clean_env(), timeout=30)
+        assert proc.returncode == -15, proc                              # the cancellation reaches the caller
+        assert _no_process_runs(mark)
+    finally:
+        _reap(mark)
 
 
 def test_a_fixture_timeout_lets_the_checker_end_its_transport(tmp_path):
@@ -1046,9 +1064,12 @@ def test_a_fixture_timeout_lets_the_checker_end_its_transport(tmp_path):
             f"c.destination_oids('ext::{helper} x')\n")
     env = _clean_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "protocol.ext.allow",
                       "GIT_CONFIG_VALUE_0": "always"})
-    with pytest.raises(subprocess.TimeoutExpired):
-        _sub([sys.executable, "-c", code], cwd=root, env=env, timeout=3)
-    assert _no_process_runs(mark)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _sub([sys.executable, "-c", code], cwd=root, env=env, timeout=3)
+        assert _no_process_runs(mark)
+    finally:
+        _reap(mark)
 
 
 def test_a_shallow_boundary_is_judged_against_its_stored_parent(tmp_path):
@@ -1081,3 +1102,83 @@ def test_a_series_of_refused_edits_reads_each_version_once():
     assert m.refused([[("v0", "v1", "f.md")]], Reader(), lines)
     assert m.refused([[("v1", "v2", "f.md")]], Reader(), lines)
     assert sorted(texts) == ["v1", "v2"], texts                         # v1 read once, as child then parent
+
+
+def test_a_cancellation_as_the_handlers_are_put_back_still_reaches_the_caller(tmp_path):
+    """SIGTERM landing while _bounded restores the caller's handlers is delivered, never recorded and lost."""
+    code = ("import os, subprocess, importlib.util, signal as sg\n"
+            f"spec = importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
+            "c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
+            "state = {'ran': False, 'sent': False}\n"
+            "real_popen, real_signal = subprocess.Popen, sg.signal\n"
+            "def popen(*a, **k):\n"
+            "    p = real_popen(*a, **k); state['ran'] = True; return p\n"
+            "def put(sig, handler):\n"
+            "    if state['ran'] and not state['sent']:\n"
+            "        state['sent'] = True; os.kill(os.getpid(), sg.SIGTERM)\n"
+            "    return real_signal(sig, handler)\n"
+            "c.subprocess.Popen = popen\n"
+            "sg.signal = put\n"
+            "c._bounded(['true'], 'a stand-in')\n"
+            "print('returned')\n")
+    proc = _sub([sys.executable, "-c", code], cwd=tmp_path, env=_clean_env(), timeout=30, text=True)
+    assert proc.returncode == -15 and "returned" not in proc.stdout, proc
+
+
+def test_a_decoding_error_ends_the_blob_reader_at_once(tmp_path, monkeypatch):
+    """A UTF-16 blob invalid near its start with a pipeful left: the error is reported, not held to the deadline."""
+    import time
+    root = _repo(tmp_path)
+    base = _git(root, "rev-parse", "HEAD")
+    bad = b"\xff\xfe" + b"\x00\xd8" + b"a\x00" * (1 << 19)          # an unpaired surrogate, then 1 MiB
+    _stage(root, {"w.txt": bad})
+    _commit(root, "utf-16")
+    tip = _git(root, "rev-parse", "HEAD")
+    _production_git_in(root, monkeypatch)
+    monkeypatch.setattr(m, "TIMEOUT", 20)
+    began = time.monotonic()
+    with pytest.raises(ValueError, match="could not be decoded"):
+        m.judge(m.outgoing([(base, tip)])[0])
+    assert time.monotonic() - began < 10
+
+
+def test_a_shallow_parent_the_destination_reaches_is_a_comparison(tmp_path):
+    """The boundary's parent is not advertised, but a commit the destination has descends from it."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "old " + DASH + "\n"})
+    _commit(root, "the dash, already there")
+    fork = _git(root, "rev-parse", "HEAD")
+    _commit(root, "on main", "--allow-empty")
+    bound = _git(root, "rev-parse", "HEAD")
+    _git(root, "checkout", "-q", "-b", "side", fork)
+    _stage(root, {"other.md": "plain\n"})
+    _commit(root, "plain change")
+    tip = _git(root, "rev-parse", "HEAD")
+    (root / ".git/shallow").write_text(tip + "\n")
+    assert _run(root, "--range", bound, tip).returncode == 0
+
+
+def test_a_depth_one_clone_whose_advertised_parent_it_lacks_is_told_to_deepen(tmp_path):
+    src = _repo(tmp_path)
+    _stage(src, {"doc.md": "old " + DASH + "\n"})
+    _commit(src, "parent")
+    parent = _git(src, "rev-parse", "HEAD")
+    _stage(src, {"doc.md": "old " + DASH + "\nmore\n"})
+    _commit(src, "tip")
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", "--depth", "1", f"file://{src}", str(clone))
+    _stage(clone, {"n.md": "plain\n"})
+    _commit(clone, "new")
+    new = _git(clone, "rev-parse", "HEAD")
+    dest = _dest(tmp_path, src, "d.git", {"refs/heads/old": parent})
+    r = _push_check(clone, dest, f"refs/heads/main {new} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 2 and "shallow" in r.stderr and "deepen" in r.stderr, r
+
+
+def test_dash_lines_names_exactly_the_lines_a_full_split_would():
+    samples = [b"", b"x" + DASH.encode(), DASH.encode() * 3 + b"\n" + b"plain\r\n" + b"a" + DASH.encode() + b"\r\n",
+               b"\n\n" + "\u2013".encode() + b"\nend" + DASH.encode(), b"no dash at all\n" * 4]
+    for text in samples:
+        naive = [(n, ln.removesuffix(b"\r")) for n, ln in enumerate(text.split(b"\n"), 1)
+                 if any(d in ln for d in m.DASHES)]
+        assert m.dash_lines(text) == naive, text

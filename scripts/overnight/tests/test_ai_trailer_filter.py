@@ -141,3 +141,59 @@ def test_the_history_scan_reads_messages_in_utf8_whatever_the_output_encoding(tm
                        timeout=120)
     out = r.stdout + r.stderr
     assert r.returncode != 0 and "found 1 post-anchor commit(s)" in out, out[-2000:]
+
+
+def _policy_repo(tmp_path):
+    import os
+    root = tmp_path / "r"
+    root.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+    def git(*a, cwd=root):
+        return subprocess.run(["git", *a], cwd=cwd, env=env, capture_output=True, text=True, timeout=30,
+                              check=True).stdout.strip()
+    git("init", "-q")
+    git("config", "user.name", "t")
+    git("config", "user.email", "t@t")
+    (root / "CONTRIBUTING.md").write_text("AI-Assisted Commit Policy (zero trailer)\n")
+    (root / "scripts").mkdir()
+    (root / "scripts/test-ai-system.sh").write_bytes(SUITE.read_bytes())
+    git("add", "-A")
+    git("commit", "-q", "-m", "policy")
+    return root, env, git
+
+
+def _zero_scan(root, env):
+    r = subprocess.run(["bash", str(root / "scripts/test-ai-system.sh"), "--zero-trailers"], cwd=root, env=env,
+                       capture_output=True, text=True, timeout=120)
+    return r.returncode, r.stdout + r.stderr
+
+
+def test_a_replacement_ref_never_hides_a_stored_trailer(tmp_path):
+    root, env, git = _policy_repo(tmp_path)
+    git("commit", "-q", "--allow-empty", "-m", "later\n\nCo-Authored-By: S <s@example.org>")
+    bad = git("rev-parse", "HEAD")
+    clean = git("commit-tree", git("rev-parse", "HEAD^{tree}"), "-p", git("rev-parse", "HEAD^"), "-m", "later")
+    git("replace", bad, clean)
+    rc, out = _zero_scan(root, env)
+    assert rc != 0 and "found 1 post-anchor commit(s)" in out, out[-2000:]
+
+
+def test_a_shallow_clone_cannot_certify_the_history(tmp_path):
+    root, env, git = _policy_repo(tmp_path)
+    git("commit", "-q", "--allow-empty", "-m", "later")
+    clone = tmp_path / "c"
+    git("clone", "-q", "--depth", "1", f"file://{root}", str(clone), cwd=tmp_path)
+    rc, out = _zero_scan(clone, env)
+    assert rc != 0 and "shallow" in out and "unshallow" in out, out[-2000:]
+
+
+def test_a_graft_file_cannot_hide_history_from_the_scan(tmp_path):
+    root, env, git = _policy_repo(tmp_path)
+    git("commit", "-q", "--allow-empty", "-m", "later\n\nCo-Authored-By: S <s@example.org>")
+    git("commit", "-q", "--allow-empty", "-m", "clean")
+    (root / ".git/info").mkdir(exist_ok=True)
+    (root / ".git/info/grafts").write_text(git("rev-parse", "HEAD") + "\n")         # HEAD as a root
+    rc, out = _zero_scan(root, env)
+    assert rc != 0 and "graft file" in out and "grafts is deprecated" not in out, out[-2000:]
