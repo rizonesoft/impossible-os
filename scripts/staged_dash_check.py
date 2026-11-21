@@ -17,9 +17,11 @@ them; a dash line moved INTO another file counts as written there. Only on a
 refusal are lines matched, to name the new or edited lines (or, when the
 gain is an extra copy of an identical line, every copy).
 
-One `git diff --raw -z -M` (or `git diff-tree` per outgoing commit) names
-each file with its old and new blob, and one streamed `git cat-file --batch`
-reads them. A file's old blob is read only when its new blob holds a dash.
+One `git diff --raw -z -M` (or, for a push, one `git diff-tree --stdin`
+over every outgoing commit and parent) names each file with its old and new
+blob, and one streamed `git cat-file --batch` reads them; only dash counts
+are kept. A file's old blob is read only when its new blob holds a dash. A
+merge is judged too: a file is refused when it gains over every parent.
 The rule is the UTF-8 encoding of U+2013 and U+2014 (the bytes Windows
 serial and CMD garble), read from UTF-8 text and BOM-marked UTF-16 text; a
 binary blob (a NUL in its first 8000 bytes, git's own test) holds none.
@@ -28,7 +30,7 @@ Generated files are exempt: their text is copied from sources this check has
 already judged (todo/implementation-plan.md copies TODO titles).
 
 Usage: staged_dash_check.py                 the staged change (pre-commit)
-       staged_dash_check.py --range OLD NEW  each non-merge commit in OLD..NEW;
+       staged_dash_check.py --range OLD NEW  each commit in OLD..NEW;
                                              OLD all zeros means every commit
                                              of NEW not on a remote (pre-push)
 Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
@@ -55,13 +57,25 @@ def changes_from_raw(raw: bytes) -> list:
     A deleted file, a submodule and a generated destination have no new blob
     to judge and are left out; a generated or non-blob source compares as
     empty. Equal blob ids cannot gain anything and are left out."""
-    out, parts, i = [], raw.split(b"\0"), 0
+    return changes_by_header(raw)[0][1] if raw else []
+
+
+def changes_by_header(raw: bytes) -> list:
+    """[(header, changes)] from raw -z output. A part that does not start
+    with ':' where an entry is expected is a header (`diff-tree --stdin`
+    prints the commit id before each pair's entries); output without headers
+    is one block with header None."""
+    blocks, parts, i = [], raw.split(b"\0"), 0
     while i < len(parts):
-        head = parts[i].decode("ascii", "replace")
-        if not head.startswith(":"):
+        part = parts[i]
+        if not part.startswith(b":"):
+            if part:
+                blocks.append((part.decode("ascii", "replace"), []))
             i += 1
             continue
-        fields = head[1:].split(" ")
+        if not blocks:
+            blocks.append((None, []))
+        fields = part[1:].decode("ascii", "replace").split(" ")
         status = fields[4][:1] if len(fields) > 4 else ""
         two = status in ("R", "C")
         src = parts[i + 1].decode("utf-8", "surrogateescape")
@@ -73,8 +87,8 @@ def changes_from_raw(raw: bytes) -> list:
         if old_mode not in BLOB_MODES or src in GENERATED:
             old = NULL_OID
         if old != new:
-            out.append((old, new, path))
-    return out
+            blocks[-1][1].append((old, new, path))
+    return blocks
 
 
 def as_text(blob: bytes):
@@ -101,23 +115,27 @@ def dash_lines(text: bytes) -> list:
 
 
 class BlobReader:
-    """One `git cat-file --batch` process; each blob is read once and kept as
-    text. A timer kills the process at the deadline, so a stalled read ends in
-    a short read, which is an error."""
+    """One `git cat-file --batch` process. Each blob's dash count is cached by
+    id and its text is not kept; a refused file's two blobs are read again to
+    name lines. A timer kills the process at the deadline, so a stalled read
+    ends in a short read, which is an error."""
 
     def __init__(self):
         self.proc = subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE)   # deadline: the timer below
         self.timer = threading.Timer(TIMEOUT, self.proc.kill)
         self.timer.start()
-        self.cache = {}
+        self.counts = {}
+
+    def count(self, oid: str) -> int:
+        if oid == NULL_OID:
+            return 0
+        if oid not in self.counts:
+            self.counts[oid] = dash_count(as_text(self._read(oid)))
+        return self.counts[oid]
 
     def text(self, oid: str):
-        if oid == NULL_OID:
-            return None
-        if oid not in self.cache:
-            self.cache[oid] = as_text(self._read(oid))
-        return self.cache[oid]
+        return None if oid == NULL_OID else as_text(self._read(oid))
 
     def _read(self, oid: str) -> bytes:
         self.proc.stdin.write(oid.encode() + b"\n")
@@ -145,40 +163,52 @@ class BlobReader:
         return rc
 
 
-def refused(changes: list, text_of) -> list:
+def name_lines(old_text, new_text):
+    """(exact, copies): dash lines of the new text no old line matches, and
+    every copy of an identical line that now appears more often."""
+    new_lines = dash_lines(new_text)
+    old_seen = collections.Counter(ln for _n, ln in dash_lines(old_text)) if old_text else collections.Counter()
+    new_seen = collections.Counter(ln for _n, ln in new_lines)
+    exact = [n for n, ln in new_lines if not old_seen[ln]]
+    copies = [n for n, ln in new_lines if old_seen[ln] and new_seen[ln] > old_seen[ln]]
+    return exact, copies
+
+
+def refused(per_parent: list, reader) -> list:
     """(path, gained, exact lines, candidate copies) for each file that holds
-    more dashes than before. Exact lines are dash lines no old line matches;
-    candidate copies are every copy of an identical line that now appears
-    more often than it did."""
+    more dashes than before. `per_parent` holds one change list per parent
+    (one for a commit or the staged change, several for a merge); a file is
+    refused only when it gains over every parent, so a merge is judged on
+    what the merge itself added. A new blob with no dash is never compared."""
+    gains = []
+    for changes in per_parent:
+        g = {}
+        for old, new, path in changes:
+            n = reader.count(new)
+            if n and n > reader.count(old):
+                g[path] = (old, new, n - reader.count(old))
+        gains.append(g)
+    if not gains:
+        return []
     found = []
-    for old, new, path in changes:
-        new_text = text_of(new)
-        if not dash_count(new_text):
-            continue                                       # the old blob is never read
-        old_text = text_of(old)
-        gained = dash_count(new_text) - dash_count(old_text)
-        if gained <= 0:
-            continue
-        new_lines = dash_lines(new_text)
-        old_seen = collections.Counter(ln for _n, ln in dash_lines(old_text)) if old_text else collections.Counter()
-        new_seen = collections.Counter(ln for _n, ln in new_lines)
-        exact = [n for n, ln in new_lines if not old_seen[ln]]
-        copies = [n for n, ln in new_lines if old_seen[ln] and new_seen[ln] > old_seen[ln]]
-        found.append((path, gained, exact, copies))
+    for path, (old, new, _gain) in gains[0].items():
+        if all(path in g for g in gains[1:]):
+            exact, copies = name_lines(reader.text(old), reader.text(new))
+            found.append((path, min(g[path][2] for g in gains), exact, copies))
     return found
 
 
-def _git(*args) -> bytes:
-    return subprocess.run(["git", *args], capture_output=True, timeout=TIMEOUT, check=True).stdout
+def _git(*args, stdin=None) -> bytes:
+    return subprocess.run(["git", *args], input=stdin, capture_output=True, timeout=TIMEOUT, check=True).stdout
 
 
-def judge(change_sets: list) -> list:
-    """(label, refused files) for each (label, changes) pair, one blob reader for all."""
-    if not any(changes for _label, changes in change_sets):
+def judge(commits: list) -> list:
+    """(label, refused files) for each (label, per-parent changes), one blob reader for all."""
+    if not any(changes for _label, per_parent in commits for changes in per_parent):
         return []
     reader = BlobReader()
     try:
-        out = [(label, hits) for label, changes in change_sets if (hits := refused(changes, reader.text))]
+        out = [(label, hits) for label, per_parent in commits if (hits := refused(per_parent, reader))]
     finally:
         rc = reader.close()
     if rc != 0:
@@ -188,19 +218,31 @@ def judge(change_sets: list) -> list:
 
 def staged() -> list:
     raw = _git("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
-    return [("", changes_from_raw(raw))]
+    return [("", [changes_from_raw(raw)])]
 
 
 def outgoing(old: str, new: str) -> list:
-    if old == NULL_OID:
-        revs = _git("rev-list", "--no-merges", "--reverse", new, "--not", "--remotes")
-    else:
-        revs = _git("rev-list", "--no-merges", "--reverse", f"{old}..{new}")
-    sets = []
-    for commit in revs.decode().split():
-        raw = _git("diff-tree", "-r", "-z", "-M", "--no-abbrev", "--no-commit-id", "--root", commit)
-        sets.append((f"commit {commit[:12]}: ", changes_from_raw(raw)))
-    return sets
+    """(label, per-parent changes) for every outgoing commit, merges included,
+    from one rev-list and one `diff-tree --stdin` fed one line per parent."""
+    span = [new, "--not", "--remotes"] if old == NULL_OID else [f"{old}..{new}"]
+    pairs = []                                            # (commit, parent or None), in input order
+    for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
+        commit, *parents = line.split()
+        if parents:
+            pairs.extend((commit, p) for p in parents)
+        else:
+            pairs.append((commit, None))
+    if not pairs:
+        return []
+    feed = "".join(f"{c} {p}\n" if p else f"{c}\n" for c, p in pairs).encode()
+    blocks = changes_by_header(_git("diff-tree", "--stdin", "--always", "-r", "-z", "-M", "--no-abbrev", "--root",
+                                    stdin=feed))
+    if len(blocks) != len(pairs) or any(h != c for (h, _ch), (c, _p) in zip(blocks, pairs)):
+        raise ValueError("diff-tree returned a different set of commits than it was given")
+    commits = {}
+    for (commit, _p), (_h, changes) in zip(pairs, blocks):
+        commits.setdefault(commit, []).append(changes)
+    return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()]
 
 
 def report(found: list) -> None:

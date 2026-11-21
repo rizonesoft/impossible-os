@@ -18,3 +18,7 @@ def test_forbidden_trailers_are_found_in_any_case():
 def test_other_trailers_and_prose_are_not():
     assert _trailers("subject\n\nbody\n\nReviewed-by: Someone <s@example.org>\n") == ""
     assert _trailers("subject\n\nthe Co-Authored-By: rule is in prose here, then more text\n") == ""
+
+
+def test_a_divider_line_does_not_hide_the_trailers():
+    assert _trailers("subject\n\nnotes\n\n---\n\nverification\n\nCo-Authored-By: Someone <s@example.org>\n")

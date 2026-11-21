@@ -196,11 +196,12 @@ def test_a_rename_out_of_a_generated_file_and_a_utf16_script_are_read(tmp_path):
 def test_no_old_blob_is_read_when_the_new_blob_holds_no_dash():
     asked = []
 
-    def text_of(oid):
-        asked.append(oid)
-        return b"clean\n" if oid == "b" * 40 else b"old " + m.DASHES[1] + b"\n"
+    class Reader:
+        def count(self, oid):
+            asked.append(oid)
+            return 0 if oid == "b" * 40 else 1
 
-    assert m.refused([("a" * 40, "b" * 40, "clean.md")], text_of) == []
+    assert m.refused([[("a" * 40, "b" * 40, "clean.md")]], Reader()) == []
     assert asked == ["b" * 40], asked
 
 
@@ -217,7 +218,7 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch):
         stdout = io.BytesIO(b"abc blob 100\nclean")
 
     reader = m.BlobReader.__new__(m.BlobReader)
-    reader.proc, reader.cache = Short(), {}
+    reader.proc, reader.counts = Short(), {}
     try:
         reader._read("abc")
     except ValueError as exc:
@@ -226,11 +227,11 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch):
         raise AssertionError("a truncated blob was accepted")
 
     raw = b":100644 100644 " + b"1" * 40 + b" " + b"2" * 40 + b" M\0f.md\0"
-    monkeypatch.setattr(m, "_git", lambda *a: raw)
+    monkeypatch.setattr(m, "_git", lambda *a, **k: raw)
 
     class Exits:
-        def text(self, oid):
-            return b""
+        def count(self, oid):
+            return 0
 
         def close(self):
             return 128
@@ -266,3 +267,39 @@ def test_the_hook_gates_print_their_guidance_under_errexit(tmp_path):
             r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{GATE}"; {call} || exit 7'],
                                capture_output=True, text=True, timeout=30, env=_clean_env())
             assert r.returncode == 7 and expect in r.stdout, (call, r)
+
+
+def test_merges_are_judged_on_what_the_merge_added(tmp_path):
+    """Two clean parents whose automatic merge doubles a dash, and a conflict
+    resolution that adds one, are refused; a clean merge passes."""
+    root = _repo(tmp_path)
+    body = [f"line {i}" for i in range(40)]
+    moved_up = "\n".join(["legacy " + DASH] + body) + "\n"
+    _stage(root, {"f.md": "\n".join(body + ["legacy " + DASH]) + "\n", "g.md": "g\n"})
+    _commit(root, "base")
+    base = _git(root, "rev-parse", "HEAD")
+    _git(root, "checkout", "-q", "-b", "side")
+    _stage(root, {"f.md": moved_up})
+    _commit(root, "move up")
+    _git(root, "checkout", "-q", "-")
+    _stage(root, {"g.md": "g edited\n"})
+    _commit(root, "clean")
+    tip = _git(root, "rev-parse", "HEAD")
+    # an automatic merge whose file ends with both copies
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side")
+    _stage(root, {"f.md": moved_up + "legacy " + DASH + "\n"})
+    _commit(root, "doubled")
+    merge = _git(root, "rev-parse", "--short=12", "HEAD")
+    r = _run(root, "--range", base, "HEAD")
+    assert r.returncode == 1 and f"commit {merge}: f.md gains 1" in r.stderr, r
+    # a resolution that adds a dash in another file
+    _git(root, "reset", "-q", "--hard", tip)
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side")
+    _stage(root, {"f.md": moved_up, "h.md": "resolved " + DASH + "\n"})
+    _commit(root, "resolved")
+    r = _run(root, "--range", base, "HEAD")
+    assert r.returncode == 1 and "h.md gains 1" in r.stderr and "f.md" not in r.stderr, r
+    # a clean merge
+    _git(root, "reset", "-q", "--hard", tip)
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", "side")
+    assert _run(root, "--range", base, "HEAD").returncode == 0

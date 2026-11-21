@@ -89,9 +89,10 @@ done
 # --ai-trailers mode its regression drives. `git interpret-trailers --parse`
 # is git's own definition of a trailer; git reads trailer keys without regard
 # to case, so the match ignores case too (a lowercase co-authored-by once
-# passed this gate).
+# passed this gate), and --no-divider keeps a `---` line in a commit message
+# from being read as the start of a patch that hides the trailers after it.
 forbidden_trailers() {
-    git interpret-trailers --parse 2>/dev/null | grep -iE '^(co-authored-by|assisted-by|ai-author):' || true
+    git interpret-trailers --parse --no-divider 2>/dev/null | grep -iE '^(co-authored-by|assisted-by|ai-author):' || true
 }
 if [ "$TRAILERS_ONLY" = 1 ]; then
     forbidden_trailers
