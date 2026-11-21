@@ -23,6 +23,10 @@ Generated files are exempt on both sides: their text is copied from sources
 this check has already judged (todo/implementation-plan.md copies TODO
 titles), so a change to one neither adds lines nor lends them.
 
+The rule is the UTF-8 encoding of U+2013 and U+2014 (the bytes Windows serial
+and CMD garble), read from UTF-8 text and from BOM-marked UTF-16 text; other
+source encodings are outside it, and the tree holds none.
+
 Exit 0 when clean, 1 with one line per hit, 2 when the staged changes cannot
 be read. SKIP_DASH_CHECK=1 skips it.
 """
@@ -81,8 +85,8 @@ def as_text(blob: bytes):
     if blob[:2] in UTF16_BOMS:
         try:
             return blob.decode("utf-16").encode("utf-8")
-        except UnicodeDecodeError:
-            return None
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
     return None if b"\0" in blob[:8000] else blob
 
 
@@ -169,28 +173,43 @@ class BlobReader:
 
 
 def added_dash_lines(changes: list, lines_of) -> list:
-    """(path, line) for each dash line the change adds.
+    """(path, candidate line numbers, count) for each run of dash lines the change adds.
 
     Each file is matched against its own old blob first, so an untouched line
-    is never blamed for a copy elsewhere. Lines left over in old blobs (moved
-    out, or out of a deleted file) then cover the same lines appearing in
-    other files; whatever is still unmatched is new."""
-    pool, pending = collections.Counter(), []
-    for old, new, path in changes:
-        keep = collections.Counter(ln for _n, ln in lines_of(old)) if old != NULL_OID else collections.Counter()
-        if new != NULL_OID:
-            for n, ln in lines_of(new):
-                if keep[ln] > 0:
-                    keep[ln] -= 1
-                else:
-                    pending.append((path, n, ln))
-        pool.update(keep)
+    is never blamed for a copy elsewhere. Lines left over in the change's old
+    blobs (moved out, or out of a deleted file) then cover the same lines
+    appearing in other files. When identical lines make the new copy
+    ambiguous, every candidate is named. Old blobs are read only for files
+    whose new blob holds a dash, and the rest only if something is unmatched."""
+    pending, matched = [], set()
+    for i, (old, new, path) in enumerate(changes):
+        new_lines = lines_of(new) if new != NULL_OID else []
+        if not new_lines:
+            continue
+        matched.add(i)
+        kept = collections.Counter(ln for _n, ln in lines_of(old)) if old != NULL_OID else collections.Counter()
+        where = collections.defaultdict(list)
+        for n, ln in new_lines:
+            where[ln].append(n)
+        for ln, numbers in where.items():
+            excess = len(numbers) - kept[ln]
+            if excess > 0:
+                pending.append([path, ln, numbers, excess, kept[ln] > 0])
+    if not pending:
+        return []
+    pool = collections.Counter()
+    for i, (old, new, _path) in enumerate(changes):
+        if old != NULL_OID:
+            lines = [ln for _n, ln in lines_of(old)]
+            if i in matched:
+                lines = (collections.Counter(lines) - collections.Counter(ln for _n, ln in lines_of(new))).elements()
+            pool.update(lines)
     found = []
-    for path, n, ln in pending:
-        if pool[ln] > 0:
-            pool[ln] -= 1
-        else:
-            found.append((path, n))
+    for path, ln, numbers, excess, _shared in pending:
+        take = min(pool[ln], excess)
+        pool[ln] -= take
+        if excess - take > 0:
+            found.append((path, tuple(numbers), excess - take))
     return found
 
 
@@ -218,9 +237,15 @@ def main() -> int:
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the staged changes could not be read: {exc}", file=sys.stderr)
         return 2
-    for path, line in found:
-        print(f"[dash-check] {path}:{line} adds a Unicode en or em dash; rewrite it with a comma, colon, "
-              "parentheses or a full stop", file=sys.stderr)
+    fix = "rewrite it with a comma, colon, parentheses or a full stop"
+    for path, numbers, count in found:
+        if count == len(numbers):
+            for n in numbers:
+                print(f"[dash-check] {path}:{n} adds a Unicode en or em dash; {fix}", file=sys.stderr)
+        else:
+            where = ", ".join(f"{path}:{n}" for n in numbers)
+            print(f"[dash-check] {path} adds {count} line(s) with a Unicode en or em dash; identical lines make "
+                  f"the new copy one of {where}; {fix}", file=sys.stderr)
     return 1 if found else 0
 
 

@@ -226,3 +226,41 @@ def test_a_nonzero_reader_exit_fails_the_check(monkeypatch):
 
     monkeypatch.setattr(m, "BlobReader", Reader)
     assert m.main() == 2
+
+
+def test_a_copy_inserted_above_its_original_names_both_candidates(tmp_path):
+    root = _repo(tmp_path)
+    legacy = "legacy " + DASH + " row\n"
+    (root / "f.md").write_text("a\nb\n" + legacy, encoding="utf-8")
+    _git(root, "add", "-A")
+    _commit(root, "base")
+    (root / "f.md").write_text(legacy + "a\nb\n" + legacy, encoding="utf-8")
+    _git(root, "add", "-A")
+    r = _run(root)
+    assert r.returncode == 1 and "one of f.md:1, f.md:4" in r.stderr, r
+
+
+def test_no_old_blob_is_read_when_no_new_blob_holds_a_dash():
+    sys.path.insert(0, str(CHECK.parent))
+    import staged_dash_check as m
+    asked = []
+
+    def lines_of(oid):
+        asked.append(oid)
+        return [(1, b"old " + m.DASHES[1])] if oid.startswith("d") else []
+
+    changes = [("d" * 40, m.NULL_OID, "gone.md"), ("a" * 40, "b" * 40, "clean.md")]
+    assert m.added_dash_lines(changes, lines_of) == []
+    assert "d" * 40 not in asked and "a" * 40 not in asked, asked
+
+
+def test_an_undecodable_utf16_file_is_a_read_error():
+    sys.path.insert(0, str(CHECK.parent))
+    import staged_dash_check as m
+    blob = ("ok " + chr(0x2014) + "\n").encode("utf-16") + b"\n"
+    try:
+        m.dash_lines(blob)
+    except ValueError as exc:
+        assert "UTF-16" in str(exc)
+    else:
+        raise AssertionError("a truncated UTF-16 file read as clean")

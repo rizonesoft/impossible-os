@@ -28,7 +28,7 @@
 
 ## Claude / Reviewer Boundary
 
-Claude Code implements and runs the overnight run. The one other implementer is the operator-started neon-a lane (agy), under the same gates and the same Astra review ([CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set)); neon-b only writes reports. Codex remains available only as an external reviewer invoked by Claude skills.
+Claude Code implements and runs the overnight run. The one other implementer is the operator-started neon-a lane (agy), under the same gates and the same Astra review ([CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set)); neon-b only writes reports. Codex reviews only, invoked by Claude skills, except the attended `task --write` rescue in which the operator reviews Codex's diff and authors the commit ([CLAUDE.md "Codex reviewers are read-only"](../../CLAUDE.md#model-roles)).
 
 - **No parallel skill sets.** Doctrine lives in `CLAUDE.md`; Claude skills live in `.claude/skills/`. `.codex/skills/` remains forbidden.
 - **Claude owns runner files and state.** Runner mechanics stay under `.claude/skills/overnight-sequencer/`, `.claude/hooks/`, and `scripts/overnight/`.
