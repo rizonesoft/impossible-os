@@ -49,20 +49,20 @@
 | **Markdown** (`.md`)        |     703 |     169025 |
 | **JSON** (`.json`)          |      73 |      21699 |
 | **YAML** (`.yml`/`.yaml`)   |      18 |       2353 |
-| **HTML** (`.html`)          |      22 |       3488 |
+| **HTML** (`.html`)          |      22 |       3489 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **818** | **197166** |
+| **Subtotal**                | **818** | **197167** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
 | **Core code + tooling**                              | **1535** |  **782742** |
-| **Supporting text + metadata**                       |  **818** |  **197166** |
-| **Written here**                                     | **2353** |  **979908** |
+| **Supporting text + metadata**                       |  **818** |  **197167** |
+| **Written here**                                     | **2353** |  **979909** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2943** | **1456236** |
+| **All lines in tree**                                | **2943** | **1456237** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,7 +77,7 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,456,236 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,456,237 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 20 day(s) |
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-11-21 18:25 · commit `4fa8baaba`*
+*Last updated: 2026-11-21 18:29 · commit `ace9d91a3`*
