@@ -13,13 +13,15 @@ context, textconv), pathspec mode or file name can change the answer. One
 `git diff --cached --raw -z -M` names each staged file with its old and new
 blob (a rename or copy pairs with its source), one streamed `git cat-file
 --batch` reads them, and a dash line counts as added when the change's new
-blobs hold more copies of that exact line than its old blobs did, so a line
-moved within or between files is not new. Lines split on LF only; a binary
+blobs hold more copies of that exact line than its old blobs did: each file
+is matched against its own old blob first, then leftover old lines cover
+lines moved between files. Lines split on LF only; a binary
 blob (a NUL in its first 8000 bytes, git's own test) holds no lines, and a
 pair whose blob ids are equal is never read.
 
-Generated files are exempt: their text is copied from sources this check has
-already judged (todo/implementation-plan.md copies TODO titles).
+Generated files are exempt on both sides: their text is copied from sources
+this check has already judged (todo/implementation-plan.md copies TODO
+titles), so a change to one neither adds lines nor lends them.
 
 Exit 0 when clean, 1 with one line per hit, 2 when the staged changes cannot
 be read. SKIP_DASH_CHECK=1 skips it.
@@ -28,6 +30,7 @@ import collections
 import os
 import subprocess
 import sys
+import threading
 
 DASHES = (chr(0x2013).encode(), chr(0x2014).encode())
 GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
@@ -40,7 +43,8 @@ def staged_changes(raw: bytes) -> list:
     """(old_oid, new_oid, path) per staged regular file or link from --raw -z.
 
     A deleted file keeps its old blob (its lines may move elsewhere) with a
-    null new blob; a submodule has no blob and is left out."""
+    null new blob; a submodule has no blob. A change touching a generated
+    file on either side is left out whole, so it neither adds nor lends."""
     out, parts, i = [], raw.split(b"\0"), 0
     while i < len(parts):
         head = parts[i].decode("ascii", "replace")
@@ -50,8 +54,11 @@ def staged_changes(raw: bytes) -> list:
         fields = head[1:].split(" ")
         status = fields[4][:1] if len(fields) > 4 else ""
         two = status in ("R", "C")
-        path_raw = parts[i + 2] if two else parts[i + 1]
+        src = parts[i + 1].decode("utf-8", "surrogateescape")
+        path = parts[i + 2].decode("utf-8", "surrogateescape") if two else src
         i += 3 if two else 2
+        if src in GENERATED or path in GENERATED:
+            continue
         old_mode, new_mode, old, new = fields[0], fields[1], fields[2], fields[3]
         if old_mode not in BLOB_MODES:
             old = NULL_OID
@@ -59,7 +66,7 @@ def staged_changes(raw: bytes) -> list:
             new = NULL_OID
         if old == new:
             continue                                       # identical content, or nothing to read
-        out.append((old, new, path_raw.decode("utf-8", "surrogateescape")))
+        out.append((old, new, path))
     return out
 
 
@@ -69,58 +76,93 @@ def is_binary(blob: bytes) -> bool:
 
 
 def dash_lines(blob: bytes) -> list:
-    """(line number, line) for each LF-delimited text line holding a dash."""
-    if is_binary(blob) or not any(d in blob for d in DASHES):
+    """(line number, line) for each LF-delimited text line holding a dash.
+
+    Only the lines that hold a dash are copied: the blob is searched for the
+    dash bytes and each hit's line is cut out by its LF bounds."""
+    if is_binary(blob):
         return []
-    return [(n, ln) for n, ln in enumerate(blob.split(b"\n"), 1) if any(d in ln for d in DASHES)]
+    starts = set()
+    for d in DASHES:
+        at = blob.find(d)
+        while at != -1:
+            starts.add(blob.rfind(b"\n", 0, at) + 1)
+            at = blob.find(d, at + 1)
+    out, line_no, pos = [], 1, 0
+    for start in sorted(starts):
+        line_no += blob.count(b"\n", pos, start)
+        pos = start
+        end = blob.find(b"\n", start)
+        out.append((line_no, blob[start:] if end == -1 else blob[start:end]))
+    return out
 
 
 class BlobReader:
     """One `git cat-file --batch` process, read one blob at a time so only the
-    dash lines of each blob are kept."""
+    dash lines of each blob are kept. A timer kills the process at the
+    deadline, so a stalled read ends in a short read, which is an error."""
 
     def __init__(self):
         self.proc = subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE)   # deadline: closed in close(), killed on error
+                                     stdout=subprocess.PIPE)   # deadline: the timer below
+        self.timer = threading.Timer(TIMEOUT, self.proc.kill)
+        self.timer.start()
+        self.cache = {}
 
-    def read(self, oid: str) -> bytes:
+    def dash_lines(self, oid: str) -> list:
+        if oid not in self.cache:
+            self.cache[oid] = dash_lines(self._read(oid))
+        return self.cache[oid]
+
+    def _read(self, oid: str) -> bytes:
         self.proc.stdin.write(oid.encode() + b"\n")
         self.proc.stdin.flush()
         header = self.proc.stdout.readline().split(b" ")
-        if len(header) < 3:
-            raise ValueError(f"cat-file did not return {oid}")
+        if len(header) < 3 or header[1] != b"blob":
+            raise ValueError(f"cat-file did not return blob {oid}")
         size = int(header[2])
         data = self.proc.stdout.read(size)
-        self.proc.stdout.read(1)                           # the LF after each object
+        if len(data) != size or self.proc.stdout.read(1) != b"\n":
+            raise ValueError(f"cat-file returned blob {oid} short")
         return data
 
-    def close(self):
+    def close(self) -> int:
         try:
             self.proc.stdin.close()
-            self.proc.wait(timeout=TIMEOUT)
-        except (OSError, subprocess.TimeoutExpired):
+        except OSError:
+            pass                                           # fail-direction: wait() below reports the exit
+        try:
+            rc = self.proc.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
             self.proc.kill()
+            rc = self.proc.wait()
+        self.timer.cancel()
+        return rc
 
 
-def added_dash_lines(changes: list, read) -> list:
+def added_dash_lines(changes: list, lines_of) -> list:
     """(path, line) for each dash line the change adds.
 
-    The budget is every dash line in the change's old blobs, so a line moved
-    within a file, between files or out of a deleted file is not new; a line
-    the new blobs hold more often than the old ones did is."""
-    budget = collections.Counter()
-    for old, _new, _path in changes:
-        if old != NULL_OID:
-            budget.update(ln for _n, ln in dash_lines(read(old)))
+    Each file is matched against its own old blob first, so an untouched line
+    is never blamed for a copy elsewhere. Lines left over in old blobs (moved
+    out, or out of a deleted file) then cover the same lines appearing in
+    other files; whatever is still unmatched is new."""
+    pool, pending = collections.Counter(), []
+    for old, new, path in changes:
+        keep = collections.Counter(ln for _n, ln in lines_of(old)) if old != NULL_OID else collections.Counter()
+        if new != NULL_OID:
+            for n, ln in lines_of(new):
+                if keep[ln] > 0:
+                    keep[ln] -= 1
+                else:
+                    pending.append((path, n, ln))
+        pool.update(keep)
     found = []
-    for _old, new, path in changes:
-        if new == NULL_OID or path in GENERATED:
-            continue
-        for n, ln in dash_lines(read(new)):
-            if budget[ln] > 0:
-                budget[ln] -= 1
-            else:
-                found.append((path, n))
+    for path, n, ln in pending:
+        if pool[ln] > 0:
+            pool[ln] -= 1
+        else:
+            found.append((path, n))
     return found
 
 
@@ -128,13 +170,16 @@ def hits() -> list:
     raw = subprocess.run(["git", "diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff"],
                          capture_output=True, timeout=TIMEOUT, check=True).stdout
     changes = staged_changes(raw)
-    if not changes:
-        return []
+    if not any(new != NULL_OID for _old, new, _path in changes):
+        return []                                          # only deletions: nothing can be added
     reader = BlobReader()
     try:
-        return added_dash_lines(changes, reader.read)
+        found = added_dash_lines(changes, reader.dash_lines)
     finally:
-        reader.close()
+        rc = reader.close()
+    if rc != 0:
+        raise ValueError(f"cat-file exited {rc}")
+    return found
 
 
 def main() -> int:

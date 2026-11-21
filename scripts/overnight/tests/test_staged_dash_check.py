@@ -1,4 +1,5 @@
 """The staged dash check refuses an added dash in any lane's commit and leaves old lines alone."""
+import io
 import os
 import subprocess
 import sys
@@ -144,3 +145,41 @@ def test_the_fixture_never_writes_the_callers_index(tmp_path, monkeypatch):
     _git(root, "add", "x.md")
     assert _run(root).returncode == 0
     assert outer.read_bytes() == b"caller state"
+
+
+def test_matching_is_per_file_first_and_generated_files_lend_nothing(tmp_path):
+    root = _repo(tmp_path)
+    legacy = "legacy " + DASH + " row\n"
+    (root / "z.md").write_text(legacy + "tail\n", encoding="utf-8")
+    (root / "COUNT.md").write_text("# Count " + DASH + " heading\n1\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _commit(root, "base")
+    # a copy of z.md's untouched line: the copy is named, never the original
+    (root / "a.md").write_text(legacy, encoding="utf-8")
+    (root / "z.md").write_text(legacy + "tail edited\n", encoding="utf-8")
+    # a retained generated heading copied elsewhere is new
+    (root / "COUNT.md").write_text("# Count " + DASH + " heading\n2\n", encoding="utf-8")
+    (root / "notes.md").write_text("# Count " + DASH + " heading\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    r = _run(root)
+    assert r.returncode == 1 and "a.md:1" in r.stderr and "notes.md:1" in r.stderr, r
+    assert "z.md" not in r.stderr and "COUNT.md" not in r.stderr, r
+
+
+def test_a_short_blob_read_is_an_error_not_clean():
+    sys.path.insert(0, str(CHECK.parent))
+    import staged_dash_check as m
+
+    class Short:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(b"abc blob 100\nclean")
+
+    reader = m.BlobReader.__new__(m.BlobReader)
+    reader.proc, reader.cache = Short(), {}
+    try:
+        reader._read("abc")
+    except ValueError as exc:
+        assert "short" in str(exc)
+    else:
+        raise AssertionError("a truncated blob was accepted")
