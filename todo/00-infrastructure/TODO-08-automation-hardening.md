@@ -1626,12 +1626,21 @@ Section 32 made the guards read the command behind reserved words, case arms, su
 Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/plans/2026-11-20-parallel-lanes.md). Four lanes: main (the run), userland (Claude), neon-a (agy, commits) and neon-b (agy, reports only). Every lane is started by the operator; main runs alone or with any subset of the other three.
 
 - [x] CLAUDE.md "Two engines, one gate set": only operator-started lanes commit (plus attended repair), one gate set, Claude decides, extra lanes light, lane-wide rules in `.githooks/` or CI
-- [x] The dash rule binds every lane: `scripts/staged_dash_check.py` refuses an added Unicode dash from `.githooks/pre-commit`
+- [x] The dash rule binds every lane: `scripts/staged_dash_check.py` refuses a file that gains a Unicode dash, from pre-commit and pre-push
 - [x] `ai-system.md`, `TODO-02`, `AGENTS.md` and `CONTRIBUTING.md` match: new canonical lanes sentence and invariant 5, reviewer boundary, autonomous-agent policy
 - [x] A new `GEMINI.md` points agy at the lane rules and holds only agy mechanics; `scripts/test-ai-system.sh` holds it to the pointer contract
 - [x] Commit: `"lanes: two engines, one gate set"`
 
 **Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean; `bash scripts/test-ai-system.sh --quiet` passes; `test_staged_dash_check.py` refuses an added dash and passes an old line and a generated file.
+
+> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_staged_dash_check.py scripts/overnight/tests/test_ai_trailer_filter.py` (16 passed) and `bash scripts/test-ai-system.sh --quiet` (88 passed, 0 failed), on the candidate stamped below.
+
+**Notes:**
+
+- The dash check decides by one dash count per file. Rounds 2 to 7 of the review each found a new case in the line-matching design it replaced (renames, inter-hunk context, cross-file moves, binary bytes, a UTF-8 BOM, attribution order), so the matcher was removed rather than patched again; `test_reshaping_a_file_never_changes_the_decision` is the class regression.
+- A dash line moved into another file is refused there, deliberately: the author is editing that text anyway.
+- Out of scope by decision: source encodings other than UTF-8 and BOM-marked UTF-16 (the tree holds none), and partial clones.
+- The zero-trailer gate now ignores key case, as git does (`test_ai_trailer_filter.py`).
 
 ## 49. The lane map and the commit check
 

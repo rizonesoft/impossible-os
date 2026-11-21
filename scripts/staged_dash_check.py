@@ -1,34 +1,38 @@
 #!/usr/bin/env python3
-"""Refuse a commit that adds a line holding a Unicode en or em dash.
+"""Refuse a commit that adds a Unicode en or em dash.
 
 The dash rule (CLAUDE.md "Code Style: ASCII Dashes") was enforced only by
 Claude's edit hook, which binds no other lane. This check runs from
-.githooks/pre-commit, so it binds every lane that commits. It refuses only
-lines the commit ADDS: the 2026-11-21 tree still holds dashes in about 225
-older files, which are not swept, and an untouched, moved or renamed line is
-never refused.
+.githooks/pre-commit on the staged change and from .githooks/pre-push on
+every outgoing commit (a rebase that resolves a conflict commits without
+pre-commit), so it binds every lane. The 2026-11-21 tree still holds dashes
+in about 225 older files, which are not swept.
 
-No diff text is read, so no diff setting (prefixes, context, inter-hunk
-context, textconv), pathspec mode or file name can change the answer. One
-`git diff --cached --raw -z -M` names each staged file with its old and new
-blob (a rename or copy pairs with its source), one streamed `git cat-file
---batch` reads them, and a dash line counts as added when the change's new
-blobs hold more copies of that exact line than its old blobs did: each file
-is matched against its own old blob first, then leftover old lines cover
-lines moved between files. Lines split on LF only; a binary
-blob (a NUL in its first 8000 bytes, git's own test) holds no lines, and a
-pair whose blob ids are equal is never read.
+The decision is one count per file: a file the change touches is refused
+when its new version holds more en or em dashes than its old version did.
+No line matching decides anything, so line order, a byte-order mark, line
+endings, diff settings, pathspec modes and file names cannot change the
+answer. A rename or copy is compared with its source, as `git diff -M` pairs
+them; a dash line moved INTO another file counts as written there. Only on a
+refusal are lines matched, to name the new or edited lines (or, when the
+gain is an extra copy of an identical line, every copy).
 
-Generated files are exempt on both sides: their text is copied from sources
-this check has already judged (todo/implementation-plan.md copies TODO
-titles), so a change to one neither adds lines nor lends them.
+One `git diff --raw -z -M` (or `git diff-tree` per outgoing commit) names
+each file with its old and new blob, and one streamed `git cat-file --batch`
+reads them. A file's old blob is read only when its new blob holds a dash.
+The rule is the UTF-8 encoding of U+2013 and U+2014 (the bytes Windows
+serial and CMD garble), read from UTF-8 text and BOM-marked UTF-16 text; a
+binary blob (a NUL in its first 8000 bytes, git's own test) holds none.
 
-The rule is the UTF-8 encoding of U+2013 and U+2014 (the bytes Windows serial
-and CMD garble), read from UTF-8 text and from BOM-marked UTF-16 text; other
-source encodings are outside it, and the tree holds none.
+Generated files are exempt: their text is copied from sources this check has
+already judged (todo/implementation-plan.md copies TODO titles).
 
-Exit 0 when clean, 1 with one line per hit, 2 when the staged changes cannot
-be read. SKIP_DASH_CHECK=1 skips it.
+Usage: staged_dash_check.py                 the staged change (pre-commit)
+       staged_dash_check.py --range OLD NEW  each non-merge commit in OLD..NEW;
+                                             OLD all zeros means every commit
+                                             of NEW not on a remote (pre-push)
+Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
+read. SKIP_DASH_CHECK=1 skips it.
 """
 import collections
 import os
@@ -41,15 +45,16 @@ GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
 NULL_OID = "0" * 40
 TIMEOUT = 60
 BLOB_MODES = {"100644", "100755", "120000"}
+UTF8_BOM = b"\xef\xbb\xbf"
+UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
-def staged_changes(raw: bytes) -> list:
-    """(old_oid, new_oid, path) per staged regular file or link from --raw -z.
+def changes_from_raw(raw: bytes) -> list:
+    """(old_oid, new_oid, path) per changed regular file or link in --raw -z.
 
-    A deleted file keeps its old blob (its lines may move elsewhere) with a
-    null new blob; a submodule has no blob. The generated-file exemption
-    applies to each side alone: a generated source lends no lines and a
-    generated destination adds none, so a rename out of one is still read."""
+    A deleted file, a submodule and a generated destination have no new blob
+    to judge and are left out; a generated or non-blob source compares as
+    empty. Equal blob ids cannot gain anything and are left out."""
     out, parts, i = [], raw.split(b"\0"), 0
     while i < len(parts):
         head = parts[i].decode("ascii", "replace")
@@ -63,76 +68,42 @@ def staged_changes(raw: bytes) -> list:
         path = parts[i + 2].decode("utf-8", "surrogateescape") if two else src
         i += 3 if two else 2
         old_mode, new_mode, old, new = fields[0], fields[1], fields[2], fields[3]
-        if old_mode not in BLOB_MODES or src in GENERATED:
-            old = NULL_OID                                 # a generated source lends nothing
         if new_mode not in BLOB_MODES or status == "D" or path in GENERATED:
-            new = NULL_OID                                 # a generated destination adds nothing
-        if old == new:
-            continue                                       # identical content, or nothing to read
-        out.append((old, new, path))
+            continue
+        if old_mode not in BLOB_MODES or src in GENERATED:
+            old = NULL_OID
+        if old != new:
+            out.append((old, new, path))
     return out
 
 
-UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
-
-
 def as_text(blob: bytes):
-    """The blob as UTF-8 text bytes, or None for a binary blob.
-
-    A BOM-marked UTF-16 file (a PowerShell script saved by Windows) is text
-    and is decoded; otherwise git's own test applies: a NUL in the first 8000
-    bytes means binary."""
+    """The blob as UTF-8 text bytes without a byte-order mark, or None for a
+    binary blob. A BOM-marked UTF-16 file is decoded; one that cannot be
+    decoded is a read error, never clean."""
     if blob[:2] in UTF16_BOMS:
         try:
             return blob.decode("utf-16").encode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
-    return None if b"\0" in blob[:8000] else blob
+    if b"\0" in blob[:8000]:
+        return None
+    return blob[3:] if blob.startswith(UTF8_BOM) else blob
 
 
-class _DashFinder:
-    """The next dash at or after a position. Each dash's next hit is cached
-    and searched for again only once the position passes it, so the whole
-    text is scanned once per dash."""
-
-    def __init__(self, text: bytes):
-        self.text, self.next = text, [text.find(d) for d in DASHES]
-
-    def at_or_after(self, pos: int) -> int:
-        for i, d in enumerate(DASHES):
-            if self.next[i] != -1 and self.next[i] < pos:
-                self.next[i] = self.text.find(d, pos)
-        live = [n for n in self.next if n != -1]
-        return min(live) if live else -1
+def dash_count(text) -> int:
+    return 0 if text is None else sum(text.count(d) for d in DASHES)
 
 
-def dash_lines(blob: bytes) -> list:
-    """(line number, line) for each LF-delimited text line holding a dash.
-
-    Only the lines that hold a dash are copied. The search jumps from a hit
-    to the end of its line, so a line with many dashes is scanned once."""
-    text = as_text(blob)
-    if text is None:
-        return []
-    finder = _DashFinder(text)
-    out, line_no, pos, at = [], 1, 0, finder.at_or_after(0)
-    while at != -1:
-        nl = text.rfind(b"\n", pos, at)
-        start = nl + 1 if nl != -1 else pos
-        line_no += text.count(b"\n", pos, start)
-        end = text.find(b"\n", at)
-        out.append((line_no, text[start:] if end == -1 else text[start:end]))
-        if end == -1:
-            break
-        pos, line_no = end + 1, line_no + 1
-        at = finder.at_or_after(pos)
-    return out
+def dash_lines(text: bytes) -> list:
+    """(line number, line) for each LF-delimited line holding a dash."""
+    return [(n, ln) for n, ln in enumerate(text.split(b"\n"), 1) if any(d in ln for d in DASHES)]
 
 
 class BlobReader:
-    """One `git cat-file --batch` process, read one blob at a time so only the
-    dash lines of each blob are kept. A timer kills the process at the
-    deadline, so a stalled read ends in a short read, which is an error."""
+    """One `git cat-file --batch` process; each blob is read once and kept as
+    text. A timer kills the process at the deadline, so a stalled read ends in
+    a short read, which is an error."""
 
     def __init__(self):
         self.proc = subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE,
@@ -141,9 +112,11 @@ class BlobReader:
         self.timer.start()
         self.cache = {}
 
-    def dash_lines(self, oid: str) -> list:
+    def text(self, oid: str):
+        if oid == NULL_OID:
+            return None
         if oid not in self.cache:
-            self.cache[oid] = dash_lines(self._read(oid))
+            self.cache[oid] = as_text(self._read(oid))
         return self.cache[oid]
 
     def _read(self, oid: str) -> bytes:
@@ -172,100 +145,93 @@ class BlobReader:
         return rc
 
 
-def added_dash_lines(changes: list, lines_of) -> list:
-    """(candidate (path, line) pairs, count) for each dash line text the change adds.
-
-    Each file is matched against its own old blob first, so an untouched line
-    is never blamed for a copy elsewhere. Lines left over in the change's old
-    blobs (moved out, or out of a deleted file) then cover the same lines
-    appearing in other files, grouped by text so no destination is preferred.
-    When identical lines make the new copy ambiguous, every candidate in every
-    file is named. Old blobs are read only for files
-    whose new blob holds a dash, and the rest only if something is unmatched."""
-    pending, matched = [], set()
-    for i, (old, new, path) in enumerate(changes):
-        new_lines = lines_of(new) if new != NULL_OID else []
-        if not new_lines:
-            continue
-        matched.add(i)
-        kept = collections.Counter(ln for _n, ln in lines_of(old)) if old != NULL_OID else collections.Counter()
-        where = collections.defaultdict(list)
-        for n, ln in new_lines:
-            where[ln].append(n)
-        for ln, numbers in where.items():
-            excess = len(numbers) - kept[ln]
-            if excess > 0:
-                pending.append([path, ln, numbers, excess, kept[ln] > 0])
-    if not pending:
-        return []
-    need = collections.Counter()
-    for entry in pending:
-        need[entry[1]] += entry[3]
-    covered = collections.Counter()
-
-    def lend(lines) -> bool:
-        """Credit old lines toward the pending ones; True once all are covered."""
-        for ln in lines:
-            if need[ln] > covered[ln]:
-                covered[ln] += 1
-        return all(covered[ln] >= n for ln, n in need.items())
-
-    done = False
-    for i, (old, new, _path) in enumerate(changes):         # leftovers of files already read
-        if i in matched and old != NULL_OID:
-            left = collections.Counter(ln for _n, ln in lines_of(old)) - collections.Counter(
-                ln for _n, ln in lines_of(new))
-            if lend(left.elements()):
-                done = True
-                break
-    if not done:
-        for i, (old, _new, _path) in enumerate(changes):    # old blobs not read yet
-            if i not in matched and old != NULL_OID and lend(ln for _n, ln in lines_of(old)):
-                break
-    groups = collections.defaultdict(list)
-    for path, ln, numbers, _excess, _shared in pending:
-        groups[ln].extend((path, n) for n in numbers)
+def refused(changes: list, text_of) -> list:
+    """(path, gained, exact lines, candidate copies) for each file that holds
+    more dashes than before. Exact lines are dash lines no old line matches;
+    candidate copies are every copy of an identical line that now appears
+    more often than it did."""
     found = []
-    for ln, candidates in groups.items():
-        excess = need[ln] - covered[ln]
-        if excess > 0:
-            found.append((tuple(candidates), excess))
+    for old, new, path in changes:
+        new_text = text_of(new)
+        if not dash_count(new_text):
+            continue                                       # the old blob is never read
+        old_text = text_of(old)
+        gained = dash_count(new_text) - dash_count(old_text)
+        if gained <= 0:
+            continue
+        new_lines = dash_lines(new_text)
+        old_seen = collections.Counter(ln for _n, ln in dash_lines(old_text)) if old_text else collections.Counter()
+        new_seen = collections.Counter(ln for _n, ln in new_lines)
+        exact = [n for n, ln in new_lines if not old_seen[ln]]
+        copies = [n for n, ln in new_lines if old_seen[ln] and new_seen[ln] > old_seen[ln]]
+        found.append((path, gained, exact, copies))
     return found
 
 
-def hits() -> list:
-    raw = subprocess.run(["git", "diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff"],
-                         capture_output=True, timeout=TIMEOUT, check=True).stdout
-    changes = staged_changes(raw)
-    if not any(new != NULL_OID for _old, new, _path in changes):
-        return []                                          # only deletions: nothing can be added
+def _git(*args) -> bytes:
+    return subprocess.run(["git", *args], capture_output=True, timeout=TIMEOUT, check=True).stdout
+
+
+def judge(change_sets: list) -> list:
+    """(label, refused files) for each (label, changes) pair, one blob reader for all."""
+    if not any(changes for _label, changes in change_sets):
+        return []
     reader = BlobReader()
     try:
-        found = added_dash_lines(changes, reader.dash_lines)
+        out = [(label, hits) for label, changes in change_sets if (hits := refused(changes, reader.text))]
     finally:
         rc = reader.close()
     if rc != 0:
         raise ValueError(f"cat-file exited {rc}")
-    return found
+    return out
 
 
-def main() -> int:
+def staged() -> list:
+    raw = _git("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
+    return [("", changes_from_raw(raw))]
+
+
+def outgoing(old: str, new: str) -> list:
+    if old == NULL_OID:
+        revs = _git("rev-list", "--no-merges", "--reverse", new, "--not", "--remotes")
+    else:
+        revs = _git("rev-list", "--no-merges", "--reverse", f"{old}..{new}")
+    sets = []
+    for commit in revs.decode().split():
+        raw = _git("diff-tree", "-r", "-z", "-M", "--no-abbrev", "--no-commit-id", "--root", commit)
+        sets.append((f"commit {commit[:12]}: ", changes_from_raw(raw)))
+    return sets
+
+
+def report(found: list) -> None:
+    fix = "rewrite it with a comma, colon, parentheses or a full stop"
+    for label, hits in found:
+        for path, gained, exact, copies in hits:
+            print(f"[dash-check] {label}{path} gains {gained} Unicode en or em dash(es); {fix}", file=sys.stderr)
+            for n in exact:
+                print(f"[dash-check]   {path}:{n} is a new or edited line holding one", file=sys.stderr)
+            if copies:
+                where = ", ".join(f"{path}:{n}" for n in copies)
+                print(f"[dash-check]   an identical line now appears more often; the new copy is one of {where}",
+                      file=sys.stderr)
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     if os.environ.get("SKIP_DASH_CHECK") == "1":
         return 0
     try:
-        found = hits()
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"[dash-check] the staged changes could not be read: {exc}", file=sys.stderr)
-        return 2
-    fix = "rewrite it with a comma, colon, parentheses or a full stop"
-    for candidates, count in found:
-        if count == len(candidates):
-            for path, n in candidates:
-                print(f"[dash-check] {path}:{n} adds a Unicode en or em dash; {fix}", file=sys.stderr)
+        if argv[:1] == ["--range"] and len(argv) == 3:
+            found = judge(outgoing(argv[1], argv[2]))
+        elif not argv:
+            found = judge(staged())
         else:
-            where = ", ".join(f"{path}:{n}" for path, n in candidates)
-            print(f"[dash-check] {count} added line(s) hold a Unicode en or em dash; identical lines make "
-                  f"the new copy one of {where}; {fix}", file=sys.stderr)
+            print("usage: staged_dash_check.py [--range OLD NEW]", file=sys.stderr)
+            return 2
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)
+        return 2
+    report(found)
     return 1 if found else 0
 
 

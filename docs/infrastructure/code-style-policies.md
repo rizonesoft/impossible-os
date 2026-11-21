@@ -6,7 +6,7 @@
 
 Do not use Unicode **en dash** (U+2013) or **em dash** (U+2014) in source files, comments, strings, docs, or scripts. Windows serial and CMD/PowerShell often garble those bytes as mojibake (for example `ΓÇö`).
 
-Two layers enforce it. Claude's edit hook (`.claude/hooks/unicode_dash_block.py`) refuses an edit that writes one, and `.githooks/pre-commit` runs `scripts/staged_dash_check.py`, which refuses a commit whose added lines hold one; the second binds every lane, not only Claude sessions. Lines already in the tree are not swept, and generated files (`todo/implementation-plan.md`, `COUNT.md`) are exempt.
+Two layers enforce it. Claude's edit hook (`.claude/hooks/unicode_dash_block.py`) refuses an edit that writes one, and `scripts/staged_dash_check.py` refuses a change in which a touched file holds more en or em dashes than before: `.githooks/pre-commit` runs it on the staged change and `.githooks/pre-push` on every outgoing commit (a rebase that resolves a conflict commits without pre-commit). The second layer binds every lane, not only Claude sessions. It decides by one dash count per file, so reordering, a byte-order mark or line endings never change the answer; a rename is compared with its source, and a dash line moved into another file counts as written there. Lines already in the tree are not swept, and generated files (`todo/implementation-plan.md`, `COUNT.md`) are exempt.
 
 ### Prose and explanatory comments
 

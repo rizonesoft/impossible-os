@@ -42,6 +42,17 @@ if [ "${SKIP_PUSH_IDENTITY_CHECK:-}" != "1" ] && [ -f "$REPO_ROOT/scripts/check-
   done <<< "$STDIN_DATA"
 fi
 
+# ---- No outgoing commit adds a Unicode dash (TODO-08 section 48) -----------
+# pre-commit judges the staged change; a rebase that resolves a conflict
+# commits without it, so each outgoing commit is judged here too.
+# shellcheck source=.githooks/lib/dash-gate.sh
+. "$REPO_ROOT/.githooks/lib/dash-gate.sh"
+while read -r _dsl _dsloid _dsr _dsroid; do
+  [ -n "${_dsloid:-}" ] || continue
+  [ "$_dsloid" = "0000000000000000000000000000000000000000" ] && continue   # a ref deletion
+  dash_push_gate "$_dsroid" "$_dsloid" || exit 1
+done <<< "$STDIN_DATA"
+
 # ---- Branch policy: main + gh-pages only -------------------------------------
 #
 # This repo is main-only by decision (CI fires on main; long-lived branches were

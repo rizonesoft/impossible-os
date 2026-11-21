@@ -156,7 +156,9 @@ def _push_fixture(d):
         r = _run(cmd)
         assert r.returncode == 0, r.stderr
     (root / ".githooks/lib").mkdir(parents=True)
-    for rel in (".githooks/pre-push", ".githooks/lib/isolate-git-env.sh"):
+    (root / "scripts").mkdir()
+    for rel in (".githooks/pre-push", ".githooks/lib/isolate-git-env.sh", ".githooks/lib/dash-gate.sh",
+                "scripts/staged_dash_check.py"):
         (root / rel).write_text((REPO / rel).read_text())
     (root / ".githooks/pre-push").chmod(0o755)
     # The hook refuses when a sibling gate's script is missing; those gates are not under test.

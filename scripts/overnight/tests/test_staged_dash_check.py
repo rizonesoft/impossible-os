@@ -1,13 +1,19 @@
-"""The staged dash check refuses an added dash in any lane's commit and leaves old lines alone."""
+"""The dash check refuses an added dash in any lane's commit and leaves old dashes alone."""
 import io
 import os
+import shutil
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 CHECK = REPO / "scripts/staged_dash_check.py"
+GATE = REPO / ".githooks/lib/dash-gate.sh"
 DASH = chr(0x2014)
+_spec = importlib.util.spec_from_file_location("staged_dash_check", CHECK)
+m = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(m)
 
 
 def _clean_env(extra=None):
@@ -20,57 +26,62 @@ def _clean_env(extra=None):
 
 
 def _git(root, *a):
-    subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30, env=_clean_env())
+    return subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30,
+                          env=_clean_env()).stdout.decode().strip()
 
 
 def _repo(tmp_path):
     root = tmp_path / "r"
-    root.mkdir()
+    root.mkdir(parents=True)
     _git(root, "init", "-q")
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base")
+    _commit(root, "base", "--allow-empty")
     return root
 
 
-def _run(root, extra=None):
-    env = _clean_env(extra)
-    return subprocess.run([sys.executable, str(CHECK)], cwd=root, env=env, capture_output=True, text=True,
-                          timeout=60)
+def _commit(root, msg, *extra):
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", *extra, "-m", msg)  # a fresh repo: no hooks
+
+
+def _run(root, *args, extra=None):
+    return subprocess.run([sys.executable, str(CHECK), *args], cwd=root, env=_clean_env(extra),
+                          capture_output=True, text=True, timeout=60)
+
+
+def _stage(root, files):
+    for name, data in files.items():
+        p = root / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+    _git(root, "add", "-A")
 
 
 def test_an_added_dash_is_refused_and_named(tmp_path):
     root = _repo(tmp_path)
-    (root / "a.md").write_text("ok\nbad " + DASH + " line\n", encoding="utf-8")
-    _git(root, "add", "a.md")
+    _stage(root, {"a.md": "ok\nbad " + DASH + " line\n"})
     r = _run(root)
     assert r.returncode == 1 and "a.md:2" in r.stderr, r
 
 
 def test_an_old_dash_on_an_untouched_line_and_a_generated_file_pass(tmp_path):
     root = _repo(tmp_path)
-    (root / "old.md").write_text("old " + DASH + " line\n", encoding="utf-8")
-    _git(root, "add", "old.md")
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "-m", "old")
-    (root / "old.md").write_text("old " + DASH + " line\nnew line\n", encoding="utf-8")
-    (root / "todo").mkdir()
-    (root / "todo/implementation-plan.md").write_text("title " + DASH + " copied\n", encoding="utf-8")
-    _git(root, "add", "old.md", "todo/implementation-plan.md")
+    _stage(root, {"old.md": "old " + DASH + " line\n"})
+    _commit(root, "old")
+    _stage(root, {"old.md": "old " + DASH + " line\nnew line\n", "todo/implementation-plan.md": "t " + DASH + "\n"})
     r = _run(root)
     assert r.returncode == 0, r
 
 
 def test_no_display_setting_name_or_content_hides_an_added_dash(tmp_path):
-    """The class: whatever once fooled the patch parser (no b/ prefix, a quoted
-    non-ASCII name, added text that looks like a header, a line separator inside
-    a line, a symlink replaced by a file) still reports at the right line."""
+    """Whatever once fooled the patch parser (no b/ prefix, a quoted non-ASCII
+    name, added text that looks like a header, a form feed inside a line, a
+    symlink replaced by a file) still reports at the right line."""
     root = _repo(tmp_path)
     (root / "link").symlink_to("target")
     _git(root, "add", "link")
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "-m", "link")
+    _commit(root, "link")
     (root / "link").unlink()
-    (root / "link").write_text("x " + DASH + "\n", encoding="utf-8")
-    (root / "café.md").write_text("++ heading\nbad " + DASH + "\n", encoding="utf-8")
-    (root / "sep.md").write_bytes(("a \fb " + DASH + "\n").encode())
-    _git(root, "add", "-A")
+    _stage(root, {"link": "x " + DASH + "\n", "café.md": "++ heading\nbad " + DASH + "\n",
+                  "sep.md": "a \fb " + DASH + "\n"})
     _git(root, "config", "diff.noprefix", "true")
     r = _run(root)
     assert r.returncode == 1, r
@@ -78,62 +89,63 @@ def test_no_display_setting_name_or_content_hides_an_added_dash(tmp_path):
         assert want in r.stderr, (want, r.stderr)
 
 
-def _commit(root, msg):
-    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "-m", msg)
-
-
-def test_git_settings_renames_and_odd_names_never_change_what_counts_as_added(tmp_path):
-    """The class, second round: a rename, a widened hunk, a literal-pathspec
-    environment and a name git reads as an index stage neither refuse an
-    untouched dash nor hide an added one."""
+def test_git_settings_renames_and_odd_names_never_change_the_answer(tmp_path):
     root = _repo(tmp_path)
-    (root / "legacy.md").write_text("a\nold " + DASH + " line\nc\n", encoding="utf-8")
-    (root / "moved.md").write_text("keep " + DASH + " me\n", encoding="utf-8")
-    (root / "notes.md").write_text("clean\n", encoding="utf-8")
-    _git(root, "add", "-A")
+    _stage(root, {"legacy.md": "a\nold " + DASH + " line\nc\n", "moved.md": "keep " + DASH + " me\n",
+                  "notes.md": "clean\n"})
     _commit(root, "legacy")
-    # clean: edit both sides of an untouched dash with a wide inter-hunk context, rename a file
-    (root / "legacy.md").write_text("A\nold " + DASH + " line\nC\n", encoding="utf-8")
+    _stage(root, {"legacy.md": "A\nold " + DASH + " line\nC\n"})
     _git(root, "mv", "moved.md", "renamed.md")
     _git(root, "config", "diff.interHunkContext", "100")
-    _git(root, "add", "-A")
-    env_extra = {"GIT_LITERAL_PATHSPECS": "1"}
-    r = _run(root, env_extra)
-    assert r.returncode == 0, r
-    # refused: a dash added in a renamed file and in a file whose name looks like a stage
+    env = {"GIT_LITERAL_PATHSPECS": "1"}
+    assert _run(root, extra=env).returncode == 0
     _commit(root, "clean")
     _git(root, "mv", "renamed.md", "again.md")
-    (root / "again.md").write_text("keep " + DASH + " me\nnew " + DASH + "\n", encoding="utf-8")
-    (root / "0:notes.md").write_text("x\nbad " + DASH + "\n", encoding="utf-8")
-    _git(root, "add", "-A")
-    r = _run(root, env_extra)
+    _stage(root, {"again.md": "keep " + DASH + " me\nnew " + DASH + "\n", "0:notes.md": "x\nbad " + DASH + "\n"})
+    r = _run(root, extra=env)
     assert r.returncode == 1 and "again.md:2" in r.stderr and "0:notes.md:2" in r.stderr, r
     assert "again.md:1" not in r.stderr, r
 
 
-def test_moved_lines_and_binary_blobs_are_not_additions(tmp_path):
-    """A dash line moved to another file or out of a deleted file is not new; a
-    second copy is; a PNG whose compressed bytes match the dash is not text."""
-    import shutil
+def test_reshaping_a_file_never_changes_the_decision(tmp_path):
+    """The class behind rounds 4 to 7: the decision is one dash count per file,
+    so no reshaping of its lines can refuse an old dash or hide a new one."""
+    lines = ["one " + DASH + " a", "two", "three " + DASH + " b", "four"]
+    shapes = {
+        "reordered": lambda ls: "\n".join(reversed(ls)) + "\n",
+        "utf8 bom": lambda ls: "﻿" + "\n".join(ls) + "\n",
+        "crlf": lambda ls: "\r\n".join(ls) + "\r\n",
+        "moved within": lambda ls: "\n".join(ls[1:] + ls[:1]) + "\n",
+    }
+    for name, shape in shapes.items():
+        root = _repo(tmp_path / name.replace(" ", "-"))
+        _stage(root, {"f.md": "\n".join(lines) + "\n", "s.ps1": ("x " + DASH + "\r\n").encode("utf-8")})
+        _commit(root, "base")
+        _stage(root, {"f.md": shape(lines), "s.ps1": ("x " + DASH + "\r\n").encode("utf-16")})
+        assert _run(root).returncode == 0, name
+        _stage(root, {"f.md": shape(lines + ["five " + DASH])})
+        r = _run(root)
+        assert r.returncode == 1 and "f.md gains 1" in r.stderr, (name, r)
+    root = _repo(tmp_path / "rename")
+    body = "".join(f"line {i}\n" for i in range(30))
+    _stage(root, {"a.md": body + "legacy " + DASH + "\n"})
+    _commit(root, "base")
+    _git(root, "mv", "a.md", "b.md")
+    _stage(root, {"b.md": "edited\n" + body + "legacy " + DASH + "\n"})
+    assert _run(root).returncode == 0
+
+
+def test_a_line_moved_into_another_file_is_written_there_and_binary_is_not_text(tmp_path):
     root = _repo(tmp_path)
     para = "para " + DASH + " moved\n"
-    (root / "a.md").write_text("one\n" + para, encoding="utf-8")
-    (root / "b.md").write_text("two\n", encoding="utf-8")
-    (root / "gone.md").write_text("gone " + DASH + " line\n", encoding="utf-8")
-    _git(root, "add", "-A")
+    _stage(root, {"a.md": "one\n" + para, "b.md": "two\n", "gone.md": "gone " + DASH + " line\n"})
     _commit(root, "base")
-    (root / "a.md").write_text("one\n", encoding="utf-8")
-    (root / "b.md").write_text("two\n" + para, encoding="utf-8")
     (root / "gone.md").unlink()
-    (root / "c.md").write_text("other\ngone " + DASH + " line\n", encoding="utf-8")
     shutil.copy(REPO / "resources/icons/color/64/settings.png", root / "icon.png")
-    _git(root, "add", "-A")
+    _stage(root, {"a.md": "one\n", "b.md": "two\n" + para})
     r = _run(root)
-    assert r.returncode == 0, r
-    (root / "b.md").write_text("two\n" + para + para, encoding="utf-8")
-    _git(root, "add", "-A")
-    r = _run(root)
-    assert r.returncode == 1 and "b.md:3" in r.stderr and "icon.png" not in r.stderr, r
+    assert r.returncode == 1 and "b.md:2" in r.stderr, r
+    assert "icon.png" not in r.stderr and "a.md" not in r.stderr and "gone.md" not in r.stderr, r
 
 
 def test_the_fixture_never_writes_the_callers_index(tmp_path, monkeypatch):
@@ -141,39 +153,68 @@ def test_the_fixture_never_writes_the_callers_index(tmp_path, monkeypatch):
     outer.write_bytes(b"caller state")
     monkeypatch.setenv("GIT_INDEX_FILE", str(outer))
     root = _repo(tmp_path)
-    (root / "x.md").write_text("x\n", encoding="utf-8")
-    _git(root, "add", "x.md")
+    _stage(root, {"x.md": "x\n"})
     assert _run(root).returncode == 0
     assert outer.read_bytes() == b"caller state"
 
 
-def test_matching_is_per_file_first_and_generated_files_lend_nothing(tmp_path):
+def test_a_copy_is_named_and_the_untouched_original_is_not(tmp_path):
     root = _repo(tmp_path)
     legacy = "legacy " + DASH + " row\n"
-    (root / "z.md").write_text(legacy + "tail\n", encoding="utf-8")
-    (root / "COUNT.md").write_text("# Count " + DASH + " heading\n1\n", encoding="utf-8")
-    _git(root, "add", "-A")
+    _stage(root, {"z.md": legacy + "tail\n", "COUNT.md": "# Count " + DASH + " heading\n1\n"})
     _commit(root, "base")
-    # a copy of z.md's untouched line: the copy is named, never the original
-    (root / "a.md").write_text(legacy, encoding="utf-8")
-    (root / "z.md").write_text(legacy + "tail edited\n", encoding="utf-8")
-    # a retained generated heading copied elsewhere is new
-    (root / "COUNT.md").write_text("# Count " + DASH + " heading\n2\n", encoding="utf-8")
-    (root / "notes.md").write_text("# Count " + DASH + " heading\n", encoding="utf-8")
-    _git(root, "add", "-A")
+    _stage(root, {"a.md": legacy, "z.md": legacy + "tail edited\n", "COUNT.md": "# Count " + DASH + " heading\n2\n",
+                  "notes.md": "# Count " + DASH + " heading\n"})
     r = _run(root)
     assert r.returncode == 1 and "a.md:1" in r.stderr and "notes.md:1" in r.stderr, r
     assert "z.md" not in r.stderr and "COUNT.md" not in r.stderr, r
 
 
-def test_a_short_blob_read_is_an_error_not_clean():
-    sys.path.insert(0, str(CHECK.parent))
-    import staged_dash_check as m
+def test_a_copy_inserted_above_its_original_names_both_copies(tmp_path):
+    root = _repo(tmp_path)
+    legacy = "legacy " + DASH + " row\n"
+    _stage(root, {"f.md": "a\nb\n" + legacy})
+    _commit(root, "base")
+    _stage(root, {"f.md": legacy + "a\nb\n" + legacy})
+    r = _run(root)
+    assert r.returncode == 1 and "one of f.md:1, f.md:4" in r.stderr, r
+
+
+def test_a_rename_out_of_a_generated_file_and_a_utf16_script_are_read(tmp_path):
+    root = _repo(tmp_path)
+    body = "".join(f"count line {i}\n" for i in range(40))
+    _stage(root, {"COUNT.md": body, "old.ps1": ("Write-Output 'legacy " + DASH + "'\r\n").encode("utf-16")})
+    _commit(root, "base")
+    _git(root, "mv", "COUNT.md", "snapshot.md")
+    _stage(root, {"snapshot.md": body + "added " + DASH + " sentence\n",
+                  "old.ps1": ("Write-Output 'legacy " + DASH + "'\r\nWrite-Output 'new " + DASH + "'\r\n").encode("utf-16")})
+    r = _run(root)
+    assert r.returncode == 1 and "snapshot.md:41" in r.stderr and "old.ps1:2" in r.stderr, r
+    assert "old.ps1:1" not in r.stderr, r
+
+
+def test_no_old_blob_is_read_when_the_new_blob_holds_no_dash():
+    asked = []
+
+    def text_of(oid):
+        asked.append(oid)
+        return b"clean\n" if oid == "b" * 40 else b"old " + m.DASHES[1] + b"\n"
+
+    assert m.refused([("a" * 40, "b" * 40, "clean.md")], text_of) == []
+    assert asked == ["b" * 40], asked
+
+
+def test_reads_that_fail_are_errors_not_clean(monkeypatch):
+    try:
+        m.as_text(("ok " + DASH + "\n").encode("utf-16") + b"\n")
+    except ValueError as exc:
+        assert "UTF-16" in str(exc)
+    else:
+        raise AssertionError("a truncated UTF-16 file read as clean")
 
     class Short:
-        def __init__(self):
-            self.stdin = io.BytesIO()
-            self.stdout = io.BytesIO(b"abc blob 100\nclean")
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(b"abc blob 100\nclean")
 
     reader = m.BlobReader.__new__(m.BlobReader)
     reader.proc, reader.cache = Short(), {}
@@ -184,113 +225,44 @@ def test_a_short_blob_read_is_an_error_not_clean():
     else:
         raise AssertionError("a truncated blob was accepted")
 
+    raw = b":100644 100644 " + b"1" * 40 + b" " + b"2" * 40 + b" M\0f.md\0"
+    monkeypatch.setattr(m, "_git", lambda *a: raw)
 
-def test_a_rename_out_of_a_generated_file_and_a_utf16_script_are_read(tmp_path):
-    root = _repo(tmp_path)
-    body = "".join(f"count line {i}\n" for i in range(40))
-    (root / "COUNT.md").write_text(body, encoding="utf-8")
-    (root / "old.ps1").write_bytes(("Write-Output 'legacy " + DASH + "'\r\n").encode("utf-16"))
-    _git(root, "add", "-A")
-    _commit(root, "base")
-    _git(root, "mv", "COUNT.md", "snapshot.md")
-    (root / "snapshot.md").write_text(body + "added " + DASH + " sentence\n", encoding="utf-8")
-    (root / "old.ps1").write_bytes(("Write-Output 'legacy " + DASH + "'\r\nWrite-Output 'new "
-                                    + DASH + "'\r\n").encode("utf-16"))
-    _git(root, "add", "-A")
-    r = _run(root)
-    assert r.returncode == 1 and "snapshot.md:41" in r.stderr and "old.ps1:2" in r.stderr, r
-    assert "old.ps1:1" not in r.stderr, r
-
-
-def test_dash_lines_finds_each_line_once_on_a_long_dashed_line():
-    sys.path.insert(0, str(CHECK.parent))
-    import staged_dash_check as m
-    en, em = chr(0x2013), chr(0x2014)
-    long_line = ("x" + en + "y" + em) * 2000
-    blob = ("first\n" + long_line + "\nmid\nlast " + em + "\n").encode()
-    assert [n for n, _ln in m.dash_lines(blob)] == [2, 4]
-
-
-def test_a_nonzero_reader_exit_fails_the_check(monkeypatch):
-    sys.path.insert(0, str(CHECK.parent))
-    import staged_dash_check as m
-    monkeypatch.setattr(m.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
-        a, 0, stdout=b":100644 100644 " + b"1" * 40 + b" " + b"2" * 40 + b" M\0f.md\0"))
-
-    class Reader:
-        def dash_lines(self, oid):
-            return []
+    class Exits:
+        def text(self, oid):
+            return b""
 
         def close(self):
             return 128
 
-    monkeypatch.setattr(m, "BlobReader", Reader)
-    assert m.main() == 2
+    monkeypatch.setattr(m, "BlobReader", Exits)
+    assert m.main([]) == 2
 
 
-def test_a_copy_inserted_above_its_original_names_both_candidates(tmp_path):
+def test_the_range_mode_checks_every_outgoing_commit(tmp_path):
+    """A rebase that resolves a conflict commits without pre-commit; pre-push
+    checks each outgoing commit against its parent."""
     root = _repo(tmp_path)
-    legacy = "legacy " + DASH + " row\n"
-    (root / "f.md").write_text("a\nb\n" + legacy, encoding="utf-8")
-    _git(root, "add", "-A")
-    _commit(root, "base")
-    (root / "f.md").write_text(legacy + "a\nb\n" + legacy, encoding="utf-8")
-    _git(root, "add", "-A")
-    r = _run(root)
-    assert r.returncode == 1 and "one of f.md:1, f.md:4" in r.stderr, r
+    _stage(root, {"legacy.md": "old " + DASH + "\n"})
+    _commit(root, "legacy")
+    base = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"legacy.md": "old " + DASH + "\nmore\n"})
+    _commit(root, "clean edit")
+    assert _run(root, "--range", base, "HEAD").returncode == 0
+    _stage(root, {"doc.md": "resolved " + DASH + " conflict\n"})
+    _commit(root, "resolution")
+    bad = _git(root, "rev-parse", "--short=12", "HEAD")
+    r = _run(root, "--range", base, "HEAD")
+    assert r.returncode == 1 and f"commit {bad}: doc.md gains 1" in r.stderr and "doc.md:1" in r.stderr, r
+    assert "legacy.md" not in r.stderr, r
 
 
-def test_no_old_blob_is_read_when_no_new_blob_holds_a_dash():
-    sys.path.insert(0, str(CHECK.parent))
-    import staged_dash_check as m
-    asked = []
-
-    def lines_of(oid):
-        asked.append(oid)
-        return [(1, b"old " + m.DASHES[1])] if oid.startswith("d") else []
-
-    changes = [("d" * 40, m.NULL_OID, "gone.md"), ("a" * 40, "b" * 40, "clean.md")]
-    assert m.added_dash_lines(changes, lines_of) == []
-    assert "d" * 40 not in asked and "a" * 40 not in asked, asked
-
-
-def test_an_undecodable_utf16_file_is_a_read_error():
-    sys.path.insert(0, str(CHECK.parent))
-    import staged_dash_check as m
-    blob = ("ok " + chr(0x2014) + "\n").encode("utf-16") + b"\n"
-    try:
-        m.dash_lines(blob)
-    except ValueError as exc:
-        assert "UTF-16" in str(exc)
-    else:
-        raise AssertionError("a truncated UTF-16 file read as clean")
-
-
-def test_a_move_plus_a_copy_names_both_destinations_in_either_order(tmp_path):
-    for first, second in (("a.md", "b.md"), ("b.md", "a.md")):
-        (tmp_path / first[0]).mkdir()
-        root = _repo(tmp_path / first[0])
-        legacy = "legacy " + DASH + " row\n"
-        (root / "src.md").write_text("keep\n" + legacy, encoding="utf-8")
-        (root / "a.md").write_text("a\n", encoding="utf-8")
-        (root / "b.md").write_text("b\nb\n", encoding="utf-8")
-        _git(root, "add", "-A")
-        _commit(root, "base")
-        (root / "src.md").write_text("keep\n", encoding="utf-8")
-        (root / first).write_text((root / first).read_text() + legacy, encoding="utf-8")
-        (root / second).write_text((root / second).read_text() + legacy, encoding="utf-8")
-        _git(root, "add", "-A")
-        r = _run(root)
-        assert r.returncode == 1 and "1 added line(s)" in r.stderr, r
-        assert "a.md:2" in r.stderr and "b.md:3" in r.stderr, r
-
-
-def test_the_hook_prints_its_guidance_under_errexit(tmp_path):
-    gate = REPO / ".githooks/lib/dash-gate.sh"
+def test_the_hook_gates_print_their_guidance_under_errexit(tmp_path):
     for rc, expect in ((1, "SKIP_DASH_CHECK=1"), (2, "could not read")):
         fake = tmp_path / str(rc)
         (fake / "scripts").mkdir(parents=True)
         (fake / "scripts/staged_dash_check.py").write_text(f"import sys\nsys.exit({rc})\n", encoding="utf-8")
-        r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{gate}"; dash_gate || exit 7'],
-                           capture_output=True, text=True, timeout=30, env=_clean_env())
-        assert r.returncode == 7 and expect in r.stdout, r
+        for call in ("dash_gate", "dash_push_gate 1111 2222"):
+            r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{GATE}"; {call} || exit 7'],
+                               capture_output=True, text=True, timeout=30, env=_clean_env())
+            assert r.returncode == 7 and expect in r.stdout, (call, r)

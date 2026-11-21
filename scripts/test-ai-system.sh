@@ -24,6 +24,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 QUIET=0
+TRAILERS_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
@@ -33,6 +34,8 @@ test-ai-system.sh -- AI workflow regression pack
 Usage:
   bash scripts/test-ai-system.sh              Run the full regression pack
   bash scripts/test-ai-system.sh --quiet      Summary line only
+  bash scripts/test-ai-system.sh --ai-trailers  Print the forbidden trailers of
+                                              the commit message on stdin
   bash scripts/test-ai-system.sh --help
 
 What this tests (12 check groups; owned by TODO-02 sections 1-8):
@@ -74,12 +77,26 @@ EOF
             exit 0
             ;;
         --quiet) QUIET=1 ;;
+        --ai-trailers) TRAILERS_ONLY=1 ;;
         *)
             echo "Unknown option: $arg" >&2
             exit 1
             ;;
     esac
 done
+
+# The forbidden-trailer test, shared by check_zero_trailer_policy and the
+# --ai-trailers mode its regression drives. `git interpret-trailers --parse`
+# is git's own definition of a trailer; git reads trailer keys without regard
+# to case, so the match ignores case too (a lowercase co-authored-by once
+# passed this gate).
+forbidden_trailers() {
+    git interpret-trailers --parse 2>/dev/null | grep -iE '^(co-authored-by|assisted-by|ai-author):' || true
+}
+if [ "$TRAILERS_ONLY" = 1 ]; then
+    forbidden_trailers
+    exit 0
+fi
 
 # ---- Colors ----
 if [ "$QUIET" = "0" ] && [ -t 1 ]; then
@@ -334,9 +351,7 @@ check_zero_trailer_policy() {
     while IFS= read -r commit; do
         [ -z "$commit" ] && continue
         local trailers
-        trailers=$(git log -1 --format='%B' "$commit" 2>/dev/null \
-                   | git interpret-trailers --parse 2>/dev/null \
-                   | grep -E '^(Co-[Aa]uthored-[Bb]y|Assisted-[Bb]y|AI-Author):' || true)
+        trailers=$(git log -1 --format='%B' "$commit" 2>/dev/null | forbidden_trailers)
         if [ -n "$trailers" ]; then
             trailer_hits="$trailer_hits ${commit:0:8}"
         fi
