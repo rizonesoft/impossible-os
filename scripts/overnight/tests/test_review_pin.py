@@ -443,6 +443,32 @@ def test_a_first_line_larger_than_a_pipe_is_attributed(tmp_path):
     assert e["todo"] == "todo/00-infrastructure/TODO-01-developer-tooling-stack.md" and e["section"] == 99
 
 
+def test_refusal_a_marked_review_in_a_directory_it_cannot_write_is_not_dispatched(tmp_path):
+    import os
+    reviews = tmp_path / "ro-reviews"
+    reviews.mkdir()
+    os.chmod(reviews, 0o555)
+    try:
+        if os.access(reviews, os.W_OK):
+            pytest.skip("running as a user who can write a read-only directory")
+        done, prompt = _dispatch(tmp_path, "adversarial", "x", reviews_dir=reviews)
+        assert done.returncode == 2 and "no writable reviews directory" in done.stderr, done.stderr
+        assert prompt == "", "the reviewer must not have started"
+    finally:
+        os.chmod(reviews, 0o755)
+
+
+def test_the_first_line_is_found_in_one_pass_after_a_blank_prefix():
+    import subprocess
+    import time
+    lib = REPO / "scripts/lib/review-prompt.sh"
+    prompt = "\n" * 4000 + "  [review-kind: round] todo/a.md section 3\n" + "x" * 90000
+    t = time.time()
+    r = subprocess.run(["bash", "-c", f". {lib}; review_prompt_first_line \"$1\"", "_", prompt],
+                       capture_output=True, text=True, timeout=30)
+    assert r.stdout == "  [review-kind: round] todo/a.md section 3" and time.time() - t < 2, r.stdout[:80]
+
+
 def test_refusal_a_marker_only_the_recorder_would_read_is_refused(tmp_path):
     """Review finding: ` [review-kind: completion]` and `[review_kind: completion]` skipped the pin and lens
     checks here and were still recorded as a completion pass."""
@@ -568,8 +594,10 @@ def test_the_broker_runs_a_pass_through_the_checking_wrapper(tmp_path):
     assert done.returncode == 0, done.stderr
     log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
     deadline = time.time() + 60
-    while time.time() < deadline and not (log.exists() and "Turn completed (rc=" in log.read_text()):
+    done_file = pathlib.Path(str(log) + ".done")
+    while time.time() < deadline and not done_file.exists():   # what the waiter ends on
         time.sleep(0.2)
+    assert done_file.read_text().strip() == "0", log.read_text()[-400:]
     assert "Turn completed (rc=0)" in log.read_text(), log.read_text()[-400:]
     assert "[codex]" not in log.read_text(), "the real reviewer must not have been reached"
     assert "- record: " in (tmp_path / "prompt.txt").read_text(), "the lenses were appended"

@@ -71,6 +71,19 @@ def test_direct_wrapper_carries_the_same_rule():
         "codex-dispatch.sh no longer registers its leg in the shared manifest"
 
 
+def test_the_recorder_reads_the_section_from_the_first_line_only():
+    """A whole-file review whose inventory numbers sections is no section's review."""
+    import sys
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import codex_review_completed as crc
+    head = "[review-kind: adversarial] todo/00-x/TODO-01-x.md"
+    body = "\nsection 5 depends on section 3\n"
+    assert crc._detect_todo_path(head + body, REPO)[1] == ""
+    assert crc._detect_todo_path(head + " section 7" + body, REPO)[1] == SIGN + "7"
+    assert crc._detect_todo_path(head + " s4 sleep" + body, REPO)[1] == SIGN + "4"
+    assert crc._detect_todo_path(head + " (see section 9)" + body, REPO)[1] == SIGN + "9"
+
+
 if __name__ == "__main__":
     test_section_of_cases()
     test_section_sign_pattern_is_a_real_byte_not_an_escape()

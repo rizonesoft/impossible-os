@@ -647,6 +647,10 @@ _TODO_PATH_RE = re.compile(r"(?<![\w/-])todo/[\w./-]+TODO-\d[\w./-]*\.md")
 # whitespace, hyphen, underscore, or colon.
 _SECTION_RE = re.compile(r"(?:§\s*|section[\s\-_:]+)(\d+)", re.IGNORECASE)
 _SECTION_AFTER_PATH_RE = re.compile(r"\.md\s+s(\d+)\b")
+# The first-line rule, as scripts/lib/review-prompt.sh applies it after the path.
+_SECTION_LEAD_RE = re.compile(r"\s*(?:§\s*|section[\s\-_:]*)(\d+)", re.IGNORECASE)
+_SECTION_S_LEAD_RE = re.compile(r"\s*s(\d+)(?:[^0-9A-Za-z]|$)")
+_SECTION_ANY_RE = re.compile(r"(?:§\s*|section[\s\-_:]*)(\d+)", re.IGNORECASE)
 
 # Self-summary preambles that bias the reviewer toward agreement
 # (CONSENSAGENT ACL-2025). Detected on the first ~10 non-empty lines
@@ -786,11 +790,15 @@ def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
             f"that does not exist on disk. Recording anyway; the gate "
             f"will not match a non-existent path.\n"
         )
-    section = ""
-    # `s3` straight after the path counts too, matching the broker's _broker_section_of.
-    sm = _SECTION_RE.search(prompt) or _SECTION_AFTER_PATH_RE.search(prompt)
-    if sm:
-        section = f"§{sm.group(1)}"
+    # The section is read from the first line, after its TODO path, with the
+    # precedence of scripts/lib/review-prompt.sh: a whole-file review followed
+    # by an inventory that numbers sections ("section 5 depends on section 3")
+    # is no section's review.
+    first = next((ln for ln in prompt.splitlines() if ln.strip()), "")
+    rest = first.split(".md", 1)[1] if ".md" in first else ""
+    sm = (_SECTION_LEAD_RE.match(rest) or _SECTION_S_LEAD_RE.match(rest)
+          or _SECTION_ANY_RE.search(rest))
+    section = f"§{sm.group(1)}" if sm else ""
     return (chosen, section)
 
 

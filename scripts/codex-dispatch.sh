@@ -225,7 +225,12 @@ The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the rep
 $PIN_LENSES"
 fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
-if mkdir -p "$REVIEWS_DIR" 2>/dev/null; then
+# The transcript itself is created before the reviewer starts: an existing
+# directory this process cannot write would otherwise be found only by tee,
+# with the review already running and nowhere to keep it.
+if mkdir -p "$REVIEWS_DIR" 2>/dev/null \
+        && _probe="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out" \
+        && : 2>/dev/null > "$_probe"; then
     # The process id is in the name: two passes of one kind started in the same
     # second must not share a transcript, or one is checked against the other's verdict.
     LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out"

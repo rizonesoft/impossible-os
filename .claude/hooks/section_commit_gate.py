@@ -2516,8 +2516,17 @@ def _spent_passes(root: Path, todo: str, section: str) -> int:
 
 
 def _receipt_complete(receipt: dict) -> bool:
-    return receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True \
-        and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7
+    if not (receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True
+            and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7):
+        return False
+    # A dispatcher that publishes <log>.done writes it after this receipt: the
+    # pass is credited once that status is published and agrees (0).
+    if receipt.get("done_file") is True:
+        try:
+            return Path(str(receipt.get("logFile") or "") + ".done").read_text().strip() == "0"
+        except OSError:
+            return False
+    return True
 
 
 def _pin_issue(root: Path) -> str:

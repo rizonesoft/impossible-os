@@ -27,6 +27,8 @@
 # Arm / disarm / launch / watchdog
 .claude/skills/overnight-sequencer/
 scripts/overnight/
+# The prompt parser the broker shares with the direct dispatchers (2026-11-21).
+scripts/lib/review-prompt.sh
 
 # The file that WIRES every hook below. Added 2026-07-28 after verifying it was
 # in NEITHER manifest: `printf '.claude/settings.json' | control-plane-match.sh`

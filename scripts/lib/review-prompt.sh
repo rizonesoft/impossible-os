@@ -6,18 +6,17 @@
 # closes the pipe, and under pipefail the writer's SIGPIPE ends the dispatcher
 # once the prompt outgrows the pipe buffer (2026-11-21, a whole-file inventory).
 
-# The first line holding a non-space character, or nothing.
+# The first line holding a non-space character (its leading spaces kept), or
+# nothing. One pass: the leading whitespace is cut once and the line is taken
+# with a regex, since a per-line loop re-copies the rest of the prompt for each
+# blank line and `${s%%<newline>*}` is quadratic on a long line.
 review_prompt_first_line() {
-    local rest="$1" line
-    while :; do
-        line="${rest%%$'\n'*}"
-        if [[ "$line" =~ [^[:space:]] ]]; then
-            printf '%s' "$line"
-            return 0
-        fi
-        [[ "$rest" == *$'\n'* ]] || return 0
-        rest="${rest#*$'\n'}"
-    done
+    local s="$1" lead nl=$'\n'
+    lead="${s%%[![:space:]]*}"
+    [[ "$lead" == "$s" ]] && return 0
+    s="${lead##*$'\n'}${s:${#lead}}"
+    [[ "$s" =~ ^([^$nl]*) ]] && printf '%s' "${BASH_REMATCH[1]}"
+    return 0
 }
 
 # The first todo/...md path on the line, or nothing.
