@@ -85,14 +85,6 @@ while IFS=' ' read -r _lref _lsha rref _rsha; do
   esac
 done <<< "$PUSH_RECORDS"
 
-# ---- No outgoing commit adds a Unicode dash (TODO-08 section 48) -----------
-# pre-commit judges the staged change; a rebase that resolves a conflict
-# commits without it, so each outgoing commit is judged here too. It runs
-# after the branch policy, which refuses on the ref name alone.
-# shellcheck source=.githooks/lib/dash-gate.sh
-. "$REPO_ROOT/.githooks/lib/dash-gate.sh"
-dash_push_gate "${2:-}" <<< "$STDIN_DATA" || exit 1
-
 # A section built while the reviewer was down owes its review, and nothing is
 # pushed until it has had it: an outage is a delay, never an approval. Owner:
 # todo/00-infrastructure/TODO-08-automation-hardening.md section 45. A record
@@ -109,6 +101,15 @@ if [ -f "$OWED_TOOL" ]; then
     exit 1
   fi
 fi
+
+# ---- No outgoing commit adds a Unicode dash (TODO-08 section 48) -----------
+# pre-commit judges the staged change; a rebase that resolves a conflict
+# commits without it, so each outgoing commit is judged here too. It runs
+# after the branch policy and the review debt, which refuse locally, because
+# it asks the destination (git ls-remote) what it already holds.
+# shellcheck source=.githooks/lib/dash-gate.sh
+. "$REPO_ROOT/.githooks/lib/dash-gate.sh"
+dash_push_gate "${2:-}" <<< "$STDIN_DATA" || exit 1
 
 # Files changed across every non-delete ref update in this push.
 pushed_files() {

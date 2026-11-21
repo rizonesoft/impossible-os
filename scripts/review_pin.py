@@ -16,7 +16,7 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap, and no_progress_cap when the pin names one
     python3 scripts/review_pin.py --repair-base TODO N --manifest FILE  # a reconciliation's last reviewed candidate
-    python3 scripts/review_pin.py --repair-section-base TODO N --manifest FILE  # the section base that pass reviewed
+    python3 scripts/review_pin.py --repair-range TODO N --manifest FILE  # that pass's section base and head, one read
     python3 scripts/review_pin.py --owed-base TODO N                   # an owed section's recorded base, else empty
     --raw                                          # with --highest: the transcript is the review itself
 """
@@ -462,11 +462,12 @@ def repair_base(manifest, todo, section, field="head"):
     if found.get("worktree_sha256") != CLEAN_WORKTREE:
         raise Refused(f"the newest checked {found['kind']} of {todo} section {section} read uncommitted changes at "
                       f"{found['head'][:10]}; dispatch the completion again on a committed candidate")
-    if field == "base":
-        # The section range that pass reviewed: a reconciliation reviews the same whole section.
+    if field == "range":
+        # The section range that pass reviewed and where it ended, from the one receipt: a reconciliation
+        # reviews the same whole section, starting at the repair since that pass.
         _need(isinstance(found.get("base"), str) and found["base"],
               f"the newest checked {found['kind']} of {todo} section {section} records no section base")
-        return found["base"]
+        return f"{found['base']} {found['head']}"
     return found["head"]
 
 
@@ -492,7 +493,7 @@ def main(argv=None):
     group.add_argument("--section", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--owed-base", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--repair-base", nargs=2, metavar=("TODO", "N"))
-    group.add_argument("--repair-section-base", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--repair-range", nargs=2, metavar=("TODO", "N"))
     parser.add_argument("--manifest")
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--root", default=str(REPO))
@@ -517,9 +518,9 @@ def main(argv=None):
             _need(args.manifest, "--repair-base needs --manifest FILE")
             print(repair_base(args.manifest, args.repair_base[0], args.repair_base[1]))
             return 0
-        if args.repair_section_base:
-            _need(args.manifest, "--repair-section-base needs --manifest FILE")
-            print(repair_base(args.manifest, *args.repair_section_base, field="base"))
+        if args.repair_range:
+            _need(args.manifest, "--repair-range needs --manifest FILE")
+            print(repair_base(args.manifest, *args.repair_range, field="range"))
             return 0
         if args.section:
             status, base = section_status(args.root, args.section[0], args.section[1])

@@ -382,6 +382,29 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
 
 
+
+def test_a_reconciliation_after_a_first_commit_takes_the_empty_tree_base(tmp_path):
+    import subprocess
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    lenses = ["plan-delivery", "record", "repair-adversarial", "repair-integration", "adversarial", "integration",
+              "concurrency", "bare-metal", "design"]                    # from the empty tree every path changed
+    full = "\n".join(f"LENS {n}: clean" for n in lenses) + "\nHIGHEST: none\n"
+    last = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True, cwd=str(REPO),
+                          check=True).stdout.strip()
+    empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base=empty) + "\n")
+    done, prompt = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
+    assert done.returncode == 0, done.stderr
+    assert f"then review the whole section: git diff {empty} HEAD" in prompt
+
+
+def test_the_repair_range_comes_from_one_receipt(tmp_path):
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(_receipt("completion", "b" * 40, base="a" * 40) + "\n")
+    assert rp.repair_base(manifest, todo, 99, field="range") == f"{'a' * 40} {'b' * 40}"
+
 def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, capsys):
     sys.path.insert(0, str(REPO / ".claude/hooks"))
     import review_round_guard as guard

@@ -178,15 +178,12 @@ Impossible OS is a Claude Code-orchestrated project (see [docs/infrastructure/ai
 
 ---
 
-## 🔄 Pull Request Process
+## 🔄 How a Change Lands
 
-1. **Fork** the repository
-2. **Branch** from `main` using the naming convention below:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. **Implement** your changes following the code style above
-4. **Test** before submitting:
+Changes land on `main` from the lanes the operator starts and from the attended repair route ([CLAUDE.md "Two engines, one gate set"](CLAUDE.md#two-engines-one-gate-set)), committed straight on `main` with no feature branch and no pull request ([CLAUDE.md "Branching"](CLAUDE.md#branching----develop-straight-on-main)). External pull requests are not taken while that holds; the stance-change condition above says what changes when it does.
+
+1. **Implement** the change following the code style above, in the lane's own tree (or `../impossible-os-repair` beside a live run).
+2. **Test** before committing:
    ```bash
    bash scripts/build.sh             # Must show "=== BUILD OK ===" in build/build.log
    bash scripts/test.sh              # Run all kernel unit tests (headless QEMU)
@@ -194,19 +191,10 @@ Impossible OS is a Claude Code-orchestrated project (see [docs/infrastructure/ai
    ```
    See [Wrapper Contract](docs/infrastructure/development-tooling.md#wrapper-contract)
    for the full command reference including `--help`, `SUITE=<cat>`, and `QUIET=1` modes.
-5. **Commit** with a conventional commit message
-6. **Push** and open a Pull Request against `main`
+3. **Commit** on `main` with a `"scope: description"` message; the `.githooks/` gates run on every commit.
+4. **Push** to `main` once the section is reviewed and stamped; pre-push and CI gate it.
 
-### Branch Naming Convention
-
-| Prefix | Usage | Example |
-|--------|-------|---------|
-| `feature/*` | New features or capabilities | `feature/tcp-stack` |
-| `fix/*` | Bug fixes | `fix/pmm-double-free` |
-| `docs/*` | Documentation changes | `docs/contributing-guide` |
-| `refactor/*` | Code refactoring (no behavior change) | `refactor/vfs-cleanup` |
-
-### PR Checklist
+### Commit Checklist
 
 - [ ] Code compiles without warnings (`-Wall -Wextra -Werror`)
 - [ ] Tested in QEMU -- boots and runs correctly

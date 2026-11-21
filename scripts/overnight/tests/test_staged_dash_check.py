@@ -754,3 +754,85 @@ def test_the_dash_gate_runs_before_any_slow_pre_commit_check():
     hook = (REPO / ".githooks/pre-commit").read_text()
     gate = hook.index("dash_commit_gate || exit 1")
     assert hook.index("git diff --cached --quiet --exit-code") < gate < hook.index('echo "Pre-commit: running scripts/lint.sh')
+
+
+def test_a_range_between_two_commits_is_that_range_whatever_a_remote_tracks(tmp_path):
+    root = _repo(tmp_path)
+    base = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")      # already published
+    r = _run(root, "--range", base, "HEAD")
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+    assert _run(root, "--range", m.NULL_OID, "HEAD").returncode == 0  # from nothing: tracked commits stand in
+
+
+def test_a_local_replacement_never_stands_in_for_the_object_pushed(tmp_path):
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    dashed = _git(root, "rev-parse", "HEAD:doc.md")
+    clean = _sub(["git", "hash-object", "-w", "--stdin"], cwd=root, input=b"clean\n").stdout.decode().strip()
+    _git(root, "replace", dashed, clean)
+    r = _run(root, "--range", _git(root, "rev-parse", "HEAD~1"), "HEAD")
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+
+
+def test_a_failed_destination_lookup_never_prints_its_url(tmp_path):
+    root = _repo(tmp_path)
+    tip = _git(root, "rev-parse", "HEAD")
+    url = "https://user:SECRET-TOKEN@127.0.0.1:9/x.git"                 # port 9: refused at once
+    r = _push_check(root, url, f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 2 and "SECRET-TOKEN" not in r.stdout + r.stderr, r
+    assert "could not be listed" in r.stderr, r
+
+
+def test_a_stalled_transport_is_stopped_with_its_whole_group(tmp_path, monkeypatch):
+    """A transport helper is git's child; on timeout the group goes, and the message names no URL."""
+    root = _repo(tmp_path)
+    pidfile = tmp_path / "helper.pid"
+    helper = tmp_path / "helper.sh"
+    helper.write_text(f"#!/bin/sh\necho $$ > '{pidfile}'\nexec sleep 30\n")
+    helper.chmod(0o755)
+    _production_git_in(root, monkeypatch)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.ext.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    monkeypatch.setattr(m, "TIMEOUT", 2)
+    with pytest.raises(ValueError) as err:
+        m.destination_oids(f"ext::{helper} SECRET-TOKEN")
+    assert "SECRET-TOKEN" not in str(err.value) and "within 2 s" in str(err.value)
+    pid = int(pidfile.read_text())
+    import time
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:                                   # gone, or dead and awaiting its reaper
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            break
+        if state in ("Z", "X"):
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError(f"transport helper {pid} still running after the timeout")
+
+
+def test_the_dash_check_asks_the_destination_only_after_the_local_refusals():
+    """The branch policy and the review debt refuse without the network; the dash check asks the destination."""
+    hook = (REPO / ".githooks/pre-push").read_text()
+    assert hook.index("OWED_TOOL=") < hook.index('dash_push_gate "${2:-}"')
+
+
+def test_one_refused_change_at_many_paths_is_diagnosed_once():
+    texts = []
+
+    class Reader:
+        def count(self, oid):
+            return {"new": 1, "old": 0}[oid]
+
+        def text(self, oid):
+            texts.append(oid)
+            return ("x " + DASH + "\n").encode()
+
+    found = m.refused([[("old", "new", f"f{i}.md") for i in range(5)]], Reader(), {})
+    assert len(found) == 5 and texts == ["new"], texts

@@ -152,7 +152,8 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
-PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""
+PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""; REPAIR_FROM=""
+EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
@@ -190,14 +191,21 @@ if [ "$PIN_KIND" = "1" ]; then
         # A reconciliation reviews the same whole section the completion before it did: its base is that
         # pass's recorded base, used for the lenses and the prompt alike, and a REVIEW_BASE naming another
         # commit is refused (review, 2026-11-21: HEAD~1 had been offered as "the whole section").
-        RECON_BASE="$(python3 "$PIN_TOOL" --repair-section-base "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
+        # One read of one receipt gives both ends: the section base and the last reviewed candidate.
+        RECON_RANGE="$(python3 "$PIN_TOOL" --repair-range "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
             echo "[$SELF_NAME] BLOCK -- the section base of the last reviewed candidate could not be read (reason above)" >&2; exit 2; }
-        if [ -z "$RECON_BASE" ]; then
+        if [ -z "$RECON_RANGE" ]; then
             echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
             exit 2
         fi
-        BASE_OID="$(git rev-parse --quiet --verify "${RECON_BASE}^{commit}" 2>/dev/null)" || {
-            echo "[$SELF_NAME] BLOCK -- the section base ${RECON_BASE:0:10} the completion reviewed is not a commit here" >&2; exit 2; }
+        RECON_BASE="${RECON_RANGE%% *}"
+        REPAIR_FROM="${RECON_RANGE#* }"
+        if [ "$RECON_BASE" = "$EMPTY_TREE_OID" ]; then
+            BASE_OID="$EMPTY_TREE_OID"                         # the completion of a first commit, against the empty tree
+        else
+            BASE_OID="$(git rev-parse --quiet --verify "${RECON_BASE}^{commit}" 2>/dev/null)" || {
+                echo "[$SELF_NAME] BLOCK -- the section base ${RECON_BASE:0:10} the completion reviewed is not a commit here" >&2; exit 2; }
+        fi
         if [ -n "${REVIEW_BASE:-}" ] && [ "$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" != "$BASE_OID" ]; then
             echo "[$SELF_NAME] BLOCK -- the completion reviewed this section from ${BASE_OID:0:10}; REVIEW_BASE names another commit. Leave it unset or give that one." >&2
             exit 2
@@ -207,7 +215,7 @@ if [ "$PIN_KIND" = "1" ]; then
             echo "[$SELF_NAME] BLOCK -- REVIEW_BASE is not a commit here: $REVIEW_BASE" >&2; exit 2; }
     else
         BASE_OID="$(git rev-parse --quiet --verify 'HEAD~1^{commit}' 2>/dev/null)" \
-            || BASE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"      # a first commit: against the empty tree
+            || BASE_OID="$EMPTY_TREE_OID"                       # a first commit: against the empty tree
     fi
     { git diff --name-only "$BASE_OID" HEAD && git diff --name-only HEAD; } > "$PATHS_FILE.all" 2>/dev/null || {
         rm -f "$PATHS_FILE.all"
@@ -224,8 +232,10 @@ This section was built while the reviewer was unavailable. Its whole change is: 
     # last reviewed candidate, the head of this section's newest checked completion or reconciliation pass, and
     # the repaired candidate, HEAD with the working tree. With no such pass on record there is no repair to name.
     if [ "$KIND" = "reconciliation" ]; then
-        REPAIR_FROM="$(python3 "$PIN_TOOL" --repair-base "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
-            echo "[$SELF_NAME] BLOCK -- the last reviewed candidate of this section could not be read (reason above)" >&2; exit 2; }
+        if [ -z "${REPAIR_FROM:-}" ]; then                     # an owed section: its base came from the debt record
+            REPAIR_FROM="$(python3 "$PIN_TOOL" --repair-base "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
+                echo "[$SELF_NAME] BLOCK -- the last reviewed candidate of this section could not be read (reason above)" >&2; exit 2; }
+        fi
         if [ -z "$REPAIR_FROM" ]; then
             echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
             exit 2

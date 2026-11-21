@@ -136,7 +136,7 @@ class BlobReader:
     ends in a short read, which is an error."""
 
     def __init__(self):
-        self.proc = subprocess.Popen(["git", "cat-file", "--batch"], stdin=subprocess.PIPE,
+        self.proc = subprocess.Popen(["git", "--no-replace-objects", "cat-file", "--batch"], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE)   # deadline: the timer below
         self.timer = threading.Timer(TIMEOUT, self.proc.kill)
         self.timer.start()
@@ -241,13 +241,16 @@ def name_lines(old_texts, new_text):
     return exact, copies
 
 
-def refused(per_parent: list, reader) -> list:
+def refused(per_parent: list, reader, lines=None) -> list:
     """(path, gained, exact lines, candidate copies) for each file that holds
     more dashes than before. `per_parent` holds one change list per parent
     (one for a commit or the staged change, several for a merge); a file is
     refused only when it gains over every parent, so a merge is judged on
     what the merge itself added. Only a path changed against every parent is
-    read, and a new blob with no dash is never compared."""
+    read, and a new blob with no dash is never compared. `lines` caches the
+    named lines by (new blob, dash-bearing parent blobs), which alone decide
+    them, so the same refused change at many paths is diagnosed once."""
+    lines = {} if lines is None else lines
     if not per_parent:
         return []
     others = [{path: old for old, _new, path in changes} for changes in per_parent[1:]]
@@ -265,15 +268,19 @@ def refused(per_parent: list, reader) -> list:
             if gained <= 0:
                 break
         if gained > 0:
-            exact, copies = name_lines([reader.text(o) for o in dict.fromkeys(olds) if reader.count(o)],
-                                       reader.text(new))
+            parents = tuple(o for o in dict.fromkeys(olds) if reader.count(o))
+            if (new, parents) not in lines:
+                lines[new, parents] = name_lines([reader.text(o) for o in parents], reader.text(new))
+            exact, copies = lines[new, parents]
             found.append((path, gained, exact, copies))
     return found
 
 
 # Every diff this checker reads finds renames the same way, whatever the caller's config: with no limit on
 # inexact detection, a renamed and edited file is compared with its source, never with an empty file.
-DIFF_CONFIG = ("-c", "diff.renameLimit=0", "-c", "diff.renames=true")
+# Nor is a local replacement ref allowed to stand in for an object: a push sends the stored objects, so the
+# check reads those (--no-replace-objects, on every git this checker starts).
+DIFF_CONFIG = ("--no-replace-objects", "-c", "diff.renameLimit=0", "-c", "diff.renames=true")
 
 
 def _git(*args, stdin=None) -> bytes:
@@ -285,9 +292,9 @@ def judge(commits: list) -> list:
     """(label, refused files) for each (label, per-parent changes), one blob reader for all."""
     if not any(changes for _label, per_parent in commits for changes in per_parent):
         return []
-    reader = BlobReader()
+    reader, lines = BlobReader(), {}
     try:
-        out = [(label, hits) for label, per_parent in commits if (hits := refused(per_parent, reader))]
+        out = [(label, hits) for label, per_parent in commits if (hits := refused(per_parent, reader, lines))]
     finally:
         rc = reader.close()
     if rc != 0:
@@ -325,9 +332,23 @@ def destination_oids(dest: str) -> set:
     given by URL and a remote whose tracking refs are stale all answer for
     the repository actually written."""
     if dest.startswith("-"):
-        raise ValueError(f"the push destination {dest!r} reads as an option")
-    out = _git("ls-remote", dest).decode("ascii", "replace")
-    return {line.split("\t", 1)[0] for line in out.splitlines() if line.strip()}
+        raise ValueError("the push destination reads as an option")
+    import signal
+    # Its own process group, stopped whole on timeout: a stalled transport (ssh, a credential helper) is a
+    # child of git and would outlive a kill of git alone. Nothing here names the URL, which can carry a token.
+    # A group only so the timeout can end it whole; it is waited on here, never left running.
+    proc = subprocess.Popen(["git", "ls-remote", "--end-of-options", dest], stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                            start_new_session=True)  # LIFECYCLE-WAIVER: waited on here, never left running
+    try:
+        out, _err = proc.communicate(timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise ValueError(f"the destination did not list its refs within {TIMEOUT} s (git ls-remote)") from None
+    if proc.returncode != 0:
+        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {proc.returncode})")
+    return {line.split("\t", 1)[0] for line in out.decode("ascii", "replace").splitlines() if line.strip()}
 
 
 def _resolve(rev: str) -> str:
@@ -335,7 +356,8 @@ def _resolve(rev: str) -> str:
     empty range."""
     if rev == NULL_OID:
         return rev
-    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{object}"],
+    r = subprocess.run(["git", "--no-replace-objects", "rev-parse", "--verify", "--quiet", "--end-of-options",
+                        rev + "^{object}"],
                        capture_output=True, text=True, timeout=TIMEOUT)
     if r.returncode != 0:
         raise ValueError(f"{rev!r} names no object in this repository")
@@ -373,7 +395,9 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     held = {old for old, _new in updates if old != NULL_OID}
     if dest:
         held |= destination_oids(dest)
-    else:
+    elif any(old == NULL_OID for old, _new in updates):
+        # A manual range from nothing: what some remote already tracks stands in for a destination. A range
+        # between two named commits is exactly that range.
         held |= set(_git("for-each-ref", "--format=%(objectname)", "refs/remotes").decode().split())
     types = _object_types(tips + sorted(held))
     for tip in tips:

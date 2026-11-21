@@ -183,3 +183,59 @@ def test_install_writes_the_scope_git_reads_the_hooks_path_from(tmp_path):
     assert r.returncode == 0 and "Configured: core.hooksPath = .githooks" in r.stdout, r
     assert _cfg(root, "--get", "core.hooksPath").stdout.strip() == ".githooks"
     assert _cfg(root, "--worktree", "--get", "core.hooksPath").stdout.strip() == ".githooks"
+
+
+def test_install_is_judged_by_the_value_git_uses_not_any_value_it_holds(tmp_path):
+    """.githooks in the repository's config under a worktree override: git runs the override, so install acts."""
+    root = _plain_repo(tmp_path)
+    _cfg(root, "core.hooksPath", ".githooks")
+    _cfg(root, "extensions.worktreeConfig", "true")
+    _cfg(root, "--worktree", "core.hooksPath", "/custom")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=_env())
+    assert r.returncode == 0 and "Configured: core.hooksPath = .githooks" in r.stdout, r
+    hooks = subprocess.run(["git", "rev-parse", "--git-path", "hooks"], cwd=root, capture_output=True, text=True,
+                           timeout=30, env=_env()).stdout.strip()
+    assert hooks == ".githooks", hooks
+
+
+def test_remove_undoes_a_worktree_scoped_install(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    _cfg(root, "--worktree", "core.hooksPath", "/custom")
+    subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, check=True, capture_output=True, timeout=60,
+                   env=_env())
+    assert _cfg(root, "--worktree", "--get", "core.hooksPath").stdout.strip() == ".githooks"
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0 and "inert" in r.stdout, r
+    assert _cfg(root, "--get", "core.hooksPath", check=False).returncode == 1
+
+
+def test_status_and_the_doctor_show_a_value_that_only_reads_as_githooks(tmp_path):
+    root = _plain_repo(tmp_path)
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    _cfg(root, "core.hooksPath", ".githooks\n")
+    status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
+                            text=True, timeout=60, env=_env())
+    assert "Hooks path     : $'.githooks\\n' (expected: .githooks)" in status.stdout, status.stdout
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=_env())
+    check = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]
+    assert check["status"] != "pass", check
+
+
+def test_remove_prunes_the_legacy_link_of_a_worktree_whose_path_holds_a_newline(tmp_path):
+    root = _plain_repo(tmp_path)
+    env = _env()
+    for a in (["config", "user.name", "t"], ["config", "user.email", "t@t"], ["add", "-A"], ["commit", "-qm", "x"]):
+        subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30, env=env)
+    wt = tmp_path / "w\nt"
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(wt)], cwd=root, check=True, capture_output=True, timeout=30,
+                   env=env)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(wt / "scripts/hooks/pre-push")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0 and not link.is_symlink(), r
