@@ -330,7 +330,8 @@ def test_the_direct_receipt_hashes_the_callers_prompt(tmp_path):
     fake = tmp_path / "companion.js"
     fake.write_text("process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
     prompt = _prompt("round")                      # a pinned pass: the dispatcher appends its lenses
-    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1"}
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
+           "REVIEW_BASE": "HEAD"}                  # a later pass names its section start
     subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), prompt], capture_output=True, text=True,
                    timeout=60, cwd=repo, env=env)
     rows = [json.loads(x) for x in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]

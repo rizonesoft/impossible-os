@@ -427,6 +427,36 @@ def unreadable_line_may_be(line, todo):
 CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
+def _manifest_lines(manifest):
+    """The reviews manifest one line at a time, never the whole history at once (it only grows). A missing
+    manifest has no lines; one that cannot be read is refused."""
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            for line in fh:
+                yield line.rstrip("\n")
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Refused(f"{manifest} cannot be read: {exc}") from exc
+
+
+def section_start(manifest, todo, section):
+    """Where a section's code starts: the candidate of its newest checked plan pass in `manifest` (the commit
+    before the code, REVIEW_BASE), or "" when no plan pass is on record there."""
+    import json
+    start = ""
+    for line in _manifest_lines(manifest):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
+                and e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
+                and isinstance(e.get("head"), str) and e["head"]:
+            start = e["head"]
+    return start
+
+
 def repair_base(manifest, todo, section, field="head"):
     """The last reviewed candidate a reconciliation's repair starts from: the head of the section's newest
     checked completion or reconciliation pass in the manifest, in the order the passes were recorded.
@@ -437,14 +467,8 @@ def repair_base(manifest, todo, section, field="head"):
     section, as the commit gate treats it); or a pass that read uncommitted changes, which `git diff <head>`
     could not show (review, 2026-11-20). Whether the head is on HEAD's history the dispatcher checks."""
     import json
-    try:
-        lines = pathlib.Path(manifest).read_text().splitlines()
-    except FileNotFoundError:
-        return ""
-    except (OSError, UnicodeDecodeError) as exc:
-        raise Refused(f"{manifest} cannot be read: {exc}") from exc
     found, unreadable_after = None, False
-    for line in lines:
+    for line in _manifest_lines(manifest):
         try:
             e = json.loads(line)
         except ValueError:
@@ -494,6 +518,7 @@ def main(argv=None):
     group.add_argument("--owed-base", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--repair-base", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--repair-range", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--section-start", nargs=2, metavar=("TODO", "N"))
     parser.add_argument("--manifest")
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--root", default=str(REPO))
@@ -517,6 +542,10 @@ def main(argv=None):
         if args.repair_base:
             _need(args.manifest, "--repair-base needs --manifest FILE")
             print(repair_base(args.manifest, args.repair_base[0], args.repair_base[1]))
+            return 0
+        if args.section_start:
+            _need(args.manifest, "--section-start needs --manifest FILE")
+            print(section_start(args.manifest, *args.section_start))
             return 0
         if args.repair_range:
             _need(args.manifest, "--repair-range needs --manifest FILE")

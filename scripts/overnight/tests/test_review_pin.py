@@ -397,6 +397,70 @@ def test_a_reconciliation_after_a_first_commit_takes_the_empty_tree_base(tmp_pat
     done, prompt = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 0, done.stderr
     assert f"then review the whole section: git diff {empty} HEAD" in prompt
+    # Given explicitly, the recorded sentinel is the same base, not "another commit".
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base=empty) + "\n")
+    done, prompt = _dispatch(tmp_path, "reconciliation", full, base=empty, reviews_dir=reviews)
+    assert done.returncode == 0, done.stderr
+    assert f"then review the whole section: git diff {empty} HEAD" in prompt
+
+
+def test_a_later_pass_with_no_base_starts_where_the_section_did(tmp_path):
+    """With REVIEW_BASE unset a round reviews from the plan pass's candidate, never HEAD~1; with no plan on
+    record it is refused."""
+    import json
+    import subprocess
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    start = subprocess.run(["git", "rev-parse", "HEAD~3"], capture_output=True, text=True, cwd=str(REPO),
+                           check=True).stdout.strip()
+    done, _prompt = _dispatch(tmp_path, "round", "LENS adversarial: clean\nHIGHEST: none\n", base="",
+                              reviews_dir=reviews)
+    assert done.returncode == 2 and "start is not on record" in done.stderr, done.stderr
+    (reviews / "manifest.jsonl").write_text(_receipt("plan", start) + "\n")
+    full = "\n".join(f"LENS {n}: clean" for n in ("adversarial", "integration", "source-defect", "consistency",
+                                                  "quality", "test-coverage", "design", "concurrency",
+                                                  "bare-metal")) + "\nHIGHEST: none\n"
+    done, _prompt = _dispatch(tmp_path, "round", full, base="", reviews_dir=reviews)
+    receipt = json.loads((reviews / "manifest.jsonl").read_text().splitlines()[-1])
+    assert receipt["kind"] == "round" and receipt["base"] == start, (receipt, done.stderr)
+
+
+def test_refusal_a_candidate_that_moves_while_the_pass_is_prepared_is_not_dispatched(tmp_path):
+    """The lenses come from the candidate pinned first; an edit before the reviewer starts refuses the pass."""
+    import os
+    import subprocess
+    import shutil as sh
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "one"]):
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "-c", "core.hooksPath=/dev/null", *args], check=True, capture_output=True, timeout=60)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = sh.which("python3")
+    (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in *" --lenses "*) echo moved > "{repo}/new.txt" ;; esac\n'
+                                    f'exec "{real}" "$@"\n')
+    (bindir / "python3").chmod(0o755)
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION)
+    (tmp_path / "review.txt").write_text("HIGHEST: none\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"), "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"),
+           "FAKE_REVIEW": str(tmp_path / "review.txt"), "REVIEW_BASE": "HEAD"}
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=120, cwd=str(repo), env=env)
+    assert done.returncode == 2 and "candidate changed while the round pass was prepared" in done.stderr, done.stderr
+    assert not (tmp_path / "prompt.txt").exists()                          # the reviewer never started
+
+
+def test_the_section_start_is_read_from_the_dispatchers_manifest(tmp_path):
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / "manifest.jsonl"
+    assert rp.section_start(manifest, todo, 99) == ""                        # no manifest yet
+    manifest.write_text(_receipt("plan", "a" * 40) + "\n" + _receipt("plan", "b" * 40, checked=False) + "\n"
+                        + _receipt("round", "c" * 40) + "\n")
+    assert rp.section_start(manifest, todo, 99) == "a" * 40
 
 
 def test_the_repair_range_comes_from_one_receipt(tmp_path):

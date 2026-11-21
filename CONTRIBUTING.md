@@ -183,7 +183,7 @@ Impossible OS is a Claude Code-orchestrated project (see [docs/infrastructure/ai
 Changes land on `main` from the lanes the operator starts and from the attended repair route ([CLAUDE.md "Two engines, one gate set"](CLAUDE.md#two-engines-one-gate-set)), committed straight on `main` with no feature branch and no pull request ([CLAUDE.md "Branching"](CLAUDE.md#branching----develop-straight-on-main)). External pull requests are not taken while that holds; the stance-change condition above says what changes when it does.
 
 1. **Implement** the change following the code style above, in the lane's own tree (or `../impossible-os-repair` beside a live run).
-2. **Test** before committing:
+2. **Test** before committing (the main lane; an extra lane runs a build, suite or boot only inside the push lock at push time, per [CLAUDE.md "Two engines, one gate set"](CLAUDE.md#two-engines-one-gate-set)):
    ```bash
    bash scripts/build.sh             # Must show "=== BUILD OK ===" in build/build.log
    bash scripts/test.sh              # Run all kernel unit tests (headless QEMU)

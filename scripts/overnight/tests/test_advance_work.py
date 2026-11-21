@@ -90,7 +90,7 @@ def test_runnable_sections_go_in_plan_row_order_after_any_owing_only_review():
     secs = [{"n": 49, "class": "NEEDS_WORK", "plan_order": 7}, {"n": 52, "class": "NEEDS_WORK", "waiting": True},
             {"n": 60, "class": "NEEDS_WORK", "plan_order": 1}, {"n": 61, "class": "NEEDS_WORK", "plan_order": 2}]
     assert m._next_section(_ordered(secs))["n"] == 60             # the plan's first buildable row, not section 49
-    shipped = {"n": 70, "class": "NEEDS_WORK"}                    # shipped, owing its review: no plan_order
+    shipped = {"n": 70, "class": "NEEDS_WORK", "shipped": True}   # shipped, owing its review: no plan_order
     assert m._next_section(_ordered(secs + [shipped]))["n"] == 70
     assert m._next_section(_ordered([{**s, "waiting": True} for s in secs]))["n"] == 49   # all wait: the first
 
@@ -127,3 +127,14 @@ def test_the_classify_array_is_in_work_order_so_every_reader_picks_the_same_sect
     assert [s["n"] for s in secs] == [60, 61, 49, 52, 1]
     first_open = next(s["n"] for s in secs if s["class"] == "NEEDS_WORK")     # run_phase_guard's derivation
     assert first_open == _mod()._next_section(secs)["n"] == 60
+
+
+def test_a_shipped_section_leads_even_when_the_plan_cannot_be_read():
+    """With no plan answer every open section is runnable and none has a plan row; the shipped one owing
+    only its review still comes first."""
+    t = _triage()
+    entry = {"file_path": "todo/a.md", "sections": [{"n": 1, "status": " "}, {"n": 2, "status": "x"}]}
+    per = [(1, t.NEEDS_WORK), (2, t.NEEDS_WORK)]
+    secs = t.section_list(entry, per, None)
+    assert [s["n"] for s in secs] == [2, 1], secs
+    assert _mod()._next_section(secs)["n"] == 2

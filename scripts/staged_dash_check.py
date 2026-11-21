@@ -136,7 +136,7 @@ class BlobReader:
     ends in a short read, which is an error."""
 
     def __init__(self):
-        self.proc = subprocess.Popen(["git", "--no-replace-objects", "cat-file", "--batch"], stdin=subprocess.PIPE,
+        self.proc = subprocess.Popen(["git", "cat-file", "--batch"], env=_git_env(), stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE)   # deadline: the timer below
         self.timer = threading.Timer(TIMEOUT, self.proc.kill)
         self.timer.start()
@@ -270,7 +270,7 @@ def refused(per_parent: list, reader, lines=None) -> list:
         if gained > 0:
             parents = tuple(o for o in dict.fromkeys(olds) if reader.count(o))
             if (new, parents) not in lines:
-                lines[new, parents] = name_lines([reader.text(o) for o in parents], reader.text(new))
+                lines[new, parents] = name_lines((reader.text(o) for o in parents), reader.text(new))
             exact, copies = lines[new, parents]
             found.append((path, gained, exact, copies))
     return found
@@ -278,14 +278,20 @@ def refused(per_parent: list, reader, lines=None) -> list:
 
 # Every diff this checker reads finds renames the same way, whatever the caller's config: with no limit on
 # inexact detection, a renamed and edited file is compared with its source, never with an empty file.
-# Nor is a local replacement ref allowed to stand in for an object: a push sends the stored objects, so the
-# check reads those (--no-replace-objects, on every git this checker starts).
-DIFF_CONFIG = ("--no-replace-objects", "-c", "diff.renameLimit=0", "-c", "diff.renames=true")
+DIFF_CONFIG = ("-c", "diff.renameLimit=0", "-c", "diff.renames=true")
+
+
+def _git_env() -> dict:
+    """The environment of every git this checker starts. A push sends the stored objects along their stored
+    parents, so neither a local replacement ref (GIT_NO_REPLACE_OBJECTS) nor a graft file (GIT_GRAFT_FILE,
+    pointed at an empty file) may stand in for them: either would make the check judge other bytes, or other
+    parents, than the ones the destination receives."""
+    return {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
 
 
 def _git(*args, stdin=None) -> bytes:
     return subprocess.run(["git", *DIFF_CONFIG, *args], input=stdin, capture_output=True, timeout=TIMEOUT,
-                          check=True).stdout
+                          check=True, env=_git_env()).stdout
 
 
 def judge(commits: list) -> list:
@@ -333,19 +339,43 @@ def destination_oids(dest: str) -> set:
     the repository actually written."""
     if dest.startswith("-"):
         raise ValueError("the push destination reads as an option")
+    # pre-push hands over the URL after git's rewrites; ls-remote applies url.*.insteadOf again, and a second
+    # matching rule would list another repository's refs. That is refused, never followed.
+    again = subprocess.run(["git", "ls-remote", "--get-url", "--end-of-options", dest], capture_output=True,
+                           timeout=TIMEOUT, env=_git_env())
+    if again.returncode != 0 or again.stdout.rstrip(b"\n") != dest.encode():
+        raise ValueError("a url.*.insteadOf rule rewrites the push URL again, so the destination's refs cannot "
+                         "be listed safely; make the rewrite rules not chain")
     import signal
-    # Its own process group, stopped whole on timeout: a stalled transport (ssh, a credential helper) is a
-    # child of git and would outlive a kill of git alone. Nothing here names the URL, which can carry a token.
-    # A group only so the timeout can end it whole; it is waited on here, never left running.
+    # Its own process group, ended whole on timeout, on Ctrl-C and on SIGTERM: a stalled transport (ssh, a
+    # credential helper) is a child of git and would outlive an end of git alone. Nothing here names the URL,
+    # which can carry a token.
     proc = subprocess.Popen(["git", "ls-remote", "--end-of-options", dest], stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, env=_git_env(),
                             start_new_session=True)  # LIFECYCLE-WAIVER: waited on here, never left running
+
+    def _end_group():
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:                         # the group has already exited: nothing to end
+            pass
+        proc.communicate()
+
+    def _on_term(signum, _frame):
+        raise KeyboardInterrupt(signum)
+
+    previous = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _on_term)
     try:
         out, _err = proc.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
+        _end_group()
         raise ValueError(f"the destination did not list its refs within {TIMEOUT} s (git ls-remote)") from None
+    except BaseException:                                  # Ctrl-C or SIGTERM: end the group, then go on ending
+        _end_group()
+        raise
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     if proc.returncode != 0:
         raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {proc.returncode})")
     return {line.split("\t", 1)[0] for line in out.decode("ascii", "replace").splitlines() if line.strip()}
@@ -356,9 +386,8 @@ def _resolve(rev: str) -> str:
     empty range."""
     if rev == NULL_OID:
         return rev
-    r = subprocess.run(["git", "--no-replace-objects", "rev-parse", "--verify", "--quiet", "--end-of-options",
-                        rev + "^{object}"],
-                       capture_output=True, text=True, timeout=TIMEOUT)
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{object}"],
+                       capture_output=True, text=True, timeout=TIMEOUT, env=_git_env())
     if r.returncode != 0:
         raise ValueError(f"{rev!r} names no object in this repository")
     return r.stdout.strip()
@@ -385,8 +414,8 @@ def outgoing(updates: list, dest: str = "") -> tuple:
     nothing the destination holds: one `rev-list --stdin` over every tip at
     once, stopped at every remote oid the push names (a deletion's
     included) and every oid the destination itself advertises. With no
-    destination (a manual --range) every remote's tracking refs stand in
-    for it. A pushed tip this clone lacks is a read error, never clean. A
+    destination, a range from nothing is bounded by every remote's
+    tracking refs and a range between two commits is exactly that range. A pushed tip this clone lacks is a read error, never clean. A
     destination commit this clone lacks cannot bound the walk; it is
     counted, so a refusal can say to fetch first."""
     tips = list(dict.fromkeys(new for _old, new in updates if new != NULL_OID))
@@ -399,11 +428,11 @@ def outgoing(updates: list, dest: str = "") -> tuple:
         # A manual range from nothing: what some remote already tracks stands in for a destination. A range
         # between two named commits is exactly that range.
         held |= set(_git("for-each-ref", "--format=%(objectname)", "refs/remotes").decode().split())
-    types = _object_types(tips + sorted(held))
+    types = _object_types(sorted(set(tips) | held))
     for tip in tips:
         if types.get(tip, "missing") == "missing":
             raise ValueError(f"the pushed object {tip} is not in this repository")
-    bounds = [o for o in sorted(held) if types.get(o) in ("commit", "tag")]
+    bounds = [o for o in held if types.get(o) in ("commit", "tag")]
     missing = sum(1 for o in held if types.get(o, "missing") == "missing")
     feed = "".join(t + "\n" for t in tips) + "".join("^" + o + "\n" for o in bounds)
     pairs = []                                                     # (commit, parent or None), oldest first
@@ -465,7 +494,9 @@ def main(argv=None) -> int:
     try:
         missing = 0
         if argv[:1] == ["--range"] and len(argv) in (3, 4):
-            blocks, missing = outgoing([(_resolve(argv[1]), _resolve(argv[2]))], *argv[3:])
+            old, new = _resolve(argv[1]), _resolve(argv[2])
+            # Two named commits are exactly that range; only a range from nothing asks the URL what it holds.
+            blocks, missing = outgoing([(old, new)], argv[3] if old == NULL_OID and argv[3:] else "")
             found = judge(blocks)
         elif argv[:1] == ["--push"] and len(argv) == 2:
             blocks, missing = outgoing(push_updates(sys.stdin.read()), argv[1])
@@ -485,7 +516,8 @@ def main(argv=None) -> int:
     report(found)
     if found and missing:
         print(f"[dash-check] {missing} commit(s) the destination holds are not in this clone, so they could not "
-              "bound the walk; if a named commit is already there, git fetch and push again", file=sys.stderr)
+              "bound the walk; if a named commit is already there, fetch the destination's refs from the push "
+              "URL itself (git fetch <push-url> 'refs/*:refs/dash-check/*') and push again", file=sys.stderr)
     return 1 if found else 0
 
 

@@ -60,16 +60,20 @@ hooks_path_raw() {
     git -C "$PROJECT" config "$@" --null --get core.hooksPath | tr '\0' '\001'
 }
 hooks_path_is_ours() {
-    [ "$(hooks_path_raw "$@")" = $'.githooks\001' ]
+    [ "$(hooks_path_raw)" = $'.githooks\001' ]
 }
 # The value for a person to read: the exact one, quoted when it holds bytes
 # a plain print would hide.
 hooks_path_shown() {
     local raw
     raw="$(hooks_path_raw)"
+    if [ -z "$raw" ]; then
+        echo '<unset>'                                     # no value at all: the key is absent
+        return
+    fi
     raw="${raw%$'\001'}"
     if [ -z "$raw" ]; then
-        echo '<unset>'
+        echo "''"                                         # set, to the empty string: git reads hooks from ./
     elif [[ "$raw" =~ ^[[:graph:]]+$ ]]; then
         printf '%s\n' "$raw"
     else
@@ -185,31 +189,33 @@ prune_legacy_symlinks() {
 }
 
 remove_all() {
-    # Only the value this installer writes is removed: the repository's own
-    # .githooks, set in this repository's config or, where install wrote it,
-    # this worktree's. A custom directory, or a value inherited from global or
-    # system config, is the operator's.
-    local scope rc any=0
-    local scopes=(--local)
-    worktree_config_on && scopes+=(--worktree)
-    for scope in "${scopes[@]}"; do
-        rc=0
-        git -C "$PROJECT" config "$scope" --get core.hooksPath >/dev/null || rc=$?
-        if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then     # 1 means unset; anything else is a config git cannot read
-            echo "core.hooksPath could not be read (git config $scope exit $rc)" >&2
-            return 1
-        fi
-        [ "$rc" -eq 0 ] || continue
-        any=1
-        if hooks_path_is_ours "$scope"; then
-            git -C "$PROJECT" config "$scope" --fixed-value --unset core.hooksPath .githooks \
-                || { echo "core.hooksPath could not be unset ($scope)" >&2; return 1; }
-            echo "Unset: core.hooksPath (${scope#--} config, was: .githooks)"
+    # Only the value this installer writes is removed, and only where git
+    # reads it from: the effective core.hooksPath, when it is exactly
+    # .githooks in this repository's or this worktree's config. A value at
+    # another scope is left alone, so a shared repository value beneath this
+    # worktree's own setting keeps sibling worktrees' gates; a custom
+    # directory, or a value inherited from global or system config, is the
+    # operator's.
+    local scoped scope raw rc=0
+    # One read gives the scope git takes it from and the exact value; exit 1 is "not set", anything else an error.
+    scoped="$(set -o pipefail; git -C "$PROJECT" config --show-scope --null --get core.hooksPath | tr '\0' '\001')" || rc=$?
+    if [ "$rc" -gt 1 ]; then
+        echo "core.hooksPath could not be read (git config exit $rc)" >&2; return 1
+    fi
+    if [ -z "$scoped" ]; then
+        echo "core.hooksPath is not set."
+    else
+        scope="${scoped%%$'\001'*}"
+        raw="${scoped#*$'\001'}"
+        raw="${raw%$'\001'}"
+        if [ "$raw" = ".githooks" ] && { [ "$scope" = "local" ] || [ "$scope" = "worktree" ]; }; then
+            git -C "$PROJECT" config "--$scope" --fixed-value --unset core.hooksPath .githooks \
+                || { echo "core.hooksPath could not be unset ($scope config)" >&2; return 1; }
+            echo "Unset: core.hooksPath ($scope config, was: .githooks)"
         else
-            echo "core.hooksPath in ${scope#--} config is $(git -C "$PROJECT" config "$scope" --get core.hooksPath | head -1), not this installer's .githooks: left as it is."
+            echo "core.hooksPath is $(hooks_path_shown) in $scope config, not this installer's .githooks here: left as it is."
         fi
-    done
-    [ "$any" -eq 1 ] || echo "core.hooksPath is not set in this repository."
+    fi
     disable_pre_push
     prune_legacy_symlinks
     echo ""

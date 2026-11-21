@@ -576,8 +576,8 @@ def section_list(entry, per, ready, owed=None):
     order inside a file too. The array is in work order, so its first open
     section is the one to work, for every reader (the packet, and the run
     cursor run_phase_guard derives): the `review_first` debt, then the
-    runnable sections (a shipped one owing only its review first, then the
-    rest by plan row), then the waiting ones, then the owed ones, then the
+    runnable sections (a shipped one owing only its review first, marked
+    `shipped` so it leads even with no plan answer, then the rest by plan row), then the waiting ones, then the owed ones, then the
     sections with nothing to do, each group in file order."""
     blocked, recovered = owed or (frozenset(), [])
     view = _plan_view(entry, ready)
@@ -589,6 +589,7 @@ def section_list(entry, per, ready, owed=None):
     out = [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {}),
              **({"review_owed": True} if c == NEEDS_WORK and n in built and (entry["file_path"], n) in blocked else {}),
              **({"review_first": True} if n == first else {}),
+             **({"shipped": True} if c == NEEDS_WORK and n in built and n in runnable else {}),
              **({"plan_order": rank[n]} if c == NEEDS_WORK and n in runnable and n in rank and n not in built else {})}
             for n, c in per]
     return sorted(out, key=_work_order)
@@ -596,7 +597,8 @@ def section_list(entry, per, ready, owed=None):
 
 def _work_order(s):
     """Sort key putting `section_list`'s array in the order sections are worked (sorted() keeps file order
-    within a group)."""
+    within a group). A shipped section owing only its review comes first among the runnable ones whether or
+    not the plan could be read; a runnable section with no plan row follows the plan-ordered ones."""
     if s["class"] != NEEDS_WORK:
         return (5, 0)
     if s.get("review_first"):
@@ -605,7 +607,9 @@ def _work_order(s):
         return (4, 0)
     if s.get("waiting"):
         return (3, 0)
-    return (1, 0) if "plan_order" not in s else (2, s["plan_order"])
+    if s.get("shipped"):
+        return (1, 0)
+    return (2, s["plan_order"]) if "plan_order" in s else (2, float("inf"))
 
 
 def pick_next(cache, root, ready="unset", want_ready=False):

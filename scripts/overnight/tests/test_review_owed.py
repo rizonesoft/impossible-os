@@ -318,7 +318,7 @@ def test_the_work_packet_never_names_an_owed_section_and_names_a_recovered_one_f
     (root / ".claude/state/review-owed.json").unlink()
     st._OWED_MEMO.clear()
     plain = st.section_list(cache[0], per, [], st.owed_reviews(root))
-    assert plain == [{"n": 7, "class": st.NEEDS_WORK}, {"n": 8, "class": st.NEEDS_WORK}]
+    assert plain == [{"n": 7, "class": st.NEEDS_WORK, "shipped": True}, {"n": 8, "class": st.NEEDS_WORK, "shipped": True}]
     assert advance._next_section(plain)["n"] == 7
 
 

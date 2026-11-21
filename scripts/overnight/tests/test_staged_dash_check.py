@@ -836,3 +836,118 @@ def test_one_refused_change_at_many_paths_is_diagnosed_once():
 
     found = m.refused([[("old", "new", f"f{i}.md") for i in range(5)]], Reader(), {})
     assert len(found) == 5 and texts == ["new"], texts
+
+
+def test_a_second_url_rewrite_is_refused_never_followed(tmp_path):
+    """pre-push hands over the rewritten URL; a rule that rewrites it again would list another repository."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    lacks = _dest(tmp_path, root, "a.git")
+    holds = _dest(tmp_path, root, "b.git", {"refs/heads/main": tip})
+    _git(root, "config", f"url.{holds}.insteadOf", lacks)
+    r = _push_check(root, lacks, f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 2 and "rewrites the push URL again" in r.stderr, r
+
+
+def _helper_state(pid):
+    """The helper's /proc state letter, or "" once it is gone."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return ""
+
+
+def _assert_helper_ends(pid):
+    import time
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:                                   # gone, or dead and awaiting its reaper
+        if _helper_state(pid) in ("", "Z", "X"):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"transport helper {pid} still running")
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGINT"])
+def test_a_cancelled_lookup_ends_the_transport_group_too(tmp_path, sig):
+    """Ctrl-C or SIGTERM to the checker while ls-remote waits on a stalled helper ends the helper as well."""
+    import signal
+    import time
+    root = _repo(tmp_path)
+    pidfile = tmp_path / "helper.pid"
+    helper = tmp_path / "helper.sh"
+    helper.write_text(f"#!/bin/sh\necho $$ > '{pidfile}'\nexec sleep 30\n")
+    helper.chmod(0o755)
+    # As at a terminal: a caller started in the background inherits SIGINT ignored, and Python then never
+    # raises KeyboardInterrupt, so the child restores the default first.
+    code = ("import signal\nsignal.signal(signal.SIGINT, signal.default_int_handler)\n"
+            f"import importlib.util,sys\nspec=importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
+            "c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
+            f"c.destination_oids('ext::{helper} x')\n")
+    env = _clean_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "protocol.ext.allow",
+                      "GIT_CONFIG_VALUE_0": "always"})
+    proc = subprocess.Popen([sys.executable, "-c", code], cwd=root, env=env, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 20
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        pid = int(pidfile.read_text())
+        os.kill(proc.pid, getattr(signal, sig))
+        proc.wait(timeout=10)
+        assert proc.returncode != 0                                      # the cancellation still ends the check
+        _assert_helper_ends(pid)
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:                                       # the group has already exited
+            pass
+        proc.wait()
+
+
+def test_a_range_between_two_commits_ignores_what_a_url_holds(tmp_path):
+    """The optional URL bounds only a range from nothing; two named commits are exactly that range."""
+    root = _repo(tmp_path)
+    base = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    holds = _dest(tmp_path, root, "holds.git", {"refs/heads/main": tip})
+    r = _run(root, "--range", base, tip, holds)
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+    assert _run(root, "--range", m.NULL_OID, tip, holds).returncode == 0
+
+
+def test_a_local_graft_never_changes_the_parents_judged(tmp_path):
+    """A graft that makes a commit a root would have it judged against the empty tree."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "old " + DASH + "\n"})
+    _commit(root, "the dash, already there")
+    parent = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"other.md": "plain\n"})
+    _commit(root, "plain change")
+    tip = _git(root, "rev-parse", "HEAD")
+    (root / ".git/info").mkdir(exist_ok=True)
+    (root / ".git/info/grafts").write_text(tip + "\n")                  # the tip as a root
+    r = _run(root, "--range", parent, tip)
+    assert r.returncode == 0, r
+
+
+def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
+    """A replacement making HEAD look like the index must not let a staged dash skip the commit-time check."""
+    root = _repo(tmp_path)
+    (root / "scripts").mkdir()
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    (root / "scripts/lint.sh").write_text("exit 0\n")
+    _git(root, "config", "core.hooksPath", ".githooks")
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    tree = _git(root, "write-tree")
+    head = _git(root, "rev-parse", "HEAD")
+    fake = _sub(["git", "commit-tree", tree, "-m", "lookalike"], cwd=root,
+                env=_clean_env({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                                "GIT_COMMITTER_EMAIL": "t@t"})).stdout.decode().strip()
+    _git(root, "replace", head, fake)
+    r = _sub(["git", "commit", "-q", "--allow-empty", "-m", "dash"], cwd=root, text=True)
+    assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr

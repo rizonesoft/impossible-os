@@ -29,7 +29,8 @@ anchor_git_env
 mark_pre_commit_ran  # before any early exit: prepare-commit-msg refuses a commit without it
 
 # If nothing is staged (e.g., `git commit --allow-empty`), skip.
-if git diff --cached --quiet --exit-code 2>/dev/null; then
+# Against the stored HEAD: a local replacement ref must not make a changed index look unchanged.
+if GIT_NO_REPLACE_OBJECTS=1 git diff --cached --quiet --exit-code 2>/dev/null; then
     exit 0
 fi
 

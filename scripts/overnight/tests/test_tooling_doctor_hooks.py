@@ -239,3 +239,39 @@ def test_remove_prunes_the_legacy_link_of_a_worktree_whose_path_holds_a_newline(
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=env)
     assert r.returncode == 0 and not link.is_symlink(), r
+
+
+def test_remove_in_one_worktree_keeps_the_shared_value_its_siblings_use(tmp_path):
+    """A shared .githooks beneath this worktree's own custom setting is the siblings' gate: it stays."""
+    root = _plain_repo(tmp_path)
+    env = _env()
+    for a in (["config", "user.name", "t"], ["config", "user.email", "t@t"], ["add", "-A"], ["commit", "-qm", "x"]):
+        subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30, env=env)
+    _cfg(root, "core.hooksPath", ".githooks")
+    _cfg(root, "extensions.worktreeConfig", "true")
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(wt)], cwd=root, check=True,
+                   capture_output=True, timeout=30, env=env)
+    _cfg(wt, "--worktree", "core.hooksPath", "/custom")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=wt, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0 and "left as it is" in r.stdout, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath").stdout.strip() == ".githooks"
+    assert _cfg(wt, "--worktree", "--get", "core.hooksPath").stdout.strip() == "/custom"
+
+
+def test_status_shows_an_empty_hooks_path_as_set_not_unset(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "core.hooksPath", "")
+    status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
+                            text=True, timeout=60, env=_env())
+    assert "Hooks path     : '' (expected: .githooks)" in status.stdout, status.stdout
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=_env())
+    check = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]
+    assert "Unset" not in json.dumps(check), check                       # set to empty is not a fresh clone
+    _cfg(root, "--unset", "core.hooksPath")
+    status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
+                            text=True, timeout=60, env=_env())
+    assert "Hooks path     : <unset> (expected: .githooks)" in status.stdout, status.stdout
