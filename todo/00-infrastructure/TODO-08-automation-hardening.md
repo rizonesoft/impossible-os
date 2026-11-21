@@ -129,7 +129,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  61   |   §61   | A P2 comes with a failing test                                                                   | --                         |  [ ]   |
 | ⭐  |  62   |   §62   | Review depth per path                                                                            | --                         |  [ ]   |
 | ⭐  |  63   |   §63   | A repeated finding dispatches a redesign pass                                                    | --                         |  [ ]   |
-| ⭐  |  64   |   §64   | Re-dispatched passes review only the repair                                                      | §59                        |  [ ]   |
+| ⭐  |  64   |   §64   | Re-dispatched passes name the repair                                                             | --                         |  [ ]   |
 | ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | --                         |  [ ]   |
 | ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
@@ -1828,10 +1828,11 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 
 Operator decision 2026-11-21: every level blocks on every path, so this section sets review DEPTH by path, never a lower blocking level (it was "Blocking level per path", which would have let run-only machinery block on P1 alone).
 
-- [ ] `deep_paths` in `.conclave/reviewers.toml` names `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build; a section touching one gets full-scope passes only
+- [ ] `deep_paths` in `.conclave/reviewers.toml` names `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
+- [ ] A section touching a deep path gets every lens in every pass, and [section 66](#66-lens-yield-is-measured) never removes a lens there
 - [ ] Commit: `"review: review depth per path"`
 
-**Test checkpoint:** `review_pin.py` refuses a repair-scoped round for a section touching `src/kernel/` and allows one under `scripts/`.
+**Test checkpoint:** `review_pin.py` gives a pass over `src/kernel/` every lens, including one lens yield would drop elsewhere.
 
 ## 63. A repeated finding dispatches a redesign pass
 
@@ -1843,18 +1844,17 @@ Operator decision 2026-11-21: every level blocks on every path, so this section 
 
 **Test checkpoint:** three hits on one function produce a `redesign` kind; hits on different functions do not.
 
-## 64. Re-dispatched passes review only the repair
+## 64. Re-dispatched passes name the repair
 
 > **Spawned-by:** root
-> **User impact:** a re-dispatched round re-reads the whole section and finds new issues outside what was fixed.
+> **User impact:** a re-dispatched pass is not told what changed since the last one, so a defect in the repair is found only if the reviewer happens to look there.
 
-On trial for sections 48 to 59 by operator decision 2026-11-21 ([the review discipline](../../.claude/skills/three-pass-review.md#review-discipline-operator-2026-11-21)); build this only if their tally shows no defect a full-scope pass would have caught.
+Changed 2026-11-21 (operator): this section was "Re-dispatched passes review only the repair", a pass scoped to the repair diff. A scoped pass is one fewer independent full look at the section, and on section 48 nearly every full-scope round found a new defect, so that is a quality cost, and the trial of it on sections 48 to 59 is ended. Every pass reviews the whole section; this section only adds a pointer to what changed.
 
-- [ ] While a round converges outside the [section 62](#62-review-depth-per-path) deep paths, a re-dispatched round or performance pass is scoped to the repair diff and the code it reaches
-- [ ] The candidate being stamped always gets a full-scope round, performance and completion wave
-- [ ] Commit: `"review: re-dispatched passes review only the repair"`
+- [ ] A re-dispatched round, performance or completion pass names the repair range since the last reviewed candidate as where to look first, and still reviews the whole section
+- [ ] Commit: `"review: re-dispatched passes name the repair"`
 
-**Test checkpoint:** a converging re-dispatch prompt names only the repair range; a stamp-candidate prompt and a deep-path prompt name the whole section.
+**Test checkpoint:** a re-dispatch prompt names the whole section range and, separately, the repair range; a first dispatch names no repair range.
 
 ## 65. Tools run in front of the review lenses
 
@@ -1873,7 +1873,7 @@ On trial for sections 48 to 59 by operator decision 2026-11-21 ([the review disc
 
 - [ ] Each finding's verdict (fixed, rejected, accepted) is stored with its lens
 - [ ] `scripts/overnight/lens-yield.py` scores each lens
-- [ ] A lens is removed only after a replay on known defects shows no loss, as the agent-model rule requires (CLAUDE.md, Model Roles)
+- [ ] A lens is removed only after a replay on known defects shows no loss, as the agent-model rule requires (CLAUDE.md, Model Roles), and never on a [section 62](#62-review-depth-per-path) deep path
 - [ ] Commit: `"review: lens yield is measured"`
 
 **Test checkpoint:** `lens-yield.py` scores a fixture manifest correctly.

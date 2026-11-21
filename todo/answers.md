@@ -577,7 +577,7 @@ A: (operator choice, 2026-11-17) A. The design notes give no reason against it: 
 
 Sections 60 to 67 (review receipts, repro tests, review depth per path, the redesign pass, scoped re-dispatch, tools before lenses, lens yield, the overlapped push wait) depend on nothing in 49 to 59, the lane sections.
 
-- **A:** section 48, then 60 to 63, 65, 66 and 67, then 49 to 59, then 64 last, which depends on 59.
+- **A:** section 48, then 60 to 67, then 49 to 59.
 - **B:** section 48, then 49 to 59, then 60 to 67 in number order.
 
-A: (operator asked, run decided, 2026-11-21) A. The review sections make every later review safer or faster, so the eleven lane sections are reviewed under them. Section 64 is the general form of the scoped-re-dispatch trial on 48 to 59 and is built only if that trial's tally allows, so it cannot come before 59; its Depends On names 59, which `todo-plan.py --check` enforces. The run now follows the plan's row order inside a file as well as between files (`sequencer_triage.py` `plan_order`, `advance-work.py` `_next_section`); before this it took the lowest-numbered runnable section in the file. Reversing it costs a reorder of the plan rows and dropping 64's dependency.
+A: (operator asked, run decided, 2026-11-21) A. The review sections make every later review safer or faster, so the eleven lane sections are reviewed under them. Section 64 was first ordered last, after the scoped-re-dispatch trial on 48 to 59; the operator then ended that trial (a scoped pass is one fewer full look at the section) and section 64 became "Re-dispatched passes name the repair", which scopes nothing and builds with the other review sections. The run now follows the plan's row order inside a file as well as between files (`sequencer_triage.py` `plan_order`, `advance-work.py` `_next_section`); before this it took the lowest-numbered runnable section in the file. Reversing it costs a reorder of the plan rows and dropping 64's dependency.
