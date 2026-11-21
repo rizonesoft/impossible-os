@@ -31,10 +31,16 @@ def _run(*logs, maxw=5, stale=None, cwd=None):
     return subprocess.run(args, capture_output=True, text=True, cwd=cwd)
 
 
+def _finish(log, rc=0):
+    """What a dispatcher does after the review process exits."""
+    pathlib.Path(str(log) + ".done").write_text(f"{rc}\n")
+
+
 def test_sentinel_present_returns_done():
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
         log.write_text("review output...\nTurn completed (rc=0)\n")
+        _finish(log)
         r = _run(log)
         assert r.returncode == 0, r.stderr
         assert "DONE:" in r.stdout and "Turn completed (rc=0)" in r.stdout
@@ -43,7 +49,7 @@ def test_sentinel_present_returns_done():
 
 def test_companion_progress_line_is_not_the_terminal_sentinel():
     # The companion prints "[codex] Turn completed." mid-log, before its verdict;
-    # only the dispatcher's own "Turn completed (rc=N)" line ends a review.
+    # only the dispatcher's <log>.done, written after the review exits, ends a wait.
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
         log.write_text("[codex] Running command: ...\n[codex] Turn completed.\n")
@@ -53,11 +59,11 @@ def test_companion_progress_line_is_not_the_terminal_sentinel():
 
 
 def test_quoted_terminal_line_inside_a_live_log_is_not_done():
-    # A review that quotes a previous run's terminal line is still running:
-    # only the LAST non-empty line of the log ends a wait.
+    # A live review whose latest line quotes a terminal line is still running:
+    # only the dispatcher's <log>.done ends a wait, never log text.
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
-        log.write_text("Turn completed (rc=0)\nreview still running\n")
+        log.write_text("review quoting an earlier run:\nTurn completed (rc=0)\n")
         r = _run(log, maxw=1)
         assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
 
@@ -85,10 +91,12 @@ def test_multi_log_waits_for_all():
         a = pathlib.Path(d) / "a.log"
         b = pathlib.Path(d) / "b.log"
         a.write_text("Turn completed (rc=0)\n")
+        _finish(a)
         b.write_text("still going...\n")             # b not done -> STILL RUNNING
         r = _run(a, b, maxw=1)
         assert r.returncode == 3 and str(b) in r.stdout, r.stdout
         b.write_text("Turn completed (rc=0)\n")       # now both done -> DONE
+        _finish(b)
         r = _run(a, b)
         assert r.returncode == 0 and r.stdout.count("DONE:") == 2, r.stdout
 
@@ -154,6 +162,7 @@ def test_bare_number_arg_ignored_not_phantom_log():
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
         log.write_text("Turn completed (rc=0)\n")
+        _finish(log)
         r = subprocess.run(["bash", str(TOOL), "--max", "5", str(log), "300"],
                            capture_output=True, text=True, cwd=d)
         assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)

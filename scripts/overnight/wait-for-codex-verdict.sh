@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]
 #
-# Wait until EVERY given DETACHED Codex review log contains the "Turn completed"
-# sentinel (written by review-broker-codex-dispatch.sh / codex-bg-dispatch.sh
-# when a review finishes), then print each verdict line + the last log's tail.
+# Wait until EVERY given DETACHED Codex review log has its <log>.done sidecar
+# (written by review-broker-codex-dispatch.sh / codex-dispatch.sh after the review
+# exits), then print each verdict line + the last log's tail.
 # Pass several logs to wait on a whole multi-kind round in ONE call (the
 # combined-completion condition the wait-discipline requires).
 #
@@ -27,7 +27,7 @@
 # one still producing output.
 #
 # Exit status:
-#   0  -- ALL logs show "Turn completed"; each verdict + the last tail printed.
+#   0  -- ALL logs have <log>.done; each verdict + the last tail printed.
 #   3  -- bounded wait elapsed, >=1 review still running AND producing output;
 #         re-invoke to keep going (nothing is lost, reviews run detached).
 #   5  -- bounded wait elapsed AND >=1 pending log path DOES NOT EXIST after
@@ -83,12 +83,12 @@ fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
 ACT_DIR=".claude/state/waiter-activity"
 
-# A review ends only when the dispatcher's own "Turn completed (rc=N)" line is
-# the LAST non-empty line of its log: the companion prints "[codex] Turn
-# completed." before its verdict, and a review can quote an earlier run's line.
+# A review ends only when its dispatcher has written <log>.done (the exit
+# status, written atomically after the review process exited). Log text never
+# ends a wait: the companion prints "[codex] Turn completed." before its
+# verdict, and a live review can print a line that looks like any sentinel.
 _log_done() {
-    [ -f "$1" ] && grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -n 1 \
-        | grep -qE '^Turn completed \(rc=[0-9]+\)[[:space:]]*$'
+    [ -f "$1.done" ]
 }
 
 _all_done() {
@@ -103,7 +103,7 @@ elapsed=0
 while [ "$elapsed" -lt "$MAX" ]; do
     if _all_done; then
         for f in "${LOGS[@]}"; do
-            echo "DONE: $f -- $(grep -E '^Turn completed \(rc=[0-9]+\)' "$f" | tail -1)"
+            echo "DONE: $f -- Turn completed (rc=$(cat "$f.done" 2>/dev/null))"
         done
         echo "--- verdict tail ($LAST) ---"
         tail -n 25 "$LAST"

@@ -66,7 +66,7 @@ The wrapper invokes `codex-companion.mjs task --background --json` (the only bac
 node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" status <jobId> --wait --timeout-ms 240000
 ```
 
-When `status: "completed"`, the same JSON contains `finalMessage` (the review text). If you prefer a single non-blocking check, drop `--wait`.
+When the status reports the job completed, fetch the review text with `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" result <jobId>`; a failed or cancelled job has no review to receive, so dispatch it again. If you prefer a single non-blocking check, drop `--wait`.
 
 **Receive integrity caveat.** Background dispatch is a fallback reviewer path, not shipping proof by itself. `codex_review_completed.py` can record the trigger state, but TODO-10 §7 owns normalizing background completion and trusted receipt binding before shared gates may accept it as reviewer evidence. Read the result and apply `superpowers:receiving-code-review` before acting on any finding.
 

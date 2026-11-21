@@ -170,14 +170,14 @@ python3 "$MANIFEST_LINE" --append "$MANIFEST" \
 if systemd-run --user --collect "--unit=$UNIT" \
      "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
      "--setenv=PATH=$PATH" --same-dir \
-     /bin/bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; rm -f $Q_PROMPT" \
+     /bin/bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT" \
      >/dev/null 2>&1; then
   :
 else
   # Non-systemd fallback: setsid detach (survives plain shells; NOT a
   # systemd cgroup -- callers inside a service should have systemd-run).
   # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
-  setsid bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; rm -f $Q_PROMPT" \
+  setsid bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT" \
     < /dev/null >/dev/null 2>&1 &
   :
 fi
