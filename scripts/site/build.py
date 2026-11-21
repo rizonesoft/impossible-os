@@ -221,65 +221,9 @@ def load_project() -> dict[str, str]:
     facts["release_year"] = str(d.year)
     facts["_historical_owners"] = raw.get("historical_owners", [])
     facts["_historical_owner_files"] = raw.get("historical_owner_files", [])
-    facts["_adsense_client"] = raw.get("adsense_client")
-    facts["_adsense_docs_slot"] = raw.get("adsense_docs_slot")
     facts.update(load_stats())
     facts.update(load_materials())
     return facts
-
-
-ADSENSE_PREFIX = "ca-pub-"
-ADSENSE_LOADER = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"
-ADSENSE_TAG_ID = "f08c47fec0942fa0"   # Google's certification authority ID for ads.txt
-
-
-def _ascii_digits(text: str) -> bool:
-    return bool(text) and all(c in "0123456789" for c in text)
-
-
-def adsense_settings(facts: dict, errors: list[str]) -> tuple[str, str]:
-    """(client, docs slot) from project.json's adsense_client and adsense_docs_slot.
-    A null client turns advertising off everywhere; a null slot keeps the loader
-    (which is what Google's site review reads) but places no ad unit."""
-    client = facts.get("_adsense_client")
-    slot = facts.get("_adsense_docs_slot")
-    if client is None:
-        if slot is not None:
-            errors.append("project.json: adsense_docs_slot is set but adsense_client is null")
-        return "", ""
-    pub = client[len(ADSENSE_PREFIX):] if isinstance(client, str) and client.startswith(ADSENSE_PREFIX) else ""
-    if len(pub) != 16 or not _ascii_digits(pub):
-        errors.append(f"project.json: adsense_client must be {ADSENSE_PREFIX} and 16 digits (got {client!r})")
-        return "", ""
-    if slot is not None and not (isinstance(slot, str) and _ascii_digits(slot) and len(slot) <= 20):
-        errors.append(f"project.json: adsense_docs_slot must be the ad unit's digits (got {slot!r})")
-        slot = None
-    return client, slot or ""
-
-
-def adsense_head(client: str) -> str:
-    return (f'<script async src="{ADSENSE_LOADER}?client={html.escape(client)}" '
-            f'crossorigin="anonymous"></script>\n')
-
-
-def adsense_unit(client: str, slot: str) -> str:
-    return ('<aside class="ad" aria-label="Advertisements"><span class="ad-label">Advertisements</span>'
-            f'<ins class="adsbygoogle" data-ad-client="{html.escape(client)}" data-ad-slot="{html.escape(slot)}" '
-            'data-ad-format="auto" data-full-width-responsive="true"></ins>'
-            '<script>(window.adsbygoogle = window.adsbygoogle || []).push({});</script></aside>\n')
-
-
-# Pages that are navigation (section indexes, the coverage table) or policy text
-# load no AdSense at all: AdSense forbids ads on screens used for navigation.
-NO_AD_UNIT = ("coverage.md", "privacy.md")
-
-
-def ad_unit_allowed(page: "Page") -> bool:
-    return not (page.noindex or page.rel in NO_AD_UNIT or posixpath.basename(page.rel) == "index.md")
-
-
-def ads_txt(client: str) -> bytes:
-    return f"google.com, {client[len('ca-'):]}, DIRECT, {ADSENSE_TAG_ID}\n".encode("utf-8")
 
 
 MATERIAL_ROWS = ("taskbar", "start", "flyout", "menu", "frame")
@@ -1651,7 +1595,6 @@ def description(facts: dict, page: Page) -> str:
 
 def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updated: str = "") -> str:
     root = depth_prefix(page.url)
-    client, slot = facts.get("_ads", ("", ""))
     stamp = (f'<span>Last updated <time datetime="{updated}">{updated}</time></span>' if updated else "")
     values = {
         "TITLE": html.escape(page.title),
@@ -1670,10 +1613,6 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updat
         "PAGE_PATH": html.escape(page.url),
         # Kept out of search engines and so out of sitemap.xml: the results page.
         "ROBOTS": '<meta name="robots" content="noindex">\n' if page.noindex else "",
-        # Advertising (project.json adsense_*): the loader and the unit go only on
-        # content pages, so not even Auto ads can reach a navigation page.
-        "ADSENSE": adsense_head(client) if client and ad_unit_allowed(page) else "",
-        "AD_UNIT": adsense_unit(client, slot) if client and slot and ad_unit_allowed(page) else "",
     }
     # One pass over the TEMPLATE: text substituted in (a page body that mentions
     # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.
@@ -2035,9 +1974,6 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     # sitemap and robots.txt belong to the main site.
     landing = RELEASE is None
     facts = dict(facts, design_tokens_css=design_tokens_css()) if landing else dict(facts)
-    # A release tree is frozen when retained, so ads there could never be switched
-    # off again from project.json: only the main site carries them.
-    facts["_ads"] = adsense_settings(facts, errors) if landing else ("", "")
     # Only when a template uses it: a snapshot of an older tree has no features.json.
     if landing and any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
                        for f in SITE_SRC.rglob("*.html")):
@@ -2098,14 +2034,11 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         files[f"{DOCS_BASE}{found.url}"] = render_page(tpl, facts, all_pages, found).encode("utf-8")
         sources[f"{DOCS_BASE}{found.url}"] = ""
     if landing:
-        for name in ("sitemap.xml", "robots.txt", "ads.txt"):
+        for name in ("sitemap.xml", "robots.txt"):
             if name in files:
                 errors.append(f"gh-pages/{name}: generated by build.py; remove the hand-written copy")
         files["sitemap.xml"] = sitemap(facts, files, sources, dates)
         files["robots.txt"] = (f"User-agent: *\nAllow: /\n\nSitemap: {site_url(facts, 'sitemap.xml')}\n").encode("utf-8")
-        if facts["_ads"][0]:
-            files["ads.txt"] = ads_txt(facts["_ads"][0])
-            sources["ads.txt"] = ""
     if landing:
         # Page hygiene of the CURRENT tree, like check_design_lines: a release is
         # published as it was.
