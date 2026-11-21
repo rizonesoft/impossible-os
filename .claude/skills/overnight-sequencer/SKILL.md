@@ -118,7 +118,7 @@ bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <t
 #    this replaces: 51 polls x ~350K cached tokens in run-20260719-022200
 #    (~27% of that session's Bash calls). One model turn, idle while it sleeps:
 bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool timeout: 600000
-#    (watches <logFile> for the "Turn completed" sentinel) exit 0 = DONE
+#    (waits for <logFile>.done, which the dispatcher writes after the review exits) exit 0 = DONE
 #     (prints the verdict tail); exit 3 = STILL RUNNING (reports bytes +
 #     last-growth age); exit 4 = STALE (no growth for --stale-secs, ~hung --
 #     re-dispatch THAT log only, keep waiting on the rest; B2).

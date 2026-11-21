@@ -17,7 +17,7 @@
 # the Bash command line.
 #
 # Output (stdout): one JSON line {kind, jobId, logFile, manifest} -- poll
-# logFile IN-SESSION for the "Turn completed" sentinel (blocking sleep loop).
+# logFile IN-SESSION until <logFile>.done appears (blocking sleep loop).
 set -euo pipefail
 
 # Section attribution from the prompt's FIRST line. v17 close-out (2026-08-29):
@@ -127,7 +127,7 @@ UNIT="codex-rev-${KIND}-${STAMP}-$$"
 # left in the service's cgroup, killing an in-flight review with it. A
 # review in its OWN transient scope survives the session's death, so the
 # NEXT session can still read a completed artifact. systemd-run --collect
-# gives it that scope; the "Turn completed" sentinel is what the in-session
+# gives it that scope; <logFile>.done (the exit status) is what the in-session
 # poll (and any recovering next session) watches for.
 PROMPT_FILE="$(mktemp)"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
