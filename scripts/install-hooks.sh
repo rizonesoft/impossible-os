@@ -89,14 +89,25 @@ set_hooks_path() {
         echo "ERROR: $HOOKS_DIR not found -- are you in the repo root?"
         exit 1
     fi
-    local current
-    current="$(git -C "$PROJECT" config --get core.hooksPath 2>/dev/null || true)"
-    if [ "$current" != ".githooks" ]; then
-        git -C "$PROJECT" config core.hooksPath .githooks
-        echo "Configured: core.hooksPath = .githooks"
-    else
-        echo "Already configured: core.hooksPath = .githooks"
+    # The setting is written where git reads it from: a worktree-scoped value (extensions.worktreeConfig)
+    # outranks the repository's, so writing the repository's alone would report success while git keeps
+    # using the other directory. The effective value is checked after the write.
+    local scope current
+    scope="$(git -C "$PROJECT" config --show-scope --get core.hooksPath || true)"   # fail-direction: unset is empty
+    scope="${scope%%$'\t'*}"
+    if git -C "$PROJECT" config --fixed-value --get core.hooksPath .githooks >/dev/null; then
+        echo "Already configured: core.hooksPath = .githooks ($scope)"
+        return 0
     fi
+    case "$scope" in
+        worktree) git -C "$PROJECT" config --worktree core.hooksPath .githooks ;;
+        *)        git -C "$PROJECT" config --local core.hooksPath .githooks ;;
+    esac
+    if ! git -C "$PROJECT" config --fixed-value --get core.hooksPath .githooks >/dev/null; then
+        echo "core.hooksPath is still not .githooks after writing it (a higher-priority value wins); nothing enabled" >&2
+        exit 1
+    fi
+    echo "Configured: core.hooksPath = .githooks"
 }
 
 enable_pre_push() {
@@ -129,17 +140,18 @@ prune_legacy_symlinks() {
     # to anything else is the operator's, and unsetting core.hooksPath gives
     # it back to them.
     [ -d "$LEGACY_HOOKS" ] || return 0
-    local removed=0 target wt link
+    local removed=0 target wt
     target="$LEGACY_HOOKS/pre-push"
     if [ -L "$target" ]; then
-        link="$(readlink -- "$target")"                   # never fails on a link, even a dangling one
-        while IFS= read -r wt; do
-            if [ "$link" = "${wt#worktree }/scripts/hooks/pre-push" ]; then
+        # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link,
+        # or one to another file whose name merely reads the same once a shell strips a newline, never does).
+        while IFS= read -r -d '' wt; do
+            if [ "$target" -ef "${wt#worktree }/scripts/hooks/pre-push" ]; then
                 rm "$target"
                 removed=1
                 break
             fi
-        done < <(git -C "$PROJECT" worktree list --porcelain 2>/dev/null | grep '^worktree ')
+        done < <(git -C "$PROJECT" worktree list --porcelain -z | tr '\n' '\0' | grep -z '^worktree ')
     fi
     [ "$removed" -gt 0 ] && echo "Pruned $removed legacy symlink(s) from .git/hooks/"
     return 0
@@ -155,8 +167,10 @@ remove_all() {
         echo "core.hooksPath could not be read (git config exit $rc)" >&2
         return 1
     fi
-    if [ "$current" = ".githooks" ]; then
-        git -C "$PROJECT" config --local --unset core.hooksPath \
+    # Ownership is decided by git's exact match, never by the shell's copy: command substitution strips
+    # trailing newlines, so a value of ".githooks" plus a newline would read as ours.
+    if [ "$rc" -eq 0 ] && git -C "$PROJECT" config --local --fixed-value --get core.hooksPath .githooks >/dev/null; then
+        git -C "$PROJECT" config --local --fixed-value --unset core.hooksPath .githooks \
             || { echo "core.hooksPath could not be unset" >&2; return 1; }
         echo "Unset: core.hooksPath (was: $current)"
     elif [ -n "$current" ]; then
@@ -167,8 +181,12 @@ remove_all() {
     disable_pre_push
     prune_legacy_symlinks
     echo ""
-    echo "Git hooks removed. Always-on hooks in .githooks/ are inert until"
-    echo "'bash scripts/install-hooks.sh' reconfigures core.hooksPath."
+    if git -C "$PROJECT" config --fixed-value --get core.hooksPath .githooks >/dev/null; then
+        echo "This checkout still runs .githooks/: core.hooksPath comes from $(git -C "$PROJECT" config --show-scope --get core.hooksPath | cut -f1) config, which --remove does not change."
+    else
+        echo "Git hooks removed. Always-on hooks in .githooks/ are inert until"
+        echo "'bash scripts/install-hooks.sh' reconfigures core.hooksPath."
+    fi
 }
 
 case "${1:-}" in

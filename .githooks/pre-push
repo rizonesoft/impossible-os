@@ -34,9 +34,14 @@ STDIN_DATA="$(cat)"
 # (IFS=' ', so a tab stays in its field, as git keeps it); a local ref can
 # hold a space, so they read PUSH_RECORDS, the records with that ref's spaces
 # encoded. The dash checker and the delegated gate get the records verbatim.
+# The hook runs without errexit, so a helper that fails to load, or records
+# that cannot be made, refuse the push here: an empty PUSH_RECORDS would let
+# every loop below see no updates and pass.
 # shellcheck source=.githooks/lib/push-records.sh
-. "$REPO_ROOT/.githooks/lib/push-records.sh"
-PUSH_RECORDS="$(push_records <<< "$STDIN_DATA")"
+. "$REPO_ROOT/.githooks/lib/push-records.sh" \
+  || { echo "[pre-push] .githooks/lib/push-records.sh could not be loaded; push refused" >&2; exit 1; }
+PUSH_RECORDS="$(push_records <<< "$STDIN_DATA")" \
+  || { echo "[pre-push] the pushed ref records could not be read; push refused" >&2; exit 1; }
 
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
@@ -86,7 +91,7 @@ done <<< "$PUSH_RECORDS"
 # after the branch policy, which refuses on the ref name alone.
 # shellcheck source=.githooks/lib/dash-gate.sh
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
-dash_push_gate "${1:-}" <<< "$STDIN_DATA" || exit 1
+dash_push_gate "${2:-}" <<< "$STDIN_DATA" || exit 1
 
 # A section built while the reviewer was down owes its review, and nothing is
 # pushed until it has had it: an outage is a delay, never an approval. Owner:

@@ -186,6 +186,22 @@ if [ "$PIN_KIND" = "1" ]; then
             echo "[$SELF_NAME] BLOCK -- this section was built while the reviewer was down and starts at ${BASE_OID:0:10}; REVIEW_BASE names another commit. Leave it unset or give that one." >&2
             exit 2
         fi
+    elif [ "$KIND" = "reconciliation" ]; then
+        # A reconciliation reviews the same whole section the completion before it did: its base is that
+        # pass's recorded base, used for the lenses and the prompt alike, and a REVIEW_BASE naming another
+        # commit is refused (review, 2026-11-21: HEAD~1 had been offered as "the whole section").
+        RECON_BASE="$(python3 "$PIN_TOOL" --repair-section-base "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
+            echo "[$SELF_NAME] BLOCK -- the section base of the last reviewed candidate could not be read (reason above)" >&2; exit 2; }
+        if [ -z "$RECON_BASE" ]; then
+            echo "[$SELF_NAME] BLOCK -- a reconciliation follows a completion: this section has no checked completion or reconciliation pass to start the repair from" >&2
+            exit 2
+        fi
+        BASE_OID="$(git rev-parse --quiet --verify "${RECON_BASE}^{commit}" 2>/dev/null)" || {
+            echo "[$SELF_NAME] BLOCK -- the section base ${RECON_BASE:0:10} the completion reviewed is not a commit here" >&2; exit 2; }
+        if [ -n "${REVIEW_BASE:-}" ] && [ "$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" != "$BASE_OID" ]; then
+            echo "[$SELF_NAME] BLOCK -- the completion reviewed this section from ${BASE_OID:0:10}; REVIEW_BASE names another commit. Leave it unset or give that one." >&2
+            exit 2
+        fi
     elif [ -n "${REVIEW_BASE:-}" ]; then
         BASE_OID="$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" || {
             echo "[$SELF_NAME] BLOCK -- REVIEW_BASE is not a commit here: $REVIEW_BASE" >&2; exit 2; }

@@ -53,15 +53,29 @@ def test_cursor_disagreement_is_a_field_not_a_silent_choice():
     assert m._cursor_disagreement({}, todo, {"n": 59}) is None
 
 
+def _triage():
+    import importlib.util
+    hook = pathlib.Path(__file__).resolve().parents[3] / ".claude/hooks/sequencer_triage.py"
+    spec = importlib.util.spec_from_file_location("_triage_for_packet", hook)
+    t = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(t)
+    return t
+
+
+def _ordered(secs):
+    """The array as --classify emits it: section_list sorts it into work order, which _next_section reads."""
+    return sorted(secs, key=_triage()._work_order)
+
+
 def test_the_packet_names_a_runnable_section_never_a_blocked_one():
     m = _mod()
     secs = [{"n": 1, "class": "NEEDS_WORK", "waiting": True}, {"n": 2, "class": "BLOCKED"},
             {"n": 3, "class": "NEEDS_WORK"}, {"n": 4, "class": "DONE"}]
-    assert m._next_section(secs)["n"] == 3
+    assert m._next_section(_ordered(secs))["n"] == 3
     # Every open section waits: the first is named so the stall is visible.
-    assert m._next_section(secs[:2])["n"] == 1
+    assert m._next_section(_ordered(secs[:2]))["n"] == 1
     # Only blocked and done work left: no section.
-    assert m._next_section([secs[1], secs[3]]) is None
+    assert m._next_section(_ordered([secs[1], secs[3]])) is None
 
 
 if __name__ == "__main__":
@@ -75,10 +89,10 @@ def test_runnable_sections_go_in_plan_row_order_after_any_owing_only_review():
     m = _mod()
     secs = [{"n": 49, "class": "NEEDS_WORK", "plan_order": 7}, {"n": 52, "class": "NEEDS_WORK", "waiting": True},
             {"n": 60, "class": "NEEDS_WORK", "plan_order": 1}, {"n": 61, "class": "NEEDS_WORK", "plan_order": 2}]
-    assert m._next_section(secs)["n"] == 60                       # the plan's first buildable row, not section 49
+    assert m._next_section(_ordered(secs))["n"] == 60             # the plan's first buildable row, not section 49
     shipped = {"n": 70, "class": "NEEDS_WORK"}                    # shipped, owing its review: no plan_order
-    assert m._next_section(secs + [shipped])["n"] == 70
-    assert m._next_section([{**s, "waiting": True} for s in secs])["n"] == 49   # all wait: the first, so the stall shows
+    assert m._next_section(_ordered(secs + [shipped]))["n"] == 70
+    assert m._next_section(_ordered([{**s, "waiting": True} for s in secs]))["n"] == 49   # all wait: the first
 
 
 def test_classify_marks_each_buildable_section_with_its_plan_row():

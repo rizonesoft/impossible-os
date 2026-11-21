@@ -327,7 +327,7 @@ check_zero_trailer_policy() {
     # CONTRIBUTING.md existed before §7 shipped; the section was added via a
     # modification, not a file creation.
     local anchor
-    anchor=$(git log --reverse --format='%H' -S 'AI-Assisted Commit Policy (zero trailer)' -- CONTRIBUTING.md 2>/dev/null | head -1)
+    anchor=$(git log --encoding=UTF-8 --reverse --format='%H' -S 'AI-Assisted Commit Policy (zero trailer)' -- CONTRIBUTING.md 2>/dev/null | head -1)
     if [ -z "$anchor" ]; then
         t_fail "§7 adoption anchor resolvable" \
                "git log did not find the introducing commit for 'AI-Assisted Commit Policy' in CONTRIBUTING.md -- re-check §7 adoption"
@@ -363,7 +363,7 @@ check_zero_trailer_policy() {
     # Turkish locale folds AI-Author's I to a dotless i). Under pipefail a
     # failed read fails the check.
     local trailer_hits rc=0
-    trailer_hits=$(git log -z --format='%H%n%B' "$range" | LC_ALL=C gawk -v RS='\0' -v re="$AI_TRAILER_RE" '
+    trailer_hits=$(git log -z --encoding=UTF-8 --format='%H%n%B' "$range" | LC_ALL=C gawk -v RS='\0' -v re="$AI_TRAILER_RE" '
         { n = split($0, line, "\n")
           for (i = 2; i <= n; i++) if (tolower(line[i]) ~ re) { printf " %s", line[1]; break } }') || rc=$?
     if [ "$rc" -ne 0 ]; then

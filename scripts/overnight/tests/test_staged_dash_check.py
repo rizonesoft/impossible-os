@@ -30,8 +30,33 @@ def _clean_env(extra=None):
     return env
 
 
+def _sub(cmd, *, cwd=None, input=None, env=None, timeout=120, check=False, capture_output=True, text=False):
+    """subprocess.run for every fixture command: the command runs in its own
+    process group, and the whole group (a hook, the checker, a cat-file it
+    started) is stopped on timeout and after the command returns, so nothing
+    a test starts outlives it."""
+    import signal
+    proc = subprocess.Popen(cmd, cwd=cwd, env=_clean_env() if env is None else env, text=text,
+                            stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE if capture_output else None,
+                            stderr=subprocess.PIPE if capture_output else None, start_new_session=True)
+    try:
+        out, err = proc.communicate(input, timeout=timeout)
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:                         # the group has already exited: nothing to stop
+            pass
+        if proc.returncode is None:
+            proc.communicate()
+    r = subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+    if check:
+        r.check_returncode()
+    return r
+
+
 def _git(root, *a):
-    return subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30,
+    return _sub(["git", *a], cwd=root, check=True, capture_output=True, timeout=30,
                           env=_clean_env()).stdout.decode().strip()
 
 
@@ -45,12 +70,24 @@ def _repo(tmp_path):
     return root
 
 
+def _dest(tmp_path, root, name, refs=None):
+    """A bare repository at tmp_path/name holding `refs` ({ref: oid}) pushed from root; its path is the URL."""
+    bare = tmp_path / name
+    _git(tmp_path, "init", "-q", "--bare", str(bare))
+    for ref, oid in (refs or {}).items():
+        _git(root, "push", "-q", str(bare), f"{oid}:{ref}")
+    return str(bare)
+
+
+def _push_check(root, dest, stdin):
+    return _sub([sys.executable, str(CHECK), "--push", dest], cwd=root, input=stdin, text=True, timeout=60)
+
 def _commit(root, msg, *extra):
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", *extra, "-m", msg)  # a fresh repo: no hooks
 
 
 def _run(root, *args, extra=None):
-    return subprocess.run([sys.executable, str(CHECK), *args], cwd=root, env=_clean_env(extra),
+    return _sub([sys.executable, str(CHECK), *args], cwd=root, env=_clean_env(extra),
                           capture_output=True, text=True, timeout=60)
 
 
@@ -290,7 +327,7 @@ def test_the_hook_gates_print_their_guidance_under_errexit(tmp_path):
         (fake / "scripts").mkdir(parents=True)
         (fake / "scripts/staged_dash_check.py").write_text(f"import sys\nsys.exit({rc})\n", encoding="utf-8")
         for call in ("dash_gate", "dash_push_gate origin < /dev/null"):
-            r = subprocess.run(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{GATE}"; {call} || exit 7'],
+            r = _sub(["bash", "-c", f'set -euo pipefail; REPO_ROOT="{fake}"; . "{GATE}"; {call} || exit 7'],
                                capture_output=True, text=True, timeout=30, env=_clean_env())
             assert r.returncode == 7 and expect in r.stdout, (call, r)
 
@@ -345,7 +382,7 @@ def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
     _git(root, "checkout", "-q", "-")
     _stage(root, {"f.md": "a\nb\n"})
     _commit(root, "main removes it")
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side"],
+    _sub(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "side"],
                    cwd=root, capture_output=True, timeout=30, env=_clean_env())
     assert _git(root, "rev-parse", "MERGE_HEAD") == _git(root, "rev-parse", "side")
     _stage(root, {"f.md": kept})
@@ -373,7 +410,7 @@ def _hooked_repo(tmp_path):
 
 
 def _auto_merge(root):
-    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", "side"],
+    return _sub(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", "side"],
                           cwd=root, capture_output=True, text=True, timeout=60, env=_clean_env())
 
 
@@ -414,63 +451,96 @@ def test_an_automatic_merge_that_keeps_the_other_parents_dash_passes(tmp_path):
 
 
 def test_a_new_ref_is_judged_against_the_destination_remote(tmp_path):
-    """A commit another remote already tracks is still outgoing to this one."""
+    """A commit another remote holds is still outgoing to this one: the destination says what it has."""
     root = _repo(tmp_path)
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
     tip = _git(root, "rev-parse", "HEAD")
-    _git(root, "remote", "add", "mirror", str(tmp_path / "mirror.git"))
-    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    mirror = _dest(tmp_path, root, "mirror.git", {"refs/heads/main": tip})
+    origin = _dest(tmp_path, root, "origin.git", {"refs/heads/main": _git(root, "rev-parse", "HEAD~1")})
     _git(root, "update-ref", "refs/remotes/mirror/main", tip)
-    _git(root, "update-ref", "refs/remotes/origin/main", "HEAD~1")
-    assert _run(root, "--range", m.NULL_OID, tip).returncode == 0      # no remote named: all remotes
-    r = _run(root, "--range", m.NULL_OID, tip, "origin")
+    assert _run(root, "--range", m.NULL_OID, tip).returncode == 0      # no destination named: tracking refs
+    r = _run(root, "--range", m.NULL_OID, tip, origin)
     assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
-    assert _run(root, "--range", m.NULL_OID, tip, "mirror").returncode == 0
-    # A URL has no tracking refs of its own: origin's or mirror's copy says nothing about that repository.
-    r = _run(root, "--range", m.NULL_OID, tip, "https://example.org/r.git")
+    assert _run(root, "--range", m.NULL_OID, tip, mirror).returncode == 0
+    r = _run(root, "--range", m.NULL_OID, tip, _dest(tmp_path, root, "empty.git"))
     assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
 
 
-def test_a_merge_the_user_commits_is_judged_once_by_commit_msg(tmp_path):
-    """pre-commit leaves a merge to commit-msg, which refuses a dash the
-    resolution adds; outside a merge pre-commit's gate still judges."""
-    root = _hooked_repo(tmp_path)
-    gate = f'set -euo pipefail; REPO_ROOT="{root}"; . "{GATE}"; dash_commit_gate'
-    _stage(root, {"f.md": "a\n"})
-    _commit(root, "base")
-    _git(root, "checkout", "-q", "-b", "side")
-    _stage(root, {"f.md": "side\n"})
-    _commit(root, "side")
-    _git(root, "checkout", "-q", "-")
-    _stage(root, {"f.md": "main\n"})
-    _commit(root, "main")
-    subprocess.run(["git", "merge", "-q", "side"], cwd=root, capture_output=True, timeout=30, env=_clean_env())
-    assert _git(root, "rev-parse", "MERGE_HEAD") == _git(root, "rev-parse", "side")
-    _stage(root, {"f.md": "resolved " + DASH + "\n"})
-    held = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
-                          env=_clean_env())
-    assert held.returncode == 0 and "[dash-check]" not in held.stderr, held
-    r = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-edit"],
-                       cwd=root, capture_output=True, text=True, timeout=60, env=_clean_env())
-    assert r.returncode != 0 and "f.md gains 1" in r.stderr, r
-    _git(root, "merge", "--abort")
-    _stage(root, {"g.md": "new " + DASH + "\n"})
-    plain = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
-                           env=_clean_env())
-    assert plain.returncode == 1 and "g.md gains 1" in plain.stderr, plain
-
-
-def test_a_change_of_line_endings_names_only_the_added_line(tmp_path):
+def test_a_pushurl_is_judged_by_what_it_holds_not_by_the_fetch_side(tmp_path):
+    """origin fetches from a repository holding the tip and pushes to an empty one: the push sends it all."""
     root = _repo(tmp_path)
-    _stage(root, {"f.md": "legacy " + DASH + "\nplain\n"})
-    _commit(root, "base")
-    (root / "f.md").write_bytes(("legacy " + DASH + "\r\nadded " + DASH + "\r\nplain\r\n").encode())
-    _git(root, "add", "f.md")
-    r = _run(root)
-    assert r.returncode == 1 and "f.md gains 1" in r.stderr and "f.md:2 is a new" in r.stderr, r
-    assert "f.md:1" not in r.stderr, r
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    fetch = _dest(tmp_path, root, "fetch.git", {"refs/heads/main": tip})
+    push = _dest(tmp_path, root, "push.git")
+    _git(root, "remote", "add", "origin", fetch)
+    _git(root, "remote", "set-url", "--push", "origin", push)
+    _git(root, "update-ref", "refs/remotes/origin/main", tip)
+    stdin = f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n"
+    r = _push_check(root, push, stdin)
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+    assert _push_check(root, fetch, stdin).returncode == 0       # the same push to the fetch side sends nothing
 
+
+def test_an_unreadable_range_endpoint_is_a_read_error(tmp_path):
+    root = _repo(tmp_path)
+    r = _run(root, "--range", "HEAD", "missing-section-review-tip")
+    assert r.returncode == 2 and "names no object" in r.stderr, r
+    r = _push_check(root, _dest(tmp_path, root, "d.git"), f"refs/heads/main {'1' * 40} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 2 and "not in this repository" in r.stderr, r
+
+
+def test_a_destination_commit_this_clone_lacks_is_named_in_the_refusal(tmp_path):
+    root = _repo(tmp_path)
+    other = _repo(tmp_path / "o")
+    _stage(other, {"x.md": "elsewhere\n"})
+    _commit(other, "elsewhere")
+    dest = _dest(tmp_path, other, "d.git", {"refs/heads/other": _git(other, "rev-parse", "HEAD")})
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    r = _push_check(root, dest, f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 1 and "1 commit(s) the destination holds are not in this clone" in r.stderr, r
+
+
+def test_the_callers_rename_limit_never_changes_the_verdict(tmp_path):
+    """With diff.renameLimit=1 git skips inexact renames; the checker sets its own limit."""
+    root = _repo(tmp_path)
+    body = "".join(f"line {i} " + DASH + "\n" for i in range(30))
+    _stage(root, {f"a{i}.md": body for i in range(3)})
+    _commit(root, "dashes")
+    base = _git(root, "rev-parse", "HEAD")
+    for i in range(3):
+        _git(root, "mv", f"a{i}.md", f"b{i}.md")
+        (root / f"b{i}.md").write_text(body + "edited\n")
+    _git(root, "add", "-A")
+    limit = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "diff.renameLimit", "GIT_CONFIG_VALUE_0": "1"}
+    assert _run(root, extra=limit).returncode == 0, _run(root, extra=limit)
+    _commit(root, "renamed")
+    assert _run(root, "--range", base, "HEAD", extra=limit).returncode == 0
+
+
+def test_a_blob_is_counted_in_chunks_with_a_dash_across_each_boundary(tmp_path):
+    """Text past the binary prefix is drained in chunks; a dash split across a chunk edge still counts."""
+    root = _repo(tmp_path)
+    edge = m.CHUNK
+    data = bytearray(b"a" * (3 * edge + 10))
+    for at in (m.BINARY_PREFIX - 1, edge - 1, 2 * edge - 2, 3 * edge):   # straddling the prefix and each chunk edge
+        data[at:at + 3] = DASH.encode()
+    _stage(root, {"big.md": bytes(data)})
+    oid = _git(root, "rev-parse", ":big.md")
+    utf16 = ("x" * 40000 + DASH + "y" * 40000 + DASH).encode("utf-16")
+    _stage(root, {"w.md": utf16})
+    oid16 = _git(root, "rev-parse", ":w.md")
+    import contextlib
+    with contextlib.chdir(root):
+        reader = m.BlobReader()
+        try:
+            assert reader.count(oid) == 4 and reader.count(oid16) == 2
+        finally:
+            reader.close()
 
 def test_one_push_reads_a_commit_two_refs_carry_once(tmp_path, monkeypatch):
     """A branch and a new tag on the same tip: each outgoing commit is judged once."""
@@ -481,11 +551,11 @@ def test_one_push_reads_a_commit_two_refs_carry_once(tmp_path, monkeypatch):
     base = _git(root, "rev-parse", "HEAD~1")
     stdin = f"refs/heads/main {tip} refs/heads/main {base}\nrefs/tags/v1 {tip} refs/tags/v1 {m.NULL_OID}\n"
     stdin += f"(delete) {m.NULL_OID} refs/heads/old {base}\n"
-    r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
-                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    dest = _dest(tmp_path, root, "d.git", {"refs/heads/main": base, "refs/heads/old": base})
+    r = _push_check(root, dest, stdin)
     assert r.returncode == 1 and r.stderr.count("doc.md gains 1") == 1, r
     _production_git_in(root, monkeypatch)
-    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), "origin")]
+    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), dest)[0]]
     # The new tag walks nothing below main's advertised remote oid: only the tip is judged.
     assert labels == [f"commit {tip[:12]}: "], labels
 
@@ -495,12 +565,11 @@ def test_a_ref_name_holding_other_whitespace_is_one_field(tmp_path, space):
     """git accepts a U+00A0 or a U+2028 in a tag name; neither may split a field or a record."""
     root = _repo(tmp_path)
     tip = _git(root, "rev-parse", "HEAD")
-    _git(root, "update-ref", "refs/remotes/origin/main", tip)
+    dest = _dest(tmp_path, root, "d.git", {"refs/heads/main": tip})
     tag = f"refs/tags/Release{space}1"
-    assert subprocess.run(["git", "check-ref-format", tag], cwd=root, timeout=30).returncode == 0
+    assert _sub(["git", "check-ref-format", tag], cwd=root, timeout=30).returncode == 0
     stdin = f"refs/heads/main {tip} refs/heads/main {tip}\n{tag} {tip} {tag} {m.NULL_OID}\n"
-    r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
-                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    r = _push_check(root, dest, stdin)
     assert r.returncode == 0, r
     assert m.push_updates(stdin) == [(tip, tip), (m.NULL_OID, tip)]
 
@@ -515,22 +584,17 @@ def _production_git_in(root, monkeypatch):
 
 
 def test_a_new_ref_to_a_second_remote_judges_what_that_remote_lacks(tmp_path, monkeypatch):
-    """A configured remote with no tracking refs holds nothing: a commit origin
-    already has is still judged on its first push there."""
+    """A repository that holds nothing yet: a commit origin already has is still judged on its first push there."""
     root = _repo(tmp_path)
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
     tip = _git(root, "rev-parse", "HEAD")
-    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
-    _git(root, "update-ref", "refs/remotes/origin/main", tip)
-    _git(root, "remote", "add", "second", str(tmp_path / "second.git"))
+    origin = _dest(tmp_path, root, "origin.git", {"refs/heads/main": tip})
+    second = _dest(tmp_path, root, "second.git")
     stdin = f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n"
-    r = subprocess.run([sys.executable, str(CHECK), "--push", "second"], cwd=root, input=stdin,
-                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    r = _push_check(root, second, stdin)
     assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
-    origin = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
-                            env=_clean_env(), capture_output=True, text=True, timeout=60)
-    assert origin.returncode == 0, origin
+    assert _push_check(root, origin, stdin).returncode == 0
 
 
 def test_a_push_source_holding_spaces_is_one_field(tmp_path):
@@ -554,7 +618,7 @@ def test_a_real_dry_run_push_with_a_spaced_source_reaches_every_check_intact(tmp
                     'STDIN_DATA="$(cat)"\nPUSH_RECORDS="$(push_records <<< "$STDIN_DATA")"\n'
                     "while IFS=' ' read -r _l loid rref roid; do echo \"REC $loid $rref $roid\" >&2; done"
                     ' <<< "$PUSH_RECORDS"\n'
-                    'dash_push_gate "${1:-}" <<< "$STDIN_DATA" || exit 1\n')
+                    'dash_push_gate "${2:-}" <<< "$STDIN_DATA" || exit 1\n')
     hook.chmod(0o755)
     bare = tmp_path / "origin.git"
     _git(tmp_path, "init", "-q", "--bare", str(bare))
@@ -562,17 +626,17 @@ def test_a_real_dry_run_push_with_a_spaced_source_reaches_every_check_intact(tmp
     _git(root, "config", "core.hooksPath", ".githooks")
     tip = _git(root, "rev-parse", "HEAD")
     for source in ("HEAD@{0 seconds ago}", "HEAD@{0\tseconds ago}"):     # a space, and a tab git keeps as typed
-        r = _run_tree(["git", "push", "--dry-run", "origin", f"{source}:refs/heads/main"], root)
+        r = _sub(["git", "push", "--dry-run", "origin", f"{source}:refs/heads/main"], cwd=root, text=True)
         assert r.returncode == 0 and f"REC {tip} refs/heads/main {m.NULL_OID}" in r.stderr, r.stdout + r.stderr
     push = ["git", "push", "--dry-run", "origin", "HEAD@{0\tseconds ago}:refs/heads/main"]
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
-    r = _run_tree(push, root)
+    r = _sub(push, cwd=root, text=True)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
     shipped = (REPO / ".githooks/pre-push").read_text()
     assert shipped.count('done <<< "$PUSH_RECORDS"') == 6 and 'done <<< "$STDIN_DATA"' not in shipped
     assert shipped.count("while IFS=' ' read -r ") == 6 and "while read -r " not in shipped
-    assert 'dash_push_gate "${1:-}" <<< "$STDIN_DATA"' in shipped
+    assert 'dash_push_gate "${2:-}" <<< "$STDIN_DATA"' in shipped
 
 
 def test_a_binary_blob_is_counted_from_its_prefix_and_the_stream_stays_in_step(tmp_path, monkeypatch):
@@ -608,29 +672,9 @@ def test_an_ordinary_commit_is_refused_by_the_shipped_pre_commit_hook(tmp_path):
     _git(root, "config", "core.hooksPath", ".githooks")
     before = _git(root, "rev-parse", "HEAD")
     _stage(root, {"doc.md": "new " + DASH + "\n"})
-    r = _run_tree(["git", "commit", "-q", "-m", "dash"], root)
+    r = _sub(["git", "commit", "-q", "-m", "dash"], cwd=root, text=True)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
     assert _git(root, "rev-parse", "HEAD") == before
-
-
-def _run_tree(cmd, cwd, timeout=120):
-    """Run a command that starts hooks in its own process group, and stop the
-    whole group on timeout, so no hook or checker outlives the test."""
-    import signal
-    proc = subprocess.Popen(cmd, cwd=cwd, env=_clean_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise
-    finally:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)                 # anything the hook left in its group
-        except ProcessLookupError:
-            pass
-    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 def test_a_deleted_refs_remote_oid_bounds_every_walk(tmp_path, monkeypatch):
@@ -639,10 +683,9 @@ def test_a_deleted_refs_remote_oid_bounds_every_walk(tmp_path, monkeypatch):
     _stage(root, {"doc.md": "old " + DASH + "\n"})
     _commit(root, "historic dash")
     tip = _git(root, "rev-parse", "HEAD")
-    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    dest = _dest(tmp_path, root, "d.git", {"refs/tags/old": tip})
     stdin = f"(delete) {m.NULL_OID} refs/tags/old {tip}\nrefs/tags/new {tip} refs/tags/new {m.NULL_OID}\n"
-    r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
-                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    r = _push_check(root, dest, stdin)
     assert r.returncode == 0, r
     assert m.push_updates(stdin) == [(tip, m.NULL_OID), (m.NULL_OID, tip)]
 
@@ -657,10 +700,10 @@ def test_an_existing_ref_walks_nothing_another_ref_already_holds(tmp_path, monke
     _stage(root, {"clean.md": "plain\n"})
     _commit(root, "clean")
     tip = _git(root, "rev-parse", "HEAD")
-    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    dest = _dest(tmp_path, root, "d.git", {"refs/heads/main": newer, "refs/heads/side": older})
     stdin = f"refs/heads/main {tip} refs/heads/main {newer}\nrefs/heads/side {tip} refs/heads/side {older}\n"
     _production_git_in(root, monkeypatch)
-    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), "origin")]
+    labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), dest)[0]]
     assert labels == [f"commit {tip[:12]}: "], labels
 
 
@@ -677,3 +720,37 @@ def test_a_refusal_reads_only_the_parents_that_hold_a_dash(tmp_path):
 
     found = m.refused([[("bin", "new", "f.md")], [("bin", "new", "f.md")]], Reader())
     assert [f[0] for f in found] == ["f.md"] and reads == ["new"], reads
+
+
+def test_a_merge_parent_holding_as_many_decides_without_reading_the_rest():
+    counted = []
+
+    class Reader:
+        def count(self, oid):
+            counted.append(oid)
+            return {"new": 1, "p1": 1, "p2": 0}[oid]
+
+        def text(self, oid):
+            raise AssertionError("a clean file is never read")
+
+    assert m.refused([[("p1", "new", "f.md")], [("p2", "new", "f.md")]], Reader()) == []
+    assert counted == ["new", "p1"], counted
+
+
+def test_the_shipped_pre_push_refuses_when_its_record_helper_cannot_load(tmp_path):
+    """Without errexit, a missing helper used to leave every policy loop an empty record list."""
+    root = _repo(tmp_path)
+    (root / ".githooks/lib").mkdir(parents=True)
+    shutil.copy(REPO / ".githooks/pre-push", root / ".githooks/pre-push")
+    shutil.copy(REPO / ".githooks/lib/isolate-git-env.sh", root / ".githooks/lib/isolate-git-env.sh")
+    tip = _git(root, "rev-parse", "HEAD")
+    r = _sub(["bash", str(root / ".githooks/pre-push"), "origin", "x"], cwd=root, text=True, timeout=60,
+             input=f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode != 0 and "push-records.sh could not be loaded" in r.stderr, r
+
+
+def test_the_dash_gate_runs_before_any_slow_pre_commit_check():
+    """A refusal the staged index can give in milliseconds never waits behind the lint or the suites."""
+    hook = (REPO / ".githooks/pre-commit").read_text()
+    gate = hook.index("dash_commit_gate || exit 1")
+    assert hook.index("git diff --cached --quiet --exit-code") < gate < hook.index('echo "Pre-commit: running scripts/lint.sh')

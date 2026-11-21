@@ -115,3 +115,29 @@ def test_whitespace_before_the_colon_is_still_the_key(tmp_path):
         assert r.stdout.strip() == line, r
     rc, out = _scan(tmp_path, [("8" * 40, b"subject\n\nCo-Authored-By : S <s@example.org>\n")])
     assert rc == 1 and "found 1 post-anchor commit(s)" in out, out[-2000:]
+
+
+def test_the_history_scan_reads_messages_in_utf8_whatever_the_output_encoding(tmp_path):
+    """i18n.logOutputEncoding=UTF-16LE puts NULs inside every record; the scan asks git for UTF-8."""
+    import os
+    root = tmp_path / "r"
+    root.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=root, env=env, capture_output=True, text=True, timeout=30, check=True)
+    git("init", "-q")
+    git("config", "user.name", "t")
+    git("config", "user.email", "t@t")
+    (root / "CONTRIBUTING.md").write_text("AI-Assisted Commit Policy (zero trailer)\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "policy")
+    git("commit", "-q", "--allow-empty", "-m", "later\n\nCo-Authored-By: S <s@example.org>")
+    git("config", "i18n.logOutputEncoding", "UTF-16LE")
+    (root / "scripts").mkdir()
+    (root / "scripts/test-ai-system.sh").write_bytes(SUITE.read_bytes())         # the suite reads its own checkout
+    r = subprocess.run(["bash", str(root / "scripts/test-ai-system.sh"), "--zero-trailers"], cwd=root, env=env, capture_output=True, text=True,
+                       timeout=120)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and "found 1 post-anchor commit(s)" in out, out[-2000:]

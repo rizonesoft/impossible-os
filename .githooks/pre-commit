@@ -33,6 +33,13 @@ if git diff --cached --quiet --exit-code 2>/dev/null; then
     exit 0
 fi
 
+# ASCII dashes, for every lane (TODO-08 section 48); a merge is commit-msg's.
+# First of the content checks: it reads only the staged index, in tens of
+# milliseconds, so a refusal never waits behind the lint or the suites.
+# shellcheck source=.githooks/lib/dash-gate.sh
+. "$REPO_ROOT/.githooks/lib/dash-gate.sh"
+dash_commit_gate || exit 1
+
 echo ""
 echo "Pre-commit: running scripts/lint.sh (full-repo, matches CI)..."
 echo ""
@@ -136,11 +143,6 @@ if [ -f "$HOOK_AUDIT" ]; then
         fi
     fi
 fi
-
-# ASCII dashes, for every lane (TODO-08 section 48); a merge is commit-msg's.
-# shellcheck source=.githooks/lib/dash-gate.sh
-. "$REPO_ROOT/.githooks/lib/dash-gate.sh"
-dash_commit_gate || exit 1
 
 # TODO-08 §4: section-commit gate -- enforced at the final-index point
 # of git's own pre-commit. The harness PreToolUse hook is the

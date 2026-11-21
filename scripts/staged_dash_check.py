@@ -30,17 +30,19 @@ Generated files are exempt: their text is copied from sources this check has
 already judged (todo/implementation-plan.md copies TODO titles).
 
 Usage: staged_dash_check.py                 the staged change (pre-commit)
-       staged_dash_check.py --range OLD NEW [REMOTE]
+       staged_dash_check.py --range OLD NEW [URL]
                                              each commit in OLD..NEW; OLD all
                                              zeros means every commit of NEW
-                                             that REMOTE's tracking refs (or,
-                                             without any, no remote's) hold
-                                             (by hand)
-       staged_dash_check.py --push REMOTE   every ref pre-push's stdin names,
-                                             each commit once (pre-push)
+                                             the repository at URL does not
+                                             advertise (without URL, that no
+                                             remote-tracking ref holds; by hand)
+       staged_dash_check.py --push URL      every ref pre-push's stdin names,
+                                             each commit once, against what the
+                                             destination URL advertises (pre-push)
 Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
 read. SKIP_DASH_CHECK=1 skips it.
 """
+import codecs
 import collections
 import os
 import subprocess
@@ -55,6 +57,7 @@ BLOB_MODES = {"100644", "100755", "120000"}
 UTF8_BOM = b"\xef\xbb\xbf"
 UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 BINARY_PREFIX = 8000                                       # a NUL in this prefix makes a blob binary (as git decides)
+CHUNK = 1 << 16
 
 
 def changes_from_raw(raw: bytes) -> list:
@@ -115,6 +118,10 @@ def dash_count(text) -> int:
     return 0 if text is None else sum(text.count(d) for d in DASHES)
 
 
+def _str_dashes(text: str) -> int:
+    return text.count(chr(0x2013)) + text.count(chr(0x2014))
+
+
 def dash_lines(text: bytes) -> list:
     """(line number, line) for each line holding a dash; a CR before the LF is
     not part of the line, so a change of line endings never names one new."""
@@ -139,36 +146,69 @@ class BlobReader:
         if oid == NULL_OID:
             return 0
         if oid not in self.counts:
-            blob = self._read(oid, count_only=True)
-            self.counts[oid] = 0 if blob is None else dash_count(as_text(blob))
+            self.counts[oid] = self._count(oid)
         return self.counts[oid]
 
     def text(self, oid: str):
         return None if oid == NULL_OID else as_text(self._read(oid))
 
-    def _read(self, oid: str, count_only: bool = False):
-        """The blob's bytes; with count_only, None for a binary blob, whose
-        prefix decides that, so the rest is drained without being kept."""
+    def _header(self, oid: str) -> int:
         self.proc.stdin.write(oid.encode() + b"\n")
         self.proc.stdin.flush()
         header = self.proc.stdout.readline().split(b" ")
         if len(header) < 3 or header[1] != b"blob":
             raise ValueError(f"cat-file did not return blob {oid}")
-        size = int(header[2])
-        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
-        if count_only and len(head) == min(size, BINARY_PREFIX) and head[:2] not in UTF16_BOMS and b"\0" in head:
-            left = size - len(head)
-            while left:
-                chunk = self.proc.stdout.read(min(left, 1 << 16))
-                if not chunk:
-                    break
-                left -= len(chunk)
-            if left or self.proc.stdout.read(1) != b"\n":
-                raise ValueError(f"cat-file returned blob {oid} short")
-            return None
-        data = head + self.proc.stdout.read(size - len(head))
-        if len(data) != size or self.proc.stdout.read(1) != b"\n":
+        return int(header[2])
+
+    def _end(self, oid: str, left: int) -> None:
+        if left or self.proc.stdout.read(1) != b"\n":
             raise ValueError(f"cat-file returned blob {oid} short")
+
+    def _chunks(self, left: int):
+        while left:
+            chunk = self.proc.stdout.read(min(left, CHUNK))
+            if not chunk:
+                return
+            left -= len(chunk)
+            yield chunk
+
+    def _count(self, oid: str) -> int:
+        """The blob's dash count, read in chunks and never held whole: a NUL in
+        its prefix makes it binary (0), a UTF-16 byte-order mark is decoded as
+        it streams, anything else is counted as UTF-8 bytes."""
+        size = self._header(oid)
+        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
+        left = size - len(head)
+        if len(head) < min(size, BINARY_PREFIX):
+            raise ValueError(f"cat-file returned blob {oid} short")
+        if head[:2] in UTF16_BOMS:
+            decoder = codecs.getincrementaldecoder("utf-16")()
+            try:
+                n = _str_dashes(decoder.decode(head))
+                for chunk in self._chunks(left):
+                    left -= len(chunk)
+                    n += _str_dashes(decoder.decode(chunk))
+                n += _str_dashes(decoder.decode(b"", final=True))
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
+        elif b"\0" in head:
+            n = 0
+            for chunk in self._chunks(left):
+                left -= len(chunk)
+        else:
+            n, tail = dash_count(head), head[-2:]
+            for chunk in self._chunks(left):
+                left -= len(chunk)
+                window = tail + chunk                          # a dash is 3 bytes: none fits in the carried 2
+                n += dash_count(window)
+                tail = window[-2:]
+        self._end(oid, left)
+        return n
+
+    def _read(self, oid: str) -> bytes:
+        size = self._header(oid)
+        data = self.proc.stdout.read(size)
+        self._end(oid, size - len(data))
         return data
 
     def close(self) -> int:
@@ -219,7 +259,11 @@ def refused(per_parent: list, reader) -> list:
         if not n:
             continue
         olds = [old] + [index[path] for index in others]
-        gained = min(n - reader.count(o) for o in olds)
+        gained = n
+        for o in olds:                                         # a parent holding as many decides it: stop
+            gained = min(gained, n - reader.count(o))
+            if gained <= 0:
+                break
         if gained > 0:
             exact, copies = name_lines([reader.text(o) for o in dict.fromkeys(olds) if reader.count(o)],
                                        reader.text(new))
@@ -227,8 +271,14 @@ def refused(per_parent: list, reader) -> list:
     return found
 
 
+# Every diff this checker reads finds renames the same way, whatever the caller's config: with no limit on
+# inexact detection, a renamed and edited file is compared with its source, never with an empty file.
+DIFF_CONFIG = ("-c", "diff.renameLimit=0", "-c", "diff.renames=true")
+
+
 def _git(*args, stdin=None) -> bytes:
-    return subprocess.run(["git", *args], input=stdin, capture_output=True, timeout=TIMEOUT, check=True).stdout
+    return subprocess.run(["git", *DIFF_CONFIG, *args], input=stdin, capture_output=True, timeout=TIMEOUT,
+                          check=True).stdout
 
 
 def judge(commits: list) -> list:
@@ -268,42 +318,79 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     return [("", per_parent)]
 
 
-def outgoing(updates: list, remote: str = "") -> list:
-    """(label, per-parent changes) for every commit the (old, new) ref updates
-    send, merges included, each commit once however many refs carry it: one
-    rev-list per update, then one `diff-tree --stdin` fed one line per parent.
-    A deletion (new is the null id) sends nothing. Every walk stops at every
-    remote oid the push names, a deletion's included: the destination holds
-    those commits. A new ref also stops at the destination's tracking refs
-    when the destination is a configured remote; a push by URL has no
-    tracking refs of its own, so only the named oids bound it. With no
-    destination at all (a manual --range) every remote's tracking refs do."""
-    if not any(new != NULL_OID for _old, new in updates):
-        return []
-    known = sorted({old for old, _new in updates if old != NULL_OID})
-    if not remote:
-        tracking = ["--remotes"]
-    elif any(old == NULL_OID and new != NULL_OID for old, new in updates) and subprocess.run(
-            ["git", "config", "--get", f"remote.{remote}.url"], capture_output=True, timeout=TIMEOUT).returncode == 0:
-        tracking = [f"--remotes={remote}"]
+def destination_oids(dest: str) -> set:
+    """Every object id the push destination advertises (`git ls-remote`: its
+    branches, tags, peeled tags and HEAD). `dest` is the URL git pushes to,
+    which pre-push receives as its second argument, so a pushurl, a remote
+    given by URL and a remote whose tracking refs are stale all answer for
+    the repository actually written."""
+    if dest.startswith("-"):
+        raise ValueError(f"the push destination {dest!r} reads as an option")
+    out = _git("ls-remote", dest).decode("ascii", "replace")
+    return {line.split("\t", 1)[0] for line in out.splitlines() if line.strip()}
+
+
+def _resolve(rev: str) -> str:
+    """A --range endpoint as the object id it names; one this clone cannot resolve is a read error, never an
+    empty range."""
+    if rev == NULL_OID:
+        return rev
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{object}"],
+                       capture_output=True, text=True, timeout=TIMEOUT)
+    if r.returncode != 0:
+        raise ValueError(f"{rev!r} names no object in this repository")
+    return r.stdout.strip()
+
+
+def _object_types(oids: list) -> dict:
+    """oid -> type ("commit", "tag", ..., or "missing") in one batch-check."""
+    if not oids:
+        return {}
+    out = _git("cat-file", "--batch-check=%(objectname) %(objecttype)", stdin="".join(o + "\n" for o in oids).encode())
+    types = {}
+    for line in out.decode("ascii", "replace").splitlines():
+        oid, _sep, kind = line.partition(" ")
+        types[oid] = "missing" if kind.endswith("missing") or not kind else kind
+    return types
+
+
+def outgoing(updates: list, dest: str = "") -> tuple:
+    """(blocks, missing): (label, per-parent changes) for every commit the
+    ref updates send, merges included, each commit once, and the number of
+    destination commits this clone lacks.
+
+    The commits sent are exactly those reachable from a pushed tip and from
+    nothing the destination holds: one `rev-list --stdin` over every tip at
+    once, stopped at every remote oid the push names (a deletion's
+    included) and every oid the destination itself advertises. With no
+    destination (a manual --range) every remote's tracking refs stand in
+    for it. A pushed tip this clone lacks is a read error, never clean. A
+    destination commit this clone lacks cannot bound the walk; it is
+    counted, so a refusal can say to fetch first."""
+    tips = list(dict.fromkeys(new for _old, new in updates if new != NULL_OID))
+    if not tips:
+        return [], 0
+    held = {old for old, _new in updates if old != NULL_OID}
+    if dest:
+        held |= destination_oids(dest)
     else:
-        tracking = []
-    pairs, seen = [], set()                               # (commit, parent or None), in input order
-    for old, new in updates:
-        if new == NULL_OID:
-            continue
-        span = ["--ignore-missing", new, "--not", *(tracking if old == NULL_OID else []), *known]
-        for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
-            commit, *parents = line.split()
-            if commit in seen:
-                continue
-            seen.add(commit)
-            if parents:
-                pairs.extend((commit, p) for p in parents)
-            else:
-                pairs.append((commit, None))
+        held |= set(_git("for-each-ref", "--format=%(objectname)", "refs/remotes").decode().split())
+    types = _object_types(tips + sorted(held))
+    for tip in tips:
+        if types.get(tip, "missing") == "missing":
+            raise ValueError(f"the pushed object {tip} is not in this repository")
+    bounds = [o for o in sorted(held) if types.get(o) in ("commit", "tag")]
+    missing = sum(1 for o in held if types.get(o, "missing") == "missing")
+    feed = "".join(t + "\n" for t in tips) + "".join("^" + o + "\n" for o in bounds)
+    pairs = []                                                     # (commit, parent or None), oldest first
+    for line in _git("rev-list", "--reverse", "--parents", "--stdin", stdin=feed.encode()).decode().splitlines():
+        commit, *parents = line.split()
+        if parents:
+            pairs.extend((commit, p) for p in parents)
+        else:
+            pairs.append((commit, None))
     if not pairs:
-        return []
+        return [], missing
     feed = "".join(f"{c} {p}\n" if p else f"{c}\n" for c, p in pairs).encode()
     blocks = changes_by_header(_git("diff-tree", "--stdin", "--always", "-r", "-z", "-M", "--no-abbrev", "--root",
                                     stdin=feed))
@@ -312,7 +399,7 @@ def outgoing(updates: list, remote: str = "") -> list:
     commits = {}
     for (commit, _p), (_h, changes) in zip(pairs, blocks):
         commits.setdefault(commit, []).append(changes)
-    return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()]
+    return [(f"commit {c[:12]}: ", per_parent) for c, per_parent in commits.items()], missing
 
 
 def push_updates(lines: str) -> list:
@@ -352,10 +439,13 @@ def main(argv=None) -> int:
     if os.environ.get("SKIP_DASH_CHECK") == "1":
         return 0
     try:
+        missing = 0
         if argv[:1] == ["--range"] and len(argv) in (3, 4):
-            found = judge(outgoing([(argv[1], argv[2])], *argv[3:]))
+            blocks, missing = outgoing([(_resolve(argv[1]), _resolve(argv[2]))], *argv[3:])
+            found = judge(blocks)
         elif argv[:1] == ["--push"] and len(argv) == 2:
-            found = judge(outgoing(push_updates(sys.stdin.read()), argv[1]))
+            blocks, missing = outgoing(push_updates(sys.stdin.read()), argv[1])
+            found = judge(blocks)
         elif not argv:
             found = judge(staged())
         elif argv == ["--no-merge"]:
@@ -363,12 +453,15 @@ def main(argv=None) -> int:
         elif argv[:1] == ["--merge-head"] and len(argv) == 2:
             found = judge(staged(merge_head=argv[1]))
         else:
-            print("usage: staged_dash_check.py [--no-merge | --merge-head FILE | --range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--no-merge | --merge-head FILE | --range OLD NEW [URL] | --push URL]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)
         return 2
     report(found)
+    if found and missing:
+        print(f"[dash-check] {missing} commit(s) the destination holds are not in this clone, so they could not "
+              "bound the walk; if a named commit is already there, git fetch and push again", file=sys.stderr)
     return 1 if found else 0
 
 

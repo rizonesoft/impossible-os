@@ -68,17 +68,11 @@ def _next_section(sections):
     for a reviewer that is still down and is never picked, not even as the
     fallback, or the run would retry its review in a loop.
 
-    Among the runnable ones, a section with no `plan_order` (shipped, owing
-    only its review) comes first in file order, then the rest in plan row
-    order: the plan's row order is the build order inside a file as well."""
-    open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK" and not s.get("review_owed")]
-    first = next((s for s in open_secs if s.get("review_first")), None)
-    if first:
-        return first
-    runnable = [s for s in open_secs if not s.get("waiting")]
-    if runnable:                                           # min() keeps the first of equal keys: file order
-        return min(runnable, key=lambda s: (s.get("plan_order") is not None, s.get("plan_order") or 0))
-    return next(iter(open_secs), None)
+    `sections` is `sequencer_triage --classify` output, already in work order
+    (the review_first debt, the runnable sections by plan row, then the
+    waiting ones), so the first open section not owed is the answer: the
+    same one run_phase_guard derives the cursor from."""
+    return next((s for s in sections if s.get("class") == "NEEDS_WORK" and not s.get("review_owed")), None)
 
 
 def _cursor_disagreement(state: dict, todo, nxt_sec) -> dict | None:

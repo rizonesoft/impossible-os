@@ -24,9 +24,9 @@ dash_gate() {
 }
 
 # The same rule over each outgoing commit, from .githooks/pre-push: a rebase
-# that resolves a conflict commits without running pre-commit. $1 is the
-# remote's name (a new ref is judged against what that remote holds) and
-# stdin is pre-push's own, one line per ref; a commit two refs carry is read once.
+# that resolves a conflict commits without running pre-commit. $1 is the URL
+# git pushes to (pre-push's second argument): the checker asks that
+# repository what it holds. stdin is pre-push's own, one line per ref.
 dash_push_gate() {
     local rc=0
     python3 "$REPO_ROOT/scripts/staged_dash_check.py" --push "${1:-}" || rc=$?

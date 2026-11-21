@@ -140,3 +140,46 @@ def test_remove_leaves_a_hooks_path_it_did_not_write(tmp_path):
     got = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=root, capture_output=True, text=True,
                          timeout=30, env=_env()).stdout.strip()
     assert got == "my-hooks"
+
+
+def _cfg(root, *a, check=True):
+    return subprocess.run(["git", "config", *a], cwd=root, capture_output=True, text=True, timeout=30, env=_env(),
+                          check=check)
+
+
+def test_remove_keeps_a_link_and_a_value_that_only_read_alike(tmp_path):
+    """A target or value ending in a newline is another path or value: shell stripping must not make it ours."""
+    root = _plain_repo(tmp_path)
+    wt = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True,
+                        timeout=30, env=_env()).stdout.strip()
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(wt + "/scripts/hooks/pre-push\n")
+    _cfg(root, "core.hooksPath", ".githooks\n")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0, r
+    assert link.is_symlink() and _cfg(root, "--get", "core.hooksPath").stdout == ".githooks\n\n"
+
+
+def test_remove_says_when_an_inherited_value_still_runs_the_hooks(tmp_path):
+    root = _plain_repo(tmp_path)
+    glob = tmp_path / "global.cfg"
+    glob.write_text("[core]\n\thooksPath = .githooks\n")
+    env = dict(_env(), GIT_CONFIG_GLOBAL=str(glob))
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0 and "still runs .githooks/" in r.stdout and "global" in r.stdout, r
+    assert "inert" not in r.stdout
+
+
+def test_install_writes_the_scope_git_reads_the_hooks_path_from(tmp_path):
+    """A worktree-scoped value outranks the repository's: install writes that one and checks the result."""
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    _cfg(root, "--worktree", "core.hooksPath", "other-hooks")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=_env())
+    assert r.returncode == 0 and "Configured: core.hooksPath = .githooks" in r.stdout, r
+    assert _cfg(root, "--get", "core.hooksPath").stdout.strip() == ".githooks"
+    assert _cfg(root, "--worktree", "--get", "core.hooksPath").stdout.strip() == ".githooks"

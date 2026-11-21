@@ -283,10 +283,11 @@ def test_the_caps_name_no_stall_cap_when_the_pin_has_none(capsys):
 
 
 def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md",
-             worktree=rp.CLEAN_WORKTREE):
+             worktree=rp.CLEAN_WORKTREE, base=None):
     import json
     # The dispatcher's field order (manifest-line.py): ts, kind, todo first.
     return json.dumps({"ts": 1795170000, "kind": kind, "todo": todo, "section": section, "head": head,
+                       "base": head if base is None else base,
                        "pass_checked": checked, "rc": rc, "worktree_sha256": worktree})
 
 
@@ -350,22 +351,34 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["reconciliation"]) + "\nHIGHEST: none\n"
     done, prompt = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
     assert done.returncode == 2 and "a reconciliation follows a completion" in done.stderr, done.stderr
-    last = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
-    (reviews / "manifest.jsonl").write_text(_receipt("completion", last) + "\n")
-    done, prompt = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    def rev(r):
+        return subprocess.run(["git", "rev-parse", r], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
+    start, last, head = rev("HEAD~2"), rev("HEAD~1"), rev("HEAD")
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base=start) + "\n")
+    # No REVIEW_BASE: the section range is the one the completion reviewed, never HEAD~1.
+    done, prompt = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 0, done.stderr
-    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
     named = f"The newest repair runs from the last reviewed candidate, {last}, to the repaired candidate, HEAD {head}"
     assert named in prompt and prompt.index(named) < prompt.index("- repair-adversarial: ")
-    assert "then review the whole section: git diff " in prompt         # every pass reads the whole section
-    (reviews / "manifest.jsonl").write_text(_receipt("completion", "0" * 40) + "\n")
-    done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    assert f"then review the whole section: git diff {start} HEAD" in prompt     # the whole section, not the repair
+    receipt = _receipt("completion", last, base=start) + "\n"
+    (reviews / "manifest.jsonl").write_text(receipt)                  # the pass above appended its own record
+    done, _ = _dispatch(tmp_path, "reconciliation", full, base=last, reviews_dir=reviews)
+    assert done.returncode == 2 and "REVIEW_BASE names another commit" in done.stderr, done.stderr
+    (reviews / "manifest.jsonl").write_text(receipt)
+    done, _ = _dispatch(tmp_path, "reconciliation", full, base=start, reviews_dir=reviews)
+    assert done.returncode == 0, done.stderr
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base="") + "\n")
+    done, _ = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
+    assert done.returncode == 2 and "records no section base" in done.stderr, done.stderr
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", "0" * 40, base=start) + "\n")
+    done, _ = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
     # Review 2026-11-20: a commit that exists but was left behind by a reset or rebase is no start either.
     off = subprocess.run(["git", "commit-tree", "HEAD^{tree}", "-m", "off-history fixture"], capture_output=True,
                          text=True, cwd=str(REPO), check=True).stdout.strip()
-    (reviews / "manifest.jsonl").write_text(_receipt("completion", off) + "\n")
-    done, _ = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
+    (reviews / "manifest.jsonl").write_text(_receipt("completion", off, base=start) + "\n")
+    done, _ = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
 
 
