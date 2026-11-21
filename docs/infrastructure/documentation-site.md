@@ -171,3 +171,7 @@ The Linux kernel builds its documentation with Sphinx from `Documentation/` in t
 ## Privacy page
 
 The [privacy page](../privacy.md), linked from the landing footer and every docs page footer, lists every third party a visit reaches. Keep it current when the site starts loading a new service.
+
+## Analytics
+
+Every page carries Google Tag Manager when `project.json` sets `gtm_id` (`GTM-` and the container code); `null` or no key turns it off, and a malformed value fails the build. `build.py` writes the snippet into each page's `{{analytics_head}}`, so it lives in one place. Google Consent Mode defaults are set before the container loads: advertising storage is denied everywhere, and analytics storage is denied in the EEA (with the EU territories that have their own country codes), the UK, Gibraltar, the Channel Islands, the Isle of Man and Switzerland, where the site has no consent banner, so Google Analytics sends cookieless pings there (`CONSENT_REGIONS` in `build.py`). Google's `<noscript>` iframe is left out because it would load the container with no consent defaults. Retained release docs carry no analytics, since frozen pages could never be switched off. What is measured is configured in Tag Manager itself, not in this tree.

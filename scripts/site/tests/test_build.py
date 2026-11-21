@@ -1614,6 +1614,20 @@ class ReleaseDocs(unittest.TestCase):
                                   staged=False, release=ref, ref="HEAD")
         return B.run(args)
 
+    def test_release_docs_never_carry_analytics(self):
+        # A retained release is frozen, so analytics in it could never be switched off.
+        self.TEMPLATE = "{{analytics_head}}" + type(self).TEMPLATE
+        plain = self.project
+
+        def project(owner, historical):
+            return json.dumps(dict(json.loads(plain(owner, historical)), gtm_id="GTM-PZDW3KS5"))
+        self.project = project
+        self.fixture()
+        self.assertEqual(self.release("v1"), 0)
+        page = self.read("docs/v1/sub/page.html")
+        self.assertNotIn("googletagmanager", page)
+        self.assertNotIn("{{analytics_head}}", page)
+
     def test_release_links_pin_to_the_tag_commit_after_main_deletes_the_file(self):
         self.fixture()
         self.assertEqual(self.release("v1"), 0)
@@ -2864,6 +2878,51 @@ console.log = () => {};
 
 
 class SitePolish(unittest.TestCase):
+
+    def test_gtm_container_validates_project_json(self):
+        def container(raw):
+            errors: list[str] = []
+            return B.gtm_container({"_gtm_id": raw}, errors), errors
+        self.assertEqual(container(None), ("", []))                           # null is off
+        self.assertEqual(container("GTM-PZDW3KS5"), ("GTM-PZDW3KS5", []))
+        for bad in ("PZDW3KS5", "GTM-", "GTM-abc1234", "GTM-PZD", "GTM-PZDW3KS5PZDW3", "GTM-PZ\u0663W3KS5",
+                    "G-PZDW3KS5", "GTM-PZDW3KS5\"", 12345, ""):
+            got, errors = container(bad)
+            self.assertEqual((got, len(errors)), ("", 1), bad)
+
+    def test_analytics_head_sets_consent_before_the_container_loads(self):
+        self.assertEqual(B.analytics_head(""), "")
+        head = B.analytics_head("GTM-PZDW3KS5")
+        regional = head.index("analytics_storage:'denied',region:[")
+        default = head.index("analytics_storage:'granted'")
+        loader = head.index('<script async src="https://www.googletagmanager.com/gtm.js?id=GTM-PZDW3KS5"></script>')
+        start = head.index("dataLayer.push({'gtm.start':new Date().getTime(),event:'gtm.js'})")
+        self.assertLess(regional, default)      # the region-specific default is declared first
+        self.assertLess(default, start)         # both before the container starts
+        self.assertLess(start, loader)
+        ads = "ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',"
+        self.assertIn("gtag('consent','default',{" + ads + "analytics_storage:'denied',region:[", head)
+        self.assertIn("gtag('consent','default',{" + ads + "analytics_storage:'granted'});", head)
+        self.assertNotIn("'granted'", head.replace("analytics_storage:'granted'", "", 1))
+        eu = {"AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
+              "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE"}
+        expected = eu | {"IS", "LI", "NO", "GB", "CH", "RE", "GP", "MQ", "GF", "YT", "MF", "AX",
+                         "GI", "GG", "JE", "IM"}
+        self.assertEqual(set(B.CONSENT_REGIONS), expected)
+        self.assertEqual(len(B.CONSENT_REGIONS), len(expected))        # no duplicates
+        regions = head[regional:default]
+        for code in expected:
+            self.assertIn(f"'{code}'", regions)
+        self.assertNotIn("<noscript", head)
+
+    def test_every_site_page_loads_analytics_in_its_head(self):
+        pages = sorted((B.REPO_REAL / "gh-pages").rglob("*.html"))
+        self.assertTrue(pages)
+        for f in pages:
+            text = f.read_text(encoding="utf-8")
+            self.assertEqual(text.count("{{analytics_head}}"), 1, f)
+            self.assertLess(text.index("<head>"), text.index("{{analytics_head}}"), f)
+            self.assertLess(text.index("{{analytics_head}}"), text.index("</head>"), f)
     """Section 23: GitHub heading ids, anchors into non-docs Markdown, page dates,
     head tags, sitemap."""
 

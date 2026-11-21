@@ -221,6 +221,7 @@ def load_project() -> dict[str, str]:
     facts["release_year"] = str(d.year)
     facts["_historical_owners"] = raw.get("historical_owners", [])
     facts["_historical_owner_files"] = raw.get("historical_owner_files", [])
+    facts["_gtm_id"] = raw.get("gtm_id")
     facts.update(load_stats())
     facts.update(load_materials())
     return facts
@@ -1889,6 +1890,55 @@ def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates
             + "".join(rows) + "</urlset>\n").encode("utf-8")
 
 
+# Google Tag Manager, switched by project.json's gtm_id ("GTM-" and an upper-case
+# alphanumeric container code; null or absent is off). Consent Mode is set before
+# the container loads: advertising storage is denied everywhere (the site carries
+# no ads), and analytics storage is denied in the EEA (with the EU territories that
+# have their own country codes), the UK, Gibraltar, the Crown dependencies and
+# Switzerland, where the site has no consent banner, so Google Analytics sends cookieless pings
+# there. Google's <noscript> iframe is left out on purpose: it would load the
+# container with no consent defaults set.
+GTM_LOADER = "https://www.googletagmanager.com/gtm.js"
+CONSENT_REGIONS = (
+    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
+    "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+    "IS", "LI", "NO", "GB", "CH",
+    # EU territories that geolocate under their own ISO 3166 code: the French
+    # outermost regions, Saint-Martin and the Aland Islands.
+    "RE", "GP", "MQ", "GF", "YT", "MF", "AX",
+    # UK-linked jurisdictions with GDPR-equivalent laws of their own.
+    "GI", "GG", "JE", "IM",
+)
+
+
+def gtm_container(facts: dict, errors: list[str]) -> str:
+    """The validated container ID, or "" when analytics is off."""
+    raw = facts.get("_gtm_id")
+    if raw is None:
+        return ""   # null or absent is the documented off switch
+    code = raw[4:] if isinstance(raw, str) and raw.startswith("GTM-") else ""
+    if not (4 <= len(code) <= 12 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" for c in code)):
+        errors.append(f"project.json: gtm_id {raw!r} is not a Google Tag Manager container ID (GTM-XXXXXXX)")
+        return ""   # the error above fails the build
+    return raw
+
+
+def analytics_head(container: str) -> str:
+    """The <head> snippet for a container: consent defaults first, then the loader."""
+    if not container:
+        return ""
+    regions = ",".join(f"'{r}'" for r in CONSENT_REGIONS)
+    return (
+        "<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}"
+        "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',"
+        f"analytics_storage:'denied',region:[{regions}]}});"
+        "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',"
+        "analytics_storage:'granted'});"
+        "dataLayer.push({'gtm.start':new Date().getTime(),event:'gtm.js'});</script>\n"
+        f'<script async src="{GTM_LOADER}?id={container}"></script>'
+    )
+
+
 ASSET_DIRS = (
     ("resources/icons/src", "icons", (".svg",)),
     ("resources/brand", "brand", (".svg", ".png")),
@@ -1974,6 +2024,8 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     # sitemap and robots.txt belong to the main site.
     landing = RELEASE is None
     facts = dict(facts, design_tokens_css=design_tokens_css()) if landing else dict(facts)
+    # A retained release is frozen, so analytics in it could never be switched off.
+    facts["analytics_head"] = analytics_head(gtm_container(facts, errors)) if landing else ""
     # Only when a template uses it: a snapshot of an older tree has no features.json.
     if landing and any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
                        for f in SITE_SRC.rglob("*.html")):

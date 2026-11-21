@@ -9,6 +9,7 @@
   "donate_url": "https://www.paypal.com/donate/?hosted_button_id=YKAQFQPPNJEZQ",
   "release_date": "2028-08-08",
   "license": "GPL-3.0-only",
+  "gtm_id": "GTM-PZDW3KS5",
   "topics": [
     "operating-system",
     "os-development",
