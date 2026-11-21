@@ -159,18 +159,6 @@ def test_an_empty_sighting_left_by_an_interrupted_write_reads_as_missing():
         assert r.returncode == 5, (r.returncode, r.stdout, r.stderr)
 
 
-def test_a_review_that_keeps_printing_is_overdue_past_its_deadline():
-    with tempfile.TemporaryDirectory() as d:
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("x\n")
-        assert _run(log, maxw=1, stale=300, cwd=d).returncode == 3        # first sighting
-        time.sleep(2)
-        log.write_text("x\ny\n")                                          # still growing
-        r = subprocess.run(["bash", str(TOOL), "--max", "1", "--stale-secs", "300", "--deadline-secs", "1", str(log)],
-                           capture_output=True, text=True, cwd=d, timeout=30)
-        assert r.returncode == 4 and "OVERDUE" in r.stdout, (r.returncode, r.stdout)
-
-
 def test_a_log_silent_from_the_start_is_stale_in_the_same_call():
     # B2: the first sighting is sampled when the wait starts, not when it ends.
     with tempfile.TemporaryDirectory() as d:

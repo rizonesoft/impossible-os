@@ -3392,7 +3392,7 @@ def _skip_record_append(record: dict, path: Path) -> bool:
         return False
 
 
-def _reset_review_state(root: Path) -> None:
+def _reset_review_state(root: Path) -> bool:
     """After a successful SKIP, write last-codex-review.json with
     received: false so the NEXT commit cannot reuse this review's
     `received: true` to satisfy its gate. Codex M1: skip is a state
@@ -3400,17 +3400,20 @@ def _reset_review_state(root: Path) -> None:
     """
     state_path = root / ".claude" / "state" / "last-codex-review.json"
     if not state_path.exists():
-        return  # nothing to invalidate
+        return True  # nothing to invalidate
+    already = []
 
     def _invalidate(state):
         if state.get("received") is not True:
+            already.append(True)
             return None  # already not-received, nothing to do
         state["received"] = False
         state["skipped_section_commit"] = True
         return state
     # The hook's locked re-read-and-write, shared with every other writer of
     # the record, so a trigger published meanwhile is never replaced.
-    crc._update_state(state_path, _invalidate)
+    # True once the record is (or already was) not-received.
+    return _ensure_crc()._update_state(state_path, _invalidate) is not None or bool(already)
 
 
 def _emit_block(reason_label: str, details: list[str], head: str = "") -> None:
@@ -3858,7 +3861,12 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                 "requires a durable paper trail; refusing the commit.\n"
             )
             return 2
-        _reset_review_state(root)
+        if not _reset_review_state(root):
+            _emit_block("SKIP refused: last-codex-review.json could not be reset to received: false", [
+                "Another hook holds its lock or the write failed; a skipped commit must not",
+                "leave this review usable by the next one. Retry the commit.",
+            ])
+            return 2
         sys.stderr.write(
             f"[section-commit-gate] SKIP allowed -- reason: {skip_reason}\n"
             f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "

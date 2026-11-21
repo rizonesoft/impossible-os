@@ -57,6 +57,14 @@ def _job(kind, log="/x/a.out"):
     return json.dumps({"kind": kind, "jobId": "detached:j", "logFile": log})
 
 
+def _row(root, kind, log, section=1, todo=TODO):
+    """The receipt row a broker registers for each job before launching it."""
+    m = root / ".claude/overnight/reviews/manifest.jsonl"
+    m.parent.mkdir(parents=True, exist_ok=True)
+    with m.open("a") as fh:
+        fh.write(json.dumps({"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log}) + "\n")
+
+
 def test_a_registered_broker_job_is_recorded_and_stamped(tmp_path):
     state, stamps = _hook(_repo(tmp_path), _dispatch("adversarial"), stdout=_job("adversarial") + "\n")
     assert state and state["review_kind"] == "adversarial" and state["log_file"] == "/x/a.out"
@@ -73,10 +81,110 @@ def test_a_broker_refusal_records_nothing_whatever_stream_it_is_on(tmp_path):
 
 def test_a_refused_leg_beside_a_launched_one_earns_no_stamp(tmp_path):
     cmd = _dispatch("adversarial") + " extra; " + _dispatch("perf")
-    _state, stamps = _hook(_repo(tmp_path), cmd, stdout=_job("perf", "/x/p.out") + "\n",
+    root = _repo(tmp_path)
+    _row(root, "perf", "/x/p.out")
+    _state, stamps = _hook(root, cmd, stdout=_job("perf", "/x/p.out") + "\n",
                            stderr="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
     entry = stamps.get(TODO, {})
     assert isinstance(entry.get("perf"), int) and not entry.get("adversarial"), entry
+
+
+def test_a_refused_section_never_takes_its_same_kind_siblings_stamp(tmp_path):
+    root = _repo(tmp_path)
+    (root / "todo/00-x/TODO-02-y.md").write_text("# y\n## 35. Thirty-five\n")
+    other = "todo/00-x/TODO-02-y.md"
+    cmd = (_dispatch("adversarial") + " extra; "
+           + f"{BROKER} '[review-kind: adversarial] {other} section 35 body'")
+    _row(root, "adversarial", "/x/b.out", section=35, todo=other)
+    _state, stamps = _hook(root, cmd, stdout=_job("adversarial", "/x/b.out") + "\n",
+                           stderr="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
+    assert not stamps.get(TODO, {}).get("adversarial"), stamps
+    assert isinstance(stamps.get(other, {}).get("adversarial"), int), stamps
+    assert stamps[other].get("adversarial_section") == "35", stamps[other]
+
+
+def test_a_prompt_naming_the_background_wrapper_still_needs_a_launch_line(tmp_path):
+    cmd = f"{BROKER} '[review-kind: adversarial] {TODO} section 1 review scripts/codex-bg-dispatch.sh' extra"
+    state, stamps = _hook(_repo(tmp_path), cmd, stdout="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
+    assert state is None and stamps == {}, (state, stamps)
+
+
+def test_a_transcript_path_with_spaces_is_a_launch():
+    resp = {"tool_response": {"stderr": "[codex-dispatch] transcript: /tmp/review logs/20261121-1-1-perf-direct.out\n"}}
+    assert crc._launches(resp) == [("perf", "/tmp/review logs/20261121-1-1-perf-direct.out")]
+
+
+def test_a_receive_leaves_another_sessions_review_pending(tmp_path):
+    root = _repo(tmp_path)
+    state = root / ".claude/state/last-codex-review.json"
+    state.write_text(json.dumps({"timestamp_ns": 1, "received": False, "session_id": "B"}))
+    payload = {"tool_name": "Skill", "session_id": "A",
+               "tool_input": {"skill": "superpowers:receiving-code-review"}}
+    subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True, cwd=root,
+                   capture_output=True, timeout=60)
+    assert json.loads(state.read_text())["received"] is False
+
+
+def _locked(path):
+    import fcntl
+    fd = os.open(str(path) + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def test_a_trigger_is_not_published_without_the_lock(tmp_path):
+    path = tmp_path / "last-codex-review.json"
+    path.write_text(json.dumps({"timestamp_ns": 1, "review_kind": "round"}))
+    fd = _locked(path)
+    try:
+        ok, _err = crc._publish_trigger(path, {"timestamp_ns": 5, "review_kind": "perf"})
+    finally:
+        os.close(fd)
+    assert not ok and json.loads(path.read_text())["review_kind"] == "round"
+
+
+def test_a_skip_whose_reset_cannot_be_made_is_reported(tmp_path):
+    scg = importlib.import_module("section_commit_gate")
+    state = tmp_path / ".claude/state/last-codex-review.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"timestamp_ns": 1, "received": True}))
+    fd = _locked(state)
+    try:
+        assert scg._reset_review_state(tmp_path) is False
+    finally:
+        os.close(fd)
+    assert scg._reset_review_state(tmp_path) is True
+    assert json.loads(state.read_text())["received"] is False
+    assert scg._reset_review_state(tmp_path) is True          # already reset
+
+
+def test_the_broker_ends_a_review_past_its_runtime_limit(tmp_path):
+    import time
+    repo = _repo(tmp_path / "r")
+    fake = tmp_path / "companion.js"
+    fake.write_text("setInterval(() => process.stdout.write('.'), 200);\n")   # prints, never ends
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
+           "CODEX_REVIEW_MAX_SECS": "2"}
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                        f"[review-kind: adversarial] {TODO} section 1 body"],
+                       capture_output=True, text=True, timeout=60, cwd=repo, env=env)
+    assert r.returncode == 0, r.stderr
+    log = pathlib.Path(json.loads(r.stdout.strip().splitlines()[-1])["logFile"])
+    done = pathlib.Path(str(log) + ".done")
+    t = time.monotonic()
+    while not done.exists() and time.monotonic() - t < 45:
+        time.sleep(0.5)
+    assert done.exists() and done.read_text().strip() == "124", (done.exists(), log.read_text()[-200:])
+
+
+def test_a_bad_runtime_limit_is_refused(tmp_path):
+    env = {**os.environ, "CODEX_OUTAGE_OVERRIDE": "1", "CODEX_REVIEW_MAX_SECS": "soon",
+           "CODEX_COMPANION_PATH": str(tmp_path / "c.js")}
+    (tmp_path / "c.js").write_text("")
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                        f"[review-kind: adversarial] {TODO} section 1 body"],
+                       capture_output=True, text=True, timeout=60, cwd=_repo(tmp_path / "r"), env=env)
+    assert r.returncode == 2 and "[review-broker] BLOCK" in r.stderr, r.stderr
 
 
 def test_the_direct_launch_line_names_its_kind():

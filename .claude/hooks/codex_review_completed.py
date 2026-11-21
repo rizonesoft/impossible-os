@@ -863,6 +863,7 @@ def _record_stamp(
     kind: str,
     now_ns: int,
     dispatch_head_sha: str = "",
+    deadline: float | None = None,
 ) -> tuple[bool, str]:
     """Update last-review-stamps.json[todo_path] with `kind` timestamp,
     per-kind `dispatch_head_sha`, and per-kind section metadata.
@@ -932,7 +933,8 @@ def _record_stamp(
             # TEST side was migrated to monotonic earlier; the hook it
             # measures was not, so the fix had landed on the observer only.
             acquired = False
-            deadline = time.monotonic() + 2.0  # 2s budget; harness timeout 5s
+            # 2 s budget, shared by every stamp of one hook call (harness timeout 5 s)
+            deadline = deadline if deadline is not None else time.monotonic() + 2.0
             sleep_s = 0.01
             while time.monotonic() < deadline:
                 try:
@@ -1392,7 +1394,9 @@ class _StateLock:
 
 def _publish_trigger(state_path: Path, state: dict) -> tuple[bool, str]:
     """Publish a fully built trigger record ONCE, never over a newer one."""
-    with _StateLock(state_path):
+    with _StateLock(state_path) as lk:
+        if not lk.held:
+            return (False, "state lock busy for 2 s; trigger not recorded")
         cur = _load_state(state_path)
         if isinstance(cur, dict) and isinstance(cur.get("timestamp_ns"), int) \
                 and isinstance(state.get("timestamp_ns"), int) and cur["timestamp_ns"] > state["timestamp_ns"]:
@@ -1421,16 +1425,17 @@ def _update_state(state_path: Path, change) -> dict | None:
 # {"kind", "jobId", "logFile"} line per job it registered, and the direct
 # dispatcher announces the transcript it created once nothing can refuse any
 # more. A refusal prints neither, whatever else the output quotes.
-_DIRECT_LAUNCH_RE = re.compile(r"^\[codex-dispatch\] (?:transcript: (\S+)|launched: (\S+))\s*$")
+_DIRECT_LAUNCH_RE = re.compile(r"^\[codex-dispatch\] (?:transcript: (.+?)|launched: (\S+))\s*$")
 
 
-def _launched_kinds(payload: dict) -> list:
+def _launches(payload: dict) -> list:
+    """[(kind, log path or "")] for every launch line in the tool response."""
     resp = payload.get("tool_response")
     if isinstance(resp, dict):
         text = "\n".join(str(resp.get(k) or "") for k in ("stdout", "stderr", "output"))
     else:
         text = str(resp or "")
-    kinds = []
+    out = []
     for ln in text.splitlines():
         s = ln.strip()
         if s.startswith("{") and '"logFile"' in s:
@@ -1439,18 +1444,62 @@ def _launched_kinds(payload: dict) -> list:
             except ValueError:
                 continue
             if isinstance(rec, dict) and isinstance(rec.get("logFile"), str):
-                kinds.append(str(rec.get("kind") or ""))
+                out.append((str(rec.get("kind") or ""), rec["logFile"]))
             continue
         m = _DIRECT_LAUNCH_RE.match(s)
         if m:
             k = _out_kind_from_name(Path(m.group(1)).name) if m.group(1) else m.group(2)
-            kinds.append(k[:-len("-direct")] if k.endswith("-direct") else k)
-    return kinds
+            out.append((k[:-len("-direct")] if k.endswith("-direct") else k, m.group(1) or ""))
+    return out
+
+
+def _launched_kinds(payload: dict) -> list:
+    return [k for k, _log in _launches(payload)]
+
+
+_WRAPPERS = ("codex-dispatch.sh", "review-broker-codex-dispatch.sh")
+
+
+def _invoked_scripts(cmd: str) -> set:
+    """Basenames of the words a command line runs or passes, with every quoted
+    prompt kept as ONE word, so a script named inside a prompt is not one."""
+    import shlex
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        toks = cmd.split()
+    return {os.path.basename(t.rstrip(";&|")) for t in toks if "\n" not in t and " " not in t}
 
 
 def _is_wrapper_dispatch(cmd: str) -> bool:
-    return bool(cmd) and ("codex-dispatch.sh" in cmd or _cd.is_review_broker_dispatch(cmd)) \
-        and "codex-bg-dispatch.sh" not in cmd
+    names = _invoked_scripts(cmd) if cmd else set()
+    return bool(names & set(_WRAPPERS)) and "codex-bg-dispatch.sh" not in names
+
+
+def _manifest_rows_for(root: Path, logs: list) -> list:
+    """The receipt row each launched log belongs to (its kind, TODO and
+    section), first row per log; a log with no row yields None."""
+    def key(v):
+        try:
+            return str(Path(str(v)).resolve())
+        except OSError:
+            return ""
+    want = {key(lg): None for lg in logs}
+    try:
+        lines = (root / ".claude/overnight/reviews/manifest.jsonl").read_text(encoding="utf-8").splitlines()[-400:]
+    except OSError:  # fail-direction: no manifest means no row; a bundle then earns no stamp
+        lines = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("parent"):
+            continue
+        k = key(rec.get("logFile") or "")
+        if k and k in want and want[k] is None:
+            want[k] = rec
+    return [want.get(key(lg)) for lg in logs]
 
 
 def _response_log_file(payload: dict) -> str:
@@ -1519,7 +1568,7 @@ def main() -> int:
     _ti = payload.get("tool_input") or {}
     _cmd = str(_ti.get("command") or "") if isinstance(_ti, dict) else ""
     _wrapper = _is_wrapper_dispatch(_cmd)
-    _launched = _launched_kinds(payload) if _wrapper else []
+    _launched = _launches(payload) if _wrapper else []
     if kind == "trigger" and ((_wrapper and not _launched) or (not _wrapper and _dispatch_was_refused(payload))):
         # Refused at argv time: no review ran. Recording it would open a
         # reception obligation and stamp a review that never happened.
@@ -1659,6 +1708,10 @@ def main() -> int:
         # One publication of the finished record (never a preliminary one a
         # later trigger could be overwritten by), never over a newer trigger.
         write_ok, write_err = _publish_trigger(state_path, state)
+        if not write_ok:
+            sys.stderr.write(
+                f"[codex-review-state] WARN: {write_err}. The review is NOT recorded and earns no "
+                "stamp; dispatch it again once the contending hook has finished.\n")
         _debug_log(
             root, "trigger_state_write",
             classifier_kind=kind,
@@ -1675,45 +1728,52 @@ def main() -> int:
             review_kind and todo_path and review_kind not in SECTION_PASS_KINDS
             and (not state.get("background_dispatch") or is_broker)
         )
-        # A wrapper stamps only the targets its launch lines account for: in a
-        # bundle where one leg was refused, the refused kind earns nothing.
-        _targets = [(review_kind, todo_path, section)] + [
-            t for t in _all_dispatch_targets(raw_cmd, root) if (t[0], t[1]) != (review_kind, todo_path)]
-        _left = collections.Counter(_launched)
-
-        def _launched_target(k):
-            if not _wrapper or len(_launched) >= len(_targets):
-                return True
-            if _left[k] > 0:
-                _left[k] -= 1
-                return True
-            return False
-
+        # A wrapper review is stamped from the receipt row of each log it
+        # launched (that row's own kind, TODO and section), so in a bundle a
+        # refused leg earns nothing and a launched one cannot lend its stamp.
+        # A lone dispatch whose log has no row yet is unambiguous: its target.
         stamp_ok, stamp_err = False, ""
-        # The command-level eligibility (broker / non-background, a non-pass
-        # kind) decides whether this invocation may stamp at all; each target
-        # of a bundle is then stamped on its own launch evidence.
-        may_stamp = stamp_attempted
-        if stamp_attempted and not _launched_target(review_kind):
-            stamp_attempted, stamp_err = False, "skipped (this leg was refused)"
-        if stamp_attempted:
+        if not write_ok:
+            stamp_attempted, stamp_err = False, "skipped (the trigger was not recorded)"
+        _bundle = len(_all_dispatch_targets(raw_cmd, root)) > 1 if raw_cmd else False
+        _stamp_deadline = time.monotonic() + 2.0
+        if stamp_attempted and _wrapper:
+            stamp_attempted = False
+            stamp_err = "skipped (no launched receipt names a stamped kind)"
+            _logs = [lg for _k, lg in _launched if lg]
+            for _row in _manifest_rows_for(root, _logs):
+                if _row is None:
+                    continue
+                _k, _tp = str(_row.get("kind") or ""), str(_row.get("todo") or "")
+                _sec = str(_row.get("section") if _row.get("section") is not None else "")
+                if not _tp or _k not in REVIEW_KINDS or _k in SECTION_PASS_KINDS:
+                    continue
+                stamp_attempted = True
+                stamp_ok, stamp_err = _record_stamp(
+                    root, _tp, ("\u00a7" + _sec) if _sec else "", _k, now_ns,
+                    dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
+                )
+            if not stamp_attempted and not _bundle and _logs and review_kind and todo_path \
+                    and review_kind not in SECTION_PASS_KINDS:
+                stamp_attempted = True
+                stamp_ok, stamp_err = _record_stamp(
+                    root, todo_path, section, review_kind, now_ns,
+                    dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
+                )
+        elif stamp_attempted:
             stamp_ok, stamp_err = _record_stamp(
                 root, todo_path, section, review_kind, now_ns,
-                dispatch_head_sha=head_at_dispatch,
+                dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
             )
-        if may_stamp:
-            # A bundled wave stamps EVERY kind it launched, not just the
-            # leading one -- see _all_dispatch_targets.
+            # A non-wrapper bundled wave stamps every kind it carries.
             _seen_targets = {(review_kind, todo_path)}
             for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
                 if (_k, _tp) in _seen_targets or _k in SECTION_PASS_KINDS:
                     continue
-                if not _launched_target(_k):
-                    continue
                 _seen_targets.add((_k, _tp))
                 _ok2, _err2 = _record_stamp(
                     root, _tp, _sec, _k, now_ns,
-                    dispatch_head_sha=head_at_dispatch,
+                    dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
                 )
                 _debug_log(
                     root, "trigger_stamp_write_bundled",
@@ -1739,7 +1799,15 @@ def main() -> int:
         )
         return 0
     # kind == "receive"
+    who = payload.get("session_id") or ""
+
     def _recv(cur):
+        # A receive acknowledges the review its own session dispatched; a
+        # record another session published meanwhile stays pending.
+        if who and cur.get("session_id") and cur.get("session_id") != who:
+            sys.stderr.write("[codex-review-state] receive left pending: the current review "
+                             "belongs to another session.\n")
+            return None
         cur["received"] = True
         cur["received_timestamp_ns"] = now_ns
         return cur

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] [--deadline-secs SECONDS] <logfile> [<logfile>...]
+# wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]
 #
 # Wait until EVERY given DETACHED Codex review log has its <log>.done sidecar
 # (written by review-broker-codex-dispatch.sh / codex-dispatch.sh after the review
@@ -56,7 +56,6 @@ set -u
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe
 POLL=10
 STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
-DEADLINE=0       # >0: a log still pending this long after its first sighting => OVERDUE, exit 4
 LOGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -66,9 +65,6 @@ while [ $# -gt 0 ]; do
         --stale-secs)   [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --stale-secs needs a value" >&2; exit 2; }
                         STALE="$2"; shift 2 ;;
         --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
-        --deadline-secs) [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --deadline-secs needs a value" >&2; exit 2; }
-                        DEADLINE="$2"; shift 2 ;;
-        --deadline-secs=*) DEADLINE="${1#--deadline-secs=}"; shift ;;
         *)
             # J2a: a BARE number that is not a file is almost always a misused
             # `--max` (`... .out 300` intending `--max 300`); adding it as a
@@ -82,8 +78,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null \
-   || ! [ "$STALE" -gt 0 ] 2>/dev/null || ! [ "$DEADLINE" -ge 0 ] 2>/dev/null; then
-    echo "usage: wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] [--deadline-secs SECONDS] <logfile> [<logfile>...]" >&2
+   || ! [ "$STALE" -gt 0 ] 2>/dev/null; then
+    echo "usage: wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]" >&2
     exit 2
 fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
@@ -127,18 +123,11 @@ _silent_for() {
         echo $(( now - $(_first_seen "$1") ))
     fi
 }
-# A review that keeps printing (a repeated tool call) never goes silent, so a
-# caller that must finish sets an absolute deadline from the first sighting.
-_overdue() {
-    [ "$DEADLINE" -gt 0 ] || return 1
-    [ $(( $(date +%s) - $(_first_seen "$1") )) -ge "$DEADLINE" ]
-}
 _any_silent() {
     local f
     for f in "${LOGS[@]}"; do
         _log_done "$f" && continue
         [ "$(_silent_for "$f")" -ge "$STALE" ] && return 0
-        _overdue "$f" && return 0
     done
     return 1
 }
@@ -167,7 +156,6 @@ done
 
 any_stale=0
 any_missing=0
-any_overdue=0
 pending=()
 for f in "${LOGS[@]}"; do
     _log_done "$f" && continue
@@ -179,10 +167,6 @@ for f in "${LOGS[@]}"; do
         any_missing=1
         printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
                "$f" "$stalled"
-    elif [ -f "$f" ] && _overdue "$f"; then
-        any_overdue=1
-        printf '  OVERDUE: %s (%s bytes, still running %ss after it was first seen -- past --deadline-secs %s; abandon THIS attempt)\n' \
-               "$f" "$size" "$(( $(date +%s) - $(_first_seen "$f") ))" "$DEADLINE"
     elif [ "$stalled" -ge "$STALE" ]; then
         any_stale=1
         printf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
@@ -192,10 +176,6 @@ for f in "${LOGS[@]}"; do
     fi
 done
 
-if [ "$any_overdue" -eq 1 ]; then
-    echo "OVERDUE after ${elapsed}s -- >=1 pending review passed its deadline (see above)."
-    exit 4
-fi
 if [ "$any_stale" -eq 1 ]; then
     echo "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
     exit 4

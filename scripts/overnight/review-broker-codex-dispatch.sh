@@ -135,6 +135,16 @@ if [[ "$PASS_KIND" == "1" ]]; then
 else
   RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat $(q "$PROMPT_FILE"))\""
 fi
+# A hard runtime limit (CODEX_REVIEW_MAX_SECS) for a caller that must finish:
+# timeout signals the review's whole process group and the job then publishes
+# its status (124) like any other end, so a review that keeps printing and
+# never finishes cannot outlive its attempt.
+if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
+  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2
+    rm -f "$PROMPT_FILE"; exit 2; }
+  RUN="timeout --kill-after=30 $CODEX_REVIEW_MAX_SECS bash -c $(q "$RUN")"
+fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
 # REGISTERED BEFORE IT IS LAUNCHED. The gate reads the newest manifest line for
