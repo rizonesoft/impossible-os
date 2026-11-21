@@ -1251,7 +1251,8 @@ Every review reads one section. Nothing reads a finished file as a whole, so a d
   - Filed as 01-boot-platform/TODO-07 §26 (item: "With every entry exhausted, F11 and `menu-force` still open the menu").
 - [/] `complete-todo-file` step 8a runs the pass before the close-out report: one pass, one fix round, the rest filed as a new section in the file. Waits on the next file close-out to run it.
 - [x] Not needed: the first file returned 3, so the step is kept.
-- [ ] Commit: `"skills: a closing TODO file gets one review across its sections"`
+- [x] Second run, 2026-11-21, on 01-boot-platform/TODO-03 (24 sections): 1 P1 and 2 P2, all verified, filed as its §25 (item: "The post-EBS error dwell has its own TSC deadline").
+- [x] Committed as 24dab6136.
 
 **Test checkpoint:** The next file the run closes shows the pass in its close-out commit, or this section records two empty results.
 

@@ -60,32 +60,33 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                  | Depends On    | Status |
-| --- | :---: | ---------------------------------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | ELF bounds checking                                                          | --            |  [x]   |
-| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --            |  [x]   |
-| 💎  |   3   | Fallback kernel search (3 paths)                                             | --            |  [x]   |
-| 💎  |   4   | Serial port probe and COM2 fallback                                          | --            |  [x]   |
-| 💎  |   5   | GOP timeout and graceful degradation                                         | --            |  [x]   |
-| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --            |  [x]   |
-| 💎  |   7   | boot.conf validation and version field                                       | --            |  [x]   |
-| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --            |  [x]   |
-| ⭐  |   9   | Boot failure error screen                                                    | §1-§8         |  [x]   |
-| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4            |  [x]   |
-| 💎  |  11   | UEFI watchdog timer management                                               | --            |  [x]   |
-| 💎  |  12   | Memory map descriptor validation                                             | §6            |  [x]   |
-| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9            |  [x]   |
-| ⭐  |  14   | Error screen QR code                                                         | §9            |  [x]   |
-| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --            |  [x]   |
-| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15           |  [x]   |
-| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12           |  [x]   |
-| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14       |  [x]   |
-| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1            |  [x]   |
-| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13           |  [x]   |
-| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20           |  [x]   |
-| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18       |  [x]   |
-| ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22  |  [x]   |
-| ⭐  |  24   | A rejected store leaves no trace the user can act on afterwards              | §13, §20, §22 |  [x]   |
+| ⭐  | Order | Deliverable                                                                  | Depends On        | Status |
+| --- | :---: | ---------------------------------------------------------------------------- | ----------------- | :----: |
+| 💎  |   1   | ELF bounds checking                                                          | --                |  [x]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)                                        | --                |  [x]   |
+| 💎  |   3   | Fallback kernel search (3 paths)                                             | --                |  [x]   |
+| 💎  |   4   | Serial port probe and COM2 fallback                                          | --                |  [x]   |
+| 💎  |   5   | GOP timeout and graceful degradation                                         | --                |  [x]   |
+| 💎  |   6   | Memory map overflow detection (512 entries)                                  | --                |  [x]   |
+| 💎  |   7   | boot.conf validation and version field                                       | --                |  [x]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --                |  [x]   |
+| ⭐  |   9   | Boot failure error screen                                                    | §1-§8             |  [x]   |
+| 💎  |  10   | ACPI SPCR serial port auto-detection                                         | §4                |  [x]   |
+| 💎  |  11   | UEFI watchdog timer management                                               | --                |  [x]   |
+| 💎  |  12   | Memory map descriptor validation                                             | §6                |  [x]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence                                 | §9                |  [x]   |
+| ⭐  |  14   | Error screen QR code                                                         | §9                |  [x]   |
+| 💎  |  15   | boot_info ABI foundation moved to TODO-01                                    | --                |  [x]   |
+| 💎  |  16   | boot_info kernel validation moved to TODO-01                                 | §15               |  [x]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve)                                | §12               |  [x]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14           |  [x]   |
+| 💎  |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1                |  [x]   |
+| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13               |  [x]   |
+| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20               |  [x]   |
+| ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18           |  [x]   |
+| ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22      |  [x]   |
+| ⭐  |  24   | A rejected store leaves no trace the user can act on afterwards              | §13, §20, §22     |  [x]   |
+| 💎  |  25   | Cross-section defects: dwell deadline, load-failure code, history rollover   | §9, §13, §20, §21 |  [ ]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -951,6 +952,24 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
 > - Scope boundary: no inline repair route and no desktop notification (no user-facing consumer exists yet); the record names no device, so another disk's good store clears it.
 > **Verified:** 2026-11-08 | commit `85b0a641a` + review fixes | 9/9 items | build OK | SUITE=boot 7402+17 PASS | smoke matrix 11/11 (store corrupt/repeat/repaired on one variable store) | smoke PASS after the klog fix
 > **Quality reviewed:** 2026-11-08 | Codex 7x (adversarial x2, consistency x2, perf x2, re-adversarial) | 2M+7L fixed, 0 open | scope: boot-code-quality + kernel-code-quality (auditors)
+
+## 25. Cross-Section Defects Found When the File Closed
+
+> **Spawned-by:** root
+
+The cross-section review (00-infrastructure/TODO-08 §35) read this whole file on 2026-11-21 and found three defects that only show when two or more sections are read together. Each section passed its own review alone.
+
+- [ ] The post-EBS error dwell has its own TSC deadline, so a GetTime that keeps returning the same second still reaches the cold reset
+  - Sections 2, 9, 11, 18: section 11 disarms the watchdog before ExitBootServices, and the GetTime loop in `bootx64.c` (dwell before `ResetSystem`) only exits on a later second, a rollover or an error.
+  - Done when: a test drives exhausted EBS retries with a constant, successful GetTime and the dwell returns.
+- [ ] `load_kernel` returns its registry reason with the status, and `boot_fatal` persists that reason instead of always `BOOT_ERR_KERNEL_NOT_FOUND`
+  - Sections 1, 3, 8, 13, 20: a corrupt ELF and three failed allocation tiers both record "kernel not found", although `efi.h` defines distinct codes.
+  - Done when: missing file, malformed ELF and exhausted allocation each persist their own code.
+- [ ] Producer and reader use one rollover-aware sequence window, so a cookie at `UINT32_MAX` neither shows a torn entry nor hides the older ones
+  - Sections 20, 21: the producer wraps to 1, and the reader's plain `boot_seq > committed_seq` test then hides every pre-wrap entry, or shows the new one when its cookie write failed.
+  - Done when: a test fills the ring across the wrap, with the cookie write succeeding and failing.
+
+**Test checkpoint:** `SUITE=boot` green with the three new tests; smoke matrix green.
 
 ## OS Comparison
 
