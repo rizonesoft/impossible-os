@@ -1436,8 +1436,10 @@ def _invoked_scripts(cmd: str) -> set:
 
 
 def _is_wrapper_dispatch(cmd: str) -> bool:
-    names = _invoked_scripts(cmd) if cmd else set()
-    return bool(names & set(_WRAPPERS)) and "codex-bg-dispatch.sh" not in names
+    """Any call that invokes a receipt-writing wrapper is judged by receipts
+    alone, whatever else it runs: a background fallback or a check naming
+    another script beside it never turns it back into a text-judged call."""
+    return bool((_invoked_scripts(cmd) if cmd else set()) & set(_WRAPPERS))
 
 
 RECEIPT_WINDOW_S = 1800   # a receipt older than this is not this call's (a foreground review ends < 10 min)
@@ -1687,6 +1689,14 @@ def main() -> int:
         state["review_kind"] = review_kind or ""
         state["todo_path"] = todo_path
         state["section"] = section.lstrip("§")
+        # One claimed receipt is what this call launched: the shared record
+        # names that review, never a refused leg the command line led with.
+        if len(_matched) == 1:
+            _r = _matched[0]
+            state["review_kind"] = str(_r.get("kind") or "")
+            state["todo_path"] = str(_r.get("todo") or "")
+            state["section"] = str(_r.get("section") if _r.get("section") is not None else "")
+            state["head_sha"] = _row_head(_r, state.get("head_sha") or "")
         state["driver_run_id"] = driver_run_id
         state["review_run_id"] = review_run_id
         if prompt_hint:
@@ -1705,9 +1715,10 @@ def main() -> int:
         # started, so it stays excluded from the stamp PROOF surface.
         is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
         state["review_broker_dispatch"] = is_broker
-        # A bundled call carries several dispatches its single record cannot
-        # tell apart: no log binding, so auto-receive leaves it to triage.
-        if raw_cmd and len(list(_all_dispatch_targets(raw_cmd, root))) > 1:
+        # A call that launched several reviews binds no log (log_file is set
+        # above only for exactly one claimed receipt): auto-receive leaves it
+        # to triage. A text-judged bundle has no receipt and binds none.
+        if not _wrapper and raw_cmd and len(list(_all_dispatch_targets(raw_cmd, root))) > 1:
             state["log_file"] = ""
         # One publication of the finished record (never a preliminary one a
         # later trigger could be overwritten by), never over a newer trigger.

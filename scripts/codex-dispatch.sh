@@ -78,6 +78,10 @@ EOF
 fi
 
 PROMPT="$1"
+# The receipt's prompt hash is of the CALLER's prompt, taken before any lens,
+# debt or repair text is appended: the recorder matches the receipt to the call
+# by hashing the argument it saw on the command line.
+CALLER_PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 
 # Defense-in-depth ADVICE only -- the shell already evaluated anything
 # the caller wrote unquoted. Both intentional ($( in single-quoted text)
@@ -293,7 +297,7 @@ if [ -n "$LOG_FILE" ]; then
             echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_FILE" >&2; }
     fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
-    PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
+    PROMPT_SHA="$CALLER_PROMPT_SHA"
     # Written by a JSON serializer: a path or TODO name holding a quote, a
     # backslash or a newline must not produce a line no reader can parse.
     python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/manifest-line.py" --append "$REVIEWS_DIR/manifest.jsonl" \

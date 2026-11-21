@@ -135,6 +135,7 @@ def test_a_refused_leg_beside_a_launched_one_earns_no_stamp(tmp_path):
                            stderr="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
     entry = stamps.get(TODO, {})
     assert isinstance(entry.get("perf"), int) and not entry.get("adversarial"), entry
+    assert _state["review_kind"] == "perf" and _state["log_file"] == "/x/p.out", _state
 
 
 def test_a_refused_section_never_takes_its_same_kind_siblings_stamp(tmp_path):
@@ -310,3 +311,27 @@ def test_a_receive_that_cannot_take_the_lock_leaves_the_review_pending(tmp_path)
     finally:
         os.close(fd)
     assert got is None and json.loads(path.read_text())["received"] is False
+
+
+def test_a_wrapper_call_beside_a_background_fallback_still_needs_its_receipt(tmp_path):
+    root = _repo(tmp_path)
+    bg = json.dumps({"kind": "adversarial", "jobId": "bg:1", "logFile": "/x/bg.out"})
+    for cmd in (_dispatch("adversarial") + " || bash scripts/codex-bg-dispatch.sh " + shlex.quote(_prompt("adversarial")),
+                "test -f scripts/codex-bg-dispatch.sh && " + _dispatch("adversarial")):
+        state, stamps = _hook(root, cmd, stdout=bg + "\n")
+        assert state is None and stamps == {}, (cmd, state, stamps)
+
+
+def test_the_direct_receipt_hashes_the_callers_prompt(tmp_path):
+    import hashlib
+    import time
+    repo = _repo(tmp_path / "r")
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
+    prompt = _prompt("round")                      # a pinned pass: the dispatcher appends its lenses
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1"}
+    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), prompt], capture_output=True, text=True,
+                   timeout=60, cwd=repo, env=env)
+    rows = [json.loads(x) for x in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
+    want = hashlib.sha256(prompt.encode()).hexdigest()
+    assert rows and rows[-1]["prompt_sha256"] == want, (rows[-1:], want)
