@@ -534,7 +534,14 @@ def registered_records(verbs, classic, records=()):
     verbs, whose conditions exclude each other, were "shown on drive")."""
     if not verbs:
         raise ValueError("the registered verbs were not read")
-    modern = {r["id"].rsplit(".", 1)[1] for r in records if r.get("kind") == "menuItem"}
+    # Each trigger's modern menu items by verb: a twin is told apart on a classic
+    # trigger only by that trigger's own modern menu (review, 2026-11-21: the
+    # drive menu's evidence credited the removable menu too).
+    modern = {}
+    for r in records:
+        parent, _, last = r["id"].rpartition(".")
+        if r.get("kind") == "menuItem" and parent.startswith("win11.explorer.") and parent.endswith("-menu"):
+            modern.setdefault(parent[len("win11.explorer."):-len("-menu")], set()).add(last)
     sharing = {}
     for v in verbs:
         label = v.get("label") or v.get("default")
@@ -561,16 +568,20 @@ def registered_records(verbs, classic, records=()):
         label = v.get("label") or v.get("default")
         on = sorted(shown.get(plain(label), set()) & CLASS_MENUS[v["class"]]) if label else []
         twins = [t for t in sharing.get((v["class"], plain(label)), []) if t != v["verb"]] if label else []
-        unsure = False
-        if on and twins:
-            held = [t for t in [v["verb"], *twins] if core.slug(t) in modern]
-            if len(held) == 1:
-                on = on if held[0] == v["verb"] else []
-            else:
-                unsure = True
+        unsure = []
+        if twins:
+            mine = []
+            for menu in on:
+                held = [t for t in [v["verb"], *twins] if core.slug(t) in modern.get(menu, ())]
+                if held == [v["verb"]]:
+                    mine.append(menu)
+                elif len(held) != 1:
+                    unsure.append(menu)
+            on = mine
         if unsure:
-            how = (f"Shown on {', '.join(on)} under the label it shares with {', '.join(twins)}; "
-                   "the menus do not say which of them it is")
+            text = (f"on {', '.join(unsure)} it shares its label with {', '.join(twins)}, "
+                    "and the menus do not say which of them is shown")
+            how = f"Shown on {', '.join(on)}; {text}" if on else text[0].upper() + text[1:]
         elif on:
             how = f"Shown on {', '.join(on)}"
             if v.get("extended"):

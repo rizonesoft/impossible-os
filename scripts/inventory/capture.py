@@ -223,9 +223,8 @@ def standin_run(label, files, cmd, timeout, variant):
     """ref_run's contract on the stand-in machine: the same C:\\ios\\in layout and
     command, run by standin/run.py; its exit codes are ref_run's (2 refused,
     3 no result). The staging folder is always removed."""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    stage = WORK / f"{label}-{stamp}-in"
-    out = WORK / f"{label}-{stamp}"
+    run = run_folder(label)
+    stage, out = run / "in", run / "out"
     try:
         for rel, src in files.items():
             (stage / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +247,15 @@ def standin_run(label, files, cmd, timeout, variant):
     return out, p.returncode
 
 
+def run_folder(label):
+    """A folder of this run's own under WORK, holding its staging (in) and its
+    output (out): two checkouts starting the same label in one second shared one
+    name, and one could overwrite or delete the other's inputs before either held
+    the VM (review, 2026-11-21). mkdtemp makes it, so no other run has it."""
+    WORK.mkdir(parents=True, exist_ok=True)
+    return pathlib.Path(tempfile.mkdtemp(prefix=f"{label}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=WORK))
+
+
 def stop_runner(p, grace=STANDIN_STOP_GRACE):
     """Stop standin/run.py: SIGTERM runs its teardown (QEMU stopped and reaped,
     overlay removed); SIGKILL only after `grace` seconds, and QEMU then still
@@ -266,9 +274,8 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
     Returns (output folder, exit code); 3 when ref-run
     outlived its margin (the VM is then turned off and `checkpoint` restored), and
     on an interrupt the same happens before the interrupt goes on. The staging folder is always removed."""
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    stage = WORK / f"{label}-{stamp}-in"
-    out = WORK / f"{label}-{stamp}"
+    run = run_folder(label)
+    stage, out = run / "in", run / "out"
     try:
         # Staging and every path conversion come before ref-run starts: an
         # interrupt during either restored the checkpoint of a VM no run had

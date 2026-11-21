@@ -160,6 +160,20 @@ def close_scene(ctx):
         ctx.powershell(END_HOSTS)
 
 
+def close_hung(ctx):
+    """close_scene for the not-responding scene, with the hung fixture ended first:
+    while it hangs, every UI Automation desktop list waits 20 s on it, and
+    close_scene's window scan is one (performance review, 2026-11-21). A host
+    that will not die in time is left to close_scene's END_HOSTS."""
+    for p in _hosts:
+        if p.poll() is None:
+            p.kill()
+    deadline = time.monotonic() + HOST_EXIT_WAIT
+    while any(p.poll() is None for p in _hosts) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    close_scene(ctx)
+
+
 # The credential prompt fills its fields in after it shows (2026-11-20: one
 # capture held only the frame, the captions and Cancel).
 CREDENTIAL_FIELDS = ("EditField_0", "PasswordField_1", "OkButton")
@@ -331,7 +345,7 @@ SCENES += [
     scene("task-dialog", "Task dialog", host("task-dialog")),
     scene("credential", "Windows Security: credentials", host("credential", ready=credential_ready)),
     scene("about", "About", host("about", check=check_owner)),
-    scene("not-responding", "A program is not responding", not_responding),
+    dict(scene("not-responding", "A program is not responding", not_responding), close=close_hung),
 ]
 
 

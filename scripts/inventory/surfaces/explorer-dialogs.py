@@ -575,12 +575,13 @@ _merge_text = []
 
 def open_folder_merge(ctx):
     """A folder copied onto a folder of the same name: Confirm Folder Replace."""
-    work(ctx, SHOW_MERGE + "New-Item -ItemType Directory -Path '%s\\General items' -Force | Out-Null\n"
-              "Set-Content -LiteralPath '%s\\General items\\Other item.txt' -Value 'Other item'\n" % (WORK, WORK))
     # The scene is closed only once its opener returned, so an opener that fails
-    # after the override puts the setting back itself (review, 2026-11-21).
+    # after the override puts the setting back itself, the setup's own fixture
+    # writes included (review, 2026-11-21).
     win = None
     try:
+        work(ctx, SHOW_MERGE + "New-Item -ItemType Directory -Path '%s\\General items' -Force | Out-Null\n"
+                  "Set-Content -LiteralPath '%s\\General items\\Other item.txt' -Value 'Other item'\n" % (WORK, WORK))
         before = copy_into(ctx, SAMPLE, ["General items"], WORK)
         win = operation_window(ctx, before)
         time.sleep(SETTLE)

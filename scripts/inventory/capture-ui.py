@@ -76,6 +76,17 @@ POPUP_WINDOWS = {"#32768", "ComboLBox", "Xaml_WindowedPopupClass", "Popup", "Mic
 # The input indicator's flyout is light-dismissed the same way (2026-11-17).
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 76, 77, 78, 79
 EVENT_E_ALL_SUBSCRIBERS_FAILED = -2147220991
+UIA_E_TIMEOUT = -2146233083         # 0x80131505: a provider did not answer one call in time
+# Provider failures that say nothing about the surface: the scene is opened
+# again (core.SCENE_TRIES). A web view's provider dropped one call while its
+# page reflowed (the emoji panel and the capture bar, 2026-11-18); Explorer's
+# provider timed out on one desktop list after a view switch, and the next
+# open read the whole surface (the header menu, 2026-11-21).
+TRANSIENT = (EVENT_E_ALL_SUBSCRIBERS_FAILED, UIA_E_TIMEOUT)
+
+
+def transient(exc, com_error):
+    return isinstance(exc, com_error) and bool(exc.args) and exc.args[0] in TRANSIENT
 ON_SCREEN_MAX = 8                  # windows a failure message names
 NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "Shell_TrayWnd",
                                  "Shell_InputSwitchTopLevelWindow"}
@@ -737,11 +748,6 @@ def main(argv=None):
     live = Live()
     ctx = Context(live)
 
-    def transient(exc):
-        # EVENT_E_ALL_SUBSCRIBERS_FAILED: a web view's provider dropped one call
-        # while its page reflowed (the emoji panel and the capture bar,
-        # 2026-11-18); the next open of the same scene reads it whole.
-        return isinstance(exc, live.COMError) and exc.args and exc.args[0] == EVENT_E_ALL_SUBSCRIBERS_FAILED
     meta = {"surface": args.surface, "build": build, "profile": args.profile, "complete": False}
     shots = pathlib.Path(args.shots) / args.surface if args.shots else None
     if shots:
@@ -792,7 +798,7 @@ def main(argv=None):
 
     code = 3
     try:
-        cap, passes = core.run_scenes(scenes, ctx, walk_scene, on_open=dump_scene, transient=transient)
+        cap, passes = core.run_scenes(scenes, ctx, walk_scene, on_open=dump_scene, transient=lambda exc: transient(exc, live.COMError))
         records = cap.records
         records += core.authored(getattr(mod, "HAND", ()), surface=mod.SURFACE, build=build, source="hand")
         metrics = mod.METRICS(cap.records + cap.measured) if hasattr(mod, "METRICS") else ()

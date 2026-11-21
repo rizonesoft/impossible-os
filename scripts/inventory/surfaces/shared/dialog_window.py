@@ -162,7 +162,14 @@ def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",), uia=True):
     known = {w[0] for w in before}            # by handle: a renamed window is not a new one
     new = []
     with ctx.within(wait) as deadline:
+        looked = False
         while True:
+            # The first look always runs; a later one only while time is left: a
+            # scan begun at the deadline is a whole enumeration whose result is
+            # refused anyway (performance review, 2026-11-21).
+            if looked and time.monotonic() >= deadline:
+                break
+            looked = True
             try:
                 new = [w for w in top_windows(ctx, known, uia) if w[0] not in known and w[1] not in skip]
             except core.Incomplete:
@@ -173,9 +180,10 @@ def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",), uia=True):
                 # wait is the one look, taken as it is.
                 if len(new) == 1 and (wait <= 0 or time.monotonic() <= deadline):
                     return ctx.live.wrap(ctx.live.uia.ElementFromHandle(new[0][0]))
-            if time.monotonic() > deadline:
-                raise core.Incomplete(f"after the action {len(new)} new window(s) showed: {sorted(w[1:] for w in new)}")
+            if time.monotonic() >= deadline:
+                break
             time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+    raise core.Incomplete(f"after the action {len(new)} new window(s) showed: {sorted(w[1:] for w in new)}")
 
 
 def innermost_first(windows):

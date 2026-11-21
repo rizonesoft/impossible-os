@@ -2649,7 +2649,33 @@ class Serial(unittest.TestCase):
         self.assertEqual(calls[0][1], 900 + capture.RUN_MARGIN)
         self.assertEqual(calls[1][0][-3:], ["-Stop", "-Checkpoint", "clean"])
         self.assertIn("is off", out.getvalue())
-        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith("-in")], [])   # staging removed
+        self.assertEqual([p for p in self.tmp.glob("*/in")], [])   # staging removed
+
+    def test_two_runs_in_one_second_keep_their_own_inputs(self):
+        # Two checkouts starting one label in the same second shared a staging
+        # folder, and one's cleanup deleted the other's inputs (review, 2026-11-21).
+        real = capture.subprocess.run, capture.WORK, capture.winpath, capture.time.strftime
+        a, b = self.tmp / "a.py", self.tmp / "b.py"
+        a.write_text("first"), b.write_text("second")
+        seen = {}
+
+        def run(cmd, **kw):
+            stage = pathlib.Path(cmd[cmd.index("-In") + 1])
+            if "outer" not in seen:
+                seen["outer"] = stage
+                capture.ref_run("notepad", {"x.py": b}, "inner", 60)
+                seen["after"] = (stage / "x.py").read_text()
+            return capture.subprocess.CompletedProcess(cmd, 0, "", "")
+        capture.subprocess.run, capture.WORK, capture.winpath = run, self.tmp, str
+        capture.time.strftime = lambda fmt, *a: "20261121-080000"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                out, _ = capture.ref_run("notepad", {"x.py": a}, "outer", 60)
+        finally:
+            capture.subprocess.run, capture.WORK, capture.winpath, capture.time.strftime = real
+        self.assertEqual(seen["after"], "first")
+        self.assertEqual(out.parent.name.startswith("notepad-20261121-080000-"), True)
+        self.assertEqual(len(list(self.tmp.glob("notepad-20261121-080000-*"))), 2)
 
 
     def test_a_failed_guest_run_reports_why(self):
@@ -2701,7 +2727,7 @@ class Serial(unittest.TestCase):
 
             def stop(*_):
                 raise KeyboardInterrupt
-            win = (lambda p: stop() if str(p).endswith("-in") else str(p)) if where == "winpath" else str
+            win = (lambda p: stop() if pathlib.Path(p).name == "in" else str(p)) if where == "winpath" else str
             capture.subprocess.run, capture.WORK, capture.winpath = run, self.tmp, win
             if where == "copy":
                 capture.shutil.copy = stop
@@ -2711,7 +2737,7 @@ class Serial(unittest.TestCase):
             finally:
                 capture.subprocess.run, capture.WORK, capture.winpath, capture.shutil.copy = real
             self.assertEqual(calls, [], where)
-            self.assertEqual(list(self.tmp.glob("x-*-in")), [], where)
+            self.assertEqual(list(self.tmp.glob("x-*/in")), [], where)
 
     def test_a_machine_profile_run_is_restored_to_its_own_checkpoint(self):
         # Recovery restored clean after a profile-<id> run (review, 2026-11-18).
@@ -2906,6 +2932,15 @@ class Scenes(unittest.TestCase):
         with self.assertRaises(core.Incomplete):
             core.run_scenes(core.scenes_of(m), None, self.walk_scene)
         self.assertEqual(log, ["open desktop", "close desktop"])
+
+    def test_a_provider_timeout_is_a_transient_failure(self):
+        class COMError(Exception):
+            pass
+        self.assertTrue(guest.transient(COMError(guest.UIA_E_TIMEOUT, None, None), COMError))
+        self.assertTrue(guest.transient(COMError(guest.EVENT_E_ALL_SUBSCRIBERS_FAILED, None, None), COMError))
+        self.assertFalse(guest.transient(COMError(-2147024891, None, None), COMError))   # access denied is not
+        self.assertFalse(guest.transient(COMError(), COMError))
+        self.assertFalse(guest.transient(ValueError(guest.UIA_E_TIMEOUT), COMError))
 
     def test_a_transient_failure_reopens_the_scene_a_bounded_number_of_times(self):
         class Dropped(Exception):
@@ -3325,7 +3360,7 @@ class ExplorerMenu(unittest.TestCase):
         live = types.SimpleNamespace(uia=types.SimpleNamespace(GetFocusedElement=lambda: focus),
                                      wrap=lambda e: e, _parent=lambda e: None)
         ctx = Ctx(live=live)
-        with mock.patch.object(self.ew, "window", lambda c: None), \
+        with mock.patch.object(self.ew, "window", lambda c, wait=None: None), \
              mock.patch.object(self.ew, "descendants", lambda c, root, depth, skip=(): tree(el)), \
              mock.patch.object(self.ew, "focused", lambda c: {}), mock.patch.object(self.ew.time, "sleep", lambda s: None):
             return self.ew.menu(ctx, wait=0)
@@ -3334,6 +3369,23 @@ class ExplorerMenu(unittest.TestCase):
         got = self.run_menu(lambda el: [el(control_type="Menu", offscreen=True, name="stale"),
                                         el(control_type="Menu", name="open")])
         self.assertEqual(got.name, "open")
+
+    def test_the_window_lookup_is_one_look_inside_the_menu_poll(self):
+        # A lookup with its own 20 s wait ran inside a 5 s menu poll (review, 2026-11-21).
+        waits = []
+        focus = types.SimpleNamespace(control_type="ListItem", offscreen=False)
+        live = types.SimpleNamespace(uia=types.SimpleNamespace(GetFocusedElement=lambda: focus),
+                                     wrap=lambda e: e, _parent=lambda e: None)
+
+        def gone(c, wait=None):
+            waits.append(wait)
+            raise self.ew.core.Incomplete("no File Explorer window")
+        start = time.monotonic()
+        with mock.patch.object(self.ew, "window", gone), mock.patch.object(self.ew, "focused", lambda c: {}), \
+                self.assertRaisesRegex(self.ew.core.Incomplete, "holds the focus within 0.3 s"):
+            self.ew.menu(Ctx(live=live), wait=0.3)
+        self.assertLess(time.monotonic() - start, 1.5)
+        self.assertTrue(waits and set(waits) == {0}, waits)
 
     def test_only_a_closed_menu_is_no_menu(self):
         with self.assertRaises(guest.core.Incomplete):
@@ -3645,6 +3697,14 @@ class ExplorerMenus(unittest.TestCase):
         out = {r["id"]: r for r in self.m.registered_records(verbs, {"drive": [entry]}, [])}
         for v in ("encrypt-bde", "encrypt-bde-elev"):                  # no modern item: neither is credited alone
             self.assertIn("do not say which", out[f"menus.registered.drive.{v}"]["behaviour"])
+        # The drive menu's modern item tells nothing about the removable menu (review, 2026-11-21).
+        out = {r["id"]: r for r in self.m.registered_records(verbs, {"drive": [entry], "removable": [entry]}, modern)}
+        elev = out["menus.registered.drive.encrypt-bde-elev"]["behaviour"]
+        self.assertTrue(elev.startswith("Shown on drive; on removable it shares its label with encrypt-bde"), elev)
+        self.assertNotIn("Shown on drive, removable", elev)
+        self.assertTrue(out["menus.registered.drive.encrypt-bde"]["behaviour"].startswith(
+            "On removable it shares its label with encrypt-bde-elev"))
+        self.assertEqual(out["menus.registered.drive.encrypt-bde"]["kind"], "state")
 
     def test_icon_row_lists_the_triggers_that_show_each_button(self):
         row = {"height": 48}
@@ -3862,6 +3922,22 @@ class ExplorerDialogs(unittest.TestCase):
         with mock.patch.object(dw, "top_windows", slow), self.assertRaises(dw.core.Incomplete):
             dw.appeared(Ctx(live=live), set(), wait=0.1)
 
+    def test_no_scan_starts_once_the_wait_has_run_out(self):
+        dw = sys.modules["dialog_window"]
+        looks = []
+
+        def none_yet(ctx, known=(), uia=True):
+            looks.append(time.monotonic())
+            return set()
+        start = time.monotonic()
+        with mock.patch.object(dw, "top_windows", none_yet), self.assertRaises(dw.core.Incomplete):
+            dw.appeared(Ctx(live=None), set(), wait=0.3)
+        self.assertTrue(all(t < start + 0.3 for t in looks), [t - start for t in looks])
+        with mock.patch.object(dw, "top_windows", none_yet), self.assertRaises(dw.core.Incomplete):
+            looks.clear()
+            dw.appeared(Ctx(live=None), set(), wait=0)
+        self.assertEqual(len(looks), 1)                           # wait=0 is the one look
+
     def test_a_renamed_window_is_not_a_new_one(self):
         dw = sys.modules["dialog_window"]
         before = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "Untitled - Notepad")}
@@ -3989,6 +4065,18 @@ class ExplorerDialogs(unittest.TestCase):
         with mock.patch.multiple(self.m, **patch), self.assertRaises(self.m.core.Incomplete):
             self.m.open_folder_merge(ctx)
         self.assertEqual(ran, ["closed", self.m.HIDE_MERGE])
+
+    def test_a_merge_setup_that_fails_after_the_override_puts_it_back(self):
+        ran = []
+        ctx = types.SimpleNamespace(powershell=lambda script: ran.append(script))
+
+        def work(ctx, script):
+            raise self.m.core.Incomplete("Set-Content: the fixture folder is read-only")
+        patch = dict(work=work, close_operation=lambda ctx: ran.append("closed"))
+        with mock.patch.multiple(self.m, **patch), self.assertRaises(self.m.core.Incomplete):
+            self.m.open_folder_merge(ctx)
+        self.assertEqual(ran, ["closed", self.m.HIDE_MERGE])
+        self.assertIsNone(self.m._root["el"])
 
     def test_the_folder_merge_message_is_recorded_without_its_time(self):
         merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
@@ -4219,6 +4307,27 @@ class DialogsCommon(unittest.TestCase):
                 self.m.close_scene(ctx)
         self.assertEqual(ran, [self.m.END_HOSTS])
         self.assertEqual(self.m._hosts, [])
+
+    def test_the_hung_fixture_is_ended_before_the_window_scan(self):
+        order = []
+
+        class Host:
+            code = None
+
+            def poll(self):
+                return self.code
+
+            def kill(self):
+                order.append("kill")
+                self.code = -9
+        ctx = types.SimpleNamespace(powershell=lambda script: order.append("END_HOSTS"))
+        with mock.patch.object(self.m, "close_new_windows", lambda ctx: order.append("scan")):
+            self.m._hosts[:] = [Host()]
+            self.m.close_hung(ctx)
+        self.assertEqual(order, ["kill", "scan"])
+        self.assertEqual(self.m._hosts, [])
+        by = {s["slug"]: s for s in self.m.SCENES}
+        self.assertIs(by["not-responding"]["close"], self.m.close_hung)
 
     def test_a_host_that_exited_needs_no_process_query(self):
         ran = []
@@ -4813,7 +4922,11 @@ class HostCapture(unittest.TestCase):
             old.mkdir()
             (old / "build.json").write_text(json.dumps({"build": "26300.1"}), encoding="utf-8")
             out, rc = self.hc.run_host("x", [], "clean", 10)
-        self.assertEqual((out, rc, seen), (old, 2, []))
+        # A run in the same second has a folder of its own (review, 2026-11-21).
+        self.assertEqual(rc, 0)
+        self.assertNotEqual(out, old)
+        self.assertTrue(out.parent.name.startswith("x-20260101-000000-"), out)
+        self.assertEqual(len(seen), 1)
         self.assertEqual(json.loads((old / "build.json").read_text(encoding="utf-8")), {"build": "26300.1"})
 
     def test_an_interrupted_host_walk_restores_its_checkpoint(self):

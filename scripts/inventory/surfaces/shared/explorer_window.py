@@ -6,6 +6,7 @@ Owner: todo/08-graphics-ui/TODO-17-win11-parity-inventory.md section 12. Staged
 into the guest with every surface module (capture.py run_guest); a module
 imports it by name, since capture-ui puts this folder on the path.
 """
+import contextlib
 import ctypes
 import time
 
@@ -220,8 +221,15 @@ def command_bar(ctx):
 def menu(ctx, kinds=("Menu",), wait=WAIT):
     """The menu a command bar button or a breadcrumb opened: Explorer hosts it
     inside its own window, so it is found from the entry that took the focus
-    (2026-11-19: no popup window opens, and the focus is on the first entry)."""
-    deadline = time.monotonic() + wait
+    (2026-11-19: no popup window opens, and the focus is on the first entry).
+    The whole poll, window lookups included, ends by `wait` (performance review,
+    2026-11-21: a lookup took its own 20 s inside a 5 s menu poll); wait=0 is one
+    look."""
+    with (ctx.within(wait) if wait > 0 else contextlib.nullcontext(time.monotonic())) as deadline:
+        return _menu_poll(ctx, kinds, wait, deadline)
+
+
+def _menu_poll(ctx, kinds, wait, deadline):
     while True:
         el = ctx.live.uia.GetFocusedElement()
         for _ in range(MENU_DEPTH):
@@ -237,13 +245,16 @@ def menu(ctx, kinds=("Menu",), wait=WAIT):
         # window. Only one on screen: a closed flyout's menu stays in the tree,
         # offscreen, and was taken for the next menu before that one opened
         # (2026-11-19: the second Group by click went to the first menu's place).
-        shown = [k for k in descendants(ctx, window(ctx), MENU_SEARCH_DEPTH, skip=MENU_SEARCH_SKIP)
-                 if k.control_type == "Menu" and not k.offscreen]
+        try:
+            shown = [k for k in descendants(ctx, window(ctx, wait=0), MENU_SEARCH_DEPTH, skip=MENU_SEARCH_SKIP)
+                     if k.control_type == "Menu" and not k.offscreen]
+        except core.Incomplete:
+            shown = []            # the window is between layouts, or the look ran out: the deadline decides
         if shown:
             return shown[0]
         if time.monotonic() > deadline:
             raise core.Incomplete(f"no {' or '.join(kinds)} holds the focus within {wait} s (focus: {focused(ctx)})")
-        time.sleep(0.5)
+        time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
 
 
 def press_more(ctx):
