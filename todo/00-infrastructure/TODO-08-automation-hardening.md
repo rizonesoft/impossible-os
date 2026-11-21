@@ -1244,13 +1244,14 @@ The gate's step-8 rule binds a staged source file to a test named for its basena
 
 Every review reads one section. Nothing reads a finished file as a whole, so a defect that only shows across sections (two sections each correct, wrong together) has no reviewer. `codex-review-todo` exists and is never scheduled.
 
-- [x] Ran one cross-section pass on 01-boot-platform/TODO-07 (closed 2026-11-09, 25 sections): 3 findings no single-section review could make, all verified in the code.
+- [x] Ran one cross-section pass on 01-boot-platform/TODO-07 (swept 2026-11-09, 17 of 25 rows done, 8 parked): 3 findings no single-section review could make, all verified in the code.
   - All entries exhausted: the synthesized `fallback` id is no menu candidate, so F11 cannot open the menu (sections 3, 5, 6, 7, 9).
   - Watchdog rollback removes the peak-tries entry among already-filtered candidates, so it can drop the last viable entry (sections 3, 5, 12).
   - `LoaderEntries` publishes inactive and unsupported entries policy refuses (sections 3, 6, 15, 16, 21).
   - Filed as 01-boot-platform/TODO-07 §26 (item: "With every entry exhausted, F11 and `menu-force` still open the menu").
-- [/] `complete-todo-file` step 4a runs the pass before verification: one pass per file, one fix round, the rest filed as a new section. Waits on the next file close-out to run it.
-  - Review fixes: verification now runs after the fix round; a filed section reports REOPENED, not CLOSED; the commit body records the count, 0 included.
+- [/] `complete-todo-file` step 3a runs the pass before the sweep and verification: one pass per file, one fix round, the rest filed as a new section. Waits on the next file close-out to run it.
+  - Its result is a `Cross-section review:` line in the TODO, written when the review returns, so a clean pass, a retry and a resumed close-out reuse it instead of paying again.
+  - Review fixes: a FAIL outranks REOPENED; a filed section reports REOPENED, not CLOSED; source fixes commit apart from the TODO-only close-out.
 - [x] Not needed: the first file returned 3, so the step is kept.
 - [x] Second run, 2026-11-21, on 01-boot-platform/TODO-03 (24 sections): 1 P1 and 2 P2, all verified, filed as its §25 (item: "The post-EBS error dwell has its own TSC deadline").
 - [x] Committed as 24dab6136.
