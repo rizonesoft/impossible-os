@@ -41,7 +41,7 @@ if [[ "${1:-}" == "--section-of" ]]; then
 fi
 
 if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 '<[review-kind: X] todo-path body>'" >&2
+    echo "[review-broker] BLOCK -- expected exactly one prompt argument. Usage: $0 '<[review-kind: X] todo-path body>'" >&2
     exit 2
 fi
 PROMPT="$1"

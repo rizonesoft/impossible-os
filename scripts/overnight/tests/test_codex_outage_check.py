@@ -82,6 +82,10 @@ CASES = [
     # Overlapping reviews: the first launched finished LAST and succeeded.
     ("a success that finished last clears two earlier-finishing failures",
      [(OK, 300, {"_finished_age": 5}), (OUTAGE, 200, {"_finished_age": 60}), (OUTAGE, 100, {"_finished_age": 30})], 0),
+    # Receipts are appended at finish with their launch ts: an expired row can
+    # come last and must not hide the recent failures before it.
+    ("an expired row appended last does not hide two recent failures",
+     [(OUTAGE, 120), (OUTAGE, 60), (OK, 2500, {"parent": "detached:z"}), (OK, 2400)], 75),
     ("two failed brokered reviews refuse", [(OUTAGE, 120), (OUTAGE, 119, {"parent": "detached:a"}),
                                             (OUTAGE, 60), (OUTAGE, 59, {"parent": "detached:b"})], 75),
 ]

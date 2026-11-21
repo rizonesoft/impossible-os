@@ -70,8 +70,10 @@ def check(manifest: Path, window: int, threshold: int, now: float):
         except ValueError:
             continue
         ts = rec.get("ts")
+        # Rows are appended at finish, keyed by launch: an old launch can sit
+        # after newer ones, so skip it and keep scanning the bounded tail.
         if not isinstance(ts, (int, float)) or now - ts > window:
-            break
+            continue
         # A receipt the broker's own job wrote (parent = that job) is the same
         # attempt as the broker's row: count each attempt once.
         if rec.get("parent"):

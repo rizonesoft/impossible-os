@@ -177,6 +177,20 @@ def test_crashed_broker_leg_is_not_review_proof():
         assert not any("perf" in b for b in bad), bad
 
 
+def test_a_failed_foreground_leg_longer_than_five_minutes_still_blocks():
+    # Its row carries the LAUNCH time; it is placed by when its status was published.
+    todo = "todo/x/TODO-1.md"
+    with tempfile.TemporaryDirectory() as d:
+        root = _broker_fixture(d, todo, {"adversarial": "crash"})
+        mf = root / ".claude/overnight/reviews/manifest.jsonl"
+        row = json.loads(mf.read_text().splitlines()[0])
+        row["ts"] = int(time.time()) - 360
+        mf.write_text(json.dumps(row) + "\n")
+        pathlib.Path(row["logFile"] + ".done").write_text("1\n")
+        bad = scg._crashed_broker_legs(root, todo, {"adversarial": time.time_ns()})
+        assert any("adversarial" in b for b in bad), bad
+
+
 def test_completion_check_fails_open_when_it_cannot_prove_a_crash():
     """A gate that cannot read its evidence must never block a commit."""
     todo = "todo/x/TODO-1.md"
@@ -364,6 +378,45 @@ def test_crecv_the_broker_log_file_is_taken_from_the_dispatch_response():
     payload = {"tool_response": {"stdout": 'noise\n{"kind": "round", "jobId": "j", "logFile": "/x/a-round.out"}\n'}}
     assert crc._response_log_file(payload) == "/x/a-round.out"
     assert crc._response_log_file({"tool_response": {"stdout": "review text"}}) == ""
+
+
+def test_crecv_a_newer_record_landing_during_the_check_is_kept():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial", _CLEAN)
+        state = root / ".claude/state/last-codex-review.json"
+        newer = {"received": False, "review_kind": "round", "timestamp_ns": 1, "log_file": "/x/b.out"}
+        real = crc._out_is_clean
+        def racing(r, p):
+            state.write_text(json.dumps(newer))      # another dispatch records B meanwhile
+            return real(r, p)
+        crc._out_is_clean = racing
+        try:
+            got = _poll(root, out)
+        finally:
+            crc._out_is_clean = real
+        assert got == newer, got
+
+
+def test_crecv_a_bundled_response_binds_no_log():
+    two = {"tool_response": {"stdout": '{"logFile": "/x/a-round.out"}\n{"logFile": "/x/b-round.out"}\n'}}
+    assert crc._response_log_file(two) == ""
+
+
+def test_crecv_a_quoted_banner_is_not_a_refusal():
+    quoted = {"tool_response": {"stdout": "finding: [codex-bg-dispatch] BLOCK -- x is wrong", "stderr": ""}}
+    assert not crc._dispatch_was_refused(quoted)
+    launched = {"tool_response": {"stdout": '{"logFile": "/x/a.out"}', "stderr": "[review-broker] BLOCK -- y"}}
+    assert not crc._dispatch_was_refused(launched)
+
+
+def test_crecv_every_broker_argv_refusal_is_recognised():
+    import subprocess
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                        "[review-kind: adversarial] todo/x.md section 1 body", "extra"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2, r
+    assert crc._dispatch_was_refused({"tool_response": {"stdout": r.stdout, "stderr": r.stderr}}), r.stderr
 
 
 def test_crecv_an_outage_refusal_is_a_refused_dispatch():

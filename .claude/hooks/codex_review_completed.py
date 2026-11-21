@@ -1297,7 +1297,7 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
             same = False
         if not same:
             continue
-        out_kind = _out_kind_from_name(p.name)
+        out_kind = _out_kind_from_name(Path(rec_log).name)
         # (F1) Require an EXACT, non-empty kind match. A multi-log wait may list
         # several .out paths; the current record tracks exactly ONE review.
         if not out_kind or out_kind != rec_kind:
@@ -1307,18 +1307,26 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
         # older clean same-kind .out (earlier mtime) must not complete the current
         # (possibly finding-bearing) state.
         try:
-            if isinstance(rec_ts, int) and p.stat().st_mtime < (rec_ts / 1e9) - 5:
+            if isinstance(rec_ts, int) and (Path(rec_log) if os.path.isabs(rec_log) else root / rec_log).stat().st_mtime < (rec_ts / 1e9) - 5:
                 continue
         except Exception:
             continue
-        if _out_is_clean(root, p):
-            state["received"] = True
-            state["received_timestamp_ns"] = time.time_ns()
-            state["received_via"] = "auto-clean-broker-completion (C-RECV)"
-            ok, _err = _write_atomic(state_path, state)
+        # Everything below reads the RECORDED path, never the caller's spelling
+        # of it (an alias could carry another attempt's .done).
+        rp = Path(rec_log) if os.path.isabs(rec_log) else root / rec_log
+        if _out_is_clean(root, rp):
+            with _StateLock(state_path):
+                cur = _load_state(state_path)
+                if not isinstance(cur, dict) or cur.get("received") is True \
+                        or cur.get("timestamp_ns") != rec_ts or (cur.get("log_file") or "") != rec_log:
+                    return    # another dispatch's record replaced this one meanwhile
+                cur["received"] = True
+                cur["received_timestamp_ns"] = time.time_ns()
+                cur["received_via"] = "auto-clean-broker-completion (C-RECV)"
+                ok, _err = _write_atomic(state_path, cur)
             if ok:
-                _append_history(root, state)
-                _debug_log(root, "auto_receive_clean", kind=rec_kind, out=str(p))
+                _append_history(root, cur)
+                _debug_log(root, "auto_receive_clean", kind=rec_kind, out=str(rp))
             return
 
 
@@ -1335,17 +1343,60 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
 _WRAPPER_REFUSAL = ("[codex-dispatch] BLOCK", "[review-broker] BLOCK", "[codex-bg-dispatch] BLOCK")
 
 
+class _StateLock:
+    """flock on a sibling of last-codex-review.json, shared by every writer of
+    that record, so auto-receive can re-read and compare the record it is about
+    to mark received without another dispatch's record landing in between.
+    Bounded (about 2 s, monotonic); lock-free when fcntl is missing or the lock
+    stays busy, which is the record's behaviour before the lock existed."""
+
+    def __init__(self, state_path: Path):
+        self.path = state_path.with_name(state_path.name + ".lock")
+        self.fd = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+            deadline = time.monotonic() + 2.0
+            while True:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        os.close(self.fd)
+                        self.fd = None
+                        break
+                    time.sleep(0.02)
+        except Exception:  # fail-direction: no lock is the pre-lock behaviour, never a lost write
+            self.fd = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        return False
+
+
 def _response_log_file(payload: dict) -> str:
     """The `logFile` a broker dispatch printed, or "" (a foreground dispatch)."""
     try:
         resp = payload.get("tool_response")
         text = " ".join(str(resp.get(k) or "") for k in ("stdout", "output")) \
             if isinstance(resp, dict) else str(resp or "")
-        for line in reversed(text.splitlines()):
+        found = []
+        for line in text.splitlines():
             line = line.strip()
             if line.startswith("{") and '"logFile"' in line:
                 v = json.loads(line).get("logFile")
-                return v if isinstance(v, str) else ""
+                found.append(v if isinstance(v, str) else "")
+        # Exactly one: a bundled call's logs cannot be paired with its targets.
+        return found[0] if len(found) == 1 else ""
     except Exception:  # fail-direction: no log path means no auto-receive, the review is triaged by hand
         return ""
     return ""
@@ -1357,14 +1408,18 @@ def _dispatch_was_refused(payload: dict) -> bool:
     try:
         resp = payload.get("tool_response")
         if isinstance(resp, dict):
-            text = " ".join(
-                str(resp.get(k) or "") for k in ("stdout", "stderr", "output", "error")
-            )
+            # A refusal is a wrapper's own stderr line; a review's text (which
+            # can quote a banner) is on stdout.
+            text = "\n".join(str(resp.get(k) or "") for k in ("stderr", "error"))
+            out = str(resp.get("stdout") or resp.get("output") or "")
         elif isinstance(resp, str):
-            text = resp
+            text = out = resp
         else:
             return False
-        return any(m in text for m in _WRAPPER_REFUSAL)
+        refused = any(ln.startswith(m) for ln in text.splitlines() for m in _WRAPPER_REFUSAL)
+        # Something launched (a broker logFile, or a direct transcript line): not a refusal.
+        launched = '"logFile"' in out or "[codex-dispatch] transcript:" in text
+        return refused and not launched
     except Exception:
         return False
 
@@ -1481,7 +1536,8 @@ def main() -> int:
         # path swallowed an OSError -- the H1 fix from the section-24
         # review pipeline. The write itself remains best-effort; we add
         # honest diagnosis, not new failure modes.
-        write_ok, write_err = _write_atomic(state_path, state)
+        with _StateLock(state_path):
+            write_ok, write_err = _write_atomic(state_path, state)
         _debug_log(
             root, "trigger_state_write",
             classifier_kind=kind,
@@ -1532,7 +1588,12 @@ def main() -> int:
         # started, so it stays excluded from the stamp PROOF surface.
         is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
         state["review_broker_dispatch"] = is_broker
-        _write_atomic(state_path, state)
+        # A bundled call carries several dispatches its single record cannot
+        # tell apart: no log binding, so auto-receive leaves it to triage.
+        if raw_cmd and len(list(_all_dispatch_targets(raw_cmd, root))) > 1:
+            state["log_file"] = ""
+        with _StateLock(state_path):
+            _write_atomic(state_path, state)
         # A pass of the reviewer pin earns no stamp here. The commit gate judges
         # it from the receipt scripts/codex-dispatch.sh writes when the pass has
         # been checked; a stamp written now, when the dispatch has only started,

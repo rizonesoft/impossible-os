@@ -2104,8 +2104,15 @@ def _crashed_broker_legs(root: Path, todo: str, entry: dict) -> list[str]:
             if not e:
                 continue          # foreground dispatch: nothing to prove here
             # Only judge a manifest entry from THIS dispatch onward; an older
-            # brokered leg for a prior round must not condemn a fresh one.
-            if (e.get("ts") or 0) * 1_000_000_000 < ts - 300_000_000_000:
+            # brokered leg for a prior round must not condemn a fresh one. A
+            # row's ts is its LAUNCH; a foreground stamp is written when the
+            # review returns, so the attempt is placed by when it FINISHED
+            # (its .done), or a review longer than five minutes escapes.
+            try:
+                fin = os.stat(str(e.get("logFile") or "") + ".done").st_mtime
+            except OSError:  # fail-direction: no status yet is placed by launch, then judged incomplete
+                fin = float(e.get("ts") or 0)
+            if fin * 1_000_000_000 < ts - 300_000_000_000:
                 continue
             try:
                 s = rev.leg_summary(e)
