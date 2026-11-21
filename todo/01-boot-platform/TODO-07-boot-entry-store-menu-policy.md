@@ -1059,7 +1059,7 @@ Menu rendering, menu keys and loader-var readback now run in the booted image (`
 
 ---
 
-> **Cross-section review:** 2026-11-12 | 3 findings | exhausted-entry menu filed as section 26, watchdog rollback filed as section 26, LoaderEntries eligibility filed as section 26
+> **Cross-section pilot:** 2026-11-12, run while 8 rows were parked, so it does not stand in for the close-out pass | 3 findings | exhausted-entry menu filed as section 26, watchdog rollback filed as section 26, LoaderEntries eligibility filed as section 26
 
 ## Verification
 
