@@ -30,3 +30,15 @@ def test_no_divider_or_scissors_line_hides_a_trailer_on_either_side():
                     "subject\n\nAssisted-by: TOOL:MODEL\n\n---\n\nverification notes\n",
                     "subject\n\nbody\n    co-authored-by: S <s@example.org>\nmore body\n"):
         assert _trailers(message), message
+
+
+def test_a_failed_history_read_fails_the_gate(tmp_path):
+    """The history scan's own git log fails: the suite must report it, not pass."""
+    import os
+    shim = tmp_path / "git"
+    real = subprocess.run(["bash", "-c", "command -v git"], capture_output=True, text=True, check=True).stdout.strip()
+    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%x01%H%n%B" ] && exit 128; done\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
+    r = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True, timeout=300, env=env)
+    assert r.returncode == 1 and "zero-trailer scan read the history" in r.stdout + r.stderr, r.stdout[-2000:]

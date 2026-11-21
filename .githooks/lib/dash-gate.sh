@@ -12,7 +12,10 @@ dash_gate() {
     python3 "$REPO_ROOT/scripts/staged_dash_check.py" || rc=$?
     if [ "$rc" -eq 1 ]; then
         echo -e "\033[31mPre-commit: a staged line adds a Unicode dash (above)\033[0m"
-        echo "  Opt-out (last resort): SKIP_DASH_CHECK=1 git commit ..."
+        echo "  This check compares with HEAD (and MERGE_HEAD): git does not tell a hook that it is amending."
+        echo "  If this is \`git commit --amend\` putting back a line the amended commit removed, its real parent"
+        echo "  has it and pre-push judges against that parent: SKIP_DASH_CHECK=1 git commit --amend ..."
+        echo "  Otherwise, opt-out (last resort): SKIP_DASH_CHECK=1 git commit ..."
         return 1
     elif [ "$rc" -ne 0 ]; then
         echo -e "\033[31mPre-commit: the dash check could not read the staged changes (above); fix that and commit again\033[0m"

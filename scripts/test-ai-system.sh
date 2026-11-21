@@ -95,9 +95,10 @@ done
 # and one after a scissors line all pass in turn; a line test has no block to
 # get wrong. On the gate's whole range it matches only the two grandfathered
 # commits below.
+AI_TRAILER_RE='^[[:space:]]*(co-authored-by|assisted-by|ai-author):'
 forbidden_trailers() {
     local rc=0
-    grep -iE '^[[:space:]]*(co-authored-by|assisted-by|ai-author):' || rc=$?
+    grep -iE "$AI_TRAILER_RE" || rc=$?
     [ "$rc" -le 1 ]                                        # 1 is grep's "no line matched", the clean answer
 }
 if [ "$TRAILERS_ONLY" = 1 ]; then
@@ -348,18 +349,20 @@ check_zero_trailer_policy() {
     else
         range="HEAD"
     fi
-    # Each commit's whole message goes through forbidden_trailers (above): a
-    # line that starts with a forbidden key fails, wherever it sits.
-    local trailer_hits=""
-    local commit
-    while IFS= read -r commit; do
-        [ -z "$commit" ] && continue
-        local trailers
-        trailers=$(git log -1 --format='%B' "$commit" 2>/dev/null | forbidden_trailers)
-        if [ -n "$trailers" ]; then
-            trailer_hits="$trailer_hits ${commit:0:8}"
-        fi
-    done < <(git log --format='%H' "$range" 2>/dev/null)
+    # One `git log` reads every message in the range (a 0x01 byte starts each
+    # commit), and AI_TRAILER_RE (above, shared with --ai-trailers) is tested
+    # against every line: a line that starts with a forbidden key fails,
+    # wherever it sits. A failed read fails the check, never passes it.
+    local history rc=0
+    history=$(git log --format='%x01%H%n%B' "$range") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        t_fail "zero-trailer scan read the history" "git log over $range exited $rc; no commit was checked"
+        return
+    fi
+    local trailer_hits
+    trailer_hits=$(printf '%s\n' "$history" | awk -v re="$AI_TRAILER_RE" '
+        /^\001/ { h = substr($0, 2, 8); next }
+        tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }')
     # Filter out declared exceptions.
     local real_hits=""
     for hit in $trailer_hits; do

@@ -415,8 +415,9 @@ These paths exist in the repo for other reasons. Their presence does NOT imply a
 | ------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | [`AGENTS.md`](../../AGENTS.md)        | Cross-tool pointer file (Linux Foundation AGENTS.md standard).                               | Explicit "Autonomous-agent stop sign" sub-section tells autonomous agents to stop before opening a PR.     |
 | [`CLAUDE.md`](../../CLAUDE.md)        | Doctrine source-of-truth.                                                                    | Read by Claude Code + cross-tool readers; does not authorize autonomous PR creation.                        |
+| [`GEMINI.md`](../../GEMINI.md)        | agy's entry point for the operator-started neon lanes; points at `CLAUDE.md`.                | Holds only agy mechanics; `scripts/test-ai-system.sh` keeps it a pointer, and lanes start only when the operator starts them. |
 
-(`.github/copilot-instructions.md` was previously listed here for the retired Copilot-CLI subordinate-reviewer role. The file was deleted 2026-04-28 with the Copilot-CLI removal sweep; cross-tool readers now have only `AGENTS.md` + `CLAUDE.md` as repo-level pointer surfaces.)
+(`.github/copilot-instructions.md` was previously listed here for the retired Copilot-CLI subordinate-reviewer role. The file was deleted 2026-04-28 with the Copilot-CLI removal sweep; cross-tool readers then had only `AGENTS.md` + `CLAUDE.md` as repo-level pointer surfaces; `GEMINI.md` joined them on 2026-11-20 for agy.)
 
 ### GitHub-side enablement note (regression pack cannot detect)
 

@@ -1633,13 +1633,14 @@ Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/pla
 
 **Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean; `bash scripts/test-ai-system.sh --quiet` passes; `test_staged_dash_check.py` refuses an added dash and passes an old line and a generated file.
 
-> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_staged_dash_check.py scripts/overnight/tests/test_ai_trailer_filter.py` (20 passed) and `bash scripts/test-ai-system.sh --quiet` (88 passed, 0 failed); the stamp names the commit they ran on.
+> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_staged_dash_check.py scripts/overnight/tests/test_ai_trailer_filter.py` (22 passed) and `bash scripts/test-ai-system.sh --quiet` (88 passed, 0 failed); the stamp names the commit they ran on.
 
 **Notes:**
 
 - The dash check decides by one dash count per file. Rounds 2 to 7 of the review each found a new case in the line-matching design it replaced (renames, inter-hunk context, cross-file moves, binary bytes, a UTF-8 BOM, attribution order), so the matcher was removed rather than patched again; `test_reshaping_a_file_never_changes_the_decision` is the class regression.
 - A dash line moved into another file is refused there, deliberately: the author is editing that text anyway.
-- Merges are judged on what they add over every parent: pre-push over every outgoing commit through one `diff-tree --stdin`, and pre-commit against `MERGE_HEAD` while a merge is being committed. Only dash counts are cached.
+- Merges are judged on what they add over every parent: pre-push over every outgoing commit through one `diff-tree --stdin`, and pre-commit (or `pre-merge-commit`, for an automatic merge) against `MERGE_HEAD`. Only dash counts are cached.
+- git does not tell a hook it is amending, so an amend that puts back a line the amended commit removed is refused at commit; the hook names that case and its opt-out, and pre-push judges the real parent.
 - Out of scope by decision: source encodings other than UTF-8 and BOM-marked UTF-16 (the tree holds none), and partial clones.
 - The zero-trailer gate refuses any message line that starts with a forbidden key, in any case: `git interpret-trailers` let a lowercase key and trailers around a `---` or scissors line pass in turn, and on the gate's whole range the line test matches only the two grandfathered commits (`test_ai_trailer_filter.py`).
 

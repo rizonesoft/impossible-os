@@ -326,3 +326,29 @@ def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
     _stage(root, {"f.md": kept, "g.md": "new " + DASH + "\n"})
     r = _run(root)
     assert r.returncode == 1 and "g.md gains 1" in r.stderr and "f.md" not in r.stderr, r
+
+
+def test_an_automatic_merge_is_refused_before_head_moves(tmp_path):
+    """git runs pre-merge-commit, not pre-commit, for an automatic merge."""
+    root = _repo(tmp_path)
+    hooks = root / ".githooks"
+    (hooks / "lib").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    shutil.copy(REPO / ".githooks/pre-merge-commit", hooks / "pre-merge-commit")
+    shutil.copy(GATE, hooks / "lib/dash-gate.sh")
+    shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    _git(root, "config", "core.hooksPath", ".githooks")
+    body = [f"line {i}" for i in range(40)]
+    _stage(root, {"f.md": "\n".join(body + ["legacy " + DASH]) + "\n"})
+    _commit(root, "base")
+    _git(root, "checkout", "-q", "-b", "side")
+    _stage(root, {"f.md": "\n".join(["legacy " + DASH] + body) + "\n"})
+    _commit(root, "side moves it to the top")
+    _git(root, "checkout", "-q", "-")
+    _stage(root, {"f.md": "\n".join(body[:20] + ["legacy " + DASH] + body[20:]) + "\n"})
+    _commit(root, "main moves it to the middle")
+    before = _git(root, "rev-parse", "HEAD")
+    r = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-edit", "side"],
+                       cwd=root, capture_output=True, text=True, timeout=60, env=_clean_env())
+    assert r.returncode != 0 and "f.md gains 1" in r.stderr, r
+    assert _git(root, "rev-parse", "HEAD") == before
