@@ -1480,6 +1480,34 @@ def _is_wrapper_dispatch(cmd: str) -> bool:
     return bool(names & set(_WRAPPERS)) and "codex-bg-dispatch.sh" not in names
 
 
+def _matched_receipts(root: Path, cmd: str, launched: list) -> list:
+    """The receipt rows THIS invocation launched: each launch claim's log
+    matched to its receipt row, kept only when the row's prompt hash is one
+    of the invocation's own prompts (each prompt used once). A review that
+    quotes another job's launch line names a row with another prompt."""
+    try:
+        hashes = collections.Counter(
+            hashlib.sha256(b.encode("utf-8")).hexdigest() for b in _cd.extract_dispatch_prompts(cmd))
+    except Exception:  # fail-direction: no prompt hashes means no row matches, nothing is credited
+        return []
+    out = []
+    for row in _manifest_rows_for(root, [lg for _k, lg, _st in launched if lg]):
+        h = str((row or {}).get("prompt_sha256") or "")
+        if row is not None and hashes[h] > 0:
+            hashes[h] -= 1
+            out.append(row)
+    return out
+
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _row_head(row: dict, fallback: str) -> str:
+    """The commit a receipt says its review read: the launch HEAD."""
+    h = str(row.get("head") or "")
+    return h if _SHA_RE.match(h) else fallback
+
+
 def _manifest_rows_for(root: Path, logs: list) -> list:
     """The receipt row each launched log belongs to (its kind, TODO and
     section), first row per log; a log with no row yields None."""
@@ -1511,25 +1539,6 @@ def _manifest_rows_for(root: Path, logs: list) -> list:
         if k and k in want and want[k] is None:
             want[k] = rec
     return [want.get(key(lg)) for lg in logs]
-
-
-def _response_log_file(payload: dict) -> str:
-    """The `logFile` a broker dispatch printed, or "" (a foreground dispatch)."""
-    try:
-        resp = payload.get("tool_response")
-        text = " ".join(str(resp.get(k) or "") for k in ("stdout", "output")) \
-            if isinstance(resp, dict) else str(resp or "")
-        found = []
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith("{") and '"logFile"' in line:
-                v = json.loads(line).get("logFile")
-                found.append(v if isinstance(v, str) else "")
-        # Exactly one: a bundled call's logs cannot be paired with its targets.
-        return found[0] if len(found) == 1 else ""
-    except Exception:  # fail-direction: no log path means no auto-receive, the review is triaged by hand
-        return ""
-    return ""
 
 
 def _dispatch_was_refused(payload: dict) -> bool:
@@ -1580,6 +1589,7 @@ def main() -> int:
     _cmd = str(_ti.get("command") or "") if isinstance(_ti, dict) else ""
     _wrapper = _is_wrapper_dispatch(_cmd)
     _launched = _launches(payload) if _wrapper else []
+    _matched = _matched_receipts(root, _cmd, _launched) if _launched else []
     if kind == "trigger" and ((_wrapper and not _launched) or (not _wrapper and _dispatch_was_refused(payload))):
         # Refused at argv time: no review ran. Recording it would open a
         # reception obligation and stamp a review that never happened.
@@ -1658,10 +1668,12 @@ def main() -> int:
             "tree_hash": _tree_hash(root),
             "received": False,
             "received_timestamp_ns": None,
-            # The broker prints the job's logFile: auto-receive completes THIS
-            # review only from that exact log, never from another one of the
-            # same kind that happened to finish later.
-            "log_file": _response_log_file(payload),
+            # The one log this call launched, proven by its receipt row (never
+            # a logFile line the streamed review merely quotes): auto-receive
+            # completes THIS review only from that log, and the outage path
+            # marks only a record whose own log failed at the backend.
+            "log_file": str(_matched[0].get("logFile") or "")
+            if len(_matched) == 1 and len(_all_dispatch_targets(_cmd, root)) <= 1 else "",
         }
         # TODO-08 section 24 observability: capture write success/failure
         # so missing-write incidents leave a structured trail in
@@ -1750,21 +1762,10 @@ def main() -> int:
         if stamp_attempted and _wrapper:
             stamp_attempted = False
             stamp_err = "skipped (no launched receipt names a stamped kind)"
-            # A launch counts only through a receipt row whose prompt hash is
-            # one of THIS invocation's prompts (each used once): a review that
-            # quotes another job's launch line names a row with another prompt.
-            try:
-                _hashes = collections.Counter(
-                    hashlib.sha256(b.encode("utf-8")).hexdigest() for b in _cd.extract_dispatch_prompts(raw_cmd))
-            except Exception:  # fail-direction: no prompt hashes means no row matches, no stamp
-                _hashes = collections.Counter()
-            _logs = [lg for _k, lg, _st in _launched if lg]
-            _rows = _manifest_rows_for(root, _logs)
+            # A launch counts only through its matched receipt row, and the
+            # stamp names the commit that row says the review read.
             _stamp_deadline = time.monotonic() + 2.0
-            for _row in _rows:
-                if _row is None or _hashes[str(_row.get("prompt_sha256") or "")] <= 0:
-                    continue
-                _hashes[str(_row.get("prompt_sha256"))] -= 1
+            for _row in _matched:
                 _k, _tp = str(_row.get("kind") or ""), str(_row.get("todo") or "")
                 _sec = str(_row.get("section") if _row.get("section") is not None else "")
                 if not _tp or _k not in REVIEW_KINDS or _k in SECTION_PASS_KINDS:
@@ -1772,12 +1773,13 @@ def main() -> int:
                 stamp_attempted = True
                 stamp_ok, stamp_err = _record_stamp(
                     root, _tp, ("\u00a7" + _sec) if _sec else "", _k, now_ns,
-                    dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
+                    dispatch_head_sha=_row_head(_row, head_at_dispatch), deadline=_stamp_deadline,
                 )
             # A lone dispatch whose receipt is not written yet: its own launch
             # line on stderr (never the streamed review) names its one target.
             if not stamp_attempted and not _bundle and any(st == "stderr" for _k, _lg, st in _launched) \
-                    and all(r is None for r in _rows) and review_kind and todo_path \
+                    and not any(_manifest_rows_for(root, [lg for _k, lg, _st in _launched if lg])) \
+                    and review_kind and todo_path \
                     and review_kind not in SECTION_PASS_KINDS:
                 stamp_attempted = True
                 stamp_ok, stamp_err = _record_stamp(

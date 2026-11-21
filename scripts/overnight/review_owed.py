@@ -92,27 +92,34 @@ def save(root, records):
 REVIEW_STATE = pathlib.Path(".claude") / "state" / "last-codex-review.json"
 
 
+def _module(name, path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def mark_failed_dispatch(root):
-    """Mark the unreceived dispatch record as the confirmed outage's (see `add`). Nothing to mark is fine."""
+    """Mark the unreceived dispatch record as the confirmed outage's (see `add`), under the recorder's lock and
+    only when that record's own log ended in a backend failure. A record another dispatch published meanwhile,
+    or one with no single log, is left pending (it is then received by hand). Nothing to mark is fine."""
     path = pathlib.Path(root) / REVIEW_STATE
-    try:
-        state = json.loads(path.read_text())
-    except (OSError, ValueError):
+    if not path.exists():
         return
-    if not isinstance(state, dict) or state.get("received") is True or state.get("outage_debt") is True:
-        return
-    state["outage_debt"] = True
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".last-codex-review-")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write(json.dumps(state))
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        raise
+    crc = _module("codex_review_completed", REPO / ".claude" / "hooks" / "codex_review_completed.py")
+    leg_state = _module("codex_outage_check", OUTAGE_CHECK).leg_state
+
+    def _mark(state):
+        if state.get("received") is True or state.get("outage_debt") is True:
+            return None
+        log = str(state.get("log_file") or "")
+        if not log or leg_state(pathlib.Path(log))[0] != "outage":
+            return None
+        state["outage_debt"] = True
+        return state
+
+    crc._update_state(path, _mark)
 
 
 def base_of(root, todo, section):

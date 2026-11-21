@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]
+# wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS | --no-stale] <logfile> [<logfile>...]
 #
 # Wait until EVERY given DETACHED Codex review log has its <log>.done sidecar
 # (written by review-broker-codex-dispatch.sh / codex-dispatch.sh after the review
@@ -56,6 +56,7 @@ set -u
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe
 POLL=10
 STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
+NO_STALE=0       # 1: never report STALE (a missing log is still exit 5)
 LOGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -65,6 +66,10 @@ while [ $# -gt 0 ]; do
         --stale-secs)   [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --stale-secs needs a value" >&2; exit 2; }
                         STALE="$2"; shift 2 ;;
         --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
+        # The caller's review has its own runtime limit (CODEX_REVIEW_MAX_SECS),
+        # which ends a hung attempt and publishes its status: silence is then
+        # not a signal, and every wait sleeps its full --max until .done.
+        --no-stale)     NO_STALE=1; shift ;;
         *)
             # J2a: a BARE number that is not a file is almost always a misused
             # `--max` (`... .out 300` intending `--max 300`); adding it as a
@@ -127,6 +132,7 @@ _any_silent() {
     local f
     for f in "${LOGS[@]}"; do
         _log_done "$f" && continue
+        [ "$NO_STALE" -eq 1 ] && [ -f "$f" ] && continue
         [ "$(_silent_for "$f")" -ge "$STALE" ] && return 0
     done
     return 1
@@ -167,7 +173,7 @@ for f in "${LOGS[@]}"; do
         any_missing=1
         printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
                "$f" "$stalled"
-    elif [ "$stalled" -ge "$STALE" ]; then
+    elif [ "$stalled" -ge "$STALE" ] && [ "$NO_STALE" -eq 0 ]; then
         any_stale=1
         printf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
                "$f" "$size" "$stalled" "$STALE"

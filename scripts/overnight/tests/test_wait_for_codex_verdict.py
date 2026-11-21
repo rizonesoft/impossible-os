@@ -240,3 +240,20 @@ if __name__ == "__main__":
     test_bare_number_arg_ignored_not_phantom_log()
     test_missing_path_is_reported_as_missing_not_hung()
     print("PASS: wait-for-codex-verdict (B1 + B2 + J2a)")
+
+
+def test_no_stale_keeps_waiting_on_a_log_that_is_already_silent(tmp_path):
+    import os
+    import time
+    log = tmp_path / "r-round.out"
+    log.write_text("working\n")
+    old = time.time() - 4000
+    os.utime(log, (old, old))
+    t = time.monotonic()
+    r = subprocess.run(["bash", str(TOOL), "--max", "3", "--stale-secs", "60", "--no-stale", str(log)],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 3, (r.returncode, r.stdout)
+    assert time.monotonic() - t >= 2.5, "a second wait on a silent log must sleep, not return at once"
+    missing = subprocess.run(["bash", str(TOOL), "--max", "2", "--stale-secs", "1", "--no-stale",
+                              str(tmp_path / "nope.out")], capture_output=True, text=True, timeout=30)
+    assert missing.returncode == 5, missing.stdout

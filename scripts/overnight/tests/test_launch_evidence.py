@@ -62,15 +62,18 @@ def _prompt(kind, todo=TODO, section=1):
     return f"[review-kind: {kind}] {todo} section {section} body"
 
 
-def _row(root, kind, log, section=1, todo=TODO, prompt=None):
+def _row(root, kind, log, section=1, todo=TODO, prompt=None, head=None):
     """The receipt row a dispatcher writes for each job, with its prompt hash."""
     import hashlib
     body = prompt if prompt is not None else _prompt(kind, todo, section)
     m = root / ".claude/overnight/reviews/manifest.jsonl"
     m.parent.mkdir(parents=True, exist_ok=True)
+    row = {"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log,
+           "prompt_sha256": hashlib.sha256(body.encode()).hexdigest()}
+    if head:
+        row["head"] = head
     with m.open("a") as fh:
-        fh.write(json.dumps({"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log,
-                             "prompt_sha256": hashlib.sha256(body.encode()).hexdigest()}) + "\n")
+        fh.write(json.dumps(row) + "\n")
 
 
 def test_a_registered_broker_job_is_recorded_and_stamped(tmp_path):
@@ -120,13 +123,17 @@ def test_a_quoted_launch_line_in_a_review_stamps_nothing_of_its_own(tmp_path):
     other = "todo/00-x/TODO-02-y.md"
     (root / other).write_text("# y\n## 9. Nine\n")
     direct_log = "/r/20261121-1-1-adversarial-direct.out"
-    _row(root, "adversarial", direct_log)
-    _row(root, "perf", "/x/q.out", section=9, todo=other)
+    _row(root, "adversarial", direct_log, head="a" * 40)
+    _row(root, "adversarial", "/x/q.out", section=9, todo=other)       # a same-kind job the review quotes
     cmd = "bash scripts/codex-dispatch.sh " + shlex.quote(_prompt("adversarial"))
-    _state, stamps = _hook(root, cmd, stdout="review text\n" + _job("perf", "/x/q.out") + "\nmore\n",
-                           stderr=f"[codex-dispatch] transcript: {direct_log}\n")
+    state, stamps = _hook(root, cmd, stdout="review text\n" + _job("adversarial", "/x/q.out") + "\nmore\n",
+                          stderr=f"[codex-dispatch] transcript: {direct_log}\n")
     assert isinstance(stamps.get(TODO, {}).get("adversarial"), int), stamps
     assert other not in stamps, stamps
+    # Auto-receive is bound to the review's own log, never the quoted job's.
+    assert state["log_file"] == direct_log, state
+    # The stamp names the commit the review launched on, not the hook's HEAD.
+    assert stamps[TODO].get("adversarial_head") == "a" * 40, stamps[TODO]
 
 
 def test_a_lone_launch_claimed_only_on_stdout_is_not_enough_without_a_receipt(tmp_path):

@@ -386,12 +386,6 @@ def test_crecv_a_record_without_a_log_file_is_never_auto_received():
         assert _poll(root, _out_file(root, "re-adversarial", _CLEAN))["received"] is False
 
 
-def test_crecv_the_broker_log_file_is_taken_from_the_dispatch_response():
-    payload = {"tool_response": {"stdout": 'noise\n{"kind": "round", "jobId": "j", "logFile": "/x/a-round.out"}\n'}}
-    assert crc._response_log_file(payload) == "/x/a-round.out"
-    assert crc._response_log_file({"tool_response": {"stdout": "review text"}}) == ""
-
-
 def test_crecv_a_newer_record_landing_during_the_check_is_kept():
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "re-adversarial")
@@ -408,11 +402,6 @@ def test_crecv_a_newer_record_landing_during_the_check_is_kept():
         finally:
             crc._out_is_clean = real
         assert got == newer, got
-
-
-def test_crecv_a_bundled_response_binds_no_log():
-    two = {"tool_response": {"stdout": '{"logFile": "/x/a-round.out"}\n{"logFile": "/x/b-round.out"}\n'}}
-    assert crc._response_log_file(two) == ""
 
 
 def test_crecv_a_quoted_banner_is_not_a_refusal():
