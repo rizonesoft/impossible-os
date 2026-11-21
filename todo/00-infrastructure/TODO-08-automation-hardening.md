@@ -1633,7 +1633,7 @@ Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/pla
 
 **Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean; `bash scripts/test-ai-system.sh --quiet` passes; `test_staged_dash_check.py` refuses an added dash and passes an old line and a generated file.
 
-> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_staged_dash_check.py scripts/overnight/tests/test_ai_trailer_filter.py scripts/overnight/tests/test_tooling_doctor_hooks.py` (33 passed) and `bash scripts/test-ai-system.sh --quiet` (88 passed, 0 failed); the stamp names the commit they ran on.
+> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_staged_dash_check.py scripts/overnight/tests/test_ai_trailer_filter.py scripts/overnight/tests/test_tooling_doctor_hooks.py` (36 passed) and `bash scripts/test-ai-system.sh --quiet` (88 passed, 0 failed); the stamp names the commit they ran on.
 
 **Notes:**
 

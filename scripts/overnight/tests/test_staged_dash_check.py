@@ -4,6 +4,8 @@ import os
 import shutil
 import importlib.util
 import subprocess
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -466,12 +468,13 @@ def test_one_push_reads_a_commit_two_refs_carry_once(tmp_path, monkeypatch):
     assert len(labels) == len(set(labels)) and sum(tip[:12] in label for label in labels) == 1, labels
 
 
-def test_a_ref_name_holding_other_whitespace_is_one_field(tmp_path):
-    """git accepts a U+00A0 in a tag name; it must not split the record."""
+@pytest.mark.parametrize("space", ["\u00a0", "\u2028"])
+def test_a_ref_name_holding_other_whitespace_is_one_field(tmp_path, space):
+    """git accepts a U+00A0 or a U+2028 in a tag name; neither may split a field or a record."""
     root = _repo(tmp_path)
     tip = _git(root, "rev-parse", "HEAD")
     _git(root, "update-ref", "refs/remotes/origin/main", tip)
-    tag = "refs/tags/Release\u00a01"
+    tag = f"refs/tags/Release{space}1"
     assert subprocess.run(["git", "check-ref-format", tag], cwd=root, timeout=30).returncode == 0
     stdin = f"refs/heads/main {tip} refs/heads/main {tip}\n{tag} {tip} {tag} {m.NULL_OID}\n"
     r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,

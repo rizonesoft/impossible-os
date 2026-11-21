@@ -50,7 +50,10 @@ HOOKS_DIR="$PROJECT/.githooks"
 # the plain form is relative to the CALLER's directory in the primary
 # checkout, so running this from docs/ wrote docs/.git/.impossible-os-prepush.
 SENTINEL="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path .impossible-os-prepush 2>/dev/null || echo "$PROJECT/.git/.impossible-os-prepush")"
-LEGACY_HOOKS="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path hooks 2>/dev/null || echo "$PROJECT/.git/hooks")"
+# The legacy hooks directory is git's own, in the common dir: --git-path hooks
+# follows core.hooksPath and would name .githooks while it is set, which is
+# exactly when --remove reads it.
+LEGACY_HOOKS="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$PROJECT/.git")/hooks"
 LEGACY_SRC="$SCRIPT_DIR/hooks"
 
 usage() {

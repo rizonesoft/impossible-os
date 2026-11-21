@@ -49,3 +49,22 @@ def test_the_build_step_sentinel_does_not_depend_on_the_callers_directory(tmp_pa
     status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
                             text=True, timeout=60, env=env)
     assert "Pre-push build/test step: ENABLED" in status.stdout, status.stdout
+
+
+def test_remove_prunes_a_legacy_symlink_while_hooks_path_is_set(tmp_path):
+    root = tmp_path / "r"
+    (root / "scripts/hooks").mkdir(parents=True)
+    shutil.copy(REPO / "scripts/install-hooks.sh", root / "scripts/install-hooks.sh")
+    (root / "scripts/hooks/pre-push").write_text("#!/bin/sh\n")
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, timeout=30, env=env)
+    subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=root, check=True, timeout=30, env=env)
+    legacy = root / ".git/hooks/pre-push"
+    legacy.parent.mkdir(exist_ok=True)
+    legacy.symlink_to(root / "scripts/hooks/pre-push")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0, r
+    assert not legacy.is_symlink(), r.stdout
+    assert (root / ".githooks/pre-push").is_file()

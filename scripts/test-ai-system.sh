@@ -335,8 +335,8 @@ check_zero_trailer_policy() {
     # Each exception entry is a {hash, reason} pair audited at §9 adoption.
     # Zero entries is the target state; add only as a one-time grandfather.
     local trailer_exceptions=(
-        "c6b30e0f:Copilot-authored PR merged mid-§7-§8 sprint on 2026-04-19; post-anchor but pre-§9 enforcement; not rewritten to avoid destroying downstream commit chain."
-        "e4454a2b:Copilot-authored PR merged 2026-04-22 (re-enabled fastpath probe + trimmed CI artifacts) carrying Co-authored-by trailer; not rewritten because -17 WHPX validation stamp + -18 fast-path observability work built on top, and rebasing would destroy that chain."
+        "c6b30e0f625c344393b262697af4aa67decb1b41:Copilot-authored PR merged mid-§7-§8 sprint on 2026-04-19; post-anchor but pre-§9 enforcement; not rewritten to avoid destroying downstream commit chain."
+        "e4454a2b11cf297bbdd4d394c30c8128e76c7bb9:Copilot-authored PR merged 2026-04-22 (re-enabled fastpath probe + trimmed CI artifacts) carrying Co-authored-by trailer; not rewritten because -17 WHPX validation stamp + -18 fast-path observability work built on top, and rebasing would destroy that chain."
     )
     # Inclusive range: scan the anchor commit itself plus every commit after.
     # Earlier version used `$anchor..HEAD` which EXCLUDES the anchor, so a
@@ -358,7 +358,7 @@ check_zero_trailer_policy() {
     # Under pipefail a failed read fails the check, never passes it.
     local trailer_hits rc=0
     trailer_hits=$(git log --format='%x00%H%n%B' "$range" | tr '\001\000' ' \001' | awk -v re="$AI_TRAILER_RE" '
-        /^\001/ { h = substr($0, 2, 8); next }
+        /^\001/ { h = substr($0, 2); next }
         tolower($0) ~ re && !(h in seen) { seen[h] = 1; printf " %s", h }') || rc=$?
     if [ "$rc" -ne 0 ]; then
         t_fail "zero-trailer scan read the history" "git log over $range exited $rc; no commit was checked"
@@ -374,7 +374,7 @@ check_zero_trailer_policy() {
                 break
             fi
         done
-        [ "$matched" = "0" ] && real_hits="$real_hits $hit"
+        [ "$matched" = "0" ] && real_hits="$real_hits ${hit:0:12}"
     done
     # Report exceptions (advisory) and real drift (hard fail).
     if [ -n "$real_hits" ]; then
@@ -387,7 +387,8 @@ check_zero_trailer_policy() {
     fi
     if [ "${#trailer_exceptions[@]}" -gt 0 ]; then
         for excp in "${trailer_exceptions[@]}"; do
-            local short="${excp%%:*}"
+            local id="${excp%%:*}" short
+            short="${id:0:8}"
             local reason="${excp#*:}"
             t_info "documented trailer exception: $short -- $reason"
         done
