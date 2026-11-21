@@ -537,6 +537,7 @@ def test_a_push_is_refused_while_a_review_is_owed(tmp_path):
     shutil.copy(REPO / ".githooks/pre-push", fx / ".githooks/pre-push")
     shutil.copy(REPO / ".githooks/lib/isolate-git-env.sh", fx / ".githooks/lib/isolate-git-env.sh")
     shutil.copy(REPO / ".githooks/lib/dash-gate.sh", fx / ".githooks/lib/dash-gate.sh")
+    shutil.copy(REPO / ".githooks/lib/push-records.sh", fx / ".githooks/lib/push-records.sh")
     for rel in ("scripts/overnight/review_owed.py", "scripts/overnight/codex-outage-check.py", "scripts/todo_fence.py",
                 "scripts/todo-graph/cache_schema.py", "scripts/staged_dash_check.py"):
         shutil.copy(REPO / rel, fx / rel)

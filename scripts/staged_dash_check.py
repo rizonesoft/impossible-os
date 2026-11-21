@@ -54,6 +54,7 @@ TIMEOUT = 60
 BLOB_MODES = {"100644", "100755", "120000"}
 UTF8_BOM = b"\xef\xbb\xbf"
 UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+BINARY_PREFIX = 8000                                       # a NUL in this prefix makes a blob binary (as git decides)
 
 
 def changes_from_raw(raw: bytes) -> list:
@@ -105,7 +106,7 @@ def as_text(blob: bytes):
             return blob.decode("utf-16").encode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
-    if b"\0" in blob[:8000]:
+    if b"\0" in blob[:BINARY_PREFIX]:
         return None
     return blob[3:] if blob.startswith(UTF8_BOM) else blob
 
@@ -138,20 +139,34 @@ class BlobReader:
         if oid == NULL_OID:
             return 0
         if oid not in self.counts:
-            self.counts[oid] = dash_count(as_text(self._read(oid)))
+            blob = self._read(oid, count_only=True)
+            self.counts[oid] = 0 if blob is None else dash_count(as_text(blob))
         return self.counts[oid]
 
     def text(self, oid: str):
         return None if oid == NULL_OID else as_text(self._read(oid))
 
-    def _read(self, oid: str) -> bytes:
+    def _read(self, oid: str, count_only: bool = False):
+        """The blob's bytes; with count_only, None for a binary blob, whose
+        prefix decides that, so the rest is drained without being kept."""
         self.proc.stdin.write(oid.encode() + b"\n")
         self.proc.stdin.flush()
         header = self.proc.stdout.readline().split(b" ")
         if len(header) < 3 or header[1] != b"blob":
             raise ValueError(f"cat-file did not return blob {oid}")
         size = int(header[2])
-        data = self.proc.stdout.read(size)
+        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
+        if count_only and len(head) == min(size, BINARY_PREFIX) and head[:2] not in UTF16_BOMS and b"\0" in head:
+            left = size - len(head)
+            while left:
+                chunk = self.proc.stdout.read(min(left, 1 << 16))
+                if not chunk:
+                    break
+                left -= len(chunk)
+            if left or self.proc.stdout.read(1) != b"\n":
+                raise ValueError(f"cat-file returned blob {oid} short")
+            return None
+        data = head + self.proc.stdout.read(size - len(head))
         if len(data) != size or self.proc.stdout.read(1) != b"\n":
             raise ValueError(f"cat-file returned blob {oid} short")
         return data
@@ -229,9 +244,10 @@ def judge(commits: list) -> list:
     return out
 
 
-def merge_heads() -> list:
-    """The other parents of a merge being committed (MERGE_HEAD), or none."""
-    path = _git("rev-parse", "--git-path", "MERGE_HEAD").decode().strip()
+def merge_heads(path: str = "") -> list:
+    """The other parents of a merge being committed (MERGE_HEAD, or the file
+    the caller already resolved), or none."""
+    path = path or _git("rev-parse", "--git-path", "MERGE_HEAD").decode().strip()
     try:
         with open(path, encoding="ascii") as f:
             return f.read().split()
@@ -239,14 +255,15 @@ def merge_heads() -> list:
         return []                                          # fail-direction: no merge is in progress
 
 
-def staged(merging: bool = True) -> list:
+def staged(merging: bool = True, merge_head: str = "") -> list:
     """The staged change against HEAD and, while a merge is being committed,
     against each other parent too, so a resolution is judged as the push
     check judges the merge commit: on what it adds over every parent.
-    `merging=False` is pre-commit's call, which has already seen no MERGE_HEAD."""
+    `merging=False` is pre-commit's call, which has already seen no MERGE_HEAD;
+    `merge_head` is commit-msg's, the MERGE_HEAD file it found."""
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
     per_parent = [changes_from_raw(_git(*diff))]
-    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in (merge_heads() if merging else [])]
+    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in (merge_heads(merge_head) if merging else [])]
     return [("", per_parent)]
 
 
@@ -255,17 +272,20 @@ def outgoing(updates: list, remote: str = "") -> list:
     send, merges included, each commit once however many refs carry it: one
     rev-list per update, then one `diff-tree --stdin` fed one line per parent.
     A new ref takes every commit the destination remote's tracking refs do not
-    hold; a push by URL, or to a remote with none, falls back to all remotes."""
+    hold, and nothing below a remote oid this push names (the destination
+    has those commits, whatever its tracking refs say); a push by URL falls
+    back to every remote's tracking refs."""
     if not updates:
         return []
-    tracked = (bool(remote) and any(old == NULL_OID for old, _new in updates)
-               and bool(_git("for-each-ref", "--count=1", f"refs/remotes/{remote}/").strip()))
+    known = sorted({old for old, _new in updates if old != NULL_OID})
+    named = any(old == NULL_OID for old, _new in updates) and bool(remote) and subprocess.run(
+        ["git", "config", "--get", f"remote.{remote}.url"], capture_output=True, timeout=TIMEOUT).returncode == 0
     pairs, seen = [], set()                               # (commit, parent or None), in input order
     for old, new in updates:
         if old != NULL_OID:
             span = [f"{old}..{new}"]
         else:
-            span = [new, "--not", f"--remotes={remote}" if tracked else "--remotes"]
+            span = ["--ignore-missing", new, "--not", f"--remotes={remote}" if named else "--remotes", *known]
         for line in _git("rev-list", "--reverse", "--parents", *span).decode().splitlines():
             commit, *parents = line.split()
             if commit in seen:
@@ -292,11 +312,12 @@ def push_updates(lines: str) -> list:
     """(remote old, local new) per ref a push updates, from pre-push's stdin
     (`<local ref> <local oid> <remote ref> <remote oid>`); a deletion sends
     nothing and is left out. git separates records by LF and fields by an
-    ASCII space, which no ref name holds; any other whitespace (a U+00A0 in
-    a tag name) belongs to its field."""
+    ASCII space. The local ref is the source as typed and can hold a space
+    (`HEAD@{0 seconds ago}`); the other three fields cannot, so they are
+    taken from the right. Any other whitespace belongs to its field."""
     updates = []
     for line in lines.split("\n"):
-        fields = line.split(" ") if line else []
+        fields = line.rsplit(" ", 3) if line else []
         if len(fields) != 4:
             if fields:
                 raise ValueError(f"pre-push gave an unreadable line: {line!r}")
@@ -332,8 +353,10 @@ def main(argv=None) -> int:
             found = judge(staged())
         elif argv == ["--no-merge"]:
             found = judge(staged(merging=False))
+        elif argv[:1] == ["--merge-head"] and len(argv) == 2:
+            found = judge(staged(merge_head=argv[1]))
         else:
-            print("usage: staged_dash_check.py [--no-merge | --range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--no-merge | --merge-head FILE | --range OLD NEW [REMOTE] | --push REMOTE]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)

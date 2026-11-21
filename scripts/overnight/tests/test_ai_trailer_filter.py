@@ -41,12 +41,31 @@ def _scan(tmp_path, records=None, fail=False):
     data.write_bytes(b"".join(c.encode() + b"\n" + body + b"\0" for c, body in records or []))
     answer = "exit 128" if fail else f'cat "{data}"; exit 0'
     shim = tmp_path / "git"
-    shim.write_text(f'#!/bin/bash\nfor a in "$@"; do [ "$a" = "--format=%H%n%B" ] && {{ {answer}; }}; done\n'
+    # The shim answers the whole synthetic history: the adoption anchor (a
+    # root, so the range is HEAD) and the log; the real lookup stays covered
+    # by the production run of the suite.
+    shim.write_text('#!/bin/bash\n'
+                    'for a in "$@"; do [ "$a" = "-S" ] && { echo ' + "a" * 40 + '; exit 0; }; done\n'
+                    '[ "$1" = rev-parse ] && [ "$2" = --verify ] && exit 1\n'
+                    f'for a in "$@"; do [ "$a" = "--format=%H%n%B" ] && {{ {answer}; }}; done\n'
                     f'exec {real} "$@"\n')
     shim.chmod(0o755)
-    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}")
+    # A different awk first on PATH and a Turkish locale must not change the
+    # scan: it runs gawk, in the C locale.
+    (tmp_path / "awk").write_text("#!/bin/sh\nexit 3\n")
+    (tmp_path / "awk").chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}", LC_ALL="tr_TR.UTF-8")
     r = subprocess.run(["bash", str(SUITE), "--zero-trailers"], capture_output=True, text=True, timeout=120, env=env)
     return r.returncode, r.stdout + r.stderr
+
+
+def test_a_capital_i_key_is_found_in_any_locale(tmp_path):
+    rc, out = _scan(tmp_path, [("9" * 40, b"subject\n\nAI-Author: S <s@example.org>\n")])
+    assert rc == 1 and "found 1 post-anchor commit(s)" in out, out[-2000:]
+    import os
+    r = subprocess.run(["bash", str(SUITE), "--ai-trailers"], input="s\n\nAI-AUTHOR: x\n", capture_output=True,
+                       text=True, timeout=30, env=dict(os.environ, LC_ALL="tr_TR.UTF-8"))
+    assert r.stdout.strip() == "AI-AUTHOR: x", r
 
 
 def test_a_failed_history_read_fails_the_gate(tmp_path):

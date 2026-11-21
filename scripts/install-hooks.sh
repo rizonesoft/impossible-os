@@ -54,7 +54,6 @@ SENTINEL="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path .impos
 # follows core.hooksPath and would name .githooks while it is set, which is
 # exactly when --remove reads it.
 LEGACY_HOOKS="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$PROJECT/.git")/hooks"
-LEGACY_SRC="$SCRIPT_DIR/hooks"
 
 usage() {
     sed -n '2,/^# =====/ { s/^# \{0,1\}//; p }' "$0" | sed '$d'
@@ -123,21 +122,25 @@ disable_pre_push() {
 prune_legacy_symlinks() {
     # Early versions of this script symlinked hooks into .git/hooks/. Since
     # core.hooksPath=.githooks makes .git/hooks/ inert, leftover symlinks
-    # are harmless but confusing -- clean them on --remove. Only a link to
-    # this repository's own legacy hook is ours: a link to anything else is
-    # the operator's, and unsetting core.hooksPath gives it back to them.
+    # are harmless but confusing -- clean them on --remove. The legacy
+    # installer (399ee35b6) linked only pre-push, by absolute path, to
+    # scripts/hooks/pre-push in whichever checkout ran it, so a link is ours
+    # only when it names that file in a worktree of this repository: a link
+    # to anything else is the operator's, and unsetting core.hooksPath gives
+    # it back to them.
     [ -d "$LEGACY_HOOKS" ] || return 0
-    local removed=0
-    for hook in "$LEGACY_SRC"/*; do
-        [ -e "$hook" ] || continue
-        local name target
-        name="$(basename "$hook")"
-        target="$LEGACY_HOOKS/$name"
-        if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$hook")" ]; then
-            rm "$target"
-            removed=$((removed + 1))
-        fi
-    done
+    local removed=0 target wt link
+    target="$LEGACY_HOOKS/pre-push"
+    if [ -L "$target" ]; then
+        link="$(readlink -f "$target")"
+        while IFS= read -r wt; do
+            if [ "$link" = "$(readlink -f "${wt#worktree }/scripts/hooks/pre-push")" ]; then
+                rm "$target"
+                removed=1
+                break
+            fi
+        done < <(git -C "$PROJECT" worktree list --porcelain 2>/dev/null | grep '^worktree ')
+    fi
     [ "$removed" -gt 0 ] && echo "Pruned $removed legacy symlink(s) from .git/hooks/"
     return 0
 }

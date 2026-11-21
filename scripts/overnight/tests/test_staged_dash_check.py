@@ -23,6 +23,9 @@ def _clean_env(extra=None):
     or GIT_DIR from an outer commit would make these commands write the caller's
     index."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "SKIP_DASH_CHECK"}
+    # Nor do the caller's global or system settings: a global commit.gpgSign or
+    # core.hooksPath would fail or redirect the fixture's own commits.
+    env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
     env.update(extra or {})
     return env
 
@@ -258,7 +261,7 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
             return 128
 
     monkeypatch.setattr(m, "BlobReader", Exits)
-    monkeypatch.setattr(m, "merge_heads", lambda: [])
+    monkeypatch.setattr(m, "merge_heads", lambda path="": [])
     assert m.main([]) == 2
     assert "cat-file exited 128" in capsys.readouterr().err
 
@@ -416,6 +419,8 @@ def test_a_new_ref_is_judged_against_the_destination_remote(tmp_path):
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     _commit(root, "dash")
     tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "remote", "add", "mirror", str(tmp_path / "mirror.git"))
+    _git(root, "remote", "add", "origin", str(tmp_path / "origin.git"))
     _git(root, "update-ref", "refs/remotes/mirror/main", tip)
     _git(root, "update-ref", "refs/remotes/origin/main", "HEAD~1")
     assert _run(root, "--range", m.NULL_OID, tip).returncode == 0      # no remote named: all remotes
@@ -477,12 +482,10 @@ def test_one_push_reads_a_commit_two_refs_carry_once(tmp_path, monkeypatch):
     r = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
                        env=_clean_env(), capture_output=True, text=True, timeout=60)
     assert r.returncode == 1 and r.stderr.count("doc.md gains 1") == 1, r
-    monkeypatch.chdir(root)
-    monkeypatch.setattr(m, "_git", lambda *a, **k: subprocess.run(["git", *a], input=k.get("stdin"), cwd=root,
-                                                                   capture_output=True, check=True,
-                                                                   env=_clean_env()).stdout)
+    _production_git_in(root, monkeypatch)
     labels = [label for label, _changes in m.outgoing(m.push_updates(stdin), "origin")]
-    assert len(labels) == len(set(labels)) and sum(tip[:12] in label for label in labels) == 1, labels
+    # The new tag walks nothing below main's advertised remote oid: only the tip is judged.
+    assert labels == [f"commit {tip[:12]}: "], labels
 
 
 @pytest.mark.parametrize("space", ["\u00a0", "\u2028"])
@@ -498,3 +501,108 @@ def test_a_ref_name_holding_other_whitespace_is_one_field(tmp_path, space):
                        env=_clean_env(), capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r
     assert m.push_updates(stdin) == [(tip, tip), (m.NULL_OID, tip)]
+
+
+def _production_git_in(root, monkeypatch):
+    """Run the checker's own _git (and its timeout) in the fixture, isolated."""
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.chdir(root)
+
+
+def test_a_new_ref_to_a_second_remote_judges_what_that_remote_lacks(tmp_path, monkeypatch):
+    """A configured remote with no tracking refs holds nothing: a commit origin
+    already has is still judged on its first push there."""
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "update-ref", "refs/remotes/origin/main", tip)
+    _git(root, "remote", "add", "second", str(tmp_path / "second.git"))
+    stdin = f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n"
+    r = subprocess.run([sys.executable, str(CHECK), "--push", "second"], cwd=root, input=stdin,
+                       env=_clean_env(), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
+    origin = subprocess.run([sys.executable, str(CHECK), "--push", "origin"], cwd=root, input=stdin,
+                            env=_clean_env(), capture_output=True, text=True, timeout=60)
+    assert origin.returncode == 0, origin
+
+
+def test_a_push_source_holding_spaces_is_one_field(tmp_path):
+    root = _repo(tmp_path)
+    tip = _git(root, "rev-parse", "HEAD")
+    line = f"HEAD@{{0 seconds ago}} {tip} refs/tags/proof {m.NULL_OID}\n"
+    assert m.push_updates(line) == [(m.NULL_OID, tip)]
+
+
+def test_a_real_dry_run_push_with_a_spaced_source_reaches_every_check_intact(tmp_path):
+    """git hands pre-push the source as typed. The fixture hook is the shipped
+    record handling and dash gate; the shipped hook's loops all read it."""
+    root = _repo(tmp_path)
+    (root / ".githooks/lib").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    for rel in (".githooks/lib/push-records.sh", ".githooks/lib/dash-gate.sh", "scripts/staged_dash_check.py"):
+        shutil.copy(REPO / rel, root / rel)
+    hook = root / ".githooks/pre-push"
+    hook.write_text('#!/usr/bin/env bash\nset -uo pipefail\nREPO_ROOT="$(git rev-parse --show-toplevel)"\n'
+                    '. "$REPO_ROOT/.githooks/lib/push-records.sh"\n. "$REPO_ROOT/.githooks/lib/dash-gate.sh"\n'
+                    'STDIN_DATA="$(cat)"\nPUSH_RECORDS="$(push_records <<< "$STDIN_DATA")"\n'
+                    'while read -r _l loid rref roid; do echo "REC $loid $rref $roid" >&2; done <<< "$PUSH_RECORDS"\n'
+                    'dash_push_gate "${1:-}" <<< "$STDIN_DATA" || exit 1\n')
+    hook.chmod(0o755)
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(bare))
+    _git(root, "remote", "add", "origin", str(bare))
+    _git(root, "config", "core.hooksPath", ".githooks")
+    push = ["git", "push", "--dry-run", "origin", "HEAD@{0 seconds ago}:refs/heads/main"]
+    tip = _git(root, "rev-parse", "HEAD")
+    r = subprocess.run(push, cwd=root, capture_output=True, text=True, timeout=120, env=_clean_env())
+    assert r.returncode == 0 and f"REC {tip} refs/heads/main {m.NULL_OID}" in r.stderr, r.stdout + r.stderr
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    _commit(root, "dash")
+    r = subprocess.run(push, cwd=root, capture_output=True, text=True, timeout=120, env=_clean_env())
+    assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
+    shipped = (REPO / ".githooks/pre-push").read_text()
+    assert shipped.count('done <<< "$PUSH_RECORDS"') == 6 and 'done <<< "$STDIN_DATA"' not in shipped
+    assert 'dash_push_gate "${1:-}" <<< "$STDIN_DATA"' in shipped
+
+
+def test_a_binary_blob_is_counted_from_its_prefix_and_the_stream_stays_in_step(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    big = b"\0" + DASH.encode() * 200000
+    _stage(root, {"bin.dat": big, "a.md": "x " + DASH + "\n"})
+    _commit(root, "two")
+    oids = [_git(root, "rev-parse", f"HEAD:{name}") for name in ("bin.dat", "a.md")]
+    _production_git_in(root, monkeypatch)
+    reader = m.BlobReader()
+    try:
+        assert reader.count(oids[0]) == 0 and reader.count(oids[1]) == 1
+        assert reader.text(oids[1]).count(DASH.encode()) == 1
+    finally:
+        assert reader.close() == 0
+
+
+def test_commit_msg_passes_the_merge_head_it_found(monkeypatch, tmp_path):
+    calls = []
+    head = tmp_path / "MERGE_HEAD"
+    head.write_text("a" * 40 + "\n")
+    monkeypatch.setattr(m, "_git", lambda *a, **k: calls.append(a) or b"")
+    assert m.staged(merge_head=str(head)) == [("", [[], []])]
+    assert not any(a[:1] == ("rev-parse",) for a in calls), calls
+
+
+def test_an_ordinary_commit_is_refused_by_the_shipped_pre_commit_hook(tmp_path):
+    root = _repo(tmp_path)
+    (root / "scripts").mkdir()
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    (root / "scripts/lint.sh").write_text("exit 0\n")       # the lint has its own suite; this test is the dash step
+    _git(root, "config", "core.hooksPath", ".githooks")
+    before = _git(root, "rev-parse", "HEAD")
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    r = subprocess.run(["git", "commit", "-q", "-m", "dash"], cwd=root, capture_output=True, text=True, timeout=120,
+                       env=_clean_env())
+    assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
+    assert _git(root, "rev-parse", "HEAD") == before

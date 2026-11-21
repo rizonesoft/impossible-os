@@ -1069,7 +1069,7 @@ bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-p
 | `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **always on** for the dash check; the build/test gate is **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on an outgoing commit whose files gain a Unicode dash, or (opt-in) build or test failure | `python3 scripts/staged_dash_check.py --range <remote-oid> <local-oid>`; `bash scripts/build.sh && bash scripts/test.sh` |
 
 Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
-- `pre-commit` lints only staged C/H files (none staged: the lint step exits at once) and runs the dash check over every non-empty staged change: one diff and one `cat-file` stream, tens of milliseconds.
+- `pre-commit` does nothing for an empty staged change. For any other it runs `scripts/lint.sh` (the repository checks CI runs, with the TODO checks scoped to the staged change; its C checks read only staged `.c`/`.h` files) and the dash check (one diff and one `cat-file` stream, tens of milliseconds).
 - `prepare-commit-msg` reads one small file: `pre-commit` records its git process id (`.githooks/lib/pre-commit-mark.sh`) and this hook, a child of the same process, refuses a `git commit` with no record. Cherry-pick, revert, merge and rebase run no `pre-commit` and pass; the one internal `--no-verify` commit, `post-commit`'s `COUNT.md` amend, records its pid and is let through.
 - `post-commit` regenerates the tracked code + supporting-text tally in `COUNT.md` and amends -- silent on success.
 - `pre-push` always runs the branch policy, the identity check and the dash check over the outgoing commits (tens of milliseconds for an ordinary push). Its build/test step rebuilds and runs the full test suite (~10s on KVM, longer on TCG), which is why that step alone is opt-in; `--with-pre-push` is for contributors who prefer to catch failures locally before the push leaves their machine.
@@ -1078,8 +1078,8 @@ Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
 
 | Behavior      | Detail                                           |
 | ------------- | ------------------------------------------------ |
-| Scope         | Only staged `.c`/`.h` files                      |
-| Fast path     | No C files staged -> lint skipped (the dash check still runs) |
+| Scope         | Every non-empty staged change; the C checks read only staged `.c`/`.h` files |
+| Fast path     | Nothing staged -> exits at once                  |
 | Errors        | Block commit (exit 1)                            |
 | Warnings      | Don't block                                      |
 | Deleted files | Skipped (`--diff-filter=d`)                      |

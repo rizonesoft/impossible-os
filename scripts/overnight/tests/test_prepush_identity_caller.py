@@ -158,6 +158,7 @@ def _push_fixture(d):
     (root / ".githooks/lib").mkdir(parents=True)
     (root / "scripts").mkdir()
     for rel in (".githooks/pre-push", ".githooks/lib/isolate-git-env.sh", ".githooks/lib/dash-gate.sh",
+                ".githooks/lib/push-records.sh",
                 "scripts/staged_dash_check.py"):
         (root / rel).write_text((REPO / rel).read_text())
     (root / ".githooks/pre-push").chmod(0o755)

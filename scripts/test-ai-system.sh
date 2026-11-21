@@ -102,7 +102,7 @@ done
 AI_TRAILER_RE='^[[:space:]]*(co-authored-by|assisted-by|ai-author):'
 forbidden_trailers() {
     local rc=0
-    grep -iE "$AI_TRAILER_RE" || rc=$?
+    LC_ALL=C grep -iE "$AI_TRAILER_RE" || rc=$?             # C: case folds ASCII keys alike in every locale
     [ "$rc" -le 1 ]                                        # 1 is grep's "no line matched", the clean answer
 }
 if [ "$TRAILERS_ONLY" = 1 ]; then
@@ -358,9 +358,12 @@ check_zero_trailer_policy() {
     # the record's first line is its ID, and AI_TRAILER_RE (above, shared with
     # --ai-trailers) is tested against every other line, byte for byte as
     # --ai-trailers sees it. A line that starts with a forbidden key fails,
-    # wherever it sits. Under pipefail a failed read fails the check.
+    # wherever it sits. gawk by name (a required host and CI tool) and the C
+    # locale, in which tolower() folds the ASCII keys the same everywhere (a
+    # Turkish locale folds AI-Author's I to a dotless i). Under pipefail a
+    # failed read fails the check.
     local trailer_hits rc=0
-    trailer_hits=$(git log -z --format='%H%n%B' "$range" | awk -v RS='\0' -v re="$AI_TRAILER_RE" '
+    trailer_hits=$(git log -z --format='%H%n%B' "$range" | LC_ALL=C gawk -v RS='\0' -v re="$AI_TRAILER_RE" '
         { n = split($0, line, "\n")
           for (i = 2; i <= n; i++) if (tolower(line[i]) ~ re) { printf " %s", line[1]; break } }') || rc=$?
     if [ "$rc" -ne 0 ]; then
