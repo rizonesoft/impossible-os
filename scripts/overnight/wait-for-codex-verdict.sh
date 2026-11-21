@@ -110,8 +110,10 @@ _first_seen() {
     local side; side="$ACT_DIR/$(printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-16)"
     # A sighting that cannot be kept reads as the epoch, so a missing log is
     # reported MISSING at once rather than looking newly launched forever.
-    [ -f "$side" ] || date +%s > "$side" 2>/dev/null || { echo 0; return; }
-    cat "$side" 2>/dev/null || echo 0
+    local t=""
+    [ -f "$side" ] || { date +%s > "$side.tmp.$$" && mv -f "$side.tmp.$$" "$side"; } 2>/dev/null || { echo 0; return; }
+    read -r t < "$side" 2>/dev/null || t=""
+    case "$t" in ''|*[!0-9]*) echo 0 ;; *) echo "$t" ;; esac
 }
 _silent_for() {
     local now; now=$(date +%s)

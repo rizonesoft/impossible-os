@@ -4320,12 +4320,13 @@ def _step13_impl_adversarial_check(
             ts = entry.get(tag)
             if not isinstance(ts, int):
                 continue
-            # Section binding: the recorded per-kind section must match
-            # the section being flipped. Legacy entries may only have a
-            # shared `section`; when the live path knows the flipped
-            # section, missing or mismatched section evidence fails closed.
+            # Section binding: the recorded PER-KIND section must match the
+            # section being flipped. The shared `section` is never a fallback:
+            # it is whichever section the newest review of any kind named, so a
+            # whole-file review (whose per-kind section is "" or, from older
+            # recorders, absent) would borrow it. Missing evidence fails closed.
             recorded_section = _normalize_section_id(
-                (entry[f"{tag}_section"] if f"{tag}_section" in entry else entry.get("section", ""))
+                entry.get(f"{tag}_section", "")
             )
             if not recorded_section or recorded_section != required_section:
                 continue
@@ -4355,7 +4356,7 @@ def _step13_impl_adversarial_check(
             if not isinstance(ts, int):
                 continue
             rec = _normalize_section_id(
-                (entry[f"{tag}_section"] if f"{tag}_section" in entry else entry.get("section", "")))
+                entry.get(f"{tag}_section", ""))
             if not rec:
                 seen.append(f"`{tag}` recorded with NO section binding")
                 continue

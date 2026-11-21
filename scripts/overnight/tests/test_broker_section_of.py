@@ -85,6 +85,9 @@ def test_the_recorder_reads_the_section_from_the_first_line_only():
     # The fixed templates once put the marker alone on line one, the target on line two.
     two = "[review-kind: adversarial]\nTarget: todo/00-x/TODO-01-x.md section 35\nFiles in scope: a\n"
     assert crc._detect_todo_path(two, REPO)[1] == SIGN + "35"
+    # ... but never from an inventory sentence below a standalone marker.
+    prose = "[review-kind: adversarial]\nReview the whole file.\nSee todo/00-x/TODO-01-x.md section 35 for one case.\n"
+    assert crc._detect_todo_path(prose, REPO)[1] == ""
 
 
 def test_the_shipped_templates_name_path_and_section_on_the_marker_line():
@@ -97,11 +100,14 @@ def test_the_shipped_templates_name_path_and_section_on_the_marker_line():
 def test_the_first_line_parser_is_linear_on_a_long_whitespace_prefix():
     import time
     lib = REPO / "scripts/lib/review-prompt.sh"
-    prompt = "\n" + " " * 120000 + "[review-kind: round] todo/a.md section 3\nbody"
-    t = time.time()
-    r = subprocess.run(["bash", "-c", f". {lib}; review_prompt_first_line \"$1\"", "_", prompt],
-                       capture_output=True, text=True, timeout=30)
-    assert r.stdout == " " * 120000 + "[review-kind: round] todo/a.md section 3" and time.time() - t < 1.5
+    marker = "[review-kind: round] todo/a.md section 3"
+    for prompt, want in (("\n" + " " * 120000 + marker + "\nbody", " " * 120000 + marker),
+                         (" " * 120000 + "\n" + marker + "\nbody", marker),       # a long blank line first
+                         ("\n" * 120000 + marker, marker)):
+        t = time.time()
+        r = subprocess.run(["bash", "-c", f". {lib}; review_prompt_first_line \"$1\"", "_", prompt],
+                           capture_output=True, text=True, timeout=30)
+        assert r.stdout == want and time.time() - t < 1.5, (len(r.stdout), time.time() - t)
 
 
 if __name__ == "__main__":

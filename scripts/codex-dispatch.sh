@@ -250,6 +250,9 @@ if [ -n "$LOG_FILE" ]; then
     fi
     TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
+    # The receipt's ts is the LAUNCH time, as the broker's row is: the outage
+    # check selects attempts by when they started.
+    LAUNCH_TS="$(date +%s)"
     node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
@@ -292,7 +295,7 @@ if [ -n "$LOG_FILE" ]; then
     # Written by a JSON serializer: a path or TODO name holding a quote, a
     # backslash or a newline must not produce a line no reader can parse.
     python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/manifest-line.py" --append "$REVIEWS_DIR/manifest.jsonl" \
-        "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=direct:$STAMP-$$" \
+        "int:ts=$LAUNCH_TS" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=direct:$STAMP-$$" \
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \

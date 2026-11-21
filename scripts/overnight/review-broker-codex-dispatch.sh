@@ -50,7 +50,7 @@ PROMPT="$1"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/review-prompt.sh"
 FIRST_LINE="$(review_prompt_first_line "$PROMPT")"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
-    echo "ERROR: first nonblank prompt line must be '[review-kind: <kind>] <todo-path> ...'" >&2
+    echo "[review-broker] BLOCK -- first nonblank prompt line must be '[review-kind: <kind>] <todo-path> ...'" >&2
     exit 2
 fi
 SELF_NAME="review-broker"
@@ -82,7 +82,7 @@ if [[ "${CODEX_OUTAGE_OVERRIDE:-}" != "1" ]]; then
     _OUTAGE_WHY="$(python3 "$(dirname "$0")/codex-outage-check.py" --manifest "${BROKER_MANIFEST:-.claude/overnight/reviews/manifest.jsonl}")" || _OUTAGE_RC=$?
     if [[ $_OUTAGE_RC -eq 75 ]]; then
         {
-            echo "[$SELF_NAME] REFUSED -- the Codex backend looks DOWN: $_OUTAGE_WHY"
+            echo "[$SELF_NAME] BLOCK -- REFUSED, the Codex backend looks DOWN: $_OUTAGE_WHY"
             echo
             echo "Do not retry. Defer this review (park the section with the outage as its"
             echo "blocker) and continue with work that needs no Codex. The gate clears by itself"
@@ -101,7 +101,7 @@ TODO_PATH="$(review_prompt_todo_path "$FIRST_LINE")"
 SECTION="$(_broker_section_of "$FIRST_LINE")"
 
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
-[[ -f "$COMPANION" ]] || { echo "ERROR: codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
+[[ -f "$COMPANION" ]] || { echo "[review-broker] BLOCK -- codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
 export CODEX_REVIEWER_DISPATCH=1
 
 MANIFEST_DIR=".claude/overnight/reviews"
@@ -154,7 +154,7 @@ python3 "$MANIFEST_LINE" --append "$MANIFEST" \
     "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
     "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
     "worktree_sha256=$TREE_WORK" "bool:done_file=true" || {
-  echo "ERROR: the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
+  echo "[review-broker] BLOCK -- the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
   rm -f "$PROMPT_FILE"
   exit 1
 }

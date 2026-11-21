@@ -7,18 +7,18 @@
 # once the prompt outgrows the pipe buffer (2026-11-21, a whole-file inventory).
 
 # The first line holding a non-space character (its leading spaces kept), or
-# nothing. Linear: bash regex matches do the scanning, since a per-line loop
-# re-copies the rest of the prompt for each blank line and the `%%`/`##` glob
-# removals are quadratic on a long run of whitespace or a long line.
+# nothing. Two start-anchored regex matches, each one forward pass: the first
+# takes every whitespace-only line before it (greedy whitespace, then the last
+# newline of that run), the second takes the line. A per-line loop re-copies
+# the rest of the prompt for each blank line, and the `%%`/`##` glob removals
+# and end-anchored regexes retry from each position: all quadratic.
 review_prompt_first_line() {
-    local s="$1" lead line nl=$'\n'
-    [[ "$s" =~ ^([[:space:]]*) ]]
-    lead="${BASH_REMATCH[1]}"
-    [[ ${#lead} -eq ${#s} ]] && return 0
-    [[ "$lead" =~ ([^$nl]*)$ ]]
+    local s="$1" line nl=$'\n'
+    [[ "$s" =~ ^([[:space:]]*$nl)? ]]
+    s="${s:${#BASH_REMATCH[0]}}"
+    [[ "$s" =~ ^([^$nl]*) ]]
     line="${BASH_REMATCH[1]}"
-    [[ "${s:${#lead}}" =~ ^([^$nl]*) ]]
-    printf '%s' "$line${BASH_REMATCH[1]}"
+    [[ "$line" =~ [^[:space:]] ]] && printf '%s' "$line"
     return 0
 }
 

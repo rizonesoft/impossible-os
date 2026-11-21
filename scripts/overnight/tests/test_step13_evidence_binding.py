@@ -146,6 +146,11 @@ def test_a_whole_file_review_never_borrows_the_shared_section():
         f.write_text(json.dumps(data))
         ok, msg = _check(mod, d)
         assert not ok, msg
+        # The older recorder's shape: the per-kind key removed, the shared one kept.
+        del data["todo/x.md"]["adversarial_section"]
+        f.write_text(json.dumps(data))
+        ok, msg = _check(mod, d)
+        assert not ok, msg
 
 
 def test_refusal_names_the_actual_reason():

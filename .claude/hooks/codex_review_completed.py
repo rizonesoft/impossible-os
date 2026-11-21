@@ -647,6 +647,7 @@ _TODO_PATH_RE = re.compile(r"(?<![\w/-])todo/[\w./-]+TODO-\d[\w./-]*\.md")
 # whitespace, hyphen, underscore, or colon.
 _SECTION_RE = re.compile(r"(?:§\s*|section[\s\-_:]+)(\d+)", re.IGNORECASE)
 _SECTION_AFTER_PATH_RE = re.compile(r"\.md\s+s(\d+)\b")
+_STANDALONE_MARKER_RE = re.compile(r"^\s*\[review[-_ ]kind\s*:[^\]]*\]\s*$", re.IGNORECASE)
 # The first-line rule, as scripts/lib/review-prompt.sh applies it after the path.
 _SECTION_LEAD_RE = re.compile(r"\s*(?:§\s*|section[\s\-_:]*)(\d+)", re.IGNORECASE)
 _SECTION_S_LEAD_RE = re.compile(r"\s*s(\d+)(?:[^0-9A-Za-z]|$)")
@@ -794,9 +795,14 @@ def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
     # precedence of scripts/lib/review-prompt.sh: a whole-file review followed
     # by an inventory that numbers sections ("section 5 depends on section 3")
     # is no section's review.
-    # The line that first names the path: the marker line, or the `Target:`
-    # line of the fixed templates that put the marker alone on line one.
-    first = next((ln for ln in prompt.splitlines() if chosen in ln), "")
+    # The marker line, as the dispatchers read it; or, for the older template
+    # shape with the marker alone on line one, a `Target:` line straight after
+    # it. Never an inventory line further down.
+    nonblank = [ln for ln in prompt.splitlines() if ln.strip()]
+    first = nonblank[0] if nonblank else ""
+    if chosen not in first and _STANDALONE_MARKER_RE.match(first) and len(nonblank) > 1 \
+            and nonblank[1].lstrip().startswith("Target:"):
+        first = nonblank[1]
     rest = first.split(chosen, 1)[1] if chosen in first else ""
     sm = (_SECTION_LEAD_RE.match(rest) or _SECTION_S_LEAD_RE.match(rest)
           or _SECTION_ANY_RE.search(rest))
@@ -1279,8 +1285,18 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
     if not rec_kind:
         return
     rec_ts = state.get("timestamp_ns")
+    rec_log = state.get("log_file") or ""
+    # Only the exact log this record's dispatch returned can complete it.
+    if not rec_log:
+        return
     for out_rel in outs:
         p = Path(out_rel) if os.path.isabs(out_rel) else (root / out_rel)
+        try:
+            same = p.resolve() == (Path(rec_log) if os.path.isabs(rec_log) else root / rec_log).resolve()
+        except OSError:
+            same = False
+        if not same:
+            continue
         out_kind = _out_kind_from_name(p.name)
         # (F1) Require an EXACT, non-empty kind match. A multi-log wait may list
         # several .out paths; the current record tracks exactly ONE review.
@@ -1316,7 +1332,23 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
 # last-review-stamps.json as though the kind had been reviewed. Anchored on the
 # wrappers' own banner, which nothing else emits. Fails OPEN (records) whenever
 # the response cannot be read, so a real review is never dropped.
-_WRAPPER_REFUSAL = ("[codex-dispatch] BLOCK", "[review-broker] BLOCK")
+_WRAPPER_REFUSAL = ("[codex-dispatch] BLOCK", "[review-broker] BLOCK", "[codex-bg-dispatch] BLOCK")
+
+
+def _response_log_file(payload: dict) -> str:
+    """The `logFile` a broker dispatch printed, or "" (a foreground dispatch)."""
+    try:
+        resp = payload.get("tool_response")
+        text = " ".join(str(resp.get(k) or "") for k in ("stdout", "output")) \
+            if isinstance(resp, dict) else str(resp or "")
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and '"logFile"' in line:
+                v = json.loads(line).get("logFile")
+                return v if isinstance(v, str) else ""
+    except Exception:  # fail-direction: no log path means no auto-receive, the review is triaged by hand
+        return ""
+    return ""
 
 
 def _dispatch_was_refused(payload: dict) -> bool:
@@ -1437,6 +1469,10 @@ def main() -> int:
             "tree_hash": _tree_hash(root),
             "received": False,
             "received_timestamp_ns": None,
+            # The broker prints the job's logFile: auto-receive completes THIS
+            # review only from that exact log, never from another one of the
+            # same kind that happened to finish later.
+            "log_file": _response_log_file(payload),
         }
         # TODO-08 section 24 observability: capture write success/failure
         # so missing-write incidents leave a structured trail in

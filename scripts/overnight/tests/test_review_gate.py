@@ -310,12 +310,15 @@ def _crecv_repo(d):
     return root
 
 
-def _rec(root, kind="re-adversarial", received=False, ts=None):
+def _rec(root, kind="re-adversarial", received=False, ts=None, log_file=None):
+    """A trigger record, holding the logFile its broker dispatch returned."""
     import time as _t
     if ts is None:
         ts = _t.time_ns()
+    if log_file is None:
+        log_file = str(root / f".claude/overnight/reviews/20260714-000000-{kind}.out")
     (root / ".claude/state/last-codex-review.json").write_text(json.dumps({
-        "received": received, "review_kind": kind, "timestamp_ns": ts,
+        "received": received, "review_kind": kind, "timestamp_ns": ts, "log_file": log_file,
         "trigger_files": ["src/x.c"], "trigger_blobs": {"src/x.c": "abc"},
         "received_timestamp_ns": None}))
 
@@ -341,6 +344,32 @@ def _poll(root, out_path):
 # the broker terminal sentinel as the FINAL line.
 _CLEAN = ('{"verdict":"approve","summary":"no issues"}\n'
           'No material findings.\nTurn completed (rc=0)\n')
+
+
+def test_crecv_another_review_of_the_same_kind_never_completes_this_one():
+    # B is the current review; A, an earlier same-kind dispatch, finishes clean.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d)
+        _rec(root, "re-adversarial", log_file=str(root / ".claude/overnight/reviews/b-re-adversarial.out"))
+        assert _poll(root, _out_file(root, "re-adversarial", _CLEAN))["received"] is False
+
+
+def test_crecv_a_record_without_a_log_file_is_never_auto_received():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial", log_file="")
+        assert _poll(root, _out_file(root, "re-adversarial", _CLEAN))["received"] is False
+
+
+def test_crecv_the_broker_log_file_is_taken_from_the_dispatch_response():
+    payload = {"tool_response": {"stdout": 'noise\n{"kind": "round", "jobId": "j", "logFile": "/x/a-round.out"}\n'}}
+    assert crc._response_log_file(payload) == "/x/a-round.out"
+    assert crc._response_log_file({"tool_response": {"stdout": "review text"}}) == ""
+
+
+def test_crecv_an_outage_refusal_is_a_refused_dispatch():
+    for msg in ("[review-broker] BLOCK -- REFUSED, the Codex backend looks DOWN: x",
+                "[codex-bg-dispatch] BLOCK -- first nonblank prompt line must start"):
+        assert crc._dispatch_was_refused({"tool_response": {"stderr": msg}}), msg
 
 
 def test_crecv_a_live_log_is_never_auto_received():

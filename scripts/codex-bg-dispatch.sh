@@ -26,7 +26,7 @@ set -euo pipefail
 if [[ $# -ne 1 ]]; then
     echo "Usage: $0 <prompt>" >&2
     echo "Example: $0 '[review-kind: design] todo/XX/TODO-NN-name.md section N -- Plan: ...'" >&2
-    echo "ERROR: expected exactly one prompt argv, got $#." >&2
+    echo "[codex-bg-dispatch] BLOCK -- expected exactly one prompt argv, got $#." >&2
     exit 2
 fi
 
@@ -38,7 +38,7 @@ FIRST_LINE="$(review_prompt_first_line "$PROMPT")"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]+(design|adversarial-impl|adversarial|consistency|perf|test-coverage|gap-audit|re-adversarial)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
     echo "Usage: $0 <prompt>" >&2
     echo "Example: $0 '[review-kind: design] todo/XX/TODO-NN-name.md section N -- Plan: ...'" >&2
-    echo "ERROR: first nonblank prompt line must start with [review-kind: <kind>] <todo-path>." >&2
+    echo "[codex-bg-dispatch] BLOCK -- first nonblank prompt line must start with [review-kind: <kind>] <todo-path>." >&2
     exit 2
 fi
 
@@ -48,7 +48,7 @@ fi
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
 
 if [[ ! -f "$COMPANION" ]]; then
-    echo "ERROR: codex-companion.mjs not found at $COMPANION" >&2
+    echo "[codex-bg-dispatch] BLOCK -- codex-companion.mjs not found at $COMPANION" >&2
     echo "Set CODEX_COMPANION_PATH if the codex plugin lives elsewhere." >&2
     exit 1
 fi

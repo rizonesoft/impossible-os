@@ -148,6 +148,17 @@ def test_a_missing_log_whose_sighting_cannot_be_kept_is_missing_at_once():
         assert r.returncode == 5, (r.returncode, r.stdout)
 
 
+def test_an_empty_sighting_left_by_an_interrupted_write_reads_as_missing():
+    import hashlib
+    with tempfile.TemporaryDirectory() as d:
+        log = str(pathlib.Path(d) / "never.out")
+        side = pathlib.Path(d) / ".claude/state/waiter-first-seen" / hashlib.md5(log.encode()).hexdigest()[:16]
+        side.parent.mkdir(parents=True)
+        side.write_text("")
+        r = _run(pathlib.Path(log), maxw=1, stale=300, cwd=d)
+        assert r.returncode == 5, (r.returncode, r.stdout, r.stderr)
+
+
 def test_a_log_silent_from_the_start_is_stale_in_the_same_call():
     # B2: the first sighting is sampled when the wait starts, not when it ends.
     with tempfile.TemporaryDirectory() as d:
