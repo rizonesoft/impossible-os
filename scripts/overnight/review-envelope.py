@@ -101,7 +101,9 @@ def leg_summary(entry: dict) -> dict:
     # The receipt, not the transcript, says how a pass ended: a review can
     # quote a "Turn completed (rc=0)" line, and the first such line in the
     # text would otherwise decide.
-    if entry.get("pass_checked") is True:
+    # A receipt from a dispatcher that publishes <log>.done is credited only
+    # once that status is published (it is written after the receipt).
+    if entry.get("pass_checked") is True and not (entry.get("done_file") is True and done_rc is None):
         rc, highest = entry.get("rc"), entry.get("highest") or None
         out["pass"] = {"rc": rc, "highest": highest}
         out["rc"] = rc

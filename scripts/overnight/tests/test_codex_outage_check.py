@@ -38,7 +38,7 @@ RUNNING = "[codex] Thinking...\n"
 def manifest(d, legs, now):
     """legs: oldest-first list of (content_or_path, age_seconds)."""
     lines = []
-    for i, (content, age) in enumerate(legs):
+    for i, (content, age, *extra) in enumerate(legs):
         if isinstance(content, Path):
             content = content.read_text(errors="replace")
         log = Path(d) / f"leg{i}.out"
@@ -47,7 +47,8 @@ def manifest(d, legs, now):
         rcs = re.findall(r"^Turn completed \(rc=(\d+)\)\s*$", content, re.M)
         if rcs:
             Path(str(log) + ".done").write_text(rcs[-1] + "\n")
-        lines.append(json.dumps({"ts": int(now - age), "kind": "adversarial", "logFile": str(log)}))
+        lines.append(json.dumps({"ts": int(now - age), "kind": "adversarial", "logFile": str(log),
+                                 **(extra[0] if extra else {})}))
     m = Path(d) / "manifest.jsonl"
     m.write_text("\n".join(lines) + "\n")
     return m
@@ -72,6 +73,11 @@ CASES = [
     ("local ENOENT is not the backend", [(ENOENT, 120), (ENOENT, 60)], 0),
     ("review-side errors are not the backend", [(BADREF, 120), (BADREF, 60)], 0),
     ("empty manifest allows", [], 0),
+    # A brokered review writes the broker's row and, from its own job, a receipt
+    # naming that job as parent: one failed attempt, not two.
+    ("one failed brokered review is one attempt", [(OUTAGE, 120), (OUTAGE, 119, {"parent": "detached:a"})], 0),
+    ("two failed brokered reviews refuse", [(OUTAGE, 120), (OUTAGE, 119, {"parent": "detached:a"}),
+                                            (OUTAGE, 60), (OUTAGE, 59, {"parent": "detached:b"})], 75),
 ]
 
 

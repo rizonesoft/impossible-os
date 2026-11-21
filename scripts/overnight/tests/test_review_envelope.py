@@ -105,6 +105,21 @@ def test_a_leg_whose_dispatcher_writes_done_files_waits_for_one():
         assert "adversarial" in env["needs_redispatch"]
 
 
+def test_a_checked_receipt_waits_for_its_published_status():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "review text\n"})
+        man = root / ".claude/overnight/reviews/manifest.jsonl"
+        e = json.loads(man.read_text())
+        e.update({"done_file": True, "pass_checked": True, "rc": 0, "highest": "none"})
+        man.write_text(json.dumps(e) + "\n")
+        rc, env = _run(root)
+        assert env["kinds"]["adversarial"]["complete"] is False
+        (root / ".claude/overnight/reviews/adversarial.out.done").write_text("0\n")
+        rc, env = _run(root)
+        assert env["kinds"]["adversarial"]["complete"] is True and env["kinds"]["adversarial"]["crashed"] is False
+
+
 def test_a_quoted_crash_message_never_overrides_a_clean_exit():
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)

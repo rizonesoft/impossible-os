@@ -120,21 +120,16 @@ export CODEX_REVIEWER_DISPATCH=1
 # dispatch routes can no longer disagree about what happened.
 COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
 REVIEWS_DIR="${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}"
-# The first nonblank line, read without a pipe: under pipefail an early-exiting
-# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
-FIRST_LINE=""
-while IFS= read -r _line; do
-    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
-done <<< "$PROMPT"
+# Prompt parsing shared by the three dispatchers, in memory (no pipeline).
+# shellcheck source=scripts/lib/review-prompt.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/review-prompt.sh"
+FIRST_LINE="$(review_prompt_first_line "$PROMPT")"
 KIND="direct"
 if [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\] ]]; then
     KIND="${BASH_REMATCH[1],,}"
 fi
-TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | head -1 || true)"
-_rest="${FIRST_LINE#*.md}"
-_m="$(printf '%s\n' "$_rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
-[[ -n "$_m" ]] || _m="$(printf '%s\n' "$_rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
-SECTION="$(printf '%s' "$_m" | grep -oE '[0-9]+' | tail -1 || true)"
+TODO_PATH="$(review_prompt_todo_path "$FIRST_LINE")"
+SECTION="$(review_prompt_section_of "$FIRST_LINE")"
 # A pass of the reviewer pin (.conclave/reviewers.toml): the pin must hold and
 # Codex must be configured for its model, the pass's lenses are appended with
 # the verdict line each one owes, and below the returned review is checked for
@@ -296,6 +291,7 @@ if [ -n "$LOG_FILE" ]; then
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
+        "opt:parent=${CODEX_BROKER_JOB:-}" \
         || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
              # A review with no receipt cannot be credited or found: report it
              # incomplete (rc 3, dispatched again), never as its own success.
@@ -309,5 +305,10 @@ if [ -n "$LOG_FILE" ]; then
     fi
     exit "$rc"
 fi
-# No writable reviews directory: behave exactly as before (nothing retained).
+# No writable reviews directory. A marked review would leave no receipt and no
+# done file, so nothing could find or credit it: refuse it before it runs.
+if [ "$KIND" != "direct" ]; then
+    echo "[$SELF_NAME] REFUSED: no writable reviews directory ($REVIEWS_DIR) to keep this review's transcript and receipt" >&2
+    exit 2
+fi
 exec node "$COMPANION" adversarial-review -- "$PROMPT"

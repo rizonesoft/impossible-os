@@ -1201,17 +1201,18 @@ def _out_is_clean(root: Path, out_path: Path) -> bool:
     FAIL-SAFE in every direction: a parse failure, a non-rc0 final line, a missing
     or non-approve verdict, any finding, or a severity word all return False, and
     the model must still triage the review through receiving-code-review."""
-    try:
-        text = out_path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return False
     # (F2) the review has ended with exit 0 only when its dispatcher has
     # published <log>.done holding 0; no line of the log can say so, since a
-    # live review can print one that looks like the terminal line.
+    # live review can print one that looks like the terminal line. Read FIRST:
+    # the transcript read after it is the finished one.
     try:
         if Path(str(out_path) + ".done").read_text().strip() != "0":
             return False
     except (OSError, ValueError):
+        return False
+    try:
+        text = out_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
         return False
     # (F3) authoritative structured verdict must be approve-class.
     verdicts = _VERDICT_RE.findall(text)

@@ -53,15 +53,21 @@ def test_section_of_cases():
     assert not bad, bad
 
 
+LIB = REPO / "scripts/lib/review-prompt.sh"
+
+
 def test_section_sign_pattern_is_a_real_byte_not_an_escape():
-    src = BROKER.read_text(encoding="utf-8")
+    src = LIB.read_text(encoding="utf-8")
     assert "\\xc2\\xa7" not in src, "the never-matching \\xc2\\xa7 spelling is back"
     assert SIGN + "[[:space:]]*" in src
 
 
 def test_direct_wrapper_carries_the_same_rule():
+    for rel in ("scripts/codex-dispatch.sh", "scripts/overnight/review-broker-codex-dispatch.sh",
+                "scripts/codex-bg-dispatch.sh"):
+        assert "lib/review-prompt.sh" in (REPO / rel).read_text(encoding="utf-8"), rel
     src = (REPO / "scripts/codex-dispatch.sh").read_text(encoding="utf-8")
-    assert SIGN + "[[:space:]]*" in src and "manifest.jsonl" in src, \
+    assert "review_prompt_section_of" in src and "manifest.jsonl" in src, \
         "codex-dispatch.sh no longer registers its leg in the shared manifest"
 
 

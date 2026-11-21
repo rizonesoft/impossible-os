@@ -424,6 +424,25 @@ def test_refusal_a_pass_with_nowhere_to_keep_its_transcript_is_not_dispatched(tm
     assert prompt == ""
 
 
+def test_refusal_any_marked_review_with_nowhere_to_keep_its_receipt_is_not_dispatched(tmp_path):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    done, prompt = _dispatch(tmp_path, "adversarial", "x", reviews_dir=blocker / "reviews")
+    assert done.returncode == 2 and "no writable reviews directory" in done.stderr, done.stderr
+    assert prompt == ""
+
+
+def test_a_first_line_larger_than_a_pipe_is_attributed(tmp_path):
+    """The first line itself can be a large inventory: path and section are read in memory."""
+    import json
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    done, _ = _dispatch(tmp_path, "completion", full, body=" also " + "todo/y.md " * 9000)
+    assert done.returncode == 0, (done.returncode, done.stderr[-400:])
+    e = json.loads((tmp_path / "reviews/manifest.jsonl").read_text().splitlines()[-1])
+    assert e["todo"] == "todo/00-infrastructure/TODO-01-developer-tooling-stack.md" and e["section"] == 99
+
+
 def test_refusal_a_marker_only_the_recorder_would_read_is_refused(tmp_path):
     """Review finding: ` [review-kind: completion]` and `[review_kind: completion]` skipped the pin and lens
     checks here and were still recorded as a completion pass."""

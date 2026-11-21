@@ -31,12 +31,10 @@ if [[ $# -ne 1 ]]; then
 fi
 
 PROMPT="$1"
-# The first nonblank line, read without a pipe: under pipefail an early-exiting
-# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
-FIRST_LINE=""
-while IFS= read -r _line; do
-    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
-done <<< "$PROMPT"
+# Prompt parsing shared by the three dispatchers, in memory (no pipeline).
+# shellcheck source=scripts/lib/review-prompt.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/review-prompt.sh"
+FIRST_LINE="$(review_prompt_first_line "$PROMPT")"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]+(design|adversarial-impl|adversarial|consistency|perf|test-coverage|gap-audit|re-adversarial)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
     echo "Usage: $0 <prompt>" >&2
     echo "Example: $0 '[review-kind: design] todo/XX/TODO-NN-name.md section N -- Plan: ...'" >&2

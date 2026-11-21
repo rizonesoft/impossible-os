@@ -29,19 +29,9 @@ set -euo pipefail
 # path; a mention later in the line is used only when nothing follows the path.
 # Exposed as `--section-of '<line>'` so the rule is testable without a dispatch.
 _broker_section_of() {
-    local line="$1" rest m
-    rest="${line#*.md}"
-    m="$(printf '%s\n' "$rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
-    # `s3` straight after the path, the form item prompts use: the section glyph is
-    # discouraged in source, which led writers to it and dropped the leg from the
-    # envelope. Anchored, so `x86 s3 sleep` later in the prompt is not a section.
-    if [[ -z "$m" ]]; then
-        m="$(printf '%s\n' "$rest" | grep -oE "^[[:space:]]*s[0-9]+([^[:alnum:]]|$)" | head -1 | grep -oE "[0-9]+" | head -1 || true)"
-    fi
-    if [[ -z "$m" ]]; then
-        m="$(printf '%s\n' "$rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
-    fi
-    printf '%s' "$m" | grep -oE '[0-9]+' | tail -1 || true
+    # shellcheck source=scripts/lib/review-prompt.sh
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/review-prompt.sh"
+    review_prompt_section_of "$1"
 }
 if [[ "${1:-}" == "--section-of" ]]; then
     [[ $# -eq 2 ]] || { echo "usage: $0 --section-of '<first prompt line>'" >&2; exit 2; }
@@ -55,12 +45,10 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 PROMPT="$1"
-# The first nonblank line, read without a pipe: under pipefail an early-exiting
-# reader closes the pipe on a large prompt and the writer's SIGPIPE ends the script.
-FIRST_LINE=""
-while IFS= read -r _line; do
-    [[ "$_line" =~ [^[:space:]] ]] && { FIRST_LINE="$_line"; break; }
-done <<< "$PROMPT"
+# Prompt parsing shared by the three dispatchers, in memory (no pipeline).
+# shellcheck source=scripts/lib/review-prompt.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/review-prompt.sh"
+FIRST_LINE="$(review_prompt_first_line "$PROMPT")"
 if ! [[ "$FIRST_LINE" =~ ^\[review-kind:[[:space:]]*([a-zA-Z-]+)\][[:space:]]+todo/.+\.md([[:space:]]|$) ]]; then
     echo "ERROR: first nonblank prompt line must be '[review-kind: <kind>] <todo-path> ...'" >&2
     exit 2
@@ -104,7 +92,7 @@ if [[ "${CODEX_OUTAGE_OVERRIDE:-}" != "1" ]]; then
         exit 75
     fi
 fi
-TODO_PATH="$(printf '%s\n' "$FIRST_LINE" | grep -oE 'todo/[^[:space:]]+\.md' | head -1)"
+TODO_PATH="$(review_prompt_todo_path "$FIRST_LINE")"
 # Section attribution (v14 close-out, 2026-08-16): the envelope was FILE-scoped
 # only, so a section's review wave silently ingested an earlier section's legs
 # from the same TODO. The prompt already names the section; record it so
@@ -143,7 +131,7 @@ q() { printf '%q' "$1"; }
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
-  RUN="REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
+  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
 else
   RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat $(q "$PROMPT_FILE"))\""
 fi
