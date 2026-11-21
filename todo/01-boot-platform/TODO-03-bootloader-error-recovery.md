@@ -1018,6 +1018,8 @@ The cross-section review (00-infrastructure/TODO-08 §35) read this whole file o
 
 ---
 
+> **Cross-section review:** 2026-11-21 | 3 findings | dwell deadline filed as section 25, kernel-load code filed as section 25, history rollover filed as section 25
+
 ## Verification
 
 - [ ] **ELF corruption test**: build test kernel with corrupted phdr -- bootloader rejects with specific error message, not crash.

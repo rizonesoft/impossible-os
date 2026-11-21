@@ -1059,6 +1059,8 @@ Menu rendering, menu keys and loader-var readback now run in the booted image (`
 
 ---
 
+> **Cross-section review:** 2026-11-12 | 3 findings | exhausted-entry menu filed as section 26, watchdog rollback filed as section 26, LoaderEntries eligibility filed as section 26
+
 ## Verification
 
 - [x] `bash scripts/build.sh` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (re-verified at every section ship).
