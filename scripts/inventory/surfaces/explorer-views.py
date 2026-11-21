@@ -251,13 +251,17 @@ def group_by_type(ctx):
 
 # ------------------------------------------------------- measured scenes --
 
-def read_items(ctx):
-    """Each item of the view: its box and its name label's box."""
+def read_items(ctx, labels=()):
+    """Each item of the view: its box, and the name label's box of the items in
+    `labels` only (the two the mode metrics measure): a label is one more
+    cross-process read per item (review, 2026-11-21)."""
     out = {}
     for k in items(ctx).children():
         if k.control_type != "ListItem":
             continue
-        label = next((d for d in k.children() if d.automation_id == "System.ItemNameDisplay"), None)
+        label = None
+        if k.name in labels:
+            label = next((d for d in k.children() if d.automation_id == "System.ItemNameDisplay"), None)
         out[k.name] = {"box": list(k.bounds), "label": list(label.bounds) if label else None}
     return out
 
@@ -305,15 +309,18 @@ def read_icon(ctx, entry, slug):
     return [sx + found[0], sy + found[1], found[2], found[3]]
 
 
+MEASURED = (ONE_LINE, LONG)
+
+
 def read_measured(ctx):
     """read_items with the two measured items on screen: the list is virtualized,
     so an item scrolled out of view is missing until it is brought back
     (2026-11-19: the long-named item, last of ten, in extra large icons)."""
-    now = read_items(ctx)
-    for name in (ONE_LINE, LONG):
+    now = read_items(ctx, MEASURED)
+    for name in MEASURED:
         if name not in now:
             ctx.bring_into_view(items(ctx), name)
-            now = read_items(ctx)
+            now = read_items(ctx, MEASURED)
     return now
 
 
@@ -415,20 +422,18 @@ def measure_tip(ctx):
     fresh(ctx)
     set_mode(ctx, "ctrl+shift+2")
     def tips():
-        return [w for w in ctx.live.children(ctx.live.uia.GetRootElement()) if w.control_type == "ToolTip" and w.name]
-    # A tooltip already on the desktop before the hover is not the file's info
-    # tip (review, 2026-11-21): only one File Explorer owns, or one the hover
-    # brought up, is read.
+        """Every visible named tooltip, from both places UI Automation lists one:
+        File Explorer's owned windows and the desktop."""
+        desktop = ctx.live.children(ctx.live.uia.GetRootElement())
+        return [w for w in list(owned_windows(ctx)) + list(desktop)
+                if w.control_type == "ToolTip" and w.name and not w.offscreen]
+    # A tooltip already shown before the hover, owned or not, is not the file's
+    # info tip (review, 2026-11-21): only one the hover brought up is read.
     before = {(w.name, w.bounds[:2]) for w in tips()}
     ctx.hover(item(ctx, "Sample document"), settle=0.5)
     with ctx.within(TIP_WAIT) as deadline:
         while True:
-            # A tooltip is a window File Explorer owns, so UI Automation may list
-            # it under the File Explorer window as well as on the desktop.
-            tip = next((w for w in owned_windows(ctx) if w.control_type == "ToolTip" and w.name), None)
-            if tip is None:
-                tip = next((w for w in tips() if (w.name, w.bounds[:2]) not in before
-                            and not w.offscreen), None)
+            tip = next((w for w in tips() if (w.name, w.bounds[:2]) not in before), None)
             if tip is not None:
                 break
             if time.monotonic() > deadline:

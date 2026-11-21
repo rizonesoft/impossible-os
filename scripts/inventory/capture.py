@@ -147,14 +147,19 @@ def migrate_store(manifest, store):
     """Copy each entry's shot from its old name (<state>.<profile>.png) to its
     digest name, when the bytes there are the ones the entry records. The old
     file stays for a checkout that has not moved yet. Returns (copied, missing)."""
+    def holds(path, e):
+        return path.is_file() and path.stat().st_size == e["size"] and sha256(path) == e["sha256"]
     copied, missing = 0, []
     for e in manifest:
         new, old = shot_path(store, e), legacy_shot_path(store, e)
-        if new.is_file():
-            continue
-        if old.is_file() and old.stat().st_size == e["size"] and sha256(old) == e["sha256"]:
+        if holds(new, e):
+            continue                      # a damaged copy is replaced, not counted as moved
+        if holds(old, e):
             tmp = new.with_name(f".{new.name}.{os.getpid()}.tmp")
             shutil.copyfile(old, tmp)
+            if sha256(tmp) != e["sha256"]:
+                tmp.unlink()
+                raise OSError(f"{tmp}: the copy differs from {old}")
             os.replace(tmp, new)
             copied += 1
         else:

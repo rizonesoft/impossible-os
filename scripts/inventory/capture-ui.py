@@ -621,11 +621,13 @@ class Context(core.Polls):
                     nxt = []
                     for el in level:
                         if el is not within and core.matches(el, spec):
+                            if self.overdue():
+                                raise core.Incomplete(f"no element matching {spec} before its poll ended")
                             return el
                         # A positive timeout holds inside every pass, the first
                         # included: reading children is what costs time on a
                         # broad tree. Zero is the one whole look.
-                        if timeout > 0 and time.monotonic() >= deadline:
+                        if (timeout > 0 and time.monotonic() >= deadline) or self.overdue():
                             raise core.Incomplete(f"no element matching {spec} within {timeout} s")
                         if d + 1 < depth:    # the last level's children are never searched
                             nxt.extend(el.children())
@@ -651,6 +653,8 @@ class Context(core.Polls):
             # element, so the control view leaves it out.
             for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition()):
                 if core.matches(w, spec) and not w.offscreen:
+                    if self.overdue():
+                        raise core.Incomplete(f"no window matching {spec} before its poll ended")
                     # A popup is never brought forward: a menu that loses the
                     # foreground to itself closes (2026-11-16, the classic menu).
                     if foreground and w.class_name not in NO_FOREGROUND:

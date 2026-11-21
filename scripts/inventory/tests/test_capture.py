@@ -1892,9 +1892,12 @@ class Shots(unittest.TestCase):
         self.assertEqual((copied, missing), (1, []))
         self.assertTrue(new.is_file() and old.is_file())        # the old name stays for an older checkout
         self.assertEqual(capture.migrate_store([entry], self.store), (0, []))
+        new.write_bytes(b"cut")                                  # a damaged copy beside a good original
+        self.assertEqual(capture.migrate_store([entry], self.store), (1, []))
+        self.assertEqual(capture.sha256(new), entry["sha256"])
         old.write_bytes(b"other")
-        new.unlink()
-        self.assertEqual(capture.migrate_store([entry], self.store), (0, [str(old)]))   # bytes not as recorded
+        new.write_bytes(b"cut")
+        self.assertEqual(capture.migrate_store([entry], self.store), (0, [str(old)]))   # neither holds the bytes
 
     def test_publish_then_verify(self):
         self.publish()
@@ -3169,7 +3172,8 @@ class PollDeadlines(unittest.TestCase):
         with ctx.within(0):
             time.sleep(0.01)
             self.assertTrue(ctx.overdue())
-            self.assertEqual(ctx.capped(15), 0.0)
+            with self.assertRaises(core.Incomplete):            # an ended poll is no single whole look
+                ctx.capped(15)
         self.assertFalse(ctx.overdue())
 
     def test_a_find_inside_a_poll_ends_with_the_poll(self):
@@ -3181,6 +3185,26 @@ class PollDeadlines(unittest.TestCase):
             with self.assertRaises(guest.core.Incomplete):
                 ctx.find(timeout=15, name="Never")
         self.assertLess(time.monotonic() - start, 2)          # not the helper's own 15 s
+
+    def test_an_ended_poll_fetches_nothing(self):
+        # An expired poll made find() search a whole tree and return a late match (review, 2026-11-21).
+        fetched = []
+        target = types.SimpleNamespace(name="Target", offscreen=False, control_type="Window", automation_id="",
+                                       class_name="Target", children=lambda: fetched.append(1) or [])
+
+        def children(el, cond=None):
+            fetched.append(1)
+            return [target]
+        live = types.SimpleNamespace(children=children, uia=types.SimpleNamespace(
+            GetRootElement=lambda: None, CreateTrueCondition=lambda: None), COMError=OSError)
+        ctx = guest.Context(live)
+        with ctx.within(0):
+            time.sleep(0.01)
+            for look in (lambda: ctx.find(name="Target"), lambda: ctx.find_window(name="Target")):
+                with self.assertRaises(guest.core.Incomplete):
+                    look()
+        self.assertEqual(fetched, [])
+        self.assertIs(ctx.find(timeout=0, name="Target"), target)   # an explicit single look still runs
 
 
 class ExplorerDescendants(unittest.TestCase):
@@ -3384,6 +3408,36 @@ class ExplorerViews(unittest.TestCase):
             with self.assertRaises(self.m.core.Incomplete):
                 self.m.measure_tip(ctx)
 
+    def test_a_stale_owned_tooltip_is_not_the_info_tip(self):
+        stale = types.SimpleNamespace(control_type="ToolTip", name="Unrelated: previous", bounds=(1, 1, 9, 9),
+                                      offscreen=False)
+        tip = types.SimpleNamespace(control_type="ToolTip", name="Type: Text Document", bounds=(50, 60, 90, 40),
+                                    offscreen=False)
+        owned = [stale]
+        ctx = Ctx(live=types.SimpleNamespace(children=lambda el: [], uia=types.SimpleNamespace(GetRootElement=lambda: None)),
+                  hover=lambda el, settle=0: owned.append(tip), hover_point=lambda x, y: None)
+        with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None,
+                                 item=lambda ctx, name: None, owned_windows=lambda ctx: list(owned)):
+            self.m.measure_tip(ctx)
+            self.assertEqual(self.m._m["tip"], ["Type: Text Document"])
+            owned[:] = [stale]
+            ctx.hover = lambda el, settle=0: None
+            with mock.patch.object(self.m, "TIP_WAIT", 0), self.assertRaises(self.m.core.Incomplete):
+                self.m.measure_tip(ctx)                                  # no new tip: the stale one is not read
+
+    def test_only_the_measured_items_have_their_labels_read(self):
+        label = types.SimpleNamespace(automation_id="System.ItemNameDisplay", bounds=(1, 2, 3, 4))
+        read = []
+
+        def item_el(name):
+            return types.SimpleNamespace(control_type="ListItem", name=name, bounds=(0, 0, 9, 9),
+                                         children=lambda: read.append(name) or [label])
+        view = types.SimpleNamespace(children=lambda: [item_el("a"), item_el(self.m.ONE_LINE)])
+        with mock.patch.object(self.m, "items", lambda ctx: view):
+            out = self.m.read_items(None, (self.m.ONE_LINE,))
+        self.assertEqual(read, [self.m.ONE_LINE])
+        self.assertEqual((out["a"]["label"], out[self.m.ONE_LINE]["label"]), (None, [1, 2, 3, 4]))
+
     def test_a_measured_item_off_screen_is_brought_into_view(self):
         shown = {self.m.ONE_LINE: {"box": [0, 0, 1, 1], "label": [0, 0, 1, 1]}}
         brought = []
@@ -3392,7 +3446,7 @@ class ExplorerViews(unittest.TestCase):
             brought.append((container, name))
             shown[name] = {"box": [5, 5, 1, 1], "label": [5, 5, 1, 1]}
         ctx = types.SimpleNamespace(bring_into_view=bring)
-        with mock.patch.object(self.m, "read_items", lambda c: dict(shown)), \
+        with mock.patch.object(self.m, "read_items", lambda c, labels=(): dict(shown)), \
                 mock.patch.object(self.m, "items", lambda c: "list"):
             now = self.m.read_measured(ctx)
         self.assertEqual(brought, [("list", self.m.LONG)])
@@ -3639,8 +3693,38 @@ class ExplorerDialogs(unittest.TestCase):
         roots = {h: build(spec) for h, spec in trees.items()}
         live = types.SimpleNamespace(wrap=lambda h: roots[h], uia=types.SimpleNamespace(
             ElementFromHandle=lambda h: h, CreateTrueCondition=lambda: None),
-            children=lambda e, cond: e, COMError=OSError)
+            children=self.children_within, COMError=OSError)
         return Ctx(live=live)
+
+    @staticmethod
+    def children_within(e, cond, limit=None):
+        if limit is not None and len(e) > limit:
+            raise sys.modules["dialog_window"].core.Incomplete("over")
+        return e
+
+    def test_a_tooltip_host_look_is_bounded_and_ends_with_its_poll(self):
+        dw = sys.modules["dialog_window"]
+        tip = ("ToolTip", [("Text", [])])
+        wide = ("Window", [("Pane", [tip] + [("Text", [])] * 40)] * 3)      # a tooltip in 123 elements
+        self.assertTrue(dw.tooltip_only(self.tooltip_ctx({1: ("Window", [("Pane", [tip] + [("Text", [])] * 40)])}),
+                                        (1, "Xaml_WindowedPopupClass", "PopupHost")))  # within the budget
+        ctx = self.tooltip_ctx({1: wide})
+        self.assertFalse(dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost")))   # past the budget: real
+        with ctx.within(0):
+            time.sleep(0.01)
+            with self.assertRaises(dw.core.Incomplete):
+                dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost"))
+
+    def test_a_known_window_is_not_read_for_a_tooltip(self):
+        dw = sys.modules["dialog_window"]
+        asked = []
+        live = types.SimpleNamespace(children=lambda el, cond: [], uia=types.SimpleNamespace(
+            GetRootElement=lambda: None, CreateTrueCondition=lambda: None))
+        with mock.patch.object(dw, "win32_windows", lambda: [(1, "Xaml_WindowedPopupClass", "a"),
+                                                              (2, "Xaml_WindowedPopupClass", "b")]), \
+                mock.patch.object(dw, "tooltip_only", lambda ctx, w: asked.append(w[0]) or False):
+            self.assertEqual(len(dw.top_windows(Ctx(live=live), known={1})), 2)
+        self.assertEqual(asked, [2])
 
     def test_a_window_that_only_holds_a_tooltip_is_no_scene_window(self):
         dw = sys.modules["dialog_window"]
@@ -3687,7 +3771,7 @@ class ExplorerDialogs(unittest.TestCase):
         now = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "*Untitled - Notepad"), (12, "#32770", "Save As")}
         live = types.SimpleNamespace(wrap=lambda h: ("wrapped", h), uia=types.SimpleNamespace(ElementFromHandle=lambda h: h))
         saved = dw.top_windows
-        dw.top_windows = lambda ctx: now
+        dw.top_windows = lambda ctx, known=(): now
         try:
             self.assertEqual(dw.appeared(Ctx(live=live), before, wait=0), ("wrapped", 12))
         finally:
@@ -3785,9 +3869,18 @@ class ExplorerDialogs(unittest.TestCase):
             ps("Set-Content -LiteralPath \"%s\" -Value 1" % saved)
             self.assertEqual(ps(hide)[0], 0)
             self.assertEqual(ps(state)[1].split(), ["1", "False"])
+            # An empty record (a save cut short before this design) refuses the
+            # override and leaves the setting alone; a leftover temp file does not count.
+            ps("New-Item -ItemType File -Path \"%s\" -Force | Out-Null" % saved)
+            self.assertNotEqual(ps(show)[0], 0)
+            self.assertEqual(ps(state)[1].split()[0], "1")
+            ps("Remove-Item -LiteralPath \"%s\" -Force; Set-Content -LiteralPath \"%s.tmp\" -Value ''" % (saved, saved))
+            self.assertEqual(ps(show)[0], 0)
+            self.assertEqual(ps(hide)[0], 0)
+            self.assertEqual(ps(state)[1].split(), ["1", "False"])
         finally:
-            ps("Remove-Item -Path '%s' -Recurse -Force; Remove-Item -LiteralPath \"%s\" -Force -ErrorAction Ignore"
-               % (key, saved))
+            ps("Remove-Item -Path '%s' -Recurse -Force; Remove-Item -LiteralPath \"%s\", \"%s.tmp\" -Force "
+               "-ErrorAction Ignore" % (key, saved, saved))
 
     def test_the_folder_merge_message_is_recorded_without_its_time(self):
         merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
@@ -3897,7 +3990,14 @@ class DialogsCommon(unittest.TestCase):
     def metrics_input(self):
         box = lambda w: {"bounds": {"x": 0, "y": 0, "width": w, "height": 150}}  # noqa: E731
         return [dict(id="win11.dialogs.message-box-ok", **box(240)),
-                dict(id="win11.dialogs.message-box-long-text", **box(548))]
+                dict(id="win11.dialogs.message-box-long-text", **box(548))] + \
+            [{"id": f"win11.dialogs.{i}"} for i in self.m.REQUIRED]
+
+    def test_metrics_refuse_a_scene_published_without_its_controls(self):
+        # Readiness saw the controls; the published records must hold them too (review, 2026-11-21).
+        records = [r for r in self.metrics_input() if r["id"] != "win11.dialogs.save-as-encoding.encoding-combobox"]
+        with self.assertRaisesRegex(ValueError, "encoding-combobox"):
+            self.m.METRICS(records)
 
     def test_metrics_give_the_long_text_width_and_each_icon_sound(self):
         self.m._m["sounds"] = {"SystemHand": "Windows Foreground.wav", "SystemQuestion": None,
@@ -3955,7 +4055,7 @@ class DialogsCommon(unittest.TestCase):
         self.assertNotIn("print-modern", [s["slug"] for s in self.m.SCENES])
 
     def test_the_credential_prompt_waits_for_its_fields(self):
-        kids = [types.SimpleNamespace(automation_id=a) for a in ("CloseButton", "CancelButton")]
+        kids = [types.SimpleNamespace(automation_id=a, offscreen=False) for a in ("CloseButton", "CancelButton")]
         saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
         seen = []
 
@@ -3969,8 +4069,13 @@ class DialogsCommon(unittest.TestCase):
         try:
             with self.assertRaises(self.m.core.Incomplete):           # the partial frame of 2026-11-20
                 self.m.credential_ready(Ctx(), None)
-            kids.extend(types.SimpleNamespace(automation_id=a) for a in self.m.CREDENTIAL_FIELDS)
-            kids.append(types.SimpleNamespace(automation_id="Unrelated"))
+            hidden = [types.SimpleNamespace(automation_id=a, offscreen=True) for a in self.m.CREDENTIAL_FIELDS]
+            kids.extend(hidden)
+            with self.assertRaises(self.m.core.Incomplete):           # present but offscreen: the walk keeps none
+                self.m.credential_ready(Ctx(), None)
+            for k in hidden:
+                k.offscreen = False
+            kids.append(types.SimpleNamespace(automation_id="Unrelated", offscreen=False))
             seen.clear()
             self.m.credential_ready(Ctx(), None)
             self.assertNotIn("Unrelated", [k.automation_id for k in seen])   # the look stopped at the last field
@@ -3978,13 +4083,17 @@ class DialogsCommon(unittest.TestCase):
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
 
     def test_the_encoding_slot_is_waited_for(self):
-        kids = [types.SimpleNamespace(control_type="Edit", name="File name:")]
+        kids = [types.SimpleNamespace(control_type="Edit", name="File name:", offscreen=False)]
         saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
         self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth, stop=None: kids), 0
         try:
             with self.assertRaises(self.m.core.Incomplete):           # an uncustomised dialog
                 self.m.encoding_ready(Ctx(), None)
-            kids.append(types.SimpleNamespace(control_type="ComboBox", name="Encoding:"))
+            combo = types.SimpleNamespace(control_type="ComboBox", name="Encoding:", offscreen=True)
+            kids.append(combo)
+            with self.assertRaises(self.m.core.Incomplete):           # present but offscreen
+                self.m.encoding_ready(Ctx(), None)
+            combo.offscreen = False
             self.m.encoding_ready(Ctx(), None)
         finally:
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w

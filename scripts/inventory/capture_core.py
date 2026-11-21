@@ -87,11 +87,17 @@ class Polls:
             ends.pop()
 
     def capped(self, timeout):
-        """`timeout`, cut to what is left of the poll this runs in."""
+        """`timeout`, cut to what is left of the poll this runs in. A poll that has
+        ended raises Incomplete here, before any look: a zero left is not the
+        single whole look an explicit timeout=0 asks for (review, 2026-11-21:
+        an expired enable poll then searched a whole tree and pressed a late match)."""
         ends = self.__dict__.get("_poll_ends")
         if not ends:
             return timeout
-        return max(0.0, min(timeout, ends[-1] - time.monotonic()))
+        left = ends[-1] - time.monotonic()
+        if left <= 0:
+            raise Incomplete("the poll this look runs in has ended")
+        return min(timeout, left)
 
     def overdue(self):
         ends = self.__dict__.get("_poll_ends")

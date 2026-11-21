@@ -75,19 +75,21 @@ def win32_windows():
     return out
 
 
-def top_windows(ctx):
+def top_windows(ctx, known=()):
     """(handle, class, title) of each top-level window on screen, from both lists:
     UI Automation's root leaves out a dialog its owner holds (Customize's Browse),
     and Win32's visible windows leave out the Open With picker, which UI
     Automation lists at the root (both 2026-11-20). A window that only holds a
     tooltip is left out: help text, which the walk never records either. One
     entry per handle: the two lists can name a window differently, and a handle,
-    not its title, is what makes it a window."""
+    not its title, is what makes it a window. A handle in `known` is returned
+    without reading whether it is a tooltip: a caller looking for new windows
+    drops it anyway (review, 2026-11-21)."""
     out = {w[0]: w for w in win32_windows()}
     for w in ctx.live.children(ctx.live.uia.GetRootElement(), ctx.live.uia.CreateTrueCondition()):
         if not w.offscreen:
             out.setdefault(w.el.CurrentNativeWindowHandle, (w.el.CurrentNativeWindowHandle, w.class_name, w.name))
-    return {w for w in out.values() if not tooltip_only(ctx, w)}
+    return {w for w in out.values() if w[0] in known or not tooltip_only(ctx, w)}
 
 
 # The window classes that host a tooltip: the classic control, and the XAML popup
@@ -97,23 +99,32 @@ TOOLTIP_HOSTS = ("tooltips_class32", "Xaml_WindowedPopupClass")
 
 
 TOOLTIP_DEPTH = 8                        # levels read under a tooltip host before it counts as a real window
+TOOLTIP_BUDGET = 64                      # elements read under one before it counts as a real window
 CONTAINERS = ("Window", "Pane", "Text")
 
 
 def tooltip_only(ctx, window):
     """Whether a top-level window holds nothing but a tooltip (core.NEVER's rule):
     every branch is read to its end, through containers, and any other control,
-    or a branch deeper than TOOLTIP_DEPTH, makes it a real window."""
+    a branch deeper than TOOLTIP_DEPTH, or more than TOOLTIP_BUDGET elements makes
+    it a real window. A poll that ends mid-read raises core.Incomplete."""
     if window[1] not in TOOLTIP_HOSTS:
         return False
     try:
         el = ctx.live.wrap(ctx.live.uia.ElementFromHandle(window[0]))
         if el.control_type in core.NEVER:
             return True
-        tips, level = 0, [el]
+        tips, level, read = 0, [el], 0
         for _ in range(TOOLTIP_DEPTH):
             below = []
-            for k in (k for e in level for k in ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition())):
+            fetched = []
+            for e in level:
+                if ctx.overdue():
+                    raise TimeoutError
+                kids = ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition(), TOOLTIP_BUDGET - read)
+                read += len(kids)
+                fetched.extend(kids)
+            for k in fetched:
                 if k.control_type in core.NEVER:
                     tips += 1                 # a tooltip's own text is the tooltip
                 elif k.control_type in CONTAINERS:
@@ -124,8 +135,10 @@ def tooltip_only(ctx, window):
                 return tips > 0
             level = below
         return False                          # not read to its end: treat it as real
+    except TimeoutError:
+        raise core.Incomplete("the look at a tooltip host ran past its poll's deadline") from None
     except (ctx.live.COMError, core.Incomplete):
-        return False                          # gone meanwhile: the next look decides
+        return False                          # gone meanwhile, or past the budget: the next look decides
 
 
 def baseline(ctx):
@@ -141,15 +154,20 @@ def baseline(ctx):
 def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",)):
     """The top-level window that was not there before an action (the one whose
     title is not known ahead: Open with, a wizard). Refused when none or several appear."""
-    deadline = time.monotonic() + wait
     known = {w[0] for w in before}            # by handle: a renamed window is not a new one
-    while True:
-        new = [w for w in top_windows(ctx) if w[0] not in known and w[1] not in skip]
-        if len(new) == 1:
-            return ctx.live.wrap(ctx.live.uia.ElementFromHandle(new[0][0]))
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"after the action {len(new)} new window(s) showed: {sorted(w[1:] for w in new)}")
-        time.sleep(0.5)
+    new = []
+    with ctx.within(wait) as deadline:
+        while True:
+            try:
+                new = [w for w in top_windows(ctx, known) if w[0] not in known and w[1] not in skip]
+            except core.Incomplete:
+                pass                              # the look ran out of time; the deadline below decides
+            else:
+                if len(new) == 1:
+                    return ctx.live.wrap(ctx.live.uia.ElementFromHandle(new[0][0]))
+            if time.monotonic() > deadline:
+                raise core.Incomplete(f"after the action {len(new)} new window(s) showed: {sorted(w[1:] for w in new)}")
+            time.sleep(0.5)
 
 
 def innermost_first(windows):
@@ -255,9 +273,9 @@ def press(ctx, within, click=False, **spec):
         raise core.Incomplete(f"no element matching {spec}; the buttons and links there are {seen[:40]}") from None
     with ctx.within(ENABLE_WAIT) as deadline:         # the refreshing find ends by it too
         while not el.enabled:
-            if time.monotonic() > deadline:
-                raise core.Incomplete(f"{el.name!r} stayed disabled for {ENABLE_WAIT} s")
             time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+            if time.monotonic() >= deadline:
+                raise core.Incomplete(f"{el.name!r} stayed disabled for {ENABLE_WAIT} s")
             el = ctx.find(within=within, depth=6, **spec)
     if click:
         ctx.click(el)

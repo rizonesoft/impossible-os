@@ -532,10 +532,16 @@ MERGE_SAVED = "$env:TEMP\\inventory-merge.txt"
 SHOW_MERGE = r"""
 $ErrorActionPreference = 'Stop'
 $saved = "%s"
-if (-not (Test-Path -LiteralPath $saved)) {
+if (Test-Path -LiteralPath $saved) {
+    # A record a killed run left: used only if it holds a value this script writes.
+    $v = (Get-Content -LiteralPath $saved -Raw)
+    if ($null -eq $v -or $v.Trim() -notmatch '^(absent|\d+)$') { throw "the saved HideMergeConflicts record is unreadable" }
+} else {
     $p = Get-ItemProperty -Path '%s'
     $v = if ($p.PSObject.Properties.Name -contains 'HideMergeConflicts') { [string]$p.HideMergeConflicts } else { 'absent' }
-    Set-Content -LiteralPath $saved -Value $v -Encoding ASCII
+    # Written beside it and renamed into place: an interrupted save leaves no record, not an empty one.
+    Set-Content -LiteralPath "$saved.tmp" -Value $v -Encoding ASCII
+    Move-Item -LiteralPath "$saved.tmp" -Destination $saved -Force
 }
 Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value 0 -Type DWord
 """ % (MERGE_SAVED, MERGE_KEY, MERGE_KEY)
@@ -544,7 +550,9 @@ $ErrorActionPreference = 'Stop'
 $saved = "%s"
 $key = '%s'
 if (Test-Path -LiteralPath $saved) {
-    $v = (Get-Content -LiteralPath $saved -Raw).Trim()
+    $v = (Get-Content -LiteralPath $saved -Raw)
+    if ($null -eq $v -or $v.Trim() -notmatch '^(absent|\d+)$') { throw "the saved HideMergeConflicts record is unreadable" }
+    $v = $v.Trim()
     $p = Get-ItemProperty -Path $key
     $has = $p.PSObject.Properties.Name -contains 'HideMergeConflicts'
     if ($v -eq 'absent') { if ($has) { Remove-ItemProperty -Path $key -Name HideMergeConflicts } }

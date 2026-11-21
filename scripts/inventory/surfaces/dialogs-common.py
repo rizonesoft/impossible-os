@@ -167,8 +167,8 @@ ENCODING_LABEL = "Encoding:"
 def encoding_ready(ctx, el):
     """Wait for the application's Encoding combo box. Each look stops at the
     combo, and none outlives the wait (review, 2026-11-21)."""
-    def combo(k):
-        return k.control_type == "ComboBox" and ENCODING_LABEL.rstrip(":") in (k.name or "")
+    def combo(k):                         # on screen: the walk keeps nothing offscreen
+        return k.control_type == "ComboBox" and ENCODING_LABEL.rstrip(":") in (k.name or "") and not k.offscreen
     kids = []
     with ctx.within(DIALOG_WAIT) as deadline:
         while True:
@@ -189,7 +189,8 @@ def credential_ready(ctx, el):
     have = set()
 
     def complete(k):
-        have.add(k.automation_id)
+        if not k.offscreen:                   # on screen: the walk keeps nothing offscreen
+            have.add(k.automation_id)
         return all(a in have for a in CREDENTIAL_FIELDS)
     with ctx.within(DIALOG_WAIT) as deadline:
         while True:
@@ -325,9 +326,18 @@ SCENES += [
 ]
 
 
+# The controls a scene exists to capture: readiness waited for them on screen,
+# and the published records must hold them too (review, 2026-11-21).
+REQUIRED = ("credential.editfield-0", "credential.passwordfield-1", "credential.okbutton",
+            "save-as-encoding.encoding-combobox")
+
+
 def METRICS(records):
     """The message box's width for long text, and the sound each icon plays."""
     by = {r["id"]: r for r in records}
+    missing = [i for i in REQUIRED if f"win11.dialogs.{i}" not in by]
+    if missing:
+        raise ValueError(f"the scenes published without {missing}")
     out = []
     short, long_ = by.get("win11.dialogs.message-box-ok"), by.get("win11.dialogs.message-box-long-text")
     if not (short and long_ and "bounds" in short and "bounds" in long_):
