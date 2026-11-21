@@ -205,7 +205,7 @@ def test_no_old_blob_is_read_when_the_new_blob_holds_no_dash():
     assert asked == ["b" * 40], asked
 
 
-def test_reads_that_fail_are_errors_not_clean(monkeypatch):
+def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
     try:
         m.as_text(("ok " + DASH + "\n").encode("utf-16") + b"\n")
     except ValueError as exc:
@@ -237,7 +237,9 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch):
             return 128
 
     monkeypatch.setattr(m, "BlobReader", Exits)
+    monkeypatch.setattr(m, "merge_heads", lambda: [])
     assert m.main([]) == 2
+    assert "cat-file exited 128" in capsys.readouterr().err
 
 
 def test_the_range_mode_checks_every_outgoing_commit(tmp_path):
@@ -399,3 +401,31 @@ def test_a_new_ref_is_judged_against_the_destination_remote(tmp_path):
     assert r.returncode == 1 and "doc.md gains 1" in r.stderr, r
     assert _run(root, "--range", m.NULL_OID, tip, "mirror").returncode == 0
     assert _run(root, "--range", m.NULL_OID, tip, "https://example.org/r.git").returncode == 0
+
+
+def test_a_merge_the_user_commits_is_judged_once_by_commit_msg(tmp_path):
+    """pre-commit leaves a merge to commit-msg, which refuses a dash the
+    resolution adds; outside a merge pre-commit's gate still judges."""
+    root = _hooked_repo(tmp_path)
+    gate = f'set -euo pipefail; REPO_ROOT="{root}"; . "{GATE}"; dash_commit_gate'
+    _stage(root, {"f.md": "a\n"})
+    _commit(root, "base")
+    _git(root, "checkout", "-q", "-b", "side")
+    _stage(root, {"f.md": "side\n"})
+    _commit(root, "side")
+    _git(root, "checkout", "-q", "-")
+    _stage(root, {"f.md": "main\n"})
+    _commit(root, "main")
+    subprocess.run(["git", "merge", "-q", "side"], cwd=root, capture_output=True, timeout=30, env=_clean_env())
+    _stage(root, {"f.md": "resolved " + DASH + "\n"})
+    held = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
+                          env=_clean_env())
+    assert held.returncode == 0 and "[dash-check]" not in held.stderr, held
+    r = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-edit"],
+                       cwd=root, capture_output=True, text=True, timeout=60, env=_clean_env())
+    assert r.returncode != 0 and "f.md gains 1" in r.stderr, r
+    _git(root, "merge", "--abort")
+    _stage(root, {"g.md": "new " + DASH + "\n"})
+    plain = subprocess.run(["bash", "-c", gate], cwd=root, capture_output=True, text=True, timeout=60,
+                           env=_clean_env())
+    assert plain.returncode == 1 and "g.md gains 1" in plain.stderr, plain

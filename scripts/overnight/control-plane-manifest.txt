@@ -71,6 +71,9 @@ scripts/lib/review-prompt.sh
 .githooks/commit-msg
 .githooks/lib/dash-gate.sh
 scripts/staged_dash_check.py
+# The zero-trailer scanner, whose fixtures (test_ai_trailer_filter.py) are the
+# only check that it still finds a forbidden line: CI's history holds none.
+scripts/test-ai-system.sh
 
 # SHARED GATE MACHINERY (2026-07-28). The manifest listed the gate FILES but
 # not the helpers that decide whether a gate applies, so a one-line change here

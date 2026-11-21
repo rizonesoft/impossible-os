@@ -224,18 +224,24 @@ check_hooks() {
             "Run: bash scripts/install-hooks.sh   # to restore the canonical path."
     fi
 
-    # Parse pre-push gate
+    # The opt-in pre-push build/test step (the rest of pre-push always runs).
+    # The label is install-hooks.sh --status's own; a status without it is a
+    # drift between the two scripts, reported rather than left out.
     local prepush_state
-    prepush_state=$(echo "$status_out" | awk -F': ' '/^Pre-push gate/{print $2}')
+    prepush_state=$(echo "$status_out" | awk -F': ' '/^Pre-push build\/test step/{print $2}')
     if [ -n "$prepush_state" ]; then
-        record hooks pass "pre-push gate" \
+        record hooks pass "pre-push build/test step" \
             "$prepush_state" \
             "-"
+    else
+        record hooks warn "pre-push build/test step" \
+            "install-hooks.sh --status printed no build/test step line" \
+            "Align scripts/tooling-doctor.sh with scripts/install-hooks.sh --status."
     fi
 
     # Per-hook files exist
     local h
-    for h in pre-commit post-commit pre-push; do
+    for h in pre-commit commit-msg post-commit pre-push; do
         if [ -x "$REPO_ROOT/.githooks/$h" ]; then
             record hooks pass ".githooks/$h" \
                 "Present and executable" \

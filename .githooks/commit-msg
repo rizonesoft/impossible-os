@@ -4,8 +4,9 @@
 # pre-commit, and runs it before MERGE_HEAD exists, so that hook could judge
 # the merge only against HEAD. commit-msg runs after MERGE_HEAD is written and
 # before HEAD moves, so staged_dash_check.py judges the merge against every
-# parent, as pre-push does. Any other commit already passed pre-commit, so the
-# hook does nothing without MERGE_HEAD. `--no-verify` skips it, as it skips
+# parent, as pre-push does. It judges a merge the user commits too, so
+# pre-commit leaves every merge to it; any other commit already passed
+# pre-commit, so the hook does nothing without MERGE_HEAD. `--no-verify` skips it, as it skips
 # pre-commit; the gate names its own opt-out.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

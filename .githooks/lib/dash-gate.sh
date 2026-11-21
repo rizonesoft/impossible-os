@@ -39,3 +39,11 @@ dash_push_gate() {
         return 1
     fi
 }
+
+# pre-commit's call: a merge being committed is judged once, by commit-msg,
+# which runs for a merge whether git or the user commits it; every other
+# commit is judged here, before the message is written.
+dash_commit_gate() {
+    [ -f "$(git rev-parse --git-path MERGE_HEAD)" ] && return 0
+    dash_gate
+}

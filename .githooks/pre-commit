@@ -137,10 +137,10 @@ if [ -f "$HOOK_AUDIT" ]; then
     fi
 fi
 
-# ASCII dashes, for every lane (TODO-08 section 48).
+# ASCII dashes, for every lane (TODO-08 section 48); a merge is commit-msg's.
 # shellcheck source=.githooks/lib/dash-gate.sh
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
-dash_gate || exit 1
+dash_commit_gate || exit 1
 
 # TODO-08 §4: section-commit gate -- enforced at the final-index point
 # of git's own pre-commit. The harness PreToolUse hook is the
