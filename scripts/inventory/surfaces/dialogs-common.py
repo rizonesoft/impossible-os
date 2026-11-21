@@ -165,26 +165,44 @@ ENCODING_LABEL = "Encoding:"
 
 
 def encoding_ready(ctx, el):
-    deadline = time.monotonic() + DIALOG_WAIT
-    while True:
-        kids = descendants(ctx, el, 8)
-        if any(k.control_type == "ComboBox" and ENCODING_LABEL.rstrip(":") in (k.name or "") for k in kids):
-            return
-        if time.monotonic() > deadline:
-            raise core.Incomplete("the Save dialog showed no Encoding combo box: "
-                                  f"{sorted({(k.control_type, k.name) for k in kids if k.name})[:40]}")
-        time.sleep(0.5)
+    """Wait for the application's Encoding combo box. Each look stops at the
+    combo, and none outlives the wait (review, 2026-11-21)."""
+    def combo(k):
+        return k.control_type == "ComboBox" and ENCODING_LABEL.rstrip(":") in (k.name or "")
+    kids = []
+    with ctx.within(DIALOG_WAIT) as deadline:
+        while True:
+            try:
+                kids = descendants(ctx, el, 8, stop=combo)
+            except core.Incomplete:
+                kids = []                     # the look ran out of time; the deadline below decides
+            if any(combo(k) for k in kids):
+                return
+            if time.monotonic() > deadline:
+                raise core.Incomplete("the Save dialog showed no Encoding combo box: "
+                                      f"{sorted({(k.control_type, k.name) for k in kids if k.name})[:40]}")
+            time.sleep(0.5)
 
 
 def credential_ready(ctx, el):
-    deadline = time.monotonic() + DIALOG_WAIT
-    while True:
-        have = {k.automation_id for k in descendants(ctx, el, 4)}
-        if all(a in have for a in CREDENTIAL_FIELDS):
-            return
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"the credential prompt never showed {sorted(set(CREDENTIAL_FIELDS) - have)}")
-        time.sleep(0.5)
+    """Wait for every credential field; each look stops once the last is seen."""
+    have = set()
+
+    def complete(k):
+        have.add(k.automation_id)
+        return all(a in have for a in CREDENTIAL_FIELDS)
+    with ctx.within(DIALOG_WAIT) as deadline:
+        while True:
+            have.clear()
+            try:
+                descendants(ctx, el, 4, stop=complete)
+            except core.Incomplete:
+                pass
+            if all(a in have for a in CREDENTIAL_FIELDS):
+                return
+            if time.monotonic() > deadline:
+                raise core.Incomplete(f"the credential prompt never showed {sorted(set(CREDENTIAL_FIELDS) - have)}")
+            time.sleep(0.5)
 
 
 def read_sounds(ctx):

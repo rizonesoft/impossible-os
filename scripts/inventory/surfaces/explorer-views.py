@@ -117,7 +117,7 @@ def column(ctx, name):
 
 def owned_windows(ctx):
     """The windows the File Explorer window owns, from one look for it: none
-    while it is not there (the caller's poll has its own deadline)."""
+    while it is not there (the caller's poll holds the deadline)."""
     try:
         return descendants(ctx, window(ctx, wait=0), 1)
     except core.Incomplete:
@@ -128,15 +128,14 @@ def owned(ctx, wait=10, **spec):
     """A window the File Explorer window owns (a dialog, a drop-down): UI
     Automation lists it under its owner, not the desktop, and in the raw view
     only (2026-11-19, Choose Details)."""
-    deadline = time.monotonic() + wait
-    while True:
-        # One look at the owner per poll: its own 20 s wait would outlast this one.
-        for k in owned_windows(ctx):
-            if k.class_name not in OWNED_SKIP and core.matches(k, spec):
-                return k
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"no window owned by File Explorer matches {spec} within {wait} s")
-        time.sleep(0.5)
+    with ctx.within(wait) as deadline:
+        while True:
+            for k in owned_windows(ctx):
+                if k.class_name not in OWNED_SKIP and core.matches(k, spec):
+                    return k
+            if time.monotonic() > deadline:
+                raise core.Incomplete(f"no window owned by File Explorer matches {spec} within {wait} s")
+            time.sleep(0.5)
 
 
 def popup(ctx):
@@ -232,12 +231,12 @@ def groups(ctx, want, wait=GROUP_WAIT):
     """Wait until the folder shows groups (want=True) or none; True when it
     does. Only groups on screen count: an ungrouped folder's groups can stay
     in the tree offscreen while the view redraws."""
-    deadline = time.monotonic() + wait
-    while True:
-        shown = any(k.class_name == "UIGroupItem" and not k.offscreen for k in items(ctx).children())
-        if shown == want or time.monotonic() >= deadline:
-            return shown == want
-        time.sleep(0.5)
+    with ctx.within(wait) as deadline:                  # the window and view lookups end by it too
+        while True:
+            shown = any(k.class_name == "UIGroupItem" and not k.offscreen for k in items(ctx).children())
+            if shown == want or time.monotonic() >= deadline:
+                return shown == want
+            time.sleep(0.5)
 
 
 def group_by_type(ctx):
@@ -415,20 +414,26 @@ def measure_tip(ctx):
     """Rest the pointer on a file and read its info tip, a tooltip window."""
     fresh(ctx)
     set_mode(ctx, "ctrl+shift+2")
+    def tips():
+        return [w for w in ctx.live.children(ctx.live.uia.GetRootElement()) if w.control_type == "ToolTip" and w.name]
+    # A tooltip already on the desktop before the hover is not the file's info
+    # tip (review, 2026-11-21): only one File Explorer owns, or one the hover
+    # brought up, is read.
+    before = {(w.name, w.bounds[:2]) for w in tips()}
     ctx.hover(item(ctx, "Sample document"), settle=0.5)
-    deadline = time.monotonic() + TIP_WAIT
-    while True:
-        # A tooltip is a window File Explorer owns, so UI Automation may list
-        # it under the File Explorer window as well as on the desktop.
-        tops = list(ctx.live.children(ctx.live.uia.GetRootElement()))
-        tip = next((w for w in tops if w.control_type == "ToolTip" and w.name), None)
-        if tip is None:
+    with ctx.within(TIP_WAIT) as deadline:
+        while True:
+            # A tooltip is a window File Explorer owns, so UI Automation may list
+            # it under the File Explorer window as well as on the desktop.
             tip = next((w for w in owned_windows(ctx) if w.control_type == "ToolTip" and w.name), None)
-        if tip is not None:
-            break
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"no info tip within {TIP_WAIT} s of resting on Sample document")
-        time.sleep(0.3)
+            if tip is None:
+                tip = next((w for w in tips() if (w.name, w.bounds[:2]) not in before
+                            and not w.offscreen), None)
+            if tip is not None:
+                break
+            if time.monotonic() > deadline:
+                raise core.Incomplete(f"no info tip within {TIP_WAIT} s of resting on Sample document")
+            time.sleep(0.3)
     _m["tip"] = (tip.name or "").splitlines()
     ctx.hover_point(10, 10)
 

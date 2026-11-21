@@ -138,9 +138,11 @@ def cloud_entry(ctx):
     _root["cloud"] = True
 
 
-def descendants(ctx, el, depth, skip=()):
+def descendants(ctx, el, depth, skip=(), stop=None):
     """Every element under `el` to `depth` levels, from the raw view, without
-    going into an element whose class is in `skip`."""
+    going into an element whose class is in `skip`. `stop(element)` ends the
+    look at the first element it accepts (a readiness poll needs no more), and
+    the look ends with core.Incomplete once the poll it runs in is overdue."""
     # One budget for the whole look, charged as each parent's children come and
     # before the skip filter, as the walk's is (review, 2026-11-21): a wide tree
     # is refused rather than read whole.
@@ -149,12 +151,14 @@ def descendants(ctx, el, depth, skip=()):
     for _ in range(depth):
         below = []
         for e in level:
-            left = core.MAX_RECORDS - fetched
-            if left <= 0:
-                raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
-            kids = ctx.live.children(e.el, cond, left)
+            if ctx.overdue():
+                raise core.Incomplete(f"the look under {el.name or el.class_name!r} ran past its poll's deadline")
+            kids = ctx.live.children(e.el, cond, core.MAX_RECORDS - fetched)
             fetched += len(kids)
-            below.extend(k for k in kids if k.class_name not in skip)
+            kept = [k for k in kids if k.class_name not in skip]
+            if stop is not None and any(stop(k) for k in kept):
+                return out + below + kept
+            below.extend(kept)
         out.extend(below)
         if not below:
             break

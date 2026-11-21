@@ -526,23 +526,35 @@ def open_conflict(compare=False):
 # kill, which would save the scene's own 0) and put back exactly: absent, 0 or 1.
 MERGE_KEY = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
 MERGE_SAVED = "$env:TEMP\\inventory-merge.txt"
+# Every step stops on its first error, and the saved value is deleted only once
+# the registry is seen to hold it again (review, 2026-11-21): a restore that
+# failed keeps its record for the next run to retry.
 SHOW_MERGE = r"""
+$ErrorActionPreference = 'Stop'
 $saved = "%s"
 if (-not (Test-Path -LiteralPath $saved)) {
-    $v = (Get-ItemProperty -Path '%s' -Name HideMergeConflicts -ErrorAction SilentlyContinue).HideMergeConflicts
-    $(if ($null -eq $v) { 'absent' } else { [string]$v }) | Set-Content -LiteralPath $saved -Encoding ASCII
+    $p = Get-ItemProperty -Path '%s'
+    $v = if ($p.PSObject.Properties.Name -contains 'HideMergeConflicts') { [string]$p.HideMergeConflicts } else { 'absent' }
+    Set-Content -LiteralPath $saved -Value $v -Encoding ASCII
 }
 Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value 0 -Type DWord
 """ % (MERGE_SAVED, MERGE_KEY, MERGE_KEY)
 HIDE_MERGE = r"""
+$ErrorActionPreference = 'Stop'
 $saved = "%s"
+$key = '%s'
 if (Test-Path -LiteralPath $saved) {
     $v = (Get-Content -LiteralPath $saved -Raw).Trim()
-    if ($v -eq 'absent') { Remove-ItemProperty -Path '%s' -Name HideMergeConflicts -ErrorAction SilentlyContinue }
-    else { Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value ([int]$v) -Type DWord }
+    $p = Get-ItemProperty -Path $key
+    $has = $p.PSObject.Properties.Name -contains 'HideMergeConflicts'
+    if ($v -eq 'absent') { if ($has) { Remove-ItemProperty -Path $key -Name HideMergeConflicts } }
+    else { Set-ItemProperty -Path $key -Name HideMergeConflicts -Value ([int]$v) -Type DWord }
+    $p = Get-ItemProperty -Path $key
+    $now = if ($p.PSObject.Properties.Name -contains 'HideMergeConflicts') { [string]$p.HideMergeConflicts } else { 'absent' }
+    if ($now -ne $v) { throw "HideMergeConflicts is $now, not the saved $v" }
     Remove-Item -LiteralPath $saved -Force
 }
-""" % (MERGE_SAVED, MERGE_KEY, MERGE_KEY)
+""" % (MERGE_SAVED, MERGE_KEY)
 MERGE_TEXT = "already contains a folder named"
 # The prompt's message sits in elements the control view does not list
 # (2026-11-20), so the opener keeps its lines and METRICS records them, each

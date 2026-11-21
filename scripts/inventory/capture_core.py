@@ -65,6 +65,38 @@ MAX_RECORDS = 20000
 MAX_VISITS = 4 * MAX_RECORDS   # elements read, excluded and hosting ones included
 POSITIONAL = "--"              # marks a segment told apart only by position; slug() never makes it
 
+class Polls:
+    """The deadlines of the polls in progress, innermost last. A surface's Context
+    takes them, so every find, window lookup and bounded look made inside a poll
+    ends by that poll's deadline."""
+
+    @contextlib.contextmanager
+    def within(self, seconds):
+        """A poll's deadline. Every find, find_window and bounded look made under
+        it ends by it, whatever timeout the helper passes: four polls outlived
+        their own deadline inside a helper's 15 or 20 s wait (review, 2026-11-21),
+        and a deadline each helper had to be handed would leave the next one out."""
+        end = time.monotonic() + seconds
+        ends = self.__dict__.setdefault("_poll_ends", [])
+        if ends:
+            end = min(end, ends[-1])
+        ends.append(end)
+        try:
+            yield end
+        finally:
+            ends.pop()
+
+    def capped(self, timeout):
+        """`timeout`, cut to what is left of the poll this runs in."""
+        ends = self.__dict__.get("_poll_ends")
+        if not ends:
+            return timeout
+        return max(0.0, min(timeout, ends[-1] - time.monotonic()))
+
+    def overdue(self):
+        ends = self.__dict__.get("_poll_ends")
+        return bool(ends) and time.monotonic() > ends[-1]
+
 
 class Incomplete(Exception):
     """The capture did not see the whole surface; nothing may be published from it."""

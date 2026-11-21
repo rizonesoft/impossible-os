@@ -253,12 +253,12 @@ def press(ctx, within, click=False, **spec):
         seen = [(k.control_type, k.name) for k in descendants(ctx, within, 4)
                 if k.control_type in ("Button", "Hyperlink", "SplitButton", "MenuItem")]
         raise core.Incomplete(f"no element matching {spec}; the buttons and links there are {seen[:40]}") from None
-    deadline = time.monotonic() + ENABLE_WAIT
-    while not el.enabled:
-        if time.monotonic() > deadline:
-            raise core.Incomplete(f"{el.name!r} stayed disabled for {ENABLE_WAIT} s")
-        time.sleep(0.5)
-        el = ctx.find(within=within, depth=6, **spec)
+    with ctx.within(ENABLE_WAIT) as deadline:         # the refreshing find ends by it too
+        while not el.enabled:
+            if time.monotonic() > deadline:
+                raise core.Incomplete(f"{el.name!r} stayed disabled for {ENABLE_WAIT} s")
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+            el = ctx.find(within=within, depth=6, **spec)
     if click:
         ctx.click(el)
     else:
@@ -282,10 +282,7 @@ def quiet(ctx, el):
             for e in level:
                 if time.monotonic() > deadline:
                     return sorted(out)
-                left = core.MAX_RECORDS - len(out)
-                if left <= 0:
-                    raise core.Incomplete(f"{el.name or el.class_name!r} holds more than {core.MAX_RECORDS} elements")
-                kids = ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition(), left)
+                kids = ctx.live.children(e.el, ctx.live.uia.CreateTrueCondition(), core.MAX_RECORDS - len(out))
                 out.extend((k.control_type, k.name, tuple(k.bounds)) for k in kids)
                 below.extend(kids)
             if not below:

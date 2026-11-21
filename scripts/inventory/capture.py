@@ -27,7 +27,7 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
 4. Runs check-inventory.py over a scratch copy of the inventory holding the new
    file; a file that fails is not published.
 5. Publishes docs/design/inventory/<surface>/<file>.json, moves the screenshots
-   to the store (D:\\11\\ref-shots\\<surface>\\<state>.<profile>.png) and records
+   to the store (D:\\11\\ref-shots\\<surface>\\<state>.<profile>.<sha16>.png) and records
    each in docs/design/inventory/shots.json (surface, state, profile, size,
    SHA-256); writes build/inventory/<surface>-unnamed.json for hand labels.
 
@@ -127,6 +127,41 @@ def load_manifest(path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
+def shot_path(store, entry):
+    """Where a manifest entry's screenshot lives: named by its digest, so a
+    publish never replaces bytes another checkout's manifest still names
+    (review, 2026-11-21: two checkouts share one store, and a path keyed by
+    surface, state and profile alone let the second overwrite the first's shot).
+    Identical bytes share one file."""
+    return store / entry["surface"] / f"{entry['state']}.{entry['profile']}.{entry['sha256'][:SHOT_KEY]}.png"
+
+
+SHOT_KEY = 16                     # hex digits of the SHA-256 in a stored shot's name
+
+
+def legacy_shot_path(store, entry):
+    return store / entry["surface"] / f"{entry['state']}.{entry['profile']}.png"
+
+
+def migrate_store(manifest, store):
+    """Copy each entry's shot from its old name (<state>.<profile>.png) to its
+    digest name, when the bytes there are the ones the entry records. The old
+    file stays for a checkout that has not moved yet. Returns (copied, missing)."""
+    copied, missing = 0, []
+    for e in manifest:
+        new, old = shot_path(store, e), legacy_shot_path(store, e)
+        if new.is_file():
+            continue
+        if old.is_file() and old.stat().st_size == e["size"] and sha256(old) == e["sha256"]:
+            tmp = new.with_name(f".{new.name}.{os.getpid()}.tmp")
+            shutil.copyfile(old, tmp)
+            os.replace(tmp, new)
+            copied += 1
+        else:
+            missing.append(str(old))
+    return copied, missing
+
+
 def verify_shots(manifest, store):
     """Messages for every manifest entry whose stored file is missing or changed."""
     out = []
@@ -134,12 +169,12 @@ def verify_shots(manifest, store):
     for e in manifest:
         owners.setdefault((e["surface"], e["state"], e["profile"]), []).append(e.get("file"))
     for e in manifest:
-        f = store / e["surface"] / f"{e['state']}.{e['profile']}.png"
+        f = shot_path(store, e)
         files = owners[(e["surface"], e["state"], e["profile"])]
         if len(files) > 1:
-            # One store path, two records: the later capture overwrote the
-            # other's shot (session secure and setup, 2026-11-18).
-            msg = f"shared: {f} is claimed by {', '.join(sorted(str(x) for x in files))}"
+            # One state, two record files: before digest names, the later
+            # capture overwrote the other's shot (session secure and setup, 2026-11-18).
+            msg = f"shared: {legacy_shot_path(store, e)} is claimed by {', '.join(sorted(str(x) for x in files))}"
             if msg not in out:
                 out.append(msg)
         elif not f.is_file():
@@ -444,14 +479,19 @@ def publish(target, records, surface, out, states, manifest_path, store, *, prof
             state, p = s["file"][: -len(".png")].rsplit(".", 1)
             if p != profile:
                 raise OSError(f"{s['file']}: taken at {p}, but this capture is {profile}")
-            tmp = dest / f".{s['file']}.{os.getpid()}.tmp"
+            digest = sha256(src)
+            entry = {"surface": surface, "file": file, "state": state, "profile": p, "width": s["width"],
+                     "height": s["height"], "size": src.stat().st_size, "sha256": digest,
+                     **{k: s[k] for k in SHOT_DETAIL if k in s}}
+            final = shot_path(store, entry)
+            manifest.append(entry)
+            if final.is_file() and sha256(final) == digest:
+                continue                  # these bytes are stored already; nothing to swap
+            tmp = dest / f".{final.name}.{os.getpid()}.tmp"
             shutil.copyfile(src, tmp)
-            staged.append((tmp, dest / s["file"]))
-            if sha256(tmp) != sha256(src):
+            staged.append((tmp, final))
+            if sha256(tmp) != digest:
                 raise OSError(f"{tmp}: the copy differs from {src}")
-            manifest.append({"surface": surface, "file": file, "state": state, "profile": p, "width": s["width"],
-                             "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src),
-                             **{k: s[k] for k in SHOT_DETAIL if k in s}})
         manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
         man_tmp = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
         man_tmp.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
@@ -547,10 +587,23 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fixture", action="store_true", help="also keep the walked tree, for a test fixture")
     ap.add_argument("--verify-shots", action="store_true")
+    ap.add_argument("--migrate-store", action="store_true",
+                    help="copy each shot in shots.json from its old name to its digest name, once per store")
     ap.add_argument("--prepare", metavar="NAME[:VARIANT]", help="run this capture fixture before the walk")
     ap.add_argument("--standin", metavar="VARIANT", help="capture on the stand-in machine in this variant")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args(argv)
+    if args.migrate_store:
+        try:
+            with held():
+                copied, missing = migrate_store(load_manifest(SHOTS_MANIFEST), STORE)
+        except BlockingIOError as exc:
+            print(f"capture: {exc}; run one at a time")
+            return 4
+        for m in missing:
+            print(f"missing: {m}")
+        print(f"shots: {copied} copied to their digest names, {len(missing)} not found as recorded")
+        return 1 if missing else 0
     if args.verify_shots:
         bad = verify_shots(load_manifest(SHOTS_MANIFEST), STORE)
         for b in bad:

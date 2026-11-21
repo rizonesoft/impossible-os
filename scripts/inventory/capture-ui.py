@@ -17,6 +17,7 @@ never settled, a walk error) writes complete: false and exits 3; capture.py then
 publishes nothing. --dump writes the tree itself, as a test fixture.
 """
 import argparse
+import contextlib
 import ctypes
 import importlib.util
 import json
@@ -481,7 +482,7 @@ class LiveElement:
         self._opened = {}
 
 
-class Context:
+class Context(core.Polls):
     """What a surface module may use to open, find and close its surface."""
 
     def __init__(self, live):
@@ -489,6 +490,7 @@ class Context:
         self.keys = keys
         self.hold = hold
         self.release = release
+
 
     def launch(self, *argv):
         return subprocess.Popen(list(argv))
@@ -609,6 +611,7 @@ class Context:
         (the desktop when None) to `depth` levels, waiting up to `timeout` s.
         Offscreen containers are searched too: a WinUI menu's popup window
         reports offscreen while its entries are on screen."""
+        timeout = self.capped(timeout)
         deadline = time.monotonic() + timeout
         while True:
             level = [within] if within is not None else None
@@ -641,6 +644,7 @@ class Context:
         and clipboard panel is an ApplicationFrameWindow, the class Settings and
         other apps also run in, and it closes when it is brought forward
         (2026-11-18), so the caller that knows it is light-dismissed says so."""
+        timeout = self.capped(timeout)
         deadline = time.monotonic() + timeout
         while True:                  # one look at least: timeout=0 is a single check
             # The raw view: a classic menu's #32768 window is not a control

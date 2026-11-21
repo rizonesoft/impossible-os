@@ -47,6 +47,10 @@ def load(name, path):
 
 
 core = load("capture_core", INV / "capture_core.py")
+
+
+class Ctx(types.SimpleNamespace, core.Polls):
+    """A surface Context stand-in: the attributes given, plus the real poll deadlines."""
 capture = load("capture_host", INV / "capture.py")
 guest = load("capture_ui", INV / "capture-ui.py")
 smoke = load("surface_notepad_smoke", INV / "surfaces" / "notepad-smoke.py")
@@ -1791,6 +1795,12 @@ class Shots(unittest.TestCase):
         capture.publish(target or self.target, list(records), "notepad-smoke", self.out, states or self.STATE,
                         self.manifest, self.store, profile=profile, journal=self.journal, file=file)
 
+    def stored(self, surface="notepad-smoke", state="rest", profile="fhd-100"):
+        """The store path of a published shot, from the manifest (shots are named by digest)."""
+        e = next(e for e in json.loads(self.manifest.read_text())
+                 if (e["surface"], e["state"], e["profile"]) == (surface, state, profile))
+        return capture.shot_path(self.store, e)
+
     def shot(self, name):
         core.write_png(self.out / "shots" / "notepad-smoke" / name, 2, 1, b"\xff\x00\x00\x00\xff\x00")
         return {"state": name.rsplit(".", 2)[0], "file": name, "width": 2, "height": 1}
@@ -1856,16 +1866,48 @@ class Shots(unittest.TestCase):
             self.publish(profile="fhd-150")
         self.assertFalse(self.target.exists())
 
+    def test_two_checkouts_publishing_one_state_keep_both_shots(self):
+        # Checkout A publishes, then checkout B (its own manifest) publishes other
+        # pixels for the same surface, state and profile: A's manifest must still
+        # verify against the shared store (review, 2026-11-21).
+        self.publish()
+        a = json.loads(self.manifest.read_text())
+        b_manifest = self.tmp / "b-shots.json"
+        core.write_png(self.out / "shots" / "notepad-smoke" / "rest.fhd-100.png", 2, 1, b"\x00\x00\xff\x00\xff\x00")
+        capture.publish(self.tmp / "b" / "window.json", [{"id": "win11.notepad-smoke.window", "label": "B"}],
+                        "notepad-smoke", self.out, self.STATE, b_manifest, self.store, profile="fhd-100",
+                        journal=self.tmp / "b.journal")
+        b = json.loads(b_manifest.read_text())
+        mine = lambda m: [e for e in m if e["surface"] == "notepad-smoke"]        # noqa: E731
+        self.assertNotEqual(mine(a)[0]["sha256"], mine(b)[0]["sha256"])
+        self.assertEqual(capture.verify_shots(mine(a), self.store), [])
+        self.assertEqual(capture.verify_shots(mine(b), self.store), [])
+
+    def test_the_store_moves_to_digest_names_once(self):
+        self.publish()
+        entry = next(e for e in json.loads(self.manifest.read_text()) if e["surface"] == "notepad-smoke")
+        new, old = capture.shot_path(self.store, entry), capture.legacy_shot_path(self.store, entry)
+        os.replace(new, old)                                    # a store written before digest names
+        copied, missing = capture.migrate_store([entry], self.store)
+        self.assertEqual((copied, missing), (1, []))
+        self.assertTrue(new.is_file() and old.is_file())        # the old name stays for an older checkout
+        self.assertEqual(capture.migrate_store([entry], self.store), (0, []))
+        old.write_bytes(b"other")
+        new.unlink()
+        self.assertEqual(capture.migrate_store([entry], self.store), (0, [str(old)]))   # bytes not as recorded
+
     def test_publish_then_verify(self):
         self.publish()
         manifest = json.loads(self.manifest.read_text())
         self.assertEqual([(e["surface"], e["state"], e["profile"]) for e in manifest],
                          [("notepad-smoke", "rest", "fhd-100"), ("other", "rest", "fhd-100")])
-        (self.store / "other").mkdir()
-        (self.store / "other" / "rest.fhd-100.png").write_bytes(b"x")
+        other = capture.shot_path(self.store, manifest[1])
+        self.assertEqual(other.name, "rest.fhd-100." + "0" * 16 + ".png")
+        other.parent.mkdir()
+        other.write_bytes(b"x")
         bad = capture.verify_shots(manifest, self.store)
-        self.assertEqual(bad, [f"changed: {self.store / 'other' / 'rest.fhd-100.png'}"])
-        (self.store / "notepad-smoke" / "rest.fhd-100.png").unlink()
+        self.assertEqual(bad, [f"changed: {other}"])
+        self.stored().unlink()
         self.assertEqual(len(capture.verify_shots(manifest, self.store)), 2)
 
     def test_a_host_shot_records_its_source_size_and_depth(self):
@@ -1889,7 +1931,7 @@ class Shots(unittest.TestCase):
 
     def test_a_failed_publication_leaves_the_previous_one_whole(self):
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
-        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.stored())}
         (self.out / "shots" / "notepad-smoke" / "rest.fhd-100.png").unlink()     # the second shot cannot be copied
         with self.assertRaises(OSError):
             self.publish([{"id": "win11.notepad-smoke.window", "label": "New"}])
@@ -1899,7 +1941,7 @@ class Shots(unittest.TestCase):
 
     def test_a_failure_during_the_swap_puts_everything_back(self):
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
-        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.stored())}
         real = capture.os.replace
         calls = []
 
@@ -1923,7 +1965,7 @@ class Shots(unittest.TestCase):
         # store path has no file in it, so setup's shot replaced secure's
         # while both kept their manifest entries (2026-11-18).
         self.publish()                                                     # window: rest
-        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.stored())}
         other = self.target.with_name("menu.json")
         with self.assertRaisesRegex(OSError, r"rest\.fhd-100\.png \(published for window\)"):
             self.publish([{"id": "win11.notepad-smoke.menu", "label": "Menu"}], target=other, states=[self.shot("rest.fhd-100.png")])
@@ -1941,7 +1983,7 @@ class Shots(unittest.TestCase):
 
     def test_two_shots_with_one_file_name_publish_nothing(self):
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
-        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.stored())}
         with self.assertRaises(OSError):
             capture.publish(self.target, [{"id": "x"}], "notepad-smoke", self.out, self.STATE * 2,
                             self.manifest, self.store, profile="fhd-100", journal=self.journal)
@@ -1949,7 +1991,7 @@ class Shots(unittest.TestCase):
 
     def test_a_kill_part_way_is_rolled_back_by_the_next_run(self):
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
-        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.stored())}
         # A child process publishes and dies (os._exit: no handler runs) as it
         # swaps the records, after the screenshot and the manifest are swapped.
         script = f"""
@@ -1983,7 +2025,7 @@ capture.publish(t / "inventory" / "notepad-smoke" / "window.json", [{{"id": "win
         # the shared store); checkout B's next run must find it and roll it back
         # before it publishes, so A has nothing left to undo later (review, 2026-11-21).
         self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
-        shot = self.store / "notepad-smoke" / "rest.fhd-100.png"
+        shot = self.stored()
         before = {p: p.read_bytes() for p in (self.target, self.manifest, shot)}
         script = f"""
 import importlib.util, os, pathlib
@@ -3114,6 +3156,33 @@ class DesktopMetrics(unittest.TestCase):
         self.assertEqual(len(orders), len(set(orders)))
 
 
+class PollDeadlines(unittest.TestCase):
+    def test_a_helper_wait_ends_with_the_poll_it_runs_in(self):
+        ctx = Ctx()
+        self.assertEqual(ctx.capped(15), 15)                     # no poll: the helper's own wait
+        self.assertFalse(ctx.overdue())
+        with ctx.within(2) as end:
+            self.assertLessEqual(ctx.capped(15), 2)
+            with ctx.within(60) as inner:
+                self.assertEqual(inner, end)                     # an inner poll never outlives its outer one
+            self.assertEqual(ctx.capped(1), 1)
+        with ctx.within(0):
+            time.sleep(0.01)
+            self.assertTrue(ctx.overdue())
+            self.assertEqual(ctx.capped(15), 0.0)
+        self.assertFalse(ctx.overdue())
+
+    def test_a_find_inside_a_poll_ends_with_the_poll(self):
+        live = types.SimpleNamespace(children=lambda el: [], uia=types.SimpleNamespace(GetRootElement=lambda: None),
+                                     COMError=OSError)
+        ctx = guest.Context(live)
+        start = time.monotonic()
+        with ctx.within(0.3):
+            with self.assertRaises(guest.core.Incomplete):
+                ctx.find(timeout=15, name="Never")
+        self.assertLess(time.monotonic() - start, 2)          # not the helper's own 15 s
+
+
 class ExplorerDescendants(unittest.TestCase):
     """shared/explorer_window.py descendants(): one element budget for the look."""
 
@@ -3133,7 +3202,7 @@ class ExplorerDescendants(unittest.TestCase):
             if len(e) > limit:
                 raise self.ew.core.Incomplete("over")
             return e
-        ctx = types.SimpleNamespace(live=types.SimpleNamespace(
+        ctx = Ctx(live=types.SimpleNamespace(
             children=children, uia=types.SimpleNamespace(CreateTrueCondition=lambda: None)))
         saved = self.ew.core.MAX_RECORDS
         self.ew.core.MAX_RECORDS = 5
@@ -3146,6 +3215,39 @@ class ExplorerDescendants(unittest.TestCase):
             self.assertEqual(skipped, [])               # a skipped parent's children are never fetched
         finally:
             self.ew.core.MAX_RECORDS = saved
+
+    def ctx(self):
+        def children(e, cond, limit):
+            if len(e) > limit:
+                raise self.ew.core.Incomplete("over")
+            return e
+        return Ctx(live=types.SimpleNamespace(children=children,
+                                              uia=types.SimpleNamespace(CreateTrueCondition=lambda: None)))
+
+    def test_a_tree_exactly_at_the_limit_is_read_whole(self):
+        leaf = lambda: types.SimpleNamespace(class_name="Leaf", name="x", el=[])   # noqa: E731
+        root = types.SimpleNamespace(class_name="Root", name="r", el=[leaf(), leaf()])
+        saved = self.ew.core.MAX_RECORDS
+        self.ew.core.MAX_RECORDS = 2
+        try:
+            self.assertEqual(len(self.ew.descendants(self.ctx(), root, 2)), 2)     # leaves have no children
+            root.el[0].el.append(leaf())                                          # one more is one too many
+            with self.assertRaises(self.ew.core.Incomplete):
+                self.ew.descendants(self.ctx(), root, 2)
+        finally:
+            self.ew.core.MAX_RECORDS = saved
+
+    def test_a_look_stops_at_what_it_waits_for_and_at_its_poll_deadline(self):
+        leaf = lambda n: types.SimpleNamespace(class_name="Leaf", name=n, el=[])  # noqa: E731
+        deep = types.SimpleNamespace(class_name="Group", name="g", el=[leaf("deep")])
+        root = types.SimpleNamespace(class_name="Root", name="r", el=[leaf("want"), deep])
+        found = self.ew.descendants(self.ctx(), root, 3, stop=lambda k: k.name == "want")
+        self.assertNotIn("deep", [k.name for k in found])                         # no level past the match
+        ctx = self.ctx()
+        with ctx.within(0):
+            time.sleep(0.01)
+            with self.assertRaisesRegex(self.ew.core.Incomplete, "deadline"):
+                self.ew.descendants(ctx, root, 3)
 
 
 class ExplorerMenu(unittest.TestCase):
@@ -3160,7 +3262,7 @@ class ExplorerMenu(unittest.TestCase):
         focus = el(control_type="ListItem")
         live = types.SimpleNamespace(uia=types.SimpleNamespace(GetFocusedElement=lambda: focus),
                                      wrap=lambda e: e, _parent=lambda e: None)
-        ctx = types.SimpleNamespace(live=live)
+        ctx = Ctx(live=live)
         with mock.patch.object(self.ew, "window", lambda c: None), \
              mock.patch.object(self.ew, "descendants", lambda c, root, depth, skip=(): tree(el)), \
              mock.patch.object(self.ew, "focused", lambda c: {}), mock.patch.object(self.ew.time, "sleep", lambda s: None):
@@ -3260,6 +3362,27 @@ class ExplorerViews(unittest.TestCase):
         with mock.patch.object(self.m, "window", window):
             self.assertEqual(self.m.owned_windows(None), [])
         self.assertEqual(waits, [0])
+
+    def test_a_tooltip_already_on_the_desktop_is_not_the_info_tip(self):
+        # An unrelated named tooltip present before the hover is never read as the
+        # file's properties (review, 2026-11-21); the one the hover brings up is.
+        stale = types.SimpleNamespace(control_type="ToolTip", name="Other: tip", bounds=(5, 5, 9, 9), offscreen=False)
+        fresh_tip = types.SimpleNamespace(control_type="ToolTip", name="Type: Text Document\nSize: 1 KB",
+                                          bounds=(50, 60, 90, 40), offscreen=False)
+        tops = [stale]
+        ctx = Ctx(live=types.SimpleNamespace(children=lambda el: list(tops),
+                                             uia=types.SimpleNamespace(GetRootElement=lambda: None)),
+                  hover=lambda el, settle=0: tops.append(fresh_tip), hover_point=lambda x, y: None)
+        with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None,
+                                 item=lambda ctx, name: None, owned_windows=lambda ctx: []):
+            self.m.measure_tip(ctx)
+        self.assertEqual(self.m._m["tip"], ["Type: Text Document", "Size: 1 KB"])
+        tops[:] = [stale]
+        with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None, TIP_WAIT=0,
+                                 item=lambda ctx, name: None, owned_windows=lambda ctx: []):
+            ctx.hover = lambda el, settle=0: None
+            with self.assertRaises(self.m.core.Incomplete):
+                self.m.measure_tip(ctx)
 
     def test_a_measured_item_off_screen_is_brought_into_view(self):
         shown = {self.m.ONE_LINE: {"box": [0, 0, 1, 1], "label": [0, 0, 1, 1]}}
@@ -3517,7 +3640,7 @@ class ExplorerDialogs(unittest.TestCase):
         live = types.SimpleNamespace(wrap=lambda h: roots[h], uia=types.SimpleNamespace(
             ElementFromHandle=lambda h: h, CreateTrueCondition=lambda: None),
             children=lambda e, cond: e, COMError=OSError)
-        return types.SimpleNamespace(live=live)
+        return Ctx(live=live)
 
     def test_a_window_that_only_holds_a_tooltip_is_no_scene_window(self):
         dw = sys.modules["dialog_window"]
@@ -3553,10 +3676,10 @@ class ExplorerDialogs(unittest.TestCase):
         dw.core.MAX_RECORDS = 2
         try:
             with self.assertRaises(dw.core.Incomplete):
-                dw.quiet(types.SimpleNamespace(live=live), el)
+                dw.quiet(Ctx(live=live), el)
         finally:
             dw.core.MAX_RECORDS = saved
-        self.assertEqual(asked, [2])                            # the second level is refused before any fetch
+        self.assertEqual(asked, [2, 0])                         # the next fetch has nothing left, and finds a child
 
     def test_a_renamed_window_is_not_a_new_one(self):
         dw = sys.modules["dialog_window"]
@@ -3566,7 +3689,7 @@ class ExplorerDialogs(unittest.TestCase):
         saved = dw.top_windows
         dw.top_windows = lambda ctx: now
         try:
-            self.assertEqual(dw.appeared(types.SimpleNamespace(live=live), before, wait=0), ("wrapped", 12))
+            self.assertEqual(dw.appeared(Ctx(live=live), before, wait=0), ("wrapped", 12))
         finally:
             dw.top_windows = saved
 
@@ -3579,7 +3702,7 @@ class ExplorerDialogs(unittest.TestCase):
         saved = dw.win32_windows, dw.tooltip_only
         dw.win32_windows, dw.tooltip_only = (lambda: {(7, "#32770", "Open")}), (lambda ctx, w: False)
         try:
-            self.assertEqual(dw.top_windows(types.SimpleNamespace(live=live)), {(7, "#32770", "Open")})
+            self.assertEqual(dw.top_windows(Ctx(live=live)), {(7, "#32770", "Open")})
         finally:
             dw.win32_windows, dw.tooltip_only = saved
 
@@ -3590,7 +3713,7 @@ class ExplorerDialogs(unittest.TestCase):
         kids = [btn("Close", False), btn("Yes", True), btn("No", True)]
         live = types.SimpleNamespace(wrap=lambda e: e, uia=types.SimpleNamespace(ElementFromHandle=lambda h: h),
                                      COMError=OSError)
-        ctx = types.SimpleNamespace(live=live, invoke=lambda el: pressed.append(el.name))
+        ctx = Ctx(live=live, invoke=lambda el: pressed.append(el.name))
         saved = dw.descendants
         dw.descendants = lambda c, el, depth: kids
         try:
@@ -3628,9 +3751,43 @@ class ExplorerDialogs(unittest.TestCase):
         show, hide = self.m.SHOW_MERGE, self.m.HIDE_MERGE
         self.assertLess(show.index("Test-Path -LiteralPath $saved"), show.index("-Value 0"))
         self.assertIn("'absent'", show)
-        self.assertIn("if ($v -eq 'absent') { Remove-ItemProperty", hide)
-        self.assertIn("-Value ([int]$v)", hide)
-        self.assertIn("Remove-Item -LiteralPath $saved", hide)
+        self.assertIn("$ErrorActionPreference = 'Stop'", show)
+        self.assertIn("$ErrorActionPreference = 'Stop'", hide)
+        self.assertLess(hide.index("throw"), hide.index("Remove-Item -LiteralPath $saved"))   # deleted only once verified
+
+    @unittest.skipUnless(shutil.which("powershell.exe"), "needs Windows PowerShell for the registry")
+    def test_the_merge_setting_round_trips_through_the_registry(self):
+        # The real scripts against a throwaway key: absent and 1 come back as they
+        # were, and a restore that fails keeps its record for a retry.
+        key = "HKCU:\\Software\\ImpossibleOsInventoryTest%d" % os.getpid()
+        saved = "$env:TEMP\\inventory-merge-test-%d.txt" % os.getpid()
+        show = self.m.SHOW_MERGE.replace(self.m.MERGE_KEY, key).replace(self.m.MERGE_SAVED, saved)
+        hide = self.m.HIDE_MERGE.replace(self.m.MERGE_KEY, key).replace(self.m.MERGE_SAVED, saved)
+
+        def ps(script):
+            r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                               capture_output=True, text=True, timeout=60)
+            return r.returncode, r.stdout.strip()
+        state = ("$p = Get-ItemProperty -Path '%s'; if ($p.PSObject.Properties.Name -contains 'HideMergeConflicts') "
+                 "{ [string]$p.HideMergeConflicts } else { 'absent' }; Test-Path -LiteralPath \"%s\"" % (key, saved))
+        ps("New-Item -Path '%s' -Force | Out-Null" % key)
+        try:
+            self.assertEqual(ps(show)[0], 0)
+            self.assertEqual(ps(state)[1].split(), ["0", "True"])
+            self.assertEqual(ps(hide)[0], 0)
+            self.assertEqual(ps(state)[1].split(), ["absent", "False"])        # absent comes back absent
+            ps("Set-ItemProperty -Path '%s' -Name HideMergeConflicts -Value 1 -Type DWord" % key)
+            self.assertEqual(ps(show)[0], 0)
+            self.assertEqual(ps(show)[0], 0)                                    # a rerun keeps the first saved value
+            ps("Set-Content -LiteralPath \"%s\" -Value nonsense" % saved)       # the restore cannot apply this
+            self.assertNotEqual(ps(hide)[0], 0)
+            self.assertEqual(ps(state)[1].split()[1], "True")                   # its record stays for a retry
+            ps("Set-Content -LiteralPath \"%s\" -Value 1" % saved)
+            self.assertEqual(ps(hide)[0], 0)
+            self.assertEqual(ps(state)[1].split(), ["1", "False"])
+        finally:
+            ps("Remove-Item -Path '%s' -Recurse -Force; Remove-Item -LiteralPath \"%s\" -Force -ErrorAction Ignore"
+               % (key, saved))
 
     def test_the_folder_merge_message_is_recorded_without_its_time(self):
         merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
@@ -3800,24 +3957,35 @@ class DialogsCommon(unittest.TestCase):
     def test_the_credential_prompt_waits_for_its_fields(self):
         kids = [types.SimpleNamespace(automation_id=a) for a in ("CloseButton", "CancelButton")]
         saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
-        self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth: kids), 0
+        seen = []
+
+        def look(ctx, el, depth, stop=None):
+            for k in kids:
+                seen.append(k)
+                if stop is not None and stop(k):
+                    break
+            return kids
+        self.m.descendants, self.m.DIALOG_WAIT = look, 0
         try:
             with self.assertRaises(self.m.core.Incomplete):           # the partial frame of 2026-11-20
-                self.m.credential_ready(None, None)
+                self.m.credential_ready(Ctx(), None)
             kids.extend(types.SimpleNamespace(automation_id=a) for a in self.m.CREDENTIAL_FIELDS)
-            self.m.credential_ready(None, None)
+            kids.append(types.SimpleNamespace(automation_id="Unrelated"))
+            seen.clear()
+            self.m.credential_ready(Ctx(), None)
+            self.assertNotIn("Unrelated", [k.automation_id for k in seen])   # the look stopped at the last field
         finally:
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
 
     def test_the_encoding_slot_is_waited_for(self):
         kids = [types.SimpleNamespace(control_type="Edit", name="File name:")]
         saved_d, saved_w = self.m.descendants, self.m.DIALOG_WAIT
-        self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth: kids), 0
+        self.m.descendants, self.m.DIALOG_WAIT = (lambda ctx, el, depth, stop=None: kids), 0
         try:
             with self.assertRaises(self.m.core.Incomplete):           # an uncustomised dialog
-                self.m.encoding_ready(None, None)
+                self.m.encoding_ready(Ctx(), None)
             kids.append(types.SimpleNamespace(control_type="ComboBox", name="Encoding:"))
-            self.m.encoding_ready(None, None)
+            self.m.encoding_ready(Ctx(), None)
         finally:
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
         self.assertIn("save-as-encoding", [sc["slug"] for sc in self.m.SCENES])
