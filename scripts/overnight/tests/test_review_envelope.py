@@ -67,6 +67,22 @@ def test_all_clean_exits_zero():
         assert env["needs_redispatch"] == []
 
 
+def test_a_quoted_clean_line_never_hides_a_failed_exit():
+    # A review can quote an earlier "Turn completed (rc=0)"; the dispatcher's
+    # <log>.done (and, without it, the LAST terminal line) is the real status.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        body = "quoting: \nTurn completed (rc=0)\nok\nTurn completed (rc=1)\n"
+        _build(root, {"adversarial": body, "consistency": body})
+        rev = root / ".claude" / "overnight" / "reviews"
+        (rev / "adversarial.out.done").write_text("1\n")
+        rc, env = _run(root)
+        for kind in ("adversarial", "consistency"):
+            assert env["kinds"][kind]["rc"] == 1, (kind, env["kinds"][kind])
+            assert env["kinds"][kind]["crashed"] is True
+            assert kind in env["needs_redispatch"]
+
+
 def test_missing_leg_needs_redispatch():
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)

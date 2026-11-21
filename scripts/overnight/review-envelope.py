@@ -63,9 +63,15 @@ def leg_summary(entry: dict) -> dict:
     # Crash detection: an explicit rc != 0 in the completion marker, OR a known
     # Codex crash signature anywhere in the leg output. A crashed leg is NOT a
     # valid verdict even though its "Turn completed" marker is present.
-    rc_m = RC_RE.search(text)
-    if rc_m:
-        out["rc"] = int(rc_m.group(1))
+    # The dispatcher's <log>.done holds the real exit status; without it (an
+    # older log) the LAST terminal line counts, since a review can quote one.
+    try:
+        out["rc"] = int(Path(str(path) + ".done").read_text().strip())
+        out["complete"] = True
+    except (OSError, ValueError):  # fail-direction: falls back to the transcript's last line
+        rc_all = RC_RE.findall(text)
+        if rc_all:
+            out["rc"] = int(rc_all[-1])
     if (out["rc"] is not None and out["rc"] != 0) or \
             any(sig in text for sig in CRASH_SIGNATURES):
         out["crashed"] = True

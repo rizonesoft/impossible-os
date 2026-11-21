@@ -283,9 +283,6 @@ if [ -n "$LOG_FILE" ]; then
             echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_FILE" >&2; }
     fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
-    # The waiter ends on this file, never on log text: a live review can print
-    # anything, including a line that looks like the one above.
-    echo "$rc" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
     PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
     # Written by a JSON serializer: a path or TODO name holding a quote, a
     # backslash or a newline must not produce a line no reader can parse.
@@ -295,6 +292,10 @@ if [ -n "$LOG_FILE" ]; then
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" \
         || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
+    # Published LAST, after the receipt: the waiter ends on this file, never on
+    # log text (a live review can print a line that looks like the one above),
+    # and whoever it releases reads the receipt next.
+    echo "$rc" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
     exit "$rc"
 fi
 # No writable reviews directory: behave exactly as before (nothing retained).
