@@ -1,5 +1,6 @@
 """tooling-doctor.sh reads install-hooks.sh --status by its labels; a renamed label must not drop a row."""
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -209,7 +210,8 @@ def test_remove_undoes_a_worktree_scoped_install(tmp_path):
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=_env())
     assert r.returncode == 0 and "inert" in r.stdout, r
-    assert _cfg(root, "--get", "core.hooksPath", check=False).returncode == 1
+    # The install went on top of the worktree's own value, so removing it brings that value back.
+    assert _cfg(root, "--worktree", "--get-all", "core.hooksPath").stdout == "/custom\n"
 
 
 def test_status_and_the_doctor_show_a_value_that_only_reads_as_githooks(tmp_path):
@@ -294,3 +296,31 @@ def test_install_refuses_a_command_line_githooks_over_an_unset_value(tmp_path):
     assert r.returncode != 0 and "outranks every config file" in r.stderr, r
     assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1
     assert not list(root.joinpath(".git").glob(".impossible-os-prepush"))          # no sentinel either
+
+
+def test_remove_under_a_command_line_value_changes_nothing(tmp_path):
+    root = _plain_repo(tmp_path)
+    assert subprocess.run(["bash", "scripts/install-hooks.sh", "--with-pre-push"], cwd=root, capture_output=True,
+                          text=True, timeout=60, env=_env()).returncode == 0
+    sentinel = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-path", ".impossible-os-prepush"],
+                              cwd=root, capture_output=True, text=True, timeout=30, env=_env()).stdout.strip()
+    env = {**_env(), "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/custom"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode != 0 and "outranks every config file" in r.stderr, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath").stdout == ".githooks\n"
+    assert os.path.exists(sentinel)
+
+
+def test_install_and_remove_with_two_values_in_one_file(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "--local", "--add", "core.hooksPath", "first")
+    _cfg(root, "--local", "--add", "core.hooksPath", "second")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=_env())
+    assert r.returncode == 0, r
+    assert _cfg(root, "--get", "core.hooksPath").stdout == ".githooks\n"
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0, r
+    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == "first\nsecond\n"

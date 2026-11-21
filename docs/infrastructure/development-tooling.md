@@ -1056,7 +1056,7 @@ bash scripts/install-hooks.sh --status       # print current state
 bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-push sentinel
 ```
 
-`core.hooksPath=.githooks` points git at the repo-tracked `.githooks/` directory so every contributor sees the exact same hook tree without needing a symlink setup per clone. The `.git/hooks/` directory becomes inert once `core.hooksPath` is set -- manual edits there will not fire. The `install-hooks.sh --remove` path also prunes any legacy symlinks that earlier versions of the script left in `.git/hooks/`.
+`core.hooksPath=.githooks` points git at the repo-tracked `.githooks/` directory so every contributor sees the exact same hook tree without needing a symlink setup per clone. The `.git/hooks/` directory becomes inert once `core.hooksPath` is set -- manual edits there will not fire. The installer writes `.githooks` at the scope git reads the setting from, as that scope's last entry, so a value already there stays beneath it and `--remove` brings it back; a value given on the command line or in the environment refuses both install and remove, since it says nothing about what the next plain git command runs. The `install-hooks.sh --remove` path also prunes any legacy symlinks that earlier versions of the script left in `.git/hooks/`.
 
 ### Hook lifecycle
 

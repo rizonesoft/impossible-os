@@ -179,8 +179,6 @@ if [ "$PIN_KIND" = "1" ]; then
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
     CAND_HEAD="$(git rev-parse --quiet --verify 'HEAD^{commit}' 2>/dev/null)" || {
         echo "[$SELF_NAME] BLOCK -- HEAD could not be read" >&2; exit 2; }
-    CAND_WORK="$(work_snapshot)" || {
-        echo "[$SELF_NAME] BLOCK -- the working tree could not be read (reason above)" >&2; exit 2; }
     # The changed files decide the conditional lenses, so a base that cannot
     # be read refuses the pass: an empty list would drop those lenses silently.
     # A section built while the reviewer was down starts at its recorded base, the commit before its code
@@ -243,36 +241,52 @@ if [ "$PIN_KIND" = "1" ]; then
         BASE_OID="$(git rev-parse --quiet --verify "${SECTION_START}^{commit}" 2>/dev/null)" || {
             echo "[$SELF_NAME] BLOCK -- the section's recorded start ${SECTION_START:0:10} is not a commit here" >&2; exit 2; }
     fi
-    # Every base after the plan is on the candidate's own history: a plan or completion receipt left behind
-    # by a reset or rebase would compare unrelated snapshots.
-    if [ "$KIND" != "plan" ] && [ "$BASE_OID" != "$EMPTY_TREE_OID" ] \
+    # Every base is on the candidate's own history: a receipt left behind by a reset or rebase, or a stale
+    # REVIEW_BASE from another branch, would compare unrelated snapshots. (The empty tree, a root's base, is
+    # no commit.)
+    if [ "$BASE_OID" != "$EMPTY_TREE_OID" ] \
             && ! git merge-base --is-ancestor "$BASE_OID" "$CAND_HEAD" 2>/dev/null; then
         echo "[$SELF_NAME] BLOCK -- the section base ${BASE_OID:0:10} is not on the candidate's history (a reset or rebase left it behind); give REVIEW_BASE=<the commit before the section's code>" >&2
         exit 2
     fi
     # Both sides of every rename and every untracked file are part of the candidate: a kernel source moved
     # out, or a new one not yet added, decides its lenses too.
+    # One read gives the working tree's fingerprint and the covered paths from the same status walk; the
+    # launch check below compares a fresh fingerprint against it.
     UNTRACKED_FILE="$PATHS_FILE.untracked"
-    python3 "$CAND_TOOL" paths --base "$BASE_OID" --head "$CAND_HEAD" --exclude "$REVIEWS_DIR" \
-            --out "$PATHS_FILE" --untracked-out "$UNTRACKED_FILE" || {
-        echo "[$SELF_NAME] BLOCK -- the changed files of this pass could not be listed (reason above)" >&2; exit 2; }
+    CAND_WORK="$(python3 "$CAND_TOOL" prepare --base "$BASE_OID" --head "$CAND_HEAD" --exclude "$REVIEWS_DIR" \
+            --out "$PATHS_FILE" --untracked-out "$UNTRACKED_FILE")" || {
+        echo "[$SELF_NAME] BLOCK -- the working tree or the changed files of this pass could not be read (reason above)" >&2; exit 2; }
     PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file "$PATHS_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
     if [ -n "$OWED_BASE" ]; then
         PROMPT="$PROMPT
 
-This section was built while the reviewer was unavailable. Its whole change is: git diff $BASE_OID HEAD"
-    elif [ "$KIND" = "round" ] || [ "$KIND" = "performance" ] || [ "$KIND" = "completion" ]; then
-        # The receipt names this range, so the reviewer is shown it, never left to a default diff.
+This section was built while the reviewer was unavailable."
+    fi
+    if [ -n "$OWED_BASE" ] || [ "$KIND" = "round" ] || [ "$KIND" = "performance" ] || [ "$KIND" = "completion" ]; then
+        # The receipt names this range and fingerprints the working tree, so the reviewer is shown both.
         PROMPT="$PROMPT
 
 This pass reviews the whole section: git diff $BASE_OID $CAND_HEAD, the candidate HEAD $CAND_HEAD, plus the working tree (git diff $CAND_HEAD)."
     fi
+    # Untracked entries appear in no diff. A short list goes in the prompt; a long one is kept beside the
+    # transcript (the reviews directory, which the fingerprint leaves out) and named, since the prompt is one
+    # argument and a long one would not launch.
     if [ -s "$UNTRACKED_FILE" ]; then
-        PROMPT="$PROMPT
+        if [ "$(wc -l < "$UNTRACKED_FILE")" -le 50 ] && [ "$(wc -c < "$UNTRACKED_FILE")" -le 8192 ]; then
+            PROMPT="$PROMPT
 
-These untracked files are part of the candidate and appear in no diff; read each one:
+These untracked entries are part of the candidate and appear in no diff; read each one:
 $(cat "$UNTRACKED_FILE")"
+        else
+            UNTRACKED_KEPT="$(cd "$REVIEWS_DIR" && pwd)/$(date +%Y%m%d-%H%M%S)-$$-${KIND}-untracked.txt"
+            cp "$UNTRACKED_FILE" "$UNTRACKED_KEPT" || {
+                echo "[$SELF_NAME] BLOCK -- the untracked-entry list could not be kept for the reviewer" >&2; exit 2; }
+            PROMPT="$PROMPT
+
+$(wc -l < "$UNTRACKED_FILE") untracked entries are part of the candidate and appear in no diff; read each one listed in $UNTRACKED_KEPT"
+        fi
     fi
     # A reconciliation reviews the newest repair, so it names the repair's two ends (operator, 2026-11-20): the
     # last reviewed candidate, the head of this section's newest checked completion or reconciliation pass, and

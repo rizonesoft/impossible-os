@@ -364,7 +364,7 @@ def section_status(root, todo, section):
     import json
     root = pathlib.Path(root)
     section = str(section)
-    base, seen, older = "", False, False
+    seen, older = False, False
     try:
         lines = (root / MANIFEST).read_text().splitlines()
     except FileNotFoundError:
@@ -383,10 +383,10 @@ def section_status(root, todo, section):
         if e.get("kind") not in SECTION_KINDS:
             continue
         seen = True
-        if e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
-                and isinstance(e.get("head"), str):
-            base = e["head"]
     if seen:
+        # The same checked-plan lookup the dispatcher uses, so a resume and a dispatch name one base, and a
+        # torn line newer than the plan refuses both.
+        base = section_start(root / MANIFEST, todo, section)
         return ("passes", section_base(root, todo, section, base))
     if older:
         return ("older", "")

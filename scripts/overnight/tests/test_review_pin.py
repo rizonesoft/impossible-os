@@ -945,7 +945,9 @@ def test_a_section_is_told_which_review_rules_it_is_on(tmp_path):
     lines = [{"kind": "adversarial", "todo": todo, "section": 8, "head": "a" * 40},
              {"kind": "plan", "todo": todo, "section": 8, "head": "b" * 40, "rc": 3, "pass_checked": True},
              {"kind": "plan", "todo": todo, "section": 9, "head": "c" * 40, "rc": 0, "pass_checked": True}]
-    manifest.write_text("\n".join(json.dumps(e) for e in lines) + "\n{cut short\n")
+    # A torn last line that provably names another TODO; one that may be this TODO's refuses (tested below).
+    torn = '{"ts": 1795170000, "kind": "plan", "todo": "todo/00-x/TODO-02-y.md", "sec'
+    manifest.write_text("\n".join(json.dumps(e) for e in lines) + "\n" + torn + "\n")
     assert rp.section_status(tmp_path, todo, 8) == ("passes", ""), "an incomplete plan is no base"
     assert rp.section_status(tmp_path, todo, 9) == ("passes", "c" * 40)
     assert rp.section_status(tmp_path, todo, 7) == ("older", ""), "its own receipts decide, not another section's"
@@ -1205,3 +1207,132 @@ def test_an_untracked_file_is_named_to_the_reviewer(tmp_path):
     (repo / "fresh.py").write_text("x = 1\n")
     _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
     assert "appear in no diff; read each one:\nfresh.py" in prompt, prompt[-600:]
+
+
+def test_a_reviews_directory_name_is_matched_literally(tmp_path):
+    """A reviews directory named src/* is that one directory: read as a pattern it would hide every source."""
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "src/kernel").mkdir(parents=True)
+    (repo / "src/kernel/new.c").write_text("int x;\n")
+    odd = repo / "src/*"
+    odd.mkdir()
+    (odd / "transcript.out").write_text("grows\n")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD", {"CODEX_REVIEWS_DIR": str(odd)})
+    listed = prompt.split("appear in no diff", 1)[-1]
+    assert "src/kernel/new.c" in listed and "transcript.out" not in listed, prompt[-600:]
+    assert "- concurrency: " in prompt, prompt[-600:]
+
+
+def test_a_link_is_shown_with_its_target_not_as_a_file_to_read(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    (tmp_path / "outside.txt").write_text("secret\n")
+    os.symlink(tmp_path / "outside.txt", repo / "link")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
+    assert f"link (a symbolic link to {tmp_path / 'outside.txt'}: review the link text" in prompt, prompt[-600:]
+
+
+def test_a_long_untracked_list_is_kept_beside_the_transcript(tmp_path):
+    repo, _git = _tmp_repo(tmp_path)
+    for i in range(60):
+        (repo / f"new-{i:02}.txt").write_text(f"{i}\n")
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
+    kept = prompt.split("read each one listed in ", 1)[1].split("\n", 1)[0].strip()
+    assert "60 untracked entries" in prompt and "new-07.txt" not in prompt, prompt[-600:]
+    assert len(open(kept).read().splitlines()) == 60
+
+
+def test_refusal_a_plan_base_from_another_branch(tmp_path):
+    repo, git = _tmp_repo(tmp_path)
+    git("checkout", "-q", "-b", "side")
+    git("commit", "-q", "--allow-empty", "-m", "side")
+    stale = git("rev-parse", "HEAD")
+    git("checkout", "-q", "-")
+    done, prompt = _dispatch_in(repo, tmp_path, "plan", "HIGHEST: none\n", stale)
+    assert done.returncode == 2 and "not on the candidate's history" in done.stderr and prompt == "", done.stderr
+
+
+def test_refusal_a_resume_and_a_dispatch_read_one_section_start(tmp_path):
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / rp.MANIFEST
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(_receipt("plan", "a" * 40) + "\n" + _receipt("plan", "b" * 40)[:60] + "\n")
+    with pytest.raises(rp.Refused):
+        rp.section_status(tmp_path, todo, 99)
+
+
+def test_the_review_dispatch_code_is_in_the_control_plane():
+    import subprocess
+    for rel in ("scripts/review_candidate.py", "scripts/codex-dispatch.sh", "scripts/review_pin.py"):
+        r = subprocess.run(["bash", str(REPO / "scripts/overnight/control-plane-match.sh"), rel],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0 and r.stdout.strip() == rel, (rel, r)
+
+
+def _rc_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rc", REPO / "scripts/review_candidate.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_refusal_a_file_that_grows_while_it_is_read(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "log.txt").write_text("one\n")
+    real, grown = rc.os.read, []
+
+    def read(fd, n):
+        chunk = real(fd, n)
+        if len(grown) < 3:                                              # a writer still appending, then done
+            grown.append(1)
+            with open(repo / "log.txt", "a") as f:
+                f.write("more\n")
+        return chunk
+    monkeypatch.setattr(rc.os, "read", read)
+    with pytest.raises(rc.Refused, match="changed while it was read"):
+        rc._entry(str(repo), b"log.txt")
+
+
+def test_the_fingerprint_is_the_hash_of_exactly_what_it_names(tmp_path, monkeypatch):
+    import hashlib
+    import subprocess
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "t.txt").write_text("one\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "t")
+    (repo / "t.txt").write_text("two\n")
+    monkeypatch.chdir(repo)
+    patch = subprocess.run(["git", "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-renames"],
+                           capture_output=True, check=True, timeout=30).stdout
+    status = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"],
+                            capture_output=True, check=True, timeout=30).stdout
+    assert rc.snapshot() == hashlib.sha256(patch + status).hexdigest()
+
+
+def test_preparing_a_pass_walks_the_status_once(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "u.txt").write_text("u\n")
+    monkeypatch.chdir(repo)
+    calls = []
+    real = rc._status
+    monkeypatch.setattr(rc, "_status", lambda *a: calls.append(a) or real(*a))
+    head = git("rev-parse", "HEAD")
+    _digest, covered, notes = rc.prepare(head, head)
+    assert len(calls) == 1 and covered == [b"u.txt"] and notes == [(b"u.txt", None)]
+
+
+def test_a_repository_with_no_commit_yet_has_a_fingerprint(tmp_path):
+    import subprocess
+    repo = tmp_path / "fresh"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, timeout=30)
+    empty = _snapshot(repo)
+    assert empty.returncode == 0 and empty.stdout.strip() == rp.CLEAN_WORKTREE, empty
+    (repo / "a.txt").write_text("a\n")
+    subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True, timeout=30)
+    staged = _snapshot(repo)
+    assert staged.returncode == 0 and staged.stdout != empty.stdout, staged

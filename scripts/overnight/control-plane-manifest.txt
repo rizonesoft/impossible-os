@@ -104,6 +104,8 @@ scripts/overnight/heartbeat.sh
 scripts/overnight/run-common.sh
 scripts/run.sh
 scripts/review_pin.py
+scripts/review_candidate.py
+scripts/codex-dispatch.sh
 scripts/overnight/ship_count.py
 # CI install steps and their helper: test_ci_toolchain_install.py pins them, and
 # on 2026-11-10 a workflow edit broke that test with no gate running it.

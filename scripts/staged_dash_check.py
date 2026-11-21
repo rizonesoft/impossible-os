@@ -127,22 +127,26 @@ def dash_lines(text: bytes) -> list:
     not part of the line, so a change of line endings never names one new.
     Only dash-bearing lines are built: a large file with one dash allocates
     one line, not all of them."""
-    hits = set()
-    for d in DASHES:
-        at = text.find(d)
-        while at >= 0:
-            hits.add(at)
-            at = text.find(d, at + 1)
-    out, line_no, counted_to, last_start = [], 1, 0, -1
-    for at in sorted(hits):
-        start = text.rfind(b"\n", 0, at) + 1
-        if start == last_start:
-            continue
+    # One forward pass: the next dash of each kind is found once and kept until the scan passes it, and after
+    # a hit the scan resumes past that line's end, so no byte is searched more than once per dash kind.
+    out, pos, line_no, counted_to = [], 0, 1, 0
+    nxt = {d: text.find(d) for d in DASHES}
+    while True:
+        for d, at in nxt.items():
+            if 0 <= at < pos:
+                nxt[d] = text.find(d, pos)
+        live = [at for at in nxt.values() if at >= 0]
+        if not live:
+            return out
+        at = min(live)
+        start = text.rfind(b"\n", pos, at) + 1 or pos
         line_no += text.count(b"\n", counted_to, start)
-        counted_to = last_start = start
+        counted_to = start
         end = text.find(b"\n", at)
         out.append((line_no, text[start:len(text) if end < 0 else end].removesuffix(b"\r")))
-    return out
+        if end < 0:
+            return out
+        pos = end + 1
 
 
 class BlobReader:
@@ -363,7 +367,10 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     `merge_head` is commit-msg's, the MERGE_HEAD file it found."""
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
     per_parent = [changes_from_raw(_git(*diff))]
-    per_parent += [changes_from_raw(_git(*diff, parent)) for parent in (merge_heads(merge_head) if merging else [])]
+    for parent in merge_heads(merge_head) if merging else []:
+        if not per_parent[-1]:
+            break                                          # a path refused gains over every parent: none can now
+        per_parent.append(changes_from_raw(_git(*diff, parent)))
     return [("", per_parent)]
 
 

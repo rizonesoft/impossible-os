@@ -130,7 +130,9 @@ set_hooks_path() {
         echo "ERROR: $HOOKS_DIR not found -- are you in the repo root?"
         exit 1
     fi
-    # The setting is written where git reads it from, decided before anything is written: a worktree-scoped
+    # Added as that scope's last entry, which git reads, so a value already there (one or several) stays
+    # beneath it and --remove brings it back. The setting is written where git reads it from, decided before
+    # anything is written: a worktree-scoped
     # value (extensions.worktreeConfig) outranks the repository's, so writing the repository's alone would
     # report success while git keeps using the other directory; a value given on the command line or in the
     # environment outranks every file, so writing any would change what sibling worktrees and later commands
@@ -148,9 +150,9 @@ set_hooks_path() {
     fi
     case "$HP_SCOPE" in
         worktree)
-            git -C "$PROJECT" config --worktree core.hooksPath .githooks ;;
+            git -C "$PROJECT" config --worktree --add core.hooksPath .githooks ;;
         *)
-            git -C "$PROJECT" config --local core.hooksPath .githooks ;;
+            git -C "$PROJECT" config --local --add core.hooksPath .githooks ;;
     esac
     if ! hooks_path_is_ours; then
         echo "core.hooksPath is still not .githooks after writing it (a higher-priority value wins); nothing enabled" >&2
@@ -219,11 +221,17 @@ remove_all() {
     # directory, or a value inherited from global or system config, is the
     # operator's.
     hooks_path_scoped || return 1
+    # Before any cleanup: under a command-line value, what the next plain git command runs is unknown, so
+    # neither the setting, the pre-push sentinel nor a legacy link is touched.
+    if [ "$HP_SCOPE" = "command" ]; then
+        echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; run --remove without it (nothing changed)" >&2
+        return 1
+    fi
     if [ -z "$HP_SCOPE" ]; then
         echo "core.hooksPath is not set."
     else
         if [ "$HP_VALUE" = ".githooks" ] && { [ "$HP_SCOPE" = "local" ] || [ "$HP_SCOPE" = "worktree" ]; }; then
-            git -C "$PROJECT" config "--$HP_SCOPE" --fixed-value --unset core.hooksPath .githooks \
+            git -C "$PROJECT" config "--$HP_SCOPE" --fixed-value --unset-all core.hooksPath .githooks \
                 || { echo "core.hooksPath could not be unset ($HP_SCOPE config)" >&2; return 1; }
             echo "Unset: core.hooksPath ($HP_SCOPE config, was: .githooks)"
         else

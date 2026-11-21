@@ -668,7 +668,7 @@ def test_commit_msg_passes_the_merge_head_it_found(monkeypatch, tmp_path):
     head = tmp_path / "MERGE_HEAD"
     head.write_text("a" * 40 + "\n")
     monkeypatch.setattr(m, "_git", lambda *a, **k: calls.append(a) or b"")
-    assert m.staged(merge_head=str(head)) == [("", [[], []])]
+    assert m.staged(merge_head=str(head)) == [("", [[]])]          # nothing against HEAD: no other parent read
     assert not any(a[:1] == ("rev-parse",) for a in calls), calls
 
 
@@ -962,42 +962,31 @@ def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
 
 
-def _marker():
-    """A sleep length unique to this test run, so a stand-in left by another run never reads as this one's,
-    and short (about a minute), so one this test fails to end outlives it only briefly."""
-    import uuid
-    return f"61.{uuid.uuid4().int % 10 ** 12}"
+def _stand_in(tmp_path):
+    """(shell commands, pid file) for a stand-in that records its own process id, then sleeps about a minute:
+    each test watches and reaps exactly that process, and one a test fails to end outlives it only briefly."""
+    pidfile = tmp_path / f"stand-in-{len(list(tmp_path.glob('stand-in-*')))}.pid"
+    return f'echo $$ > "{pidfile}"; exec sleep 61', pidfile
 
 
-def _reap(marker):
-    """End every stand-in whose command line holds `marker`: the fixture owns them, whatever the checker did."""
-    import signal
-    for d in Path("/proc").iterdir():
-        if d.name.isdigit():
-            try:
-                if marker.encode() in (d / "cmdline").read_bytes():
-                    os.kill(int(d.name), signal.SIGKILL)
-            except (OSError, ProcessLookupError):          # it ended while it was read: nothing to reap
-                pass
-
-
-def _no_process_runs(marker, seconds=5):
-    """True once no process's command line holds `marker` (within `seconds`)."""
+def _stand_in_ends(pidfile, seconds=5):
+    """True once the recorded stand-in is gone (or never started)."""
     import time
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        alive = []
-        for d in Path("/proc").iterdir():
-            if d.name.isdigit():
-                try:
-                    if marker.encode() in (d / "cmdline").read_bytes() and _helper_state(int(d.name)) not in ("Z", "X", ""):
-                        alive.append(d.name)
-                except OSError:                            # the process ended while it was read
-                    pass
-        if not alive:
+        if not pidfile.exists() or _helper_state(int(pidfile.read_text())) in ("", "Z", "X"):
             return True
         time.sleep(0.05)
     return False
+
+
+def _reap_stand_in(pidfile):
+    """End the recorded stand-in, whatever the code under test did."""
+    import signal
+    try:
+        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+    except (FileNotFoundError, ValueError, ProcessLookupError):   # never started, or already gone
+        pass
 
 
 def test_a_stalled_url_check_never_prints_the_url(tmp_path, monkeypatch, capsys):
@@ -1006,8 +995,8 @@ def test_a_stalled_url_check_never_prints_the_url(tmp_path, monkeypatch, capsys)
     bindir = tmp_path / "bin"
     bindir.mkdir()
     real = shutil.which("git")
-    mark = _marker()
-    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" --get-url "*) exec sleep {mark} ;; esac\nexec "{real}" "$@"\n')
+    stand_in, pidfile = _stand_in(tmp_path)
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" --get-url "*) {stand_in} ;; esac\nexec "{real}" "$@"\n')
     (bindir / "git").chmod(0o755)
     _production_git_in(root, monkeypatch)
     monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
@@ -1017,9 +1006,9 @@ def test_a_stalled_url_check_never_prints_the_url(tmp_path, monkeypatch, capsys)
             m.destination_oids("https://user:SECRET-TOKEN@example.invalid/x.git")
         out = capsys.readouterr()
         assert "SECRET-TOKEN" not in str(err.value) + out.out + out.err and "within 1 s" in str(err.value)
-        assert _no_process_runs(mark)
+        assert pidfile.exists() and _stand_in_ends(pidfile)
     finally:
-        _reap(mark)
+        _reap_stand_in(pidfile)
 
 
 def test_a_local_destination_ending_in_lf_is_not_a_rewrite(tmp_path):
@@ -1034,7 +1023,7 @@ def test_a_local_destination_ending_in_lf_is_not_a_rewrite(tmp_path):
 
 def test_a_cancellation_while_the_group_starts_still_ends_it(tmp_path):
     """SIGTERM landing before the group is registered is held, then ends the group and the checker."""
-    mark = _marker()
+    stand_in, pidfile = _stand_in(tmp_path)
     code = ("import os, signal, subprocess, importlib.util\n"
             f"spec = importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
             "c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
@@ -1043,21 +1032,21 @@ def test_a_cancellation_while_the_group_starts_still_ends_it(tmp_path):
             "    os.kill(os.getpid(), signal.SIGTERM)\n"
             "    return real(*a, **k)\n"
             "c.subprocess.Popen = popen\n"
-            f"c._bounded(['sh', '-c', 'exec sleep {mark}'], 'a stand-in')\n")
+            f"c._bounded(['sh', '-c', {stand_in!r}], 'a stand-in')\n")
     try:
         proc = _sub([sys.executable, "-c", code], cwd=tmp_path, env=_clean_env(), timeout=30)
         assert proc.returncode == -15, proc                              # the cancellation reaches the caller
-        assert _no_process_runs(mark)
+        assert _stand_in_ends(pidfile)
     finally:
-        _reap(mark)
+        _reap_stand_in(pidfile)
 
 
 def test_a_fixture_timeout_lets_the_checker_end_its_transport(tmp_path):
     """The fixture's own timeout sends SIGTERM first, so the checker ends the group it started."""
     root = _repo(tmp_path)
     helper = tmp_path / "helper.sh"
-    mark = _marker()
-    helper.write_text(f"#!/bin/sh\nexec sleep {mark}\n")
+    stand_in, pidfile = _stand_in(tmp_path)
+    helper.write_text(f"#!/bin/sh\n{stand_in}\n")
     helper.chmod(0o755)
     code = (f"import importlib.util\nspec = importlib.util.spec_from_file_location('c', {str(CHECK)!r})\n"
             "c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)\n"
@@ -1067,9 +1056,9 @@ def test_a_fixture_timeout_lets_the_checker_end_its_transport(tmp_path):
     try:
         with pytest.raises(subprocess.TimeoutExpired):
             _sub([sys.executable, "-c", code], cwd=root, env=env, timeout=3)
-        assert _no_process_runs(mark)
+        assert pidfile.exists() and _stand_in_ends(pidfile)
     finally:
-        _reap(mark)
+        _reap_stand_in(pidfile)
 
 
 def test_a_shallow_boundary_is_judged_against_its_stored_parent(tmp_path):
@@ -1182,3 +1171,36 @@ def test_dash_lines_names_exactly_the_lines_a_full_split_would():
         naive = [(n, ln.removesuffix(b"\r")) for n, ln in enumerate(text.split(b"\n"), 1)
                  if any(d in ln for d in m.DASHES)]
         assert m.dash_lines(text) == naive, text
+
+
+def test_naming_the_lines_of_a_long_dash_dense_line_is_linear():
+    import time
+    line = (b"x" + DASH.encode()) * 400_000                             # about 1.6 MB on one line
+    began = time.monotonic()
+    found = m.dash_lines(b"head\n" + line + b"\r\ntail " + DASH.encode())
+    assert time.monotonic() - began < 1.0
+    assert [n for n, _ln in found] == [2, 3] and found[0][1] == line
+
+
+def test_a_merge_with_nothing_changed_against_head_reads_no_other_parent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(m, "_git", lambda *a, **k: calls.append(a) or b"")
+    monkeypatch.setattr(m, "merge_heads", lambda path="": ["a" * 40, "b" * 40])
+    assert m.staged(merging=True) == [("", [[]])]
+    assert len(calls) == 1, calls
+
+
+def test_an_external_diff_that_calls_a_dash_equal_cannot_skip_pre_commit(tmp_path):
+    root = _repo(tmp_path)
+    (root / "scripts").mkdir()
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    (root / "scripts/lint.sh").write_text("exit 0\n")
+    (root / "same.sh").write_text("#!/bin/sh\nexit 0\n")
+    (root / "same.sh").chmod(0o755)
+    _git(root, "config", "core.hooksPath", ".githooks")
+    _git(root, "config", "diff.external", str(root / "same.sh"))
+    _git(root, "config", "diff.trustExitCode", "true")                  # its exit status decides "no change"
+    _stage(root, {"doc.md": "new " + DASH + "\n"})
+    r = _sub(["git", "commit", "-q", "-m", "dash"], cwd=root, text=True)
+    assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
