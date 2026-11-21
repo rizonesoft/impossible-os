@@ -967,7 +967,8 @@ The cross-section review (00-infrastructure/TODO-08 §35) read this whole file o
   - Done when: missing file, malformed ELF and exhausted allocation each persist their own code.
 - [ ] Producer and reader use one rollover-aware sequence window, so a cookie at `UINT32_MAX` neither shows a torn entry nor hides the older ones
   - Sections 20, 21: the producer wraps to 1, and the reader's plain `boot_seq > committed_seq` test then hides every pre-wrap entry, or shows the new one when its cookie write failed.
-  - Done when: a test fills the ring across the wrap, with the cookie write succeeding and failing.
+  - The renderer's `by_seq_asc` in the kernel's `boot_history.c` sorts by plain sequence too, so it would put 1 before `UINT32_MAX`.
+  - Done when: a test fills the ring across the wrap, with the cookie write succeeding and failing, and asserts the exact oldest-to-newest order.
 
 **Test checkpoint:** `SUITE=boot` green with the three new tests; smoke matrix green.
 

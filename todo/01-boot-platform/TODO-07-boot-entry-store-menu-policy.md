@@ -1013,7 +1013,7 @@ Each defect needs two or more sections to see: every section's own review passed
   - Done when a test of all counters exhausted plus F11 renders the menu and the fallback still boots on timeout.
 - [ ] Watchdog rollback excludes the entry that was attempted, not the entry with the most tries among the remaining candidates.
   - Today `boot_policy.c` looks for the peak after the counter filter has already removed an exhausted failed entry, so it removes a viable one instead (sections 3, 5, 12).
-  - Done when an exhausted failed entry plus one viable entry boots the viable one and acknowledges the watchdog request.
+  - Done when an exhausted failed entry plus one viable entry with `tries_done` > 0 and `tries_left` > 0 boots the viable one and acknowledges the watchdog request (a fresh survivor with 0 tries done never hits the wrong eviction).
 - [ ] `LoaderEntries` lists exactly the entries policy and the menu would boot, from one shared eligibility predicate.
   - Today `lv_entry_visible()` in `loader_vars.c` skips only skipped kinds and HIDDEN, so the shipped seed publishes inactive `slot-b` and an unsupported recovery entry (sections 3, 6, 15, 16, 21).
   - Done when a seed-based test shows inactive, unsupported and other-machine entries absent.
