@@ -13,6 +13,7 @@ import importlib
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -57,16 +58,25 @@ def _job(kind, log="/x/a.out"):
     return json.dumps({"kind": kind, "jobId": "detached:j", "logFile": log})
 
 
-def _row(root, kind, log, section=1, todo=TODO):
-    """The receipt row a broker registers for each job before launching it."""
+def _prompt(kind, todo=TODO, section=1):
+    return f"[review-kind: {kind}] {todo} section {section} body"
+
+
+def _row(root, kind, log, section=1, todo=TODO, prompt=None):
+    """The receipt row a dispatcher writes for each job, with its prompt hash."""
+    import hashlib
+    body = prompt if prompt is not None else _prompt(kind, todo, section)
     m = root / ".claude/overnight/reviews/manifest.jsonl"
     m.parent.mkdir(parents=True, exist_ok=True)
     with m.open("a") as fh:
-        fh.write(json.dumps({"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log}) + "\n")
+        fh.write(json.dumps({"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log,
+                             "prompt_sha256": hashlib.sha256(body.encode()).hexdigest()}) + "\n")
 
 
 def test_a_registered_broker_job_is_recorded_and_stamped(tmp_path):
-    state, stamps = _hook(_repo(tmp_path), _dispatch("adversarial"), stdout=_job("adversarial") + "\n")
+    root = _repo(tmp_path)
+    _row(root, "adversarial", "/x/a.out", prompt=f"[review-kind: adversarial] {TODO} section 1 body")
+    state, stamps = _hook(root, _dispatch("adversarial"), stdout=_job("adversarial") + "\n")
     assert state and state["review_kind"] == "adversarial" and state["log_file"] == "/x/a.out"
     assert isinstance(stamps.get(TODO, {}).get("adversarial"), int), stamps
 
@@ -94,13 +104,35 @@ def test_a_refused_section_never_takes_its_same_kind_siblings_stamp(tmp_path):
     (root / "todo/00-x/TODO-02-y.md").write_text("# y\n## 35. Thirty-five\n")
     other = "todo/00-x/TODO-02-y.md"
     cmd = (_dispatch("adversarial") + " extra; "
-           + f"{BROKER} '[review-kind: adversarial] {other} section 35 body'")
+           + f"{BROKER} " + shlex.quote(_prompt("adversarial", other, 35)))
     _row(root, "adversarial", "/x/b.out", section=35, todo=other)
     _state, stamps = _hook(root, cmd, stdout=_job("adversarial", "/x/b.out") + "\n",
                            stderr="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
     assert not stamps.get(TODO, {}).get("adversarial"), stamps
     assert isinstance(stamps.get(other, {}).get("adversarial"), int), stamps
     assert stamps[other].get("adversarial_section") == "35", stamps[other]
+
+
+def test_a_quoted_launch_line_in_a_review_stamps_nothing_of_its_own(tmp_path):
+    # A direct review streams its text to stdout; it quotes a real broker job of
+    # another TODO. Only the direct review's own receipt earns a stamp.
+    root = _repo(tmp_path)
+    other = "todo/00-x/TODO-02-y.md"
+    (root / other).write_text("# y\n## 9. Nine\n")
+    direct_log = "/r/20261121-1-1-adversarial-direct.out"
+    _row(root, "adversarial", direct_log)
+    _row(root, "perf", "/x/q.out", section=9, todo=other)
+    cmd = "bash scripts/codex-dispatch.sh " + shlex.quote(_prompt("adversarial"))
+    _state, stamps = _hook(root, cmd, stdout="review text\n" + _job("perf", "/x/q.out") + "\nmore\n",
+                           stderr=f"[codex-dispatch] transcript: {direct_log}\n")
+    assert isinstance(stamps.get(TODO, {}).get("adversarial"), int), stamps
+    assert other not in stamps, stamps
+
+
+def test_a_lone_launch_claimed_only_on_stdout_is_not_enough_without_a_receipt(tmp_path):
+    cmd = "bash scripts/codex-dispatch.sh " + shlex.quote(_prompt("adversarial"))
+    _state, stamps = _hook(_repo(tmp_path), cmd, stdout="[codex-dispatch] transcript: /r/x-adversarial-direct.out\n")
+    assert stamps == {}, stamps
 
 
 def test_a_prompt_naming_the_background_wrapper_still_needs_a_launch_line(tmp_path):
@@ -111,7 +143,7 @@ def test_a_prompt_naming_the_background_wrapper_still_needs_a_launch_line(tmp_pa
 
 def test_a_transcript_path_with_spaces_is_a_launch():
     resp = {"tool_response": {"stderr": "[codex-dispatch] transcript: /tmp/review logs/20261121-1-1-perf-direct.out\n"}}
-    assert crc._launches(resp) == [("perf", "/tmp/review logs/20261121-1-1-perf-direct.out")]
+    assert crc._launches(resp) == [("perf", "/tmp/review logs/20261121-1-1-perf-direct.out", "stderr")]
 
 
 def test_a_receive_leaves_another_sessions_review_pending(tmp_path):
@@ -162,7 +194,10 @@ def test_the_broker_ends_a_review_past_its_runtime_limit(tmp_path):
     import time
     repo = _repo(tmp_path / "r")
     fake = tmp_path / "companion.js"
-    fake.write_text("setInterval(() => process.stdout.write('.'), 200);\n")   # prints, never ends
+    # Prints and does not end on its own within the limit; bounded at 20 s so a
+    # broken limit cannot leave it running.
+    fake.write_text("setInterval(() => process.stdout.write('.'), 200);\n"
+                    "setTimeout(() => process.exit(0), 20000);\n")
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
            "CODEX_REVIEW_MAX_SECS": "2"}
     r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
@@ -175,6 +210,37 @@ def test_the_broker_ends_a_review_past_its_runtime_limit(tmp_path):
     while not done.exists() and time.monotonic() - t < 45:
         time.sleep(0.5)
     assert done.exists() and done.read_text().strip() == "124", (done.exists(), log.read_text()[-200:])
+
+
+LIMIT = REPO / "scripts/overnight/review-runtime-limit.sh"
+
+
+def test_the_runtime_limit_ends_a_descendant_that_ignores_term(tmp_path):
+    import signal
+    import time
+    out = tmp_path / "ticks"
+    pg = tmp_path / "pgid"
+    # The leader exits on TERM; its child ignores TERM and keeps writing
+    # (bounded at 60 ticks so a broken limit cannot run on).
+    cmd = (f"echo $$ > {pg}; ( trap '' TERM; for i in $(seq 60); do echo $i >> {out}; sleep 0.2; done ) & "
+           "wait")
+    try:
+        r = subprocess.run(["bash", str(LIMIT), "2", cmd], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 124, (r.returncode, r.stderr)
+        size = out.stat().st_size
+        time.sleep(1.2)
+        assert out.stat().st_size == size, "a process of the attempt wrote after the limit returned"
+    finally:
+        try:
+            os.killpg(int(pg.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):  # the group is already gone: the expected case
+            pass
+
+
+def test_the_runtime_limit_passes_a_normal_status_through(tmp_path):
+    r = subprocess.run(["bash", str(LIMIT), "30", "exit 3"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 3, r
+    assert subprocess.run(["bash", str(LIMIT), "0", "true"], capture_output=True, timeout=10).returncode == 2
 
 
 def test_a_bad_runtime_limit_is_refused(tmp_path):

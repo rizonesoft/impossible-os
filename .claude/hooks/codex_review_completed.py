@@ -1429,32 +1429,36 @@ _DIRECT_LAUNCH_RE = re.compile(r"^\[codex-dispatch\] (?:transcript: (.+?)|launch
 
 
 def _launches(payload: dict) -> list:
-    """[(kind, log path or "")] for every launch line in the tool response."""
+    """[(kind, log path or "", stream)] for every launch line in the tool
+    response. A line is only a CLAIM: the direct dispatcher streams the review
+    itself to stdout, and a review can quote any line. Stamping binds each
+    claim to a receipt row carrying this invocation's own prompt hash."""
     resp = payload.get("tool_response")
     if isinstance(resp, dict):
-        text = "\n".join(str(resp.get(k) or "") for k in ("stdout", "stderr", "output"))
+        streams = [(k, str(resp.get(k) or "")) for k in ("stdout", "stderr", "output")]
     else:
-        text = str(resp or "")
+        streams = [("output", str(resp or ""))]
     out = []
-    for ln in text.splitlines():
-        s = ln.strip()
-        if s.startswith("{") and '"logFile"' in s:
-            try:
-                rec = json.loads(s)
-            except ValueError:
+    for name, text in streams:
+        for ln in text.splitlines():
+            s = ln.strip()
+            if s.startswith("{") and '"logFile"' in s:
+                try:
+                    rec = json.loads(s)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("logFile"), str):
+                    out.append((str(rec.get("kind") or ""), rec["logFile"], name))
                 continue
-            if isinstance(rec, dict) and isinstance(rec.get("logFile"), str):
-                out.append((str(rec.get("kind") or ""), rec["logFile"]))
-            continue
-        m = _DIRECT_LAUNCH_RE.match(s)
-        if m:
-            k = _out_kind_from_name(Path(m.group(1)).name) if m.group(1) else m.group(2)
-            out.append((k[:-len("-direct")] if k.endswith("-direct") else k, m.group(1) or ""))
+            m = _DIRECT_LAUNCH_RE.match(s)
+            if m:
+                k = _out_kind_from_name(Path(m.group(1)).name) if m.group(1) else m.group(2)
+                out.append((k[:-len("-direct")] if k.endswith("-direct") else k, m.group(1) or "", name))
     return out
 
 
 def _launched_kinds(payload: dict) -> list:
-    return [k for k, _log in _launches(payload)]
+    return [k for k, _log, _stream in _launches(payload)]
 
 
 _WRAPPERS = ("codex-dispatch.sh", "review-broker-codex-dispatch.sh")
@@ -1485,8 +1489,15 @@ def _manifest_rows_for(root: Path, logs: list) -> list:
         except OSError:
             return ""
     want = {key(lg): None for lg in logs}
+    # The manifest only grows (thousands of rows): read its last 512 KiB, which
+    # holds well over the last 400 rows, never the whole file.
     try:
-        lines = (root / ".claude/overnight/reviews/manifest.jsonl").read_text(encoding="utf-8").splitlines()[-400:]
+        with open(root / ".claude/overnight/reviews/manifest.jsonl", "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 512 * 1024))
+            tail = fh.read().decode("utf-8", "replace")
+        lines = tail.splitlines()[1 if size > 512 * 1024 else 0:][-400:]
     except OSError:  # fail-direction: no manifest means no row; a bundle then earns no stamp
         lines = []
     for line in lines:
@@ -1736,14 +1747,24 @@ def main() -> int:
         if not write_ok:
             stamp_attempted, stamp_err = False, "skipped (the trigger was not recorded)"
         _bundle = len(_all_dispatch_targets(raw_cmd, root)) > 1 if raw_cmd else False
-        _stamp_deadline = time.monotonic() + 2.0
         if stamp_attempted and _wrapper:
             stamp_attempted = False
             stamp_err = "skipped (no launched receipt names a stamped kind)"
-            _logs = [lg for _k, lg in _launched if lg]
-            for _row in _manifest_rows_for(root, _logs):
-                if _row is None:
+            # A launch counts only through a receipt row whose prompt hash is
+            # one of THIS invocation's prompts (each used once): a review that
+            # quotes another job's launch line names a row with another prompt.
+            try:
+                _hashes = collections.Counter(
+                    hashlib.sha256(b.encode("utf-8")).hexdigest() for b in _cd.extract_dispatch_prompts(raw_cmd))
+            except Exception:  # fail-direction: no prompt hashes means no row matches, no stamp
+                _hashes = collections.Counter()
+            _logs = [lg for _k, lg, _st in _launched if lg]
+            _rows = _manifest_rows_for(root, _logs)
+            _stamp_deadline = time.monotonic() + 2.0
+            for _row in _rows:
+                if _row is None or _hashes[str(_row.get("prompt_sha256") or "")] <= 0:
                     continue
+                _hashes[str(_row.get("prompt_sha256"))] -= 1
                 _k, _tp = str(_row.get("kind") or ""), str(_row.get("todo") or "")
                 _sec = str(_row.get("section") if _row.get("section") is not None else "")
                 if not _tp or _k not in REVIEW_KINDS or _k in SECTION_PASS_KINDS:
@@ -1753,7 +1774,10 @@ def main() -> int:
                     root, _tp, ("\u00a7" + _sec) if _sec else "", _k, now_ns,
                     dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
                 )
-            if not stamp_attempted and not _bundle and _logs and review_kind and todo_path \
+            # A lone dispatch whose receipt is not written yet: its own launch
+            # line on stderr (never the streamed review) names its one target.
+            if not stamp_attempted and not _bundle and any(st == "stderr" for _k, _lg, st in _launched) \
+                    and all(r is None for r in _rows) and review_kind and todo_path \
                     and review_kind not in SECTION_PASS_KINDS:
                 stamp_attempted = True
                 stamp_ok, stamp_err = _record_stamp(
@@ -1761,6 +1785,7 @@ def main() -> int:
                     dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
                 )
         elif stamp_attempted:
+            _stamp_deadline = time.monotonic() + 2.0
             stamp_ok, stamp_err = _record_stamp(
                 root, todo_path, section, review_kind, now_ns,
                 dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
