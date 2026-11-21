@@ -41,6 +41,17 @@ def test_sentinel_present_returns_done():
         assert "NEXT:" in r.stdout and "receiving-code-review" in r.stdout, r.stdout
 
 
+def test_companion_progress_line_is_not_the_terminal_sentinel():
+    # The companion prints "[codex] Turn completed." mid-log, before its verdict;
+    # only the dispatcher's own "Turn completed (rc=N)" line ends a review.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("[codex] Running command: ...\n[codex] Turn completed.\n")
+        r = _run(log, maxw=1)
+        assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+        assert "STILL RUNNING" in r.stdout
+
+
 def test_no_sentinel_returns_still_running():
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"

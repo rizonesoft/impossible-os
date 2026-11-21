@@ -86,7 +86,7 @@ ACT_DIR=".claude/state/waiter-activity"
 _all_done() {
     local f
     for f in "${LOGS[@]}"; do
-        [ -f "$f" ] && grep -q "Turn completed" "$f" 2>/dev/null || return 1
+        [ -f "$f" ] && grep -qE '^Turn completed \(rc=[0-9]+\)' "$f" 2>/dev/null || return 1
     done
     return 0
 }
@@ -95,7 +95,7 @@ elapsed=0
 while [ "$elapsed" -lt "$MAX" ]; do
     if _all_done; then
         for f in "${LOGS[@]}"; do
-            echo "DONE: $f -- $(grep 'Turn completed' "$f" | tail -1)"
+            echo "DONE: $f -- $(grep -E '^Turn completed \(rc=[0-9]+\)' "$f" | tail -1)"
         done
         echo "--- verdict tail ($LAST) ---"
         tail -n 25 "$LAST"
@@ -119,7 +119,7 @@ any_stale=0
 any_missing=0
 pending=()
 for f in "${LOGS[@]}"; do
-    if { [ -f "$f" ] && grep -q "Turn completed" "$f" 2>/dev/null; }; then
+    if { [ -f "$f" ] && grep -qE '^Turn completed \(rc=[0-9]+\)' "$f" 2>/dev/null; }; then
         continue
     fi
     pending+=("$f")
