@@ -1253,6 +1253,7 @@ Every review reads one section. Nothing reads a finished file as a whole, so a d
   - Its result is a `Cross-section review:` line in the TODO, written when the review returns, so a clean pass, a retry and a resumed close-out reuse it instead of paying again.
   - Review fixes: a FAIL outranks REOPENED; a filed section reports REOPENED, not CLOSED; source fixes commit apart from the TODO-only close-out.
   - Dispositions are written `pending` and change only once the work exists; `rejected` is one of them; both pilot files carry their record line.
+  - The line is written `in flight` with the review's log before dispatch, and a filing names its section number while still pending, so every interruption resumes without a second pass.
 - [x] Not needed: the first file returned 3, so the step is kept.
 - [x] Second run, 2026-11-21, on 01-boot-platform/TODO-03 (24 sections): 1 P1 and 2 P2, all verified, filed as its §25 (item: "The post-EBS error dwell has its own TSC deadline").
 - [x] Committed as 24dab6136.
