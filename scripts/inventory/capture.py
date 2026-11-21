@@ -564,19 +564,43 @@ def exclusive(path):
 
 
 @contextlib.contextmanager
-def held():
-    """The checkout's capture lock, then the shot store's: what publication and
-    swap recovery run under. Raises BlockingIOError naming the lock another job
-    holds. With no drive under the store (a CI runner) there is no shared store
-    to guard, and a publication into it fails on its own."""
+def held(store=True):
+    """The checkout's capture lock, then (store=True) the shot store's: what
+    publication and swap recovery run under. Raises BlockingIOError naming the
+    lock another job holds. With no drive under the store (a CI runner) there is
+    no shared store to guard, and a publication into it fails on its own."""
     with contextlib.ExitStack() as stack:
-        for path in (LOCK, STORE_LOCK):
-            if path is STORE_LOCK and not path.parent.is_dir():
-                continue
+        try:
+            stack.enter_context(exclusive(LOCK))
+        except BlockingIOError:
+            raise BlockingIOError(f"another job holds {LOCK}") from None
+        if store:
+            stack.enter_context(store_held(wait=0))
+        yield
+
+
+STORE_WAIT = 120                          # s a finished capture waits for another checkout's publication
+
+
+@contextlib.contextmanager
+def store_held(wait=STORE_WAIT):
+    """The shot store's lock alone, for recovery and publication only: a guest
+    run in one checkout never holds it, so another checkout's publication does
+    not fail for the length of a capture (review, 2026-11-21). A publication
+    waits up to `wait` s for one in progress elsewhere."""
+    if not STORE_LOCK.parent.is_dir():
+        yield
+        return
+    deadline = time.monotonic() + wait
+    with contextlib.ExitStack() as stack:
+        while True:
             try:
-                stack.enter_context(exclusive(path))
+                stack.enter_context(exclusive(STORE_LOCK))
+                break
             except BlockingIOError:
-                raise BlockingIOError(f"another job holds {path}") from None
+                if time.monotonic() >= deadline:
+                    raise BlockingIOError(f"another job holds {STORE_LOCK}") from None
+                time.sleep(1)
         yield
 
 
@@ -647,7 +671,7 @@ def main(argv=None):
     # publication rollback), instead of dying with the VM running.
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        with held():
+        with held(store=False):
             return capture_and_publish(args)
     except BlockingIOError as exc:
         print(f"capture: {exc}; run one at a time")
@@ -655,8 +679,9 @@ def main(argv=None):
 
 
 def capture_and_publish(args):
-    if recover_pending():
-        print("capture: rolled back a publication that was interrupted; the previous one is restored")
+    with store_held():
+        if recover_pending():
+            print("capture: rolled back a publication that was interrupted; the previous one is restored")
     out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture, args.prepare, args.standin,
                         module=args.module)
     if rc == 2:
@@ -666,6 +691,15 @@ def capture_and_publish(args):
     except core.Incomplete as exc:
         print(f"capture: {exc}; nothing published, nothing removed")
         return 3
+    # From here to the last swap the store is held: a publication another
+    # checkout was killed in is rolled back before this one reads its inputs.
+    with store_held():
+        if recover_pending():
+            print("capture: rolled back a publication that was interrupted; the previous one is restored")
+        return check_and_publish(args, out, meta, new)
+
+
+def check_and_publish(args, out, meta, new):
     if args.observe:
         # An observation file holds only what this capture measured, so it is
         # rewritten whole; the canonical file and the other profiles' files

@@ -82,10 +82,11 @@ NO_FOREGROUND = POPUP_WINDOWS | {"Windows.UI.Core.CoreWindow", "XamlExplorerHost
 PROP_CONTROL_TYPE = 30003
 PROP_PROCESS_ID = 30002
 PROP_IS_OFFSCREEN = 30022
+PROP_NATIVE_WINDOW_HANDLE = 30020
 # Name, AutomationId, ClassName, ControlType, BoundingRectangle, IsOffscreen,
 # AcceleratorKey, IsEnabled, IsExpandCollapsePatternAvailable, ProcessId
 CACHED = (30005, 30011, 30012, PROP_CONTROL_TYPE, 30001, PROP_IS_OFFSCREEN, 30006, 30010, PROP_EC_AVAILABLE,
-          PROP_PROCESS_ID)
+          PROP_PROCESS_ID, PROP_NATIVE_WINDOW_HANDLE)
 
 user32 = gdi32 = None    # opened by win32() on Windows, so the module also imports on Linux for its tests
 
@@ -401,6 +402,7 @@ class LiveElement:
         self.enabled = bool(el.CachedIsEnabled)
         self.can_expand = bool(el.GetCachedPropertyValue(PROP_EC_AVAILABLE))
         self.pid = el.CachedProcessId
+        self.hwnd = el.CachedNativeWindowHandle or 0     # cached: a window list reads it once per window
         self._opened = {}
 
     def children(self, limit=core.MAX_RECORDS):
@@ -651,7 +653,8 @@ class Context(core.Polls):
         while True:                  # one look at least: timeout=0 is a single check
             # The raw view: a classic menu's #32768 window is not a control
             # element, so the control view leaves it out.
-            for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition()):
+            seen = self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition())
+            for w in seen:
                 if core.matches(w, spec) and not w.offscreen:
                     if self.overdue():
                         raise core.Incomplete(f"no window matching {spec} before its poll ended")
@@ -661,15 +664,17 @@ class Context(core.Polls):
                         user32.SetForegroundWindow(w.el.CurrentNativeWindowHandle)
                     return w
             if time.monotonic() >= deadline:
-                raise core.Incomplete(f"no window matching {spec} within {timeout} s; on screen: {self.on_screen()}")
+                raise core.Incomplete(f"no window matching {spec} within {timeout} s; on screen: {self.on_screen(seen)}")
             time.sleep(0.5)
 
-    def on_screen(self):
+    def on_screen(self, windows=None):
         """The top-level windows on screen, class and name, for a failure message:
-        a window that went missing is explained by what took its place."""
+        a window that went missing is explained by what took its place. `windows`
+        is a list already read, so a failed lookup does not scan the desktop again."""
         try:
-            shown = [w for w in self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition())
-                     if not w.offscreen]
+            if windows is None:
+                windows = self.live.children(self.live.uia.GetRootElement(), self.live.uia.CreateTrueCondition())
+            shown = [w for w in windows if not w.offscreen]
         except self.live.COMError:
             return "(unreadable)"
         return ", ".join(f"{w.class_name}:{w.name[:30]!r}" for w in shown[:ON_SCREEN_MAX]) or "(none)"

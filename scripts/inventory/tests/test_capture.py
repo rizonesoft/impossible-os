@@ -2596,6 +2596,31 @@ class Serial(unittest.TestCase):
         finally:
             capture.LOCK, capture.STORE_LOCK = real
 
+    def test_the_guest_run_does_not_hold_the_shot_store(self):
+        # Another checkout publishes while this one's guest runs (review, 2026-11-21);
+        # publication then holds the store again.
+        real = capture.LOCK, capture.STORE_LOCK
+        capture.LOCK, capture.STORE_LOCK = self.tmp / "a" / "capture.lock", self.tmp / "ref-shots.lock"
+        during = []
+
+        def guest(*a, **k):
+            with capture.exclusive(capture.STORE_LOCK):         # the other checkout's publication
+                during.append("published")
+            return self.tmp, 2                                  # rc 2: the capture stops here
+        args = types.SimpleNamespace(surface="s", profile="fhd-100", timeout=1, fixture=None, prepare=None,
+                                     standin=None, module=None)
+        try:
+            with mock.patch.object(capture, "run_guest", guest), mock.patch.object(capture, "recover_pending",
+                                                                                     lambda: False):
+                with capture.held(store=False):
+                    self.assertEqual(capture.capture_and_publish(args), 2)
+            self.assertEqual(during, ["published"])
+            with capture.exclusive(capture.STORE_LOCK), self.assertRaises(BlockingIOError):
+                with capture.store_held(wait=0):
+                    pass
+        finally:
+            capture.LOCK, capture.STORE_LOCK = real
+
     def test_no_store_drive_means_only_the_checkout_lock(self):
         real = capture.LOCK, capture.STORE_LOCK
         capture.LOCK, capture.STORE_LOCK = self.tmp / "capture.lock", self.tmp / "absent" / "ref-shots.lock"
@@ -2850,6 +2875,19 @@ class Scenes(unittest.TestCase):
         self.assertEqual(passes, {"desktop": 2, "menu": 2})
         code, report = capture.check_scratch({"scenetest/scenetest.json": cap.records})
         self.assertEqual(code, 0, report)
+
+    def test_a_measuring_scene_is_opened_and_closed_but_never_walked(self):
+        m, log = self.mod()
+        m.SCENES[0].update(keep=False, walk=False,
+                           root=lambda ctx: (_ for _ in ()).throw(AssertionError("walked")))
+        cap, passes = core.run_scenes(core.scenes_of(m), None, self.walk_scene)
+        self.assertEqual(log, ["open desktop", "close desktop", "open menu", "close menu"])
+        self.assertEqual(passes["desktop"], 0)
+        self.assertEqual(cap.measured, [])
+        self.assertEqual([r["id"] for r in cap.records if "parent" not in r], ["win11.scenetest.menu"])
+        m.SCENES[0]["keep"] = True
+        with self.assertRaisesRegex(ValueError, "walk=False needs keep=False"):
+            core.scenes_of(m)
 
     def test_a_root_with_no_area_takes_the_box_around_its_entries(self):
         # A WinUI menu's popup window reports an empty box (2026-11-16).
@@ -3390,19 +3428,22 @@ class ExplorerViews(unittest.TestCase):
     def test_a_tooltip_already_on_the_desktop_is_not_the_info_tip(self):
         # An unrelated named tooltip present before the hover is never read as the
         # file's properties (review, 2026-11-21); the one the hover brings up is.
-        stale = types.SimpleNamespace(control_type="ToolTip", name="Other: tip", bounds=(5, 5, 9, 9), offscreen=False)
+        stale = types.SimpleNamespace(control_type="ToolTip", name="Other: tip", bounds=(5, 5, 9, 9), offscreen=False,
+                                      pid=1)
         fresh_tip = types.SimpleNamespace(control_type="ToolTip", name="Type: Text Document\nSize: 1 KB",
-                                          bounds=(50, 60, 90, 40), offscreen=False)
+                                          bounds=(50, 60, 90, 40), offscreen=False, pid=1)
         tops = [stale]
         ctx = Ctx(live=types.SimpleNamespace(children=lambda el: list(tops),
                                              uia=types.SimpleNamespace(GetRootElement=lambda: None)),
                   hover=lambda el, settle=0: tops.append(fresh_tip), hover_point=lambda x, y: None)
         with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None,
+                                 window=lambda ctx, wait=20: types.SimpleNamespace(pid=1),
                                  item=lambda ctx, name: None, owned_windows=lambda ctx: []):
             self.m.measure_tip(ctx)
         self.assertEqual(self.m._m["tip"], ["Type: Text Document", "Size: 1 KB"])
         tops[:] = [stale]
         with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None, TIP_WAIT=0,
+                                 window=lambda ctx, wait=20: types.SimpleNamespace(pid=1),
                                  item=lambda ctx, name: None, owned_windows=lambda ctx: []):
             ctx.hover = lambda el, settle=0: None
             with self.assertRaises(self.m.core.Incomplete):
@@ -3410,13 +3451,14 @@ class ExplorerViews(unittest.TestCase):
 
     def test_a_stale_owned_tooltip_is_not_the_info_tip(self):
         stale = types.SimpleNamespace(control_type="ToolTip", name="Unrelated: previous", bounds=(1, 1, 9, 9),
-                                      offscreen=False)
+                                      offscreen=False, pid=1)
         tip = types.SimpleNamespace(control_type="ToolTip", name="Type: Text Document", bounds=(50, 60, 90, 40),
-                                    offscreen=False)
+                                    offscreen=False, pid=1)
         owned = [stale]
         ctx = Ctx(live=types.SimpleNamespace(children=lambda el: [], uia=types.SimpleNamespace(GetRootElement=lambda: None)),
                   hover=lambda el, settle=0: owned.append(tip), hover_point=lambda x, y: None)
         with mock.patch.multiple(self.m, fresh=lambda ctx: None, set_mode=lambda ctx, keys: None,
+                                 window=lambda ctx, wait=20: types.SimpleNamespace(pid=1),
                                  item=lambda ctx, name: None, owned_windows=lambda ctx: list(owned)):
             self.m.measure_tip(ctx)
             self.assertEqual(self.m._m["tip"], ["Type: Text Document"])
@@ -3424,6 +3466,26 @@ class ExplorerViews(unittest.TestCase):
             ctx.hover = lambda el, settle=0: None
             with mock.patch.object(self.m, "TIP_WAIT", 0), self.assertRaises(self.m.core.Incomplete):
                 self.m.measure_tip(ctx)                                  # no new tip: the stale one is not read
+
+    def test_another_programs_tooltip_is_not_the_info_tip(self):
+        other = types.SimpleNamespace(control_type="ToolTip", name="Other: tip", bounds=(5, 5, 9, 9), offscreen=False,
+                                      pid=2)
+        tip = types.SimpleNamespace(control_type="ToolTip", name="Type: Text Document", bounds=(50, 60, 90, 40),
+                                    offscreen=False, pid=1)
+        tops = []
+        ctx = Ctx(live=types.SimpleNamespace(children=lambda el: list(tops),
+                                             uia=types.SimpleNamespace(GetRootElement=lambda: None)),
+                  hover=lambda el, settle=0: tops.extend([other, tip]), hover_point=lambda x, y: None)
+        patch = dict(fresh=lambda ctx: None, set_mode=lambda ctx, keys: None, item=lambda ctx, name: None,
+                     owned_windows=lambda ctx: [], window=lambda ctx, wait=20: types.SimpleNamespace(pid=1))
+        with mock.patch.multiple(self.m, **patch):
+            self.m.measure_tip(ctx)                                     # the other program's tip comes first
+            self.assertEqual(self.m._m["tip"], ["Type: Text Document"])
+            tops.clear()
+            twin = types.SimpleNamespace(**dict(vars(tip), name="Size: 1 KB", bounds=(0, 0, 1, 1)))
+            ctx.hover = lambda el, settle=0: tops.extend([tip, twin])
+            with self.assertRaisesRegex(self.m.core.Incomplete, "2 tooltips"):
+                self.m.measure_tip(ctx)
 
     def test_only_the_measured_items_have_their_labels_read(self):
         label = types.SimpleNamespace(automation_id="System.ItemNameDisplay", bounds=(1, 2, 3, 4))
@@ -3568,6 +3630,21 @@ class ExplorerMenus(unittest.TestCase):
         self.assertIn("12345", out["menus.registered.folder.powershell"]["behaviour"])
         with self.assertRaises(ValueError):
             self.m.registered_records([], {})
+
+    def test_one_entry_is_credited_to_one_of_two_verbs_sharing_its_label(self):
+        entry = {"text": "Turn on &BitLocker", "default": False, "submenu": False, "enabled": True}
+        verbs = [{"class": "Drive", "verb": "encrypt-bde", "label": "Turn on &BitLocker", "default": None,
+                  "appliesTo": "RequiresAdmin False"},
+                 {"class": "Drive", "verb": "encrypt-bde-elev", "label": "Turn on &BitLocker", "default": None,
+                  "appliesTo": "RequiresAdmin True"}]
+        modern = [{"id": "win11.explorer.drive-menu.encrypt-bde-elev", "kind": "menuItem"}]
+        out = {r["id"]: r for r in self.m.registered_records(verbs, {"drive": [entry]}, modern)}
+        self.assertEqual(out["menus.registered.drive.encrypt-bde-elev"]["kind"], "menuItem")
+        self.assertEqual(out["menus.registered.drive.encrypt-bde"]["kind"], "state")
+        self.assertIn("no item read met that condition", out["menus.registered.drive.encrypt-bde"]["behaviour"])
+        out = {r["id"]: r for r in self.m.registered_records(verbs, {"drive": [entry]}, [])}
+        for v in ("encrypt-bde", "encrypt-bde-elev"):                  # no modern item: neither is credited alone
+            self.assertIn("do not say which", out[f"menus.registered.drive.{v}"]["behaviour"])
 
     def test_icon_row_lists_the_triggers_that_show_each_button(self):
         row = {"height": 48}
@@ -3715,6 +3792,16 @@ class ExplorerDialogs(unittest.TestCase):
             with self.assertRaises(dw.core.Incomplete):
                 dw.tooltip_only(ctx, (1, "Xaml_WindowedPopupClass", "PopupHost"))
 
+    def test_a_win32_only_list_never_asks_ui_automation(self):
+        dw = sys.modules["dialog_window"]
+
+        def hung(el, cond):
+            raise AssertionError("UI Automation was asked while a window hangs")
+        live = types.SimpleNamespace(children=hung, uia=types.SimpleNamespace(GetRootElement=lambda: None,
+                                                                              CreateTrueCondition=lambda: None))
+        with mock.patch.object(dw, "win32_windows", lambda: [(5, "#32770", "Python")]):
+            self.assertEqual(dw.top_windows(Ctx(live=live), uia=False), {(5, "#32770", "Python")})
+
     def test_a_known_window_is_not_read_for_a_tooltip(self):
         dw = sys.modules["dialog_window"]
         asked = []
@@ -3765,13 +3852,23 @@ class ExplorerDialogs(unittest.TestCase):
             dw.core.MAX_RECORDS = saved
         self.assertEqual(asked, [2, 0])                         # the next fetch has nothing left, and finds a child
 
+    def test_a_window_seen_after_the_deadline_is_not_taken(self):
+        dw = sys.modules["dialog_window"]
+        live = types.SimpleNamespace(wrap=lambda h: ("wrapped", h), uia=types.SimpleNamespace(ElementFromHandle=lambda h: h))
+
+        def slow(ctx, known=(), uia=True):
+            time.sleep(0.15)                                  # the look ends past the 0.1 s wait
+            return {(12, "#32770", "Late")}
+        with mock.patch.object(dw, "top_windows", slow), self.assertRaises(dw.core.Incomplete):
+            dw.appeared(Ctx(live=live), set(), wait=0.1)
+
     def test_a_renamed_window_is_not_a_new_one(self):
         dw = sys.modules["dialog_window"]
         before = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "Untitled - Notepad")}
         now = {(10, "CabinetWClass", "Explorer sample"), (11, "Notepad", "*Untitled - Notepad"), (12, "#32770", "Save As")}
         live = types.SimpleNamespace(wrap=lambda h: ("wrapped", h), uia=types.SimpleNamespace(ElementFromHandle=lambda h: h))
         saved = dw.top_windows
-        dw.top_windows = lambda ctx, known=(): now
+        dw.top_windows = lambda ctx, known=(), uia=True: now
         try:
             self.assertEqual(dw.appeared(Ctx(live=live), before, wait=0), ("wrapped", 12))
         finally:
@@ -3779,8 +3876,8 @@ class ExplorerDialogs(unittest.TestCase):
 
     def test_two_lists_naming_one_window_give_one_entry(self):
         dw = sys.modules["dialog_window"]
-        uia_w = types.SimpleNamespace(offscreen=False, class_name="#32770", name="Open (UIA)",
-                                      el=types.SimpleNamespace(CurrentNativeWindowHandle=7))
+        uia_w = types.SimpleNamespace(offscreen=False, class_name="#32770", name="Open (UIA)", hwnd=7,
+                                      el=types.SimpleNamespace())        # a live handle read would fail here
         live = types.SimpleNamespace(children=lambda root, cond: [uia_w], uia=types.SimpleNamespace(
             GetRootElement=lambda: None, CreateTrueCondition=lambda: None))
         saved = dw.win32_windows, dw.tooltip_only
@@ -3881,6 +3978,17 @@ class ExplorerDialogs(unittest.TestCase):
         finally:
             ps("Remove-Item -Path '%s' -Recurse -Force; Remove-Item -LiteralPath \"%s\", \"%s.tmp\" -Force "
                "-ErrorAction Ignore" % (key, saved, saved))
+
+    def test_a_failed_merge_opener_puts_the_setting_back(self):
+        ran = []
+        ctx = types.SimpleNamespace(powershell=lambda script: ran.append(script))
+        patch = dict(work=lambda ctx, script: None, copy_into=lambda *a: set(),
+                     operation_window=lambda ctx, before: types.SimpleNamespace(),
+                     descendants=lambda ctx, el, depth: [types.SimpleNamespace(name="Copying")],
+                     close_operation=lambda ctx: ran.append("closed"), SETTLE=0)
+        with mock.patch.multiple(self.m, **patch), self.assertRaises(self.m.core.Incomplete):
+            self.m.open_folder_merge(ctx)
+        self.assertEqual(ran, ["closed", self.m.HIDE_MERGE])
 
     def test_the_folder_merge_message_is_recorded_without_its_time(self):
         merge = {"id": "win11.explorer.folder-merge", "kind": "dialog", "label": "x", "order": 0}
@@ -4098,6 +4206,19 @@ class DialogsCommon(unittest.TestCase):
         finally:
             self.m.descendants, self.m.DIALOG_WAIT = saved_d, saved_w
         self.assertIn("save-as-encoding", [sc["slug"] for sc in self.m.SCENES])
+
+    def test_hosts_are_ended_when_a_window_will_not_close(self):
+        ran = []
+        ctx = types.SimpleNamespace(powershell=lambda script: ran.append(script))
+
+        def stuck(ctx):
+            raise self.m.core.Incomplete("a window refused to close")
+        with mock.patch.object(self.m, "close_new_windows", stuck):
+            self.m._hosts[:] = [types.SimpleNamespace(poll=lambda: None)]
+            with self.assertRaisesRegex(self.m.core.Incomplete, "refused"):
+                self.m.close_scene(ctx)
+        self.assertEqual(ran, [self.m.END_HOSTS])
+        self.assertEqual(self.m._hosts, [])
 
     def test_a_host_that_exited_needs_no_process_query(self):
         ran = []

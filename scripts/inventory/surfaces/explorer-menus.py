@@ -30,7 +30,10 @@ ROOT = "menus"
 # Among the frame record's children: its parts run from 0, its metrics from
 # 200, its known folders are 300 and the views 400.
 MENUS_ORDER = 500
-ENVIRONMENT_LISTS = []
+# Share with lists the machine's installed share targets, and fills in after it
+# opens: Phone Link was there on one run and missing from three menus on the next
+# (2026-11-21). Its rows are the machine's data; the submenu is recorded, not them.
+ENVIRONMENT_LISTS = [{"automationId": "Windows.ModernShareFlyout"}]
 VALUES = []
 IDENTITY = []
 # A modern menu's icon row is a command bar and its list an overflow popup;
@@ -521,12 +524,22 @@ def plain(label):
     return text.rstrip(".\u2026").strip().lower()
 
 
-def registered_records(verbs, classic):
+def registered_records(verbs, classic, records=()):
     """One record per registered verb of the baseline's classes, matched to its
     shell-commands row: where the classic menus showed it, or which registry
-    value keeps it out of them."""
+    value keeps it out of them. A classic menu entry is known by its label only,
+    so where two verbs of one class share a label, the modern menus' items (whose
+    ids are their verbs) decide which one the menu holds; when they cannot, the
+    record says so rather than credit both (review, 2026-11-21: both BitLocker
+    verbs, whose conditions exclude each other, were "shown on drive")."""
     if not verbs:
         raise ValueError("the registered verbs were not read")
+    modern = {r["id"].rsplit(".", 1)[1] for r in records if r.get("kind") == "menuItem"}
+    sharing = {}
+    for v in verbs:
+        label = v.get("label") or v.get("default")
+        if label:
+            sharing.setdefault((v["class"], plain(label)), []).append(v["verb"])
     shown = {}
     for menu, entries in classic.items():
         if menu == "send-to-parent":                # the document's menu again, read to reach Send to
@@ -547,7 +560,18 @@ def registered_records(verbs, classic):
         seen.add(rid)
         label = v.get("label") or v.get("default")
         on = sorted(shown.get(plain(label), set()) & CLASS_MENUS[v["class"]]) if label else []
-        if on:
+        twins = [t for t in sharing.get((v["class"], plain(label)), []) if t != v["verb"]] if label else []
+        unsure = False
+        if on and twins:
+            held = [t for t in [v["verb"], *twins] if core.slug(t) in modern]
+            if len(held) == 1:
+                on = on if held[0] == v["verb"] else []
+            else:
+                unsure = True
+        if unsure:
+            how = (f"Shown on {', '.join(on)} under the label it shares with {', '.join(twins)}; "
+                   "the menus do not say which of them it is")
+        elif on:
             how = f"Shown on {', '.join(on)}"
             if v.get("extended"):
                 how += ", with Shift held only"
@@ -594,7 +618,7 @@ def icon_row_records(records):
 
 def METRICS(records):
     out = [{"id": ROOT, "parent": "frame", "kind": "group", "label": "Context menus", "order": MENUS_ORDER}]
-    return (out + verb_records(_m["classic"]) + registered_records(_m.get("verbs"), _m["classic"])
+    return (out + verb_records(_m["classic"]) + registered_records(_m.get("verbs"), _m["classic"], records)
             + icon_row_records(records))
 
 

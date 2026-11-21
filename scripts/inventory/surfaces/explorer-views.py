@@ -421,19 +421,25 @@ def measure_tip(ctx):
     """Rest the pointer on a file and read its info tip, a tooltip window."""
     fresh(ctx)
     set_mode(ctx, "ctrl+shift+2")
+    explorer = window(ctx).pid
+
     def tips():
-        """Every visible named tooltip, from both places UI Automation lists one:
-        File Explorer's owned windows and the desktop."""
+        """Every visible named tooltip of File Explorer's process, from both places
+        UI Automation lists one: its owned windows and the desktop."""
         desktop = ctx.live.children(ctx.live.uia.GetRootElement())
         return [w for w in list(owned_windows(ctx)) + list(desktop)
-                if w.control_type == "ToolTip" and w.name and not w.offscreen]
-    # A tooltip already shown before the hover, owned or not, is not the file's
-    # info tip (review, 2026-11-21): only one the hover brought up is read.
+                if w.control_type == "ToolTip" and w.name and not w.offscreen and w.pid == explorer]
+    # Only a tooltip of File Explorer's process that the hover brought up is the
+    # file's info tip: not one shown before it, nor another program's (review,
+    # 2026-11-21), and two new ones are refused rather than guessed between.
     before = {(w.name, w.bounds[:2]) for w in tips()}
     ctx.hover(item(ctx, "Sample document"), settle=0.5)
     with ctx.within(TIP_WAIT) as deadline:
         while True:
-            tip = next((w for w in tips() if (w.name, w.bounds[:2]) not in before), None)
+            new = list({(w.name, w.bounds[:2]): w for w in tips() if (w.name, w.bounds[:2]) not in before}.values())
+            if len(new) > 1:
+                raise core.Incomplete(f"the hover brought up {len(new)} tooltips: {[w.name for w in new]}")
+            tip = new[0] if new else None
             if tip is not None:
                 break
             if time.monotonic() > deadline:
@@ -474,12 +480,13 @@ SCENES = [
          root=command_bar, close=nothing, expand=False),
     dict(slug="search-options-menu", label="Search options menu", kind="menu", open=at(then=search_options),
          root=opened, close=close_menu),
+    # Measurements: each opener fills _m, which METRICS reads; the window is not walked.
     dict(slug="new-names", label="New folder names", kind="state", open=measure_new_names, root=window, close=nothing,
-         keep=False, expand=False),
+         keep=False, walk=False),
     dict(slug="info-tip", label="Info tip", kind="state", open=measure_tip, root=window, close=nothing,
-         keep=False, expand=False),
+         keep=False, walk=False),
     dict(slug="modes", label="View modes", kind="state", open=measure_modes, root=window, close=compact_off,
-         keep=False, expand=False),
+         keep=False, walk=False),
     # Last: grouping is kept for the folder, and no scene after it reads the sample folder.
     dict(slug="grouped", label="Grouped by type", kind="state", open=at(then=group_by_type), root=view_root,
          close=nothing, expand=False),

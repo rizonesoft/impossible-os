@@ -143,10 +143,16 @@ def host(kind, check=None, ready=None):
 def close_scene(ctx):
     """Close what the scene opened, then end any dialog host still running. A
     host that exited with its dialog needs no process query; one still running,
-    or a scene that started its host some other way, gets END_HOSTS."""
-    close_new_windows(ctx)
+    or a scene that started its host some other way, gets END_HOSTS. The hosts
+    are ended even when a window refused to close, and that failure is still
+    raised (review, 2026-11-21: the hung fixture sleeps 900 s)."""
     started = list(_hosts)
     _hosts.clear()
+    try:
+        close_new_windows(ctx)
+    except BaseException:
+        ctx.powershell(END_HOSTS)
+        raise
     deadline = time.monotonic() + HOST_EXIT_WAIT
     while started and any(p.poll() is None for p in started) and time.monotonic() < deadline:
         time.sleep(0.2)
@@ -229,14 +235,17 @@ def not_responding(ctx):
     time.sleep(GHOST_WAIT)
     ctx.click(_root["el"])               # input it does not read: Windows ghosts it
     time.sleep(2)
-    ghosts = [w for w in top_windows(ctx) if w[1] == "Ghost"]
+    # Win32's window list only from here: with a window hung, each UI Automation
+    # desktop list waits 20 s on it (2026-11-21), and the dialog that follows is
+    # a Win32 one.
+    ghosts = [w for w in top_windows(ctx, uia=False) if w[1] == "Ghost"]
     if len(ghosts) != 1:
         raise core.Incomplete(f"the hung window was ghosted {len(ghosts)} times")
-    before = top_windows(ctx)
+    before = top_windows(ctx, uia=False)
     # The ghost's own close command, as its title bar's Close sends it: Alt+F4 from
     # this process did not reach it (2026-11-20, foreground is not ours to give).
     user32.PostMessageW(ghosts[0][0], WM_SYSCOMMAND, SC_CLOSE, 0)
-    _root["el"] = appeared(ctx, before, skip=("CabinetWClass", "Ghost"))
+    _root["el"] = appeared(ctx, before, skip=("CabinetWClass", "Ghost"), uia=False)
 
 
 def measure_crash(ctx):

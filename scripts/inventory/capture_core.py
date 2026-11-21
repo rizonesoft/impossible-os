@@ -592,7 +592,7 @@ class Scene:
     """
 
     FIELDS = ("slug", "label", "kind", "open", "root", "close", "identity", "values", "environment_lists", "keep",
-              "expand", "hosts", "labels", "omit", "count", "kinds", "parent")
+              "expand", "hosts", "labels", "omit", "count", "kinds", "parent", "walk")
 
     def __init__(self, mod, **spec):
         unknown = set(spec) - set(self.FIELDS)
@@ -610,6 +610,13 @@ class Scene:
         # keep=False: a measuring scene (the desktop at another icon size); its
         # records reach METRICS and are not published, nor are its screenshots.
         self.keep = bool(spec.get("keep", True))
+        # walk=False: a scene whose opener measures into its module's own state
+        # and whose window nothing reads; it is opened and closed, never walked
+        # nor shot (review, 2026-11-21: three views scenes walked a window twice
+        # each for nothing). Only an unkept scene may skip its walk.
+        self.walk = bool(spec.get("walk", True))
+        if not self.walk and self.keep:
+            raise ValueError(f"scene {self.slug!r}: walk=False needs keep=False, as nothing of it is published")
         self.expand = bool(spec.get("expand", True))
         self.hosts = tuple(spec.get("hosts", getattr(mod, "HOSTS", ())))
         self.labels = tuple(spec.get("labels", getattr(mod, "LABELS", ())))
@@ -705,10 +712,13 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None, transient=lambda exc: Fals
                 with failing_step(f"scene {sc.slug}: opening"):
                     sc.open(ctx)
                 opened = True
-                with failing_step(f"scene {sc.slug}: walking"):
-                    cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
-                    if on_open:
-                        on_open(sc, cap)
+                if sc.walk:
+                    with failing_step(f"scene {sc.slug}: walking"):
+                        cap, passes[sc.slug] = settle(lambda sc=sc: walk_scene(sc))
+                        if on_open:
+                            on_open(sc, cap)
+                else:
+                    cap, passes[sc.slug] = Capture(), 0
                 failed = None
             except Exception as exc:
                 if attempt == SCENE_TRIES or not transient(exc):
@@ -728,6 +738,8 @@ def run_scenes(scenes, ctx, walk_scene, on_open=None, transient=lambda exc: Fals
                         sc.close(ctx)
             if failed is None:
                 break
+        if not sc.walk:
+            continue
         cap.records[0]["order"] = n
         if not sc.keep:
             total.measured.extend(cap.records)

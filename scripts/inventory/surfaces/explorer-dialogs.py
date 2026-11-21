@@ -577,14 +577,25 @@ def open_folder_merge(ctx):
     """A folder copied onto a folder of the same name: Confirm Folder Replace."""
     work(ctx, SHOW_MERGE + "New-Item -ItemType Directory -Path '%s\\General items' -Force | Out-Null\n"
               "Set-Content -LiteralPath '%s\\General items\\Other item.txt' -Value 'Other item'\n" % (WORK, WORK))
-    before = copy_into(ctx, SAMPLE, ["General items"], WORK)
-    win = operation_window(ctx, before)
-    time.sleep(SETTLE)
-    names = [k.name for k in descendants(ctx, win, 6)]
-    # One element can hold every paragraph (2026-11-20): keep each text once.
-    texts = list(dict.fromkeys(n for n in names if n and any(key in n for key in MERGE_LINES)))
-    if not all(any(key in t for t in texts) for key in MERGE_LINES):
-        raise core.Incomplete(f"the folder copy showed no folder merge prompt: {names[:40]}")
+    # The scene is closed only once its opener returned, so an opener that fails
+    # after the override puts the setting back itself (review, 2026-11-21).
+    win = None
+    try:
+        before = copy_into(ctx, SAMPLE, ["General items"], WORK)
+        win = operation_window(ctx, before)
+        time.sleep(SETTLE)
+        names = [k.name for k in descendants(ctx, win, 6)]
+        # One element can hold every paragraph (2026-11-20): keep each text once.
+        texts = list(dict.fromkeys(n for n in names if n and any(key in n for key in MERGE_LINES)))
+        if not all(any(key in t for t in texts) for key in MERGE_LINES):
+            raise core.Incomplete(f"the folder copy showed no folder merge prompt: {names[:40]}")
+    except BaseException:
+        _root["el"] = win                     # what this opener showed, or nothing: never an earlier scene's
+        try:
+            close_operation(ctx)
+        finally:
+            ctx.powershell(HIDE_MERGE)
+        raise
     _merge_text[:] = texts
     _root["el"] = win
 

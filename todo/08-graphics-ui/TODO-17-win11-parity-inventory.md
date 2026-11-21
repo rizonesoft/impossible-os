@@ -701,7 +701,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture in-place rename, the new-item placeholder name pattern, and the info tip's row shape
   - Capture the drag image and the drop highlight in the list and on the navigation pane
   - Done when: `check-inventory.py --surface explorer` passes; all eight view modes have their metrics, and the five folder kinds each have a default column list.
-- [x] File Explorer Context Menus and Commands: `docs/design/inventory/explorer/menus.json` (1014 records; 14 triggers x modern + classic, 21 baseline verbs matched)
+- [x] File Explorer Context Menus and Commands: `docs/design/inventory/explorer/menus.json` (990 records; 14 triggers x modern + classic, 21 baseline verbs matched, Share with an environment list)
   - Capture the modern context menu for each trigger
     - A file (document, image, archive, executable, shortcut), a folder, a drive, a removable drive, the folder background
     - A navigation pane entry, a library, a Recycle Bin item, several items at once

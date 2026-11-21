@@ -264,10 +264,10 @@
   "file": "common",
   "state": "credential",
   "profile": "fhd-100",
-  "width": 456,
-  "height": 367,
-  "size": 7418,
-  "sha256": "07b57daffb0818fb268adc7b636c349f7e493bf43d9c25991aa0e472d6a97deb"
+  "width": 1920,
+  "height": 1032,
+  "size": 2346172,
+  "sha256": "f2bc538a070de188bd36de0c14fc9befc9661132b16fd313e309022c44da0d10"
  },
  {
   "surface": "dialogs",
@@ -436,8 +436,8 @@
   "profile": "fhd-100",
   "width": 960,
   "height": 540,
-  "size": 67997,
-  "sha256": "01fe37f1f263ff48bd1861dbd76e99a39ebcc6b4c1eb37457cb6d94aa8e24b75"
+  "size": 67904,
+  "sha256": "758333cfef12122bffa1c9a8c6fd6b46cdf60a79b06e5fcb666fecc15d96df80"
  },
  {
   "surface": "dialogs",
@@ -446,8 +446,8 @@
   "profile": "fhd-100",
   "width": 960,
   "height": 540,
-  "size": 67997,
-  "sha256": "01fe37f1f263ff48bd1861dbd76e99a39ebcc6b4c1eb37457cb6d94aa8e24b75"
+  "size": 67911,
+  "sha256": "51e8160124bfb9b69d187b95da8b388f0155f62f010c76ec7fa07474789e5e86"
  },
  {
   "surface": "dialogs",
@@ -486,8 +486,8 @@
   "profile": "fhd-100",
   "width": 960,
   "height": 540,
-  "size": 63493,
-  "sha256": "52fda7a03ccac11e00857b48c4ac5debc8b19c48bdfcca5cf2b459c5f905205e"
+  "size": 63435,
+  "sha256": "9a9e55b622c926a857875f754fdf1fd6b6c407d84190b9b71f64b321fe46145a"
  },
  {
   "surface": "dialogs",
@@ -496,8 +496,8 @@
   "profile": "fhd-100",
   "width": 960,
   "height": 540,
-  "size": 63956,
-  "sha256": "61a01a579ac725fdb536a052c648cf9cfb2c65c7b80ffbe1a2c0fe218962f371"
+  "size": 63890,
+  "sha256": "d7a654eea71d4362520f4811a69dc6b8af5bf69b22600e0611aa71e487e4f283"
  },
  {
   "surface": "dialogs",
@@ -506,8 +506,8 @@
   "profile": "fhd-100",
   "width": 960,
   "height": 540,
-  "size": 52743,
-  "sha256": "163163f5bdd230d5a9eca1274a4b84a73ba162bbdf1280e2ebce0626c417bcd7"
+  "size": 52748,
+  "sha256": "f54e54333bda09bce9d80aa08e0d05fe9edd37052fb168e745ed93475257fd52"
  },
  {
   "surface": "dialogs",
@@ -526,8 +526,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 230,
-  "size": 10146,
-  "sha256": "6a47d5f8cb3f3eb206e34e92031216a343ee823b9dd82a13e4924575905fc831"
+  "size": 10139,
+  "sha256": "9d364db1340e8c1bfb62a8d33916bcb1cd29ae57df3ca2be9b1bccd6cf670473"
  },
  {
   "surface": "explorer",
@@ -628,16 +628,6 @@
   "height": 129,
   "size": 6710,
   "sha256": "ef02fe1213e9b56016df4b42111883b9df345d5815e5665c90613da2d4fdfe49"
- },
- {
-  "surface": "explorer",
-  "file": "menus",
-  "state": "archive-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 4016,
-  "sha256": "61ff539ef8ae73e7f00ef5ca2c3f1079e3b6ecb71c00a4b2e53974d9acdf8373"
  },
  {
   "surface": "explorer",
@@ -786,8 +776,8 @@
   "profile": "fhd-100",
   "width": 274,
   "height": 357,
-  "size": 5415,
-  "sha256": "862ecbf2d8fabdc3d0ce24ce38760bdd5814c8a3a6d657cb6c49c56e558fc760"
+  "size": 4224,
+  "sha256": "4fbfb91264bfc4f3608e8b523db267cd370c2fefc6a787523b71637d9f9ab481"
  },
  {
   "surface": "explorer",
@@ -906,8 +896,8 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 552,
-  "size": 6559,
-  "sha256": "f0d48a6e071f537e5c02cd1957b319a7a15a26688b92451f18d579f95b9c9e21"
+  "size": 6566,
+  "sha256": "09d57d0e4cdab0eb8c66f01daa90f4ec2def87c26081178a688dfaa8c2fdd4c7"
  },
  {
   "surface": "explorer",
@@ -916,8 +906,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 172,
-  "size": 8999,
-  "sha256": "0dca06ffe66dce1a38bf378b7bf7f3fe103fac649efa3f438c725541d1b18599"
+  "size": 8991,
+  "sha256": "79be4a6df683dac5924d61af79f4f544b573bf0338dc41cfaf4dc6c1950f1fa4"
  },
  {
   "surface": "explorer",
@@ -926,8 +916,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 275,
-  "size": 8101,
-  "sha256": "40a9e1b85a70a5b0bf2cffeb1ba2ff8561e5f58f0cdeb454d4fe87c4a33c914b"
+  "size": 8182,
+  "sha256": "0d1ffcb1b74d46ec04cbdc28b42ef1b957c0a03db89fcf931b141c85bbec87a2"
  },
  {
   "surface": "explorer",
@@ -936,8 +926,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 487,
-  "size": 12780,
-  "sha256": "3f53655bf1744bacdb0bdd880c66932271267b5aa01235dc021ef85e042005fc"
+  "size": 12748,
+  "sha256": "ce3f3fb16c658f29bd92b277c9ca89dca80a0117533e5e2359f64ad2e9946cc3"
  },
  {
   "surface": "explorer",
@@ -966,8 +956,8 @@
   "profile": "fhd-100",
   "width": 496,
   "height": 189,
-  "size": 8714,
-  "sha256": "9c23b430a5678d0eda5fca7e9d9b93e35403f461f7133122e2e4a4719ef8e2ef"
+  "size": 8725,
+  "sha256": "bfb9a99c08f7be9a542fb04505c3c251b044c0e3e809a8220b48b63681bcf0ab"
  },
  {
   "surface": "explorer",
@@ -976,8 +966,8 @@
   "profile": "fhd-100",
   "width": 496,
   "height": 189,
-  "size": 9399,
-  "sha256": "e861c108456de34271f8a2b2f62c775ad4bbc5aef4c2c9823db2a572df74cc10"
+  "size": 9388,
+  "sha256": "daa61a9f9311838fed820b69ace256b00e709518991e130497fe0d00e2c74053"
  },
  {
   "surface": "explorer",
@@ -1006,8 +996,8 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 552,
-  "size": 23857,
-  "sha256": "2943c27f16a8543cb02d8da061419b698c6cfe7d81042b83cf6ffcedfd6c1359"
+  "size": 23811,
+  "sha256": "49141e049fb94ef7d12e5d50b3f40d0f74564564433e7364b4353465bc83a484"
  },
  {
   "surface": "explorer",
@@ -1052,16 +1042,6 @@
  {
   "surface": "explorer",
   "file": "menus",
-  "state": "disc-image-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 4203,
-  "sha256": "38e0618b56daae60a76eb0058cc77ec7bc7692d59ab20bf0d09f6cac41d77c0e"
- },
- {
-  "surface": "explorer",
-  "file": "menus",
   "state": "document-menu",
   "profile": "fhd-100",
   "width": 328,
@@ -1092,16 +1072,6 @@
  {
   "surface": "explorer",
   "file": "menus",
-  "state": "document-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 4203,
-  "sha256": "2ac17228f5cd6e80eb1385dd45c92b245146e50e253ac45590571eed7c8d74de"
- },
- {
-  "surface": "explorer",
-  "file": "menus",
   "state": "drive-menu",
   "profile": "fhd-100",
   "width": 278,
@@ -1116,8 +1086,8 @@
   "profile": "fhd-100",
   "width": 377,
   "height": 506,
-  "size": 16674,
-  "sha256": "b4eca4894c65eed6192f1206bf56189bccfee30b1a10158b9c2d298b4df80c48"
+  "size": 16716,
+  "sha256": "d9b9678fa344fce4c04369da924a5f22d04f6a78cd730970982a5aff360afbc4"
  },
  {
   "surface": "explorer",
@@ -1126,8 +1096,8 @@
   "profile": "fhd-100",
   "width": 349,
   "height": 424,
-  "size": 11361,
-  "sha256": "3f8b461670466b27d870c67736b14706a64a9c4a2e2a74593b09175f703b9fb2"
+  "size": 11334,
+  "sha256": "267005c8776ddb71a5e9ba6b75cf65768c66ab33e183fc99776bc3a18ac21263"
  },
  {
   "surface": "explorer",
@@ -1246,8 +1216,8 @@
   "profile": "fhd-100",
   "width": 628,
   "height": 461,
-  "size": 11371,
-  "sha256": "2e55dbbd99a103a3fea0f4ecee4754db79bca2102db7887129ac660a9acd44c2"
+  "size": 11363,
+  "sha256": "a0c1459975bd0b03394c31e846d7b131e14ae779d936f345c71bbb7e4daa593a"
  },
  {
   "surface": "explorer",
@@ -1256,8 +1226,8 @@
   "profile": "fhd-100",
   "width": 542,
   "height": 532,
-  "size": 13164,
-  "sha256": "5e26d89e8d840ca34a50fac78da416b94d068a3431aa653551ef8ab26d8e2e05"
+  "size": 13168,
+  "sha256": "9d8a362d55aaae221c5ecc6ac467c14bce962e2e4225d8aa2ac3216548e98d95"
  },
  {
   "surface": "explorer",
@@ -1266,8 +1236,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 260,
-  "size": 9825,
-  "sha256": "db9f6120aa1ab3c4085718b461bfc0abbbdcde511c80d5032ee560243bab8ab0"
+  "size": 9845,
+  "sha256": "96e82bb585841052baf6059228765e663cc22d16d96e21e8fababda171d8b6dc"
  },
  {
   "surface": "explorer",
@@ -1276,8 +1246,8 @@
   "profile": "fhd-100",
   "width": 419,
   "height": 516,
-  "size": 32630,
-  "sha256": "e9373e53c69cf21503015d99006a861bc6e154ffe4b20670b7bd8657df222a3e"
+  "size": 32623,
+  "sha256": "bf2b60e9582577bb01148c365b88bc5c40e10eb25163e8a14ce5b2491c230ec3"
  },
  {
   "surface": "explorer",
@@ -1286,8 +1256,8 @@
   "profile": "fhd-100",
   "width": 391,
   "height": 434,
-  "size": 8090,
-  "sha256": "f092627a076b12379f84d63a838c55f69e7a4a1a967075e8cfdb130075241362"
+  "size": 8105,
+  "sha256": "4b76492ec94e5372af4bdae12098ebd5eec7848243bf2a5d928951b3dd846ac7"
  },
  {
   "surface": "explorer",
@@ -1306,8 +1276,8 @@
   "profile": "fhd-100",
   "width": 391,
   "height": 434,
-  "size": 10591,
-  "sha256": "7aa1845cd9c6908bfeb60c961fabe59bf72046cb6af72c606806ca433fc37e02"
+  "size": 10569,
+  "sha256": "4e66cfe44fba757d9895c4ec00a64be6ce9c0bd461ef9c1a100d66c40ce55b92"
  },
  {
   "surface": "explorer",
@@ -1376,8 +1346,8 @@
   "profile": "fhd-100",
   "width": 463,
   "height": 335,
-  "size": 14155,
-  "sha256": "8533b15f3a47ec76f4bb9f639e00e8de41c329bac60c0053fcc322b594549074"
+  "size": 14178,
+  "sha256": "fbaab38cff897dd45908ea70451bc6e00e53f8c83224fc5af4ebe78137616e57"
  },
  {
   "surface": "explorer",
@@ -1436,8 +1406,8 @@
   "profile": "fhd-100",
   "width": 377,
   "height": 488,
-  "size": 24004,
-  "sha256": "2bb30554283bb934a5c2cc48d7c145e7717f2e0602ee90fc2173d15ea76496fe"
+  "size": 23961,
+  "sha256": "05c7aac38507ea4c5171880e563ca7e10a99ed4f84df9eb51d2b8656eca31d97"
  },
  {
   "surface": "explorer",
@@ -1456,8 +1426,8 @@
   "profile": "fhd-100",
   "width": 349,
   "height": 406,
-  "size": 9179,
-  "sha256": "04319fbc6f45d5ba7cd02ee78c4c521bd62673e6d245761a72248365942be816"
+  "size": 9202,
+  "sha256": "d9e9f9294dfc78c2e539888b181562e372fdb9db4fd018fa9d11a5867a500f0a"
  },
  {
   "surface": "explorer",
@@ -1506,8 +1476,8 @@
   "profile": "fhd-100",
   "width": 267,
   "height": 465,
-  "size": 10095,
-  "sha256": "f9038b233c8cd77519904e657a36425adf1036d69e58c251c08691064b7c20a7"
+  "size": 10117,
+  "sha256": "635aab150b5173179a00dbc929c4231f9fd816700643670013543b7c473545a9"
  },
  {
   "surface": "explorer",
@@ -1536,8 +1506,8 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 557,
-  "size": 27312,
-  "sha256": "fe3410dd094c03f2decfca4944bd1fe8e2489bf1f1f73f50ac6995a03771b1f3"
+  "size": 27269,
+  "sha256": "eb3830c94f885d5082232ecc0980659d6dd3fa743954f199a6219d9e8fcaf8e3"
  },
  {
   "surface": "explorer",
@@ -1611,23 +1581,13 @@
  },
  {
   "surface": "explorer",
-  "file": "menus",
-  "state": "image-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 456,
-  "height": 65,
-  "size": 4346,
-  "sha256": "beded3055484b9e711b6c2e86757bf798f894ccdea9dfb75654d6c485cab3d11"
- },
- {
-  "surface": "explorer",
   "file": "views",
   "state": "library",
   "profile": "fhd-100",
   "width": 1024,
   "height": 552,
-  "size": 8686,
-  "sha256": "655cf0bad2d06f5f4d95d736b475fb5b5a22daa6b9ad0a793e820b4aa098ea83"
+  "size": 8682,
+  "sha256": "29604277ed3a729d8c8939e2e4032ebe727ffb7ecccf6cbae6b758a081dba75c"
  },
  {
   "surface": "explorer",
@@ -1781,23 +1741,13 @@
  },
  {
   "surface": "explorer",
-  "file": "menus",
-  "state": "program-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 4055,
-  "sha256": "9f2da126a8e98af6924fa778c6494fbc24778c16bb0a8ec869ee398887501b6e"
- },
- {
-  "surface": "explorer",
   "file": "dialogs",
   "state": "program-properties",
   "profile": "fhd-100",
   "width": 419,
   "height": 573,
-  "size": 33170,
-  "sha256": "a1d0531d250ee1269613076a11ddf643ad9f1cf39a4d9ae102f607a8696b4dc8"
+  "size": 33178,
+  "sha256": "dfe7b64899ce787ff234efbea7815e8b98a9b4f83445faed3f15e5674501d6a4"
  },
  {
   "surface": "explorer",
@@ -1836,8 +1786,8 @@
   "profile": "fhd-100",
   "width": 391,
   "height": 491,
-  "size": 10974,
-  "sha256": "c72cc1494c271731068e7c602374762d2a888776d15cd7c3786a73a501eb0f6f"
+  "size": 10961,
+  "sha256": "9fc4803e2d37fcad5c42030dae909dc5bf1feb462803e689f5378baf8ff1d90c"
  },
  {
   "surface": "explorer",
@@ -1866,8 +1816,8 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 552,
-  "size": 6763,
-  "sha256": "b6a24151666ab228c072b0e7d3d6731b9571d267d3b28e40a11d9999cec5fec1"
+  "size": 6769,
+  "sha256": "8af3a3f0dfab4a97154253e70f7d61433b489e53001ffd51d94cb98e3522053c"
  },
  {
   "surface": "explorer",
@@ -1902,16 +1852,6 @@
  {
   "surface": "explorer",
   "file": "menus",
-  "state": "recycled-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 396,
-  "height": 65,
-  "size": 3787,
-  "sha256": "5f2cd13dbf2e97da6a701aafac466e2adaf54b191d5d34493d08a825ceedfb0f"
- },
- {
-  "surface": "explorer",
-  "file": "menus",
   "state": "removable-menu",
   "profile": "fhd-100",
   "width": 278,
@@ -1926,8 +1866,8 @@
   "profile": "fhd-100",
   "width": 355,
   "height": 466,
-  "size": 26782,
-  "sha256": "2577a84a0d91100d95db49587eb44a14dce349eeae4d12e590320ebe981d9769"
+  "size": 26783,
+  "sha256": "05996b2bcd0b2a0acb8ab15961c3fb5617cea269984ec19f3a3269988f189d0d"
  },
  {
   "surface": "explorer",
@@ -1996,8 +1936,8 @@
   "profile": "fhd-100",
   "width": 1024,
   "height": 583,
-  "size": 48690,
-  "sha256": "2c61ad5fedf0532638f37292dca867246bc9f7422b70845e03d8900775286204"
+  "size": 48703,
+  "sha256": "656f4286a19ed0e1c8982f32cfbfb86e0995d02fda9eb0589f69545ad8d1c90b"
  },
  {
   "surface": "explorer",
@@ -2101,23 +2041,13 @@
  },
  {
   "surface": "explorer",
-  "file": "menus",
-  "state": "several-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 4199,
-  "sha256": "8ac58cd78c2e4333641fcb2ce06aab30f1f674fb7fa2ce3da8fc37630e691954"
- },
- {
-  "surface": "explorer",
   "file": "dialogs",
   "state": "several-properties",
   "profile": "fhd-100",
   "width": 377,
   "height": 516,
-  "size": 24804,
-  "sha256": "45968932647f9d168f63365196becff985101840d51b0a2e3104bbc740ea73fc"
+  "size": 24886,
+  "sha256": "9978a0291fca0627d8eb8d129912e1fd4d661bdfeb59e4c3dc6d5716d7574342"
  },
  {
   "surface": "explorer",
@@ -2126,8 +2056,8 @@
   "profile": "fhd-100",
   "width": 349,
   "height": 434,
-  "size": 6755,
-  "sha256": "94b0a8af457f8bec479a039558cfa56820876ceea0ade78f0a17fcd80c58035f"
+  "size": 6756,
+  "sha256": "e1b752ab0dfa46772f84a6844d3c288dbcd7fb80ab394d340e3f39dd43ee0935"
  },
  {
   "surface": "explorer",
@@ -2171,23 +2101,13 @@
  },
  {
   "surface": "explorer",
-  "file": "menus",
-  "state": "shortcut-menu.windows-modernshareflyout-open",
-  "profile": "fhd-100",
-  "width": 453,
-  "height": 65,
-  "size": 3990,
-  "sha256": "10eec13fa8c16e9e8e41f563008cda300c8ec406f7e94926ac5a26146adbccc1"
- },
- {
-  "surface": "explorer",
   "file": "dialogs",
   "state": "shortcut-properties",
   "profile": "fhd-100",
   "width": 419,
   "height": 516,
-  "size": 30185,
-  "sha256": "35047f7078503343d8105e845f0f789962791730b60241c35feeeb9a5e965a93"
+  "size": 30186,
+  "sha256": "3bad8ac2a31eed43c8400dec7b7fee6fe4464c4c6b39b4dc6a7bffcbbf622a6c"
  },
  {
   "surface": "explorer",
@@ -2196,8 +2116,8 @@
   "profile": "fhd-100",
   "width": 391,
   "height": 434,
-  "size": 8293,
-  "sha256": "a01cf4444b45fc7ecefc3f33975118e26c3c8a1986388a964540880a68c47351"
+  "size": 8306,
+  "sha256": "b420746f88dca69a3b818043c38af5bc091b894db83a5a67c4dee28b99f4c008"
  },
  {
   "surface": "explorer",
@@ -2216,8 +2136,8 @@
   "profile": "fhd-100",
   "width": 391,
   "height": 434,
-  "size": 11065,
-  "sha256": "0ba28ebfe9023267077b8255d460cd86b82bd41376502f61ff8994167a3679be"
+  "size": 11035,
+  "sha256": "d993d5c2235a53c7534e6c7165bc0618e246e731801bf538265051440203be1e"
  },
  {
   "surface": "explorer",
@@ -2306,8 +2226,8 @@
   "profile": "fhd-100",
   "width": 496,
   "height": 189,
-  "size": 9409,
-  "sha256": "690fb67f9b8e97e6089d27df12219b4f262d8808d35c1eebe5791abf5147bc19"
+  "size": 9406,
+  "sha256": "2691d7a6a23052e094a4d180bb45882ec13abd34fdd53cc36f8f0dcc2972ca6a"
  },
  {
   "surface": "explorer",

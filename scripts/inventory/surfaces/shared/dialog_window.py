@@ -75,7 +75,7 @@ def win32_windows():
     return out
 
 
-def top_windows(ctx, known=()):
+def top_windows(ctx, known=(), uia=True):
     """(handle, class, title) of each top-level window on screen, from both lists:
     UI Automation's root leaves out a dialog its owner holds (Customize's Browse),
     and Win32's visible windows leave out the Open With picker, which UI
@@ -84,11 +84,15 @@ def top_windows(ctx, known=()):
     entry per handle: the two lists can name a window differently, and a handle,
     not its title, is what makes it a window. A handle in `known` is returned
     without reading whether it is a tooltip: a caller looking for new windows
-    drops it anyway (review, 2026-11-21)."""
+    drops it anyway (review, 2026-11-21). uia=False reads Win32's list alone,
+    for a scene with a hung window up: UI Automation's desktop list waits on it
+    for its 20 s provider timeout on every look (2026-11-21)."""
     out = {w[0]: w for w in win32_windows()}
-    for w in ctx.live.children(ctx.live.uia.GetRootElement(), ctx.live.uia.CreateTrueCondition()):
-        if not w.offscreen:
-            out.setdefault(w.el.CurrentNativeWindowHandle, (w.el.CurrentNativeWindowHandle, w.class_name, w.name))
+    for w in (ctx.live.children(ctx.live.uia.GetRootElement(), ctx.live.uia.CreateTrueCondition()) if uia else ()):
+        if ctx.overdue():
+            raise core.Incomplete("the window list ran past its poll's deadline")
+        if not w.offscreen and w.hwnd not in out:
+            out[w.hwnd] = (w.hwnd, w.class_name, w.name)
     return {w for w in out.values() if w[0] in known or not tooltip_only(ctx, w)}
 
 
@@ -151,23 +155,27 @@ def baseline(ctx):
         _base["windows"] = {w[0] for w in top_windows(ctx)}
 
 
-def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",)):
+def appeared(ctx, before, wait=DIALOG_WAIT, skip=("CabinetWClass",), uia=True):
     """The top-level window that was not there before an action (the one whose
-    title is not known ahead: Open with, a wizard). Refused when none or several appear."""
+    title is not known ahead: Open with, a wizard). Refused when none or several
+    appear. uia as top_windows takes it."""
     known = {w[0] for w in before}            # by handle: a renamed window is not a new one
     new = []
     with ctx.within(wait) as deadline:
         while True:
             try:
-                new = [w for w in top_windows(ctx, known) if w[0] not in known and w[1] not in skip]
+                new = [w for w in top_windows(ctx, known, uia) if w[0] not in known and w[1] not in skip]
             except core.Incomplete:
                 pass                              # the look ran out of time; the deadline below decides
             else:
-                if len(new) == 1:
+                # A window seen after the deadline is not taken: a slow look must
+                # not make a later window the scene (review, 2026-11-21). A zero
+                # wait is the one look, taken as it is.
+                if len(new) == 1 and (wait <= 0 or time.monotonic() <= deadline):
                     return ctx.live.wrap(ctx.live.uia.ElementFromHandle(new[0][0]))
             if time.monotonic() > deadline:
                 raise core.Incomplete(f"after the action {len(new)} new window(s) showed: {sorted(w[1:] for w in new)}")
-            time.sleep(0.5)
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
 
 
 def innermost_first(windows):
