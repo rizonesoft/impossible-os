@@ -11,7 +11,7 @@ title: "TODO-02 -- AI Development System"
 > **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
 > **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
 
-> **Goal:** Turn the repo's AI workflow into an explicit, maintainable system instead of a pile of overlapping instructions. Impossible OS is **Claude Code-only** for implementation and overnight execution. Cursor was removed because maintaining a parallel skill set under `.cursor/` created clutter without a corresponding productivity win. This TODO defines the canonical source-of-truth map for the Claude + external-reviewer surfaces that remain, the skill lifecycle, hook policy, and a regression check that proves the AI layer still matches repo doctrine.
+> **Goal:** Turn the repo's AI workflow into an explicit, maintainable system instead of a pile of overlapping instructions. Claude Code implements and runs the overnight run; since 2026-11-20 the operator-started lanes (CLAUDE.md "Two engines, one gate set") are the only other writers. Cursor was removed because maintaining a parallel skill set under `.cursor/` created clutter without a corresponding productivity win. This TODO defines the canonical source-of-truth map for the Claude + external-reviewer surfaces that remain, the skill lifecycle, hook policy, and a regression check that proves the AI layer still matches repo doctrine.
 
 ## Authority Hierarchy (read this first)
 
@@ -396,7 +396,8 @@ This is the refinement step: test the workflow itself.
 ## Verification
 
 - [x] **Authority Hierarchy is stated at the top of this TODO**, in `docs/infrastructure/ai-system.md` (once §1 lands), and in references from `CLAUDE.md`. A contributor asking "which AI surface owns this?" finds a direct answer within 30 seconds: Claude is the primary interactive orchestrator and Codex review mode is finding-only.
-- [x] The 5 hierarchy invariants (doctrine in `CLAUDE.md` only; skills in `.claude/skills/` only; reviewers return findings, never edits; `CLAUDE.md` wins on conflict; Claude Code remains the only implementation agent) appear in both `TODO-02` and `ai-system.md`; `scripts/test-ai-system.sh` asserts both locations.
+- [x] The 5 hierarchy invariants appear in both `TODO-02` and `ai-system.md`; `scripts/test-ai-system.sh` asserts both locations
+  - The 5 hierarchy invariants (doctrine in `CLAUDE.md` only; skills in `.claude/skills/` only; reviewers return findings, never edits; `CLAUDE.md` wins on conflict; only operator-started lanes commit) appear in both `TODO-02` and `ai-system.md`; `scripts/test-ai-system.sh` asserts both locations.
 - [x] Root roadmap and `00-infrastructure/INDEX.md` point only at real AI/tooling TODO files -- §9 regression group 8 `[8/12] Root-index link integrity`: "36 link(s) across root indexes all resolve" + "AI-system links in CLAUDE.md all resolve" (72 PASS / 0 FAIL).
 - [x] Ownership matrix clearly maps doctrine, skills, hooks, and permissions -- and opens with the Authority Hierarchy table before any other row -- [`ai-system.md`](../../docs/infrastructure/ai-system.md) line 1 `# AI Development System -- Ownership Map`, line 5 `## Authority Hierarchy (read this first)` -- Authority is the first `##` heading, before any other content.
 - [x] External-reviewer contract is documented and linked from every `codex-*` skill -- 9/9 `codex-*` skills carry `receiving-code-review` or `external-reviewer-contract` reference (verified via `for f in .claude/skills/codex-*/SKILL.md; do grep -q 'receiving-code-review\|external-reviewer-contract' "$f"; done`).

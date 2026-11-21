@@ -46,3 +46,23 @@ def test_an_old_dash_on_an_untouched_line_and_a_generated_file_pass(tmp_path):
     _git(root, "add", "old.md", "todo/implementation-plan.md")
     r = _run(root)
     assert r.returncode == 0, r
+
+
+def test_no_display_setting_name_or_content_hides_an_added_dash(tmp_path):
+    """The class: whatever once fooled the patch parser (no b/ prefix, a quoted
+    non-ASCII name, added text that looks like a header, a line separator inside
+    a line, a symlink replaced by a file) still reports at the right line."""
+    root = _repo(tmp_path)
+    (root / "link").symlink_to("target")
+    _git(root, "add", "link")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "-m", "link")
+    (root / "link").unlink()
+    (root / "link").write_text("x " + DASH + "\n", encoding="utf-8")
+    (root / "café.md").write_text("++ heading\nbad " + DASH + "\n", encoding="utf-8")
+    (root / "sep.md").write_bytes(("a \fb " + DASH + "\n").encode())
+    _git(root, "add", "-A")
+    _git(root, "config", "diff.noprefix", "true")
+    r = _run(root)
+    assert r.returncode == 1, r
+    for want in ("link:1", "café.md:2", "sep.md:1"):
+        assert want in r.stderr, (want, r.stderr)
