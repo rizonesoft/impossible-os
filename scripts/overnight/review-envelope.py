@@ -29,7 +29,6 @@ import re
 import sys
 from pathlib import Path
 
-COMPLETE_MARKERS = ("Turn completed", "Review complete", "turn.completed")
 # The broker (review-broker-codex-dispatch.sh) appends "Turn completed (rc=N)"
 # where N is the Codex process exit code. rc != 0 means the leg CRASHED (the
 # recurring "codex app-server exited unexpectedly, rc=1" is the live case) and
@@ -51,6 +50,14 @@ def leg_summary(entry: dict) -> dict:
     out = {"kind": entry.get("kind"), "jobId": entry.get("jobId"),
            "artifact": str(path), "complete": False, "crashed": False,
            "rc": None, "findings": [], "sha256": None, "bytes": 0, "tail": []}
+    # The dispatcher's <log>.done (its exit status, written after the review
+    # process exited and after its receipt) is read BEFORE the transcript, so a
+    # snapshot taken afterwards is never older than the status it is paired with.
+    done_rc = None
+    try:
+        done_rc = int(Path(str(path) + ".done").read_text().strip())
+    except (OSError, ValueError):  # fail-direction: no status means not finished (or an older log)
+        done_rc = None
     try:
         data = path.read_bytes()
     except OSError:
@@ -59,22 +66,25 @@ def leg_summary(entry: dict) -> dict:
     out["bytes"] = len(data)
     out["sha256"] = hashlib.sha256(data).hexdigest()
     text = data.decode("utf-8", "replace")
-    out["complete"] = any(m in text for m in COMPLETE_MARKERS)
-    # Crash detection: an explicit rc != 0 in the completion marker, OR a known
-    # Codex crash signature anywhere in the leg output. A crashed leg is NOT a
-    # valid verdict even though its "Turn completed" marker is present.
-    # The dispatcher's <log>.done holds the real exit status; without it (an
-    # older log) the LAST terminal line counts, since a review can quote one.
-    try:
-        out["rc"] = int(Path(str(path) + ".done").read_text().strip())
+    # Finished means the dispatcher said so: its <log>.done, or (an older log
+    # without one) a "Turn completed (rc=N)" line it appended, the LAST one,
+    # since a review can quote an earlier one. Log text such as the companion's
+    # mid-run "[codex] Turn completed." never counts. With a status in hand the
+    # exit code alone decides a crash: a review can quote a crash diagnostic.
+    if done_rc is not None:
         out["complete"] = True
-    except (OSError, ValueError):  # fail-direction: falls back to the transcript's last line
+        out["rc"] = done_rc
+        out["crashed"] = done_rc != 0
+    elif entry.get("done_file") is True:
+        pass  # its dispatcher writes <log>.done; without it the review is still running
+    else:
         rc_all = RC_RE.findall(text)
         if rc_all:
+            out["complete"] = True
             out["rc"] = int(rc_all[-1])
-    if (out["rc"] is not None and out["rc"] != 0) or \
-            any(sig in text for sig in CRASH_SIGNATURES):
-        out["crashed"] = True
+        if (out["rc"] is not None and out["rc"] != 0) or \
+                any(sig in text for sig in CRASH_SIGNATURES):
+            out["crashed"] = True
     lines = text.splitlines()
     findings = [ln.strip()[:400] for ln in lines if FINDING_RE.match(ln)]
     if len(findings) > MAX_FINDING_LINES:

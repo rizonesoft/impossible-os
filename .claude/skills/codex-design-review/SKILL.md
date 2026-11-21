@@ -61,7 +61,7 @@ bash scripts/codex-bg-dispatch.sh "$PROMPT"
 
 The wrapper invokes `codex-companion.mjs task --background --json` (the only background-capable subcommand) and returns immediately with `{jobId, logFile, status}`. The detached worker continues reasoning past the 10-min wall.
 
-**Poll for completion** (each call blocks up to 4 min, repeat until `status: "completed"`):
+**Poll for completion** (each call blocks up to 4 min, so give the Bash call `timeout: 300000`; repeat until the job is completed):
 ```bash
 node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" status <jobId> --wait --timeout-ms 240000
 ```

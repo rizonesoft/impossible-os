@@ -124,7 +124,7 @@ def test_stale_flagged_after_no_growth():
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
         log.write_text("streaming...\n")             # content, no sentinel
-        r1 = _run(log, maxw=1, stale=1, cwd=d)       # first sighting -> running
+        r1 = _run(log, maxw=1, stale=5, cwd=d)       # first sighting -> running
         assert r1.returncode == 3, (r1.returncode, r1.stdout)
         time.sleep(2)                                 # exceed stale window, no growth
         r2 = _run(log, maxw=1, stale=1, cwd=d)
@@ -132,12 +132,21 @@ def test_stale_flagged_after_no_growth():
         assert "STALE" in r2.stdout and "no growth" in r2.stdout
 
 
+def test_a_log_silent_from_the_start_is_stale_in_the_same_call():
+    # B2: the first sighting is sampled when the wait starts, not when it ends.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("streaming...\n")
+        r = _run(log, maxw=2, stale=1, cwd=d)
+        assert r.returncode == 4, (r.returncode, r.stdout)
+
+
 def test_growth_resets_stall_clock():
     # B2: a log that GREW between checks is NOT stale (slow-but-alive, keep waiting).
     with tempfile.TemporaryDirectory() as d:
         log = pathlib.Path(d) / "r.log"
         log.write_text("chunk1\n")
-        r1 = _run(log, maxw=1, stale=1, cwd=d)
+        r1 = _run(log, maxw=1, stale=5, cwd=d)
         assert r1.returncode == 3
         time.sleep(2)
         log.write_text("chunk1\nchunk2 more streamed output\n")   # GREW

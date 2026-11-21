@@ -290,8 +290,11 @@ if [ -n "$LOG_FILE" ]; then
         "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=direct:$STAMP-$$" \
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
-        "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" \
-        || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
+        "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
+        || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
+             # A pass with no receipt cannot be credited: report it incomplete
+             # (rc 3, dispatched again), never as the review's own success.
+             [ "$PIN_KIND" = "1" ] && rc=3; }
     # Published LAST, after the receipt: the waiter ends on this file, never on
     # log text (a live review can print a line that looks like the one above),
     # and whoever it releases reads the receipt next.

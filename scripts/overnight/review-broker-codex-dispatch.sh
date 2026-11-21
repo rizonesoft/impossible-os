@@ -160,7 +160,7 @@ MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"
 python3 "$MANIFEST_LINE" --append "$MANIFEST" \
     "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
     "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
-    "worktree_sha256=$TREE_WORK" || {
+    "worktree_sha256=$TREE_WORK" "bool:done_file=true" || {
   echo "ERROR: the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
   rm -f "$PROMPT_FILE"
   exit 1

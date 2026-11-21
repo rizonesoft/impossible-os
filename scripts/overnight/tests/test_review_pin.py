@@ -460,6 +460,30 @@ def test_the_wrapper_writes_the_receipt_the_gate_reads(tmp_path):
     assert all(e["route"] == "codex-dispatch.sh" and e["section"] == 99 for e in lines)
 
 
+def test_the_wrapper_publishes_its_done_file_after_the_receipt(tmp_path):
+    """A waiter ends on <log>.done, never on log text, and reads the receipt next."""
+    import json
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    done, _ = _dispatch(tmp_path, "completion", full)
+    assert done.returncode == 0, done.stderr
+    entry = json.loads((tmp_path / "reviews/manifest.jsonl").read_text().splitlines()[-1])
+    assert entry["done_file"] is True
+    assert pathlib.Path(entry["logFile"] + ".done").read_text().strip() == "0"
+
+
+def test_a_pass_whose_receipt_cannot_be_written_is_not_published_as_success(tmp_path):
+    """No receipt, no credit: the pass reports rc 3 in its exit and its done file."""
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    (tmp_path / "reviews").mkdir()
+    (tmp_path / "reviews/manifest.jsonl").mkdir()          # the append fails; the log dir stays writable
+    done, _ = _dispatch(tmp_path, "completion", full)
+    assert done.returncode == 3, (done.returncode, done.stderr)
+    dones = list((tmp_path / "reviews").glob("*.out.done"))
+    assert len(dones) == 1 and dones[0].read_text().strip() == "3"
+
+
 def test_refusal_a_pass_names_its_todo_and_section(tmp_path):
     for first in ("[review-kind: round] just some words", "[review-kind: round] todo/x.md with no section"):
         done, prompt = _dispatch(tmp_path, "round", "x", marker=first.split("]")[0] + "]",

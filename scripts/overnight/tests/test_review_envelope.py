@@ -83,6 +83,38 @@ def test_a_quoted_clean_line_never_hides_a_failed_exit():
             assert kind in env["needs_redispatch"]
 
 
+def test_the_companion_progress_line_is_not_a_finished_leg():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "[codex] Turn completed.\n"})
+        rc, env = _run(root)
+        assert env["kinds"]["adversarial"]["complete"] is False
+        assert env["all_clean"] is False
+
+
+def test_a_leg_whose_dispatcher_writes_done_files_waits_for_one():
+    # A newly dispatched leg never falls back to log text, even a terminal-looking line.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "quoting:\nTurn completed (rc=0)\n"})
+        man = root / ".claude/overnight/reviews/manifest.jsonl"
+        e = json.loads(man.read_text()); e["done_file"] = True
+        man.write_text(json.dumps(e) + "\n")
+        rc, env = _run(root)
+        assert env["kinds"]["adversarial"]["complete"] is False
+        assert "adversarial" in env["needs_redispatch"]
+
+
+def test_a_quoted_crash_message_never_overrides_a_clean_exit():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "the last run hit: app-server exited unexpectedly\nok\nTurn completed (rc=0)\n"})
+        (root / ".claude/overnight/reviews/adversarial.out.done").write_text("0\n")
+        rc, env = _run(root)
+        assert env["kinds"]["adversarial"]["crashed"] is False
+        assert env["kinds"]["adversarial"]["complete"] is True
+
+
 def test_missing_leg_needs_redispatch():
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)

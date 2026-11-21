@@ -99,6 +99,16 @@ _all_done() {
     return 0
 }
 
+# B2: a log seen for the first time is sampled when the wait STARTS, so a review
+# silent from launch is reported STALE at the end of this call, not only at
+# the end of the next one (a 540-second wait otherwise took about 18 minutes).
+mkdir -p "$ACT_DIR" 2>/dev/null || true
+for f in "${LOGS[@]}"; do
+    [ -f "$f" ] || continue
+    side="$ACT_DIR/$(printf '%s' "$f" | md5sum 2>/dev/null | cut -c1-16)"
+    [ -f "$side" ] || printf '%s %s\n' "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" "$(date +%s)" > "$side" 2>/dev/null || true
+done
+
 elapsed=0
 while [ "$elapsed" -lt "$MAX" ]; do
     if _all_done; then
