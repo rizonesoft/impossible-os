@@ -7986,6 +7986,20 @@ rm -f "$CRSW_REPO/.claude/state/last-codex-review.json" \
 cat > "$CRSW_TMP/p_wrapper.json" <<'JSON'
 {"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md wrapper attribution'"},"tool_response":{"stderr":"[codex-dispatch] transcript: /r/20260101-000000-1-adversarial-direct.out\n"}}
 JSON
+# The dispatcher's receipt row is the only evidence of a launch; write the one
+# this direct dispatch would have written, keyed by its prompt's hash.
+python3 - "$CRSW_REPO" <<'PYEOF'
+import hashlib, json, pathlib, sys, time
+root = pathlib.Path(sys.argv[1])
+prompt = "[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md wrapper attribution"
+m = root / ".claude/overnight/reviews/manifest.jsonl"
+m.parent.mkdir(parents=True, exist_ok=True)
+with m.open("a") as fh:
+    fh.write(json.dumps({"ts": int(time.time()), "jobId": "direct:crsw-1", "kind": "adversarial",
+                         "todo": "todo/00-infrastructure/TODO-08-automation-hardening.md",
+                         "logFile": "/r/20260101-000000-1-adversarial-direct.out",
+                         "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()}) + "\n")
+PYEOF
 ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py < "$CRSW_TMP/p_wrapper.json" >/dev/null 2>&1 )
 CRSW_WRAPPER_OK=$(python3 - "$CRSW_REPO" <<'PYEOF'
 import json, sys, pathlib

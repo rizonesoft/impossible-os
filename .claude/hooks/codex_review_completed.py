@@ -1421,46 +1421,6 @@ def _update_state(state_path: Path, change) -> dict | None:
         return new if ok else None
 
 
-# Positive evidence that a wrapper launched a review: the broker prints one
-# {"kind", "jobId", "logFile"} line per job it registered, and the direct
-# dispatcher announces the transcript it created once nothing can refuse any
-# more. A refusal prints neither, whatever else the output quotes.
-_DIRECT_LAUNCH_RE = re.compile(r"^\[codex-dispatch\] (?:transcript: (.+?)|launched: (\S+))\s*$")
-
-
-def _launches(payload: dict) -> list:
-    """[(kind, log path or "", stream)] for every launch line in the tool
-    response. A line is only a CLAIM: the direct dispatcher streams the review
-    itself to stdout, and a review can quote any line. Stamping binds each
-    claim to a receipt row carrying this invocation's own prompt hash."""
-    resp = payload.get("tool_response")
-    if isinstance(resp, dict):
-        streams = [(k, str(resp.get(k) or "")) for k in ("stdout", "stderr", "output")]
-    else:
-        streams = [("output", str(resp or ""))]
-    out = []
-    for name, text in streams:
-        for ln in text.splitlines():
-            s = ln.strip()
-            if s.startswith("{") and '"logFile"' in s:
-                try:
-                    rec = json.loads(s)
-                except ValueError:
-                    continue
-                if isinstance(rec, dict) and isinstance(rec.get("logFile"), str):
-                    out.append((str(rec.get("kind") or ""), rec["logFile"], name))
-                continue
-            m = _DIRECT_LAUNCH_RE.match(s)
-            if m:
-                k = _out_kind_from_name(Path(m.group(1)).name) if m.group(1) else m.group(2)
-                out.append((k[:-len("-direct")] if k.endswith("-direct") else k, m.group(1) or "", name))
-    return out
-
-
-def _launched_kinds(payload: dict) -> list:
-    return [k for k, _log, _stream in _launches(payload)]
-
-
 _WRAPPERS = ("codex-dispatch.sh", "review-broker-codex-dispatch.sh")
 
 
@@ -1480,23 +1440,59 @@ def _is_wrapper_dispatch(cmd: str) -> bool:
     return bool(names & set(_WRAPPERS)) and "codex-bg-dispatch.sh" not in names
 
 
-def _matched_receipts(root: Path, cmd: str, launched: list) -> list:
-    """The receipt rows THIS invocation launched: each launch claim's log
-    matched to its receipt row, kept only when the row's prompt hash is one
-    of the invocation's own prompts (each prompt used once). A review that
-    quotes another job's launch line names a row with another prompt."""
+RECEIPT_WINDOW_S = 1800   # a receipt older than this is not this call's (a foreground review ends < 10 min)
+_CREDITED_CAP = 2000
+
+
+def _claim_receipts(root: Path, state_path: Path, cmd: str) -> list:
+    """The receipt rows THIS call launched, each credited exactly once.
+
+    The one evidence of a launch is the row the dispatcher itself appends to
+    the reviews manifest (the broker before it starts a job, the direct
+    dispatcher when its review ends; neither writes one when it refuses).
+    A row belongs to this call when its prompt hash is one of the call's own
+    prompts, it is recent, and no earlier call has claimed it: the claim is
+    recorded in a ledger under the review-state lock. Nothing the tool printed
+    is read, so a refusal, a quoted banner or a quoted launch line in the
+    streamed review can neither create nor lend a launch.
+    """
     try:
         hashes = collections.Counter(
             hashlib.sha256(b.encode("utf-8")).hexdigest() for b in _cd.extract_dispatch_prompts(cmd))
     except Exception:  # fail-direction: no prompt hashes means no row matches, nothing is credited
         return []
-    out = []
-    for row in _manifest_rows_for(root, [lg for _k, lg, _st in launched if lg]):
-        h = str((row or {}).get("prompt_sha256") or "")
-        if row is not None and hashes[h] > 0:
+    if not hashes:
+        return []
+    ledger = state_path.parent / "credited-receipts.json"
+    now = time.time()
+    with _StateLock(state_path) as lk:
+        if not lk.held:
+            sys.stderr.write("[codex-review-state] WARN: state lock busy; this review is not credited.\n")
+            return []
+        try:
+            credited = json.loads(ledger.read_text())
+            credited = [str(j) for j in credited] if isinstance(credited, list) else []
+        except (OSError, ValueError):  # fail-direction: a missing ledger credits nothing twice within the window
+            credited = []
+        seen = set(credited)
+        rows = []
+        for row in reversed(_manifest_tail(root)):
+            if not isinstance(row, dict) or row.get("parent"):
+                continue
+            job, h = str(row.get("jobId") or ""), str(row.get("prompt_sha256") or "")
+            ts = row.get("ts")
+            if not job or job in seen or hashes[h] <= 0 or not isinstance(ts, (int, float)) \
+                    or now - ts > RECEIPT_WINDOW_S:
+                continue
             hashes[h] -= 1
-            out.append(row)
-    return out
+            seen.add(job)
+            credited.append(job)
+            rows.append(row)
+        if rows:
+            ok, _err = _write_atomic(ledger, credited[-_CREDITED_CAP:])
+            if not ok:
+                return []
+    return list(reversed(rows))
 
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -1508,37 +1504,24 @@ def _row_head(row: dict, fallback: str) -> str:
     return h if _SHA_RE.match(h) else fallback
 
 
-def _manifest_rows_for(root: Path, logs: list) -> list:
-    """The receipt row each launched log belongs to (its kind, TODO and
-    section), first row per log; a log with no row yields None."""
-    def key(v):
-        try:
-            return str(Path(str(v)).resolve())
-        except OSError:
-            return ""
-    want = {key(lg): None for lg in logs}
-    # The manifest only grows (thousands of rows): read its last 512 KiB, which
-    # holds well over the last 400 rows, never the whole file.
+def _manifest_tail(root: Path) -> list:
+    """The last 400 manifest rows, read from the file's last 512 KiB (the
+    manifest only grows, to thousands of rows)."""
     try:
         with open(root / ".claude/overnight/reviews/manifest.jsonl", "rb") as fh:
             fh.seek(0, os.SEEK_END)
             size = fh.tell()
             fh.seek(max(0, size - 512 * 1024))
             tail = fh.read().decode("utf-8", "replace")
-        lines = tail.splitlines()[1 if size > 512 * 1024 else 0:][-400:]
-    except OSError:  # fail-direction: no manifest means no row; a bundle then earns no stamp
-        lines = []
-    for line in lines:
+    except OSError:  # fail-direction: no manifest means no receipt; nothing is credited
+        return []
+    out = []
+    for line in tail.splitlines()[1 if size > 512 * 1024 else 0:][-400:]:
         try:
-            rec = json.loads(line)
+            out.append(json.loads(line))
         except ValueError:
             continue
-        if not isinstance(rec, dict) or rec.get("parent"):
-            continue
-        k = key(rec.get("logFile") or "")
-        if k and k in want and want[k] is None:
-            want[k] = rec
-    return [want.get(key(lg)) for lg in logs]
+    return out
 
 
 def _dispatch_was_refused(payload: dict) -> bool:
@@ -1588,9 +1571,8 @@ def main() -> int:
     _ti = payload.get("tool_input") or {}
     _cmd = str(_ti.get("command") or "") if isinstance(_ti, dict) else ""
     _wrapper = _is_wrapper_dispatch(_cmd)
-    _launched = _launches(payload) if _wrapper else []
-    _matched = _matched_receipts(root, _cmd, _launched) if _launched else []
-    if kind == "trigger" and ((_wrapper and not _launched) or (not _wrapper and _dispatch_was_refused(payload))):
+    _matched = _claim_receipts(root, state_path, _cmd) if (_wrapper and kind == "trigger") else []
+    if kind == "trigger" and ((_wrapper and not _matched) or (not _wrapper and _dispatch_was_refused(payload))):
         # Refused at argv time: no review ran. Recording it would open a
         # reception obligation and stamp a review that never happened.
         sys.stderr.write(
@@ -1672,8 +1654,7 @@ def main() -> int:
             # a logFile line the streamed review merely quotes): auto-receive
             # completes THIS review only from that log, and the outage path
             # marks only a record whose own log failed at the backend.
-            "log_file": str(_matched[0].get("logFile") or "")
-            if len(_matched) == 1 and len(_all_dispatch_targets(_cmd, root)) <= 1 else "",
+            "log_file": str(_matched[0].get("logFile") or "") if len(_matched) == 1 else "",
         }
         # TODO-08 section 24 observability: capture write success/failure
         # so missing-write incidents leave a structured trail in
@@ -1758,7 +1739,6 @@ def main() -> int:
         stamp_ok, stamp_err = False, ""
         if not write_ok:
             stamp_attempted, stamp_err = False, "skipped (the trigger was not recorded)"
-        _bundle = len(_all_dispatch_targets(raw_cmd, root)) > 1 if raw_cmd else False
         if stamp_attempted and _wrapper:
             stamp_attempted = False
             stamp_err = "skipped (no launched receipt names a stamped kind)"
@@ -1774,17 +1754,6 @@ def main() -> int:
                 stamp_ok, stamp_err = _record_stamp(
                     root, _tp, ("\u00a7" + _sec) if _sec else "", _k, now_ns,
                     dispatch_head_sha=_row_head(_row, head_at_dispatch), deadline=_stamp_deadline,
-                )
-            # A lone dispatch whose receipt is not written yet: its own launch
-            # line on stderr (never the streamed review) names its one target.
-            if not stamp_attempted and not _bundle and any(st == "stderr" for _k, _lg, st in _launched) \
-                    and not any(_manifest_rows_for(root, [lg for _k, lg, _st in _launched if lg])) \
-                    and review_kind and todo_path \
-                    and review_kind not in SECTION_PASS_KINDS:
-                stamp_attempted = True
-                stamp_ok, stamp_err = _record_stamp(
-                    root, todo_path, section, review_kind, now_ns,
-                    dispatch_head_sha=head_at_dispatch, deadline=_stamp_deadline,
                 )
         elif stamp_attempted:
             _stamp_deadline = time.monotonic() + 2.0

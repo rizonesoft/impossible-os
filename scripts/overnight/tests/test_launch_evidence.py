@@ -68,7 +68,10 @@ def _row(root, kind, log, section=1, todo=TODO, prompt=None, head=None):
     body = prompt if prompt is not None else _prompt(kind, todo, section)
     m = root / ".claude/overnight/reviews/manifest.jsonl"
     m.parent.mkdir(parents=True, exist_ok=True)
-    row = {"ts": 1, "kind": kind, "todo": todo, "section": section, "logFile": log,
+    import time
+    import uuid
+    row = {"ts": int(time.time()), "jobId": f"detached:{uuid.uuid4().hex}", "kind": kind, "todo": todo,
+           "section": section, "logFile": log,
            "prompt_sha256": hashlib.sha256(body.encode()).hexdigest()}
     if head:
         row["head"] = head
@@ -82,6 +85,38 @@ def test_a_registered_broker_job_is_recorded_and_stamped(tmp_path):
     state, stamps = _hook(root, _dispatch("adversarial"), stdout=_job("adversarial") + "\n")
     assert state and state["review_kind"] == "adversarial" and state["log_file"] == "/x/a.out"
     assert isinstance(stamps.get(TODO, {}).get("adversarial"), int), stamps
+
+
+# ---- the class: printed text is never evidence of a launch ----
+# Every case below once fooled a rule that read the tool output (a refusal
+# banner on either stream, a banner or launch line quoted by a review, a
+# transcript path, a script named in a prompt). Evidence is now only a receipt
+# row the dispatcher wrote, claimed once; so any text, with no row, records
+# nothing, and the same row is never credited to a second call.
+TEXTS = [
+    ("", "[review-broker] BLOCK -- expected exactly one prompt argument.\n"),
+    ("[review-broker] BLOCK -- expected exactly one prompt argument.\n", ""),
+    (json.dumps({"kind": "adversarial", "jobId": "detached:q", "logFile": "/x/q.out"}) + "\n", ""),
+    ("review text quoting [codex-dispatch] transcript: /r/1-1-adversarial-direct.out\n", ""),
+    ("", "[codex-dispatch] transcript: /tmp/review logs/1-1-adversarial-direct.out\n"),
+    ("finding: [codex-bg-dispatch] BLOCK -- x\n", "[codex-dispatch] launched: adversarial\n"),
+]
+
+
+def test_printed_text_never_credits_a_launch_and_a_receipt_credits_once(tmp_path):
+    root = _repo(tmp_path)
+    for out, err in TEXTS:
+        for cmd in (_dispatch("adversarial"), "bash scripts/codex-dispatch.sh " + shlex.quote(_prompt("adversarial"))):
+            state, stamps = _hook(root, cmd, stdout=out, stderr=err)
+            assert state is None and stamps == {}, (out, err, state, stamps)
+    _row(root, "adversarial", "/x/a.out")
+    state, stamps = _hook(root, _dispatch("adversarial"))
+    assert state and state["log_file"] == "/x/a.out" and isinstance(stamps[TODO]["adversarial"], int)
+    (root / ".claude/state/last-codex-review.json").unlink()
+    (root / ".claude/state/last-review-stamps.json").unlink()
+    for out, err in TEXTS + [("", "")]:                     # the same prompt again, refused: its row is spent
+        state, stamps = _hook(root, _dispatch("adversarial"), stdout=out, stderr=err)
+        assert state is None and stamps == {}, (out, err, state, stamps)
 
 
 def test_a_broker_refusal_records_nothing_whatever_stream_it_is_on(tmp_path):
@@ -146,11 +181,6 @@ def test_a_prompt_naming_the_background_wrapper_still_needs_a_launch_line(tmp_pa
     cmd = f"{BROKER} '[review-kind: adversarial] {TODO} section 1 review scripts/codex-bg-dispatch.sh' extra"
     state, stamps = _hook(_repo(tmp_path), cmd, stdout="[review-broker] BLOCK -- expected exactly one prompt argument.\n")
     assert state is None and stamps == {}, (state, stamps)
-
-
-def test_a_transcript_path_with_spaces_is_a_launch():
-    resp = {"tool_response": {"stderr": "[codex-dispatch] transcript: /tmp/review logs/20261121-1-1-perf-direct.out\n"}}
-    assert crc._launches(resp) == [("perf", "/tmp/review logs/20261121-1-1-perf-direct.out", "stderr")]
 
 
 def test_a_receive_leaves_another_sessions_review_pending(tmp_path):
@@ -258,20 +288,6 @@ def test_a_bad_runtime_limit_is_refused(tmp_path):
                         f"[review-kind: adversarial] {TODO} section 1 body"],
                        capture_output=True, text=True, timeout=60, cwd=_repo(tmp_path / "r"), env=env)
     assert r.returncode == 2 and "[review-broker] BLOCK" in r.stderr, r.stderr
-
-
-def test_the_direct_launch_line_names_its_kind():
-    resp = {"tool_response": {"stderr": "[codex-dispatch] transcript: /r/20261121-140308-249807-round-direct.out\n"}}
-    assert crc._launched_kinds(resp) == ["round"]
-    assert crc._launched_kinds({"tool_response": {"stderr": "[codex-dispatch] launched: direct\n"}}) == ["direct"]
-    # A refusal before the launch line prints only its banner.
-    moved = {"tool_response": {"stderr": "[codex-dispatch] BLOCK -- HEAD moved from a to b\n"}}
-    assert crc._launched_kinds(moved) == []
-
-
-def test_the_direct_dispatcher_announces_only_after_its_last_refusal():
-    text = (REPO / "scripts/codex-dispatch.sh").read_text()
-    assert text.index("HEAD moved from") < text.index('echo "[codex-dispatch] transcript: $LOG_FILE"')
 
 
 def test_a_trigger_never_replaces_a_newer_one(tmp_path):
