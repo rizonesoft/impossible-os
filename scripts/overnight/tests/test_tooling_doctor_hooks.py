@@ -32,3 +32,20 @@ def test_a_hook_that_cannot_run_is_reported(tmp_path):
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     (root / ".githooks/prepare-commit-msg").chmod(0o644)
     assert _hooks(root)[".githooks/prepare-commit-msg"]["status"] != "pass"
+
+
+def test_the_build_step_sentinel_does_not_depend_on_the_callers_directory(tmp_path):
+    root = tmp_path / "r"
+    (root / "scripts").mkdir(parents=True)
+    (root / "docs").mkdir()
+    shutil.copy(REPO / "scripts/install-hooks.sh", root / "scripts/install-hooks.sh")
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, timeout=30, env=env)
+    run = subprocess.run(["bash", "../scripts/install-hooks.sh", "--enable-pre-push"], cwd=root / "docs",
+                         capture_output=True, text=True, timeout=60, env=env)
+    assert run.returncode == 0, run
+    assert (root / ".git/.impossible-os-prepush").is_file() and not (root / "docs/.git").exists()
+    status = subprocess.run(["bash", "scripts/install-hooks.sh", "--status"], cwd=root, capture_output=True,
+                            text=True, timeout=60, env=env)
+    assert "Pre-push build/test step: ENABLED" in status.stdout, status.stdout

@@ -14,7 +14,7 @@
 | `.claude/skills/`            | Workflow source-of-truth (directory)                                                                                                                                                         | How Claude executes a specific task (implement, review, verify, diagnose)                                                            |
 | `.claude/settings.json`      | Harness policy source-of-truth (file)                                                                                                                                                        | Permissions, hook reminders, pre/post-tool-use gates                                                                                 |
 | Codex review mode            | External reviewer                                                                                                                                                                            | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action            |
-| `.githooks/`                 | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push, opt-in shared AI-workflow gate                                                  |
+| `.githooks/`                 | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint and dash check, commit-msg merge dash check, post-commit COUNT, pre-push (always-on dash, identity and branch checks; opt-in build/test step), opt-in shared AI-workflow gate |
 
 ### Hierarchy invariants
 
@@ -317,7 +317,7 @@ The `.gitignore` explicitly excludes `.claude/settings.local.json`. A CI check (
 
 **What belongs where:**
 
-- **Shared (`settings.json`):** hook definitions (`.claude/settings.json` hooks run for every contributor), hook commands, narrow read-only allow-rules (e.g. specific grep patterns, bounded `Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)` invocations, scoped `Edit(.claude/skills/<name>/**)`), environment variables needed by hooks (if any).
+- **Shared (`settings.json`):** hook definitions (`.claude/settings.json` hooks run in every Claude Code session, and only there: a rule that binds every lane lives in `.githooks/` or CI, per [CLAUDE.md](../../CLAUDE.md#two-engines-one-gate-set)), hook commands, narrow read-only allow-rules (e.g. specific grep patterns, bounded `Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)` invocations, scoped `Edit(.claude/skills/<name>/**)`), environment variables needed by hooks (if any).
 - **User-local (`settings.local.json`):** personal allow-rules for commands you use often (broad `Bash(python3:*)` or `Bash(python3 -c :*)`, domain-specific grep patterns), `defaultMode` posture (supported modes: `default`, `acceptEdits`, `plan`, `bypassPermissions`), one-off session-driven permissions, machine-specific paths (`/home/<user>/...`).
 - **Never either:** secrets (API tokens, keys). The harness reads those from the environment or from user-level config outside this repo.
 

@@ -287,10 +287,12 @@ def outgoing(updates: list, remote: str = "") -> list:
 def push_updates(lines: str) -> list:
     """(remote old, local new) per ref a push updates, from pre-push's stdin
     (`<local ref> <local oid> <remote ref> <remote oid>`); a deletion sends
-    nothing and is left out."""
+    nothing and is left out. git separates records by LF and fields by an
+    ASCII space, which no ref name holds; any other whitespace (a U+00A0 in
+    a tag name) belongs to its field."""
     updates = []
-    for line in lines.splitlines():
-        fields = line.split()
+    for line in lines.split("\n"):
+        fields = line.split(" ") if line else []
         if len(fields) != 4:
             if fields:
                 raise ValueError(f"pre-push gave an unreadable line: {line!r}")

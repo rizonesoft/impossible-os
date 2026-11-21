@@ -46,9 +46,11 @@ HOOKS_DIR="$PROJECT/.githooks"
 # Worktree-safe sentinel path: rev-parse --git-path resolves .git whether it
 # is a directory (main checkout) or a file (linked worktree). The sentinel
 # lives per-worktree so contributors using `git worktree add` can opt into
-# pre-push independently of the primary checkout.
-SENTINEL="$(git -C "$PROJECT" rev-parse --git-path .impossible-os-prepush 2>/dev/null || echo "$PROJECT/.git/.impossible-os-prepush")"
-LEGACY_HOOKS="$(git -C "$PROJECT" rev-parse --git-path hooks 2>/dev/null || echo "$PROJECT/.git/hooks")"
+# pre-push independently of the primary checkout. --path-format=absolute:
+# the plain form is relative to the CALLER's directory in the primary
+# checkout, so running this from docs/ wrote docs/.git/.impossible-os-prepush.
+SENTINEL="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path .impossible-os-prepush 2>/dev/null || echo "$PROJECT/.git/.impossible-os-prepush")"
+LEGACY_HOOKS="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path hooks 2>/dev/null || echo "$PROJECT/.git/hooks")"
 LEGACY_SRC="$SCRIPT_DIR/hooks"
 
 usage() {
