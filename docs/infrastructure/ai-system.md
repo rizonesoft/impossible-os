@@ -1,11 +1,11 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=.claude/agents,.claude/hooks/MANIFEST.md,scripts/codex-dispatch.sh,scripts/audit-ai-system.sh reviewed=2026-11-09 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=.claude/agents,.claude/hooks/MANIFEST.md,scripts/codex-dispatch.sh,scripts/audit-ai-system.sh reviewed=2026-11-21 -->
 # AI Development System -- Ownership Map
 
 > Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in the [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
 
 ## Authority Hierarchy (read this first)
 
-> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
+> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes named in `CLAUDE.md`. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
 | Layer                        | Role                                                                                                                                                                                         | Authority over                                                                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -22,13 +22,13 @@
 2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/skills/`, `.codex/skills/`, `.other-tool/skills/` etc.).
 3. **External reviewers return findings, never edits.** Codex review output is information the active orchestrator reads and judges. Each finding is verified at file:line and classified Fix / Reject / Accept-XREF before action.
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, do not fork the doctrine.
-5. **Claude Code remains the only implementation agent.** A human operator talks to Claude for normal work. External reviewers return findings only.
+5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, and every lane passes the same gates and the same Astra review. External reviewers return findings only.
 
 ---
 
 ## Claude / Reviewer Boundary
 
-Impossible OS is Claude Code-only for implementation and overnight execution. Codex remains available only as an external reviewer invoked by Claude skills.
+Claude Code implements and runs the overnight run. The one other implementer is the operator-started neon-a lane (agy), under the same gates and the same Astra review ([CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set)); neon-b only writes reports. Codex remains available only as an external reviewer invoked by Claude skills.
 
 - **No parallel skill sets.** Doctrine lives in `CLAUDE.md`; Claude skills live in `.claude/skills/`. `.codex/skills/` remains forbidden.
 - **Claude owns runner files and state.** Runner mechanics stay under `.claude/skills/overnight-sequencer/`, `.claude/hooks/`, and `scripts/overnight/`.
@@ -387,7 +387,7 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ## Autonomous-Agent Boundary Policy
 
-Autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship) are **refused** here. Impossible OS accepts commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Claude Code remains the only implementation agent. A human operator talks to Claude for normal work. External reviewers return findings only.") enforced as repo policy rather than implied.
+Third-party autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs on their own) are **refused** here. The operator-started lanes in [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set) are not such agents: the operator starts and stops each one, and each commits only through the repository's own gates and review. Before the lanes (2026-11-20), Impossible OS accepted commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Claude Code remains the only implementation agent. A human operator talks to Claude for normal work. External reviewers return findings only.") enforced as repo policy rather than implied.
 
 ### Why
 

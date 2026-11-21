@@ -113,7 +113,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [x]   |
 | ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [x]   |
 | ⭐  |  47   |   §47   | The Bash safety guards read commands with a shell grammar                                        | §32                        |  [ ]   |
-| ⭐  |  48   |   §48   | Two engines, one gate set: the lane policy                                                       | --                         |  [ ]   |
+| ⭐  |  48   |   §48   | Two engines, one gate set: the lane policy                                                       | --                         |  [x]   |
 | ⭐  |  49   |   §49   | The lane map and the commit check                                                                | §48                        |  [ ]   |
 | ⭐  |  50   |   §50   | Section claims on origin                                                                         | §49                        |  [ ]   |
 | ⭐  |  51   |   §51   | One push queue for every lane                                                                    | §49                        |  [ ]   |
@@ -1625,12 +1625,13 @@ Section 32 made the guards read the command behind reserved words, case arms, su
 
 Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/plans/2026-11-20-parallel-lanes.md). Four lanes: main (the run), userland (Claude), neon-a (agy, commits) and neon-b (agy, reports only). Every lane is started by the operator; main runs alone or with any subset of the other three.
 
-- [ ] CLAUDE.md "Autonomous-agent boundary" becomes "Two engines, one gate set": only operator-started lanes may commit, and a rule that binds every lane lives in `.githooks/` or CI, never only in `.claude/hooks/`
-- [ ] `docs/infrastructure/ai-system.md` matches the new policy
-- [ ] An `AGENTS.md` section and a new `GEMINI.md`: lanes, gates, no heavy jobs outside the push lock, where reports go, no Microsoft icons or text
-- [ ] Commit: `"lanes: two engines, one gate set"`
+- [x] CLAUDE.md "Two engines, one gate set": only operator-started lanes commit (plus attended repair), one gate set, Claude decides, extra lanes light, lane-wide rules in `.githooks/` or CI
+- [x] The dash rule binds every lane: `scripts/staged_dash_check.py` refuses an added Unicode dash from `.githooks/pre-commit`
+- [x] `ai-system.md`, `TODO-02`, `AGENTS.md` and `CONTRIBUTING.md` match: new canonical lanes sentence and invariant 5, reviewer boundary, autonomous-agent policy
+- [x] A new `GEMINI.md` points agy at the lane rules and holds only agy mechanics; `scripts/test-ai-system.sh` holds it to the pointer contract
+- [x] Commit: `"lanes: two engines, one gate set"`
 
-**Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean.
+**Test checkpoint:** `scripts/lint.sh` passes; `python3 scripts/site/build.py --check` is clean; `bash scripts/test-ai-system.sh --quiet` passes; `test_staged_dash_check.py` refuses an added dash and passes an old line and a generated file.
 
 ## 49. The lane map and the commit check
 
@@ -1643,6 +1644,7 @@ A lane reserves its directories only while it is live; when it is off, main take
 - [ ] A live lane writes `~/.local/state/impossible-os/lanes/<lane>.json` (pid, heartbeat time, current task)
 - [ ] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
 - [ ] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
+- [ ] The section-commit gate judges a Neon ship by its Astra receipt, not Claude's skill progress, with a regression through `git commit` and no Claude state
 - [ ] Commit: `"lanes: the lane map and the commit check"`
 
 **Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file always passes.

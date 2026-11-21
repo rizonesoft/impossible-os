@@ -6,6 +6,8 @@
 
 Do not use Unicode **en dash** (U+2013) or **em dash** (U+2014) in source files, comments, strings, docs, or scripts. Windows serial and CMD/PowerShell often garble those bytes as mojibake (for example `ΓÇö`).
 
+Two layers enforce it. Claude's edit hook (`.claude/hooks/unicode_dash_block.py`) refuses an edit that writes one, and `.githooks/pre-commit` runs `scripts/staged_dash_check.py`, which refuses a commit whose added lines hold one; the second binds every lane, not only Claude sessions. Lines already in the tree are not swept, and generated files (`todo/implementation-plan.md`, `COUNT.md`) are exempt.
+
 ### Prose and explanatory comments
 
 Do not paste two ASCII hyphens (`--`) where an em dash would go; that is not clearer. It looks like minus or `--flag` noise. **Rewrite** the sentence (colon, semicolon, parentheses, comma pair, or two short sentences). Example: prefer `/* Redzone: detect underflow */` over `/* ... -- detect underflow */`.

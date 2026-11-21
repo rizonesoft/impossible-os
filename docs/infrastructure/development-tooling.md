@@ -1062,7 +1062,7 @@ bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-p
 
 | Hook | Path | Default | Blocks | Re-run manually |
 | ---- | ---- | ------- | ------ | --------------- |
-| `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure | `bash scripts/lint.sh` |
+| `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure or a staged line that adds a Unicode dash | `bash scripts/lint.sh`; `python3 scripts/staged_dash_check.py` |
 | `prepare-commit-msg` | [`.githooks/prepare-commit-msg`](../../.githooks/prepare-commit-msg) | **always on** | a `git commit` that skipped `pre-commit` (`--no-verify`, `-n`, in any spelling) | runs on every commit |
 | `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `COUNT_ONLY=1 bash .githooks/post-commit` (refresh only) or `bash .githooks/post-commit` (will amend `HEAD`) |
 | `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on build or test failure | `bash scripts/build.sh && bash scripts/test.sh` |

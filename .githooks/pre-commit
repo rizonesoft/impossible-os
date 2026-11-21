@@ -137,6 +137,15 @@ if [ -f "$HOOK_AUDIT" ]; then
     fi
 fi
 
+# ASCII dashes, for every lane (TODO-08 section 48): Claude's edit hook binds
+# only Claude sessions, so a line a commit ADDS with an en or em dash is refused
+# here. Older files are not swept; generated files are exempt.
+if ! python3 "$REPO_ROOT/scripts/staged_dash_check.py"; then
+    echo -e "\033[31mPre-commit: a staged line adds a Unicode dash (above)\033[0m"
+    echo "  Opt-out (last resort): SKIP_DASH_CHECK=1 git commit ..."
+    exit 1
+fi
+
 # TODO-08 §4: section-commit gate -- enforced at the final-index point
 # of git's own pre-commit. The harness PreToolUse hook is the
 # convenience layer; this is the load-bearing one for chained shapes

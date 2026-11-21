@@ -173,7 +173,7 @@ check_authority_hierarchy() {
     local inv2="Skills live in"
     local inv3="External reviewers return findings"
     local inv4="CLAUDE.md wins on conflict"
-    local inv5="Claude Code remains the only implementation agent"
+    local inv5="Only operator-started lanes commit."
     for file in "$todo" "$doc"; do
         for phrase in "$inv1" "$inv2" "$inv3" "$inv4" "$inv5"; do
             assert_fixed_string "invariant in $file: $phrase" "$file" "$phrase"
@@ -242,7 +242,7 @@ check_agents_md() {
     # (TODO-02 lines 21, 23 and the parallel paragraph in ai-system.md).
     local canonical_phrases=(
         "Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong."
-        "There is no sibling executor in this repo."
+        "The only other executors are the operator-started lanes named in \`CLAUDE.md\`."
         "Doctrine lives in \`CLAUDE.md\`. Nowhere else."
         "External reviewers return findings, never edits."
     )
@@ -369,6 +369,28 @@ check_zero_trailer_policy() {
             t_info "documented trailer exception: $short -- $reason"
         done
     fi
+}
+
+# 3b. GEMINI.md pointer file (TODO-08 section 48): agy's pointer, held to the
+# AGENTS.md contract so it can never become a second copy of the doctrine.
+# ============================================================================
+check_gemini_md() {
+    section "[3b/12] GEMINI.md pointer file (TODO-08 section 48)"
+    assert_file_exists "GEMINI.md exists at repo root" "GEMINI.md"
+    [ -f GEMINI.md ] || return
+    assert_fixed_string "GEMINI.md points at the lane rules" "GEMINI.md" "CLAUDE.md#two-engines-one-gate-set"
+    assert_fixed_string "GEMINI.md says CLAUDE.md wins" "GEMINI.md" "\`CLAUDE.md\` wins"
+    local n
+    n=$(wc -l < GEMINI.md | tr -d ' ')
+    if [ "$n" -le 40 ]; then t_pass "GEMINI.md <=40 lines (actual: $n)"; else t_fail "GEMINI.md <=40 lines" "actual: $n"; fi
+    local phrase
+    for phrase in "Bare Metal First" "SMP From Day One" "Bare Metal Gotchas" "Safety Gates" "Operating Mandate (operator"; do
+        if grep -qF -- "$phrase" GEMINI.md; then
+            t_fail "GEMINI.md does NOT copy CLAUDE.md doctrine" "imported: \"$phrase\" -- link to CLAUDE.md instead"
+        else
+            t_pass "GEMINI.md does NOT import: $phrase"
+        fi
+    done
 }
 
 # ============================================================================
@@ -736,6 +758,7 @@ check_authority_hierarchy
 check_claude_code_only
 check_agents_md
 check_zero_trailer_policy
+check_gemini_md
 check_autonomous_agent_boundary
 check_skill_catalog
 check_doctrine_presence

@@ -15,7 +15,7 @@ title: "TODO-02 -- AI Development System"
 
 ## Authority Hierarchy (read this first)
 
-> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo. When this TODO uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
+> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes named in `CLAUDE.md`. When this TODO uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
 | Layer                   | Role                                             | Authority over                                                                                                            |
 | ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
@@ -31,7 +31,7 @@ title: "TODO-02 -- AI Development System"
 2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/skills/`, `.codex/skills/`, `.other-tool/skills/` etc.).
 3. **External reviewers return findings, never edits.** Codex review output is information the active orchestrator reads and judges. Each finding is verified at file:line and classified Fix / Reject / Accept-XREF before action.
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, don't fork the doctrine.
-5. **Claude Code remains the only implementation agent.** A human operator talks to Claude for normal work. External reviewers return findings only.
+5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, and every lane passes the same gates and the same Astra review. External reviewers return findings only.
 
 > [!IMPORTANT]
 > **Current state:** The repository's AI surface today is `CLAUDE.md`, `.claude/settings.json`, and `.claude/skills/`. Codex participates only in review mode: finding-only, received through review discipline. The failed interchangeable-driver approach and the local Codex overnight runner are retired.
@@ -299,7 +299,7 @@ Copilot's coding-agent (the autonomous "file the issue, get a PR" agent), Devin,
 > [!TIP]
 > This is competitive work. Mature Win11/Linux repos document whether they accept autonomous-agent PRs; fewer document WHY and what they refuse to ship as a consequence. Making the refusal explicit (and linking it to the Authority Hierarchy) keeps the Claude-primary boundary enforceable long-term.
 
-**Test checkpoint:** A maintainer can state the project's autonomous-agent stance in one sentence with a direct citation ([ai-system.md "Autonomous-Agent Boundary Policy"](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy); [CLAUDE.md "Autonomous-agent boundary -- interactive only"](../../CLAUDE.md#autonomous-agent-boundary----interactive-only)). A contributor attempting to enable Copilot coding-agent or Devin finds a documented refusal path before spending cycles. `find .github -type f -name 'copilot-setup-steps.yml' -o -type d -name 'agents' -o -type d -name 'chatmodes'` returns zero paths at the time of commit; §9 regression suite will automate this check.
+**Test checkpoint:** A maintainer can state the project's autonomous-agent stance in one sentence with a direct citation ([ai-system.md "Autonomous-Agent Boundary Policy"](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy); [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set)). A contributor attempting to enable Copilot coding-agent or Devin finds a documented refusal path before spending cycles. `find .github -type f -name 'copilot-setup-steps.yml' -o -type d -name 'agents' -o -type d -name 'chatmodes'` returns zero paths at the time of commit; §9 regression suite will automate this check.
 
 > **Test runner:** N/A (docs-only + absence check) | validation: four forbidden paths absent on disk (verified via `test -e ...`); `ai-system.md` contains the Autonomous-Agent Boundary Policy section with 3 classification tables; `CLAUDE.md` has the pointer block; §9 regression suite will assert all four absence invariants + the allowed-but-not-enablement classification + the non-automatable GitHub-Settings reminder when it ships.
 
@@ -367,7 +367,7 @@ This is the refinement step: test the workflow itself.
 | 💎  | Permissions/extension boundary | ⚠️ Varies                             | ⚠️ Varies                                  | ✅ §5 allow/deny tiers + `.local.json` split          |
 | 💎  | Cross-tool `AGENTS.md` pointer | ⚠️ awesome-copilot stub               | ✅ LF-backed (Aug 2025)                    | ✅ §6 pointer to `CLAUDE.md`; no duplication          |
 | 💎  | AI-assist commit disclosure    | ❌ No convention                      | ✅ kernel `Assisted-by:` trailer (2025-12) | ✅ §7 zero-trailer policy + stance-change condition   |
-| ⭐  | Autonomous-agent boundary      | ⚠️ coding-agent + firewall allowlist  | ❌ No formal policy                        | ✅ §8 interactive-only; no Devin / setup-steps        |
+| ⭐  | Autonomous-agent boundary      | ⚠️ coding-agent + firewall allowlist  | ❌ No formal policy                        | ✅ §8 operator lanes; no Devin / setup-steps          |
 | ⭐  | AI workflow regression suite   | ❌ Rare                               | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ✅ §9 catalog + hierarchy + trailer + boundary checks |
 
 > **After §1-§5:** Impossible OS documents its AI workflow as first-class infrastructure: explicit ownership, documented hooks, and a clear external-reviewer contract.
@@ -405,6 +405,7 @@ This is the refinement step: test the workflow itself.
 - [x] The Claude-primary declaration is stated in `CLAUDE.md` and referenced from this TODO; no parallel instruction tree exists under `.cursor/`, `.codex/`, `.copilot/`, `.windsurf/`, `.aider/`, or `.continue/`.
 - [x] `AGENTS.md` exists at repo root, under 60 lines, points to `CLAUDE.md`, does not duplicate doctrine (§6) -- AGENTS.md is 35 lines (< 60 cap), contains 6 `CLAUDE.md` references, passes §9 regression byte-match group 3 (full-sentence phrases in AGENTS.md + TODO-02 + ai-system.md).
 - [x] Zero-trailer AI-assist commit policy is documented in `CLAUDE.md` or `CONTRIBUTING.md`, with the stance-change condition named explicitly (§7). A commit-log scan finds zero `Co-Authored-By:` / `Assisted-by:` trailers in recent history. -- §9 regression group 4 anchor-inclusive scan via `git interpret-trailers --parse`: "no NEW AI-attribution trailers since §7 adoption (inclusive of anchor)". One documented exception (`c6b30e0f`) carried forward as an advisory `NOTE`.
-- [x] Autonomous-agent boundary is documented: repo does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, or `.github/chatmodes/`; the refusal-to-ship is explicit, not accidental (§8) -- §9 regression group 5 confirms 4 forbidden paths absent (also `.github/instructions/`). `AGENTS.md` carries the "Autonomous-agent stop sign" section; `CLAUDE.md` section "Autonomous-agent boundary -- interactive only" makes the refusal explicit.
+- [x] Autonomous-agent boundary is documented: the forbidden `.github` agent paths stay absent (§8, §9 group 5)
+  - Autonomous-agent boundary is documented: repo does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, or `.github/chatmodes/`; the refusal-to-ship is explicit, not accidental (§8) -- §9 regression group 5 confirms 4 forbidden paths absent (also `.github/instructions/`). `AGENTS.md` carries the "Autonomous-agent stop sign" section; `CLAUDE.md` section "Two engines, one gate set" makes the refusal explicit.
 
 > **Test runner:** `make test-ai-system` | expected: `72 checks passed, 0 failed`. Also runs pre-build in [`.github/workflows/build.yml`](../../.github/workflows/build.yml) step "Run AI workflow regression pack". Complements `bash scripts/test-tooling.sh` (owned by [TODO-01 §10](TODO-01-developer-tooling-stack.md#10-smoke-test-post16-assertions)).

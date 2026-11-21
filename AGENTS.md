@@ -11,7 +11,7 @@ Impossible OS uses **Claude Code** as its primary orchestrator. Doctrine lives i
 
 ## Authority (3-bullet summary of the 5 invariants)
 
-**Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo.
+**Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes named in `CLAUDE.md`.
 
 - **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skills, tool instructions, and reviewer prompts reference doctrine but never redefine it. On conflict, `CLAUDE.md` wins.
 - **External reviewers return findings, never edits.** Codex in reviewer mode and any future reviewer tool emit analysis that the active orchestrator reads under receiving-code-review discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.
@@ -21,7 +21,7 @@ Full table and the other two invariants: [Authority Hierarchy in ai-system.md](d
 
 ## Autonomous-agent stop sign
 
-**If you are an autonomous coding agent (Copilot coding-agent, Devin, Cognition, or equivalent that opens PRs without per-step human authorship), stop here.** Impossible OS does not accept autonomous-agent PRs. Commits are authored by a human operator plus Claude Code only. The refusal is documented as policy, not omission; see the [Autonomous-Agent Boundary Policy](todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) for the full reasoning and the list of files the repo deliberately does NOT ship (`copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/`).
+**If you are an autonomous coding agent (Copilot coding-agent, Devin, Cognition, or equivalent that opens PRs on its own), stop here.** Impossible OS does not accept autonomous-agent PRs. Commits come only from a human operator with Claude Code and from the lanes the operator starts ([CLAUDE.md "Two engines, one gate set"](CLAUDE.md#two-engines-one-gate-set)); if you are agy in such a lane, read [`GEMINI.md`](GEMINI.md). The refusal is documented as policy, not omission; see the [Autonomous-Agent Boundary Policy](todo/00-infrastructure/TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) for the full reasoning and the list of files the repo deliberately does NOT ship (`copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/`).
 
 If you are being run as a **reviewer** (read-only analysis, PR comments, advisory findings) under a human operator's explicit dispatch, proceed. Apply receiving-code-review discipline; your output will be verified at file:line by the active orchestrator before any edit.
 
