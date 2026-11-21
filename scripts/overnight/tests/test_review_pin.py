@@ -173,6 +173,18 @@ def test_refusal_an_unknown_kind_is_said_out_loud(capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_every_pass_carries_the_meaning_of_each_level():
+    """The reviewer graded on its own scale until the levels were defined in the prompt (2026-11-21)."""
+    pin = _pin()
+    for kind in rp.SECTION_KINDS:
+        block = rp.lens_block(pin, kind)
+        for level in rp.SEVERITIES:
+            assert f"- {level}: {rp.SEVERITY_TEXTS[level]}" in block, (kind, level)
+        assert rp.SEVERITY_RULE in block, kind
+        assert "a finding with no such scenario is P3" in block, kind
+    assert set(rp.SEVERITY_TEXTS) == set(rp.SEVERITIES)
+
+
 def test_a_lens_block_survives_the_companions_argument_split():
     """codex-companion re-splits the prompt on whitespace and reads quotes and bare flags as syntax."""
     pin = _pin()

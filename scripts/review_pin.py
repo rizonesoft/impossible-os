@@ -59,6 +59,24 @@ LENSES = {
     "bare-metal": "What works under an emulator and fails on real hardware or real firmware?",
 }
 SEVERITIES = ("P1", "P2", "P3")
+# What each level means, sent with every pass (operator, 2026-11-21). Without it the reviewer graded on its own
+# scale: the File Explorer and Common Dialogs inventory ran 12 passes in 20 hours, and of the last wave's six P2 findings one could reach a
+# user; the rest needed two captures started in one second, a registry change the next VM restore discards, or
+# one extra bounded wait. Since `blocking` holds the stamp, a level graded by the class of a bug rather than its
+# consequence kept loops open that had nothing left a user would meet.
+SEVERITY_TEXTS = {
+    "P1": ("in normal use it loses or corrupts data, opens a security hole, crashes or hangs, breaks the build or "
+           "the boot, or publishes a wrong result as a correct one."),
+    "P2": ("in normal use, the ordinary failures the code exists to handle included (a missing device, a timeout, "
+           "a refused call), it gives a wrong result, leaves state wrong, or regresses shipped behaviour; for "
+           "performance, the normal path does work that grows with its input or blocks a user or a lock."),
+    "P3": ("it needs what normal use does not bring (use the design does not support, such as two runs at once "
+           "where one is the rule; a second failure during a first; a state the environment undoes by itself, "
+           "such as a machine restored from its checkpoint for every run), costs a bounded extra wait or call, "
+           "or is hardening, clarity, or a missing test for such a case."),
+}
+SEVERITY_RULE = ("Grade by consequence in this repository, not by the class of bug. Each P1 or P2 names the "
+                 "normal-use scenario that reaches it; a finding with no such scenario is P3.")
 # A lens the pin defines itself ([schedule.lenses], operator 2026-11-20): a lower-case name of its own.
 LENS_NAME = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 
@@ -232,8 +250,10 @@ def lens_block(pin, kind, changed_paths=()):
     lines = ["Review through these lenses only, each as its own verdict. End with one line per lens, exactly",
              "`LENS <name>: clean` or `LENS <name>: findings`. A lens with no line makes the pass incomplete."]
     lines += [f"- {name}: {pin['texts'][name]}" for name in names]
-    lines += ["Tag every finding P1, P2 or P3 and end with `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or",
-              "`HIGHEST: none`."]
+    lines += ["Tag every finding P1, P2 or P3, by these meanings:"]
+    lines += [f"- {level}: {SEVERITY_TEXTS[level]}" for level in SEVERITIES]
+    lines += [SEVERITY_RULE,
+              "End with `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or `HIGHEST: none`."]
     return "\n".join(lines)
 
 
