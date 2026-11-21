@@ -560,14 +560,21 @@ def section_list(entry, per, ready, owed=None):
     the reviewer to come back carries `review_owed`: no consumer may pick it,
     not even as the fallback when everything else waits. Once the reviewer
     answers, the oldest owed section of this file carries `review_first`: it is
-    the section to work, ahead of every other runnable one."""
+    the section to work, ahead of every other runnable one.
+
+    A section the plan lists as buildable now carries `plan_order`, its place
+    among the plan's rows: the plan's hand-written row order is the build
+    order inside a file too, so a consumer picks by it rather than by section
+    number. A shipped section owing only its review has none and goes first."""
     blocked, recovered = owed or (frozenset(), [])
+    rank = {n: i for i, (f, n) in enumerate(ready or []) if f == entry["file_path"]}
     built = {s.get("n") for s in entry.get("sections") or [] if (s.get("status") or "").strip() == "x"}
     runnable = set(runnable_sections(entry, per, ready, blocked))
     first = next((n for f, n in recovered if f == entry["file_path"] and (n, NEEDS_WORK) in per), None)
     return [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {}),
              **({"review_owed": True} if c == NEEDS_WORK and n in built and (entry["file_path"], n) in blocked else {}),
-             **({"review_first": True} if n == first else {})}
+             **({"review_first": True} if n == first else {}),
+             **({"plan_order": rank[n]} if c == NEEDS_WORK and n in runnable and n in rank and n not in built else {})}
             for n, c in per]
 
 

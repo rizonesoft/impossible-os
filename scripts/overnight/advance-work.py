@@ -66,10 +66,16 @@ def _next_section(sections):
     carrying `review_first` is a debt the reviewer can now collect and is the
     one to work, whatever precedes it; a section carrying `review_owed` waits
     for a reviewer that is still down and is never picked, not even as the
-    fallback, or the run would retry its review in a loop."""
+    fallback, or the run would retry its review in a loop.
+
+    Among the runnable ones, a section with no `plan_order` (shipped, owing
+    only its review) comes first in file order, then the rest in plan row
+    order: the plan's row order is the build order inside a file as well."""
     open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK" and not s.get("review_owed")]
+    runnable = [s for s in open_secs if not s.get("waiting")]
+    runnable.sort(key=lambda s: (s.get("plan_order") is not None, s.get("plan_order") or 0))   # stable: file order within a tie
     return (next((s for s in open_secs if s.get("review_first")), None)
-            or next((s for s in open_secs if not s.get("waiting")), None)
+            or next(iter(runnable), None)
             or next(iter(open_secs), None))
 
 

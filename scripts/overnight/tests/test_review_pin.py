@@ -20,14 +20,14 @@ def test_the_repository_pin_holds():
     pin = _pin()
     assert (pin["reviewer"], pin["cli"], pin["model"]) == ("astra", "codex", "gpt-6.2-astra")
     # No stall cap (owner, 2026-11-20): a loop ends clean or at pass_cap.
-    assert (pin["pass_cap"], pin["no_progress_cap"], pin["deep_paths"]) == (33, None, None)
+    assert (pin["pass_cap"], pin["no_progress_cap"], pin["deep_paths"]) == (55, None, None)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
     # Every reconciliation checks the named gaps and attacks the newest repair; kernel and boot add the full lenses.
     assert pin["lenses"]["reconciliation"] == ("plan-delivery", "record", "repair-adversarial", "repair-integration")
     assert rp.lenses_for(pin, "reconciliation", ["src/kernel/a.c"])[4:] == ("adversarial", "integration",
                                                                           "concurrency", "bare-metal")
     assert rp.lenses_for(pin, "reconciliation", ["src/desktop/a.c"]) == pin["lenses"]["reconciliation"]
-    assert pin["blocking"] == ("P1", "P2")
+    assert pin["blocking"] == ("P1", "P2", "P3")   # operator, 2026-11-21
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
     assert {"adversarial", "consistency", "test-coverage"} <= set(pin["lenses"]["round"])
     # Performance is its own pass, never a lens of the round (the 2026-11-11 replay).
@@ -43,17 +43,17 @@ def test_the_repository_pin_holds():
     ('cli = "codex"', 'cli = "agy"'),
     ('model = "gpt-6.2-astra"', 'model = "gpt-6.2-astra"\neffort = "high"'),
     ('policy = "four-pass"', 'policy = "three-pass"'),
-    ("pass_cap = 33", "pass_cap = 3"),
+    ("pass_cap = 55", "pass_cap = 3"),
     ('[schedule.performance]\nlenses = ["optimization"]\n', ""),
     ('[schedule.performance]\nlenses = ["optimization"]', '[schedule.performance]\nlenses = ["adversarial"]'),
-    ("pass_cap = 33", 'pass_cap = "33"'),
-    ("pass_cap = 33", "pass_cap = true"),
-    ("pass_cap = 33\n", ""),
-    ("pass_cap = 33\n", "pass_cap = 33\nno_progress_cap = 56\n"),
-    ("pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\ndeep_paths = ["/src/boot/"]\n'),
-    ("pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\ndeep_paths = ["src/kernel/", "src/kernel/"]\n'),
-    ("pass_cap = 33\n", 'pass_cap = 33\ndeep_paths = ["src/kernel/"]\n'),
-    ("pass_cap = 33\n", "pass_cap = 33\nseverity_stop_after = 2\n"),
+    ("pass_cap = 55", 'pass_cap = "33"'),
+    ("pass_cap = 55", "pass_cap = true"),
+    ("pass_cap = 55\n", ""),
+    ("pass_cap = 55\n", "pass_cap = 55\nno_progress_cap = 56\n"),
+    ("pass_cap = 55\n", 'pass_cap = 55\nno_progress_cap = 3\ndeep_paths = ["/src/boot/"]\n'),
+    ("pass_cap = 55\n", 'pass_cap = 55\nno_progress_cap = 3\ndeep_paths = ["src/kernel/", "src/kernel/"]\n'),
+    ("pass_cap = 55\n", 'pass_cap = 55\ndeep_paths = ["src/kernel/"]\n'),
+    ("pass_cap = 55\n", "pass_cap = 55\nseverity_stop_after = 2\n"),
     ("[schedule.lenses]\n", '[schedule.lenses]\nadversarial = "Redefined?"\n'),
     ("[schedule.lenses]\n", '[schedule.lenses]\nunused-lens = "Nobody asks this?"\n'),
     ("[schedule.lenses]\n", '[schedule.lenses]\nBad_Name = "Asked?"\n'),
@@ -65,10 +65,10 @@ def test_the_repository_pin_holds():
     ('lenses = ["plan"]', "lenses = []"),
     ('lenses = ["plan-delivery", "record"]\n', ""),
     ('lenses = ["plan-delivery", "record"]', 'lenses = ["plan-delivery", "record", "adversarial"]'),
-    ('blocking = ["P1", "P2"]', 'blocking = ["P2"]'),
-    ('blocking = ["P1", "P2"]', 'blocking = ["P1", "P4"]'),
-    ('blocking = ["P1", "P2"]', "blocking = []"),
-    ('blocking = ["P1", "P2"]\n', ""),
+    ('blocking = ["P1", "P2", "P3"]', 'blocking = ["P2"]'),
+    ('blocking = ["P1", "P2", "P3"]', 'blocking = ["P1", "P4"]'),
+    ('blocking = ["P1", "P2", "P3"]', "blocking = []"),
+    ('blocking = ["P1", "P2", "P3"]\n', ""),
     ('passes = ["plan", "round"]', 'passes = ["plan", "review"]'),
     ('paths = ["src/kernel/", "include/kernel/", "src/boot/"]', 'paths = ["../elsewhere/"]'),
     ('paths = ["src/kernel/", "include/kernel/", "src/boot/"]', 'paths = ["/abs/"]'),
@@ -140,8 +140,10 @@ def test_conditional_lenses_follow_the_changed_paths():
 
 def test_only_the_blocking_levels_hold_the_stamp():
     pin = _pin()
-    assert rp.blocks(pin, "P1") and rp.blocks(pin, "P2")
-    assert not rp.blocks(pin, "P3") and not rp.blocks(pin, "none")
+    assert rp.blocks(pin, "P1") and rp.blocks(pin, "P2") and rp.blocks(pin, "P3")   # every level (operator, 2026-11-21)
+    assert not rp.blocks(pin, "none")
+    narrowed = _pin(GOOD.replace('blocking = ["P1", "P2", "P3"]', 'blocking = ["P1", "P2"]'))
+    assert rp.blocks(narrowed, "P2") and not rp.blocks(narrowed, "P3")
     with pytest.raises(rp.Refused):
         rp.blocks(pin, "high")
     assert "HIGHEST: none" in rp.lens_block(pin, "completion")
@@ -260,7 +262,7 @@ def test_an_older_kind_is_dispatched_exactly_as_before(tmp_path):
 
 def test_a_pin_with_a_stall_cap_and_no_deep_paths_leaves_them_unknown():
     """Codex review 2026-11-19: an absent key read as an empty list put every kernel section on the shorter rule."""
-    pin = _pin(GOOD.replace("pass_cap = 33\n", "pass_cap = 33\nno_progress_cap = 3\n", 1))
+    pin = _pin(GOOD.replace("pass_cap = 55\n", "pass_cap = 55\nno_progress_cap = 3\n", 1))
     assert (pin["no_progress_cap"], pin["deep_paths"]) == (3, None)
 
 
@@ -276,7 +278,7 @@ def test_a_pin_lens_is_asked_like_a_built_in_one():
 
 def test_the_caps_name_no_stall_cap_when_the_pin_has_none(capsys):
     assert rp.main(["--caps"]) == 0
-    assert capsys.readouterr().out == "pass_cap 33\n"
+    assert capsys.readouterr().out == "pass_cap 55\n"
 
 
 def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastructure/TODO-01-developer-tooling-stack.md",
@@ -370,14 +372,14 @@ def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, caps
     import review_round_guard as guard
     monkeypatch.delenv("OVERNIGHT_REVIEW_ROUND_CEILING", raising=False)
     monkeypatch.delenv("OVERNIGHT_REVIEW_NOPROGRESS_CAP", raising=False)
-    assert (guard._noprogress_cap(), guard._ceiling()) == (None, 33)       # no stall cap (owner, 2026-11-20)
+    assert (guard._noprogress_cap(), guard._ceiling()) == (None, 55)       # no stall cap (owner, 2026-11-20)
     other = tmp_path / "reviewers.toml"
-    other.write_text(GOOD.replace("pass_cap = 33\n", "pass_cap = 40\nno_progress_cap = 2\n"))
+    other.write_text(GOOD.replace("pass_cap = 55\n", "pass_cap = 40\nno_progress_cap = 2\n"))
     assert guard._pin_caps(other) == (2, 40)
     # With no stall cap a chain of equal-severity passes runs on; only pass_cap ends it.
     state = tmp_path / "rounds"
     for _ in range(10):
-        _c, _s, capped, _r = guard.bump(state, "S", False, None, 33, "P2")
+        _c, _s, capped, _r = guard.bump(state, "S", False, None, 55, "P2")
         assert not capped
     assert guard.bump(tmp_path / "r2", "S", False, None, 1, "P2")[2]
     # One call can still override, and a broken pin keeps the backstop alive and says so.

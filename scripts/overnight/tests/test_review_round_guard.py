@@ -17,7 +17,7 @@ SCRIPT = HERE.parents[2] / ".claude" / "hooks" / "review_round_guard.py"
 _FIXTURE_DIR = tempfile.mkdtemp(prefix="round-guard-pin-")
 PIN = pathlib.Path(_FIXTURE_DIR) / "reviewers.toml"
 PIN.write_text((HERE.parents[2] / ".conclave" / "reviewers.toml").read_text().replace(
-    "pass_cap = 33\n", 'pass_cap = 33\nno_progress_cap = 3\n'
+    "pass_cap = 55\n", 'pass_cap = 55\nno_progress_cap = 3\n'
     'deep_paths = ["src/boot/", "src/kernel/", "include/kernel/", "src/apps/filemgr/filemgr_ops"]\n', 1))
 
 

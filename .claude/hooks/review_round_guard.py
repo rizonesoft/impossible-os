@@ -18,7 +18,7 @@ the section (operator, 2026-11-19):
     HIGHEST line) is less severe than the last round's. A review that finds a fresh edge case of the
     same severity on every fix is not converging, and K such rounds in a row STOP the loop.
   - Plus a very high COUNT CEILING as a final infinite-loop guard: `pass_cap`
-    in .conclave/reviewers.toml (33 since 2026-11-19, the one cap for all code; it counts every
+    in .conclave/reviewers.toml (55 since 2026-11-21, the one cap for all code; it counts every
     returned pass of a section).
 A round that finds a NEW finding resets the stall streak to 0 -- the review
 may run as long as it stays productive.

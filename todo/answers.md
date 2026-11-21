@@ -572,3 +572,12 @@ A: (run decision, 2026-11-17) A. Every inventory record names colours as roles, 
 - **B:** make refuses those targets with a message naming `bash scripts/build.sh`.
 
 A: (operator choice, 2026-11-17) A. The design notes give no reason against it: build.sh already drives make for every other artifact, both generators are idempotent single implementations, and the Makefile already owns generated headers by the same write-if-changed pattern (`include/build_info.h`). Reversal cost: two refusing rules and the old build.sh blocks restored from git.
+
+## Q50 (00-infrastructure/TODO-08 §48 to §67): in what order are the lane sections and the review-machinery sections built?
+
+Sections 60 to 67 (review receipts, repro tests, review depth per path, the redesign pass, scoped re-dispatch, tools before lenses, lens yield, the overlapped push wait) depend on nothing in 49 to 59, the lane sections.
+
+- **A:** section 48, then 60 to 63, 65, 66 and 67, then 49 to 59, then 64 last, which depends on 59.
+- **B:** section 48, then 49 to 59, then 60 to 67 in number order.
+
+A: (operator asked, run decided, 2026-11-21) A. The review sections make every later review safer or faster, so the eleven lane sections are reviewed under them. Section 64 is the general form of the scoped-re-dispatch trial on 48 to 59 and is built only if that trial's tally allows, so it cannot come before 59; its Depends On names 59, which `todo-plan.py --check` enforces. The run now follows the plan's row order inside a file as well as between files (`sequencer_triage.py` `plan_order`, `advance-work.py` `_next_section`); before this it took the lowest-numbered runnable section in the file. Reversing it costs a reorder of the plan rows and dropping 64's dependency.

@@ -2312,7 +2312,7 @@ def _dispatch_content_fresh(root: Path, disp_head: str,
 # there is anything to judge, and it keeps one entry per TODO across sections.
 _PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
 _PASS_MANIFEST = ".claude/overnight/reviews/manifest.jsonl"
-_BLOCKING_FALLBACK = ("P1", "P2")
+_BLOCKING_FALLBACK = ("P1", "P2", "P3")   # the strictest: a broken pin never blocks less
 
 
 # What may change after a section's last pass without a new pass: the TODO
@@ -2433,7 +2433,7 @@ def _stamped_sections(root: Path, todo: str) -> set[str] | None:
 
 
 def _blocking_levels(root: Path) -> tuple[str, ...]:
-    """The levels that hold a stamp, from the reviewer pin; P1 and P2 when the pin cannot be read."""
+    """The levels that hold a stamp, from the reviewer pin; every level when the pin cannot be read."""
     scripts = str(root / "scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)

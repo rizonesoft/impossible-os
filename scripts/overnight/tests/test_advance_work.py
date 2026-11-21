@@ -69,3 +69,28 @@ if __name__ == "__main__":
     test_cursor_disagreement_is_a_field_not_a_silent_choice()
     test_the_packet_names_a_runnable_section_never_a_blocked_one()
     print("PASS: advance-work")
+
+
+def test_runnable_sections_go_in_plan_row_order_after_any_owing_only_review():
+    m = _mod()
+    secs = [{"n": 49, "class": "NEEDS_WORK", "plan_order": 7}, {"n": 52, "class": "NEEDS_WORK", "waiting": True},
+            {"n": 60, "class": "NEEDS_WORK", "plan_order": 1}, {"n": 61, "class": "NEEDS_WORK", "plan_order": 2}]
+    assert m._next_section(secs)["n"] == 60                       # the plan's first buildable row, not section 49
+    shipped = {"n": 70, "class": "NEEDS_WORK"}                    # shipped, owing its review: no plan_order
+    assert m._next_section(secs + [shipped])["n"] == 70
+    assert m._next_section([{**s, "waiting": True} for s in secs])["n"] == 49   # all wait: the first, so the stall shows
+
+
+def test_classify_marks_each_buildable_section_with_its_plan_row():
+    import importlib.util
+    hook = pathlib.Path(__file__).resolve().parents[3] / ".claude/hooks/sequencer_triage.py"
+    spec = importlib.util.spec_from_file_location("_triage_for_order", hook)
+    t = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(t)
+    entry = {"file_path": "todo/a.md", "sections": [{"n": 48, "status": "/"}, {"n": 49, "status": " "},
+                                                    {"n": 60, "status": " "}, {"n": 70, "status": "x"}]}
+    per = [(48, t.NEEDS_WORK), (49, t.NEEDS_WORK), (60, t.NEEDS_WORK), (70, t.NEEDS_WORK)]
+    ready = [("todo/b.md", 1), ("todo/a.md", 48), ("todo/a.md", 60), ("todo/a.md", 49)]
+    out = {s["n"]: s for s in t.section_list(entry, per, ready)}
+    assert (out[48]["plan_order"], out[60]["plan_order"], out[49]["plan_order"]) == (1, 2, 3)
+    assert "plan_order" not in out[70]                            # shipped: owes only its review, goes first

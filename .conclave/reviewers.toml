@@ -21,7 +21,8 @@
 # 2026-11-20, see [schedule]).
 # Each lens has one owner: the round hunts defects, the completion pass checks delivery and the record.
 # Findings are tagged P1, P2 or P3. Only the levels in `blocking` hold the stamp; the rest are filed as tracked
-# items and spend no further passes. A [[schedule.conditional]] entry adds its lenses to the named passes only
+# items and spend no further passes. Operator decision 2026-11-21: every level blocks, so a review catches every
+# bug however small and a P3 is fixed, not filed. A [[schedule.conditional]] entry adds its lenses to the named passes only
 # when the section's changed files fall under one of its paths.
 # A section keeps the schedule it started under, so sections already under review finish on the earlier rules.
 # Operator decision 2026-11-17: GPT-6.2 Astra was released and replaces GPT-6 Astra (`gpt-6.2-astra` through the
@@ -42,13 +43,13 @@ claude = ["astra"]
 
 [schedule]
 policy = "four-pass"
-pass_cap = 33
+pass_cap = 55
 # Owner decision 2026-11-20: no stall cap. The 2026-11-19 rule (no_progress_cap = 3, progress by severity outside
 # deep_paths) ended desktop, shell, apps, user and site repair chains after three passes whose worst finding did
 # not fall, so a chain stopped for want of progress rather than for being clean. A loop now ends when its passes
-# come back below `blocking`, or at pass_cap (33 since 2026-11-19). deep_paths chose between the two stall rules
+# come back below `blocking`, or at pass_cap (55 since 2026-11-21, operator; 33 from 2026-11-19). deep_paths chose between the two stall rules
 # and went with them. Keeping chains short is the reconciliation's job: it reviews the newest repair only.
-blocking = ["P1", "P2"]
+blocking = ["P1", "P2", "P3"]
 
 [schedule.plan]
 lenses = ["plan"]

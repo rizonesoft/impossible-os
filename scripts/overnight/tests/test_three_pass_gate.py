@@ -131,8 +131,17 @@ def test_a_section_is_accepted_when_every_pass_read_the_candidate_and_ended_clea
     # A completion with gaps, the repair, then a clean reconciliation on the repaired candidate.
     assert _judge(root, highest={"completion": "P2"},
                   **_good(h, completion=(h["build"], 4), reconciliation=(h["final"], 5))) == (True, "")
-    # A finding below the blocking levels is filed, not fixed: it does not hold the stamp.
-    assert _judge(root, highest={"round": "P3", "performance": "P3", "completion": "P3"}, **_good(h)) == (True, "")
+    # Every level blocks in the repository pin (operator, 2026-11-21): a P3 holds the stamp.
+    ok, why = _judge(root, highest={"round": "P3", "performance": "P3", "completion": "P3"}, **_good(h))
+    assert not ok and "ended at P3" in why, why
+    # A pin that blocks only P1 and P2 files a P3 instead: it does not hold the stamp. (The pin is stubbed, not
+    # edited: an edited pin is staged with the stamp, which the gate rightly refuses as unreviewed.)
+    real = gate._blocking_levels
+    gate._blocking_levels = lambda _root: ("P1", "P2")
+    try:
+        assert _judge(root, highest={"round": "P3", "performance": "P3", "completion": "P3"}, **_good(h)) == (True, "")
+    finally:
+        gate._blocking_levels = real
     # Generated files, the TODO itself, and README's generated regions may ride along with the stamp.
     regenerated = README.replace("<!-- project:stat_x -->1<!-- /project -->", "<!-- project:stat_x -->2<!-- /project -->")
     assert _judge(root, also_stage={"COUNT.md": "counts\n", "README.md": regenerated,
@@ -302,7 +311,7 @@ def test_a_fix_commit_in_a_reviewed_todo_is_not_held_for_a_re_adversarial(tmp_pa
 
 def test_a_broken_pin_does_not_open_the_gate(tmp_path):
     root, h = _history(tmp_path)
-    assert gate._blocking_levels(root) == ("P1", "P2")
+    assert gate._blocking_levels(root) == ("P1", "P2", "P3")
     (root / ".conclave/reviewers.toml").write_text("schema_version = [")
     assert gate._blocking_levels(root) == gate._BLOCKING_FALLBACK
     ok, why = _judge(root, highest={"completion": "P2"}, **_good(h))

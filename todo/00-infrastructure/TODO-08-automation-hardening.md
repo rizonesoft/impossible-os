@@ -127,9 +127,9 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  59   |   §59   | Lanes pilot                                                                                      | §54, §56, §57              |  [ ]   |
 | ⭐  |  60   |   §60   | Review receipts are written atomically                                                           | --                         |  [ ]   |
 | ⭐  |  61   |   §61   | A P2 comes with a failing test                                                                   | --                         |  [ ]   |
-| ⭐  |  62   |   §62   | Blocking level per path                                                                          | --                         |  [ ]   |
+| ⭐  |  62   |   §62   | Review depth per path                                                                            | --                         |  [ ]   |
 | ⭐  |  63   |   §63   | A repeated finding dispatches a redesign pass                                                    | --                         |  [ ]   |
-| ⭐  |  64   |   §64   | Re-dispatched passes review only the repair                                                      | --                         |  [ ]   |
+| ⭐  |  64   |   §64   | Re-dispatched passes review only the repair                                                      | §59                        |  [ ]   |
 | ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | --                         |  [ ]   |
 | ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
@@ -1815,20 +1815,23 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 > **Spawned-by:** root
 > **User impact:** review chains run long on findings that are never reproduced (median 22 passes a section against 4 for a clean one; 224 of 746 round passes ended on P2).
 
-- [ ] The review prompt asks a P2 for Repro, Expect and Actual; one that cannot be reproduced is recorded as a tracked P3
+- [ ] The review prompt asks a P1 or P2 for Repro, Expect and Actual, and the fix lands with that repro as its regression test
+- [ ] A finding without a repro is verified at file:line before it is fixed; its level is never lowered (every level blocks since 2026-11-21)
 - [ ] Commit: `"review: a P2 comes with a failing test"`
 
-**Test checkpoint:** a P2 without a repro is graded P3 by `review_pin.py`; one with a repro still blocks.
+**Test checkpoint:** the round prompt asks for Repro, Expect and Actual; a P2 without one still blocks the stamp.
 
-## 62. Blocking level per path
+## 62. Review depth per path
 
 > **Spawned-by:** root
-> **User impact:** machinery that only the run uses is held to the kernel's blocking level.
+> **User impact:** the boot, kernel, userland and link paths are where a missed bug costs the most, and nothing in the pin says they always get the deepest review.
 
-- [ ] `[[schedule.blocking]]` in `.conclave/reviewers.toml` sets the blocking level by path; run-only machinery blocks on P1 only, and a gate that passes falsely counts as P1
-- [ ] Commit: `"review: blocking level per path"`
+Operator decision 2026-11-21: every level blocks on every path, so this section sets review DEPTH by path, never a lower blocking level (it was "Blocking level per path", which would have let run-only machinery block on P1 alone).
 
-**Test checkpoint:** `review_pin.py` blocks a P2 under `src/` and passes one under a run-only path.
+- [ ] `deep_paths` in `.conclave/reviewers.toml` names `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build; a section touching one gets full-scope passes only
+- [ ] Commit: `"review: review depth per path"`
+
+**Test checkpoint:** `review_pin.py` refuses a repair-scoped round for a section touching `src/kernel/` and allows one under `scripts/`.
 
 ## 63. A repeated finding dispatches a redesign pass
 
@@ -1845,10 +1848,13 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 > **Spawned-by:** root
 > **User impact:** a re-dispatched round re-reads the whole section and finds new issues outside what was fixed.
 
-- [ ] A re-dispatched round or performance pass is scoped to the repair diff and the code it reaches
+On trial for sections 48 to 59 by operator decision 2026-11-21 ([the review discipline](../../.claude/skills/three-pass-review.md#review-discipline-operator-2026-11-21)); build this only if their tally shows no defect a full-scope pass would have caught.
+
+- [ ] While a round converges outside the [section 62](#62-review-depth-per-path) deep paths, a re-dispatched round or performance pass is scoped to the repair diff and the code it reaches
+- [ ] The candidate being stamped always gets a full-scope round, performance and completion wave
 - [ ] Commit: `"review: re-dispatched passes review only the repair"`
 
-**Test checkpoint:** a re-dispatch prompt names only the repair range.
+**Test checkpoint:** a converging re-dispatch prompt names only the repair range; a stamp-candidate prompt and a deep-path prompt name the whole section.
 
 ## 65. Tools run in front of the review lenses
 
@@ -1867,6 +1873,7 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 
 - [ ] Each finding's verdict (fixed, rejected, accepted) is stored with its lens
 - [ ] `scripts/overnight/lens-yield.py` scores each lens
+- [ ] A lens is removed only after a replay on known defects shows no loss, as the agent-model rule requires (CLAUDE.md, Model Roles)
 - [ ] Commit: `"review: lens yield is measured"`
 
 **Test checkpoint:** `lens-yield.py` scores a fixture manifest correctly.
