@@ -9,8 +9,17 @@ CHECK = REPO / "scripts/staged_dash_check.py"
 DASH = chr(0x2014)
 
 
+def _clean_env(extra=None):
+    """The caller's repository settings never reach the fixture: a GIT_INDEX_FILE
+    or GIT_DIR from an outer commit would make these commands write the caller's
+    index."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "SKIP_DASH_CHECK"}
+    env.update(extra or {})
+    return env
+
+
 def _git(root, *a):
-    subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30)
+    subprocess.run(["git", *a], cwd=root, check=True, capture_output=True, timeout=30, env=_clean_env())
 
 
 def _repo(tmp_path):
@@ -22,8 +31,7 @@ def _repo(tmp_path):
 
 
 def _run(root, extra=None):
-    env = {k: v for k, v in os.environ.items() if k != "SKIP_DASH_CHECK"}
-    env.update(extra or {})
+    env = _clean_env(extra)
     return subprocess.run([sys.executable, str(CHECK)], cwd=root, env=env, capture_output=True, text=True,
                           timeout=60)
 
@@ -100,3 +108,39 @@ def test_git_settings_renames_and_odd_names_never_change_what_counts_as_added(tm
     r = _run(root, env_extra)
     assert r.returncode == 1 and "again.md:2" in r.stderr and "0:notes.md:2" in r.stderr, r
     assert "again.md:1" not in r.stderr, r
+
+
+def test_moved_lines_and_binary_blobs_are_not_additions(tmp_path):
+    """A dash line moved to another file or out of a deleted file is not new; a
+    second copy is; a PNG whose compressed bytes match the dash is not text."""
+    import shutil
+    root = _repo(tmp_path)
+    para = "para " + DASH + " moved\n"
+    (root / "a.md").write_text("one\n" + para, encoding="utf-8")
+    (root / "b.md").write_text("two\n", encoding="utf-8")
+    (root / "gone.md").write_text("gone " + DASH + " line\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _commit(root, "base")
+    (root / "a.md").write_text("one\n", encoding="utf-8")
+    (root / "b.md").write_text("two\n" + para, encoding="utf-8")
+    (root / "gone.md").unlink()
+    (root / "c.md").write_text("other\ngone " + DASH + " line\n", encoding="utf-8")
+    shutil.copy(REPO / "resources/icons/color/64/settings.png", root / "icon.png")
+    _git(root, "add", "-A")
+    r = _run(root)
+    assert r.returncode == 0, r
+    (root / "b.md").write_text("two\n" + para + para, encoding="utf-8")
+    _git(root, "add", "-A")
+    r = _run(root)
+    assert r.returncode == 1 and "b.md:3" in r.stderr and "icon.png" not in r.stderr, r
+
+
+def test_the_fixture_never_writes_the_callers_index(tmp_path, monkeypatch):
+    outer = tmp_path / "outer-index"
+    outer.write_bytes(b"caller state")
+    monkeypatch.setenv("GIT_INDEX_FILE", str(outer))
+    root = _repo(tmp_path)
+    (root / "x.md").write_text("x\n", encoding="utf-8")
+    _git(root, "add", "x.md")
+    assert _run(root).returncode == 0
+    assert outer.read_bytes() == b"caller state"
