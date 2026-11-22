@@ -53,16 +53,27 @@ LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh"
 # A caller's hard limit (CODEX_REVIEW_MAX_SECS) is one absolute deadline, taken at entry: the outage check, the
 # candidate read, the service manager's submission and the detached job each run under review-runtime-limit.sh
 # until it, so no step before the review is given back.
+# The steps end a reserve before it (a tenth of the limit, a tenth of a second to a second), which is kept for
+# publishing a result the broker owns, so even that is done by the deadline.
 LIMIT_END=""
+LIMIT_FINAL=""
 if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
   [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
     echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
   read -r LIMIT_UP _ < /proc/uptime
-  LIMIT_END=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
+  LIMIT_FINAL=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
+  RESERVE=$(( CODEX_REVIEW_MAX_SECS * 10 ))
+  (( RESERVE < 10 )) && RESERVE=10
+  (( RESERVE > 100 )) && RESERVE=100
+  LIMIT_END=$(( LIMIT_FINAL - RESERVE ))
 fi
 # One command string, under the caller's limit when there is one (124: the limit ended it).
 limited() {
   if [[ -n "$LIMIT_END" ]]; then bash "$LIMITER" --until-cs "$LIMIT_END" "$1"; else bash -c "$1"; fi
+}
+# Publishing a result the broker owns: the same, with the reserve.
+publish() {
+  if [[ -n "$LIMIT_FINAL" ]]; then bash "$LIMITER" --until-cs "$LIMIT_FINAL" "$1"; else bash -c "$1"; fi
 }
 # Prompt parsing shared by the three dispatchers, in memory (no pipeline).
 # shellcheck source=scripts/lib/review-prompt.sh
@@ -127,8 +138,7 @@ COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-cod
 [[ -f "$COMPANION" ]] || { echo "[review-broker] BLOCK -- codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
 export CODEX_REVIEWER_DISPATCH=1
 
-MANIFEST_DIR=".claude/overnight/reviews"
-mkdir -p "$MANIFEST_DIR"
+MANIFEST_DIR=".claude/overnight/reviews"     # made with the prompt below, under the deadline
 MANIFEST="$MANIFEST_DIR/manifest.jsonl"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 # The process id is in the name: two reviews of one kind started in the same
@@ -160,11 +170,15 @@ read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 # poll (and any recovering next session) watches for.
 # In the reviews directory, which the launch read above left out: anywhere else (a TMPDIR inside the
 # checkout) the file would change the tree the launch row names.
-# Made under the caller's deadline, with its hash: a stalled write to the reviews filesystem ends with the limit.
+# The directory, the hash and then the file, made under the caller's deadline: a stalled filesystem ends with
+# the limit. The name is this broker's own (its process id, stamp and kind), created exclusively, so whoever
+# ends the attempt knows what to remove; a failure removes it with the reserve.
 export PROMPT
+PROMPT_FILE="$PWD/$MANIFEST_DIR/.prompt.${STAMP}-$$-${KIND}"
 PREP_RC=0
-PREP="$(limited "f=\$(mktemp $(q "$PWD/$MANIFEST_DIR/.prompt.XXXXXX")) && printf '%s' \"\$PROMPT\" > \"\$f\" && s=\$(printf '%s' \"\$PROMPT\" | sha256sum) && printf '%s %s' \"\${s%% *}\" \"\$f\"")" || PREP_RC=$?
-if [[ "$PREP_RC" != 0 || ! "$PREP" =~ ^[0-9a-f]{64}\ (.+)$ ]]; then
+PREP="$(limited "mkdir -p $(q "$MANIFEST_DIR") && s=\$(printf '%s' \"\$PROMPT\" | sha256sum) && ( set -C; printf '%s' \"\$PROMPT\" > $(q "$PROMPT_FILE") ) && printf '%s' \"\${s%% *}\"")" || PREP_RC=$?
+if [[ "$PREP_RC" != 0 || ! "$PREP" =~ ^[0-9a-f]{64}$ ]]; then
+  publish "rm -f $(q "$PROMPT_FILE")" || echo "review-broker: $PROMPT_FILE could not be removed in time" >&2
   if [[ "$PREP_RC" == 124 && -n "$LIMIT_END" ]]; then
     echo "review-broker: writing the prompt took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
   else
@@ -172,8 +186,7 @@ if [[ "$PREP_RC" != 0 || ! "$PREP" =~ ^[0-9a-f]{64}\ (.+)$ ]]; then
   fi
   exit 2
 fi
-PROMPT_SHA="${PREP%% *}"
-PROMPT_FILE="${PREP#* }"
+PROMPT_SHA="$PREP"
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
@@ -205,13 +218,17 @@ MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"
 # detached job, at its start, before it reads the prompt or runs anything; or the broker, when the launch failed
 # or was cut short after the job's name was given out. The other leaves the result alone, so a unit that starts
 # late never writes over a published result, and a launch cut short still ends with exactly one.
+# Published with the reserve, so the caller is answered by its deadline even on a stalled filesystem.
 finalize_unlaunched() {   # $1: the status to publish when the broker owns the result
-  if ( set -C; : > "$LOG_FILE" ) 2>/dev/null; then
-    echo "Turn completed (rc=$1)" >> "$LOG_FILE"
-    echo "$1" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
-    rm -f "$PROMPT_FILE"
-  fi
+  publish "( set -C; : > $Q_LOG ) 2>/dev/null || exit 0; echo 'Turn completed (rc=$1)' >> $Q_LOG; echo $1 > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT" \
+    || echo "review-broker: the result ($1) could not be published by the deadline" >&2
 }
+# From here until the service manager has the job, the broker owns its result: a cancellation of the broker
+# publishes it (128 + the signal), so a registered attempt never waits for a result no one will write.
+cancelled_launch() { trap - TERM INT HUP; finalize_unlaunched "$1"; exit "$1"; }
+trap 'cancelled_launch 143' TERM
+trap 'cancelled_launch 130' INT
+trap 'cancelled_launch 129' HUP
 REGISTER="python3 $(q "$MANIFEST_LINE") --append $(q "$MANIFEST")"
 for field in "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
     "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
@@ -250,19 +267,27 @@ SUBMIT="systemd-run --user --collect $(q "--unit=$UNIT") $(q "--setenv=CODEX_REV
 SUBMIT_RC=0
 limited "$SUBMIT" || SUBMIT_RC=$?
 if [[ "$SUBMIT_RC" == 0 ]]; then
-  :
+  trap - TERM INT HUP                    # the unit owns the result now
+elif [[ "$SUBMIT_RC" -ge 128 ]]; then
+  # Cancelled (the limiter's own 128 + signal), or the service manager ended by a signal: whether the unit
+  # was created is unknown, so no second copy is started. The result goes to its one owner, as below.
+  trap - TERM INT HUP
+  finalize_unlaunched "$SUBMIT_RC"
+  echo "review-broker: the submission was cancelled (exit $SUBMIT_RC); no fallback was started" >&2
+  exit "$SUBMIT_RC"
 elif [[ "$SUBMIT_RC" == 124 && -n "$LIMIT_END" ]]; then
   # The limit ended the submission itself. Whether the unit was created is unknown, so no second copy is
   # started and the service manager is not asked again (that wait would outlast the deadline). The result
   # goes to its one owner: a unit that already started keeps it; otherwise it is recorded here as 124, and a
   # unit that starts later finds the log taken and exits before it reads or writes anything.
+  trap - TERM INT HUP
   finalize_unlaunched 124
 else
   # Non-systemd fallback: setsid detach (survives plain shells; NOT a
   # systemd cgroup -- callers inside a service should have systemd-run).
   # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
   setsid bash -c "$JOB" < /dev/null >/dev/null 2>&1 &
-  :
+  trap - TERM INT HUP
 fi
 
 printf '%s\n' "$RESPONSE"

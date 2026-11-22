@@ -2530,14 +2530,20 @@ def _spent_passes(root: Path, todo: str, section: str) -> int:
 _CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
+_RECEIPT_COMPLETE = None
+
+
 def _receipt_complete(receipt: dict) -> bool:
     """review_pin.receipt_complete: the one predicate the review-range reads use too, so the gate and the
     next pass's base never disagree about which passes count."""
-    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    import review_pin
-    return review_pin.receipt_complete(receipt)
+    global _RECEIPT_COMPLETE
+    if _RECEIPT_COMPLETE is None:                      # loaded once; each receipt's markers are still read
+        scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import review_pin
+        _RECEIPT_COMPLETE = review_pin.receipt_complete
+    return _RECEIPT_COMPLETE(receipt)
 
 
 def _pin_issue(root: Path) -> str:

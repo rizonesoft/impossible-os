@@ -260,9 +260,10 @@ class BlobReader:
             n, tail = dash_count(head), head[-2:]
             for chunk in self._chunks(left):
                 left -= len(chunk)
-                window = tail + chunk                          # a dash is 3 bytes: none fits in the carried 2
-                n += dash_count(window)
-                tail = window[-2:]
+                # A dash is 3 bytes: none fits in the carried 2 or in chunk[:2], so the 4 bytes across the
+                # boundary hold only dashes that cross it, and the chunk itself is counted in place.
+                n += dash_count(chunk) + dash_count(tail + chunk[:2])
+                tail = (tail + chunk)[-2:] if len(chunk) < 2 else chunk[-2:]
         self._end(oid, left)
         return n
 

@@ -321,3 +321,24 @@ def test_a_stream_closed_after_its_deadline_is_late_before_its_watchdog_runs(mon
     time.sleep(0.2)                                        # the command is done; the caller resumes late
     with pytest.raises(ValueError, match="did not finish"):
         stream.close()
+
+
+def test_a_leader_that_does_not_go_after_its_kill_is_reported_and_never_signalled_again(monkeypatch):
+    monkeypatch.setattr(bounded_run, "REAP_LIMIT", 0.2)
+    real_wait = subprocess.Popen.wait
+
+    def stuck(self, timeout=None):                         # as a leader held in uninterruptible I/O
+        if timeout is not None:
+            raise subprocess.TimeoutExpired(self.args, timeout)
+        return real_wait(self)
+    monkeypatch.setattr(subprocess.Popen, "wait", stuck)
+    signalled, real_killpg = [], os.killpg
+    monkeypatch.setattr(bounded_run.os, "killpg", lambda pgid, sig: (signalled.append(pgid), real_killpg(pgid, sig)))
+    began = time.monotonic()
+    with pytest.raises(ValueError, match="did not end within"):
+        bounded_run.run(["sleep", "30"], "a stuck command", timeout=0.2)
+    assert time.monotonic() - began < 2
+    calls = len(signalled)
+    proc = type("P", (), {"pid": 1, "abandoned": True})()
+    bounded_run._kill_group(proc)
+    assert len(signalled) == calls

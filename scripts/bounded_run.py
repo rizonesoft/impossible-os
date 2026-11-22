@@ -32,6 +32,7 @@ import time
 CHUNK = 1 << 20
 STDERR_KEEP = 1 << 16        # the end of a long stderr is what names the failure
 GRACE = 5                    # seconds to wait for the pipes to close once the group is ended
+REAP_LIMIT = 5               # seconds a KILLed leader may take to exit (uninterruptible I/O) before it is reported
 
 
 class Cancelled(BaseException):
@@ -75,15 +76,28 @@ class _Watch:
 
 
 def _kill_group(proc):
+    if getattr(proc, "abandoned", False):                  # its id may be released and reused: never again
+        return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:                             # the group has already exited: nothing to end
         pass
 
 
-def _end_group(proc):
+def _end_group(proc, what="the command"):
     _kill_group(proc)
-    proc.wait()
+    _reap(proc, what)
+
+
+def _reap(proc, what):
+    """Reap the leader within REAP_LIMIT. One the kernel keeps in uninterruptible I/O past it is reported
+    and abandoned: never signalled again (subprocess reaps it later, and its id is then free for reuse)."""
+    try:
+        proc.wait(timeout=REAP_LIMIT)
+    except subprocess.TimeoutExpired:
+        proc.abandoned = True
+        raise ValueError(f"{what} did not end within {REAP_LIMIT} s of being killed "
+                         f"(uninterruptible I/O?)") from None
 
 
 def _exit_status(proc, deadline):
@@ -194,7 +208,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         watch.hold = True
         try:
             if proc is not None:
-                _end_group(proc)
+                _end_group(proc, what)
                 for t in threads:
                     if t.ident is not None:                # started: a cancellation can land before a start
                         t.join(GRACE)                      # the pipes close with the group
@@ -276,7 +290,7 @@ class Stream:
                 self._timer.join()
         if kill:
             _kill_group(self.proc)
-        self.proc.wait()
+        _reap(self.proc, self.what)
 
     def _stop(self, signum=0):
         """End the group, reap it and give the caller its handlers back (delivering `signum`)."""

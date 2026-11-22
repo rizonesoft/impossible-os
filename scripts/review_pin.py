@@ -483,8 +483,12 @@ def receipt_complete(receipt) -> bool:
             and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7):
         return False
     log = str(receipt.get("logFile") or "")
-    if receipt.get("done_file") is True and published_status(log + ".done") != "0":
-        return False
+    # The dispatcher writes done_file=true on every receipt and publishes the status after it. A receipt
+    # with no such field is from the dispatcher before 2026-11-21, which published nothing after its
+    # receipt: that row was its last word. Any other value is not a receipt this dispatcher wrote.
+    if "done_file" in receipt:
+        if receipt["done_file"] is not True or published_status(log + ".done") != "0":
+            return False
     # A pass the review broker launched is the broker's attempt: its own status can be 0 while the broker
     # recorded the attempt as ended by its limit (124). The broker's published status decides.
     if receipt.get("parent"):

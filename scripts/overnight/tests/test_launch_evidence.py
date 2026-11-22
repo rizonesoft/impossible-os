@@ -526,3 +526,98 @@ def test_a_session_started_by_a_term_handler_is_ended_with_the_attempt(tmp_path)
     finally:
         if pidfile.exists() and pidfile.read_text().strip() and not _gone(int(pidfile.read_text()), 0):
             os.kill(int(pidfile.read_text()), signal.SIGKILL)
+
+
+def _limiter_in_process(tmp_path, body):
+    """Runs the limiter's main() in a child python with `body` patching it first; returns (rc, spawned)."""
+    import sys
+    script = tmp_path / "drive.py"
+    script.write_text("import importlib.util, os, sys\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      "spawned = []\n"
+                      "real_spawn = os.posix_spawnp\n"
+                      "def spawn(*a, **k):\n    spawned.append(a[1]); return real_spawn(*a, **k)\n"
+                      "os.posix_spawnp = spawn\n" + body +
+                      "rc = rl.main(sys.argv[1:])\nprint('spawned', len(spawned)); sys.exit(rc)\n")
+    return subprocess.run([sys.executable, str(script), "30", "true"], capture_output=True, text=True, timeout=30)
+
+
+def test_a_deadline_that_passes_while_the_supervisor_sets_up_runs_nothing(tmp_path):
+    # The parse reads the clock once; every later read is past the deadline (a host that stalled the setup).
+    done = _limiter_in_process(tmp_path, "calls = [0]\nreal = rl.now_cs\n"
+                                         "def late():\n    calls[0] += 1\n"
+                                         "    return real() if calls[0] == 1 else real() + 10**6\n"
+                                         "rl.now_cs = late\n")
+    assert done.returncode == 124 and "spawned 0" in done.stdout, done
+
+
+def test_a_cancellation_before_the_start_runs_nothing(tmp_path):
+    done = _limiter_in_process(tmp_path, "import signal\nreal_mask = signal.pthread_sigmask\n"
+                                         "def mask(how, sigs):\n"
+                                         "    if how == signal.SIG_BLOCK:\n        os.kill(os.getpid(), signal.SIGTERM)\n"
+                                         "    return real_mask(how, sigs)\n"
+                                         "signal.pthread_sigmask = mask\n")
+    assert done.returncode == 143 and "spawned 0" in done.stdout, done
+
+
+def test_a_number_given_up_and_reused_is_never_signalled(tmp_path):
+    """A member's number freed and taken by an unrelated process between the walk and the signal: only a
+    process held by a pidfd while proved a member is signalled, so the stranger lives. Run in a child that
+    has no other children, so nothing of the test's own is in reach."""
+    import sys
+    script = tmp_path / "reuse.py"
+    script.write_text("import importlib.util, os, signal, subprocess, time\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      # Not this process's child: started by a shell that exits at once.
+                      "pid = int(subprocess.run(['sh', '-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], capture_output=True,"
+                      " text=True, timeout=10).stdout)\n"
+                      "real, told = rl._stat, []\n"
+                      "def lying(p):\n"
+                      "    if int(p) == pid and not told:\n        told.append(p); return (b'S', os.getpid())\n"
+                      "    return real(p)\n"
+                      "rl._stat = lying\n"
+                      "n = rl.signal_all(signal.SIGTERM)\n"
+                      "time.sleep(0.2)\n"
+                      "alive = os.path.exists(f'/proc/{pid}') and "
+                      "not open(f'/proc/{pid}/stat').read().rsplit(') ', 1)[1].startswith('Z')\n"
+                      "os.kill(pid, signal.SIGTERM)\n"
+                      "print('told' if told else 'untold', n, alive)\n")
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert done.stdout.split() == ["told", "0", "True"], done
+
+def test_the_teardown_ends_by_the_deadline(tmp_path):
+    """TERM ignored by a descendant: it is killed before the deadline, and the answer comes by it."""
+    began = time.monotonic()
+    done = subprocess.run(["bash", str(LIMIT), "2", 'trap "" TERM; sh -c \'trap "" TERM; sleep 30\' & wait'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=20)
+    took = time.monotonic() - began
+    assert done.returncode == 124 and took < 1.95, (took, done.stderr)   # KILLed before the end
+
+
+def test_an_attempt_that_never_finishes_ending_is_answered_by_the_deadline(tmp_path):
+    """A process the kernel keeps after KILL (uninterruptible I/O): no fresh budget is started after the
+    deadline, the limit answers by it. Modelled in a child: no signal is delivered and no child is ever
+    reaped."""
+    import sys
+    script = tmp_path / "stuck.py"
+    script.write_text("import importlib.util, os, sys, time\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      "rl.signal_all = lambda sig: 0\n"
+                      "os.waitpid = lambda pid, flags: (0, 0)\n"
+                      "began = time.monotonic()\n"
+                      "rc = rl.main(['2', 'true'])   # exits at once; the model never reaps it\n"
+                      "print(rc, round(time.monotonic() - began, 2), flush=True)\n"
+                      "os._exit(0)\n")
+    proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+    rc, took = out.split()
+    assert rc == "124" and float(took) < 2.5, (out, err)

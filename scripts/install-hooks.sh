@@ -229,6 +229,17 @@ disable_pre_push() {
     fi
 }
 
+# Whether a failed stat's diagnostic reports the entry missing. GNU stat names the path quoted (in double
+# quotes when it holds a single one, a quote of the other kind escaped) and the error after the closing quote: only that ending is read, so a path that
+# merely contains the words cannot pass for an absent entry (LC_ALL=C on the stat call keeps them English).
+stat_says_absent() {
+    local last="${1##*$'\n'}"
+    case "$last" in
+        *[\'\"]": No such file or directory"|*[\'\"]": Not a directory") return 0 ;;
+    esac
+    return 1
+}
+
 prune_legacy_symlinks() {
     # Early versions of this script symlinked hooks into .git/hooks/. Since
     # core.hooksPath=.githooks makes .git/hooks/ inert, leftover symlinks
@@ -249,7 +260,7 @@ prune_legacy_symlinks() {
         local err
         RESOLVED="$(LC_ALL=C stat -L -c '%d:%i' -- "$1" 2>/dev/null)" && return 0
         err="$(LC_ALL=C stat -L -c '%d:%i' -- "$1" 2>&1 >/dev/null)"
-        case "$err" in *"No such file or directory"*|*"Not a directory"*) return 1 ;; esac
+        stat_says_absent "$err" && return 1
         return 2
     }
     legacy_link_is_ours() {
@@ -307,9 +318,7 @@ prune_legacy_symlinks() {
     # failure (an I/O error) leaves it unjudged.
     local lookup
     if ! lookup="$(LC_ALL=C stat -c '%F' -- "$target" 2>&1)"; then
-        case "$lookup" in
-            *"No such file or directory"*) return 0 ;;
-        esac
+        stat_says_absent "$lookup" && return 0
         echo "The legacy pre-push entry $target could not be looked up ($lookup): left unjudged" >&2
         return 1
     fi

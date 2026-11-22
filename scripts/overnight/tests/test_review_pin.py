@@ -2228,11 +2228,10 @@ def test_a_manifest_that_is_not_a_regular_file_refuses_at_once(tmp_path):
     import time
     fifo = tmp_path / "manifest.jsonl"
     os.mkfifo(fifo)                                    # opening it to read would wait for a writer
-    began = time.monotonic()
-    for lookup in (lambda: rp.section_start(fifo, "todo/x.md", 9), lambda: rp.repair_base(fifo, "todo/x.md", 9)):
-        with pytest.raises(rp.Refused, match="not a regular file"):
-            lookup()
-    assert time.monotonic() - began < 2
+    for call in ("section_start", "repair_base"):
+        done = _in_child(f"try:\n    rp.{call}({str(fifo)!r}, 'todo/x.md', 9)\n"
+                         f"except rp.Refused as exc:\n    print('refused', exc)", timeout=5)
+        assert done.returncode == 0 and "refused" in done.stdout and "not a regular file" in done.stdout, done
 
 
 def _published_receipt(tmp_path, n, head, published):
@@ -2262,7 +2261,7 @@ def test_the_commit_gate_and_the_range_reads_credit_the_same_receipts(tmp_path):
              {**base, "head": "abc"}, {**base, "done_file": False}, _published_receipt(tmp_path, 2, "d" * 40, "124"),
              _published_receipt(tmp_path, 3, "e" * 40, None)]
     assert [gate._receipt_complete(c) for c in cases] == [rp.receipt_complete(c) for c in cases]
-    assert [rp.receipt_complete(c) for c in cases] == [True, False, False, False, False, True, False, False]
+    assert [rp.receipt_complete(c) for c in cases] == [True, False, False, False, False, False, False, False]
 
 
 def test_making_the_answer_is_held_to_the_callers_limit(tmp_path):
@@ -2305,17 +2304,24 @@ def test_a_brokered_pass_counts_only_once_its_broker_published_success(tmp_path)
     assert rp.receipt_complete(receipt)
 
 
+def _in_child(code, timeout=10):
+    """Runs `code` against review_pin in a child the test can time out: a lookup that blocks never stalls
+    the suite, it fails it."""
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, "-c", f"import sys; sys.path.insert(0, {str(REPO / 'scripts')!r}); "
+                           f"import review_pin as rp\n{code}"], capture_output=True, text=True, timeout=timeout)
+
+
 def test_a_completion_marker_that_is_not_a_regular_file_is_never_waited_on(tmp_path):
     import json
     import os
-    import time
     r = _published_receipt(tmp_path, 1, "a" * 40, None)
     os.mkfifo(r["logFile"] + ".done")                               # reading it would wait for a writer
     manifest = tmp_path / "manifest.jsonl"
     manifest.write_text(json.dumps(r) + "\n")
-    began = time.monotonic()
-    assert rp.section_start(manifest, "todo/x.md", 9) == ""
-    assert time.monotonic() - began < 2
+    done = _in_child(f"print(repr(rp.section_start({str(manifest)!r}, 'todo/x.md', 9)))", timeout=5)
+    assert done.returncode == 0 and done.stdout.strip() == "''", done
 
 
 def test_writing_the_prompt_is_held_to_the_callers_limit(tmp_path):
@@ -2333,3 +2339,74 @@ def test_writing_the_prompt_is_held_to_the_callers_limit(tmp_path):
     done = _broker(repo, env, timeout=20)
     assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
     assert "writing the prompt took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
+    assert not list((repo / ".claude/overnight/reviews").glob(".prompt.*"))   # nothing of the attempt is left
+
+
+def _stalling_broker(tmp_path, stall_kind_arg, submit="exec sleep 30"):
+    """A broker whose answer step (manifest-line.py with kind=) or submission stalls, in its own session."""
+    import os
+    import subprocess
+    repo, _git = _tmp_repo(tmp_path)
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text("import sys, time\n"
+                                           f"if {stall_kind_arg!r} and sys.argv[1:2] and sys.argv[1].startswith('kind='):\n"
+                                           "    time.sleep(30)\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "systemd-run").write_text(f"#!/bin/sh\n{submit}\n")
+    (bindir / "systemd-run").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "PYTHONPATH": str(site),
+           "CODEX_COMPANION_PATH": str(tmp_path / "c.js"), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
+           "CODEX_REVIEW_MAX_SECS": "60"}
+    (tmp_path / "c.js").write_text("\n")
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                             "[review-kind: round] todo/x.md section 9\nReview it."], cwd=str(repo), env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    return repo, proc
+
+
+def _registered_log(repo, wait=20):
+    import json
+    import time
+    manifest = repo / ".claude/overnight/reviews/manifest.jsonl"
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        if manifest.exists() and manifest.read_text().strip():
+            return pathlib.Path(json.loads(manifest.read_text().strip().splitlines()[-1])["logFile"])
+        time.sleep(0.05)
+    raise AssertionError("no registration")
+
+
+def test_cancelling_the_broker_after_registration_publishes_the_result(tmp_path):
+    import os
+    import signal
+    repo, proc = _stalling_broker(tmp_path, True)
+    try:
+        log = _registered_log(repo)
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=20)
+        assert pathlib.Path(f"{log}.done").read_text().strip() in ("143",), proc.stderr.read()
+        assert not list((repo / ".claude/overnight/reviews").glob(".prompt.*"))
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+
+def test_a_cancelled_submission_starts_no_fallback(tmp_path):
+    import os
+    import signal
+    import time
+    # The service manager is ended by a signal mid-submission; the broker itself is not signalled.
+    repo, proc = _stalling_broker(tmp_path, False, submit="kill -TERM $$")
+    try:
+        log = _registered_log(repo)
+        proc.wait(timeout=20)
+        assert proc.returncode != 0
+        assert pathlib.Path(f"{log}.done").read_text().strip() == "143"
+        assert "Turn completed (rc=143)" in log.read_text()        # the broker's, not a review's
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()

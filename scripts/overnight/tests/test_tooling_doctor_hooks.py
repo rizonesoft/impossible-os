@@ -811,3 +811,11 @@ def test_a_legacy_entry_that_cannot_be_looked_up_fails_the_removal(tmp_path):
     r = _remove_with(root, bindir, "stat", 'case " $* " in *"%F -- "*) echo "stat: Input/output error" >&2; '
                                            'exit 1 ;; esac')
     assert r.returncode != 0 and "could not be looked up" in r.stderr and link.is_symlink(), r
+
+
+def test_an_io_error_naming_a_path_that_holds_the_absence_words_is_not_absence(tmp_path):
+    root, link, bindir = _legacy_link(tmp_path)
+    msg = "stat: cannot statx '/x/No such file or directory/y': Input/output error"
+    for probe in ("%F -- ", "%d:%i -- "):
+        r = _remove_with(root, bindir, "stat", f'case " $* " in *"{probe}"*) echo "{msg}" >&2; exit 1 ;; esac')
+        assert r.returncode != 0 and link.is_symlink(), (probe, r)
