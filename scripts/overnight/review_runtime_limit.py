@@ -272,7 +272,7 @@ def _start(spawn, until, cancel=None, abandon=None):
     """(True, `spawn()`) or (False, None): the start supervised by bounded_run.start_supervised against
     `until` (centiseconds, now_cs) and a second after a cancellation, so a spawn held by failing storage never
     holds this supervisor. Every caller keeps the gate that makes a start given up on run nothing."""
-    deadline = time.monotonic() + max(0, until - now_cs()) / 100
+    deadline = _bounded.clock() + max(0, until - now_cs()) / 100
 
     def stopped():
         # `until` is on the elapsed-time clock, which a suspend advances and the monotonic deadline above does
@@ -908,7 +908,7 @@ def _attempt(cmd, end, broker, cancel):
             return bool(signal.sigpending() & watched) or now_cs() >= kill_at
         try:
             started, leader = _bounded.start_supervised(
-                spawn, time.monotonic() + max(0, kill_at - now_cs()) / 100, stopped)
+                spawn, _bounded.clock() + max(0, kill_at - now_cs()) / 100, stopped)
         except OSError as exc:
             # Not started (a process limit, a missing shell): a failed attempt, published by its owner.
             os.close(life_wr)

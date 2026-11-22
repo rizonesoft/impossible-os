@@ -462,6 +462,9 @@ def _newest_first(manifest, block=1 << 16):
                 pos -= step
                 fh.seek(pos)
                 chunk = fh.read(step)
+                if len(chunk) != step:
+                    # The file shrank under the read: what is left could be an older, cleaner record set.
+                    raise Refused(f"{manifest} shrank while it was read; read it again")
                 if b"\n" not in chunk:                   # inside one long record: kept, never rescanned
                     pieces.append(chunk)
                     continue

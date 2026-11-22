@@ -1611,8 +1611,8 @@ class _BoundedProcesses:
             finally:
                 os.close(gate_rd)
         try:
-            # start_supervised waits on the monotonic clock; the elapsed-time deadline is checked as its stop.
-            started, proc = bounded_run.start_supervised(spawn, time.monotonic() + max(0.0, end - _clock()),
+            # start_supervised takes its deadline on bounded_run.clock() (CLOCK_BOOTTIME, as _clock is).
+            started, proc = bounded_run.start_supervised(spawn, bounded_run.clock() + max(0.0, end - _clock()),
                                                          lambda: _clock() >= end, self._end)
             if not started:
                 raise subprocess.TimeoutExpired(cmd, limit)

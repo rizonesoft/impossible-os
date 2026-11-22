@@ -81,6 +81,25 @@ class _Watch:
             raise SystemExit(128 + signum)                 # the caller's handler returned: still a cancellation
 
 
+
+SLICE = 1.0    # the longest single wait: every deadline here is checked again at least this often
+
+
+def clock() -> float:
+    """The clock every deadline here is on: elapsed time that a suspend advances (CLOCK_BOOTTIME). A caller
+    that passes an absolute deadline takes it from this clock. Relative waits (a join, a select, an event)
+    do not count a suspend, so each is sliced to SLICE and the deadline is read again between slices."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def _join(t, until) -> None:
+    """Joins `t` until it ends or `until` (on clock()) passes, in slices so a suspend is noticed on resume."""
+    while t.is_alive():
+        left = until - clock()
+        if left <= 0:
+            return
+        t.join(min(SLICE, left))
+
 def _kill_group(proc):
     if getattr(proc, "abandoned", False):                  # its id may be released and reused: never again
         return
@@ -107,8 +126,7 @@ def _reap(proc, what):
 
 
 def _exit_status(proc, deadline):
-    """The leader's exit status once it exits, read without reaping it, or None at `deadline` (a monotonic
-    time). The wait runs in a thread so the caller's join stays open to signals; the time left is read after
+    """The leader's exit status once it exits, read without reaping it, or None at `deadline` (on clock()). The wait runs in a thread so the caller's join stays open to signals; the time left is read after
     that thread has started, so a slow start is not spent twice."""
     box = []
 
@@ -120,7 +138,7 @@ def _exit_status(proc, deadline):
         box.append(info.si_status if info.si_code == os.CLD_EXITED else -info.si_status)
     t = threading.Thread(target=wait, daemon=True)
     t.start()
-    t.join(max(0.0, deadline - time.monotonic()))
+    _join(t, deadline)
     return box[0] if box else None
 
 
@@ -128,7 +146,7 @@ _NOTHING = object()
 
 
 def start_supervised(spawn, deadline, stopped, abandon=None):
-    """(True, `spawn()`) once the start returns within `deadline` (a monotonic time) and before `stopped()`,
+    """(True, `spawn()`) once the start returns within `deadline` (on clock()) and before `stopped()`,
     else (False, None) at once. A start can stall: a spawn waits until its child has executed the program,
     and loading it from failing storage holds that wait. So it runs in a launch thread the caller never
     waits on past the deadline. What the caller relies on is the gate every user of this keeps: the started
@@ -154,14 +172,14 @@ def start_supervised(spawn, deadline, stopped, abandon=None):
     t = threading.Thread(target=go, daemon=True)
     t.start()
     while True:
-        t.join(min(0.05, max(0.0, deadline - time.monotonic())))
-        if not t.is_alive() or stopped() or time.monotonic() >= deadline:
+        t.join(min(0.05, max(0.0, deadline - clock())))
+        if not t.is_alive() or stopped() or clock() >= deadline:
             break
     # The decision is made here, under the lock, against the clock and the stop as they are now: a start that
     # returned while this caller was descheduled past its deadline, or after a stop, is given up on like one
     # still held, so its gate is never released; it is handed to `abandon` here, once.
     with lock:
-        authorised = time.monotonic() < deadline and not stopped()
+        authorised = clock() < deadline and not stopped()
         if "result" in box and authorised:
             return True, box["result"]
         if "exc" in box and authorised:
@@ -272,7 +290,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
 
     watch = _Watch(cancel)
     proc, out, err, errors, threads = None, [], _Tail(), [], []
-    deadline = time.monotonic() + timeout                  # before the start: a slow start is spent from it
+    deadline = clock() + timeout                  # before the start: a slow start is spent from it
     try:
         proc = _launch(cmd, lambda argv, fds: subprocess.Popen(
             argv, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
@@ -282,7 +300,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         watch.hold = False
         if watch.pending:
             raise Cancelled(watch.pending)
-        if time.monotonic() >= deadline:
+        if clock() >= deadline:
             raise subprocess.TimeoutExpired(what, timeout)
         threads.append(threading.Thread(target=_pump, args=(proc.stdout, sink or out.append, errors), daemon=True))
         if keep_stderr:
@@ -298,16 +316,16 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             _kill_group(proc)                              # a failure leaves no helper of its own behind
             # Its status is known: a helper outside the group still holding a pipe gets one shared GRACE
             # (never past the deadline) and is then left to the daemon pumps; the failure is reported as is.
-            until = min(deadline, time.monotonic() + GRACE)
+            until = min(deadline, clock() + GRACE)
             for t in threads:
-                t.join(max(0.0, until - time.monotonic()))
+                _join(t, until)
         for t in threads:
             if rc != 0:
                 break
-            t.join(max(0.0, deadline - time.monotonic()))
+            _join(t, deadline)
             if t.is_alive():                               # a helper still holds a pipe at the deadline
                 raise subprocess.TimeoutExpired(what, timeout)
-        if time.monotonic() >= deadline:                   # seen only after it (this caller was descheduled)
+        if clock() >= deadline:                   # seen only after it (this caller was descheduled)
             raise subprocess.TimeoutExpired(what, timeout)
         watch.hold = True
         proc.wait()                                        # reaped only now: the id named the group until here
@@ -316,10 +334,10 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         try:
             if proc is not None:
                 _end_group(proc, what)
-                until = time.monotonic() + GRACE           # one bound for every pump, not one each
+                until = clock() + GRACE           # one bound for every pump, not one each
                 for t in threads:
                     if t.ident is not None:                # started: a cancellation can land before a start
-                        t.join(max(0.0, until - time.monotonic()))
+                        _join(t, until)
         finally:
             watch.finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
         if isinstance(exc, subprocess.TimeoutExpired):
@@ -332,7 +350,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
 
 
 class _AtDeadline(threading.Thread):
-    """Calls `fn` at an absolute monotonic deadline unless cancelled first. The wait is measured when the
+    """Calls `fn` at an absolute deadline on clock() unless cancelled first. The wait is measured when the
     thread runs, so a watchdog the host starts late spends no extra time (a relative timer would)."""
 
     def __init__(self, deadline, fn):
@@ -344,11 +362,11 @@ class _AtDeadline(threading.Thread):
 
     def run(self):
         while not self._cancelled.is_set():
-            left = self.deadline - time.monotonic()
+            left = self.deadline - clock()
             if left <= 0:
                 self.fn()
                 return
-            self._cancelled.wait(left)
+            self._cancelled.wait(min(SLICE, left))
 
 
 class Stream:
@@ -367,7 +385,7 @@ class Stream:
         self.what, self.timeout, self.expired = what, timeout, False
         self.proc, self._timer, self._done = None, None, False
         self._watch = _Watch(self._cancel)
-        self._deadline = time.monotonic() + timeout        # before the start: a slow start is spent from it
+        self._deadline = clock() + timeout        # before the start: a slow start is spent from it
         try:
             self.proc = _launch(cmd, lambda argv, fds: subprocess.Popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, pass_fds=fds,
@@ -394,9 +412,12 @@ class Stream:
         """Wait until `fd` is ready or the deadline; at the deadline the group is ended and this is an error."""
         with selectors.DefaultSelector() as sel:
             sel.register(fd, events)
-            left = self._deadline - time.monotonic()
-            if left > 0 and sel.select(left):
-                return
+            while True:
+                left = self._deadline - clock()
+                if left <= 0:
+                    break
+                if sel.select(min(SLICE, left)):
+                    return
         self.expired = True
         self.abort()
         raise ValueError(f"{self.what} did not answer within {self.timeout:g} s")
@@ -496,7 +517,7 @@ class Stream:
         except ValueError:
             raise ValueError(f"{self.what} did not finish within {self.timeout:g} s") from None
         # Judged here, not only by the watchdog: one the host runs late is cancelled below before it can say.
-        late = self.expired or time.monotonic() >= self._deadline
+        late = self.expired or clock() >= self._deadline
         self._watch.hold = True
         try:
             self._teardown(kill=late)                      # reaped only now, as in run()

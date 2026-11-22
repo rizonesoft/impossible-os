@@ -1437,3 +1437,26 @@ def test_a_fifo_in_place_of_merge_head_never_holds_the_commit(tmp_path):
     r = _sub(["bash", str(root / ".githooks/commit-msg"), str(msg)], cwd=root, capture_output=True,
              text=True, timeout=30, env=_merge_head_at(tmp_path, fifo))
     assert r.returncode == 1 and time.monotonic() - began < 5, (r, time.monotonic() - began)
+
+
+def test_an_interpreter_that_fails_before_the_merge_probe_refuses_never_reads_as_no_merge(tmp_path):
+    """MERGE_HEAD exists and the probe's interpreter exits 1 before the probe runs (a start-up failure):
+    commit-msg refuses, since only the probe's own absence status (10) means no merge."""
+    import os
+    import shutil
+    root = _hooked_repo(tmp_path)
+    merge_head = tmp_path / "MERGE_HEAD"
+    merge_head.write_text("0" * 40 + "\n")
+    env = _merge_head_at(tmp_path, merge_head)
+    real = shutil.which("python3")
+    (tmp_path / "bin" / "python3").write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = -c ] && [[ "$2" == *S_ISREG* ]]; then exit 1; fi\n'
+        f'exec {real} "$@"\n')
+    (tmp_path / "bin" / "python3").chmod(0o755)
+    msg = tmp_path / "msg"
+    msg.write_text("m\n")
+    r = _sub(["bash", str(root / ".githooks/commit-msg"), str(msg)], cwd=root, capture_output=True,
+             text=True, timeout=30, env=env)
+    assert r.returncode == 1 and "whether this is a merge could not be read" in r.stdout + r.stderr, r
+    assert os.path.exists(merge_head)

@@ -2678,3 +2678,47 @@ def test_a_checked_pass_reads_its_transcript_once_for_its_verdicts_and_its_level
     receipts = [json.loads(ln) for p in (tmp_path / "reviews").glob("**/*.jsonl")
                 for ln in p.read_text().splitlines() if '"pass_checked"' in ln]
     assert any(r.get("highest") == "P3" for r in receipts), receipts
+
+
+def test_a_manifest_that_shrinks_while_it_is_read_is_refused_never_read_short(tmp_path, monkeypatch):
+    """The manifest is cut back to an older, clean record between the size read and the first read: the
+    reader refuses it (read again), never yields the older record as the newest."""
+    import io
+    import os
+    m = tmp_path / "manifest.jsonl"
+    old = '{"kind": "round", "highest": "none"}\n'
+    m.write_text(old + '{"kind": "round", "highest": "P2"}\n')
+    real = os.fdopen
+
+    class Shrinking(io.FileIO):
+        def read(self, n=-1):
+            os.truncate(m, len(old))                       # cut at a record boundary after the size was taken
+            return super().read(n)
+
+    def fdopen(fd, mode="r", *a, **k):
+        return Shrinking(fd, "rb") if mode == "rb" else real(fd, mode, *a, **k)
+    monkeypatch.setattr(os, "fdopen", fdopen)              # review_pin imports os inside the reader
+    with pytest.raises(rp.Refused):
+        list(rp._newest_first(m))
+
+
+def test_a_stalled_candidate_read_refuses_the_pass_instead_of_holding_the_dispatcher(tmp_path, monkeypatch):
+    """The candidate reader stalls (storage that stops answering mid-hash): the dispatcher refuses within
+    CANDIDATE_READ_SECS and dispatches nothing."""
+    import os
+    import shutil
+    import time
+    real = shutil.which("python3")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python3").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in *review_candidate.py\\ prepare*) exec sleep 60;; esac\n'
+        f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CANDIDATE_READ_SECS", "1")
+    began = time.monotonic()
+    done, prompt = _dispatch(tmp_path, "completion", "x")
+    assert done.returncode == 2 and "could not be read" in done.stderr, (done.returncode, done.stderr[-400:])
+    assert prompt == "" and time.monotonic() - began < 20, time.monotonic() - began

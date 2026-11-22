@@ -162,7 +162,11 @@ EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # and environment pathspec settings are dropped. It leaves this dispatcher's own reviews directory out.
 CAND_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_candidate.py"
 # HEAD, the index digest and the working-tree fingerprint, read together (scripts/review_candidate.py launch).
-candidate_id() { python3 "$CAND_TOOL" launch --exclude "$REVIEWS_DIR"; }
+# Every candidate read runs under `timeout` (CANDIDATE_READ_SECS, 300 by default): a read held by failing
+# storage refuses the pass, or reads the candidate as unreadable, instead of holding the dispatcher. A read
+# the kernel keeps uninterruptible ends only when its I/O does; that is a recorded limit of the lane machinery.
+CANDIDATE_READ_SECS="${CANDIDATE_READ_SECS:-300}"
+candidate_id() { timeout -k 5 "$CANDIDATE_READ_SECS" python3 "$CAND_TOOL" launch --exclude "$REVIEWS_DIR"; }
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
@@ -272,7 +276,7 @@ if [ "$PIN_KIND" = "1" ]; then
     # One read gives the working tree's fingerprint and the covered paths from the same status walk; the
     # launch check below compares a fresh fingerprint against it.
     UNTRACKED_FILE="$PATHS_FILE.untracked"
-    CAND_WORK="$(python3 "$CAND_TOOL" prepare --base "$BASE_OID" --head "$CAND_HEAD" --exclude "$REVIEWS_DIR" \
+    CAND_WORK="$(timeout -k 5 "$CANDIDATE_READ_SECS" python3 "$CAND_TOOL" prepare --base "$BASE_OID" --head "$CAND_HEAD" --exclude "$REVIEWS_DIR" \
             --out "$PATHS_FILE" --untracked-out "$UNTRACKED_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the working tree or the changed files of this pass could not be read (reason above)" >&2; exit 2; }
     PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file0 "$PATHS_FILE")" || {

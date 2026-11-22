@@ -79,7 +79,8 @@ def owner_state(log: str):
     """"free" when LOG's owner lock exists and nobody holds it (the owner has gone), "held" when its owner
     holds it, None when that could not be read (an open or lock error). Never waits."""
     try:
-        fd = os.open(log + ".owner", os.O_RDONLY | CLOEXEC)
+        # Opened only as a regular file (review_result.open_regular): a FIFO in its place never holds the probe.
+        fd = review_result.open_regular(log + ".owner", os.O_RDONLY)
     except OSError:
         return None
     try:
@@ -184,7 +185,10 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
             if proc is not None:
                 rc = proc.poll()
                 if rc is None:
+                    # While a recovery runs, the transcript's age says nothing: it is never judged stale.
                     soon = True
+                    say(f"unknown {n}")
+                    continue
                 else:
                     # This round read "no status" conclusively: the recovery's result is judged now, once its
                     # owner's state is known too (an owner check that fails keeps it for the next round).
@@ -195,7 +199,11 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                         say(f"unpublished {n}")
                         continue
                     if owner is None:
+                        # Its owner's state is unknown: the failed recovery is judged next round, and the
+                        # transcript's age is not judged on this one.
                         soon = True
+                        say(f"unknown {n}")
+                        continue
                     else:
                         del recovery[f]
             elif f not in tried and os.path.lexists(f) and owner_free(f):

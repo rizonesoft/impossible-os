@@ -45,14 +45,16 @@ dash_push_gate() {
 # storage that stalls either refuses the commit rather than holding it. The
 # read tells confirmed absence (ENOENT, ENOTDIR) from any other stat or read
 # error, opens without blocking (a FIFO in its place never holds it) and takes
-# only a regular file. Prints the other parents, one a line.
+# only a regular file. Prints the other parents, one a line. Confirmed absence
+# is its own exit status (10): an interpreter that fails before the probe runs
+# exits 1, and that is a fault, never "not a merge".
 # 0: a merge; 1: not a merge; 2: unknown (refuse).
 _DASH_MERGE_READ='
 import errno, os, stat, sys
 try:
     st = os.lstat(sys.argv[1])
 except OSError as exc:
-    sys.exit(1 if exc.errno in (errno.ENOENT, errno.ENOTDIR) else 2)
+    sys.exit(10 if exc.errno in (errno.ENOENT, errno.ENOTDIR) else 2)
 if not stat.S_ISREG(st.st_mode):
     sys.exit(2)
 try:
@@ -75,7 +77,8 @@ dash_merge_head() {
     path="$(timeout -k 1 "$secs" git rev-parse --git-path MERGE_HEAD)" || return 2
     timeout -k 1 "$secs" python3 -c "$_DASH_MERGE_READ" "$path" || rc=$?
     case "$rc" in
-        0|1) return "$rc" ;;
+        0) return 0 ;;
+        10) return 1 ;;
         *) return 2 ;;
     esac
 }

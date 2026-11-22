@@ -939,3 +939,42 @@ def test_an_owner_check_that_fails_once_keeps_the_failed_recovery_for_the_next_r
         pathlib.Path(str(log) + ".owner").write_text("")
         r = _wait(d, bindir, "--max", "6", "--no-stale", log)
         assert "UNPUBLISHED" in r.stdout, (r.returncode, r.stdout)
+
+
+def test_a_fifo_in_place_of_an_owner_lock_never_hides_the_rest_of_the_wave():
+    """The first log's owner lock is a FIFO with no writer; the second log has published its status. The
+    observer opens the lock only as a regular file, so it goes on to the second: only the first is pending."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        first, second = pathlib.Path(d) / "a.out", pathlib.Path(d) / "b.out"
+        first.write_text("partial\n")
+        os.mkfifo(str(first) + ".owner")
+        second.write_text("x\nTurn completed (rc=0)\n")
+        pathlib.Path(str(second) + ".done").write_text("0\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "6", "--no-stale", str(first), str(second)],
+                           capture_output=True, text=True, cwd=d, timeout=60)
+        pending = [ln for ln in r.stdout.splitlines() if "pending:" in ln]
+        assert pending and "a.out" in pending[0] and "b.out" not in r.stdout, (r.returncode, r.stdout)
+
+
+def test_an_aged_transcript_is_never_judged_stale_while_a_failed_recovery_awaits_its_owner_check():
+    """As the owner-check test above, with an old transcript and stale detection on: the wait ends
+    UNPUBLISHED, never STALE before the failed recovery is judged."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([1]) +
+                "def start_recovery(log):\n"
+                "    raise OSError(errno.EMFILE, 'Too many open files')\n"
+                "o.start_recovery = start_recovery\n"
+                "_real_owner, _calls = o.owner_state, [0]\n"
+                "def owner_state(log):\n"
+                "    _calls[0] += 1\n"
+                "    return None if _calls[0] == 2 else _real_owner(log)\n"
+                "o.owner_state = owner_state\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        os.utime(log, (0, 0))
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "6", "--stale-secs", "1", log)
+        assert "UNPUBLISHED" in r.stdout and "STALE" not in r.stdout, (r.returncode, r.stdout)

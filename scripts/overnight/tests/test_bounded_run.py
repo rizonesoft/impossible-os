@@ -507,3 +507,25 @@ def test_a_failure_is_reported_at_once_while_a_helper_holds_the_pipes():
     rc, _out, _err = bounded_run.run(["bash", "-c", "setsid sleep 2 & sleep 0.1; exit 7"], "the failure test",
                                      timeout=3, keep_stderr=True)
     assert rc == 7 and time.monotonic() - began < 0.8, (rc, time.monotonic() - began)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_a_suspend_past_the_deadline_ends_the_wait_on_resume(monkeypatch, streamed):
+    """The host sleeps past the whole budget while a command runs (the elapsed-time clock jumps, the
+    monotonic one does not): run() and a Stream (its read, then close) give up within a slice of the resume, never after the
+    budget again."""
+    real, skew = bounded_run.clock, [0.0]
+    monkeypatch.setattr(bounded_run, "clock", lambda: real() + skew[0])
+    threading.Timer(0.5, lambda: skew.__setitem__(0, 120.0)).start()
+    began = time.monotonic()
+    with pytest.raises(ValueError):
+        if streamed:
+            s = bounded_run.Stream(["sleep", "30"], "sleeper", timeout=60)
+            try:
+                s.read(1)                                  # ends at the expiry; close() reports it
+                s.close()
+            finally:
+                s.abort()
+        else:
+            bounded_run.run(["sleep", "30"], "sleeper", timeout=60)
+    assert time.monotonic() - began < 4, time.monotonic() - began
