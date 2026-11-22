@@ -133,6 +133,17 @@ def start_recovery(log: str):
                             start_new_session=True)
 
 
+class _NotStarted:
+    """A recovery that could not be started: judged like one that ended without publishing."""
+
+    @staticmethod
+    def poll() -> int:
+        return 1
+
+
+_NOT_STARTED = _NotStarted()
+
+
 def say(line: str) -> None:
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
@@ -179,17 +190,13 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                     recovery[f] = start_recovery(f)
                     soon = True
                 except OSError:
-                    # The recovery could not be started (no descriptors, no memory): read the status once more
-                    # and, with no status and the owner still gone, nothing will publish it.
-                    found, error = probe_status(f)
-                    if found is not None:
-                        status[f] = found
-                        say(f"done {found} {n}")
-                        continue
-                    if error is None and owner_free(f):
-                        unpublished.add(f)
-                        say(f"unpublished {n}")
-                        continue
+                    # The recovery could not be started (no descriptors, no memory): it is judged as a recovery
+                    # that failed, the next time "no status" is read conclusively (a read error first is
+                    # reported unreadable, as always), so nothing is judged on this round's reading.
+                    recovery[f] = _NOT_STARTED
+                    soon = True
+                    say(f"unknown {n}")
+                    continue
             meta = probe_meta(f)
             if meta is None:
                 say(f"unknown {n}")

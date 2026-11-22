@@ -1539,6 +1539,27 @@ class _BoundedProcesses:
 
     REAP = 0.2         # seconds a timed-out group is given to be reaped before it is left to init
 
+    def __init__(self):
+        # The groups released and not yet reaped: the watchdog ends them before it exits, so a command the
+        # hook started never outlives a refusal made from the watchdog thread.
+        self._lock = threading.Lock()
+        self._live: set = set()
+
+    def end_live(self) -> None:
+        """Ends every released group not yet reaped (the watchdog's last act). Never waits for the lock
+        long: a thread holding it is only adding or removing one entry."""
+        if not self._lock.acquire(timeout=0.1):
+            return
+        try:
+            for proc in self._live:
+                if proc.returncode is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        pass                           # fail-direction: the group has already gone
+        finally:
+            self._lock.release()
+
     def run(self, cmd, *, cwd=None, timeout=10, env=None, input=None, capture_output=False, stdout=None,
             stderr=None, text=False, check=False, errors=None):
         limit = _hook_left(timeout)
@@ -1558,6 +1579,9 @@ class _BoundedProcesses:
         except BaseException:
             self._end(proc)
             raise
+        finally:
+            with self._lock:
+                self._live.discard(proc)
         if _clock() > end:
             raise subprocess.TimeoutExpired(cmd, limit)        # an answer first seen after its time is none
         if check and proc.returncode:
@@ -1595,6 +1619,8 @@ class _BoundedProcesses:
             if _clock() >= end:
                 self._end(proc)
                 raise subprocess.TimeoutExpired(cmd, limit)
+            with self._lock:
+                self._live.add(proc)                           # recorded before it may run
             try:
                 os.write(gate_wr, b"go\n")                      # a few bytes to an empty pipe: never blocks
             except OSError:
@@ -5304,7 +5330,9 @@ _WATCHDOG_GRACE = 1.0      # past the budget, the time the checks are given to r
 def _deadline_exit(mode: str) -> None:
     """The hook's deadline has passed with no verdict: refuse the commit by exiting 2 at once, from this timer
     thread, whatever the main thread is blocked in. Nothing is written first: a write to a stalled log file or
-    a full pipe could hold the exit itself, and the hook that runs the gate reports its refusal."""
+    a full pipe could hold the exit itself, and the hook that runs the gate reports its refusal. The groups the
+    hook released and has not reaped are ended first: they run in sessions of their own and would outlive it."""
+    _proc.end_live()
     os._exit(2)
 
 

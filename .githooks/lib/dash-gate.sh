@@ -40,10 +40,31 @@ dash_push_gate() {
     fi
 }
 
+# Whether a merge is being committed, bounded: the path lookup and the file
+# test each run under `timeout` (DASH_GATE_PROBE_SECS, 10 by default), so
+# storage that stalls them refuses the commit rather than holding it. Prints
+# the MERGE_HEAD path. 0: a merge; 1: not a merge; 2: unknown (refuse).
+dash_merge_head() {
+    local secs="${DASH_GATE_PROBE_SECS:-10}" path rc=0
+    path="$(timeout -k 1 "$secs" git rev-parse --git-path MERGE_HEAD)" || return 2
+    timeout -k 1 "$secs" test -f "$path" || rc=$?
+    case "$rc" in
+        0) printf '%s\n' "$path"; return 0 ;;
+        1) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
 # pre-commit's call: a merge being committed is judged once, by commit-msg,
 # which runs for a merge whether git or the user commits it; every other
 # commit is judged here, before the message is written.
 dash_commit_gate() {
-    [ -f "$(git rev-parse --git-path MERGE_HEAD)" ] && return 0
+    local rc=0
+    dash_merge_head >/dev/null || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    if [ "$rc" -eq 2 ]; then
+        echo -e "\033[31mPre-commit: whether this is a merge could not be read in time (storage stalled); commit again\033[0m"
+        return 1
+    fi
     dash_gate --no-merge
 }

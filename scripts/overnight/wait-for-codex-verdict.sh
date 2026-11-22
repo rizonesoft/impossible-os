@@ -80,6 +80,30 @@ SETUP_ERR=""
 # Writes $1 to descriptor $2 by $3 (microseconds, as NOW_US). The write is made by a forked copy of this
 # shell, which starts no program (nothing to load from a stalled disk), and this shell waits for its word
 # only until the deadline: a write blocked on a full pipe is then ended, never waited for.
+# One slice of a wait for a line on descriptor $2 until $1 (microseconds, as NOW_US): at most a second,
+# so the elapsed-time deadline is checked again at least once a second whatever the host's suspends. The
+# line read so far is kept in SLICE_BUF across slices. 0: a whole line, in SLICE_LINE; 1: end of input;
+# 2: the deadline has passed; 3: no line yet, wait again.
+SLICE_BUF=""
+SLICE_LINE=""
+_read_slice() {
+    local left_us t part rc
+    _now
+    left_us=$(( $1 - NOW_US ))
+    [ "$left_us" -gt 0 ] || return 2
+    [ "$left_us" -gt 1000000 ] && left_us=1000000
+    printf -v t '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
+    IFS= read -r -t "$t" -u "$2" part
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        SLICE_LINE="$SLICE_BUF$part"; SLICE_BUF=""; return 0
+    fi
+    if [ "$rc" -gt 128 ]; then
+        SLICE_BUF+="$part"; return 3                     # timed out: what arrived is kept for the next slice
+    fi
+    SLICE_BUF=""; return 1                               # end of input (a partial last line is not a record)
+}
+
 _write_until() {
     local done_fd pid left_us
     _now
@@ -90,13 +114,16 @@ _write_until() {
     pid=$!
     WRITER_PID=$pid
     _registered
-    _now
-    left_us=$(( $3 - NOW_US ))
-    [ "$left_us" -gt 0 ] || left_us=1
-    local left
-    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
-    IFS= read -r -t "$left" -u "$done_fd" _ \
-        || kill -KILL "$pid" 2>/dev/null
+    # The word is waited for in slices of at most a second, each checked against the elapsed-time deadline:
+    # a relative wait does not count time the host spent suspended, so one long wait could outlast it.
+    local got=0 rc
+    while :; do
+        _read_slice "$3" "$done_fd" && { got=1; break; }
+        rc=$?
+        [ "$rc" -eq 1 ] && break                         # the writer ended without its word
+        [ "$rc" -eq 2 ] && break                         # the deadline has passed
+    done
+    [ "$got" -eq 1 ] || kill -KILL "$pid" 2>/dev/null
     WRITER_PID=""
     exec {done_fd}<&-
 }
@@ -179,7 +206,7 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # ONE OBSERVER DOES EVERY FILESYSTEM READ. The shell that owns this call's deadline touches no file: one
 # observer process (verdict_observer.py) probes each log (its status through review_result's one status
 # parser, its owner lock, its size and last growth), recovers a result whose owner is gone, and streams what
-# it saw down a pipe, one line per observation. This shell reads that pipe with `read -t` bounded by what is
+# it saw down a pipe, one line per observation. This shell reads that pipe in one-second slices (_read_slice) bounded by what is
 # left of --max, so a probe stalled on the filesystem delays an observation, never the answer, and the
 # report at the deadline is made from the latest observations without reading anything again. Every probe
 # runs inside that one process, so ending it ends them all.
@@ -217,11 +244,13 @@ _registered
 finished=0
 tail_read=0
 while :; do
-    _now
-    left_us=$(( OBS_END_US - NOW_US ))
-    [ "$left_us" -le 0 ] && break
-    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
-    IFS= read -r -t "$left" -u "$OBS" line || break       # out of time, or the observer has gone
+    # Read in slices (see _read_slice): out of time, or the observer has gone, ends the loop.
+    _read_slice "$OBS_END_US" "$OBS"
+    case $? in
+        0) line="$SLICE_LINE" ;;
+        3) continue ;;
+        *) break ;;
+    esac
     # A log is named by its position among the arguments, never by its path (which may hold a newline).
     key=""
     case "$line" in

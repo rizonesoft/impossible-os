@@ -296,7 +296,14 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             raise subprocess.TimeoutExpired(what, timeout)
         if rc != 0:
             _kill_group(proc)                              # a failure leaves no helper of its own behind
+            # Its status is known: a helper outside the group still holding a pipe gets one shared GRACE
+            # (never past the deadline) and is then left to the daemon pumps; the failure is reported as is.
+            until = min(deadline, time.monotonic() + GRACE)
+            for t in threads:
+                t.join(max(0.0, until - time.monotonic()))
         for t in threads:
+            if rc != 0:
+                break
             t.join(max(0.0, deadline - time.monotonic()))
             if t.is_alive():                               # a helper still holds a pipe at the deadline
                 raise subprocess.TimeoutExpired(what, timeout)

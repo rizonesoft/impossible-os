@@ -613,3 +613,28 @@ def test_a_space_padded_line_is_matched_in_linear_time():
     assert time.monotonic() - began < 0.2, time.monotonic() - began
     for line in ("- [high] P2: x", "  * medium thing", "1. [critical] y", "H1 z", "-  - low w"):
         assert env_mod.FINDING_RE.match(line), line
+
+
+def test_a_transcript_cut_short_while_it_is_read_is_unreadable_never_complete(monkeypatch):
+    """Status 0, and the transcript is truncated between its fstat and its first read: the pass is unreadable
+    (read again), never a complete read with no findings, and never dispatched again."""
+    env_mod = _envelope_module()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("- [medium] P2: a finding\nHIGHEST: P2\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "P2"), "done_file": True})})
+        (rev / "round.out.done").write_text("0\n")
+        real_fstat = env_mod.os.fstat
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if env_mod.os.readlink(f"/proc/self/fd/{fd}").endswith("/round.out"):
+                env_mod.os.truncate(rev / "round.out", 0)
+            return st
+        monkeypatch.setattr(env_mod.os, "fstat", fstat)
+        out = []
+        monkeypatch.setattr(env_mod, "print", lambda *a, **k: out.append(a[0]), raising=False)
+        rc = env_mod.main([str(root), "--kinds", "round", "--todo", "todo/x.md", "--section", "7"])
+        env = json.loads(out[-1])
+        assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], env

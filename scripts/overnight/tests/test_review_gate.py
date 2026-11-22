@@ -1008,3 +1008,49 @@ def test_a_suspend_past_the_hook_deadline_refuses_and_starts_nothing():
         finally:
             scg._clock = real_clock
         assert started == [False] and not marker.exists(), started
+
+
+
+def test_the_watchdog_ends_a_command_it_started_before_it_refuses():
+    """A suspend lands after the gate released a command (the command has announced itself): the watchdog
+    refuses (exit 2) and the command's group is ended with it, never left running in its own session."""
+    import os
+    import sys
+    import textwrap
+    with tempfile.TemporaryDirectory() as d:
+        pidfile = pathlib.Path(d) / "child.pid"
+        script = textwrap.dedent(f"""
+            import pathlib, sys, threading, time
+            sys.path.insert(0, {str(REPO / '.claude/hooks')!r})
+            import section_commit_gate as scg
+            real, skew = scg._clock, [0.0]
+            scg._clock = lambda: real() + skew[0]
+            pidfile = pathlib.Path({str(pidfile)!r})
+
+            def jump():
+                while not (pidfile.exists() and pidfile.read_text().strip()):
+                    time.sleep(0.02)
+                skew[0] = 600.0
+            threading.Thread(target=jump, daemon=True).start()
+
+            def checks():
+                try:
+                    scg._proc.run(["bash", "-c", "echo $$ > {pidfile}; exec sleep 30"], timeout=60)
+                except Exception:
+                    pass
+                return 0
+            sys.exit(scg._with_deadline(30.0, "test", checks))
+        """)
+        began = time.monotonic()
+        r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 2 and time.monotonic() - began < 5, (r, time.monotonic() - began)
+        pid = int(pidfile.read_text().split()[0])
+        end = time.monotonic() + 3
+        while time.monotonic() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"command {pid} outlived the watchdog's refusal")

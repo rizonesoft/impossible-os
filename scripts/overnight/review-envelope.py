@@ -87,7 +87,6 @@ def _scan(path: Path):
         if not stat.S_ISREG(st.st_mode):
             return None
         left = st.st_size
-        # A file cut short while it is read ends the scan where its data ends.
         while left > 0 and (chunk := os.read(fd, min(1 << 20, left))):
             left -= len(chunk)
             digest.update(chunk)
@@ -102,6 +101,10 @@ def _scan(path: Path):
                 finish((line + part)[:LINE_KEEP])
                 line = b""
             line = (line + parts[-1])[:LINE_KEEP]
+        if left > 0:
+            # Shorter than it was when opened: cut while it was read. What was read is not the transcript
+            # the status belongs to, so the pass is unreadable (read again), never a complete read.
+            return OSError(errno.ENODATA, "it shrank while it was read")
         if line:
             finish(line)
     except OSError as exc:

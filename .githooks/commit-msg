@@ -9,9 +9,15 @@
 # pre-commit, so the hook does nothing without MERGE_HEAD. `--no-verify` skips it, as it skips
 # pre-commit; the gate names its own opt-out.
 set -euo pipefail
-MERGE_HEAD_FILE="$(git rev-parse --git-path MERGE_HEAD)"
-[ -f "$MERGE_HEAD_FILE" ] || exit 0
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=.githooks/lib/dash-gate.sh
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
+# The merge check is bounded (dash_merge_head): storage that stalls it refuses the commit.
+rc=0
+MERGE_HEAD_FILE="$(dash_merge_head)" || rc=$?
+[ "$rc" -eq 1 ] && exit 0
+if [ "$rc" -ne 0 ]; then
+    echo -e "\033[31mcommit-msg: whether this is a merge could not be read in time (storage stalled); commit again\033[0m"
+    exit 1
+fi
 dash_gate --merge-head "$MERGE_HEAD_FILE"

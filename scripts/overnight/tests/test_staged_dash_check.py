@@ -1364,3 +1364,24 @@ def test_a_change_that_names_no_blob_starts_no_reader(monkeypatch):
         raise AssertionError("a blob reader was started")
     monkeypatch.setattr(m.bounded_run, "Stream", started)
     assert m.judge([("", [[("a" * 40, m.NULL_OID, "gone.md")]])]) == []
+
+
+def test_a_stalled_merge_check_refuses_the_commit_instead_of_holding_it(tmp_path):
+    """git's path lookup stalls (a git on PATH that never answers): commit-msg and pre-commit's gate refuse
+    within the probe bound, never wait on it."""
+    import os
+    import time
+    root = _hooked_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text("#!/bin/bash\nsleep 30\n")
+    (bindir / "git").chmod(0o755)
+    env = {**_clean_env(), "PATH": f"{bindir}:{os.environ['PATH']}", "DASH_GATE_PROBE_SECS": "1"}
+    msg = tmp_path / "msg"
+    msg.write_text("m\n")
+    for cmd in (["bash", str(root / ".githooks/commit-msg"), str(msg)],
+                ["bash", "-c", f'REPO_ROOT={str(root)!r}; . "$REPO_ROOT/.githooks/lib/dash-gate.sh"; dash_commit_gate']):
+        began = time.monotonic()
+        r = _sub(cmd, cwd=root, capture_output=True, text=True, timeout=20, env=env)
+        assert r.returncode == 1 and "could not be read in time" in r.stdout + r.stderr, r
+        assert time.monotonic() - began < 5, time.monotonic() - began

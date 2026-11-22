@@ -497,3 +497,13 @@ def test_a_helper_holding_both_pipes_never_delays_the_timeout():
         bounded_run.run(["bash", "-c", "setsid sleep 2 & sleep 10"], "the helper test", timeout=0.25,
                         keep_stderr=True)
     assert time.monotonic() - began < 1.0, time.monotonic() - began
+
+
+def test_a_failure_is_reported_at_once_while_a_helper_holds_the_pipes():
+    """The command exits 7 after 0.1 s while a helper in a session of its own holds stdout and stderr: run()
+    returns 7 at once, not when the helper lets go and not as a timeout."""
+    import bounded_run
+    began = time.monotonic()
+    rc, _out, _err = bounded_run.run(["bash", "-c", "setsid sleep 2 & sleep 0.1; exit 7"], "the failure test",
+                                     timeout=3, keep_stderr=True)
+    assert rc == 7 and time.monotonic() - began < 0.8, (rc, time.monotonic() - began)

@@ -868,3 +868,52 @@ def test_a_cancelled_wait_ends_a_report_writer_blocked_on_a_full_pipe():
         finally:
             os.close(wr)
             os.close(rd)
+
+
+def test_a_recovery_that_cannot_start_then_an_unreadable_status_is_never_stale():
+    """The recovery cannot start (EMFILE), the next status read fails (EIO), then "no status" is read
+    conclusively: the log is never judged stale on the transcript, and ends UNPUBLISHED."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([1, 3, 1]) +
+                "def start_recovery(log):\n"
+                "    raise OSError(errno.EMFILE, 'Too many open files')\n"
+                "o.start_recovery = start_recovery\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        import os
+        os.utime(log, (0, 0))                              # an old transcript: stale by its age alone
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "6", "--stale-secs", "1", log)
+        assert "UNPUBLISHED" in r.stdout and "STALE" not in r.stdout, (r.returncode, r.stdout)
+
+
+def test_every_pipe_wait_is_a_slice_checked_against_the_elapsed_time_deadline():
+    """A relative read -t does not count a host's suspend, so the waiter waits only through _read_slice (at
+    most a second, then the elapsed-time deadline again): the one read -t in the script is that helper's."""
+    import re
+    text = TOOL.read_text()
+    waits = [m.start() for m in re.finditer(r"\bread\b[^\n]*-t\b", text)]
+    body = text[text.index("_read_slice() {"):text.index("\n}\n", text.index("_read_slice() {"))]
+    assert len(waits) == 1 and "read -r -t" in body, waits
+
+
+def test_a_record_split_across_wait_slices_is_read_whole():
+    """The observer writes a status record in two parts 1.5 s apart: the slices keep the first part, and the
+    record is read whole (DONE with its status)."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import sys, time\n"
+                        "_real = o.say\n"
+                        "def say(line):\n"
+                        "    if line.startswith('done '):\n"
+                        "        sys.stdout.write(line[:3]); sys.stdout.flush(); time.sleep(1.5)\n"
+                        "        sys.stdout.write(line[3:] + '\\n'); sys.stdout.flush()\n"
+                        "    else:\n"
+                        "        _real(line)\n"
+                        "o.say = say\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("x\nTurn completed (rc=0)\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        r = _wait(d, bindir, "--max", "10", log)
+        assert r.returncode == 0 and "-- Turn completed (rc=0)" in r.stdout, (r.returncode, r.stdout)
