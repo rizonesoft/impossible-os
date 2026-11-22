@@ -52,6 +52,18 @@ NO_DEADLINE = 10 ** 12  # centiseconds: no caller limit (a supervisor still owns
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _load_result():
+    """review_result.py, the one publisher, loaded from beside this file."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("review_result", os.path.join(HERE, "review_result.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_result = _load_result()
+
+
 TEARDOWN_CS = 200      # the teardown's own budget once the command has ended or been ended
 
 
@@ -208,32 +220,61 @@ class Broker(Result):
 
 
 def _result_step(args, until, cancel=None):
-    """review_result.py `args` in a child, waited on until `until`, or a second after a cancellation (a
-    stalled filesystem leaves it to finish on its own, outside this supervisor's answer): its exit status,
-    or None when it was not back by then."""
-    # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
-    pid = os.posix_spawn(sys.executable, [sys.executable, os.path.join(HERE, "review_result.py"), *args],
-                         _child_env())
-    while True:
-        done, raw = os.waitpid(pid, os.WNOHANG)
-        if done:
-            return os.waitstatus_to_exitcode(raw)
-        if now_cs() >= until:
-            return None
-        if cancel is not None and cancel.sig:
-            until = min(until, now_cs() + 100)
-            cancel = None
-        time.sleep(0.01)
+    """review_result.py `args` in a child (which claims and publishes in one process), waited on until
+    `until`, or a second after a cancellation: its exit status, or None when it was not back by then. A
+    stalled filesystem leaves it to finish on its own, outside this supervisor's answer, so it has streams of
+    its own: its diagnostics come through a pipe read here, and a caller capturing this supervisor's output
+    sees EOF when the supervisor answers, not when the helper does."""
+    rd, wr = os.pipe()
+    try:
+        # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
+        pid = os.posix_spawn(sys.executable, [sys.executable, os.path.join(HERE, "review_result.py"), *args],
+                             _child_env(), file_actions=[(os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                                                         (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+                                                         (os.POSIX_SPAWN_DUP2, wr, 2)])
+    finally:
+        os.close(wr)
+    os.set_blocking(rd, False)
+    said = b""
+
+    def relay():
+        nonlocal said
+        while True:
+            try:
+                chunk = os.read(rd, 1 << 16)
+            except BlockingIOError:
+                return
+            if not chunk:
+                return
+            said += chunk
+    try:
+        while True:
+            relay()
+            done, raw = os.waitpid(pid, os.WNOHANG)
+            if done:
+                relay()
+                return os.waitstatus_to_exitcode(raw)
+            if now_cs() >= until:
+                return None
+            if cancel is not None and cancel.sig:
+                until = min(until, now_cs() + 100)
+                cancel = None
+            time.sleep(0.01)
+    finally:
+        os.close(rd)
+        if said:
+            sys.stderr.write(said.decode("utf-8", "replace"))
+            sys.stderr.flush()
 
 
-def _publish(result, status, final):
+def _publish(result, status, final, cancel=None):
     """The result published by `final`. True when it was published or another owner holds it; for an attempt
     never registered, only its prompt is removed."""
     if result.owns:
         args = ["publish", result.log, str(status), "--prompt", result.prompt] + ([] if result.claimed else ["--claim"])
     else:
         args = ["discard", result.prompt]
-    rc = _result_step(args, final)
+    rc = _result_step(args, final, cancel)
     if rc is None:
         print(f"[review-broker] the result ({status}) was still being published at the deadline; "
               f"it is written to {result.log}.done when the filesystem allows", file=sys.stderr)
@@ -294,32 +335,33 @@ def main(argv) -> int:
     broker = Broker(*opts["broker"]) if opts["broker"] else None
     job = None
     if opts["job"]:
-        # The claim, before anything runs: a result another owner holds is left alone. Whoever wins the claim
-        # owns the result, so the claim step itself publishes 124 when it wins after the steps' deadline (a
-        # job first scheduled late, a claim the filesystem held) or once this supervisor stopped waiting for
-        # it; nothing is ever claimed and left unpublished.
-        log, prompt = opts["job"]
-        claimed = _result_step(["claim", log, "--expire-at", str(end), "--prompt", prompt,
-                                "--parent", str(os.getpid())], final, cancel)
-        if claimed == 4:
-            return 0                                   # another owner holds the result and publishes it
-        if claimed == 5:
-            return 124                                 # claimed after the deadline: published as 124
-        if claimed is None:
-            print("review-runtime-limit: the job's result was still being claimed at the deadline; the claim "
-                  "publishes 124 when it completes", file=sys.stderr)
-            return cancel.sig or 124
-        if claimed != 0:
-            print("review-runtime-limit: the job's result could not be claimed; nothing was run", file=sys.stderr)
-            return 1
-        job = Result(log, prompt, owns=True, claimed=True)
+        return _job(opts["job"], cmd, end, cancel)
     rc = _attempt(cmd, end, broker, cancel)
-    if job is not None:
-        return rc if _publish(job, rc, final) else 1
     if broker is None:
         return rc
     cancelled, limited, rc = rc
-    return finish_broker(broker, rc, cancelled, limited, final)
+    return finish_broker(broker, rc, cancelled, limited, final, cancel)
+
+
+def _job(job, cmd, end, cancel):
+    """The detached job: claim, run, publish, all in this one process. The claim and the publication are
+    calls made here, never steps handed to a helper whose wait could time out, so whoever creates the log
+    is the process that publishes its status: nothing can claim a result and leave it unpublished. A
+    filesystem that stalls the claim or the publication delays this detached process, which no caller
+    waits on; the review itself is still held to the steps' deadline. A claim won after that deadline, or
+    after a cancellation, runs nothing and publishes 124 or the cancellation's status."""
+    log, prompt = job
+    owned = _result.claim(log)
+    if owned == 4:
+        return 0                                       # another owner holds the result and publishes it
+    if owned != 0:
+        print("review-runtime-limit: the job's result could not be claimed; nothing was run", file=sys.stderr)
+        return 1
+    if cancel.sig or now_cs() >= end:
+        status = cancel.sig or 124
+    else:
+        status = _attempt(cmd, end, None, cancel)
+    return status if _result.publish(log, str(status), prompt) == 0 else 1
 
 
 def _attempt(cmd, end, broker, cancel):
@@ -346,8 +388,13 @@ def _attempt(cmd, end, broker, cancel):
             return (False, True, 124) if broker is not None else 124
         # LIFECYCLE-WAIVER: groups one REVIEW attempt so it can be ended whole; it does not detach, relaunch or
         # watch the session (this supervisor waits for it and reaps everything it leaves).
-        leader = os.posix_spawnp("bash", ["bash", "-c", cmd], os.environ, setsid=True, setsigmask=(),
-                                 setsigdef=(signal.SIGPIPE, signal.SIGXFSZ))
+        try:
+            leader = os.posix_spawnp("bash", ["bash", "-c", cmd], os.environ, setsid=True, setsigmask=(),
+                                     setsigdef=(signal.SIGPIPE, signal.SIGXFSZ))
+        except OSError as exc:
+            # Not started (a process limit, a missing shell): a failed attempt, published by its owner.
+            print(f"review-runtime-limit: the command could not be started ({exc.strerror})", file=sys.stderr)
+            return (False, False, 1) if broker is not None else 1
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, watched)
     if broker is not None:
@@ -415,24 +462,39 @@ def _attempt(cmd, end, broker, cancel):
     return rc if broker is None else (bool(cancel.sig), limited and not cancel.sig, rc)
 
 
-def finish_broker(broker, rc, cancelled, limited, final):
+def _deliver(broker):
+    """The broker's answer (the job to poll) written to the caller and checked: True when it was."""
+    data = memoryview((broker.response + "\n").encode())
+    try:
+        sys.stdout.flush()                 # anything already written first, in order
+        while data:                        # unbuffered, so a failed write is never retried at exit
+            data = data[os.write(1, data):]
+        return True
+    except OSError as exc:
+        print(f"[review-broker] the answer could not be delivered ({exc.strerror}); the review was launched "
+              f"and publishes its result to {broker.log}.done", file=sys.stderr)
+        return False
+
+
+def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
     """The broker's answer once its attempt is torn down: the result it owns published, a job it handed
-    over started, and the caller told which step the limit or a cancellation ended."""
+    over started, the answer delivered here (checked), and the caller told which step the limit or a
+    cancellation ended."""
     broker.read()
     step = broker.step or "the dispatch"
-    if step == "answered" and not cancelled:
-        rc = 0                            # the caller has its answer: the result is the launched job's
-    if rc == 0 and broker.job:
-        try:
-            _launch(broker.job)
-            return 0
-        except OSError as exc:
-            print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
-            _publish(broker, 1, final)
-            return 1
+    if step == "answered" and not cancelled and broker.response:
+        # The submission succeeded: the result is the launched job's, whatever happens to the answer.
+        if broker.job:
+            try:
+                _launch(broker.job)
+            except OSError as exc:
+                print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
+                _publish(broker, 1, final, cancel)
+                return 1
+        return 0 if _deliver(broker) else 1
     if rc == 0:
-        return 0
-    published = _publish(broker, rc, final)
+        rc = 1                            # ended without the answer it owes: a failed dispatch
+    published = _publish(broker, rc, final, cancel)
     if cancelled:
         print(f"[review-broker] cancelled during {step} (exit {rc}); its result is recorded as {rc}",
               file=sys.stderr)
@@ -442,8 +504,7 @@ def finish_broker(broker, rc, cancelled, limited, final):
     if step == "the submission" and broker.response:
         # Whether the unit started is unknown; its result is recorded by its one owner, so the caller gets the
         # job to poll, as for any launch.
-        print(broker.response, flush=True)
-        return 0 if published else 1
+        return 0 if _deliver(broker) and published else 1
     print(f"[review-broker] BLOCK -- {step} took the whole CODEX_REVIEW_MAX_SECS; nothing was launched",
           file=sys.stderr)
     return 2

@@ -766,23 +766,6 @@ def test_a_job_first_scheduled_after_its_deadline_publishes_the_limit(tmp_path):
     assert r.returncode == 0 and other.read_text() == "owned\n" and not pathlib.Path(str(other) + ".done").exists()
 
 
-def test_a_claim_won_after_its_supervisor_stopped_waiting_publishes_itself(tmp_path):
-    """The claim step a supervisor gave up on (a stalled filesystem, a cancellation) still owns the result
-    when it wins: it publishes 124 itself rather than leave a claimed log with no status."""
-    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
-    prompt.write_text("p")
-    far = _uptime_cs() + 100_000
-    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_result.py"), "claim", str(log),
-                        "--expire-at", str(far), "--prompt", str(prompt), "--parent", "1"],
-                       capture_output=True, text=True, timeout=30)
-    assert r.returncode == 5 and pathlib.Path(str(log) + ".done").read_text().strip() == "124", r
-    log2 = tmp_path / "s.out"
-    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_result.py"), "claim", str(log2),
-                        "--expire-at", str(far), "--prompt", str(prompt), "--parent", str(os.getpid())],
-                       capture_output=True, text=True, timeout=30)
-    assert r.returncode == 0 and log2.exists() and not pathlib.Path(str(log2) + ".done").exists(), r
-
-
 def test_a_cancellation_during_the_claim_is_published(tmp_path):
     """TERM to the job's supervisor while its claim runs: the cancellation is watched from the start, so the
     claimed result is published with the cancellation's status and nothing is run."""
@@ -794,13 +777,12 @@ def test_a_cancellation_during_the_claim_is_published(tmp_path):
     script.write_text("import importlib.util, os, signal, sys\n"
                       f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
                       "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
-                      "real = rl._result_step\n"
-                      "def step(args, until, cancel=None):\n"
-                      "    got = real(args, until, cancel)\n"
-                      "    if args[0] == 'claim':\n"
-                      "        os.kill(os.getpid(), signal.SIGTERM)   # lands after the claim, before the review\n"
+                      "real = rl._result.claim\n"
+                      "def claim(log):\n"
+                      "    got = real(log)\n"
+                      "    os.kill(os.getpid(), signal.SIGTERM)   # lands after the claim, before the review\n"
                       "    return got\n"
-                      "rl._result_step = step\n"
+                      "rl._result.claim = claim\n"
                       f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', 'touch {mark}']))\n")
     r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 128 + signal.SIGTERM and not mark.exists(), r
@@ -813,13 +795,91 @@ def test_a_handoff_larger_than_the_pipe_does_not_stall_the_broker(tmp_path):
     log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
     prompt.write_text("p")
     mark = tmp_path / "launched"
-    writer = ("import os; fd = int(os.environ['REVIEW_BROKER_HANDOFF_FD']); "
-              f"os.write(fd, b'job touch {mark} #' + b'x' * 100000 + b'\\nstep answered\\n')")
+    record = b'response {"logFile": 1}\njob touch ' + str(mark).encode() + b' #' + b'x' * 100000 + b'\nstep answered\n'
+    writer = f"import os; os.write(int(os.environ['REVIEW_BROKER_HANDOFF_FD']), {record!r})"
     r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--broker", str(log),
                         str(prompt), "--no-deadline", f"python3 -c {shlex.quote(writer)}"],
                        capture_output=True, text=True, timeout=30)
-    assert r.returncode == 0, r
+    assert r.returncode == 0 and r.stdout == '{"logFile": 1}\n', r
     t = time.monotonic()
     while not mark.exists() and time.monotonic() - t < 10:
         time.sleep(0.1)
     assert mark.exists()
+
+
+def _rl_script(tmp_path, body):
+    """A child that loads the limiter, applies `body` (patches), and runs the rest of `body`."""
+    script = tmp_path / "rl_child.py"
+    script.write_text("import importlib.util, os, signal, sys, time\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n" + body)
+    return script
+
+
+def test_an_answer_the_caller_cannot_receive_is_a_failed_dispatch(tmp_path):
+    """The supervisor delivers the broker's answer itself and checks the write: an answer that could not be
+    written is exit 1, never a success with no job handle."""
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    record = b'response {"logFile": 1}\nstep answered\n'
+    writer = f"import os; os.write(int(os.environ['REVIEW_BROKER_HANDOFF_FD']), {record!r})"
+    with open("/dev/full", "w") as full:
+        r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--broker", str(log),
+                            str(prompt), "--no-deadline", f"python3 -c {shlex.quote(writer)}"],
+                           stdout=full, stderr=subprocess.PIPE, text=True, timeout=30)
+    assert r.returncode == 1 and "could not be delivered" in r.stderr, r
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--broker", str(log),
+                        str(prompt), "--no-deadline", f"python3 -c {shlex.quote(writer)}"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and r.stdout == '{"logFile": 1}\n', r
+
+
+def test_a_review_that_cannot_be_started_after_the_claim_is_published_as_failed(tmp_path):
+    """A process limit at the review's start, after the job owns the result: the owner publishes 1."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    script = _rl_script(tmp_path, "import errno\n"
+                        "def refuse(*a, **k):\n"
+                        "    raise OSError(errno.EAGAIN, 'Resource temporarily unavailable')\n"
+                        "os.posix_spawnp = refuse\n"
+                        f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', 'true']))\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "could not be started" in r.stderr, r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "1"
+
+
+def test_the_job_claims_and_publishes_in_one_process(tmp_path):
+    """The class behind three late-claim findings: a claim handed to a helper whose wait can time out. The
+    job's supervisor makes both calls itself, so no helper is started for its result at all."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    script = _rl_script(tmp_path, "def no_helper(*a, **k):\n"
+                        "    raise AssertionError('the job handed its result to a helper')\n"
+                        "rl._result_step = no_helper\n"
+                        f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', 'exit 3']))\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 3, r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "3" and not prompt.exists()
+
+
+def test_a_cancelled_publication_wait_ends_and_the_helper_holds_no_caller_stream(tmp_path):
+    """A publication helper stalled in I/O: a cancellation ends the supervisor's wait within a second, and
+    the helper has streams of its own, so a caller capturing the output sees EOF when the supervisor ends."""
+    import sys
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "review_result.py").write_text("import sys, time\nprint('helper says', file=sys.stderr, flush=True)\n"
+                                           "time.sleep(4)\n")
+    script = _rl_script(tmp_path, f"rl.HERE = {str(here)!r}\n"
+                        "class C:\n    sig = 143\n"
+                        "began = time.monotonic()\n"
+                        "rc = rl._result_step(['publish', 'x', '1'], rl.now_cs() + 100_000, C())\n"
+                        "print(rc, round(time.monotonic() - began, 2), flush=True)\n")
+    began = time.monotonic()
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    took = time.monotonic() - began
+    rc, waited = r.stdout.split()
+    assert rc == "None" and float(waited) < 1.6 and took < 3, (r, took)
+    assert "helper says" in r.stderr, r

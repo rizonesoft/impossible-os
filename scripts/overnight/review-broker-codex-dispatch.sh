@@ -262,5 +262,4 @@ elif [[ "$SUBMIT_RC" != 0 ]]; then
   # a service should have systemd-run), started by the supervisor once this dispatch is torn down.
   tell "job $JOB"
 fi
-tell "step answered"
-printf '%s\n' "$RESPONSE"
+tell "step answered"                         # the supervisor delivers the answer and checks the write

@@ -590,3 +590,31 @@ def test_refusal_a_pass_shown_the_section_from_past_its_start(tmp_path):
     none = {"round": {"base": None}}
     ok, why = _judge(root, receipt=none, **_good(h))
     assert not ok and "no recorded base" in why, why
+
+
+def test_refusal_a_round_at_the_pass_cap_is_still_held_to_the_section_start(tmp_path):
+    """At the pass cap the round's level stops holding the stamp; where it was shown the section from does not."""
+    root, h = _history(tmp_path)
+    real = gate._pass_cap
+    gate._pass_cap = lambda _root: 1
+    try:
+        late = {"round": {"base": h["build"]}}
+        ok, why = _judge(root, receipt=late, highest={"round": "P2"}, **_good(h))
+        assert not ok and "round was shown this section from" in why, why
+        assert _judge(root, highest={"round": "P2"}, **_good(h)) == (True, "")
+    finally:
+        gate._pass_cap = real
+
+
+def test_the_graft_lookup_is_made_once_and_briefly(tmp_path):
+    root, _h = _history(tmp_path)
+    calls = []
+    real = gate._git_lines
+    gate._git_lines = lambda r, *a, **k: (calls.append(k.get("timeout")), real(r, *a, **k))[1]
+    gate._graft_issues.clear()
+    try:
+        assert gate._graft_issue(root) == "" and gate._graft_issue(root) == ""
+    finally:
+        gate._git_lines = real
+        gate._graft_issues.clear()
+    assert calls == [gate._GRAFT_LOOKUP_TIMEOUT] and gate._GRAFT_LOOKUP_TIMEOUT <= 2, calls

@@ -2239,10 +2239,24 @@ def _stored_env() -> dict:
     return {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
 
 
+_GRAFT_LOOKUP_TIMEOUT = 2      # one short read per invocation, inside the hook's ten seconds
+_graft_issues: dict[str, str] = {}
+
+
 def _graft_issue(root: Path) -> str:
     """A refusal when a graft file rewrites the history the gate would walk (which GIT_NO_REPLACE_OBJECTS
-    does not undo), as the candidate reader refuses one; "" otherwise."""
-    lines = _git_lines(root, "rev-parse", "--path-format=absolute", "--git-path", "info/grafts")
+    does not undo), as the candidate reader refuses one; "" otherwise. Looked up once per repository and
+    invocation, with a short wait, so a stamp over several sections or a slow git directory cannot spend the
+    hook's deadline on it."""
+    key = str(root)
+    if key not in _graft_issues:
+        _graft_issues[key] = _graft_lookup(root)
+    return _graft_issues[key]
+
+
+def _graft_lookup(root: Path) -> str:
+    lines = _git_lines(root, "rev-parse", "--path-format=absolute", "--git-path", "info/grafts",
+                       timeout=_GRAFT_LOOKUP_TIMEOUT)
     path = os.environ.get("GIT_GRAFT_FILE") or (lines[0] if lines else "")
     if not path:
         return "where a graft file would be could not be read, so the history the passes read is not known"
@@ -2684,9 +2698,12 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     for kind, receipt in (("round", receipts.get("round", (None, 0))[0]),
                           ("performance", receipts.get("performance", (None, 0))[0]),
                           (final_kind, final)):
+        # At the pass cap the round's LEVEL no longer holds the stamp, but where it was shown the section from
+        # still does: the base checks below apply to every pass.
         if kind == "round" and capped and receipt is not None:
-            continue
-        ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
+            ok, why = True, ""
+        else:
+            ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
         if not ok:
             parts.append(why)
         elif owed_base and receipt.get("base") != owed_base:
