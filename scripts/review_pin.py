@@ -698,6 +698,8 @@ def main(argv=None):
     parser.add_argument("--transcript")
     parser.add_argument("--paths-file")
     parser.add_argument("--paths-file0")
+    parser.add_argument("--highest-file", help="with --verdicts: also write the highest level declared (or "
+                        "nothing) to this file, from the same one read of the transcript")
     parser.add_argument("--pin", default=str(PIN))
     parser.add_argument("--codex-config", default=str(CODEX_CONFIG))
     args = parser.parse_args(argv)
@@ -750,6 +752,11 @@ def main(argv=None):
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
             missing = missing_lens_verdicts(pin, args.verdicts, text, paths)
+            if args.highest_file:
+                try:
+                    pathlib.Path(args.highest_file).write_text(highest(text) or "")
+                except OSError as exc:
+                    raise Refused(f"the highest level cannot be recorded: {exc}") from exc
             print("\n".join(missing))
             return 1 if missing else 0
         if args.check:

@@ -14,10 +14,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/.githooks/lib/dash-gate.sh"
 # The merge check is bounded (dash_merge_head): storage that stalls it refuses the commit.
 rc=0
-MERGE_HEAD_FILE="$(dash_merge_head)" || rc=$?
+MERGE_PARENTS="$(dash_merge_head)" || rc=$?
 [ "$rc" -eq 1 ] && exit 0
 if [ "$rc" -ne 0 ]; then
-    echo -e "\033[31mcommit-msg: whether this is a merge could not be read in time (storage stalled); commit again\033[0m"
+    echo -e "\033[31mcommit-msg: whether this is a merge could not be read (storage stalled or failed); commit again\033[0m"
     exit 1
 fi
-dash_gate --merge-head "$MERGE_HEAD_FILE"
+# The parents the bounded probe read are handed over: the checker reads no file of its own for them.
+mapfile -t PARENTS <<< "$MERGE_PARENTS"
+dash_gate --merge-parents "${PARENTS[@]}"

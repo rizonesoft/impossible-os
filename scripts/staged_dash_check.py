@@ -427,12 +427,13 @@ def merge_heads(path: str = "") -> list:
         return []                                          # fail-direction: no merge is in progress
 
 
-def staged(merging: bool = True, merge_head: str = "") -> list:
+def staged(merging: bool = True, merge_head: str = "", parents: list | None = None) -> list:
     """The staged change against HEAD and, while a merge is being committed,
     against each other parent too, so a resolution is judged as the push
     check judges the merge commit: on what it adds over every parent.
     `merging=False` is pre-commit's call, which has already seen no MERGE_HEAD;
-    `merge_head` is commit-msg's, the MERGE_HEAD file it found."""
+    `merge_head` names a MERGE_HEAD file to read; `parents` are the other parents already read (commit-msg's
+    bounded probe reads them, so nothing here reads the file)."""
     # --no-relative: from a subdirectory with diff.relative set, git would list only the paths below it.
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff", "--no-relative")
     per_parent = [changes_from_raw(_git(*diff))]
@@ -441,7 +442,7 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     common = {path for _old, _new, path in per_parent[0]}
     if not common:
         return [("", [[]])]                                # nothing changed against HEAD: MERGE_HEAD is not read
-    for parent in merge_heads(merge_head):
+    for parent in (parents if parents is not None else merge_heads(merge_head)):
         if not common:
             return [("", [[]])]                            # a refused path changes against every parent: none can now
         per_parent.append(changes_from_raw(_git(*diff, parent)))
@@ -663,8 +664,10 @@ def main(argv=None) -> int:
             found = judge(staged(merging=False))
         elif argv[:1] == ["--merge-head"] and len(argv) == 2:
             found = judge(staged(merge_head=argv[1]))
+        elif argv[:1] == ["--merge-parents"] and len(argv) >= 2:
+            found = judge(staged(parents=argv[1:]))
         else:
-            print("usage: staged_dash_check.py [--no-merge | --merge-head FILE | --range OLD NEW [URL] | --push URL]", file=sys.stderr)
+            print("usage: staged_dash_check.py [--no-merge | --merge-head FILE | --merge-parents OID... | --range OLD NEW [URL] | --push URL]", file=sys.stderr)
             return 2
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"[dash-check] the changes could not be read: {exc}", file=sys.stderr)

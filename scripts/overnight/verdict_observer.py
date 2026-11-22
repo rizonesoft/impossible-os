@@ -75,19 +75,27 @@ def probe_meta(log: str):
     return 1, st.st_size, int(st.st_mtime)
 
 
-def owner_free(log: str) -> bool:
-    """True when LOG's owner lock exists and nobody holds it (the owner has gone). Never waits."""
+def owner_state(log: str):
+    """"free" when LOG's owner lock exists and nobody holds it (the owner has gone), "held" when its owner
+    holds it, None when that could not be read (an open or lock error). Never waits."""
     try:
         fd = os.open(log + ".owner", os.O_RDONLY | CLOEXEC)
     except OSError:
-        return False
+        return None
     try:
         fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        return True
+        return "free"
+    except BlockingIOError:
+        return "held"
     except OSError:
-        return False
+        return None
     finally:
         os.close(fd)
+
+
+def owner_free(log: str) -> bool:
+    """True only when the owner is known to have gone."""
+    return owner_state(log) == "free"
 
 
 def first_seen(log: str, act_dir: str) -> int:
@@ -178,12 +186,18 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                 if rc is None:
                     soon = True
                 else:
-                    # This round read "no status" conclusively: the recovery's result is judged now.
-                    del recovery[f]
-                    if rc != 0 and owner_free(f):
+                    # This round read "no status" conclusively: the recovery's result is judged now, once its
+                    # owner's state is known too (an owner check that fails keeps it for the next round).
+                    owner = owner_state(f) if rc != 0 else "held"
+                    if owner == "free":
+                        del recovery[f]
                         unpublished.add(f)
                         say(f"unpublished {n}")
                         continue
+                    if owner is None:
+                        soon = True
+                    else:
+                        del recovery[f]
             elif f not in tried and os.path.lexists(f) and owner_free(f):
                 tried.add(f)
                 try:

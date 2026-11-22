@@ -1383,5 +1383,57 @@ def test_a_stalled_merge_check_refuses_the_commit_instead_of_holding_it(tmp_path
                 ["bash", "-c", f'REPO_ROOT={str(root)!r}; . "$REPO_ROOT/.githooks/lib/dash-gate.sh"; dash_commit_gate']):
         began = time.monotonic()
         r = _sub(cmd, cwd=root, capture_output=True, text=True, timeout=20, env=env)
-        assert r.returncode == 1 and "could not be read in time" in r.stdout + r.stderr, r
+        assert r.returncode == 1 and "whether this is a merge could not be read" in r.stdout + r.stderr, r
         assert time.monotonic() - began < 5, time.monotonic() - began
+
+
+def _merge_head_at(tmp_path, target):
+    """A git on PATH whose MERGE_HEAD path is `target`, every other call the real git's."""
+    import os
+    import shutil
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    real = shutil.which("git")
+    (bindir / "git").write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1" = rev-parse ] && [ "$2" = --git-path ] && [ "$3" = MERGE_HEAD ]; then echo {str(target)!r}; exit 0; fi\n'
+        f'exec {real} "$@"\n')
+    (bindir / "git").chmod(0o755)
+    return {**_clean_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+
+def test_a_merge_head_that_cannot_be_stat_ed_refuses_never_skips_the_check(tmp_path):
+    """MERGE_HEAD exists but its stat fails (EACCES: its directory cannot be searched): commit-msg refuses
+    the commit, never reads it as no merge and skips the dash check."""
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root searches any directory")
+    root = _hooked_repo(tmp_path)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "MERGE_HEAD").write_text("0" * 40 + "\n")
+    locked.chmod(0)
+    try:
+        msg = tmp_path / "msg"
+        msg.write_text("m\n")
+        r = _sub(["bash", str(root / ".githooks/commit-msg"), str(msg)], cwd=root, capture_output=True,
+                 text=True, timeout=30, env=_merge_head_at(tmp_path, locked / "MERGE_HEAD"))
+    finally:
+        locked.chmod(0o755)
+    assert r.returncode == 1 and "whether this is a merge could not be read" in r.stdout + r.stderr, r
+
+
+def test_a_fifo_in_place_of_merge_head_never_holds_the_commit(tmp_path):
+    """A FIFO has taken MERGE_HEAD's place: the probe takes only a regular file, so commit-msg refuses at
+    once instead of waiting on the FIFO."""
+    import os
+    import time
+    root = _hooked_repo(tmp_path)
+    fifo = tmp_path / "MERGE_HEAD"
+    os.mkfifo(fifo)
+    msg = tmp_path / "msg"
+    msg.write_text("m\n")
+    began = time.monotonic()
+    r = _sub(["bash", str(root / ".githooks/commit-msg"), str(msg)], cwd=root, capture_output=True,
+             text=True, timeout=30, env=_merge_head_at(tmp_path, fifo))
+    assert r.returncode == 1 and time.monotonic() - began < 5, (r, time.monotonic() - began)

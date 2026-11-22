@@ -40,17 +40,42 @@ dash_push_gate() {
     fi
 }
 
-# Whether a merge is being committed, bounded: the path lookup and the file
-# test each run under `timeout` (DASH_GATE_PROBE_SECS, 10 by default), so
-# storage that stalls them refuses the commit rather than holding it. Prints
-# the MERGE_HEAD path. 0: a merge; 1: not a merge; 2: unknown (refuse).
+# Whether a merge is being committed, bounded: the path lookup and the read of
+# MERGE_HEAD each run under `timeout` (DASH_GATE_PROBE_SECS, 10 by default), so
+# storage that stalls either refuses the commit rather than holding it. The
+# read tells confirmed absence (ENOENT, ENOTDIR) from any other stat or read
+# error, opens without blocking (a FIFO in its place never holds it) and takes
+# only a regular file. Prints the other parents, one a line.
+# 0: a merge; 1: not a merge; 2: unknown (refuse).
+_DASH_MERGE_READ='
+import errno, os, stat, sys
+try:
+    st = os.lstat(sys.argv[1])
+except OSError as exc:
+    sys.exit(1 if exc.errno in (errno.ENOENT, errno.ENOTDIR) else 2)
+if not stat.S_ISREG(st.st_mode):
+    sys.exit(2)
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            sys.exit(2)
+        data = os.read(fd, 1 << 16)
+    finally:
+        os.close(fd)
+    parents = data.decode("ascii").split()
+except (OSError, UnicodeDecodeError):
+    sys.exit(2)
+if not parents:
+    sys.exit(2)
+print("\n".join(parents))
+'
 dash_merge_head() {
     local secs="${DASH_GATE_PROBE_SECS:-10}" path rc=0
     path="$(timeout -k 1 "$secs" git rev-parse --git-path MERGE_HEAD)" || return 2
-    timeout -k 1 "$secs" test -f "$path" || rc=$?
+    timeout -k 1 "$secs" python3 -c "$_DASH_MERGE_READ" "$path" || rc=$?
     case "$rc" in
-        0) printf '%s\n' "$path"; return 0 ;;
-        1) return 1 ;;
+        0|1) return "$rc" ;;
         *) return 2 ;;
     esac
 }
@@ -63,7 +88,7 @@ dash_commit_gate() {
     dash_merge_head >/dev/null || rc=$?
     [ "$rc" -eq 0 ] && return 0
     if [ "$rc" -eq 2 ]; then
-        echo -e "\033[31mPre-commit: whether this is a merge could not be read in time (storage stalled); commit again\033[0m"
+        echo -e "\033[31mPre-commit: whether this is a merge could not be read (storage stalled or failed); commit again\033[0m"
         return 1
     fi
     dash_gate --no-merge

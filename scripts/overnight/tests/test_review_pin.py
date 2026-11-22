@@ -2619,3 +2619,62 @@ def test_a_large_transcript_is_judged_in_bounded_memory(tmp_path):
     r = subprocess.run([sys.executable, str(pathlib.Path(rp.__file__)), "--highest", "--transcript", str(f)],
                        capture_output=True, text=True, timeout=120, preexec_fn=limit)
     assert r.returncode == 0 and r.stdout.strip() == "P2", r
+
+
+def test_a_held_claim_lock_gives_up_on_elapsed_time_a_suspend_included(tmp_path):
+    """Another claimant holds the owner lock and creates no result, and the host sleeps past CLAIM_WAIT: the
+    claim gives up at once on resume (its wait is measured on CLOCK_BOOTTIME), never a minute later."""
+    import fcntl
+    import os
+    import time
+    rr = _result_module()
+    log = tmp_path / "x.out"
+    fd = os.open(f"{log}.owner", os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        real, skew = rr._elapsed, [0.0]
+        rr._elapsed = lambda: real() + skew[0]
+        calls = [0]
+        real_sleep = time.sleep
+
+        def sleep(s):
+            calls[0] += 1
+            if calls[0] == 2:
+                skew[0] = rr.CLAIM_WAIT + 1               # the host slept past the claim's bound
+            real_sleep(s)
+        rr.time.sleep = sleep
+        began = time.monotonic()
+        try:
+            assert rr.claim(str(log)) == 1
+        finally:
+            rr.time.sleep = real_sleep
+            rr._elapsed = real
+        assert time.monotonic() - began < 5, time.monotonic() - began
+    finally:
+        os.close(fd)
+
+
+def test_a_checked_pass_reads_its_transcript_once_for_its_verdicts_and_its_level(tmp_path, monkeypatch):
+    """The lens verdicts and the highest level come from one read of the final response (one review_pin run
+    with --transcript), and the receipt still records the level the review declared."""
+    import json
+    import os
+    import shutil
+    real = shutil.which("python3")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "calls"
+    (bindir / "python3").write_text(
+        "#!/bin/bash\n"
+        f'case "$*" in *review_pin.py*--transcript*) echo x >> {str(calls)!r};; esac\n'
+        f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    pin = _pin()
+    full = "findings...\n" + "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: P3\n"
+    done, _prompt = _dispatch(tmp_path, "completion", full)
+    assert done.returncode == 0, done.stderr
+    assert calls.read_text().count("x") == 1, calls.read_text()
+    receipts = [json.loads(ln) for p in (tmp_path / "reviews").glob("**/*.jsonl")
+                for ln in p.read_text().splitlines() if '"pass_checked"' in ln]
+    assert any(r.get("highest") == "P3" for r in receipts), receipts

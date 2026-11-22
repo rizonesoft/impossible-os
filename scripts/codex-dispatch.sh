@@ -179,7 +179,7 @@ if [ "$PIN_KIND" = "1" ]; then
     # Inside the reviews directory, which no candidate read covers: under a TMPDIR inside the checkout, the
     # file would be part of the tree it describes.
     PATHS_FILE="$(mktemp "$REVIEWS_DIR/.paths.XXXXXX")" || exit 2
-    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked"' EXIT
+    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest"' EXIT
     # The candidate is pinned once, before anything is derived from it: the changed paths (and so the
     # lenses), the ancestry check, the prompt and the receipt all name this commit and this working tree,
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
@@ -390,7 +390,9 @@ if [ -n "$LOG_FILE" ]; then
     PASS_CHECKED=false; PASS_HIGHEST=""
     if [ "$PIN_KIND" = "1" ]; then PASS_CHECKED=true; fi
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_RW" --paths-file0 "$PATHS_FILE")"
+        # One read of the transcript answers both the lens verdicts and the highest level declared.
+        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_RW" --paths-file0 "$PATHS_FILE" \
+            --highest-file "$PATHS_FILE.highest")"
         case "$?" in
             0) ;;
             1) rc=3
@@ -405,7 +407,8 @@ if [ -n "$LOG_FILE" ]; then
     # refuses a stamp whose pass ended at a blocking level, so a completion
     # that returned gaps cannot stand as the last word.
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        PASS_HIGHEST="$(python3 "$PIN_TOOL" --highest --transcript "$LOG_RW")" || {
+        PASS_HIGHEST="$(cat "$PATHS_FILE.highest" 2>/dev/null)"
+        [ -n "$PASS_HIGHEST" ] || {
             rc=3; PASS_HIGHEST=""
             echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_RW" >&2; }
     fi

@@ -61,6 +61,12 @@ def _owner(log: str) -> str:
 CLAIM_WAIT = 60.0      # seconds a claim waits on a busy owner lock for the competing claim to show its log
 
 
+def _elapsed() -> float:
+    """Elapsed time that a suspend advances (CLOCK_BOOTTIME): the claim's wait is bounded in it, so a host
+    that slept past CLAIM_WAIT is past it on resume."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
 def claim(log: str) -> int:
     """0 when this process now owns LOG's result (and holds its owner lock until it ends), 4 when another
     owner has it (its result created: LOG exists), 1 on an error or when that cannot be told.
@@ -73,7 +79,7 @@ def claim(log: str) -> int:
     except OSError as exc:
         print(f"review_result: {_owner(log)} could not be opened ({exc.strerror})", file=sys.stderr)
         return 1
-    give_up = time.monotonic() + CLAIM_WAIT
+    give_up = _elapsed() + CLAIM_WAIT
     try:
         while True:
             try:
@@ -83,7 +89,7 @@ def claim(log: str) -> int:
                 if os.path.lexists(log):
                     os.close(fd)
                     return 4
-                if time.monotonic() >= give_up:
+                if _elapsed() >= give_up:
                     os.close(fd)
                     print(f"review_result: {_owner(log)} stayed held with no result created", file=sys.stderr)
                     return 1

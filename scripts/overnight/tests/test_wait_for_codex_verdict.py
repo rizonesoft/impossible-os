@@ -917,3 +917,25 @@ def test_a_record_split_across_wait_slices_is_read_whole():
         pathlib.Path(str(log) + ".done").write_text("0\n")
         r = _wait(d, bindir, "--max", "10", log)
         assert r.returncode == 0 and "-- Turn completed (rc=0)" in r.stdout, (r.returncode, r.stdout)
+
+
+def test_an_owner_check_that_fails_once_keeps_the_failed_recovery_for_the_next_round():
+    """The recovery cannot start, and the first owner-lock check fails (EIO): the result is kept, and the
+    next round, whose check reads the lock free, ends the log UNPUBLISHED in the same call. (The first check is
+    the one before the recovery; the second judges it.)"""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([1]) +
+                "def start_recovery(log):\n"
+                "    raise OSError(errno.EMFILE, 'Too many open files')\n"
+                "o.start_recovery = start_recovery\n"
+                "_real_owner, _calls = o.owner_state, [0]\n"
+                "def owner_state(log):\n"
+                "    _calls[0] += 1\n"
+                "    return None if _calls[0] == 2 else _real_owner(log)\n"
+                "o.owner_state = owner_state\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "6", "--no-stale", log)
+        assert "UNPUBLISHED" in r.stdout, (r.returncode, r.stdout)
