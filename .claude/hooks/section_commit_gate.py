@@ -2308,7 +2308,7 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "merge-base", "--is-ancestor", sha, descendant_sha],
-            cwd=str(root), timeout=min(3, left), env=_stored_env(),
+            cwd=str(root), timeout=_hook_left(min(3, left)) or 0.001, env=_stored_env(),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
@@ -2394,8 +2394,11 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 def _readme_only_regenerated(root: Path, old_spec: str, new_spec: str) -> bool:
     """Whether README.md differs between two blobs only inside its generated regions."""
     def stripped(spec: str) -> str | None:
+        wait = _hook_left(10)
+        if wait <= 0:
+            return None                                # fail-direction: not shown regenerated-only refuses
         try:
-            text = subprocess.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=10,
+            text = subprocess.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=wait,
                                            stderr=subprocess.DEVNULL)
         except Exception:
             return None
@@ -2422,7 +2425,24 @@ def _unread_by_final_pass(root: Path, paths: list[str], old_spec: str, new_spec:
     return unread
 
 
+# The hook's own deadline: settings.json gives it ten seconds; two are kept back to print the verdict. Every
+# git read the gate makes is given at most what is left, so reads that each fit their own wait cannot together
+# outlast the hook. Set by main(), when the hook starts; a caller importing the gate sets none.
+_HOOK_BUDGET = 8.0
+_hook_deadline: list[float] = []
+
+
+def _hook_left(timeout: float) -> float:
+    """`timeout`, cut to what the hook has left; 0 when nothing is."""
+    if not _hook_deadline:
+        return timeout
+    return max(0.0, min(timeout, _hook_deadline[0] - time.monotonic()))
+
+
 def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
+    timeout = _hook_left(timeout)
+    if timeout <= 0:
+        return None                                    # fail-direction: a read not made refuses, never passes
     try:
         out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=timeout,
                                       stderr=subprocess.DEVNULL, env=_stored_env())
@@ -2453,7 +2473,7 @@ def _commit_diff(root: Path, mode: str, old: str, new: str, *paths: str) -> list
             return None             # not remembered: the budget is this invocation's, not the comparison's
         tail = ("--", *paths) if paths else ()
         _commit_diffs[key] = _git_lines(root, "diff", "--no-renames", mode, old, new, *tail,
-                                        timeout=min(_COMMIT_DIFF_TIMEOUT, left))
+                                        timeout=_hook_left(min(_COMMIT_DIFF_TIMEOUT, left)) or 0.001)
     return _commit_diffs[key]
 
 
@@ -2603,6 +2623,23 @@ def _pin_issue(root: Path) -> str:
     return ""
 
 
+def _capped_round_covers(root: Path, receipt: dict, current_head: str) -> tuple[bool, str]:
+    """The round at the pass cap: its level and the fixes made after it no longer hold the stamp, but it must
+    be a complete pass that read a commit, clean, in this candidate's history (never a round from another
+    branch that happens to share the plan's base)."""
+    if not _receipt_complete(receipt):
+        return (False, "round has no checked, complete receipt (still running, incomplete, or not "
+                       "dispatched with scripts/codex-dispatch.sh)")
+    if receipt.get("worktree_sha256") != _CLEAN_WORKTREE:
+        return (False, "round read uncommitted changes, not a commit; commit them and dispatch it again")
+    head = receipt.get("head")
+    if not current_head:
+        return (False, "round: HEAD could not be read")
+    if head != current_head and not _git_is_ancestor(root, head, current_head):
+        return (False, f"round was dispatched at {str(head)[:10]}, which is not in this history (cross-branch)")
+    return (True, "")
+
+
 def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
                  blocking: tuple[str, ...]) -> tuple[bool, str]:
     """Whether a pass read the candidate being stamped and ended below a blocking level.
@@ -2714,9 +2751,7 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
         # (a round that ended without a verdict is no round), and where it was shown the section from still
         # holds: the base checks below apply to every pass.
         if kind == "round" and capped and receipt is not None:
-            ok = _receipt_complete(receipt)
-            why = "" if ok else ("round has no checked, complete receipt (still running, incomplete, or not "
-                                 "dispatched with scripts/codex-dispatch.sh)")
+            ok, why = _capped_round_covers(root, receipt, current_head)
         else:
             ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
         if not ok:
@@ -5026,6 +5061,7 @@ def main(argv: list[str]) -> int:
         if root is None:
             return 0  # not a git context; fail open
         return _git_hook_mode_main(root)
+    _hook_deadline[:] = [time.monotonic() + _HOOK_BUDGET]     # the harness gives this hook ten seconds
     return _harness_main()
 
 

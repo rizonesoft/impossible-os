@@ -1167,3 +1167,83 @@ def test_a_recovery_that_cannot_publish_writes_the_log_once(tmp_path):
     finally:
         d.chmod(0o755)
     assert sizes[0] > len("partial\n") and sizes == [sizes[0]] * 3, sizes
+
+
+def test_a_prompt_larger_than_one_argument_once_quoted_is_dispatched(tmp_path):
+    """A prompt that fits one argument raw but not shell-quoted (spaces and quotes double under %q): the inner
+    run gets it through the environment, so the broker registers and answers instead of failing at exec."""
+    import json
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight/tests"))
+    from test_review_pin import _tmp_repo
+    repo, _git = _tmp_repo(tmp_path)
+    fake = tmp_path / "c.js"
+    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    prompt = "[review-kind: round] todo/x.md section 9\n" + "' " * 50000
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"), prompt],
+                       capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert r.returncode == 0 and "Argument list too long" not in r.stderr, r.stderr[-2000:]
+    log = pathlib.Path(json.loads(r.stdout.strip().splitlines()[-1])["logFile"])
+    t = time.monotonic()
+    while not pathlib.Path(f"{log}.done").exists() and time.monotonic() - t < 60:
+        time.sleep(0.1)
+    assert pathlib.Path(f"{log}.done").exists()
+
+
+def test_a_recovery_cut_short_after_its_note_completes_the_same_note(tmp_path):
+    """A recovery that ended after recording where its note goes and writing part of it: the next one writes
+    the same bytes at the same place, so the log holds one note and the status is 1."""
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location("rr", REPO / "scripts/overnight/review_result.py")
+    rr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rr)
+    log = tmp_path / "r.out"
+    base = b"partial\n"
+    note = (b"review_result: the result's owner ended without publishing it; recorded as 1\n"
+            b"Turn completed (rc=1)\n")
+    log.write_bytes(base + note[:20])
+    pathlib.Path(str(log) + ".owner").write_text(f"note-at {len(base)}\n")
+    r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_result.py"), "recover", str(log)],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and pathlib.Path(str(log) + ".done").read_text().strip() == "1", r
+    assert log.read_bytes() == base + note and getattr(rr, "NOTE", note) == note
+
+
+def test_a_prompt_replaced_by_a_fifo_fails_without_waiting(tmp_path):
+    """The registered prompt path replaced by a FIFO no one writes: the job never waits on it (it would hold
+    the owner lock for ever); the attempt fails as 1 and the reviewer is never started."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    os.mkfifo(prompt)
+    mark = tmp_path / "ran"
+    r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                        str(prompt), "--no-deadline", f"touch {mark}"], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 1 and not mark.exists(), r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "1"
+    assert "not a regular file" in log.read_text()
+
+
+def test_an_answer_to_a_pty_master_reaches_its_terminal(tmp_path):
+    """Reopening a PTY master through /proc opens the multiplexer and a new master; the answer must reach the
+    terminal the caller holds, so a master goes through the writer process."""
+    import pty
+    import select
+    import sys
+    master, slave = pty.openpty()
+    script = _rl_script(tmp_path, "fd = int(sys.argv[1])\n"
+                        "print(rl.emit(fd, b'answer\\n', rl.now_cs() + 500), flush=True)\n")
+    try:
+        r = subprocess.run([sys.executable, str(script), str(master)], capture_output=True, text=True, timeout=30,
+                           pass_fds=(master,))
+        assert r.stdout.strip() == "True", r
+        got = b""
+        while select.select([slave], [], [], 2)[0]:
+            got += os.read(slave, 1024)
+            if b"answer" in got:
+                break
+        assert b"answer" in got, got
+    finally:
+        os.close(slave)
+        os.close(master)

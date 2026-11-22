@@ -81,6 +81,15 @@ class Bounded:
         return False
 
 
+def _same_terminal(fd):
+    """Whether reopening terminal `fd` through /proc reaches the endpoint it is (a slave, a console), not a
+    new one (a PTY master's multiplexer)."""
+    try:
+        return os.path.basename(os.readlink(f"/proc/self/fd/{fd}")) != "ptmx"
+    except OSError:
+        return False
+
+
 def _writer(fd):
     """A write function for `fd` that never blocks, and leaves the inherited descriptor's flags alone
     (another process shares them): a pipe or a terminal is reopened as a private nonblocking descriptor
@@ -89,7 +98,9 @@ def _writer(fd):
     writer process instead."""
     import stat
     mode = os.fstat(fd).st_mode
-    if stat.S_ISFIFO(mode) or (stat.S_ISCHR(mode) and os.isatty(fd)):
+    # A terminal is reopened only when the reopen names the same endpoint: the multiplexer behind a PTY
+    # master (/dev/ptmx) would hand out a new master instead, so a master goes to the writer process.
+    if stat.S_ISFIFO(mode) or (stat.S_ISCHR(mode) and os.isatty(fd) and _same_terminal(fd)):
         own = os.open(f"/proc/self/fd/{fd}", os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
         return (lambda view: os.write(own, view)), own, (lambda: os.close(own))
     if stat.S_ISSOCK(mode):
@@ -475,11 +486,27 @@ def _read_prompt(prompt, digest):
     """The prompt's text, read whole and checked against the digest the broker registered, or None (with
     the reason) when it cannot be read whole or is not the registered prompt."""
     import hashlib
+    import stat
     try:
-        with open(prompt, "rb") as f:
-            data = f.read()
+        # Opened nonblocking and refused unless it is a regular file: a path replaced by a FIFO or a device
+        # would otherwise hold this owner (and its lock) in open or read for ever.
+        fd = os.open(prompt, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError as exc:
         return None, f"the prompt could not be read ({exc.strerror})"
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None, "the prompt is not a regular file"
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        data = b"".join(chunks)
+    except OSError as exc:
+        return None, f"the prompt could not be read ({exc.strerror})"
+    finally:
+        os.close(fd)
     if digest and hashlib.sha256(data).hexdigest() != digest:
         return None, "the prompt read is not the one registered (its digest differs)"
     try:

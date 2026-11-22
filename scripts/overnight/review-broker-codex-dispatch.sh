@@ -40,6 +40,13 @@ if [[ "${1:-}" == "--section-of" ]]; then
     exit 0
 fi
 
+# The inner run under the supervisor gets the prompt raw through the environment: quoted into its command it
+# could grow past the kernel's limit on one argument (printf %q doubles a prompt of spaces and quotes) and the
+# dispatch would fail before anything was registered.
+if [[ -n "${REVIEW_BROKER_INNER:-}" && $# -eq 0 && -n "${REVIEW_BROKER_PROMPT+set}" ]]; then
+    set -- "$REVIEW_BROKER_PROMPT"
+    unset REVIEW_BROKER_PROMPT
+fi
 if [[ $# -ne 1 ]]; then
     echo "[review-broker] BLOCK -- expected exactly one prompt argument. Usage: $0 '<[review-kind: X] todo-path body>'" >&2
     exit 2
@@ -93,14 +100,14 @@ MANIFEST_DIR=".claude/overnight/reviews"
 # before it starts, so it knows which result and prompt are this dispatch's.
 if [[ -z "${REVIEW_BROKER_INNER:-}" ]]; then
   printf -v BROKER_STAMP '%(%Y%m%d-%H%M%S)T' -1
-  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL
+  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL REVIEW_BROKER_PROMPT="$PROMPT"
   LOG="$PWD/$MANIFEST_DIR/${BROKER_STAMP}-$$-${KIND}.out"
   if [[ -n "$LIMIT_END" ]]; then
     exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-      --publish-by "$LIMIT_FINAL" --until-cs "$LIMIT_END" "bash $(q "${BASH_SOURCE[0]}") $(q "$PROMPT")"
+      --publish-by "$LIMIT_FINAL" --until-cs "$LIMIT_END" "bash $(q "${BASH_SOURCE[0]}")"
   fi
   exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-    --no-deadline "bash $(q "${BASH_SOURCE[0]}") $(q "$PROMPT")"
+    --no-deadline "bash $(q "${BASH_SOURCE[0]}")"
 fi
 # What the supervisor is told: the step under way (named when the limit ends it), that the result is now the
 # broker's to publish, the answer, and a job to start once the attempt is torn down.

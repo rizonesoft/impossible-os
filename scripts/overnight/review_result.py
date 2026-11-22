@@ -63,7 +63,28 @@ def claim(log: str) -> int:
     return 0
 
 
-RECOVERED = b"recovered\n"     # in LOG.owner once a recovery has written its note to the log
+NOTE = b"review_result: the result's owner ended without publishing it; recorded as 1\nTurn completed (rc=1)\n"
+
+
+def _note_once(owner_fd: int, log: str) -> None:
+    """NOTE written to `log` at the offset recorded in the owner file, recording the end of the log there
+    first when no offset is recorded yet; a note already complete at that offset is left alone."""
+    record = os.pread(owner_fd, 32, 0).split()
+    out = os.open(log, os.O_RDWR | CLOEXEC)
+    try:
+        if len(record) == 2 and record[0] == b"note-at" and record[1].isdigit():
+            at = int(record[1])
+        else:
+            at = os.fstat(out).st_size
+            os.ftruncate(owner_fd, 0)
+            os.pwrite(owner_fd, f"note-at {at}\n".encode(), 0)
+        if os.pread(out, len(NOTE), at) == NOTE:
+            return
+        view = memoryview(NOTE)
+        while view:
+            view = view[os.pwrite(out, view, at + len(NOTE) - len(view)):]
+    finally:
+        os.close(out)
 
 
 def recover(log: str) -> int:
@@ -86,23 +107,14 @@ def recover(log: str) -> int:
             return 0                               # its owner is alive and publishes it
         if os.path.lexists(log + ".done"):
             return 0                               # published meanwhile
-        # The log is written once per recovery, however many retries the status write needs: the mark is
-        # kept in the owner file this process holds locked, so a retry leaves the log (and the waiter's
-        # activity clock, which reads its mtime) as it was and the stall is reported.
-        if os.pread(fd, len(RECOVERED), 0) != RECOVERED:
-            try:
-                out = os.open(log, os.O_WRONLY | os.O_APPEND | CLOEXEC)
-                try:
-                    _write_all(out, b"review_result: the result's owner ended without publishing it; "
-                                    b"recorded as 1\nTurn completed (rc=1)\n")
-                finally:
-                    os.close(out)
-            except OSError:
-                pass                               # fail-direction: the status below is still written
-            try:
-                os.pwrite(fd, RECOVERED, 0)
-            except OSError:
-                pass                               # fail-direction: a retry writes the note again
+        # The note is written once, at one place in the log: that place is recorded in the owner file (held
+        # locked) BEFORE the note is written, so a retry, even after a recovery that ended between the two,
+        # writes the same bytes at the same offset. The log's mtime, which the waiter reads for activity,
+        # then moves only while the note is still incomplete, and the stall is reported.
+        try:
+            _note_once(fd, log)
+        except OSError:
+            pass                                   # fail-direction: the status below is still written
         return publish(log, "1", log_line=False)
     finally:
         os.close(fd)

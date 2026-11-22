@@ -648,3 +648,34 @@ def test_refusal_a_round_with_no_verdict_holds_the_stamp_at_the_pass_cap(tmp_pat
         assert _judge(root, highest={"round": "P1"}, **_good(h)) == (True, "")
     finally:
         gate._pass_cap = real
+
+
+def test_refusal_a_capped_round_from_another_branch_holds_the_stamp(tmp_path):
+    """At the cap a round from an abandoned branch can share the plan's base; it read other code, so it
+    does not stand in for this candidate's round."""
+    root, h = _history(tmp_path)
+    real = gate._pass_cap
+    gate._pass_cap = lambda _root: 1
+    try:
+        ok, why = _judge(root, receipt={"round": {"head": h["elsewhere"]}}, **_good(h))
+        assert not ok and "not in this history" in why, why
+        ok, why = _judge(root, receipt={"round": {"worktree_sha256": "0" * 64}}, **_good(h))
+        assert not ok and "uncommitted" in why, why
+    finally:
+        gate._pass_cap = real
+
+
+def test_the_stamp_path_reads_share_the_hooks_deadline(tmp_path):
+    """Reads that each fit their own wait cannot together outlast the hook: once its deadline is spent, every
+    further git read is refused (None), so the hook still answers in time, with a refusal."""
+    root, _h = _history(tmp_path)
+    saved = list(gate._hook_deadline)
+    gate._hook_deadline[:] = [time.monotonic() - 1]
+    try:
+        began = time.monotonic()
+        assert gate._git_lines(root, "rev-parse", "HEAD") is None
+        assert gate._readme_only_regenerated(root, "HEAD:README.md", "HEAD:README.md") is False
+        assert time.monotonic() - began < 0.5
+    finally:
+        gate._hook_deadline[:] = saved
+    assert gate._git_lines(root, "rev-parse", "HEAD")
