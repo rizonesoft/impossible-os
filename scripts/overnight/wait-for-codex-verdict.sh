@@ -96,57 +96,26 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # status, written atomically after the review process exited). Log text never
 # ends a wait: the companion prints "[codex] Turn completed." before its
 # verdict, and a live review can print a line that looks like any sentinel.
-# A result whose owner ended without publishing it (out of memory, a crash) is recovered here: the owner holds
-# <log>.owner locked for its life, so review_result.py recover publishes 1 only for an owner that is gone.
-# It runs in the background with streams of its own, at most once per log per call, so a stalled filesystem
-# delays the recovery, never this wait: the status it publishes is read on a later poll, inside this call's
-# deadline. Its own exit status is read too once it ends: a recovery that could not publish (a full
-# filesystem) while the owner is still gone leaves a review that has ended and will never publish, which is
+#
+# ONE OBSERVER DOES EVERY FILESYSTEM READ. The shell that owns this call's deadline touches no file: a
+# background observer probes each log (its status through review_result.py status, the one bounded status
+# reader the recovery and the envelope also use; its owner lock; its size and last growth), recovers a result
+# whose owner is gone, and streams what it saw down a pipe, one line per observation. This shell reads that
+# pipe with `read -t` bounded by what is left of --max, so a probe stalled on the filesystem delays an
+# observation, never the answer, and the report at the deadline is made from the latest observations
+# without reading anything again.
+#
+# Recovery: the owner holds <log>.owner locked for its life, so review_result.py recover publishes 1 only for
+# an owner that is gone, and replaces a damaged status (an empty or unreadable .done) the same way. It runs
+# at most once per log per call; its exit status is read once it ends, and a recovery that could not publish
+# (a full filesystem) while the owner is still gone leaves a review that has ended and will never publish,
 # reported UNPUBLISHED (exit 4, re-dispatch that log), never as a review still running.
 RESULT_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_result.py"
-declare -A REC_PID=() UNPUBLISHED=()
-_log_done() {
-    [ -f "$1.done" ] && return 0
-    [ -n "${UNPUBLISHED[$1]:-}" ] && return 1
-    local pid="${REC_PID[$1]:-}"
-    [ "$pid" = ended ] && return 1                  # its one recovery this call has ended
-    if [ -n "$pid" ]; then
-        # A recovery already started this call: read its status once it has ended (a zombie of this shell
-        # until waited on, so a still-running one is a live, non-zombie /proc entry).
-        local st=""
-        [ -r "/proc/$pid/stat" ] && read -r _ _ st _ < "/proc/$pid/stat" 2>/dev/null
-        if [ -z "$st" ] || [ "$st" = Z ]; then
-            local rc=0
-            wait "$pid" 2>/dev/null || rc=$?
-            if [ "$rc" -ne 0 ] && [ ! -f "$1.done" ] && flock -n "$1.owner" true 2>/dev/null; then
-                UNPUBLISHED[$1]=1
-            fi
-            REC_PID[$1]=ended
-        fi
-        return 1
-    fi
-    # Only a free owner lock (flock -n, which never waits) is worth a recovery; a live owner holds it.
-    if [ -e "$1.owner" ] && [ -e "$1" ] && flock -n "$1.owner" true 2>/dev/null; then
-        # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
-        python3 "$RESULT_TOOL" recover "$1" </dev/null >/dev/null 2>&1 &
-        REC_PID[$1]=$!
-    fi
-    return 1
-}
-
-_all_done() {
-    local f
-    for f in "${LOGS[@]}"; do
-        _log_done "$f" || return 1
-    done
-    return 0
-}
 
 # B2 activity. An existing log's silence is measured from its own mtime (when
 # it last grew), so a review silent since launch is STALE as soon as the
 # threshold passes, within this call. A path that does not exist yet has its
 # first sighting recorded in a sidecar, which survives re-invocations.
-mkdir -p "$ACT_DIR" 2>/dev/null || true
 _first_seen() {
     local side; side="$ACT_DIR/$(printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-16)"
     # A sighting that cannot be kept reads as the epoch, so a missing log is
@@ -156,68 +125,153 @@ _first_seen() {
     read -r t < "$side" 2>/dev/null || t=""
     case "$t" in ''|*[!0-9]*) echo 0 ;; *) echo "$t" ;; esac
 }
-_silent_for() {
-    local now; now=$(date +%s)
-    if [ -f "$1" ]; then
-        echo $(( now - $(stat -c %Y "$1" 2>/dev/null || echo "$now") ))
-    else
-        echo $(( now - $(_first_seen "$1") ))
-    fi
-}
-_any_silent() {
-    local f
-    for f in "${LOGS[@]}"; do
-        _log_done "$f" && continue
-        [ -n "${UNPUBLISHED[$f]:-}" ] && return 0      # ended without a status that can ever be published
-        [ "$NO_STALE" -eq 1 ] && [ -f "$f" ] && continue
-        [ "$(_silent_for "$f")" -ge "$STALE" ] && return 0
-    done
-    return 1
-}
-# One deadline for the whole call, read from the shell's clock and taken before any bookkeeping: time spent
-# outside sleep (the first sightings, a slow stat, a recovery started, the silence scan) counts against it.
-started=$SECONDS
-for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
-elapsed=0
-while :; do
-    # Checked once more when the deadline comes, so a status published during the last sleep is seen.
-    if _all_done; then
-        for f in "${LOGS[@]}"; do
-            echo "DONE: $f -- Turn completed (rc=$(cat "$f.done" 2>/dev/null))"
-        done
-        echo "--- verdict tail ($LAST) ---"
-        tail -n 25 "$LAST"
-        # The next step, stated where the verdicts are read (2026-09-28: 85 of 309
-        # refused calls in 21 run logs were an edit made right here, before the
-        # wave was received).
-        echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
-        exit 0
-    fi
-    elapsed=$((SECONDS - started))        # the polls above spent time too
-    [ "$elapsed" -ge "$MAX" ] && break
-    _any_silent && break
-    elapsed=$((SECONDS - started))        # and so did the silence scan: the sleep is what is left after it
-    [ "$elapsed" -ge "$MAX" ] && break
-    dur=$POLL
-    [ $((MAX - elapsed)) -lt "$POLL" ] && dur=$((MAX - elapsed))
-    [ "$dur" -gt 0 ] && sleep "$dur"
-    elapsed=$((SECONDS - started))
-done
 
+# The observer: runs in the background, writes `done RC LOG`, `unpublished LOG`, `seen EXISTS SIZE SILENT
+# LOG` (the path last, so it is read whole) and, once every log is done, the last log's tail (`tail TEXT`) and `alldone`; a `cycle` line ends
+# each round of probes.
+_observe() {
+    local -A rec_pid=() unpublished=() status=()
+    local f st rc pid pst now size silent exists
+    mkdir -p "$ACT_DIR" 2>/dev/null || true
+    for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
+    local soon left
+    while :; do
+        local all=1
+        soon=0
+        for f in "${LOGS[@]}"; do
+            if [ -n "${status[$f]:-}" ]; then continue; fi
+            if st="$(python3 "$RESULT_TOOL" status "$f" 2>/dev/null)"; then
+                status[$f]="$st"
+                echo "done $st $f"
+                continue
+            fi
+            all=0
+            if [ -n "${unpublished[$f]:-}" ]; then echo "unpublished $f"; continue; fi
+            pid="${rec_pid[$f]:-}"
+            if [ -n "$pid" ] && [ "$pid" != ended ]; then
+                # A recovery started this call: read its status once it has ended (a zombie of this shell
+                # until waited on, so a still-running one is a live, non-zombie /proc entry).
+                pst=""
+                [ -r "/proc/$pid/stat" ] && read -r _ _ pst _ < "/proc/$pid/stat" 2>/dev/null
+                if [ -z "$pst" ] || [ "$pst" = Z ]; then
+                    rc=0
+                    wait "$pid" 2>/dev/null || rc=$?
+                    rec_pid[$f]=ended
+                    if [ "$rc" -ne 0 ] && ! python3 "$RESULT_TOOL" status "$f" >/dev/null 2>&1 \
+                       && flock -n "$f.owner" true 2>/dev/null; then
+                        unpublished[$f]=1
+                        echo "unpublished $f"
+                        continue
+                    fi
+                fi
+            elif [ -z "$pid" ] && [ -e "$f.owner" ] && [ -e "$f" ] && flock -n "$f.owner" true 2>/dev/null; then
+                # Only a free owner lock (flock -n, which never waits) is worth a recovery; a live owner holds it.
+                # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
+                python3 "$RESULT_TOOL" recover "$f" </dev/null >/dev/null 2>&1 &
+                rec_pid[$f]=$!
+                soon=1
+            fi
+            now=$(date +%s)
+            if [ -f "$f" ]; then
+                exists=1
+                size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+                silent=$(( now - $(stat -c %Y "$f" 2>/dev/null || echo "$now") ))
+            else
+                exists=0
+                size=0
+                silent=$(( now - $(_first_seen "$f") ))
+            fi
+            echo "seen $exists ${size:-0} $silent $f"
+        done
+        if [ "$all" -eq 1 ]; then
+            tail -n 25 "$LAST" 2>/dev/null | while IFS= read -r line || [ -n "$line" ]; do
+                printf 'tail %s\n' "$line"
+            done
+            echo "alldone"
+            return 0
+        fi
+        echo "cycle"
+        # The next round comes after POLL, or sooner: a second after a recovery started (its status is then
+        # seen at once), and in any case a second before the deadline, so a status published during the
+        # last interval is still observed in time.
+        left=$(( DEADLINE - $(date +%s) - 1 ))
+        dur=$POLL
+        [ "$soon" -eq 1 ] && dur=1
+        [ "$left" -lt "$dur" ] && dur=$left
+        [ "$dur" -lt 1 ] && dur=1
+        sleep "$dur"
+    done
+}
+
+# One deadline for the whole call, taken before anything starts, in microseconds (EPOCHREALTIME): SECONDS
+# counts wall-clock second boundaries, so a call started late in a second lost up to a second of --max.
+_now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+START_US=$(_now_us)
+END_US=$(( START_US + MAX * 1000000 ))
+DEADLINE=$(( END_US / 1000000 ))
+declare -A GOT=() UNPUB=() EXISTS=() SIZE=() SILENT=()
+TAIL=()
+# The observer's streams are its own (exec, so no saved copy of the caller's stderr stays open in it): a
+# caller capturing this call's output sees EOF when this shell exits, not when the observer's sleep ends.
+exec {OBS}< <(exec </dev/null 2>/dev/null; _observe)
+finished=0
+while :; do
+    left_us=$(( END_US - $(_now_us) ))
+    [ "$left_us" -le 0 ] && break
+    left=$(printf '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 )))
+    IFS= read -r -t "$left" -u "$OBS" line || break       # out of time, or the observer has gone
+    case "$line" in
+        "done "*)        read -r _ rc key <<< "$line"; GOT[$key]="$rc" ;;
+        "unpublished "*) UNPUB["${line#unpublished }"]=1 ;;
+        "seen "*)        read -r _ ex sz sil key <<< "$line"
+                         EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
+        "tail "*)        TAIL+=("${line#tail }") ;;
+        alldone)         finished=1; break ;;
+        cycle)
+            # A round of probes is complete: a log silent past --stale-secs, or one that has ended without a
+            # status, ends the wait now rather than at --max.
+            stop=0
+            for f in "${LOGS[@]}"; do
+                [ -n "${GOT[$f]:-}" ] && continue
+                [ -n "${UNPUB[$f]:-}" ] && stop=1
+                [ -z "${SILENT[$f]:-}" ] && continue
+                [ "$NO_STALE" -eq 1 ] && [ "${EXISTS[$f]:-0}" = 1 ] && continue
+                [ "${SILENT[$f]}" -ge "$STALE" ] && stop=1
+            done
+            [ "$stop" -eq 1 ] && break ;;
+    esac
+done
+elapsed=$(( ($(_now_us) - START_US) / 1000000 ))
+
+if [ "$finished" -eq 1 ]; then
+    for f in "${LOGS[@]}"; do
+        echo "DONE: $f -- Turn completed (rc=${GOT[$f]:-})"
+    done
+    echo "--- verdict tail ($LAST) ---"
+    for line in "${TAIL[@]}"; do printf '%s\n' "$line"; done
+    # The next step, stated where the verdicts are read (2026-09-28: 85 of 309
+    # refused calls in 21 run logs were an edit made right here, before the
+    # wave was received).
+    echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
+    exit 0
+fi
+
+# The report is made from the latest observations; nothing is read again.
 any_stale=0
 any_missing=0
 any_unpublished=0
 pending=()
 for f in "${LOGS[@]}"; do
-    _log_done "$f" && continue
+    [ -n "${GOT[$f]:-}" ] && continue
     pending+=("$f")
-    size=0
-    [ -f "$f" ] && size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
-    stalled=$(_silent_for "$f")
-    if [ -n "${UNPUBLISHED[$f]:-}" ]; then
+    size="${SIZE[$f]:-0}"
+    stalled="${SILENT[$f]:-}"
+    if [ -n "${UNPUB[$f]:-}" ]; then
         any_unpublished=1
         printf '  UNPUBLISHED: %s (its owner ended and the recovery could not publish its status -- the review has ended; re-dispatch THIS log)\n' "$f"
-    elif [ "$stalled" -ge "$STALE" ] && [ ! -f "$f" ]; then
+    elif [ -z "$stalled" ]; then
+        printf '  running: %s (no observation yet: its filesystem has not answered within --max)\n' "$f"
+    elif [ "$stalled" -ge "$STALE" ] && [ "${EXISTS[$f]:-0}" = 0 ]; then
         any_missing=1
         printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
                "$f" "$stalled"

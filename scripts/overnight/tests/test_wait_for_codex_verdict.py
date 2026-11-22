@@ -340,3 +340,56 @@ def test_the_sleep_is_what_is_left_after_the_silence_scan():
                            text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         took = time.monotonic() - began
         assert r.returncode == 3 and took < 6, (r.returncode, took)
+
+
+def test_a_stalled_owner_probe_never_holds_the_waiter_past_its_deadline():
+    """Opening the owner lock stalls (here flock takes thirty seconds): the probe runs in the observer, so the
+    waiter still answers within --max from what it has observed."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "flock").write_text("#!/bin/sh\nexec sleep 30\n")
+        (bindir / "flock").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "3", "--no-stale", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        took = time.monotonic() - began
+        assert r.returncode == 3 and took < 3 + 1.5, (r, took)
+
+
+def test_a_damaged_status_beside_a_released_owner_is_recovered_not_read_as_done():
+    """An empty .done (a write the host cut short) is no status: the waiter never reports it as a finished
+    review, and the recovery replaces it with 1 once the owner is gone."""
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        pathlib.Path(str(log) + ".done").write_text("")
+        r = _run(log, maxw=8)
+        assert r.returncode == 0 and "rc=1)" in r.stdout, r
+        assert pathlib.Path(str(log) + ".done").read_text() == "1\n"
+
+
+def test_slow_metadata_reads_after_the_deadline_never_delay_the_answer():
+    """Three logs whose every stat takes two seconds: the answer comes at --max from the observations made so
+    far, never after a fresh read of each log."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "stat").write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/stat "$@"\n')
+        (bindir / "stat").chmod(0o755)
+        logs = []
+        for n in range(3):
+            log = pathlib.Path(d) / f"r{n}.out"
+            log.write_text("partial\n")
+            logs.append(str(log))
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "1", "--no-stale", *logs], capture_output=True, text=True,
+                           cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        took = time.monotonic() - began
+        assert r.returncode == 3 and took < 1 + 1.5, (r, took)

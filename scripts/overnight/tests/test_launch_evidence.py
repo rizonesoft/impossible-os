@@ -1509,3 +1509,47 @@ def test_a_replaced_prompt_of_another_size_is_refused_before_it_is_read(tmp_path
     p.write_bytes(text)
     got, why = rl._read_prompt(str(p), digest, len(text))
     assert got is not None, why
+
+
+def test_a_prompt_read_that_stalls_is_ended_by_the_deadline():
+    """The owner never reads the prompt itself: a read held by its storage (here one that never returns) is
+    ended at the deadline and recorded as 124, so the owner still publishes."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    real = rl._read_prompt
+    rl._read_prompt = lambda *a, **k: (time.sleep(30), (None, "unreachable"))[1]
+    try:
+        began = time.monotonic()
+        fd, failed = rl._prompt_under_deadline(str(tmp_path_prompt()), "0" * 64, 1, rl.now_cs() + 50,
+                                               types.SimpleNamespace(sig=0, at=0))
+        assert fd is None and failed[0] == 124, failed
+        assert time.monotonic() - began < 0.5 + 1
+    finally:
+        rl._read_prompt = real
+
+
+def tmp_path_prompt():
+    import tempfile
+    return pathlib.Path(tempfile.mkdtemp()) / "prompt"
+
+
+def test_a_checked_prompt_reaches_the_attempt_through_its_reader():
+    """The reader child checks the prompt and hands it over whole: the attempt's descriptor reads it back."""
+    import sys
+    import types
+    import hashlib
+    import tempfile
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    p = pathlib.Path(tempfile.mkdtemp()) / "prompt"
+    text = b"[review-kind: design] todo/x.md section 9\nReview it.\n\n"
+    p.write_bytes(text)
+    fd, failed = rl._prompt_under_deadline(str(p), hashlib.sha256(text).hexdigest(), len(text), rl.now_cs() + 500,
+                                           types.SimpleNamespace(sig=0, at=0))
+    assert failed is None, failed
+    try:
+        assert os.read(fd, 1 << 16) == text
+    finally:
+        os.close(fd)

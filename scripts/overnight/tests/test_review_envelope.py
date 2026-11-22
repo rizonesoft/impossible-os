@@ -358,3 +358,26 @@ def test_an_unreadable_pin_blocks_every_level_as_the_commit_gate_does():
     spec.loader.exec_module(mod)
     with tempfile.TemporaryDirectory() as d:
         assert mod.blocking_levels(pathlib.Path(d)) == ("P1", "P2", "P3")
+
+
+def test_a_pass_its_broker_ended_by_its_limit_is_dispatched_again():
+    """The pass published 0 just before its broker published 124: the envelope reads the broker's status, as
+    the commit gate does, so the pass is dispatched again rather than credited; until the broker publishes,
+    the pass is pending."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        broker = rev / "broker-round.out"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True, "parent": "detached:x",
+                                        "parent_log": str(broker)})})
+        (rev / "round.out.done").write_text("0\n")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["needs_redispatch"] == ["round"] and env["kinds"]["round"]["complete"] is False, env
+        broker.write_text("")
+        pathlib.Path(str(broker) + ".done").write_text("124\n")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["needs_redispatch"] == ["round"] and env["kinds"]["round"]["crashed"] is True, env
+        pathlib.Path(str(broker) + ".done").write_text("0\n")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["needs_redispatch"] == [] and rc == 0, env

@@ -115,6 +115,7 @@ def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, m
         (root / path).write_text(body)
     _git(root, "add", "-A", "--", ":!.claude")
     gate._commit_diff_deadline.clear()      # each judgement is its own invocation of the hook
+    gate._staged_paths(root, fresh=True)     # and reads the index it was given, as a detection does
     try:
         return gate._four_dispatch_evidence(root, [TODO])
     finally:
@@ -251,6 +252,7 @@ def test_refusal_a_pass_for_another_section_does_not_count(tmp_path):
     assert not ok and "missing: completion" in why, why
     ok, why = _judge(root, stamp_under="7,8", **_good(h))
     assert not ok and "one commit stamps one section" in why, why
+    gate._staged_paths(root, fresh=True)
     assert gate._stamped_sections(root, TODO) is None, "nothing staged: no section to read"
 
 

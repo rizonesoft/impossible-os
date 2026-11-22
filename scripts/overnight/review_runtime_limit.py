@@ -525,6 +525,74 @@ def _setup():
     return ""
 
 
+def _prompt_under_deadline(prompt, digest, length, end, cancel):
+    """The registered prompt in an anonymous in-memory file the attempt inherits, read by a child of this
+    owner under the steps' deadline: (fd, None), or (None, (status, reason)). The owner itself never reads
+    the prompt, so a read held by its storage cannot keep the owner from publishing: at the deadline (or a
+    second after a cancellation) the child is ended, left to finish its I/O on its own, and the attempt is
+    recorded as 124 (or the cancellation's status) with nothing run."""
+    fd = os.memfd_create("review-prompt", 0)
+    rd, wr = os.pipe()
+    # LIFECYCLE-WAIVER: reads one REVIEW attempt's prompt for its owner; it does not relaunch or watch the session.
+    pid = os.fork()
+    if pid == 0:                                       # the reader: it only reads, checks and hands over
+        try:
+            os.close(rd)
+            for sig in Cancel.WATCHED:
+                signal.signal(sig, signal.SIG_DFL)
+            text, why = _read_prompt(prompt, digest, length)
+            if text is None:
+                os.write(wr, why.encode("utf-8", "replace")[:PIPE_BUF - 1])
+                os._exit(1)
+            data = memoryview(text.encode("utf-8"))
+            while data:
+                data = data[os.write(fd, data):]
+            os.write(wr, b"\0")
+            os._exit(0)
+        except BaseException:                          # noqa: BLE001 -- the child never returns into the owner
+            os._exit(2)
+    os.close(wr)
+    try:
+        poller = select.poll()
+        poller.register(rd, select.POLLIN)
+        until = end
+        while True:
+            if cancel.sig:
+                until = min(until, cancel.at + 100)
+            left = until - now_cs()
+            if left <= 0:
+                break
+            try:
+                if poller.poll(min(left, 100) * 10):
+                    break
+            except InterruptedError:
+                continue
+        ready = poller.poll(0)
+        answer = os.read(rd, PIPE_BUF) if ready else None
+    finally:
+        os.close(rd)
+    if answer is None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, os.WNOHANG)
+        except OSError:
+            pass                                       # fail-direction: the reader has already gone
+        os.close(fd)
+        if cancel.sig:
+            return None, (cancel.sig, "the run was cancelled while the prompt was read")
+        return None, (124, "the prompt could not be read by the deadline")
+    try:
+        os.waitpid(pid, 0)                             # it has written its answer and is exiting
+    except OSError:
+        pass                                           # fail-direction: already reaped
+    if answer != b"\0":
+        os.close(fd)
+        return None, (1, answer.decode("utf-8", "replace") or "the prompt could not be read")
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.set_inheritable(fd, True)
+    return fd, None
+
+
 def _prompt_fd(text):
     """The checked prompt in an anonymous in-memory file the attempt inherits (REVIEW_PROMPT_FD): no exec
     string carries it until the reviewer's own argument, so the hand-off never shrinks the longest prompt
@@ -617,20 +685,17 @@ def _job(job, digest, cmd, end, cancel):
     elif cancel.sig or now_cs() >= end:
         status = cancel.sig or 124
     else:
-        text, why = _read_prompt(prompt, digest, length)
-        if text is None:
-            _note(log, why + "; nothing was run")
-            status = 1
+        try:
+            fd, failed = _prompt_under_deadline(prompt, digest, length, end, cancel)
+        except OSError as exc:
+            fd, failed = None, (1, f"the prompt could not be handed to the review ({exc.strerror})")
+        if fd is None:
+            _note(log, failed[1] + "; nothing was run")
+            status = failed[0]
         else:
-            try:
-                fd = _prompt_fd(text)
-            except OSError as exc:
-                _note(log, f"the prompt could not be handed to the review ({exc.strerror}); nothing was run")
-                status = 1
-            else:
-                os.environ["REVIEW_PROMPT_FD"] = str(fd)
-                status = _attempt(cmd, end, None, cancel)
-                os.close(fd)
+            os.environ["REVIEW_PROMPT_FD"] = str(fd)
+            status = _attempt(cmd, end, None, cancel)
+            os.close(fd)
     return status if _result.publish(log, str(status), prompt) == 0 else 1
 
 

@@ -30,6 +30,7 @@ success or a published one into a failure.
 import fcntl
 import os
 import re
+import stat
 import sys
 
 
@@ -97,11 +98,41 @@ def _pwrite_all(fd: int, data: bytes, at: int) -> None:
         view = view[n:]
 
 
+def status(log: str) -> str | None:
+    """THE status `log` publishes: the contents of <log>.done when it is a small regular file holding one
+    status (1 to 3 digits and a newline), read without blocking (a FIFO or device fails at once); None when
+    there is none, or the file is damaged (empty, cut short, not a status). The recovery and the verdict
+    waiter read it here, so a damaged file is never read as a finished review."""
+    try:
+        fd = os.open(log + ".done", os.O_RDONLY | os.O_NONBLOCK | CLOEXEC)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = os.read(fd, 33)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    found = re.fullmatch(rb"([0-9]{1,3})\n?", data)
+    return found.group(1).decode() if found else None
+
+
+def _print_status(log: str) -> int:
+    found = status(log)
+    if found is None:
+        return 1
+    print(found)
+    return 0
+
+
 def recover(log: str) -> int:
     """Publish 1 for a result whose owner ended without publishing it. 0 when there was nothing to do (a
     status is published, nothing is claimed yet, the owner is alive, or no owner was recorded) or the result
-    was recovered; 1 on an error."""
-    if os.path.lexists(log + ".done") or not os.path.lexists(log):
+    was recovered; 1 on an error. A damaged status (an empty or unreadable .done) is no status: once the owner
+    is gone it is replaced by 1, as a missing one is."""
+    if status(log) is not None or not os.path.lexists(log):
         return 0                                   # published, or not claimed yet: a claim may be in progress
     try:
         fd = os.open(_owner(log), os.O_RDWR | CLOEXEC)
@@ -115,7 +146,7 @@ def recover(log: str) -> int:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0                               # its owner is alive and publishes it
-        if os.path.lexists(log + ".done"):
+        if status(log) is not None:
             return 0                               # published meanwhile
         # The note is written once, at one place in the log: that place is recorded in the owner file (held
         # locked) BEFORE the note is written, so a retry, even after a recovery that ended between the two,
@@ -181,8 +212,8 @@ def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = Fals
 
 
 def main(argv) -> int:
-    if len(argv) == 2 and argv[0] in ("claim", "discard", "recover"):
-        return {"claim": claim, "discard": discard, "recover": recover}[argv[0]](argv[1])
+    if len(argv) == 2 and argv[0] in ("claim", "discard", "recover", "status"):
+        return {"claim": claim, "discard": discard, "recover": recover, "status": _print_status}[argv[0]](argv[1])
     if len(argv) >= 3 and argv[0] == "publish":
         log, status, rest = argv[1], argv[2], argv[3:]
         prompt, claim_first = "", False

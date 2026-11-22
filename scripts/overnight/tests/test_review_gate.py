@@ -749,7 +749,7 @@ def test_a_staged_listing_that_fails_is_unknown_not_a_plain_commit():
         real = scg._proc.check_output
 
         def failing(cmd, *a, **k):
-            if cmd[:3] == ["git", "diff", "--cached"] and "--name-only" in cmd:
+            if cmd[:3] == ["git", "diff", "--cached"] and ("--name-only" in cmd or "--name-status" in cmd):
                 raise scg.subprocess.TimeoutExpired(cmd, 3)
             return real(cmd, *a, **k)
         scg._proc.check_output = failing
@@ -777,6 +777,7 @@ def test_a_stamp_removed_in_one_section_never_balances_a_new_stamp_in_another():
         assert scg._stamped_todos(root, ["todo/T.md"]) == ["todo/T.md"]
         _two_sections(root, "> **Verified:** 2026-11-22 (updated)", "")
         subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        scg._staged_paths(root, fresh=True)            # a new index state is a new detection
         assert scg._stamped_todos(root, ["todo/T.md"]) == []
 
 
@@ -830,7 +831,7 @@ def test_the_hook_refuses_and_exits_when_its_deadline_passes_with_no_verdict():
             "sys.exit(g._with_deadline(0.3, 'test', lambda: time.sleep(30)))" % str(REPO / ".claude/hooks"))
     began = time.monotonic()
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20)
-    assert r.returncode == 2 and "ran out of its time" in r.stderr, (r.returncode, r.stderr)
+    assert r.returncode == 2, (r.returncode, r.stderr)
     assert time.monotonic() - began < 0.3 + scg._WATCHDOG_GRACE + 2
 
 
@@ -873,3 +874,54 @@ def test_an_updated_stamp_beside_a_fresh_one_owes_only_the_fresh_section():
         _two_sections(root, "> **Verified:** 2026-11-20 (4 rounds)", "> **Verified:** 2026-11-22")
         subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
         assert scg._stamped_sections(root, "todo/T.md") == {"2"}
+
+
+def test_the_watchdog_writes_nothing_before_it_exits():
+    """The watchdog's only act is the exit: a write first could block on a stalled log file or a pipe another
+    writer filled between a poll and the write, and hold the refusal with the gate."""
+    import inspect
+    body = inspect.getsource(scg._deadline_exit)
+    code = "\n".join(line for line in body.splitlines() if not line.strip().startswith(("#", '"""')))
+    assert "os._exit(2)" in code and "write" not in code.split('"""')[-1] and "print" not in code.split('"""')[-1]
+
+
+def test_a_deleted_todo_is_an_empty_document_not_a_failed_read():
+    """A commit that deletes a tracked TODO is judged (no stamp is fresh in it), never unknown; a fresh stamp
+    in another TODO beside it is still found."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        (root / "todo/U.md").write_text("## 1. One\n\nbody\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "two"], check=True)
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "todo/T.md"], check=True)
+        assert scg._detect_signature(root)[0] != "unknown"
+        assert scg._stamped_todos(root, ["todo/T.md"]) == []
+        (root / "todo/U.md").write_text("## 1. One\n\nbody\n\n> **Verified:** 2026-11-22\n")
+        subprocess.run(["git", "-C", str(root), "add", "todo/U.md"], check=True)
+        assert scg._detect_signature(root)[0] != "unknown"
+        assert scg._stamped_todos(root, ["todo/T.md", "todo/U.md"]) == ["todo/U.md"]
+
+
+def test_one_detection_reads_each_staged_todo_once_across_flip_and_stamp_detection():
+    """A done row's description edited beside a source change: the flip detector reads the staged TODO to
+    place the row, and the stamp check reuses that read."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _flip_repo(d)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "flip"], check=True)
+        (root / "todo/T.md").write_text((root / "todo/T.md").read_text().replace("| 2 | [x] |", "| 2 (edited) | [x] |"))
+        (root / "src/a.c").write_text("int a2;\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        real = scg._proc.check_output
+        shows = []
+
+        def counting(cmd, *a, **k):
+            if cmd[:2] == ["git", "show"] and cmd[2] == ":todo/T.md":
+                shows.append(cmd)
+            return real(cmd, *a, **k)
+        scg._proc.check_output = counting
+        try:
+            scg._detect_signature(root)
+            scg._stamped_todos(root, ["todo/T.md"])
+        finally:
+            scg._proc.check_output = real
+        assert len(shows) <= 1, shows

@@ -67,7 +67,6 @@ import functools
 import json
 import os
 import re
-import select
 import shlex
 import signal
 import subprocess
@@ -1595,8 +1594,11 @@ def _staged_source_files(root: Path) -> list[str]:
     return [p for p in _staged_paths(root) if crc._is_source_path(p)]
 
 
-# The staged path list, read once per signature detection and kept for the rest of the invocation.
+# The staged path list (and which of its paths the commit deletes), read once per signature detection and
+# kept for the rest of the invocation, with the staged documents read from it.
 _staged_listing: dict[str, list[str]] = {}
+_staged_deleted: dict[str, set[str]] = {}
+_staged_docs: dict[tuple[str, str], list[str]] = {}
 
 
 def _staged_paths(root: Path, fresh: bool = False) -> list[str]:
@@ -1604,16 +1606,44 @@ def _staged_paths(root: Path, fresh: bool = False) -> list[str]:
     runs out of time raises _StagedReadError, never an empty list: an empty list would read a stamp-only
     commit as no commit at all and pass it unchecked."""
     key = str(root)
+    if fresh:
+        for doc in [k for k in _staged_docs if k[0] == key]:
+            del _staged_docs[doc]
     if fresh or key not in _staged_listing:
         try:
             out = _proc.check_output(
-                ["git", "diff", "--cached", "--name-only", "-z"],
+                ["git", "diff", "--cached", "--name-status", "-z"],
                 cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
             )
         except Exception as exc:
             raise _StagedReadError("the staged path list") from exc
-        _staged_listing[key] = [p for p in out.split("\x00") if p]
+        paths, deleted = _parse_name_status(out)
+        _staged_listing[key], _staged_deleted[key] = paths, deleted
     return _staged_listing[key]
+
+
+def _parse_name_status(out: str) -> tuple[list[str], set[str]]:
+    """`git diff --name-status -z`: each entry is a status and a path, or a rename or copy status and two
+    paths (the new one listed, as --name-only lists it). Returns the paths and those the commit deletes."""
+    tokens = out.split("\x00")
+    paths: list[str] = []
+    deleted: set[str] = set()
+    i = 0
+    while i < len(tokens):
+        status = tokens[i]
+        if not status:
+            i += 1
+            continue
+        if status[0] in "RC" and i + 2 < len(tokens):
+            paths.append(tokens[i + 2])
+            i += 3
+            continue
+        if i + 1 < len(tokens) and tokens[i + 1]:
+            paths.append(tokens[i + 1])
+            if status[0] == "D":
+                deleted.add(tokens[i + 1])
+        i += 2
+    return paths, deleted
 
 
 def _index_worktree_desync(root: Path, paths: list[str]) -> list[str]:
@@ -1753,12 +1783,37 @@ def _section_value(raw: object) -> str:
     return ""
 
 
+class _StagedDocs:
+    """The detection's shared cache of staged documents for one repository, as a mapping by path."""
+
+    def __init__(self, root: str):
+        self.root = root
+
+    def __contains__(self, path):
+        return (self.root, path) in _staged_docs
+
+    def __getitem__(self, path):
+        return _staged_docs[(self.root, path)]
+
+    def __setitem__(self, path, lines):
+        _staged_docs[(self.root, path)] = lines
+
+
 def _staged_file_lines(root: Path, path: str, cache: dict | None = None) -> list[str]:
     """The staged TODO's lines, read once per detection (`cache`, keyed by path) under what the hook's
     deadline leaves. A read that fails or runs out of time raises _StagedReadError: the caller reports the
-    commit as unknown, never as a section judged from no table header."""
-    if cache is not None and path in cache:
+    commit as unknown, never as a section judged from no table header. A TODO the commit deletes has an empty
+    staged document. Without a `cache` of its own, the detection's shared one is used, so every reader in a
+    detection (flip, header and stamp detection) reads a document once."""
+    if cache is None:
+        cache = _StagedDocs(str(root))
+    if path in cache:
         return cache[path]
+    if str(root) not in _staged_deleted:
+        _staged_paths(root)                            # a reader outside a detection: the listing it needs
+    if path in _staged_deleted.get(str(root), set()):
+        cache[path] = []
+        return []
     wait = _hook_left(5)
     if wait <= 0:
         raise _StagedReadError(path)
@@ -1868,7 +1923,7 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
     flips: list[str] = []
     sections_by_todo: dict[str, list[str]] = {}
     all_ok = True
-    staged_lines: dict = {}                            # each staged TODO is read once, whatever rows changed
+    staged_lines = _StagedDocs(str(root))              # the detection's one read of each staged TODO
     for path in todo_files:
         wait = _hook_left(5)
         if wait <= 0:
@@ -5160,17 +5215,9 @@ _WATCHDOG_GRACE = 1.0      # past the budget, the time the checks are given to r
 
 
 def _deadline_exit(mode: str) -> None:
-    """The hook's deadline has passed with no verdict: refuse the commit and exit at once, from this timer
-    thread, whatever the main thread is blocked in. The message is written only if stderr can take it now."""
-    msg = (f"[section-commit-gate] BLOCK -- the gate ran out of its time ({mode}) before it could judge this "
-           "commit; nothing was judged. Commit again when the host answers.\n").encode()
-    try:
-        poller = select.poll()
-        poller.register(2, select.POLLOUT)
-        if poller.poll(0):
-            os.write(2, msg[:512])
-    except OSError:
-        pass                                            # fail-direction: the refusal is the exit status
+    """The hook's deadline has passed with no verdict: refuse the commit by exiting 2 at once, from this timer
+    thread, whatever the main thread is blocked in. Nothing is written first: a write to a stalled log file or
+    a full pipe could hold the exit itself, and the hook that runs the gate reports its refusal."""
     os._exit(2)
 
 

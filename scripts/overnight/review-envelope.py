@@ -115,7 +115,33 @@ def leg_summary(entry: dict) -> dict:
             out["incomplete"] = True          # a lens or the HIGHEST line is missing
         else:
             out["crashed"] = True             # the dispatcher itself failed
+    # A pass the review broker launched is the broker's attempt, read as review_pin.receipt_complete (the
+    # commit gate's predicate) reads it: its own status can be 0 while the broker published the attempt as
+    # ended by its limit (124). Until the broker publishes, the pass is pending; any status but 0 is a
+    # failed attempt, dispatched again.
+    if entry.get("parent") and out["complete"]:
+        broker_status = _broker_status(entry)
+        if broker_status is None:
+            out["complete"] = False
+        elif broker_status != "0":
+            out["crashed"] = True
+            out["rc"] = int(broker_status) if broker_status.isdigit() else out["rc"]
     return out
+
+
+def _review_pin():
+    scripts = str(Path(__file__).resolve().parents[1])
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import review_pin
+    return review_pin
+
+
+def _broker_status(entry: dict):
+    """The status the broker that launched this pass published, or None (not yet, or not readable)."""
+    pin = _review_pin()
+    broker = pin.broker_log(entry)
+    return None if broker is None else pin.published_status(broker + ".done")
 
 
 PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
@@ -124,11 +150,8 @@ PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
 def blocking_levels(project: Path) -> tuple:
     """The levels that hold a stamp, from the reviewer pin; every level when it cannot be read, as the
     commit gate falls back (section_commit_gate._blocking_levels), so the two never disagree."""
-    scripts = str(Path(__file__).resolve().parents[1])
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
     try:
-        import review_pin
+        review_pin = _review_pin()
         return tuple(review_pin.load_pin(project / ".conclave" / "reviewers.toml")["blocking"])
     except Exception:  # noqa: BLE001 -- a broken pin must not make a blocking pass read as clear
         return ("P1", "P2", "P3")
