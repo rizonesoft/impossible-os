@@ -433,7 +433,9 @@ check_gemini_md() {
     n=$(wc -l < GEMINI.md | tr -d ' ')
     if [ "$n" -le 40 ]; then t_pass "GEMINI.md <=40 lines (actual: $n)"; else t_fail "GEMINI.md <=40 lines" "actual: $n"; fi
     local phrase
-    for phrase in "Bare Metal First" "SMP From Day One" "Bare Metal Gotchas" "Safety Gates" "Operating Mandate (operator"; do
+    # Headings of the doctrine, and the shared lane rules GEMINI.md once restated in its own words.
+    for phrase in "Bare Metal First" "SMP From Day One" "Bare Metal Gotchas" "Safety Gates" "Operating Mandate (operator" \
+                  "--no-verify" "SKIP_*" "Heavy jobs" "Claude makes the call" "never Microsoft"; do
         if grep -qF -- "$phrase" GEMINI.md; then
             t_fail "GEMINI.md does NOT copy CLAUDE.md doctrine" "imported: \"$phrase\" -- link to CLAUDE.md instead"
         else

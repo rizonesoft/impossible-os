@@ -112,6 +112,12 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 # second (two sections, say) must not write one transcript.
 LOG_FILE="$PWD/$MANIFEST_DIR/${STAMP}-$$-${KIND}.out"
 UNIT="codex-rev-${KIND}-${STAMP}-$$"
+# The working tree's fingerprint for the launch row, taken before anything is written for the job: the same
+# reader the dispatcher checks against (scripts/review_candidate.py), leaving out the reviews directory the
+# detached wrapper is given below, so both digests cover one scope.
+TREE_WORK="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py" snapshot \
+    --exclude "$PWD/$MANIFEST_DIR")" || {
+    echo "[review-broker] BLOCK -- the working tree could not be read (reason above); nothing was launched" >&2; exit 2; }
 
 # CGROUP SURVIVAL IS LOAD-BEARING (live incident 2026-07-11): a review
 # spawned inside the headless session's systemd service dies with the
@@ -157,10 +163,6 @@ DETACH="detached:$UNIT"
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
-# The same fingerprint the dispatcher checks (scripts/review_candidate.py), leaving the reviews directory out.
-TREE_WORK="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py" snapshot \
-    --exclude "${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}")" || {
-    echo "[review-broker] BLOCK -- the working tree could not be read (reason above)" >&2; exit 2; }
 # Written by a JSON serializer, as the receipt is: a path holding a quote, a
 # backslash or a newline must not leave a line no reader can parse.
 MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"

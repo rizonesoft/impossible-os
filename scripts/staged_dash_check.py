@@ -49,6 +49,9 @@ import subprocess
 import sys
 import threading
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bounded_run                                         # the shared bounded runner beside this script
+
 DASHES = (chr(0x2013).encode(), chr(0x2014).encode())
 GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
 NULL_OID = "0" * 40
@@ -328,8 +331,13 @@ def _git_env() -> dict:
 
 
 def _git(*args, stdin=None) -> bytes:
-    return subprocess.run(["git", *DIFF_CONFIG, *args], input=stdin, capture_output=True, timeout=TIMEOUT,
-                          check=True, env=_git_env()).stdout
+    """stdout of one git command, bounded as a process group (scripts/bounded_run.py); a non-zero exit is a
+    CalledProcessError and a timeout a ValueError, both of which refuse the check."""
+    rc, out, err = bounded_run.run(["git", *DIFF_CONFIG, *args], f"git {args[0]}", timeout=TIMEOUT,
+                                   env=_git_env(), stdin=stdin, keep_stderr=True)
+    if rc != 0:
+        raise subprocess.CalledProcessError(rc, ["git", args[0]], out, err)
+    return out
 
 
 def judge(commits: list) -> list:
@@ -367,80 +375,21 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     `merge_head` is commit-msg's, the MERGE_HEAD file it found."""
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
     per_parent = [changes_from_raw(_git(*diff))]
+    common = {path for _old, _new, path in per_parent[0]}
     for parent in merge_heads(merge_head) if merging else []:
-        if not per_parent[-1]:
-            break                                          # a path refused gains over every parent: none can now
+        if not common:
+            return [("", [[]])]                            # a refused path changes against every parent: none can now
         per_parent.append(changes_from_raw(_git(*diff, parent)))
-    return [("", per_parent)]
-
-
-class _Cancelled(BaseException):
-    """Ctrl-C or SIGTERM reached the checker while a bounded command ran."""
-
-
-def _end_group(proc) -> None:
-    import signal
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:                             # the group has already exited: nothing to end
-        pass
-    proc.communicate()
+        common &= {path for _old, _new, path in per_parent[-1]}
+    return [("", per_parent if common or len(per_parent) == 1 else [[]])]
 
 
 def _bounded(cmd: list, what: str) -> tuple:
-    """(exit status, stdout) of `cmd`, run in its own process group that is ended whole on timeout, on
-    Ctrl-C and on SIGTERM: a stalled transport (ssh, a credential helper) is a child of git and would outlive
-    an end of git alone. The signals are caught before the group starts and held until it is registered, so
-    no moment leaves it running unowned; a cancellation then ends the group and is delivered again to the
-    caller's own handler. An error names `what`, never the command: the URL in it can carry a token."""
-    import signal
-    st = {"proc": None, "hold": True, "pending": 0}
-
-    def on_signal(signum, _frame):
-        if st["hold"]:
-            st["pending"] = st["pending"] or signum        # not registered, or being ended: deliver later
-            return
-        raise _Cancelled(signum)
-
-    watched = [signal.SIGTERM]
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
-        watched.append(signal.SIGINT)                      # an ignored SIGINT (a background caller) stays ignored
-    previous = {sig: signal.signal(sig, on_signal) for sig in watched}
-
-    def finish(signum=0):
-        """Put the caller's handlers back with the watched signals blocked, so none that arrives meanwhile is
-        recorded here and lost; one held by the block reaches the caller's handler as the mask lifts, and one
-        recorded earlier (or this cancellation) is delivered again."""
-        old = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
-        try:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            signum = signum or st["pending"]
-        finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, old)
-        if signum:
-            signal.raise_signal(signum)
-            raise SystemExit(128 + signum)                 # the caller's handler returned: still a cancellation
-
-    try:
-        st["proc"] = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                      stdin=subprocess.DEVNULL, env=_git_env(),
-                                      start_new_session=True)  # LIFECYCLE-WAIVER: waited on here, never left running
-        st["hold"] = False
-        if st["pending"]:
-            raise _Cancelled(st["pending"])
-        out, _err = st["proc"].communicate(timeout=TIMEOUT)
-        st["hold"] = True
-    except BaseException as exc:
-        st["hold"] = True
-        if st["proc"] is not None:
-            _end_group(st["proc"])
-        finish(exc.args[0] if isinstance(exc, _Cancelled) else 0)
-        if isinstance(exc, subprocess.TimeoutExpired):
-            raise ValueError(f"{what} did not answer within {TIMEOUT} s") from None
-        raise
-    finish()
-    return st["proc"].returncode, out
+    """(exit status, stdout) of `cmd`, bounded as one process group (scripts/bounded_run.py): a stalled
+    transport (ssh, a credential helper) is a child of git and would outlive an end of git alone. An error
+    names `what`, never the command: the URL in it can carry a token."""
+    rc, out, _err = bounded_run.run(cmd, what, timeout=TIMEOUT, env=_git_env())
+    return rc, out
 
 
 def destination_oids(dest: str) -> set:
@@ -461,7 +410,11 @@ def destination_oids(dest: str) -> set:
                          "be listed safely; make the rewrite rules not chain")
     rc, out = _bounded(["git", "ls-remote", "--end-of-options", dest], "the destination (git ls-remote)")
     if rc != 0:
-        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {rc})")
+        # The lookup runs in its own process group with no terminal, so it cannot ask for a passphrase or a
+        # password the way an attended push can (decided: the bounded lookup authenticates without a prompt).
+        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {rc}); it cannot "
+                         "prompt on the terminal, so authenticate without a prompt (an ssh agent, a credential "
+                         "helper, or SSH_ASKPASS)")
     return {line.split("\t", 1)[0] for line in out.decode("ascii", "replace").splitlines() if line.strip()}
 
 
@@ -470,11 +423,11 @@ def _resolve(rev: str) -> str:
     empty range."""
     if rev == NULL_OID:
         return rev
-    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{object}"],
-                       capture_output=True, text=True, timeout=TIMEOUT, env=_git_env())
-    if r.returncode != 0:
+    rc, out = _bounded(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{object}"],
+                       "git rev-parse")
+    if rc != 0:
         raise ValueError(f"{rev!r} names no object in this repository")
-    return r.stdout.strip()
+    return out.decode("ascii", "replace").strip()
 
 
 def _object_types(oids: list) -> dict:

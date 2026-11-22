@@ -175,43 +175,55 @@ def test_remove_says_when_an_inherited_value_still_runs_the_hooks(tmp_path):
 
 
 def test_install_writes_the_scope_git_reads_the_hooks_path_from(tmp_path):
-    """A worktree-scoped value outranks the repository's: install writes that one and checks the result."""
+    """A global value is beneath the repository's: install writes the repository's, git reads it, and removing
+    it gives the global value back untouched."""
     root = _plain_repo(tmp_path)
-    _cfg(root, "extensions.worktreeConfig", "true")
-    _cfg(root, "--worktree", "core.hooksPath", "other-hooks")
+    glob = tmp_path / "global.cfg"
+    glob.write_text("[core]\n\thooksPath = /global\n")
+    env = {**_env(), "GIT_CONFIG_GLOBAL": str(glob)}
     r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
-                       env=_env())
+                       env=env)
     assert r.returncode == 0 and "Configured: core.hooksPath = .githooks" in r.stdout, r
-    assert _cfg(root, "--get", "core.hooksPath").stdout.strip() == ".githooks"
-    assert _cfg(root, "--worktree", "--get", "core.hooksPath").stdout.strip() == ".githooks"
+    assert _cfg(root, "--local", "--get", "core.hooksPath").stdout == ".githooks\n"
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0, r
+    assert glob.read_text() == "[core]\n\thooksPath = /global\n"
+    assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1
 
 
 def test_install_is_judged_by_the_value_git_uses_not_any_value_it_holds(tmp_path):
-    """.githooks in the repository's config under a worktree override: git runs the override, so install acts."""
+    """.githooks in the repository's config under a worktree override: git runs the override, so install does not
+    report it configured; the override is the operator's, so it refuses and writes nothing."""
     root = _plain_repo(tmp_path)
     _cfg(root, "core.hooksPath", ".githooks")
     _cfg(root, "extensions.worktreeConfig", "true")
     _cfg(root, "--worktree", "core.hooksPath", "/custom")
     r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
                        env=_env())
-    assert r.returncode == 0 and "Configured: core.hooksPath = .githooks" in r.stdout, r
+    assert r.returncode != 0 and "Already configured" not in r.stdout and "already set in worktree config" in r.stderr, r
     hooks = subprocess.run(["git", "rev-parse", "--git-path", "hooks"], cwd=root, capture_output=True, text=True,
                            timeout=30, env=_env()).stdout.strip()
-    assert hooks == ".githooks", hooks
+    assert hooks == "/custom", hooks
 
 
 def test_remove_undoes_a_worktree_scoped_install(tmp_path):
     root = _plain_repo(tmp_path)
     _cfg(root, "extensions.worktreeConfig", "true")
     _cfg(root, "--worktree", "core.hooksPath", "/custom")
-    subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, check=True, capture_output=True, timeout=60,
-                   env=_env())
-    assert _cfg(root, "--worktree", "--get", "core.hooksPath").stdout.strip() == ".githooks"
+    # The worktree's own value is the operator's: the install refuses rather than write beside it.
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=_env())
+    assert r.returncode != 0 and "already set in worktree config" in r.stderr, r
+    assert _cfg(root, "--worktree", "--get-all", "core.hooksPath").stdout == "/custom\n"
+    _cfg(root, "--worktree", "--unset", "core.hooksPath")
+    _cfg(root, "--local", "core.hooksPath", "/shared")
+    _cfg(root, "--worktree", "core.hooksPath", ".githooks")
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=_env())
     assert r.returncode == 0 and "inert" in r.stdout, r
-    # The install went on top of the worktree's own value, so removing it brings that value back.
-    assert _cfg(root, "--worktree", "--get-all", "core.hooksPath").stdout == "/custom\n"
+    assert _cfg(root, "--worktree", "--get", "core.hooksPath", check=False).returncode == 1
+    assert _cfg(root, "--local", "--get", "core.hooksPath").stdout == "/shared\n"
 
 
 def test_status_and_the_doctor_show_a_value_that_only_reads_as_githooks(tmp_path):
@@ -312,15 +324,61 @@ def test_remove_under_a_command_line_value_changes_nothing(tmp_path):
     assert os.path.exists(sentinel)
 
 
-def test_install_and_remove_with_two_values_in_one_file(tmp_path):
+def _config_bytes(root):
+    return (root / ".git/config").read_bytes()
+
+
+def test_install_refuses_a_scope_that_already_holds_values(tmp_path):
     root = _plain_repo(tmp_path)
     _cfg(root, "--local", "--add", "core.hooksPath", "first")
     _cfg(root, "--local", "--add", "core.hooksPath", "second")
+    before = _config_bytes(root)
     r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
                        env=_env())
-    assert r.returncode == 0, r
-    assert _cfg(root, "--get", "core.hooksPath").stdout == ".githooks\n"
+    assert r.returncode != 0 and "already set in local config" in r.stderr and "first, second" in r.stderr, r
+    assert _config_bytes(root) == before
+
+
+def test_remove_keeps_entries_it_did_not_write(tmp_path):
+    """.githooks among several entries is not this installer's single entry: remove leaves every one."""
+    root = _plain_repo(tmp_path)
+    _cfg(root, "--local", "--add", "core.hooksPath", "custom")
+    _cfg(root, "--local", "--add", "core.hooksPath", ".githooks")
+    before = _config_bytes(root)
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=_env())
-    assert r.returncode == 0, r
-    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == "first\nsecond\n"
+    assert r.returncode == 0 and "not as this installer's single entry" in r.stdout, r
+    assert _config_bytes(root) == before
+
+
+def test_an_included_value_refuses_install_and_writes_nothing(tmp_path):
+    root = _plain_repo(tmp_path)
+    (root / ".git/inc").write_text("[core]\n\thooksPath = elsewhere\n")
+    with open(root / ".git/config", "a") as f:
+        f.write("[include]\n\tpath = inc\n")
+    before = _config_bytes(root)
+    for _attempt in (1, 2):                                 # a retry is refused the same way and adds nothing
+        r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True,
+                           timeout=60, env=_env())
+        assert r.returncode != 0 and "or a file it includes" in r.stderr, r
+        assert _config_bytes(root) == before
+
+
+def test_an_install_git_does_not_read_is_undone(tmp_path):
+    """A write that a higher-priority value hides is taken out again, so nothing latent is left."""
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    # After the install writes the local value, a worktree value appears (as a racing writer would leave it).
+    (bindir / "git").write_text(
+        f'#!/bin/sh\n"{real}" "$@"; rc=$?\n'
+        f'case " $* " in *" --local core.hooksPath .githooks "*) "{real}" -C "{root}" config --worktree core.hooksPath /other ;; esac\n'
+        'exit $rc\n')
+    (bindir / "git").chmod(0o755)
+    env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=env)
+    assert r.returncode != 0 and "the write was undone" in r.stderr, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1

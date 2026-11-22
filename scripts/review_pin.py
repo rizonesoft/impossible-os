@@ -14,6 +14,7 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --highest --transcript FILE          # the review's worst level: P1, P2, P3, none
     python3 scripts/review_pin.py --section TODO N                     # passes | older | new: the rules a section is on
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
+    --paths-file0 FILE                             # the same, NUL-separated (scripts/review_candidate.py writes it)
     python3 scripts/review_pin.py --caps           # pass_cap, and no_progress_cap when the pin names one
     python3 scripts/review_pin.py --repair-base TODO N --manifest FILE  # a reconciliation's last reviewed candidate
     python3 scripts/review_pin.py --repair-range TODO N --manifest FILE  # that pass's section base and head, one read
@@ -364,17 +365,15 @@ def section_status(root, todo, section):
     import json
     root = pathlib.Path(root)
     section = str(section)
-    seen, older = False, False
-    try:
-        lines = (root / MANIFEST).read_text().splitlines()
-    except FileNotFoundError:
-        lines = []
-    except (OSError, UnicodeDecodeError) as exc:
-        raise Refused(f"{MANIFEST} cannot be read: {exc}") from exc
-    for line in lines:
+    seen, older, unsure = False, False, False
+    # One read from the manifest's end: the newest checked plan answers at once (the same lookup the
+    # dispatcher uses, so a resume and a dispatch name one base, and a torn line newer than the plan refuses
+    # both); without one the whole history decides between the passes and the older kinds.
+    for line in _newest_first(root / MANIFEST):
         try:
             e = json.loads(line)
         except ValueError:
+            unsure = unsure or unreadable_line_may_be(line, todo)
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != section:
             continue
@@ -383,11 +382,13 @@ def section_status(root, todo, section):
         if e.get("kind") not in SECTION_KINDS:
             continue
         seen = True
+        if _checked(e, ("plan",)):
+            if unsure:
+                raise Refused(f"{MANIFEST} has an unreadable line after the newest checked plan of {todo} section "
+                              f"{section}; it may be a newer pass, so the section's start is unknown")
+            return ("passes", section_base(root, todo, section, e["head"]))
     if seen:
-        # The same checked-plan lookup the dispatcher uses, so a resume and a dispatch name one base, and a
-        # torn line newer than the plan refuses both.
-        base = section_start(root / MANIFEST, todo, section)
-        return ("passes", section_base(root, todo, section, base))
+        return ("passes", section_base(root, todo, section, ""))
     if older:
         return ("older", "")
     try:
@@ -456,6 +457,12 @@ def _newest_first(manifest, block=1 << 16):
             raise Refused(f"{manifest} cannot be read: {exc}") from exc
 
 
+def _checked(e, kinds):
+    """Whether receipt `e` is a checked, successful pass of one of `kinds` that names its candidate."""
+    return e.get("kind") in kinds and e.get("pass_checked") is True and e.get("rc") == 0 \
+        and isinstance(e.get("head"), str) and bool(e["head"])
+
+
 def _newest(manifest, todo, section, kinds, what):
     """The newest checked receipt of `kinds` for the section, or None. An unreadable line newer than it that
     may belong to this TODO refuses: it may be a newer pass, so the answer is unknown."""
@@ -468,8 +475,7 @@ def _newest(manifest, todo, section, kinds, what):
             unsure = unsure or unreadable_line_may_be(line, todo)
             continue
         if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
-                and e.get("kind") in kinds and e.get("pass_checked") is True and e.get("rc") == 0 \
-                and isinstance(e.get("head"), str) and e["head"]:
+                and _checked(e, kinds):
             if unsure:
                 raise Refused(f"{manifest} has an unreadable line after the newest checked {e['kind']} of {todo} "
                               f"section {section}; it may be a newer pass, so {what} is unknown")
@@ -537,17 +543,21 @@ def main(argv=None):
     parser.add_argument("--root", default=str(REPO))
     parser.add_argument("--transcript")
     parser.add_argument("--paths-file")
+    parser.add_argument("--paths-file0")
     parser.add_argument("--pin", default=str(PIN))
     parser.add_argument("--codex-config", default=str(CODEX_CONFIG))
     args = parser.parse_args(argv)
     try:
         pin = load_pin(args.pin)
         paths = ()
-        if args.paths_file:
+        _need(not (args.paths_file and args.paths_file0), "give --paths-file or --paths-file0, not both")
+        if args.paths_file or args.paths_file0:
             try:
-                # NUL-separated, as scripts/review_candidate.py writes it: a path may hold any other byte.
-                raw = pathlib.Path(args.paths_file).read_bytes()
-                paths = tuple(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)
+                # --paths-file0 is NUL-separated, as scripts/review_candidate.py writes it, since a path may hold
+                # any other byte; --paths-file is one path a line.
+                raw = pathlib.Path(args.paths_file0 or args.paths_file).read_bytes()
+                sep = "\0" if args.paths_file0 else "\n"
+                paths = tuple(p for p in raw.decode("utf-8", "surrogateescape").split(sep) if p)
             except OSError as exc:
                 raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
         if args.owed_base:

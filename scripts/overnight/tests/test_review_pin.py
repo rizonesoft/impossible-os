@@ -209,6 +209,34 @@ process.stdout.write(fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
 """
 
 
+def _fixture_repo(tmp_path):
+    """A small history for the dispatcher to read, made once per test: four commits after the first touching a
+    kernel source, a document, a TODO and a script, so a range from any of them sets every conditional lens.
+    The operator's own checkout is never read or written by these tests."""
+    import subprocess
+    repo = tmp_path / "fx"
+    if not repo.exists():
+        repo.mkdir()
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                            "-c", "core.hooksPath=/dev/null", *args], check=True, capture_output=True, timeout=60)
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "zero")
+        for rel in ("src/kernel/a.c", "docs/b.md", "todo/x.md", "scripts/y.py"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(rel + "\n")
+            git("add", rel)
+            git("commit", "-q", "-m", rel)
+    return repo
+
+
+def _rev(tmp_path, rev):
+    import subprocess
+    return subprocess.run(["git", "rev-parse", rev], capture_output=True, text=True, cwd=str(_fixture_repo(tmp_path)),
+                          check=True, timeout=30).stdout.strip()
+
+
 def _dispatch(tmp_path, kind, review, base="HEAD", marker=None, body="Review it.", reviews_dir=None):
     import os
     import subprocess
@@ -222,7 +250,7 @@ def _dispatch(tmp_path, kind, review, base="HEAD", marker=None, body="Review it.
     done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
                            (marker or f"[review-kind: {kind}]")
                            + f" todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\n{body}"],
-                          capture_output=True, text=True, timeout=120, cwd=str(REPO), env=env)
+                          capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
     prompt = (tmp_path / "prompt.txt").read_text() if (tmp_path / "prompt.txt").exists() else ""
     return done, prompt
 
@@ -351,9 +379,7 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["reconciliation"]) + "\nHIGHEST: none\n"
     done, prompt = _dispatch(tmp_path, "reconciliation", full, reviews_dir=reviews)
     assert done.returncode == 2 and "a reconciliation follows a completion" in done.stderr, done.stderr
-    def rev(r):
-        return subprocess.run(["git", "rev-parse", r], capture_output=True, text=True, cwd=str(REPO), check=True).stdout.strip()
-    start, last, head = rev("HEAD~2"), rev("HEAD~1"), rev("HEAD")
+    start, last, head = _rev(tmp_path, "HEAD~2"), _rev(tmp_path, "HEAD~1"), _rev(tmp_path, "HEAD")
     (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base=start) + "\n")
     # No REVIEW_BASE: the section range is the one the completion reviewed, never HEAD~1.
     done, prompt = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
@@ -375,8 +401,9 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     done, _ = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
     # Review 2026-11-20: a commit that exists but was left behind by a reset or rebase is no start either.
-    off = subprocess.run(["git", "commit-tree", "HEAD^{tree}", "-m", "off-history fixture"], capture_output=True,
-                         text=True, cwd=str(REPO), check=True).stdout.strip()
+    off = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit-tree",
+                          "HEAD^{tree}", "-m", "off-history fixture"], capture_output=True, text=True,
+                         cwd=str(_fixture_repo(tmp_path)), check=True, timeout=30).stdout.strip()
     (reviews / "manifest.jsonl").write_text(_receipt("completion", off, base=start) + "\n")
     done, _ = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
     assert done.returncode == 2 and "is not a commit in this history" in done.stderr, done.stderr
@@ -390,8 +417,7 @@ def test_a_reconciliation_after_a_first_commit_takes_the_empty_tree_base(tmp_pat
     lenses = ["plan-delivery", "record", "repair-adversarial", "repair-integration", "adversarial", "integration",
               "concurrency", "bare-metal", "design"]                    # from the empty tree every path changed
     full = "\n".join(f"LENS {n}: clean" for n in lenses) + "\nHIGHEST: none\n"
-    last = subprocess.run(["git", "rev-parse", "HEAD~1"], capture_output=True, text=True, cwd=str(REPO),
-                          check=True).stdout.strip()
+    last = _rev(tmp_path, "HEAD~1")
     empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
     (reviews / "manifest.jsonl").write_text(_receipt("completion", last, base=empty) + "\n")
     done, prompt = _dispatch(tmp_path, "reconciliation", full, base="", reviews_dir=reviews)
@@ -411,8 +437,7 @@ def test_a_later_pass_with_no_base_starts_where_the_section_did(tmp_path):
     import subprocess
     reviews = tmp_path / "reviews"
     reviews.mkdir()
-    start = subprocess.run(["git", "rev-parse", "HEAD~3"], capture_output=True, text=True, cwd=str(REPO),
-                           check=True).stdout.strip()
+    start = _rev(tmp_path, "HEAD~3")
     done, _prompt = _dispatch(tmp_path, "round", "LENS adversarial: clean\nHIGHEST: none\n", base="",
                               reviews_dir=reviews)
     assert done.returncode == 2 and "start is not on record" in done.stderr, done.stderr
@@ -653,7 +678,7 @@ def test_refusal_a_pass_names_its_todo_and_section(tmp_path):
     fake = tmp_path / "companion.js"
     for first in ("[review-kind: round] just some words", "[review-kind: round] todo/x.md with no section number"):
         done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), first + "\nReview it."],
-                              capture_output=True, text=True, timeout=60, cwd=str(REPO),
+                              capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)),
                               env={**os.environ, "CODEX_COMPANION_PATH": str(fake),
                                    "CODEX_REVIEWS_DIR": str(tmp_path / "reviews2")})
         assert done.returncode == 2 and "names its TODO and section on the first line" in done.stderr, done.stderr
@@ -774,7 +799,7 @@ def test_two_passes_of_one_kind_in_the_same_second_keep_their_own_transcripts(tm
         procs.append(subprocess.Popen(
             ["bash", str(REPO / "scripts/codex-dispatch.sh"),
              f"[review-kind: completion] todo/00-x/TODO-01-x.md section {n + 1}\nReview it."],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(REPO), env=env))
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(_fixture_repo(tmp_path)), env=env))
     codes = []
     for proc in procs:
         # deadline: 120 s for a fake reviewer that answers at once.
@@ -1278,6 +1303,7 @@ def _rc_module():
 
 
 def test_refusal_a_file_that_grows_while_it_is_read(tmp_path, monkeypatch):
+    import os
     rc = _rc_module()
     repo, _git = _tmp_repo(tmp_path)
     (repo / "log.txt").write_text("one\n")
@@ -1292,7 +1318,7 @@ def test_refusal_a_file_that_grows_while_it_is_read(tmp_path, monkeypatch):
         return chunk
     monkeypatch.setattr(rc.os, "read", read)
     with pytest.raises(rc.Refused, match="changed while it was read"):
-        rc._entry(str(repo), b"log.txt")
+        rc._entry(os.open(repo, os.O_RDONLY | os.O_DIRECTORY), b"log.txt")
 
 
 def test_the_fingerprint_is_the_hash_of_exactly_what_it_names(tmp_path, monkeypatch):
@@ -1336,3 +1362,148 @@ def test_a_repository_with_no_commit_yet_has_a_fingerprint(tmp_path):
     subprocess.run(["git", "-C", str(repo), "add", "a.txt"], check=True, timeout=30)
     staged = _snapshot(repo)
     assert staged.returncode == 0 and staged.stdout != empty.stdout, staged
+
+
+def test_a_helper_holding_the_reader_s_pipe_is_ended_at_the_deadline(tmp_path, monkeypatch):
+    """git exits but a helper it started keeps stderr open: the read ends at its deadline, helper and all."""
+    import os
+    import time
+    rc = _rc_module()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    pidfile = tmp_path / "helper.pid"
+    (bindir / "git").write_text(f"#!/bin/sh\nsh -c 'echo $$ > \"{pidfile}\"; exec sleep 61' &\nexit 0\n")
+    (bindir / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setattr(rc, "TIMEOUT", 1)
+    began = time.monotonic()
+    try:
+        with pytest.raises(rc.Refused, match="did not answer within 1 s"):
+            rc._git(str(tmp_path), "status")
+        assert time.monotonic() - began < 4
+        pid = int(pidfile.read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _proc_alive(pid):
+            time.sleep(0.05)
+        assert not _proc_alive(pid), "the helper outlived the read"
+    finally:
+        _reap_pid(pidfile)
+
+
+def _proc_alive(pid):
+    import pathlib
+    try:
+        return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
+    except (FileNotFoundError, ProcessLookupError):        # gone before the open, or during the read (ESRCH)
+        return False
+
+
+def _reap_pid(pidfile):
+    import os
+    import signal
+    try:
+        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+    except (FileNotFoundError, ValueError, ProcessLookupError):   # never started, or already gone
+        pass
+
+
+def test_refusal_a_directory_replaced_by_a_link_is_not_followed(tmp_path):
+    import os
+    rc = _rc_module()
+    repo = tmp_path / "repo"
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside/f").write_text("outside\n")
+    repo.mkdir()
+    os.symlink(tmp_path / "outside", repo / "d")              # was a directory when status listed d/f
+    top_fd = os.open(repo, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(rc.Refused, match="could not be reached"):
+            rc._entry(top_fd, b"d/f")
+    finally:
+        os.close(top_fd)
+
+
+def test_both_paths_file_forms_set_the_kernel_lenses(tmp_path):
+    import subprocess
+    lines = tmp_path / "paths.txt"
+    lines.write_text("docs/example.md\nsrc/kernel/example.c\n")
+    nul = tmp_path / "paths.bin"
+    nul.write_bytes(b"docs/example.md\0src/kernel/example.c\0")
+    for flag, path in (("--paths-file", lines), ("--paths-file0", nul)):
+        done = subprocess.run([sys.executable, str(REPO / "scripts/review_pin.py"), "--lenses", "round", flag, str(path)],
+                              capture_output=True, text=True, timeout=30)
+        assert done.returncode == 0 and "- concurrency: " in done.stdout and "- bare-metal: " in done.stdout, (flag, done)
+
+
+def test_a_clean_candidate_takes_no_patch_and_no_tree_name_diff(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    calls = []
+    real = rc._git
+    monkeypatch.setattr(rc, "_git", lambda top, *a, **k: calls.append(a) or real(top, *a, **k))
+    head = git("rev-parse", "HEAD")
+    digest, covered, notes = rc.prepare(head, head)
+    assert digest == rp.CLEAN_WORKTREE and covered == [] and notes == []
+    assert not any("--binary" in a for a in calls), calls
+    assert sum(1 for a in calls if a[:2] == ("diff", "--name-only")) == 1, calls   # only base..head
+
+
+def test_the_section_status_reads_the_manifest_once(tmp_path, monkeypatch):
+    todo = "todo/00-x/TODO-01-x.md"
+    manifest = tmp_path / rp.MANIFEST
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(_receipt("plan", "c" * 40, section=9, todo=todo) + "\n")
+    reads = []
+    real, real_text = rp._newest_first, rp.pathlib.Path.read_text
+    monkeypatch.setattr(rp, "_newest_first", lambda *a, **k: reads.append(a) or real(*a, **k))
+    monkeypatch.setattr(rp.pathlib.Path, "read_text",
+                        lambda self, *a, **k: (reads.append(self) if self == manifest else None) or real_text(self, *a, **k))
+    assert rp.section_status(tmp_path, todo, 9) == ("passes", "c" * 40)
+    assert len(reads) == 1, reads
+
+
+def test_the_broker_and_its_reviewer_fingerprint_one_scope(tmp_path):
+    """An inherited CODEX_REVIEWS_DIR naming another directory does not change what the launch row covers."""
+    import json
+    import os
+    import subprocess
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "other").mkdir()
+    (repo / "other/new.txt").write_text("part of the candidate\n")
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nfine\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
+           "CODEX_REVIEWS_DIR": str(repo / "other")}
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: adversarial] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    row = json.loads((repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()[0])
+    expect = subprocess.run([sys.executable, str(REPO / "scripts/review_candidate.py"), "snapshot", "--exclude",
+                             str(repo / ".claude/overnight/reviews")], capture_output=True, text=True, timeout=60,
+                            cwd=str(repo)).stdout.strip()
+    assert row["worktree_sha256"] == expect != rp.CLEAN_WORKTREE
+
+
+def test_refusal_a_broker_that_cannot_read_the_tree_leaves_no_prompt_behind(tmp_path):
+    import os
+    import subprocess
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "locked.txt").write_text("x\n")
+    (repo / "locked.txt").chmod(0)
+    temp = tmp_path / "tmp"
+    temp.mkdir()
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('fine');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "TMPDIR": str(temp)}
+    try:
+        done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                               "[review-kind: adversarial] todo/x.md section 9\nReview it."],
+                              capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    finally:
+        (repo / "locked.txt").chmod(0o644)
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-0 file")
+    assert done.returncode == 2 and "could not be read" in done.stderr, done.stderr
+    assert list(temp.iterdir()) == []

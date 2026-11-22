@@ -414,6 +414,7 @@ def _hooked_repo(tmp_path):
     shutil.copy(REPO / ".githooks/commit-msg", hooks / "commit-msg")
     shutil.copy(GATE, hooks / "lib/dash-gate.sh")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
     _git(root, "config", "core.hooksPath", ".githooks")
     return root
 
@@ -619,7 +620,8 @@ def test_a_real_dry_run_push_with_a_spaced_source_reaches_every_check_intact(tmp
     root = _repo(tmp_path)
     (root / ".githooks/lib").mkdir(parents=True)
     (root / "scripts").mkdir()
-    for rel in (".githooks/lib/push-records.sh", ".githooks/lib/dash-gate.sh", "scripts/staged_dash_check.py"):
+    for rel in (".githooks/lib/push-records.sh", ".githooks/lib/dash-gate.sh", "scripts/staged_dash_check.py",
+                "scripts/bounded_run.py"):
         shutil.copy(REPO / rel, root / rel)
     hook = root / ".githooks/pre-push"
     hook.write_text('#!/usr/bin/env bash\nset -uo pipefail\nREPO_ROOT="$(git rev-parse --show-toplevel)"\n'
@@ -677,6 +679,7 @@ def test_an_ordinary_commit_is_refused_by_the_shipped_pre_commit_hook(tmp_path):
     (root / "scripts").mkdir()
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
     (root / "scripts/lint.sh").write_text("exit 0\n")       # the lint has its own suite; this test is the dash step
     _git(root, "config", "core.hooksPath", ".githooks")
     before = _git(root, "rev-parse", "HEAD")
@@ -811,19 +814,7 @@ def test_a_stalled_transport_is_stopped_with_its_whole_group(tmp_path, monkeypat
     with pytest.raises(ValueError) as err:
         m.destination_oids(f"ext::{helper} SECRET-TOKEN")
     assert "SECRET-TOKEN" not in str(err.value) and "within 2 s" in str(err.value)
-    pid = int(pidfile.read_text())
-    import time
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:                                   # gone, or dead and awaiting its reaper
-        try:
-            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        except FileNotFoundError:
-            break
-        if state in ("Z", "X"):
-            break
-        time.sleep(0.05)
-    else:
-        raise AssertionError(f"transport helper {pid} still running after the timeout")
+    _assert_helper_ends(int(pidfile.read_text()))
 
 
 def test_the_dash_check_asks_the_destination_only_after_the_local_refusals():
@@ -864,7 +855,7 @@ def _helper_state(pid):
     """The helper's /proc state letter, or "" once it is gone."""
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):        # gone before the open, or during the read (ESRCH)
         return ""
 
 
@@ -949,6 +940,7 @@ def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
     (root / "scripts").mkdir()
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
     (root / "scripts/lint.sh").write_text("exit 0\n")
     _git(root, "config", "core.hooksPath", ".githooks")
     _stage(root, {"doc.md": "new " + DASH + "\n"})
@@ -966,7 +958,8 @@ def _stand_in(tmp_path):
     """(shell commands, pid file) for a stand-in that records its own process id, then sleeps about a minute:
     each test watches and reaps exactly that process, and one a test fails to end outlives it only briefly."""
     pidfile = tmp_path / f"stand-in-{len(list(tmp_path.glob('stand-in-*')))}.pid"
-    return f'echo $$ > "{pidfile}"; exec sleep 61', pidfile
+    # Recorded whole or not at all (written aside, then renamed), so a stand-in ended mid-write leaves no file.
+    return f'echo $$ > "{pidfile}.part" && mv "{pidfile}.part" "{pidfile}"; exec sleep 61', pidfile
 
 
 def _stand_in_ends(pidfile, seconds=5):
@@ -1195,6 +1188,7 @@ def test_an_external_diff_that_calls_a_dash_equal_cannot_skip_pre_commit(tmp_pat
     (root / "scripts").mkdir()
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
+    shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
     (root / "scripts/lint.sh").write_text("exit 0\n")
     (root / "same.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "same.sh").chmod(0o755)
@@ -1204,3 +1198,27 @@ def test_an_external_diff_that_calls_a_dash_equal_cannot_skip_pre_commit(tmp_pat
     _stage(root, {"doc.md": "new " + DASH + "\n"})
     r = _sub(["git", "commit", "-q", "-m", "dash"], cwd=root, text=True)
     assert r.returncode != 0 and "doc.md gains 1" in r.stderr, r.stdout + r.stderr
+
+
+def test_a_merge_whose_parents_share_no_changed_path_reads_no_further_parent(monkeypatch):
+    def raw(path):
+        return b":100644 100644 " + b"1" * 40 + b" " + b"2" * 40 + b" M\0" + path + b"\0"
+    answers = {(): raw(b"a.md"), ("a" * 40,): raw(b"b.md")}
+    calls = []
+
+    def git(*args, **_kw):
+        calls.append(args)
+        return answers[args[7:]]
+    monkeypatch.setattr(m, "_git", git)
+    monkeypatch.setattr(m, "merge_heads", lambda path="": ["a" * 40, "b" * 40])
+    assert m.staged(merging=True) == [("", [[]])]
+    assert len(calls) == 2, calls                           # HEAD and the first parent; never the second
+
+
+def test_a_failed_destination_lookup_says_it_cannot_prompt(tmp_path):
+    root = _repo(tmp_path)
+    _stage(root, {"doc.md": "clean\n"})
+    _commit(root, "clean")
+    tip = _git(root, "rev-parse", "HEAD")
+    r = _push_check(root, str(tmp_path / "missing.git"), f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
+    assert r.returncode == 2 and "cannot prompt on the terminal" in r.stderr, r

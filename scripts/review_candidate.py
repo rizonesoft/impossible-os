@@ -28,9 +28,10 @@ import hashlib
 import json
 import os
 import stat
-import subprocess
 import sys
-import threading
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bounded_run                                         # the shared bounded runner beside this script
 
 TIMEOUT = 120
 CHUNK = 1 << 20
@@ -48,56 +49,28 @@ def _env():
     return {k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}
 
 
-def _cmd(top, args):
-    return ["git", "--no-optional-locks", "-C", top, *args]
-
-
-def _git(top, *args):
+def _run(top, args, sink=None):
+    """(exit status, stdout, stderr) of one git command, bounded as a process group (scripts/bounded_run.py):
+    a helper git starts (a clean filter, a monitor hook) holding its pipes past the deadline is ended with it."""
+    cmd = ["git", "--no-optional-locks", *(["-C", top] if top else []), *args]
     try:
-        done = subprocess.run(_cmd(top, args), capture_output=True, timeout=TIMEOUT, env=_env())
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        return bounded_run.run(cmd, f"git {args[0]}", timeout=TIMEOUT, env=_env(), sink=sink, keep_stderr=True)
+    except (OSError, ValueError) as exc:
         raise Refused(f"git {args[0]} could not run: {exc}") from None
-    if done.returncode != 0:
-        raise Refused(f"git {args[0]} exited {done.returncode}: {done.stderr.decode(errors='replace').strip()}")
-    return done.stdout
 
 
-def _git_into(top, h, *args):
-    """Stream a git command's output into the hash `h`, never holding it whole; a timer ends it at the
-    deadline, which is then an error."""
-    try:
-        proc = subprocess.Popen(_cmd(top, args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                stdin=subprocess.DEVNULL, env=_env())   # deadline: the timer below
-    except OSError as exc:
-        raise Refused(f"git {args[0]} could not run: {exc}") from None
-    timer = threading.Timer(TIMEOUT, proc.kill)
-    timer.start()
-    err = []
-    drain = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
-    drain.start()
-    try:
-        while chunk := proc.stdout.read(CHUNK):
-            h.update(chunk)
-        rc = proc.wait()
-        drain.join()
-    finally:
-        timer.cancel()
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+def _git(top, *args, sink=None):
+    rc, out, err = _run(top, args, sink)
     if rc != 0:
-        raise Refused(f"git {args[0]} exited {rc}: {b''.join(err).decode(errors='replace').strip()}")
+        raise Refused(f"git {args[0]} exited {rc}: {err.decode(errors='replace').strip()}")
+    return out
 
 
 def _top():
-    try:
-        done = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
-                              timeout=TIMEOUT, env=_env())
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise Refused(f"the work tree could not be found: {exc}") from None
-    if done.returncode != 0 or not done.stdout.strip():
+    rc, out, _err = _run("", ("rev-parse", "--show-toplevel"))
+    if rc != 0 or not out.strip():
         raise Refused("not inside a git work tree")
-    return os.path.realpath(done.stdout.rstrip("\n"))
+    return os.path.realpath(os.fsdecode(out.rstrip(b"\n")))
 
 
 def _scope(top, exclude):
@@ -116,21 +89,48 @@ def _status(top, scope):
     return raw, [rec[3:] for rec in raw.split(b"\0") if rec[:3] == b"?? "]
 
 
-def _entry(top, rel):
-    """(record, note) for one untracked entry, read without following a link and without opening anything but
-    a regular file. A regular file is read to the size it had when opened and refused if it changed meanwhile,
-    so a file still being written can neither stall the read nor be half-read. `note` describes a non-file for
-    the reviewer, or is None."""
-    path = os.path.join(os.fsencode(top), rel)
+def _parent(top_fd, rel):
+    """(descriptor of the directory holding `rel`, its last name), reached one component at a time from the
+    checkout's own descriptor and never through a link: a directory replaced by a link after the status walk
+    refuses instead of leading the read outside the checkout."""
+    *dirs, name = rel.split(b"/")
+    fd = os.dup(top_fd)
     try:
-        st = os.lstat(path)
+        for part in dirs:
+            step = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd)
+            fd = step
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, name
+
+
+def _entry(top_fd, rel):
+    """(record, note) for one untracked entry, read without following a link (the entry's own, or any
+    directory above it) and without opening anything but a regular file. A regular file is read to the size it
+    had when opened and refused if it changed meanwhile, so a file still being written can neither stall the
+    read nor be half-read. `note` describes a non-file for the reviewer, or is None."""
+    try:
+        pfd, name = _parent(top_fd, rel)
+    except OSError as exc:
+        raise Refused(f"the untracked entry {os.fsdecode(rel)} could not be reached: {exc.strerror}") from None
+    try:
+        return _entry_in(pfd, name, rel)
+    finally:
+        os.close(pfd)
+
+
+def _entry_in(pfd, name, rel):
+    try:
+        st = os.stat(name, dir_fd=pfd, follow_symlinks=False)
         if stat.S_ISLNK(st.st_mode):
-            target = os.readlink(path)
+            target = os.readlink(name, dir_fd=pfd)
             return b"L\0" + target, f"a symbolic link to {shown(target)}: review the link text, not what it points at"
         if not stat.S_ISREG(st.st_mode):
             kind = KINDS.get(stat.S_IFMT(st.st_mode), "special file")
             return b"T\0" + str(stat.S_IFMT(st.st_mode)).encode(), f"a {kind}, not a file: nothing to read"
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=pfd)
         try:
             opened = os.fstat(fd)
             if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
@@ -153,31 +153,38 @@ def _entry(top, rel):
 
 
 def _head(top):
-    """What the tracked changes are taken against: HEAD, or the empty tree while HEAD names a branch with no
-    commit yet (a new repository). A HEAD that names nothing readable refuses."""
-    for args, answer in ((("rev-parse", "-q", "--verify", "HEAD^{commit}"), "HEAD"),
-                         (("symbolic-ref", "-q", "HEAD"), EMPTY_TREE)):
-        try:
-            done = subprocess.run(_cmd(top, args), capture_output=True, timeout=TIMEOUT, env=_env())
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise Refused(f"HEAD could not be read: {exc}") from None
-        if done.returncode == 0:
-            return answer
+    """The commit the tracked changes are taken against: HEAD's object id, or the empty tree while HEAD names
+    a branch with no commit yet (a new repository). A HEAD that names nothing readable refuses."""
+    rc, out, _err = _run(top, ("rev-parse", "-q", "--verify", "HEAD^{commit}"))
+    if rc == 0:
+        return out.decode("ascii", "replace").strip()
+    rc, _out, _err = _run(top, ("symbolic-ref", "-q", "HEAD"))
+    if rc == 0:
+        return EMPTY_TREE
     raise Refused("HEAD names no commit and no branch")
 
 
 def _fingerprint(top, scope, status):
-    """(digest, [(path, note)] for the untracked entries)."""
+    """(digest, HEAD's object id, [(path, note)] for the untracked entries). A clean status has no tracked
+    change, so no patch is taken."""
     h = hashlib.sha256()
-    _git_into(top, h, "diff", _head(top), "--binary", "--no-ext-diff", "--no-textconv", "--no-renames", *scope)
+    head = _head(top)
     raw, untracked = status
+    if raw:
+        _git(top, "diff", head, "--binary", "--no-ext-diff", "--no-textconv", "--no-renames", *scope,
+             sink=h.update)
     h.update(raw)
     notes = []
-    for rel in untracked:
-        record, note = _entry(top, rel)
-        h.update(rel + b"\0" + record + b"\0")
-        notes.append((rel, note))
-    return h.hexdigest(), notes
+    if untracked:
+        top_fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            for rel in untracked:
+                record, note = _entry(top_fd, rel)
+                h.update(rel + b"\0" + record + b"\0")
+                notes.append((rel, note))
+        finally:
+            os.close(top_fd)
+    return h.hexdigest(), head, notes
 
 
 def snapshot(exclude=""):
@@ -187,15 +194,19 @@ def snapshot(exclude=""):
 
 
 def prepare(base, head, exclude=""):
-    """(digest, sorted covered paths, [(untracked path, note)]) from one status walk."""
+    """(digest, sorted covered paths, [(untracked path, note)]) from one status walk. The working tree's own
+    changes are listed against `head` (the candidate); when that is HEAD and the status is clean there are
+    none to list."""
     top = _top()
     scope = _scope(top, exclude)
     status = _status(top, scope)
-    digest, notes = _fingerprint(top, scope, status)
+    digest, current, notes = _fingerprint(top, scope, status)
     found = {rel for rel, _note in notes}
-    for args in (("diff", "--name-only", "-z", "--no-renames", base, head),
-                 ("diff", "--name-only", "-z", "--no-renames", head)):
-        found.update(p for p in _git(top, *args, *scope).split(b"\0") if p)
+    found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", base, head, *scope).split(b"\0")
+                 if p)
+    if status[0] or head != current:
+        found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", head, *scope).split(b"\0")
+                     if p)
     return digest, sorted(found), sorted(notes)
 
 

@@ -257,7 +257,7 @@ if [ "$PIN_KIND" = "1" ]; then
     CAND_WORK="$(python3 "$CAND_TOOL" prepare --base "$BASE_OID" --head "$CAND_HEAD" --exclude "$REVIEWS_DIR" \
             --out "$PATHS_FILE" --untracked-out "$UNTRACKED_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the working tree or the changed files of this pass could not be read (reason above)" >&2; exit 2; }
-    PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file "$PATHS_FILE")" || {
+    PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file0 "$PATHS_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
     if [ -n "$OWED_BASE" ]; then
         PROMPT="$PROMPT
@@ -362,7 +362,7 @@ if [ -n "$LOG_FILE" ]; then
     PASS_CHECKED=false; PASS_HIGHEST=""
     if [ "$PIN_KIND" = "1" ]; then PASS_CHECKED=true; fi
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file "$PATHS_FILE")"
+        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file0 "$PATHS_FILE")"
         case "$?" in
             0) ;;
             1) rc=3
