@@ -1071,3 +1071,20 @@ def test_the_round_lookup_asks_the_manifest_for_the_round_alone(tmp_path, monkey
     assert asked == [("round",), tuple(scg._PASS_KINDS)], asked
     src = pathlib.Path(scg.__file__).read_text()
     assert '_pass_receipts(root, todo, required_section, ("round",))' in src
+
+
+
+def test_a_suspend_during_a_gate_command_ends_its_wait_on_resume(monkeypatch):
+    """A gate command stalls and the host sleeps past its whole budget (the elapsed-time clock jumps, the
+    monotonic one does not): the wait gives up within a slice of the resume, never after the budget again."""
+    import threading
+    import time
+
+    import pytest
+    real, skew = scg._clock, [0.0]
+    monkeypatch.setattr(scg, "_clock", lambda: real() + skew[0])
+    threading.Timer(0.5, lambda: skew.__setitem__(0, 120.0)).start()
+    began = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        scg._proc.run(["sleep", "30"], timeout=10)
+    assert time.monotonic() - began < 3, time.monotonic() - began

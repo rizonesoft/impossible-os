@@ -2745,3 +2745,39 @@ def test_every_git_command_the_dispatcher_runs_is_bounded(tmp_path, monkeypatch)
     done, prompt = _dispatch(tmp_path, "completion", "x")
     assert done.returncode == 2 and prompt == "", (done.returncode, done.stderr[-400:])
     assert time.monotonic() - began < 20, time.monotonic() - began
+
+
+
+def test_a_transcript_cut_while_its_verdict_is_read_is_unreadable_never_an_older_verdict(tmp_path, monkeypatch):
+    """The transcript holds two reviews, the newer at P2; it is cut back to the first while it is read: the
+    verdict reader refuses it, never returning the earlier HIGHEST: none."""
+    import os
+    heading = "# Codex Adversarial Review\n"
+    first = heading + "old\nHIGHEST: none\n"
+    log = tmp_path / "r.out"
+    log.write_text(first + "x" * (3 << 20) + "\n" + heading + "new\nHIGHEST: P2\n")
+    assert rp.highest(rp.read_final_response(log)) == "P2"
+    real, calls = os.read, [0]
+
+    def read(fd, n):
+        calls[0] += 1
+        if calls[0] == 2:
+            os.truncate(log, len(first))                   # cut after the first chunk was read
+        return real(fd, n)
+    monkeypatch.setattr(os, "read", read)
+    with pytest.raises(OSError):
+        rp.read_final_response(log)
+
+
+def test_a_status_that_cannot_be_read_never_steps_back_to_an_older_receipt(tmp_path, monkeypatch):
+    """The newer pass's published status cannot be read (EIO): its standing is unknown, so the status is
+    refused, and the checked receipt lookup refuses rather than answer with the older pass."""
+    import errno
+    rr = rp._review_result()
+    monkeypatch.setattr(rr, "read_status_file", lambda path: (None, OSError(errno.EIO, "Input/output error")))
+    with pytest.raises(rp.Refused):
+        rp.published_status(tmp_path / "r.out.done")
+    receipt = {"route": "codex-dispatch.sh", "pass_checked": True, "rc": 0, "head": "a" * 40,
+               "logFile": str(tmp_path / "r.out"), "done_file": True}
+    with pytest.raises(rp.Refused):
+        rp.receipt_complete(receipt)

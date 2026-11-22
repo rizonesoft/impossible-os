@@ -1571,8 +1571,19 @@ class _BoundedProcesses:
         proc = self._start(cmd, end, limit, cwd=cwd, env=env, stdin=subprocess.PIPE if input is not None else None,
                            stdout=stdout, stderr=stderr, text=text, errors=errors)
         try:
-            # The start (Popen waits for the exec) spent part of the budget: only what is left is waited.
-            out, err = proc.communicate(input, timeout=max(0.001, end - _clock()))
+            # The start (Popen waits for the exec) spent part of the budget: only what is left is waited, in
+            # slices of at most a second (communicate's own timeout does not count a suspend), the elapsed-time
+            # deadline read again after each. Input goes with the first call only, as communicate requires.
+            feed = input
+            while True:
+                left = end - _clock()
+                if left <= 0:
+                    raise subprocess.TimeoutExpired(cmd, limit)
+                try:
+                    out, err = proc.communicate(feed, timeout=min(1.0, max(0.001, left)))
+                    break
+                except subprocess.TimeoutExpired:
+                    feed = None
         except subprocess.TimeoutExpired:
             self._end(proc)
             raise subprocess.TimeoutExpired(cmd, limit) from None
@@ -2871,7 +2882,10 @@ def _receipt_complete(receipt: dict) -> bool:
         _review_pin_path(None)
         import review_pin
         _RECEIPT_COMPLETE = review_pin.receipt_complete
-    return _RECEIPT_COMPLETE(receipt)
+    try:
+        return _RECEIPT_COMPLETE(receipt)
+    except Exception:
+        return False                                   # fail-direction: a status that cannot be read credits nothing
 
 
 def _pin_issue(root: Path) -> str:

@@ -147,7 +147,9 @@ def _emit_through_writer(fd, data, until, cancel, late=True):
             until = min(until, cancel.at + 100)
         done, raw = os.waitpid(pid, os.WNOHANG)
         if done:
-            return os.waitstatus_to_exitcode(raw) == 0
+            # Seen ending only past the deadline (a suspend after the answer was fed to it): too late, as an
+            # answer that is still being written then would be.
+            return os.waitstatus_to_exitcode(raw) == 0 and now_cs() < until
         if now_cs() >= until:
             break
         time.sleep(0.01)
@@ -551,21 +553,46 @@ def _child_env():
     return env
 
 
+LAUNCH_GATE = 'IFS= read -r -n 1 -u 3 go; exec 3<&-; [ "$go" = g ] || exit 0; exec bash -c "$1"'
+
+
 def _launch(job, until, cancel=None):
     """Starts a job the broker handed over in a session of its own, its streams on /dev/null; it is this
-    supervisor's child only until this exits, and is never ended by it."""
+    supervisor's child only until this exits, and is never ended by it. The job runs only once this releases
+    it (one byte down a pipe it reads first, LAUNCH_GATE), and that happens only when no cancellation has
+    arrived: True when released, "cancelled" when a cancellation came during the start (the job runs nothing),
+    False when the start was not confirmed by the deadline."""
+    rd, wr = os.pipe()
+
     def spawn():
-        # LIFECYCLE-WAIVER: detaches a REVIEW on a host with no service manager; it does not relaunch or watch the session.
-        return os.posix_spawnp("bash", ["bash", "-c", job], _child_env(), setsid=True, file_actions=[
-            (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
-            (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
-            (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+        try:
+            # LIFECYCLE-WAIVER: detaches a REVIEW on a host with no service manager; it does not relaunch or watch the session.
+            return os.posix_spawnp("bash", ["bash", "-c", LAUNCH_GATE, "launch-gate", job], _child_env(),
+                                   setsid=True, file_actions=[
+                (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+                (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0),
+                (os.POSIX_SPAWN_DUP2, rd, 3)])
+        finally:
+            os.close(rd)
     # A start still held at the deadline is not this supervisor's to wait for, and its thread ends with this
     # process: whether a job will ever exist is unknown, so the failure is published through the exclusive
     # claim (a job that started and claimed first keeps its own result, and one that starts later finds the
     # result owned and runs nothing). The answer then names a result that is published either way.
-    started, _pid = _start(spawn, until, cancel)
-    return started
+    try:
+        started, _pid = _start(spawn, until, cancel)
+    except BaseException:
+        os.close(wr)
+        raise
+    try:
+        if not started:
+            return False                               # the gate: a job that starts now reads EOF and runs nothing
+        if cancel is not None and cancel.sig:
+            return "cancelled"                         # never released: the job runs nothing
+        os.write(wr, b"g")                             # one byte to an empty pipe: never blocks
+        return True
+    finally:
+        os.close(wr)
 
 
 class Cancel:
@@ -1058,6 +1085,11 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
                 print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
                 _publish(broker, 1, final, cancel)
                 return 1
+            if started == "cancelled":
+                print(f"[review-broker] cancelled while the job was started (exit {cancel.sig}); it was not "
+                      f"released and its result is recorded as {cancel.sig}", file=sys.stderr)
+                _publish(broker, cancel.sig, final, cancel)
+                return cancel.sig
             if not started:
                 print("[review-broker] the job's start was not confirmed by the deadline; its result is "
                       "recorded as failed unless the job claimed it first", file=sys.stderr)

@@ -2093,3 +2093,59 @@ def test_a_walk_cut_short_on_a_crowded_host_still_ends_the_attempt(tmp_path):
     else:
         os.kill(pid, signal.SIGKILL)
         raise AssertionError("the command outlived its teardown")
+
+
+
+def test_a_cancellation_during_the_fallback_start_releases_nothing(tmp_path, monkeypatch):
+    """SIGTERM lands inside the fallback job's spawn, before the child exists: the child is never released
+    (it reads EOF and runs nothing), _launch says so, and the broker publishes the cancellation."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    marker = tmp_path / "ran"
+    cancel = types.SimpleNamespace(sig=0, at=0)
+    real = os.posix_spawnp
+
+    def spawnp(*a, **k):
+        cancel.sig, cancel.at = 143, rl.now_cs()           # the signal arrives here, before the child exists
+        return real(*a, **k)
+    monkeypatch.setattr(rl.os, "posix_spawnp", spawnp)
+    assert rl._launch(f"touch {marker}", rl.now_cs() + 500, cancel) == "cancelled"
+    time.sleep(1)
+    assert not marker.exists(), "a cancelled start ran the job"
+    monkeypatch.setattr(rl.os, "posix_spawnp", real)
+    broker = types.SimpleNamespace(read=lambda: None, step="answered", response='{"logFile": 1}',
+                                   job="true", log="r.out", prompt="r.prompt", owns=True, claimed=True)
+    late = types.SimpleNamespace(sig=0, at=0)
+    published, delivered = [], []
+
+    def launch(job, until, c=None):
+        late.sig, late.at = 143, rl.now_cs()               # cancelled while the job was being started
+        return "cancelled"
+    monkeypatch.setattr(rl, "_launch", launch)
+    monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
+    monkeypatch.setattr(rl, "_publish", lambda b, status, *a, **k: published.append(status) or True)
+    rc = rl.finish_broker(broker, 0, False, False, rl.now_cs() + 500, late)
+    assert rc == 143 and published == [143] and delivered == [], (rc, published, delivered)
+
+def test_a_writer_seen_ending_only_past_the_deadline_is_not_a_delivery(tmp_path, monkeypatch):
+    """The host suspends after the answer is fed to the writer, and the writer is seen ending only past the
+    deadline: the delivery is a failure, never success with the answer late."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    out = os.open(tmp_path / "answer", os.O_WRONLY | os.O_CREAT, 0o644)
+    real_now, skew = rl.now_cs, [0]
+    monkeypatch.setattr(rl, "now_cs", lambda: real_now() + skew[0])
+    real_waitpid = os.waitpid
+
+    def waitpid(pid, flags):
+        r = real_waitpid(pid, 0)                           # the writer has ended
+        skew[0] = 10_000                                   # and is seen only after a long suspend
+        return r
+    monkeypatch.setattr(rl.os, "waitpid", waitpid)
+    try:
+        assert rl._emit_through_writer(out, b"answer\n", real_now() + 500, None) is False
+    finally:
+        os.close(out)

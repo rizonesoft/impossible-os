@@ -525,10 +525,14 @@ def _review_result():
 
 
 def published_status(path):
-    """The status a .done file publishes, or None (none, damaged, or unreadable), parsed by the one parser
-    the waiter and the recovery use (review_result.read_status_file), so no reader credits bytes another
-    reader would replace."""
-    return _review_result().read_status_file(str(path))[0]
+    """The status a .done file publishes, or None (none or damaged), parsed by the one parser the waiter and
+    the recovery use (review_result.read_status_file), so no reader credits bytes another reader would
+    replace. A status that is there but cannot be read is Refused: what it holds is unknown, so a range read
+    never steps past it to an older receipt."""
+    found, error = _review_result().read_status_file(str(path))
+    if error is not None:
+        raise Refused(f"{path} cannot be read ({error}), so whether its pass counts is unknown")
+    return found
 
 
 FINAL_RESPONSE_MAX = 8 << 20   # bytes of the final response kept; a review is far shorter
@@ -536,15 +540,20 @@ FINAL_RESPONSE_MAX = 8 << 20   # bytes of the final response kept; a review is f
 
 def _transcript_lines(path):
     """A transcript's lines, streamed a chunk at a time from a regular file opened without blocking (a FIFO
-    or device that replaced it fails at once with OSError); a line is cut at FINAL_RESPONSE_MAX bytes."""
+    or device that replaced it fails at once with OSError); a line is cut at FINAL_RESPONSE_MAX bytes. The
+    file is read to its size at open: one cut shorter while it is read raises OSError (unreadable), since what
+    is left could end at an earlier review heading and read as a complete, older verdict."""
+    import errno
     import os
     fd = _review_result().open_regular(str(path), os.O_RDONLY)
     try:
+        left = os.fstat(fd).st_size
         line = b""
-        while True:
-            chunk = os.read(fd, 1 << 20)
+        while left > 0:
+            chunk = os.read(fd, min(1 << 20, left))
             if not chunk:
-                break
+                raise OSError(errno.ENODATA, f"{path} shrank while it was read")
+            left -= len(chunk)
             parts = chunk.split(b"\n")
             for part in parts[:-1]:
                 yield (line + part)[:FINAL_RESPONSE_MAX].decode("utf-8", "replace")
