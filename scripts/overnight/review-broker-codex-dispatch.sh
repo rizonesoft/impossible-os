@@ -45,6 +45,25 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 PROMPT="$1"
+# Every value placed in the detached command is shell-quoted by printf %q. A
+# path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
+# which inside hand-written single quotes ends the quoting.
+q() { printf '%q' "$1"; }
+LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh"
+# A caller's hard limit (CODEX_REVIEW_MAX_SECS) is one absolute deadline, taken at entry: the outage check, the
+# candidate read, the service manager's submission and the detached job each run under review-runtime-limit.sh
+# until it, so no step before the review is given back.
+LIMIT_END=""
+if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
+  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
+  read -r LIMIT_UP _ < /proc/uptime
+  LIMIT_END=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
+fi
+# One command string, under the caller's limit when there is one (124: the limit ended it).
+limited() {
+  if [[ -n "$LIMIT_END" ]]; then bash "$LIMITER" --until-cs "$LIMIT_END" "$1"; else bash -c "$1"; fi
+}
 # Prompt parsing shared by the three dispatchers, in memory (no pipeline).
 # shellcheck source=scripts/lib/review-prompt.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/review-prompt.sh"
@@ -79,7 +98,11 @@ PASS_WRAPPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/codex-dispatch.sh
 # a leg succeeds or 20 minutes pass. Override: CODEX_OUTAGE_OVERRIDE=1.
 if [[ "${CODEX_OUTAGE_OVERRIDE:-}" != "1" ]]; then
     _OUTAGE_RC=0
-    _OUTAGE_WHY="$(python3 "$(dirname "$0")/codex-outage-check.py" --manifest "${BROKER_MANIFEST:-.claude/overnight/reviews/manifest.jsonl}")" || _OUTAGE_RC=$?
+    _OUTAGE_WHY="$(limited "python3 $(q "$(dirname "$0")/codex-outage-check.py") --manifest $(q "${BROKER_MANIFEST:-.claude/overnight/reviews/manifest.jsonl}")")" || _OUTAGE_RC=$?
+    if [[ $_OUTAGE_RC -eq 124 && -n "$LIMIT_END" ]]; then
+        echo "[$SELF_NAME] BLOCK -- the outage check took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
+        exit 2
+    fi
     if [[ $_OUTAGE_RC -eq 75 ]]; then
         {
             echo "[$SELF_NAME] BLOCK -- REFUSED, the Codex backend looks DOWN: $_OUTAGE_WHY"
@@ -116,28 +139,9 @@ UNIT="codex-rev-${KIND}-${STAMP}-$$"
 # the job: the same reader the dispatcher checks against (scripts/review_candidate.py), leaving out the reviews
 # directory the detached wrapper is given below, so both digests cover one scope; a commit or an index change
 # during the read refuses, so the three name one candidate.
-# Every value placed in the detached command is shell-quoted by printf %q. A
-# path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
-# which inside hand-written single quotes ends the quoting.
-q() { printf '%q' "$1"; }
-LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh"
-# A caller's hard limit (CODEX_REVIEW_MAX_SECS) is one absolute deadline, taken here: the candidate read below and
-# the detached job each run under review-runtime-limit.sh until it, so neither the read (a slow git, a large
-# untracked file) nor the wait for the service manager is given back.
-LIMIT_END=""
-if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
-  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
-    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
-  read -r LIMIT_UP _ < /proc/uptime
-  LIMIT_END=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
-fi
 READ_CANDIDATE="python3 $(q "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py") launch --exclude $(q "$PWD/$MANIFEST_DIR")"
 READ_RC=0
-if [[ -n "$LIMIT_END" ]]; then
-  TREE_LAUNCH="$(bash "$LIMITER" --until-cs "$LIMIT_END" "$READ_CANDIDATE")" || READ_RC=$?
-else
-  TREE_LAUNCH="$(bash -c "$READ_CANDIDATE")" || READ_RC=$?
-fi
+TREE_LAUNCH="$(limited "$READ_CANDIDATE")" || READ_RC=$?
 if [[ "$READ_RC" == 124 ]]; then
   echo "[review-broker] BLOCK -- reading the candidate took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2; exit 2
 elif [[ "$READ_RC" != 0 ]]; then
@@ -194,20 +198,26 @@ python3 "$MANIFEST_LINE" --append "$MANIFEST" \
   rm -f "$PROMPT_FILE"
   exit 1
 }
-# LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above
-# PROMPT_FILE); it does not relaunch or watch the session.
-if systemd-run --user --collect "--unit=$UNIT" \
-     "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
-     "--setenv=PATH=$PATH" --same-dir \
-     /bin/bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT" \
-     >/dev/null 2>&1; then
+JOB="$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT"
+# LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above PROMPT_FILE); it does not relaunch or watch the session.
+SUBMIT="systemd-run --user --collect $(q "--unit=$UNIT") $(q "--setenv=CODEX_REVIEWER_DISPATCH=1") $(q "--setenv=HOME=$HOME") $(q "--setenv=PATH=$PATH") --same-dir /bin/bash -c $(q "$JOB") >/dev/null 2>&1"
+SUBMIT_RC=0
+limited "$SUBMIT" || SUBMIT_RC=$?
+if [[ "$SUBMIT_RC" == 0 ]]; then
   :
+elif [[ "$SUBMIT_RC" == 124 && -n "$LIMIT_END" ]]; then
+  # The limit ended the submission itself. Whether the unit was created is unknown, so no second copy is
+  # started: a unit that exists is stopped (its own limiter would end it at once anyway), and the attempt is
+  # recorded as one the limit ended, as the job would have recorded it.
+  timeout 5 systemctl --user stop "$UNIT" >/dev/null 2>&1 || true   # fail-direction: a unit never made has nothing to stop
+  echo "Turn completed (rc=124)" >> "$LOG_FILE"
+  echo 124 > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
+  rm -f "$PROMPT_FILE"
 else
   # Non-systemd fallback: setsid detach (survives plain shells; NOT a
   # systemd cgroup -- callers inside a service should have systemd-run).
   # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
-  setsid bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT" \
-    < /dev/null >/dev/null 2>&1 &
+  setsid bash -c "$JOB" < /dev/null >/dev/null 2>&1 &
   :
 fi
 

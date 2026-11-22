@@ -13,6 +13,8 @@ import importlib
 import json
 import os
 import pathlib
+import shutil
+import time
 import shlex
 import subprocess
 import sys
@@ -394,3 +396,22 @@ def test_two_launched_legs_after_a_refused_one_are_each_stamped_and_name_no_sing
     assert state["review_kind"] == "bundle" and state["log_file"] == "", state
     e = stamps.get(TODO, {})
     assert isinstance(e.get("adversarial"), int) and isinstance(e.get("perf"), int), e
+
+
+def test_the_limit_ends_a_command_that_has_not_yet_started_its_group(tmp_path):
+    """Until the child runs setsid its group does not exist; the limit still ends it, and it never runs."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("setsid")
+    (bindir / "setsid").write_text(f'#!/bin/sh\nsleep 3\nexec "{real}" "$@"\n')
+    (bindir / "setsid").chmod(0o755)
+    ran = tmp_path / "ran"
+    err = tmp_path / "err"
+    began = time.monotonic()
+    with open(err, "w") as fh:                         # files, not pipes: the shim's own sleep would hold a pipe
+        done = subprocess.run(["bash", str(LIMIT), "1", f"touch {ran}; sleep 30"], stdout=subprocess.DEVNULL,
+                              stderr=fh, timeout=20, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert done.returncode == 124 and time.monotonic() - began < 2.5, err.read_text()
+    assert "No such file" not in err.read_text(), err.read_text()
+    time.sleep(3)
+    assert not ran.exists()

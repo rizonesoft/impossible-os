@@ -252,6 +252,12 @@ prune_legacy_symlinks() {
     # it. Ours is then renamed into a fresh directory and judged again there, so a hook another writer put
     # at that name in between is put back, never removed, and no earlier saved entry can be overwritten.
     [ -L "$target" ] || return 0
+    # The entry's own identity (the link itself, not what it names) and its text, so the entry moved aside
+    # below is known to be the one judged: a relative link resolves differently once moved, so it is not
+    # judged again there, and the text stands in where a freed inode number is given to a replacement.
+    local id
+    id="$(stat -c '%d:%i' -- "$target")/$(readlink -- "$target")" \
+        || { echo "The legacy link $target could not be read: left in place" >&2; return 1; }
     local ours=0
     legacy_link_is_ours "$target" || ours=$?
     if [ "$ours" = 2 ]; then
@@ -267,8 +273,12 @@ prune_legacy_symlinks() {
             echo "The legacy link $target could not be moved aside (see above): it is left in place and still runs" >&2
             return 1
         else
-            if [ -L "$aside/pre-push" ] && legacy_link_is_ours "$aside/pre-push"; then
-                rm -f -- "$aside/pre-push"
+            if [ -L "$aside/pre-push" ] \
+                && [ "$(stat -c '%d:%i' -- "$aside/pre-push" 2>/dev/null)/$(readlink -- "$aside/pre-push")" = "$id" ]; then
+                rm -f -- "$aside/pre-push" || {
+                    echo "The legacy link could not be deleted; it stays, inactive, at $aside/pre-push" >&2
+                    return 1
+                }
                 removed=1
             else
                 mv -n -T -- "$aside/pre-push" "$target" 2>/dev/null || true   # fail-direction: checked below

@@ -488,7 +488,7 @@ def test_a_hook_put_in_place_of_the_legacy_link_during_cleanup_survives(tmp_path
     env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env=env)
-    assert flag.exists() and not link.is_symlink() and link.read_text() == "replacement\n", r
+    assert flag.exists() and not link.is_symlink() and link.exists() and link.read_text() == "replacement\n", r
 
 
 def test_the_doctor_leaves_an_inherited_global_value_alone(tmp_path):
@@ -623,6 +623,47 @@ def test_a_legacy_link_that_cannot_be_moved_fails_the_removal_and_stays(tmp_path
                        timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
     assert r.returncode != 0 and "left in place" in r.stderr and link.is_symlink(), r
     assert not list(link.parent.glob(".install-hooks.*"))
+
+
+def test_a_relative_legacy_link_is_removed(tmp_path):
+    """A relative link resolves elsewhere once moved, so the entry moved aside is known by its own identity."""
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to("../../scripts/hooks/pre-push")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0 and not link.is_symlink() and not link.exists(), r
+    assert not list(link.parent.glob(".install-hooks.*"))
+
+
+def test_a_legacy_link_that_cannot_be_deleted_fails_the_removal(tmp_path):
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("rm")
+    (bindir / "rm").write_text(f'#!/bin/sh\ncase " $* " in *"/.install-hooks."*"/pre-push"*) exit 1 ;; esac\n'
+                               f'exec "{real}" "$@"\n')
+    (bindir / "rm").chmod(0o755)
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert r.returncode != 0 and "could not be deleted" in r.stderr and "Pruned" not in r.stdout, r
+
+
+def test_the_doctor_names_every_file_when_one_name_holds_another(tmp_path):
+    root = _plain_repo(tmp_path)
+    plain = tmp_path / "e"
+    holding = Path(f"{tmp_path}/d, {plain}")              # its name ends with ", " and then the other's name
+    holding.parent.mkdir(parents=True)
+    for f in (holding, plain):
+        f.write_text("[core]\n\thooksPath = /custom\n")
+    _cfg(root, "--local", "--add", "include.path", str(holding))
+    _cfg(root, "--local", "--add", "include.path", str(plain))
+    fix = _doctor(root, _env())["fix"]
+    assert fix.count(str(plain)) == 2, fix                # once inside the longer name, once on its own
 
 
 def test_a_failed_worktree_listing_fails_the_removal(tmp_path):

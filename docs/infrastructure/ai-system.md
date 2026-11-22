@@ -387,7 +387,7 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ## Autonomous-Agent Boundary Policy
 
-Third-party autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs on their own) are **refused** here. The operator-started lanes in [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set) are not such agents: the operator starts and stops each one, and each commits only through the repository's own gates and review. Before the lanes (2026-11-20), Impossible OS accepted commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Only operator-started lanes commit.") enforced as repo policy rather than implied: a third-party agent is not a lane.
+Third-party autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs on their own) are **refused** here. The operator-started lanes in [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set) are not such agents: the operator starts and stops each one, and each lane that commits (neon-b only writes reports) does so only through the repository's own gates and review. Before the lanes (2026-11-20), Impossible OS accepted commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Only operator-started lanes commit.") enforced as repo policy rather than implied: a third-party agent is not a lane.
 
 ### Why
 

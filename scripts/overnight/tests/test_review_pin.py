@@ -398,6 +398,8 @@ def test_a_reconciliation_names_its_repair_and_refuses_without_one(tmp_path):
     named = f"The newest repair runs from the last reviewed candidate, {last}, to the repaired candidate, HEAD {head}"
     assert named in prompt and prompt.index(named) < prompt.index("- repair-adversarial: ")
     assert f"then review the whole section: git diff {start} HEAD" in prompt     # the whole section, not the repair
+    # A staged change can undo the committed repair, so the repair, the index and the working files are each shown.
+    assert f"the committed repair (git diff {last} {head})" in prompt and f"git diff --cached {head}" in prompt
     receipt = _receipt("completion", last, base=start) + "\n"
     (reviews / "manifest.jsonl").write_text(receipt)                  # the pass above appended its own record
     done, _ = _dispatch(tmp_path, "reconciliation", full, base=last, reviews_dir=reviews)
@@ -1842,9 +1844,33 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
     long = "x" * (1 << 18)
     m.write_text("first\n" + long + "\nnext\n\nlast")
     assert list(rp._newest_first(m, block=7)) == ["last", "next", long, "first"]
-    began = time.monotonic()
-    assert list(rp._newest_first(m, block=64))[2] == long
-    assert time.monotonic() - began < 0.15
+    read = []
+    real_open = open
+
+    class Counted:
+        def __init__(self, fh):
+            self.fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.fh.close()
+
+        def seek(self, *a):
+            return self.fh.seek(*a)
+
+        def read(self, n):
+            data = self.fh.read(n)
+            read.append(len(data))
+            return data
+
+    rp.open = lambda *a, **k: Counted(real_open(*a, **k))
+    try:
+        assert list(rp._newest_first(m, block=64))[2] == long
+    finally:
+        del rp.open
+    assert sum(read) == m.stat().st_size                    # every byte read once: nothing rescanned
 
 
 def _broker(repo, env, timeout=60):
@@ -1901,8 +1927,11 @@ def test_a_detached_job_started_after_the_callers_deadline_runs_nothing(tmp_path
                     "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
            "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    import time
+    began = time.monotonic()
     done = _broker(repo, env)
-    assert done.returncode == 0, done.stderr
+    took = time.monotonic() - began
+    assert done.returncode == 0 and took < 3.8, (took, done.stderr)    # the submission is held to the limit too
     status, text = _done_status(done.stdout)
     assert status == "124" and not ran.exists(), text
 
@@ -1954,3 +1983,47 @@ def test_the_prompt_shows_the_index_and_the_working_files_apart(tmp_path):
     assert subprocess.run(["git", "-C", str(repo), "diff", "HEAD", "--quiet"], timeout=30).returncode == 0
     _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
     assert "git diff --cached" in prompt and "(git diff)" in prompt, prompt
+
+
+def test_a_slow_outage_check_is_held_to_the_callers_limit(tmp_path):
+    import os
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    fifo = tmp_path / "manifest.jsonl"
+    os.mkfifo(fifo)                                    # opening it for reading waits for a writer that never comes
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(tmp_path / "c.js"), "REVIEW_BASE": "HEAD",
+           "BROKER_MANIFEST": str(fifo), "CODEX_REVIEW_MAX_SECS": "2"}
+    env.pop("CODEX_OUTAGE_OVERRIDE", None)
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    try:
+        done = _broker(repo, env, timeout=20)
+    finally:
+        try:                                           # release a reader the broker left behind
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+        except OSError:                                # fail-direction: no reader is left to release
+            pass
+    assert done.returncode == 2 and time.monotonic() - began < 6, done.stderr
+    assert "outage check took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
+
+
+def test_a_chmod_while_an_untracked_file_is_read_refuses(tmp_path, monkeypatch):
+    import os
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    script = repo / "u.sh"
+    script.write_text("echo hi\n")
+    real_read = os.read
+
+    def read(fd, n):
+        try:
+            name = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            name = ""
+        if name.endswith("/u.sh"):
+            os.chmod(script, 0o755)                    # only the mode moves: size, mtime and inode stay
+        return real_read(fd, n)
+    monkeypatch.setattr(rc.os, "read", read)
+    with pytest.raises(rc.Refused, match="changed while it was read"):
+        rc.snapshot()

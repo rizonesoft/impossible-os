@@ -12,8 +12,9 @@
 # stops supervising, and a descendant that ignores TERM keeps running. Time is
 # read from /proc/uptime, which a wall-clock step does not move.
 set -u
-# Hundredths of a second since boot (/proc/uptime), so a deadline is kept to a fraction of a second.
-uptime_cs() { local u; read -r u _ < /proc/uptime; echo $(( ${u%.*} * 100 + 10#${u#*.} )); }
+# Hundredths of a second since boot (/proc/uptime), so a deadline is kept to a fraction of a second. Set in
+# NOW rather than printed, so a poll forks nothing to read the clock.
+now_cs() { local u; read -r u _ < /proc/uptime; NOW=$(( ${u%.*} * 100 + 10#${u#*.} )); }
 usage() {
     echo "usage: review-runtime-limit.sh SECONDS COMMAND | --until-cs UPTIME_CENTISECONDS COMMAND" >&2
     exit 2
@@ -25,7 +26,8 @@ if [ "${1:-}" = "--until-cs" ]; then
     [ $# -eq 3 ] && [[ "${2:-}" =~ ^[0-9]+$ ]] && [ -n "${3:-}" ] || usage
     end=$2
     cmd=$3
-    left=$(( end - $(uptime_cs) ))
+    now_cs
+    left=$(( end - NOW ))
     if [ "$left" -le 0 ]; then
         echo "review-runtime-limit: the deadline had passed before the command started; nothing was run" >&2
         exit 124
@@ -36,7 +38,8 @@ else
     if ! [[ "$max" =~ ^[1-9][0-9]*$ ]] || [ -z "$cmd" ] || [ $# -ne 2 ]; then
         usage
     fi
-    end=$(( $(uptime_cs) + max * 100 ))
+    now_cs
+    end=$(( NOW + max * 100 ))
     left=$(( max * 100 ))
 fi
 # TERM a grace before the end (30 s, or a quarter of a limit up to 120 s, at least a tenth of a second), KILL at it.
@@ -53,22 +56,26 @@ pid=$!
 
 alive() {
     local st
-    read -r _ _ st _ < "/proc/$pid/stat" 2>/dev/null || return 1
+    read -r _ _ st _ 2>/dev/null < "/proc/$pid/stat" || return 1     # gone: nothing to read
     [ "$st" != "Z" ]
 }
 
 term_at=$(( end - grace ))
 limited=0
+# Until the child has run setsid its group does not exist and a signal to it fails; the child itself is then
+# signalled, which ends it before it can start anything (it has no children of its own until setsid).
+signal_job() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
 while alive; do
-    now=$(uptime_cs)
+    now_cs
+    now=$NOW
     if [ "$now" -ge "$end" ]; then
         limited=1          # the limit ended it, even when TERM's window was missed
-        kill -KILL -- "-$pid" 2>/dev/null
+        signal_job KILL
         break
     fi
     if [ "$now" -ge "$term_at" ] && [ "$limited" -eq 0 ]; then
         limited=1
-        kill -TERM -- "-$pid" 2>/dev/null
+        signal_job TERM
     fi
     sleep 0.1                # the limit is kept to a tenth of a second
 done

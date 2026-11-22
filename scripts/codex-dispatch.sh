@@ -309,7 +309,7 @@ $(wc -l < "$UNTRACKED_FILE") untracked entries are part of the candidate and app
             echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history (a reset or rebase left its receipt behind); dispatch the completion again" >&2; exit 2; }
         PROMPT="$PROMPT
 
-The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the index (git diff --cached $REPAIR_OID) and the working files against it (git diff). Look there first, then review the whole section: git diff $BASE_OID HEAD"
+The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD: the committed repair (git diff $REPAIR_OID $REPAIR_HEAD), the index against it (git diff --cached $REPAIR_HEAD) and the working files against the index (git diff), each shown, since a staged change can undo a committed one. Look there first, then review the whole section: git diff $BASE_OID HEAD"
     fi
     PROMPT="$PROMPT
 

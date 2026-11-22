@@ -252,11 +252,14 @@ check_hooks() {
                 # One include-expanded read gives the count and the files; the scope's own count says whether
                 # unsetting it is enough.
                 local own entries=() origin="" o i
+                local -A seen=()
                 own=$(git -C "$REPO_ROOT" config "--$scope" --no-includes -z --get-all core.hooksPath 2>/dev/null | tr -cd '\0' | wc -c)
                 mapfile -d '' -t entries < <(git -C "$REPO_ROOT" config "--$scope" --includes -z --show-origin --get-all core.hooksPath 2>/dev/null)
                 for (( i = 0; i < ${#entries[@]}; i += 2 )); do
                     o="${entries[i]#file:}"
-                    case ", $origin, " in *", $o, "*) ;; *) origin="${origin:+$origin, }$o" ;; esac
+                    [ -n "${seen[$o]+x}" ] && continue        # by exact name: a name holding ", " is its own
+                    seen[$o]=1
+                    origin="${origin:+$origin, }$(printf '%q' "$o")"
                 done
                 if [ "$own" -gt 0 ] && [ "$own" -eq $(( ${#entries[@]} / 2 )) ]; then
                     if [ "$scope" = "worktree" ] && git -C "$REPO_ROOT" config --local --includes --get-all core.hooksPath >/dev/null 2>&1; then

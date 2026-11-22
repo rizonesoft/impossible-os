@@ -157,13 +157,17 @@ def _entry_in(pfd, name, rel):
             after = os.fstat(fd)
         finally:
             os.close(fd)
-        if left or (after.st_size, after.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns):
+        # The mode is part of the record (the execute bit), so a chmod meanwhile changes the candidate too.
+        if left or (after.st_size, after.st_mtime_ns, after.st_mode) != (opened.st_size, opened.st_mtime_ns,
+                                                                         opened.st_mode):
             raise Refused(f"{os.fsdecode(rel)} changed while it was read")
         # An editor that saves by renaming a new file over this one leaves the open descriptor on the old
         # bytes: the name must still lead to the file that was read.
         now = os.stat(name, dir_fd=pfd, follow_symlinks=False)
         if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
             raise Refused(f"{os.fsdecode(rel)} was replaced while it was read")
+        if now.st_mode != opened.st_mode:
+            raise Refused(f"{os.fsdecode(rel)} changed while it was read")
         # The owner's execute bit is the one git stages (core.fileMode): 0755 and 0655 stage differently.
         return b"F\0" + (b"x" if opened.st_mode & stat.S_IXUSR else b"-") + b"\0" + h.hexdigest().encode(), None
     except OSError as exc:
@@ -222,11 +226,12 @@ def launch(exclude=""):
     scope = _scope(top, exclude)
 
     def index():
-        rc, out, err = _run(top, ("ls-files", "-s", "-z"))
+        h = hashlib.sha256()
+        rc, _out, err = _run(top, ("ls-files", "-s", "-z"), sink=h.update)
         if rc != 0:
             raise Refused(f"the index could not be read (git ls-files exited {rc}: "
                           f"{err.decode(errors='replace').strip()})")
-        return "staged-" + hashlib.sha256(out).hexdigest()
+        return "staged-" + h.hexdigest()
     before = index()
     digest, head, _notes = _fingerprint(top, scope, _status(top, scope))
     if index() != before or _head(top) != head:
