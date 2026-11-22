@@ -5228,12 +5228,16 @@ def _deadline_exit(mode: str) -> None:
 def _with_deadline(budget: float, mode: str, run) -> int:
     """`run()` under the hook's one deadline: every bounded read sees it (_hook_left), and a watchdog refuses
     and exits if the deadline passes with no verdict (a stalled exec, a check another module runs)."""
-    _hook_deadline[:] = [time.monotonic() + budget]
+    deadline = time.monotonic() + budget
+    _hook_deadline[:] = [deadline]
     dog = threading.Timer(budget + _WATCHDOG_GRACE, _deadline_exit, args=(mode,))
     dog.daemon = True
     dog.start()
     try:
-        return run()
+        verdict = run()
+        # A verdict reached after the deadline (a check that stalled and then returned, inside the
+        # watchdog's grace) is not one the hook can give: it refuses, exactly as the watchdog would.
+        return verdict if time.monotonic() < deadline else 2
     finally:
         dog.cancel()
         _hook_deadline[:] = []

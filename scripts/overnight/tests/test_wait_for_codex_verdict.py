@@ -668,3 +668,51 @@ def test_the_report_is_written_inside_max_even_on_a_full_pipe():
             if wr >= 0:
                 os.close(wr)
             os.close(rd)
+
+
+def _status_sequence(bindir, codes, recover=None):
+    """A python3 stub whose status reads answer `codes` in turn (the last repeats); recover exits `recover`
+    when given, every other call runs the real interpreter."""
+    import shutil
+    real = shutil.which("python3")
+    seq = bindir / "seq"
+    seq.write_text(" ".join(str(c) for c in codes))
+    rec = f'*" recover "*) exit {recover};;' if recover is not None else ""
+    (bindir / "python3").write_text(
+        "#!/bin/bash\n"
+        f'case " $* " in *" status "*) read -ra c < "{seq}"; code=${{c[0]}}\n'
+        f'  [ ${{#c[@]}} -gt 1 ] && echo "${{c[@]:1}}" > "{seq}"; exit $code;; {rec} esac\n'
+        f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+
+
+def test_a_transient_unreadable_status_never_hides_a_later_stale_log():
+    """The first status read fails, the next finds none and the transcript is old: the latest observation
+    decides, so the wait reports STALE (exit 4), not UNREADABLE."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        _status_sequence(bindir, [3, 1])
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        os.utime(log, (1, 1))
+        r = subprocess.run(["bash", str(TOOL), "--max", "20", "--stale-secs", "1", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 4 and "STALE:" in r.stdout and "UNREADABLE" not in r.stdout, r
+
+
+def test_a_transient_unreadable_status_never_hides_a_later_unpublished_one():
+    """The first status read fails, then there is none, its owner has gone and the recovery fails: the
+    latest observation decides, so the wait reports UNPUBLISHED for that log (exit 4)."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        _status_sequence(bindir, [3, 1], recover=1)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = subprocess.run(["bash", str(TOOL), "--max", "20", "--no-stale", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 4 and f"UNPUBLISHED: {log}" in r.stdout and "UNREADABLE" not in r.stdout, r

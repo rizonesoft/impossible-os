@@ -1955,3 +1955,30 @@ def test_a_failed_failure_record_after_an_unconfirmed_start_fails_the_broker(mon
         broker = types.SimpleNamespace(read=lambda: None, step="answered", response="{}", job="true",
                                        log="/x/r.out", prompt="/x/r.prompt")
         assert rl.finish_broker(broker, 0, False, False, rl.now_cs() + 100) == 1 and not delivered, code
+
+
+def test_a_start_pending_across_a_suspend_ends_at_its_deadline(monkeypatch):
+    """The host sleeps past the deadline while a start is pending (the elapsed-time clock jumps, the
+    monotonic one does not): on resume the start is given up at once, not after the old remainder."""
+    import sys
+    import threading
+    import time
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    base = rl.now_cs()
+    clock = [base]
+    monkeypatch.setattr(rl, "now_cs", lambda: clock[0])
+    release = threading.Event()
+
+    def spawn():
+        release.wait(5)
+        return 42
+    timer = threading.Timer(0.2, lambda: clock.__setitem__(0, base + 1000))
+    timer.start()
+    began = time.monotonic()
+    try:
+        started, pid = rl._start(spawn, base + 400, abandon=lambda p: None)
+    finally:
+        release.set()
+        timer.cancel()
+    assert started is False and time.monotonic() - began < 1.5, (started, pid, time.monotonic() - began)

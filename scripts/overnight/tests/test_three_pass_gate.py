@@ -695,3 +695,13 @@ def test_the_pass_count_stops_at_the_cap(tmp_path, monkeypatch):
     assert gate._spent_passes(tmp_path, "todo/x.md", "7", 3) == 3 and len(checked) == 3
     checked.clear()
     assert gate._spent_passes(tmp_path, "todo/x.md", "7") == 10 and len(checked) == 10
+
+
+def test_a_verdict_reached_after_the_deadline_is_a_refusal():
+    """A check that stalls past the hook's budget and then returns success inside the watchdog's grace: the
+    hook refuses, as the watchdog would have, rather than approve late."""
+    def late():
+        time.sleep(0.09)
+        return 0
+    assert gate._with_deadline(0.02, "harness", late) == 2
+    assert gate._with_deadline(5.0, "harness", lambda: 0) == 0

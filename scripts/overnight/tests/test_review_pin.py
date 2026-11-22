@@ -2586,3 +2586,36 @@ def test_a_torn_line_that_may_be_the_plan_refuses_the_resume(tmp_path):
         rp.section_status(tmp_path, todo, 7)
     with pytest.raises(rp.Refused):
         rp.section_start(m, todo, "7")
+
+
+def test_the_streamed_final_response_matches_the_whole_reading(tmp_path):
+    """read_final_response gives what final_response gives over the whole text: nothing without a heading,
+    what follows the newest heading otherwise, line endings of every kind included."""
+    cases = ["no heading\nHIGHEST: P1\n",
+             f"progress\n{rp.REVIEW_HEADER}\nold\nHIGHEST: P1\n{rp.REVIEW_HEADER}\nnew\r\nHIGHEST: none\n",
+             f"{rp.REVIEW_HEADER}\n\nVerdict: approve\rHIGHEST: P3",
+             ""]
+    for i, text in enumerate(cases):
+        f = tmp_path / f"t{i}.out"
+        f.write_text(text, newline="")
+        assert rp.read_final_response(f) == rp.final_response(text), text
+
+
+def test_a_large_transcript_is_judged_in_bounded_memory(tmp_path):
+    """64 MiB of progress lines, then the review, under a 200 MiB address-space limit: --highest reads only
+    what follows the heading, so the pass is judged instead of failing on a copy of the whole transcript."""
+    import resource
+    import subprocess
+    import sys
+    f = tmp_path / "t.out"
+    line = b"[codex] working on the review, still reading files " + b"x" * 60 + b"\n"
+    with open(f, "wb") as fh:
+        for _ in range((64 << 20) // len(line)):
+            fh.write(line)
+        fh.write(f"{rp.REVIEW_HEADER}\nVerdict: needs-attention\nHIGHEST: P2\n".encode())
+
+    def limit():
+        resource.setrlimit(resource.RLIMIT_AS, (200 << 20, 200 << 20))
+    r = subprocess.run([sys.executable, str(pathlib.Path(rp.__file__)), "--highest", "--transcript", str(f)],
+                       capture_output=True, text=True, timeout=120, preexec_fn=limit)
+    assert r.returncode == 0 and r.stdout.strip() == "P2", r

@@ -165,6 +165,10 @@ def set_root(root: Path) -> None:
     sys.path.insert(0, str(REPO / "scripts" / "site"))
     import gen_theme_header as g  # noqa: E402  (sibling module)
     g.ROOT, g.TOKENS, g.HEADER = root, root / "docs" / "design" / "tokens.json", root / "include" / "desktop" / "theme_tokens.h"
+    # The freshness module is handed this build's repository where it is used (tracked_sources, the build);
+    # a root set again puts it back with the rest, so no earlier build's checkout outlives its own root.
+    if "freshness" in sys.modules:
+        sys.modules["freshness"].REPO = REPO
 
 
 def snapshot(source: str) -> Path:
@@ -1614,6 +1618,10 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updat
         "PAGE_PATH": html.escape(page.url),
         # Kept out of search engines and so out of sitemap.xml: the results page.
         "ROBOTS": '<meta name="robots" content="noindex">\n' if page.noindex else "",
+        # Retired placeholders: a release built from a revision whose template still carries them renders
+        # them as nothing, never as raw template text.
+        "ADSENSE": "",
+        "AD_UNIT": "",
     }
     # One pass over the TEMPLATE: text substituted in (a page body that mentions
     # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.

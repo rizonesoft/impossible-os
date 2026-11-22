@@ -244,7 +244,9 @@ def _start(spawn, until, cancel=None, abandon=None):
     deadline = time.monotonic() + max(0, until - now_cs()) / 100
 
     def stopped():
-        return bool(cancel is not None and cancel.sig and now_cs() >= cancel.at + 100)
+        # `until` is on the elapsed-time clock, which a suspend advances and the monotonic deadline above does
+        # not: it is checked here too, so a host that slept past it is past it on resume.
+        return bool(now_cs() >= until or (cancel is not None and cancel.sig and now_cs() >= cancel.at + 100))
     return _bounded.start_supervised(spawn, deadline, stopped, abandon)
 
 

@@ -217,7 +217,7 @@ class Links(unittest.TestCase):
             self.assertEqual(len(errors), 3, joined)
         finally:
             B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET = saved
-            B.DOCS = B.ROOT / "docs"
+            B.set_root(B.ROOT)
 
 
 class RawHtmlAndBaseline(unittest.TestCase):
@@ -3158,6 +3158,15 @@ class SitePolish(unittest.TestCase):
         self.assertEqual(B.site_url(facts, "docs/index.html"), "https://site.invalid/docs/")
         self.assertNotIn("<time", B.render_page(tpl, facts, {}, page, ""))
 
+    def test_a_retired_placeholder_in_an_older_template_renders_as_nothing(self):
+        # A release builds an older revision's template with this renderer: its ad placeholders are gone.
+        facts = dict(FACTS, site_url="https://site.invalid", name="OS")
+        page = B.Page(src=Path("docs/k/x.md"), rel="k/x.md", url="k/x.html", title="X", body="<p>b</p>",
+                      summary="s")
+        out = B.render_page("<head>%ADSENSE%</head>%BODY%%AD_UNIT%<footer></footer>", facts, {}, page, "")
+        self.assertNotIn("%ADSENSE%", out)
+        self.assertNotIn("%AD_UNIT%", out)
+
     def test_summary_is_the_first_top_level_paragraph(self):
         self.git("init", "-q")
         self.write("docs/p.md", "# P\n\n> [!NOTE]\n> not this\n\n- nor this\n\nThis `one` *here*,\nwrapped\\\nand broken.\n\n"
@@ -4446,6 +4455,18 @@ class FailureNets(unittest.TestCase):
             start = time.monotonic()
             self.assertEqual(self.lines("bounded-wait", text), want)   # the cycle t0 -> t59 -> t0 finds no None
             self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_a_root_set_again_restores_the_freshness_checkout(self):
+        # A fixture's build hands freshness its temporary checkout; setting the root again puts it back, so a
+        # later reader of the real checkout never reads a deleted one.
+        import freshness as F
+        saved = F.REPO
+        try:
+            F.REPO = Path("/nonexistent-release-checkout")
+            B.set_root(B.ROOT)
+            self.assertEqual(F.REPO, B.REPO)
+        finally:
+            F.REPO = saved
 
     def test_freshness_git_timeout_reads_unknown(self):
         import freshness as F

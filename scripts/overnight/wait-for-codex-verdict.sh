@@ -61,12 +61,16 @@ set -u
 # The clock is the kernel's elapsed-time clock (/proc/uptime: CLOCK_BOOTTIME, held in memory, never on
 # storage), so a wall-clock step back or forward never lengthens or shortens --max; EPOCHREALTIME only where
 # /proc is unreadable, and then for the whole call.
+# _now sets NOW_US in this shell (no command substitution, so reading the clock never needs a new process),
+# and the first read is the start itself.
 if read -r _up _ < /proc/uptime 2>/dev/null && [[ "$_up" =~ ^[0-9]+\.[0-9]{2}$ ]]; then
-    _now_us() { local up; read -r up _ < /proc/uptime; echo $(( ${up%.*} * 1000000 + 10#${up#*.} * 10000 )); }
+    START_US=$(( ${_up%.*} * 1000000 + 10#${_up#*.} * 10000 ))
+    _now() { local up; read -r up _ < /proc/uptime; NOW_US=$(( ${up%.*} * 1000000 + 10#${up#*.} * 10000 )); }
 else
-    _now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+    _now() { local t="$EPOCHREALTIME"; NOW_US=$(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+    _now
+    START_US=$NOW_US
 fi
-START_US=$(_now_us)
 # The caller's streams, kept for the report: a forked writer reaches them through these descriptors.
 exec {OUT_FD}>&1 {ERR_FD}>&2
 
@@ -239,7 +243,8 @@ _observe() {
         # The next round comes after POLL, or sooner: a second after a recovery started (its status is then
         # seen at once), and in any case a second before the deadline, so a status published during the
         # last interval is still observed in time.
-        left=$(( (END_US - $(_now_us)) / 1000000 - 1 ))
+        _now
+        left=$(( (END_US - NOW_US) / 1000000 - 1 ))
         dur=$POLL
         [ "$soon" -eq 1 ] && dur=1
         [ "$left" -lt "$dur" ] && dur=$left
@@ -264,15 +269,19 @@ OBS_PID=$!
 finished=0
 tail_read=0
 while :; do
-    left_us=$(( OBS_END_US - $(_now_us) ))
+    _now
+    left_us=$(( OBS_END_US - NOW_US ))
     [ "$left_us" -le 0 ] && break
-    left=$(printf '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 )))
+    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
     IFS= read -r -t "$left" -u "$OBS" line || break       # out of time, or the observer has gone
     case "$line" in
         "done "*)        read -r _ rc key <<< "$line"; GOT[$key]="$rc" ;;
-        "unpublished "*) UNPUB["${line#unpublished }"]=1 ;;
-        "unreadable "*)  UNREAD["${line#unreadable }"]=1 ;;
+        # Each probe of a log replaces what the previous one said about it: the latest observation decides.
+        "unpublished "*) key="${line#unpublished }"; UNPUB[$key]=1; unset "UNREAD[$key]" ;;
+        "unreadable "*)  key="${line#unreadable }"; UNREAD[$key]=1
+                         unset "UNPUB[$key]" "EXISTS[$key]" "SIZE[$key]" "SILENT[$key]" ;;
         "seen "*)        read -r _ ex sz sil key <<< "$line"
+                         unset "UNREAD[$key]" "UNPUB[$key]"
                          EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
         "tail "*)        TAIL+=("${line#tail }") ;;
         statuses)        finished=1 ;;                      # done; the tail lines follow until alldone
@@ -291,7 +300,8 @@ while :; do
             [ "$stop" -eq 1 ] && break ;;
     esac
 done
-elapsed=$(( ($(_now_us) - START_US) / 1000000 ))
+_now
+elapsed=$(( (NOW_US - START_US) / 1000000 ))
 
 # The report is assembled here and written once, by a child bounded by what is left of --max (at least a
 # second): a caller whose stdout pipe is full, with its reader not draining, never holds this exit.
@@ -299,18 +309,22 @@ REPORT=""
 say() { REPORT+="$*"$'\n'; }
 # shellcheck disable=SC2059  # every caller passes a literal format, as printf itself would take it
 sayf() { local line; printf -v line "$@"; REPORT+="$line"; }
-# Writes $1 to descriptor $2 by $3 (microseconds, _now_us). The write is made by a forked copy of this
+# Writes $1 to descriptor $2 by $3 (microseconds, as NOW_US). The write is made by a forked copy of this
 # shell, which starts no program (nothing to load from a stalled disk), and this shell waits for its word
 # only until the deadline: a write blocked on a full pipe is then ended, never waited for.
 _write_until() {
     local done_fd pid left_us
-    left_us=$(( $3 - $(_now_us) ))
-    [ "$left_us" -ge 100000 ] || return 0
+    _now
+    left_us=$(( $3 - NOW_US ))
+    [ "$left_us" -gt 0 ] || return 0
     exec {done_fd}< <(exec 2>/dev/null; printf '%s' "$1" >&"$2"; echo written)
     pid=$!
-    left_us=$(( $3 - $(_now_us) ))
+    _now
+    left_us=$(( $3 - NOW_US ))
     [ "$left_us" -gt 0 ] || left_us=1
-    IFS= read -r -t "$(printf '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 )))" -u "$done_fd" _ \
+    local left
+    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
+    IFS= read -r -t "$left" -u "$done_fd" _ \
         || kill -KILL "$pid" 2>/dev/null
     exec {done_fd}<&-
 }
@@ -319,14 +333,11 @@ deliver() {
     # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
     # for longer than that one probe.
     kill -TERM "$OBS_PID" 2>/dev/null
-    # One absolute deadline for both writes (the end of --max, whose last REPORT_US observation left for them;
-    # a tenth of a second when observation overran): the report first,
-    # then the setup warning with whatever time remains, so a blocked stderr never takes the report's time.
-    local now_us until_us
-    now_us=$(_now_us)
-    until_us=$(( END_US > now_us + 100000 ? END_US : now_us + 100000 ))
-    _write_until "$REPORT" "$OUT_FD" "$until_us"
-    [ -n "$SETUP_ERR" ] && _write_until "$SETUP_ERR" "$ERR_FD" $(( until_us - 100000 ))
+    # One absolute deadline for both writes, the end of --max (its last REPORT_US left for them, and never
+    # extended): the report first, then the setup warning with whatever time remains, so a blocked stderr
+    # never takes the report's time. A write whose time has gone is not made; the exit status still answers.
+    _write_until "$REPORT" "$OUT_FD" "$END_US"
+    [ -n "$SETUP_ERR" ] && _write_until "$SETUP_ERR" "$ERR_FD" "$END_US"
     exit "$1"
 }
 

@@ -528,21 +528,48 @@ def published_status(path):
     return _review_result().read_status_file(str(path))[0]
 
 
-def read_transcript(path):
-    """A transcript's text, read only from a regular file opened without blocking (a FIFO or device that
-    replaced it fails at once with OSError)."""
+FINAL_RESPONSE_MAX = 8 << 20   # bytes of the final response kept; a review is far shorter
+
+
+def _transcript_lines(path):
+    """A transcript's lines, streamed a chunk at a time from a regular file opened without blocking (a FIFO
+    or device that replaced it fails at once with OSError); a line is cut at FINAL_RESPONSE_MAX bytes."""
     import os
     fd = _review_result().open_regular(str(path), os.O_RDONLY)
     try:
-        chunks = []
+        line = b""
         while True:
             chunk = os.read(fd, 1 << 20)
             if not chunk:
                 break
-            chunks.append(chunk)
+            parts = chunk.split(b"\n")
+            for part in parts[:-1]:
+                yield (line + part)[:FINAL_RESPONSE_MAX].decode("utf-8", "replace")
+                line = b""
+            line = (line + parts[-1])[:FINAL_RESPONSE_MAX]
+        if line:
+            yield line.decode("utf-8", "replace")
     finally:
         os.close(fd)
-    return b"".join(chunks).decode("utf-8", "replace")
+
+
+def read_final_response(path):
+    """final_response() of a transcript file, in bounded memory: only what follows the newest review heading
+    is kept (reset at each heading), at most FINAL_RESPONSE_MAX bytes of it."""
+    kept, size, seen = [], 0, False               # nothing before the first heading is a response
+    for raw in _transcript_lines(path):
+        for line in raw.splitlines() or [""]:
+            if line.strip() == REVIEW_HEADER:
+                kept, size, seen = [], 0, True
+            elif seen and size < FINAL_RESPONSE_MAX:
+                kept.append(line)
+                size += len(line) + 1
+    return "\n".join(kept)
+
+
+def read_transcript(path):
+    """A whole transcript's text (the --raw reading), from a regular file opened without blocking."""
+    return "\n".join(_transcript_lines(path))
 
 
 def broker_log(receipt):
@@ -710,19 +737,19 @@ def main(argv=None):
         if args.highest:
             _need(args.transcript, "--highest needs --transcript FILE")
             try:
-                text = read_transcript(args.transcript)
+                text = read_transcript(args.transcript) if args.raw else read_final_response(args.transcript)
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
-            level = highest(text if args.raw else final_response(text))
+            level = highest(text)
             print(level)
             return 0 if level else 1
         if args.verdicts:
             _need(args.transcript, "--verdicts needs --transcript FILE")
             try:
-                text = read_transcript(args.transcript)
+                text = read_final_response(args.transcript)
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
-            missing = missing_lens_verdicts(pin, args.verdicts, final_response(text), paths)
+            missing = missing_lens_verdicts(pin, args.verdicts, text, paths)
             print("\n".join(missing))
             return 1 if missing else 0
         if args.check:
