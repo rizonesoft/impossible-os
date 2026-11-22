@@ -1577,12 +1577,108 @@ def test_refusal_a_broker_that_cannot_read_the_tree_leaves_no_prompt_behind(tmp_
     fake.write_text("process.stdout.write('fine');\n")
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "TMPDIR": str(temp)}
     try:
+        if os.access(repo / "locked.txt", os.R_OK):
+            pytest.skip("this user reads a mode-0 file")          # before the broker, so it launches nothing
         done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
                                "[review-kind: adversarial] todo/x.md section 9\nReview it."],
                               capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
     finally:
         (repo / "locked.txt").chmod(0o644)
-    if os.geteuid() == 0:
-        pytest.skip("root reads a mode-0 file")
     assert done.returncode == 2 and "could not be read" in done.stderr, done.stderr
     assert list(temp.iterdir()) == []
+
+
+def test_refusal_an_untracked_file_saved_over_while_it_is_read(tmp_path, monkeypatch):
+    import os
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "notes.txt").write_text("old\n")
+    (repo / "replacement").write_text("new\n")
+    real, done = rc.os.read, []
+
+    def read(fd, n):
+        if not done and os.readlink(f"/proc/self/fd/{fd}").endswith("/notes.txt"):
+            done.append(1)
+            os.replace(repo / "replacement", repo / "notes.txt")   # an editor's atomic save
+        return real(fd, n)
+    monkeypatch.setattr(rc.os, "read", read)
+    with pytest.raises(rc.Refused, match="notes.txt was replaced while it was read"):
+        rc.snapshot()
+
+
+def test_the_launch_identity_tells_a_conflict_from_an_unreadable_index(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    real_run, real_git = rc._run, rc._git
+    monkeypatch.setattr(rc, "_run", lambda top, args, sink=None: (128, b"", b"index.lock exists")
+                        if args[0] == "write-tree" else real_run(top, args, sink))
+    with pytest.raises(rc.Refused, match="the index could not be read"):
+        rc.launch()
+    monkeypatch.setattr(rc, "_git", lambda top, *a, **k: b"100644 x 1\ta\0" if a[:2] == ("ls-files", "-u")
+                        else real_git(top, *a, **k))
+    assert rc.launch()[1] == "unknown"
+
+
+def test_refusal_a_wrapper_handed_another_candidate_than_its_own(tmp_path):
+    repo, _git = _tmp_repo(tmp_path)
+    done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD",
+                                {"CODEX_EXPECT_CANDIDATE": "a b c"})
+    assert done.returncode == 2 and "changed between the broker's launch" in done.stderr, done.stderr
+    assert prompt == ""                                                    # the reviewer never started
+
+
+def test_an_index_change_during_the_review_makes_the_pass_incomplete(tmp_path):
+    """Only the staged hunks change: the working tree and its status (MM) stay as they were."""
+    import os
+    import subprocess
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("1\n2\n3\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "a")
+
+    def stage(text):
+        blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=text, text=True,
+                              capture_output=True, check=True, timeout=30).stdout.strip()
+        return ["git", "-C", str(repo), "update-index", "--cacheinfo", f"100644,{blob},a.txt"]
+    subprocess.run(stage("X\n2\n3\n"), check=True, timeout=30)
+    (repo / "a.txt").write_text("X\n2\nY\n")
+    swap = " ".join(f"'{a}'" for a in stage("1\n2\nY\n"))
+    fake = tmp_path / "companion.js"
+    fake.write_text("require('child_process').execSync(process.env.FAKE_DURING);\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+           "REVIEW_BASE": "HEAD", "FAKE_DURING": swap}
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=120, cwd=str(repo), env=env)
+    assert "the candidate changed while it was being reviewed" in done.stderr, done.stderr
+
+
+def test_refusal_a_candidate_that_moves_before_the_detached_pass_starts(tmp_path):
+    """The broker registers one candidate; a change before its detached wrapper starts refuses the pass."""
+    import json
+    import os
+    import subprocess
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # Stands in for the scheduler: the tree moves after registration, then the setsid route launches the job.
+    (bindir / "systemd-run").write_text(f'#!/bin/sh\necho moved > "{repo}/late.txt"\nexit 1\n')
+    (bindir / "systemd-run").chmod(0o755)
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not pathlib.Path(f"{log}.done").exists():
+        time.sleep(0.1)
+    assert pathlib.Path(f"{log}.done").read_text().strip() == "2", log.read_text()
+    assert "changed between the broker's launch" in log.read_text()

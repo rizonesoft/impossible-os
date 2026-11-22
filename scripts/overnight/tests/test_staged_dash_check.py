@@ -1209,7 +1209,7 @@ def test_a_merge_whose_parents_share_no_changed_path_reads_no_further_parent(mon
 
     def git(*args, **_kw):
         calls.append(args)
-        return answers[args[7:]]
+        return answers[args[8:]]                            # after diff --cached and its seven options
     monkeypatch.setattr(m, "_git", git)
     monkeypatch.setattr(m, "merge_heads", lambda path="": ["a" * 40, "b" * 40])
     assert m.staged(merging=True) == [("", [[]])]
@@ -1223,3 +1223,35 @@ def test_a_failed_destination_lookup_says_it_cannot_prompt(tmp_path):
     tip = _git(root, "rev-parse", "HEAD")
     r = _push_check(root, str(tmp_path / "missing.git"), f"refs/heads/main {tip} refs/heads/main {m.NULL_OID}\n")
     assert r.returncode == 2 and "cannot prompt on the terminal" in r.stderr, r
+
+
+def test_the_staged_check_reads_the_whole_index_from_a_subdirectory(tmp_path):
+    root = _repo(tmp_path)
+    _git(root, "config", "diff.relative", "true")
+    _stage(root, {"docs/ok.md": "fine\n", "top.md": "bad " + DASH + " line\n"})
+    r = _sub([sys.executable, str(CHECK)], cwd=root / "docs", env=_clean_env(None), capture_output=True, text=True,
+             timeout=60)
+    assert r.returncode == 1 and "top.md:1" in r.stderr, r
+
+
+def test_a_merge_with_no_change_against_head_reads_no_merge_head(monkeypatch):
+    monkeypatch.setattr(m, "_git", lambda *a, **k: b"")
+
+    def never(path=""):
+        raise AssertionError("MERGE_HEAD was read")
+    monkeypatch.setattr(m, "merge_heads", never)
+    assert m.staged(merging=True) == [("", [[]])]
+
+
+def test_a_push_of_tips_the_destination_holds_walks_nothing(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    tip = _git(root, "rev-parse", "HEAD")
+    dest = _dest(tmp_path, root, "dest.git", {"refs/heads/main": tip})
+    monkeypatch.chdir(root)
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(k)
+    calls = []
+    real = m._git
+    monkeypatch.setattr(m, "_git", lambda *a, **k: calls.append(a) or real(*a, **k))
+    assert m.outgoing([(m.NULL_OID, tip)], dest) == ([], 0)
+    assert not any(a and a[0] == "rev-list" for a in calls), calls

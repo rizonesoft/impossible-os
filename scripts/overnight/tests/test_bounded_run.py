@@ -135,3 +135,80 @@ def test_a_signal_while_the_blob_reader_waits_ends_its_helper_too(tmp_path):
             proc.kill()
             proc.wait()
         _reap(pidfile)
+
+
+def test_a_failed_command_leaves_no_helper_of_its_own(tmp_path):
+    pidfile = tmp_path / "helper.pid"
+    cmd = ["sh", "-c", f"{_helper(pidfile)[:-1]} </dev/null >/dev/null 2>&1 &\n"
+                       f"while [ ! -e \"{pidfile}\" ]; do :; done; exit 1"]
+    try:
+        rc, _out, _err = bounded_run.run(cmd, "a failing command", timeout=30, keep_stderr=True)
+        assert rc == 1 and _gone(int(pidfile.read_text())), "the failed command's helper outlived it"
+    finally:
+        _reap(pidfile)
+
+
+def test_a_successful_command_leaves_a_background_helper_with_its_own_streams(tmp_path):
+    """Decided: after success a helper git leaves running with its own streams (the credential cache) is git's."""
+    pidfile = tmp_path / "helper.pid"
+    cmd = ["sh", "-c", f"{_helper(pidfile)[:-1]} </dev/null >/dev/null 2>&1 &\n"
+                       f"while [ ! -e \"{pidfile}\" ]; do :; done; exit 0"]
+    try:
+        rc, _out, _err = bounded_run.run(cmd, "a succeeding command", timeout=30)
+        assert rc == 0 and not _gone(int(pidfile.read_text()), within=0.3)
+    finally:
+        _reap(pidfile)
+
+
+def test_the_wait_takes_the_time_already_spent_from_the_deadline(monkeypatch):
+    real_start, calls = threading.Thread.start, []
+
+    def start(self):
+        calls.append(self)
+        if len(calls) == 1:
+            time.sleep(1.0)                               # a slow start eats into the one budget
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    began = time.monotonic()
+    with pytest.raises(ValueError, match="did not answer within 1.5 s"):
+        bounded_run.run(["sleep", "30"], "a sleeper", timeout=1.5)
+    assert time.monotonic() - began < 2.3
+
+
+def test_closing_a_stream_waits_for_a_helper_holding_its_output(tmp_path):
+    pidfile = tmp_path / "helper.pid"
+    stream = bounded_run.Stream(["sh", "-c", f"{_helper(pidfile)}\nwhile [ ! -e \"{pidfile}\" ]; do :; done; exit 0"],
+                                "a stream", timeout=1)
+    try:
+        began = time.monotonic()
+        with pytest.raises(ValueError, match="did not finish within 1 s"):
+            stream.close()
+        assert time.monotonic() - began < 3 and _gone(int(pidfile.read_text()))
+    finally:
+        _reap(pidfile)
+
+
+def test_a_signal_while_a_stream_closes_reaches_the_caller_at_once(tmp_path):
+    ready = tmp_path / "ready"
+    script = textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(REPO / "scripts")!r})
+        import bounded_run
+        stream = bounded_run.Stream(["sleep", "61"], "a sleeper", timeout=60)
+        open({str(ready)!r}, "w").close()
+        stream.close()
+    """)
+    proc = subprocess.Popen([sys.executable, "-c", script])
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not ready.exists():
+            time.sleep(0.05)
+        time.sleep(0.5)                                   # inside close() by now
+        began = time.monotonic()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
+        assert proc.returncode == -signal.SIGTERM and time.monotonic() - began < 3
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

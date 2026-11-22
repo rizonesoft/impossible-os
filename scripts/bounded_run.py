@@ -13,10 +13,14 @@ The signals are caught before the group starts and held until it is registered, 
 running unowned; a cancellation then ends the group and is delivered again to the caller's own handler. A
 timeout is a ValueError naming `what`, never the command, since a command line can carry a URL with a token.
 
+The leader is waited on without being reaped (waitid with WNOWAIT), so its id still names the group when the
+group is ended: a timeout, a cancellation and a failed exit all end every member, and no id can have been
+reused in between.
+
 Out of scope by decision: a helper that leaves the group on its own (setsid) is outside what a process group
-can end; and on success the call returns once the command has exited and its pipes have closed, so a helper
-git leaves running in the background with its own streams (the credential cache daemon, by design) is git's,
-and is not ended.
+can end; and after a successful exit the call returns once the command's pipes have closed, so a helper git
+leaves running in the background with its own streams (the credential cache daemon, by design) is git's, and
+is not ended.
 """
 import collections
 import os
@@ -80,6 +84,23 @@ def _kill_group(proc):
 def _end_group(proc):
     _kill_group(proc)
     proc.wait()
+
+
+def _exit_status(proc, timeout):
+    """The leader's exit status once it exits, read without reaping it, or None at the timeout. The wait runs
+    in a thread so the caller's join stays open to signals."""
+    box = []
+
+    def wait():
+        try:
+            info = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+        except ChildProcessError:                          # reaped already: the group was ended meanwhile
+            return
+        box.append(info.si_status if info.si_code == os.CLD_EXITED else -info.si_status)
+    t = threading.Thread(target=wait, daemon=True)
+    t.start()
+    t.join(max(0.0, timeout))
+    return box[0] if box else None
 
 
 def _pump(stream, put, errors):
@@ -153,12 +174,17 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             threads.append(threading.Thread(target=_feed, args=(proc.stdin, stdin, errors), daemon=True))
         for t in threads:
             t.start()
-        rc = proc.wait(timeout=timeout)
+        rc = _exit_status(proc, deadline - time.monotonic())
+        if rc is None:
+            raise subprocess.TimeoutExpired(what, timeout)
+        if rc != 0:
+            _kill_group(proc)                              # a failure leaves no helper of its own behind
         for t in threads:
             t.join(max(0.0, deadline - time.monotonic()))
             if t.is_alive():                               # a helper still holds a pipe at the deadline
                 raise subprocess.TimeoutExpired(what, timeout)
         watch.hold = True
+        proc.wait()                                        # reaped only now: the id named the group until here
     except BaseException as exc:
         watch.hold = True
         try:
@@ -182,10 +208,11 @@ class Stream:
     """A command the caller writes to and reads from as it goes (`proc.stdin`, `proc.stdout`), in its own
     process group. A timer ends the whole group at the deadline, so a read the group would never answer ends
     short (the caller treats a short read as an error); Ctrl-C and SIGTERM end the group at once and then
-    reach the caller's own handler. `close` ends input and waits for the exit; `abort` ends the group."""
+    reach the caller's own handler, whenever they arrive, `close` included. `close` ends input, waits for the
+    exit and for the output's end within the same deadline; `abort` ends the group."""
 
     def __init__(self, cmd, what, *, timeout, env=None):
-        self.what, self.timeout = what, timeout
+        self.what, self.timeout, self.expired = what, timeout, False
         self.proc = None
         self._watch = _Watch(self._cancel)
         try:
@@ -193,7 +220,7 @@ class Stream:
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
                 start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
             self._deadline = time.monotonic() + timeout
-            self._timer = threading.Timer(timeout, _kill_group, args=(self.proc,))
+            self._timer = threading.Timer(timeout, self._expire)
             self._timer.daemon = True
             self._timer.start()
             self._watch.hold = False
@@ -206,36 +233,47 @@ class Stream:
         if pending:
             self._cancel(pending)
 
-    def _cancel(self, signum):
-        self._watch.hold = True
+    def _expire(self):
+        self.expired = True
         _kill_group(self.proc)
-        self._timer.cancel()
-        self._watch.finish(signum)
 
-    def abort(self) -> None:
-        """End the group at once: after a failed read its output is never consumed, so a graceful close would
-        wait for a producer that cannot finish."""
+    def _stop(self, signum=0):
+        """End the group, reap it and give the caller its handlers back (delivering `signum`)."""
         self._watch.hold = True
         try:
             _end_group(self.proc)
             self._timer.cancel()
         finally:
-            self._watch.finish()
+            self._watch.finish(signum)
+
+    def _cancel(self, signum):
+        self._stop(signum)
+
+    def abort(self) -> None:
+        """End the group at once: after a failed read its output is never consumed, so a graceful close would
+        wait for a producer that cannot finish."""
+        self._stop()
 
     def close(self) -> int:
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass                                           # fail-direction: the exit status below reports it
+        rc = _exit_status(self.proc, self._deadline - time.monotonic())
+        if rc is None:
+            self._stop()
+            raise ValueError(f"{self.what} did not finish within {self.timeout} s")
+        if rc != 0:
+            _kill_group(self.proc)                         # a failure leaves no helper of its own behind
+        while self.proc.stdout.read(CHUNK):                # the end of output: every holder gone, or the timer
+            pass
+        expired = self.expired
         self._watch.hold = True
         try:
-            try:
-                self.proc.stdin.close()
-            except OSError:
-                pass                                       # fail-direction: wait() below reports the exit
-            try:
-                rc = self.proc.wait(timeout=max(0.0, self._deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                _end_group(self.proc)
-                raise ValueError(f"{self.what} did not finish within {self.timeout} s") from None
-            finally:
-                self._timer.cancel()
+            self.proc.wait()                               # reaped only now, as in run()
+            self._timer.cancel()
         finally:
             self._watch.finish()
+        if expired:
+            raise ValueError(f"{self.what} did not finish within {self.timeout} s")
         return rc

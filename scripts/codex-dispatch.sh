@@ -158,7 +158,8 @@ EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # which reads each whole or refuses: links are not followed, a FIFO is never opened, a failed read is an error,
 # and environment pathspec settings are dropped. It leaves this dispatcher's own reviews directory out.
 CAND_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_candidate.py"
-work_snapshot() { python3 "$CAND_TOOL" snapshot --exclude "$REVIEWS_DIR"; }
+# HEAD, the index tree and the working-tree fingerprint, read together (scripts/review_candidate.py launch).
+candidate_id() { python3 "$CAND_TOOL" launch --exclude "$REVIEWS_DIR"; }
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
@@ -330,14 +331,19 @@ if [ -n "$LOG_FILE" ]; then
     # The candidate is identified BEFORE the reviewer runs. Read afterwards, a
     # commit made by another caller during the review would be named as the
     # one reviewed, and the commit gate would bind the pass to it.
-    TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    TREE_WORK="$(work_snapshot)" || {
+    LAUNCH_ID="$(candidate_id)" || {
         echo "[$SELF_NAME] BLOCK -- the working tree could not be read at launch (reason above)" >&2; exit 2; }
+    read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$LAUNCH_ID"
+    # A detached job from the broker carries the candidate the broker registered: one that moved before this
+    # wrapper started is not the one its launch row names.
+    if [ -n "${CODEX_EXPECT_CANDIDATE:-}" ] && [ "$CODEX_EXPECT_CANDIDATE" != "$LAUNCH_ID" ]; then
+        echo "[$SELF_NAME] BLOCK -- the candidate changed between the broker's launch and this $KIND pass (HEAD, the index or the working tree moved); dispatch it again" >&2
+        exit 2
+    fi
     if [ -n "${CAND_HEAD:-}" ] && { [ "$TREE_HEAD" != "$CAND_HEAD" ] || [ "$TREE_WORK" != "$CAND_WORK" ]; }; then
         echo "[$SELF_NAME] BLOCK -- the candidate changed while the $KIND pass was prepared (HEAD ${CAND_HEAD:0:10} -> ${TREE_HEAD:0:10}, or the working tree moved); dispatch it again" >&2
         exit 2
     fi
-    TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     # The receipt's ts is the LAUNCH time, as the broker's row is: the outage
     # check selects attempts by when they started.
     LAUNCH_TS="$(date +%s)"
@@ -347,11 +353,10 @@ if [ -n "$LOG_FILE" ]; then
     node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        NOW_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-        NOW_WORK="$(work_snapshot)" || NOW_WORK="unreadable"
-        if [ "$NOW_HEAD" != "$TREE_HEAD" ] || [ "$NOW_WORK" != "$TREE_WORK" ]; then
+        NOW_ID="$(candidate_id)" || NOW_ID="unreadable"
+        if [ "$NOW_ID" != "$LAUNCH_ID" ]; then
             rc=3
-            echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_HEAD:0:10}, or the working tree moved)" \
+            echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_ID:0:10}, or the index or the working tree moved)" \
                 | tee -a "$LOG_FILE" >&2
             echo "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again." | tee -a "$LOG_FILE" >&2
         fi

@@ -228,10 +228,20 @@ check_hooks() {
         # The installer writes only where no value is set, so the operator's own value is changed by hand first.
         local scope
         scope=$(git -C "$REPO_ROOT" config --show-scope --get core.hooksPath 2>/dev/null | tail -1 | cut -f1)
-        local fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
+        local fix origin
         case "$scope" in
             command) fix="Run without the core.hooksPath given on the command line or in GIT_CONFIG_* variables" ;;
-            local|worktree|global|system) ;;
+            global|system)
+                # Shared with other repositories: left as it is. The installer adds this repository's own
+                # value above it, and --remove gives it back.
+                fix="Run: bash scripts/install-hooks.sh" ;;
+            local|worktree)
+                if git -C "$REPO_ROOT" config "--$scope" --no-includes --get-all core.hooksPath >/dev/null 2>&1; then
+                    fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
+                else
+                    origin=$(git -C "$REPO_ROOT" config "--$scope" --includes --show-origin --get core.hooksPath 2>/dev/null | cut -f1)
+                    fix="It comes from ${origin:-a file} that $scope config includes: change it there, then run: bash scripts/install-hooks.sh"
+                fi ;;
             *) fix="Run: git config --show-origin --get-all core.hooksPath, and change the value it names" ;;
         esac
         record hooks warn "core.hooksPath" \

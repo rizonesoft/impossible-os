@@ -139,7 +139,8 @@ q() { printf '%q' "$1"; }
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
-  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
+  # CODEX_EXPECT_CANDIDATE: the candidate the launch row below names; the wrapper refuses another.
+  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
 else
   RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat $(q "$PROMPT_FILE"))\""
 fi

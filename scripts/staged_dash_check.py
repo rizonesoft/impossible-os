@@ -12,8 +12,9 @@ The decision is one count per file: a file the change touches is refused
 when its new version holds more en or em dashes than its old version did.
 No line matching decides anything, so line order, a byte-order mark, line
 endings, diff settings, pathspec modes and file names cannot change the
-answer. A rename or copy is compared with its source, as `git diff -M` pairs
-them; a dash line moved INTO another file counts as written there. Only on a
+answer. A detected rename is compared with its source, as `git diff -M` pairs
+them; a new copy whose original remains is a new file, compared with an empty
+one; a dash line moved INTO another file counts as written there. Only on a
 refusal are lines matched, to name the new or edited lines (or, when the
 gain is an extra copy of an identical line, every copy).
 
@@ -358,9 +359,12 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     check judges the merge commit: on what it adds over every parent.
     `merging=False` is pre-commit's call, which has already seen no MERGE_HEAD;
     `merge_head` is commit-msg's, the MERGE_HEAD file it found."""
-    diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff")
+    # --no-relative: from a subdirectory with diff.relative set, git would list only the paths below it.
+    diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff", "--no-relative")
     per_parent = [changes_from_raw(_git(*diff))]
     common = {path for _old, _new, path in per_parent[0]}
+    if merging and not common:
+        return [("", [[]])]                                # nothing changed against HEAD: MERGE_HEAD is not read
     for parent in merge_heads(merge_head) if merging else []:
         if not common:
             return [("", [[]])]                            # a refused path changes against every parent: none can now
@@ -462,6 +466,8 @@ def outgoing(updates: list, dest: str = "") -> tuple:
             raise ValueError(f"the pushed object {tip} is not in this repository")
     bounds = [o for o in held if types.get(o) in ("commit", "tag")]
     missing = sum(1 for o in held if types.get(o, "missing") == "missing")
+    if all(tip in held for tip in tips):
+        return [], missing                                 # every tip is already there: nothing is sent
     feed = "".join(t + "\n" for t in tips) + "".join("^" + o + "\n" for o in bounds)
     walked = [line.split() for line in
               _git("rev-list", "--reverse", "--parents", "--stdin", stdin=feed.encode()).decode().splitlines()]

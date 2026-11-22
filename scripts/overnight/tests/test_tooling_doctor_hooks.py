@@ -436,3 +436,71 @@ def test_the_doctor_names_a_remedy_that_works_for_a_custom_local_value(tmp_path)
     done = subprocess.run(["bash", "-c", fix.split("then run: ", 1)[1]], cwd=root, capture_output=True, text=True,
                           timeout=60, env=_env())
     assert done.returncode == 0 and "Configured: core.hooksPath = .githooks" in done.stdout, done
+
+
+def test_two_installs_at_once_leave_one_entry_that_removal_takes_out(tmp_path):
+    root = _plain_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    # Each write waits a moment, so without a lock both installers pass the empty-scope check first.
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" --add core.hooksPath "*) sleep 1 ;; esac\n'
+                                f'exec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+    runs = [subprocess.Popen(["bash", "scripts/install-hooks.sh"], cwd=root, env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True) for _ in range(2)]
+    outs = [p.communicate(timeout=60) for p in runs]
+    assert all(p.returncode == 0 for p in runs), outs
+    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == ".githooks\n", outs
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env())
+    assert r.returncode == 0 and _cfg(root, "--local", "--get-all", "core.hooksPath", check=False).returncode == 1
+
+
+def test_a_hook_put_in_place_of_the_legacy_link_during_cleanup_survives(tmp_path):
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    flag = tmp_path / "raced"
+    # Another installer replaces the link with its own hook at the first mv or rm of that name.
+    for tool in ("mv", "rm"):
+        real = shutil.which(tool)
+        (bindir / tool).write_text(
+            f'#!/bin/sh\ncase " $* " in *"{link} "*|*"{link}") [ -e "{flag}" ] || {{ : > "{flag}"; '
+            f'"{shutil.which("rm")}" -f "{link}"; echo replacement > "{link}"; }} ;; esac\nexec "{real}" "$@"\n')
+        (bindir / tool).chmod(0o755)
+    env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert flag.exists() and not link.is_symlink() and link.read_text() == "replacement\n", r
+
+
+def test_the_doctor_leaves_an_inherited_global_value_alone(tmp_path):
+    root = _plain_repo(tmp_path)
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    glob = tmp_path / "global.cfg"
+    glob.write_text("[core]\n\thooksPath = /shared\n")
+    env = {**_env(), "GIT_CONFIG_GLOBAL": str(glob)}
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=env)
+    fix = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]["fix"]
+    assert fix == "Run: bash scripts/install-hooks.sh", fix
+    done = subprocess.run(["bash", "-c", fix.split("Run: ", 1)[1]], cwd=root, capture_output=True, text=True,
+                          timeout=60, env=env)
+    assert done.returncode == 0 and glob.read_text() == "[core]\n\thooksPath = /shared\n", done
+
+
+def test_the_doctor_names_the_included_file_a_value_comes_from(tmp_path):
+    root = _plain_repo(tmp_path)
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    inc = tmp_path / "inc.cfg"
+    inc.write_text("[core]\n\thooksPath = /included\n")
+    _cfg(root, "--local", "include.path", str(inc))
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=_env())
+    fix = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]["fix"]
+    assert str(inc) in fix and "--unset-all" not in fix, fix

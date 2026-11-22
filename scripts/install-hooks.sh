@@ -61,6 +61,15 @@ hooks_path_raw() {
 # The effective value and the scope git takes it from, in one read: sets
 # HP_SCOPE (empty when the key is absent) and HP_VALUE. Exit 1 from git is
 # "not set"; anything else is an error and returns non-zero.
+# One installer or remover at a time per repository: git's value checks keep another writer's value, but two
+# of these adding at once would leave two entries that neither can take out by value alone.
+lock_hooks_config() {
+    command -v flock >/dev/null || { echo "flock (util-linux) is required to change core.hooksPath safely" >&2; return 1; }
+    local lock
+    lock="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir)/impossible-os-hooks.lock" || return 1
+    exec 9>"$lock"
+    flock -w 30 9 || { echo "another install-hooks.sh holds $lock; run again once it finishes" >&2; return 1; }
+}
 hooks_path_scoped() {
     local scoped rc=0
     HP_SCOPE="" HP_VALUE=""
@@ -150,6 +159,7 @@ set_hooks_path() {
     # never replaces another), and undone or removed by value (--fixed-value --unset takes out a single
     # .githooks entry and nothing else), so a writer changing the setting between the check and the write
     # loses nothing.
+    lock_hooks_config || exit 1
     hooks_path_scoped || exit 1
     # Checked first: a value from the command line or the environment, even .githooks itself, says nothing
     # about what the next plain git command reads.
@@ -225,15 +235,31 @@ prune_legacy_symlinks() {
     local removed=0 target wt
     target="$legacy/pre-push"
     if [ -L "$target" ]; then
-        # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link,
-        # or one to another file whose name merely reads the same once a shell strips a newline, never does).
-        while IFS= read -r -d '' wt; do
-            if [ "$target" -ef "${wt#worktree }/scripts/hooks/pre-push" ]; then
-                rm "$target"
-                removed=1
-                break
+        # Taken aside first, in one rename, and judged there: a hook another installer puts at that name
+        # meanwhile is then never the one removed, and an entry that is not ours goes back without replacing
+        # one that appeared since.
+        local aside="$legacy/.pre-push.install-hooks.$$" ours=0
+        mv -T -- "$target" "$aside" 2>/dev/null || return 0     # gone meanwhile: nothing of ours to remove
+        if [ -L "$aside" ]; then
+            # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling
+            # link, or one to another file whose name merely reads the same once a shell strips a newline,
+            # never does).
+            while IFS= read -r -d '' wt; do
+                if [ "$aside" -ef "${wt#worktree }/scripts/hooks/pre-push" ]; then
+                    ours=1
+                    break
+                fi
+            done < <(git -C "$PROJECT" worktree list --porcelain -z | grep -z '^worktree ')
+        fi
+        if [ "$ours" = 1 ]; then
+            rm -f -- "$aside"
+            removed=1
+        else
+            mv -n -T -- "$aside" "$target" 2>/dev/null || true   # fail-direction: the check below reports it
+            if [ -e "$aside" ] || [ -L "$aside" ]; then
+                echo "A new pre-push hook appeared at $target meanwhile; the earlier entry is kept at $aside" >&2
             fi
-        done < <(git -C "$PROJECT" worktree list --porcelain -z | grep -z '^worktree ')
+        fi
     fi
     [ "$removed" -gt 0 ] && echo "Pruned $removed legacy symlink(s) from .git/hooks/"
     return 0
@@ -247,6 +273,7 @@ remove_all() {
     # worktree's own setting keeps sibling worktrees' gates; a custom
     # directory, or a value inherited from global or system config, is the
     # operator's.
+    lock_hooks_config || return 1
     hooks_path_scoped || return 1
     # Before any cleanup: under a command-line value, what the next plain git command runs is unknown, so
     # neither the setting, the pre-push sentinel nor a legacy link is touched.

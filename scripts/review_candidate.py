@@ -150,6 +150,11 @@ def _entry_in(pfd, name, rel):
             os.close(fd)
         if left or (after.st_size, after.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns):
             raise Refused(f"{os.fsdecode(rel)} changed while it was read")
+        # An editor that saves by renaming a new file over this one leaves the open descriptor on the old
+        # bytes: the name must still lead to the file that was read.
+        now = os.stat(name, dir_fd=pfd, follow_symlinks=False)
+        if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
+            raise Refused(f"{os.fsdecode(rel)} was replaced while it was read")
         return b"F\0" + (b"x" if opened.st_mode & 0o111 else b"-") + b"\0" + h.hexdigest().encode(), None
     except OSError as exc:
         raise Refused(f"the untracked entry {os.fsdecode(rel)} could not be read: {exc.strerror}") from None
@@ -199,13 +204,19 @@ def snapshot(exclude=""):
 def launch(exclude=""):
     """(HEAD, index tree, digest) of one candidate, for a launch row: HEAD and the index are read before and
     after the digest, and a commit or an index change meanwhile refuses, so the three name one candidate.
-    HEAD is "unknown" before the first commit, and the index "unknown" while it holds a conflict."""
+    HEAD is "unknown" before the first commit, and the index "unknown" while it holds a conflict; an index
+    that cannot be read for any other reason refuses."""
     top = _top()
     scope = _scope(top, exclude)
 
     def index():
-        rc, out, _err = _run(top, ("write-tree",))
-        return out.decode("ascii", "replace").strip() if rc == 0 else "unknown"
+        rc, out, err = _run(top, ("write-tree",))
+        if rc == 0:
+            return out.decode("ascii", "replace").strip()
+        if _git(top, "ls-files", "-u", "-z"):
+            return "unknown"                               # unmerged entries: an index has no tree yet
+        raise Refused(f"the index could not be read (git write-tree exited {rc}: "
+                      f"{err.decode(errors='replace').strip()})")
     before = index()
     digest, head, _notes = _fingerprint(top, scope, _status(top, scope))
     if index() != before or _head(top) != head:
