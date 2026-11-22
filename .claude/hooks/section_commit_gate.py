@@ -2267,6 +2267,7 @@ def _graft_lookup(root: Path) -> str:
 
 
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_ancestry: dict[tuple, bool] = {}
 
 
 def _base_covers(root: Path, base, start: str) -> bool:
@@ -2294,15 +2295,26 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
         return False
     if sha == descendant_sha:
         return True
+    key = (str(root), sha, descendant_sha)
+    if key in _ancestry:
+        return _ancestry[key]
+    # Asked once a pair an invocation, inside the budget the commit comparisons share (one slow repository
+    # cannot spend the hook's deadline on the same question three times).
+    if not _commit_diff_deadline:
+        _commit_diff_deadline.append(time.monotonic() + _COMMIT_DIFF_BUDGET)
+    left = _commit_diff_deadline[0] - time.monotonic()
+    if left <= 0:
+        return False                                   # fail-direction: not shown to be covered refuses
     try:
         result = subprocess.run(
             ["git", "merge-base", "--is-ancestor", sha, descendant_sha],
-            cwd=str(root), timeout=3, env=_stored_env(),
+            cwd=str(root), timeout=min(3, left), env=_stored_env(),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
         return False
-    return result.returncode == 0
+    _ancestry[key] = result.returncode == 0
+    return _ancestry[key]
 
 
 def _dispatch_content_fresh(root: Path, disp_head: str,

@@ -618,3 +618,19 @@ def test_the_graft_lookup_is_made_once_and_briefly(tmp_path):
         gate._git_lines = real
         gate._graft_issues.clear()
     assert calls == [gate._GRAFT_LOOKUP_TIMEOUT] and gate._GRAFT_LOOKUP_TIMEOUT <= 2, calls
+
+
+def test_one_ancestry_question_is_asked_once(tmp_path):
+    """Three passes sharing one base ask git once, inside the budget the commit comparisons share."""
+    root, h = _history(tmp_path)
+    calls = []
+    real = gate.subprocess.run
+    gate.subprocess.run = lambda cmd, *a, **k: (calls.append(cmd), real(cmd, *a, **k))[1]
+    gate._ancestry.clear()
+    try:
+        for _ in range(3):
+            assert gate._git_is_ancestor(root, h["plan"], h["build"])
+    finally:
+        gate.subprocess.run = real
+        gate._ancestry.clear()
+    assert sum("--is-ancestor" in c for c in calls) == 1, calls

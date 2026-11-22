@@ -883,3 +883,123 @@ def test_a_cancelled_publication_wait_ends_and_the_helper_holds_no_caller_stream
     rc, waited = r.stdout.split()
     assert rc == "None" and float(waited) < 1.6 and took < 3, (r, took)
     assert "helper says" in r.stderr, r
+
+
+def _full_pipe():
+    """A pipe whose buffer is full; the caller keeps the read end open and never drains it."""
+    rd, wr = os.pipe()
+    os.set_blocking(wr, False)
+    try:
+        while True:
+            os.write(wr, b"x" * 65536)
+    except BlockingIOError:
+        pass
+    os.set_blocking(wr, True)
+    return rd, wr
+
+
+def test_an_answer_to_a_reader_that_stopped_reading_ends_at_the_deadline(tmp_path):
+    """The caller's stdout pipe is full and its reader still open: the answer waits for room only until the
+    deadline, so the supervisor exits (1, the answer undelivered) instead of hanging."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    record = b'response {"logFile": 1}\nstep answered\n'
+    writer = f"import os; os.write(int(os.environ['REVIEW_BROKER_HANDOFF_FD']), {record!r})"
+    rd, wr = _full_pipe()
+    end = _uptime_cs() + 150
+    began = time.monotonic()
+    try:
+        r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--broker",
+                            str(log), str(prompt), "--publish-by", str(end + 50), "--until-cs", str(end),
+                            f"python3 -c {shlex.quote(writer)}"], stdout=wr, stderr=subprocess.PIPE, text=True,
+                           timeout=30)
+    finally:
+        os.close(wr)
+        os.close(rd)
+    assert r.returncode == 1 and "could not be delivered" in r.stderr and time.monotonic() - began < 6, r
+
+
+def test_diagnostics_to_a_full_stderr_end_at_the_deadline(tmp_path):
+    """A caller that waits for the supervisor before draining stderr: a diagnostic waits for room only until
+    the deadline, and everything after it is dropped rather than waited on."""
+    import sys
+    rd, wr = _full_pipe()
+    script = _rl_script(tmp_path, "os.dup2(int(sys.argv[1]), 2)\n"
+                        "sys.stderr = rl.Bounded(2, rl.now_cs() + 50)\n"
+                        "began = time.monotonic()\n"
+                        "for _ in range(5):\n"
+                        "    print('x' * 10000, file=sys.stderr)\n"
+                        "print(round(time.monotonic() - began, 2), flush=True)\n")
+    try:
+        r = subprocess.run([sys.executable, str(script), str(wr)], capture_output=True, text=True, timeout=30,
+                           pass_fds=(wr,))
+    finally:
+        os.close(wr)
+        os.close(rd)
+    assert r.returncode == 0 and float(r.stdout) < 1.5, r
+
+
+def test_a_job_whose_supervisor_died_is_recovered(tmp_path):
+    """The job's supervisor is KILLed mid-review (an OOM kill): it held the owner lock for its life, so the
+    waiter's recovery sees the owner gone, ends the review it left running, and publishes 1. A live owner's
+    result is never touched."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    result = REPO / "scripts/overnight/review_result.py"
+    owner = pathlib.Path(str(log) + ".owner")
+    sup = subprocess.Popen([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                            str(prompt), "--no-deadline", "sleep 60"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, start_new_session=True)
+    leader = None
+    try:
+        t = time.monotonic()
+        while time.monotonic() - t < 10:
+            got = owner.read_text().split() if owner.exists() else []
+            if len(got) == 2:
+                leader = int(got[0])
+                break
+            time.sleep(0.05)
+        assert leader is not None
+        r = subprocess.run([sys.executable, str(result), "recover", str(log)], capture_output=True, text=True,
+                           timeout=30)
+        assert r.returncode == 0 and not pathlib.Path(str(log) + ".done").exists(), r   # alive: untouched
+        os.kill(sup.pid, signal.SIGKILL)
+        sup.wait()
+        r = subprocess.run([sys.executable, str(result), "recover", str(log)], capture_output=True, text=True,
+                           timeout=30)
+        assert r.returncode == 0 and pathlib.Path(str(log) + ".done").read_text().strip() == "1", r
+        t = time.monotonic()
+        while os.path.exists(f"/proc/{leader}") and time.monotonic() - t < 5:
+            time.sleep(0.05)
+        assert not os.path.exists(f"/proc/{leader}"), "the review the dead owner left was not ended"
+    finally:
+        if sup.poll() is None:
+            os.kill(sup.pid, signal.SIGKILL)
+            sup.wait()
+        if leader is not None and os.path.exists(f"/proc/{leader}"):
+            os.killpg(leader, signal.SIGKILL)
+
+
+def test_a_prompt_that_is_not_the_registered_one_runs_nothing(tmp_path):
+    """The job reads the prompt once and checks it against the digest the broker registered: a short or
+    changed read is a failed attempt (1) and the reviewer is never started."""
+    import hashlib
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("[review-kind: round] todo/x.md section 1")   # the first line only: the rest was lost
+    mark = tmp_path / "ran"
+    whole = hashlib.sha256(b"[review-kind: round] todo/x.md section 1\nthe rest of the scope\n").hexdigest()
+    r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                        str(prompt), "--prompt-sha", whole, "--no-deadline", f"touch {mark}"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and not mark.exists(), r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "1" and "digest differs" in log.read_text()
+    # The registered prompt reaches the reviewer whole, trailing newline included.
+    log2 = tmp_path / "s.out"
+    prompt.write_text("p\n")
+    r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log2),
+                        str(prompt), "--prompt-sha", hashlib.sha256(b"p\n").hexdigest(), "--no-deadline",
+                        f"printf %s \"$REVIEW_PROMPT_TEXT\" > {mark}"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and mark.read_text() == "p\n", r

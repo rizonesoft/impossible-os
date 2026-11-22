@@ -94,7 +94,12 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # status, written atomically after the review process exited). Log text never
 # ends a wait: the companion prints "[codex] Turn completed." before its
 # verdict, and a live review can print a line that looks like any sentinel.
+# A result whose owner ended without publishing it (an OOM kill, a crash) is recovered here: the owner holds
+# <log>.owner locked for its life, so review_result.py recover publishes 1 only for an owner that is gone.
+RESULT_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_result.py"
 _log_done() {
+    [ -f "$1.done" ] && return 0
+    [ -e "$1.owner" ] && python3 "$RESULT_TOOL" recover "$1" >/dev/null 2>&1
     [ -f "$1.done" ]
 }
 

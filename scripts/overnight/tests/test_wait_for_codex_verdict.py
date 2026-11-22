@@ -257,3 +257,15 @@ def test_no_stale_keeps_waiting_on_a_log_that_is_already_silent(tmp_path):
     missing = subprocess.run(["bash", str(TOOL), "--max", "2", "--stale-secs", "1", "--no-stale",
                               str(tmp_path / "nope.out")], capture_output=True, text=True, timeout=30)
     assert missing.returncode == 5, missing.stdout
+
+
+def test_a_result_whose_owner_is_gone_is_recovered_by_the_waiter():
+    """A log whose owner lock is free (the owner died) and has no status: the waiter recovers it as 1 at once,
+    rather than waiting on a review nobody will ever finish."""
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _run(log, maxw=5)
+        assert r.returncode == 0 and "rc=1" in r.stdout, r
+        assert "owner ended without publishing" in log.read_text()

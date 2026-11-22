@@ -191,14 +191,13 @@ if [[ ! "$PREP" =~ ^[0-9a-f]{64}$ ]]; then
   exit 2
 fi
 PROMPT_SHA="$PREP"
-PROMPT_SHA="$PREP"
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
   # CODEX_EXPECT_CANDIDATE: the candidate the launch row below names; the wrapper refuses another.
-  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
+  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$REVIEW_PROMPT_TEXT\""
 else
-  RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat $(q "$PROMPT_FILE"))\""
+  RUN="node $(q "$COMPANION") adversarial-review -- \"\$REVIEW_PROMPT_TEXT\""
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
@@ -237,7 +236,7 @@ if [[ -n "$LIMIT_END" ]]; then
 else
   JOB_LIMIT="--no-deadline"
 fi
-JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT $JOB_LIMIT $(q "$RUN >> $Q_LOG 2>&1")"
+JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT --prompt-sha $PROMPT_SHA $JOB_LIMIT $(q "$RUN >> $Q_LOG 2>&1")"
 # The broker's answer, made before the submission.
 tell "step making the answer"
 RESPONSE_RC=0

@@ -32,11 +32,14 @@ child waited on only until FINAL_CS; before that only its prompt is removed. A j
 only after the attempt's teardown, outside the tree, so the teardown cannot end it. Once COMMAND said
 "answered", the caller has its answer and the result is the launched job's.
 
-THE DETACHED JOB'S SUPERVISOR (--job LOG PROMPT, with --publish-by FINAL_CS). One supervisor for the whole
-job, never one nested in another (whose grace would end the inner one before it could answer): it claims
-the result (LOG created exclusively; a result another owner holds is left alone and nothing runs), runs
-COMMAND (the review, its output appended to LOG) until the steps' deadline, and publishes COMMAND's status,
-or 124 when the limit ended it, by the final one. A publication that fails is this supervisor's exit 1.
+THE DETACHED JOB'S SUPERVISOR (--job LOG PROMPT [--prompt-sha DIGEST]). One supervisor for the whole job,
+never one nested in another (whose grace would end the inner one before it could answer): it claims the
+result (holding LOG.owner locked for its life, then creating LOG exclusively; a result another owner holds is
+left alone and nothing runs), reads PROMPT once and checks it against DIGEST (passed to COMMAND as
+REVIEW_PROMPT_TEXT), runs COMMAND (the review, its output appended to LOG) until the steps' deadline, and
+publishes COMMAND's status, or 124 when the limit ended it, as soon as the filesystem allows: no caller
+waits on this detached process. A publication that fails is this supervisor's exit 1; a supervisor that
+dies is recovered by the verdict waiter (review_result.py recover).
 """
 import ctypes
 import os
@@ -50,6 +53,57 @@ PR_SET_CHILD_SUBREAPER = 36
 POLL = 0.1              # the limit is kept to a tenth of a second
 NO_DEADLINE = 10 ** 12  # centiseconds: no caller limit (a supervisor still owns cancellation and the result)
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+PIPE_BUF = 4096        # a write of at most this many bytes to a pipe that polls writable does not block
+
+
+class Bounded:
+    """A stream on fd 1 or 2 whose writes wait for room only until `until` (a second after a cancellation):
+    a caller that stops reading a full pipe cannot hold this supervisor past its deadline. What could not
+    be written by then is dropped, and so is everything after it."""
+
+    def __init__(self, fd, until, cancel=None):
+        self.fd, self.until, self.cancel, self.dead = fd, until, cancel, False
+
+    def write(self, text):
+        if not self.dead and not emit(self.fd, text.encode("utf-8", "replace"), self.until, self.cancel):
+            self.dead = True
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
+def emit(fd, data, until, cancel=None):
+    """Write `data` to `fd`, waiting for room only until `until` (a second after a cancellation; past it, what
+    fits at once is still written). True when all of it was written."""
+    view, poller = memoryview(data), select.poll()
+    poller.register(fd, select.POLLOUT)
+    while view:
+        if cancel is not None and cancel.sig:
+            until = min(until, cancel.at + 100)
+        left = until - now_cs()
+        try:
+            events = poller.poll(max(0, min(left, 100)) * 10)   # past the deadline: one try, no wait
+        except InterruptedError:
+            continue
+        if not events:
+            if left <= 0:
+                return False
+            continue
+        if events[0][1] & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+            return False
+        try:
+            view = view[os.write(fd, view[:PIPE_BUF]):]
+        except BlockingIOError:
+            continue
+        except OSError:
+            return False
+    return True
 
 
 def _load_result():
@@ -72,18 +126,21 @@ def now_cs() -> int:
 
 
 def usage():
-    print("usage: review-runtime-limit.sh [--broker LOG PROMPT] [--publish-by UPTIME_CS] "
+    print("usage: review-runtime-limit.sh [--broker LOG PROMPT | --job LOG PROMPT [--prompt-sha DIGEST]] "
+          "[--publish-by UPTIME_CS] "
           "SECONDS COMMAND | --until-cs UPTIME_CS COMMAND | --no-deadline COMMAND", file=sys.stderr)
     sys.exit(2)
 
 
 def parse(argv):
-    opts = {"end": None, "final": None, "broker": None, "job": None}
+    opts = {"end": None, "final": None, "broker": None, "job": None, "prompt_sha": ""}
     args = list(argv)
     while args and args[0].startswith("--"):
         flag = args.pop(0)
         if flag in ("--until-cs", "--publish-by") and args and re.fullmatch(r"[0-9]+", args[0]):
             opts["end" if flag == "--until-cs" else "final"] = int(args.pop(0))
+        elif flag == "--prompt-sha" and args and re.fullmatch(r"[0-9a-f]{64}", args[0]):
+            opts["prompt_sha"] = args.pop(0)
         elif flag == "--no-deadline":
             opts["end"] = now_cs() + NO_DEADLINE
         elif flag in ("--broker", "--job") and len(args) >= 2 and args[0] and args[1]:
@@ -303,12 +360,13 @@ class Cancel:
     WATCHED = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
     def __init__(self):
-        self.sig = 0
+        self.sig, self.at = 0, 0
         for sig in self.WATCHED:
             signal.signal(sig, self._handle)
 
     def _handle(self, signum, _frame):
-        self.sig = self.sig or 128 + signum
+        if not self.sig:
+            self.sig, self.at = 128 + signum, now_cs()
 
 
 def main(argv) -> int:
@@ -317,6 +375,7 @@ def main(argv) -> int:
     # Watched before anything starts, so a cancellation during the job's claim is seen, never the default
     # action that would leave a claimed result unpublished.
     cancel = Cancel()
+    sys.stderr = Bounded(2, final, cancel)
     if end - now_cs() <= 0 and not opts["job"]:
         print("review-runtime-limit: the deadline had passed before the command started; nothing was run",
               file=sys.stderr)
@@ -335,7 +394,7 @@ def main(argv) -> int:
     broker = Broker(*opts["broker"]) if opts["broker"] else None
     job = None
     if opts["job"]:
-        return _job(opts["job"], cmd, end, cancel)
+        return _job(opts["job"], opts["prompt_sha"], cmd, end, cancel)
     rc = _attempt(cmd, end, broker, cancel)
     if broker is None:
         return rc
@@ -343,7 +402,39 @@ def main(argv) -> int:
     return finish_broker(broker, rc, cancelled, limited, final, cancel)
 
 
-def _job(job, cmd, end, cancel):
+def _read_prompt(prompt, digest):
+    """The prompt's text, read whole and checked against the digest the broker registered, or None (with
+    the reason) when it cannot be read whole or is not the registered prompt."""
+    import hashlib
+    try:
+        with open(prompt, "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        return None, f"the prompt could not be read ({exc.strerror})"
+    if digest and hashlib.sha256(data).hexdigest() != digest:
+        return None, "the prompt read is not the one registered (its digest differs)"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "the prompt is not UTF-8 text"
+    if "\0" in text:
+        return None, "the prompt holds a NUL byte"
+    return text, ""
+
+
+def _note(log, text):
+    """A line in the job's log, for a reason the review was not run; best effort."""
+    try:
+        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC)
+        try:
+            os.write(fd, f"review-runtime-limit: {text}\n".encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass                                           # fail-direction: the status is still published
+
+
+def _job(job, digest, cmd, end, cancel):
     """The detached job: claim, run, publish, all in this one process. The claim and the publication are
     calls made here, never steps handed to a helper whose wait could time out, so whoever creates the log
     is the process that publishes its status: nothing can claim a result and leave it unpublished. A
@@ -360,11 +451,17 @@ def _job(job, cmd, end, cancel):
     if cancel.sig or now_cs() >= end:
         status = cancel.sig or 124
     else:
-        status = _attempt(cmd, end, None, cancel)
+        text, why = _read_prompt(prompt, digest)
+        if text is None:
+            _note(log, why + "; nothing was run")
+            status = 1
+        else:
+            os.environ["REVIEW_PROMPT_TEXT"] = text
+            status = _attempt(cmd, end, None, cancel, lambda leader: _result.record_attempt(log, leader))
     return status if _result.publish(log, str(status), prompt) == 0 else 1
 
 
-def _attempt(cmd, end, broker, cancel):
+def _attempt(cmd, end, broker, cancel, started=None):
     """COMMAND run under the limit and torn down: its exit status (for the broker, (cancelled, limited,
     status))."""
     watched = set(Cancel.WATCHED)
@@ -399,6 +496,8 @@ def _attempt(cmd, end, broker, cancel):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, watched)
     if broker is not None:
         broker.started()
+    if started is not None:
+        started(leader)
     status, limited, termed = None, False, False
 
     def reap():
@@ -464,16 +563,11 @@ def _attempt(cmd, end, broker, cancel):
 
 def _deliver(broker):
     """The broker's answer (the job to poll) written to the caller and checked: True when it was."""
-    data = memoryview((broker.response + "\n").encode())
-    try:
-        sys.stdout.flush()                 # anything already written first, in order
-        while data:                        # unbuffered, so a failed write is never retried at exit
-            data = data[os.write(1, data):]
+    if emit(1, (broker.response + "\n").encode(), broker.final, broker.cancel):
         return True
-    except OSError as exc:
-        print(f"[review-broker] the answer could not be delivered ({exc.strerror}); the review was launched "
-              f"and publishes its result to {broker.log}.done", file=sys.stderr)
-        return False
+    print(f"[review-broker] the answer could not be delivered by the deadline; the review was launched "
+          f"and publishes its result to {broker.log}.done", file=sys.stderr)
+    return False
 
 
 def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
@@ -481,6 +575,7 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
     over started, the answer delivered here (checked), and the caller told which step the limit or a
     cancellation ended."""
     broker.read()
+    broker.final, broker.cancel = final, cancel
     step = broker.step or "the dispatch"
     if step == "answered" and not cancelled and broker.response:
         # The submission succeeded: the result is the launched job's, whatever happens to the answer.
