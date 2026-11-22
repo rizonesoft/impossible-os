@@ -61,6 +61,14 @@ set -u
 _now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
 START_US=$(_now_us)
 
+# Setup messages are kept and written at the end through the same bounded writer as the report (a caller
+# whose stderr pipe is full never holds this call), or by `_refuse` for a usage error.
+SETUP_ERR=""
+_refuse() {
+    printf '%s\n' "$1" | timeout -k 1 1 cat >&2 2>/dev/null
+    exit 2
+}
+
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe
 POLL=10
 STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
@@ -68,10 +76,10 @@ NO_STALE=0       # 1: never report STALE (a missing log is still exit 5)
 LOGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --max)          [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --max needs a value" >&2; exit 2; }
+        --max)          [ $# -ge 2 ] || _refuse "wait-for-codex-verdict.sh: --max needs a value"
                         MAX="$2"; shift 2 ;;
         --max=*)        MAX="${1#--max=}"; shift ;;
-        --stale-secs)   [ $# -ge 2 ] || { echo "wait-for-codex-verdict.sh: --stale-secs needs a value" >&2; exit 2; }
+        --stale-secs)   [ $# -ge 2 ] || _refuse "wait-for-codex-verdict.sh: --stale-secs needs a value"
                         STALE="$2"; shift 2 ;;
         --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
         # The caller's review has its own runtime limit (CODEX_REVIEW_MAX_SECS),
@@ -84,7 +92,7 @@ while [ $# -gt 0 ]; do
             # complete. Warn + skip it. It is recognised by its shape alone (a
             # log is a path, never a bare number), so no file is looked at here.
             if [[ "$1" =~ ^[0-9]+$ ]]; then
-                echo "wait-for-codex-verdict.sh: ignoring bare number '$1' (not a log file) -- did you mean '--max $1'?" >&2
+                SETUP_ERR+="wait-for-codex-verdict.sh: ignoring bare number '$1' (not a log file) -- did you mean '--max $1'?"$'\n'
             else
                 LOGS+=("$1")
             fi
@@ -93,8 +101,7 @@ while [ $# -gt 0 ]; do
 done
 if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null \
    || ! [ "$STALE" -gt 0 ] 2>/dev/null; then
-    echo "usage: wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]" >&2
-    exit 2
+    _refuse "${SETUP_ERR}usage: wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]"
 fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
 ACT_DIR=".claude/state/waiter-first-seen"
@@ -198,7 +205,9 @@ _observe() {
             # Every status is in: the wave has finished whatever the tail read below costs. The tail is
             # diagnostic, read last and bounded by bytes (one long line never reads a whole transcript).
             echo "statuses"
-            tail -c 16384 "$LAST" 2>/dev/null | tail -n 25 | while IFS= read -r line || [ -n "$line" ]; do
+            # Read through review_result.py tail: a regular file opened without blocking, so a FIFO that
+            # replaced the transcript fails at once instead of holding this observer.
+            python3 "$RESULT_TOOL" tail "$LAST" </dev/null 2>/dev/null | while IFS= read -r line || [ -n "$line" ]; do
                 printf 'tail %s\n' "$line"
             done
             echo "alldone"
@@ -225,6 +234,7 @@ TAIL=()
 # The observer's streams are its own (exec, so no saved copy of the caller's stderr stays open in it): a
 # caller capturing this call's output sees EOF when this shell exits, not when the observer's sleep ends.
 exec {OBS}< <(exec </dev/null 2>/dev/null; _observe)
+OBS_PID=$!
 finished=0
 tail_read=0
 while :; do
@@ -263,8 +273,12 @@ say() { REPORT+="$*"$'\n'; }
 # shellcheck disable=SC2059  # every caller passes a literal format, as printf itself would take it
 sayf() { local line; printf -v line "$@"; REPORT+="$line"; }
 deliver() {
+    # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
+    # for longer than that one probe.
+    kill -TERM "$OBS_PID" 2>/dev/null
     local left_s=$(( (END_US - $(_now_us)) / 1000000 ))
     [ "$left_s" -lt 1 ] && left_s=1
+    [ -n "$SETUP_ERR" ] && printf '%s' "$SETUP_ERR" | timeout -k 1 "$left_s" cat >&2 2>/dev/null
     printf '%s' "$REPORT" | timeout -k 1 "$left_s" cat 2>/dev/null
     exit "$1"
 }

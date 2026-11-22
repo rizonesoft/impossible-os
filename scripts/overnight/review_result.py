@@ -232,9 +232,33 @@ def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = Fals
     return 0
 
 
+TAIL_BYTES = 16384
+TAIL_LINES = 25
+
+
+def tail(log: str) -> int:
+    """The last lines of the transcript `log` (at most TAIL_LINES of its last TAIL_BYTES), printed; read only
+    from a regular file opened without blocking, so a FIFO or device that replaced it fails at once (1)."""
+    try:
+        fd = open_regular(log, os.O_RDONLY)
+    except OSError:
+        return 1
+    try:
+        size = os.fstat(fd).st_size
+        data = os.pread(fd, TAIL_BYTES, max(0, size - TAIL_BYTES))
+    except OSError:
+        return 1
+    finally:
+        os.close(fd)
+    lines = data.decode("utf-8", "replace").splitlines()[-TAIL_LINES:]
+    sys.stdout.write("".join(line + "\n" for line in lines))
+    return 0
+
+
 def main(argv) -> int:
-    if len(argv) == 2 and argv[0] in ("claim", "discard", "recover", "status"):
-        return {"claim": claim, "discard": discard, "recover": recover, "status": _print_status}[argv[0]](argv[1])
+    if len(argv) == 2 and argv[0] in ("claim", "discard", "recover", "status", "tail"):
+        return {"claim": claim, "discard": discard, "recover": recover, "status": _print_status,
+                "tail": tail}[argv[0]](argv[1])
     if len(argv) >= 3 and argv[0] == "publish":
         log, status, rest = argv[1], argv[2], argv[3:]
         prompt, claim_first = "", False

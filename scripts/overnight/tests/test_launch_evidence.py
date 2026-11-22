@@ -609,7 +609,7 @@ def test_an_attempt_that_never_finishes_ending_is_answered_by_the_deadline(tmp_p
     script.write_text("import importlib.util, os, sys, time\n"
                       f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
                       "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
-                      "rl.signal_all = lambda sig, sent=None: (0, 0)\n"
+                      "rl.signal_all = lambda sig, sent=None, cutoff=None: (0, 0)\n"
                       "os.waitpid = lambda pid, flags: (0, 0)\n"
                       "began = time.monotonic()\n"
                       "rc = rl.main(['2', 'true'])   # exits at once; the model never reaps it\n"
@@ -722,7 +722,7 @@ def test_a_stuck_teardown_with_no_deadline_ends_within_its_own_budget(tmp_path):
     script.write_text("import importlib.util, os, sys, time\n"
                       f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
                       "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
-                      "rl.signal_all = lambda sig, sent=None: (0, 0)\n"
+                      "rl.signal_all = lambda sig, sent=None, cutoff=None: (0, 0)\n"
                       "real = os.waitpid\n"
                       "seen = []\n"
                       "def waitpid(pid, flags):\n"
@@ -1513,23 +1513,51 @@ def test_a_replaced_prompt_of_another_size_is_refused_before_it_is_read(tmp_path
     assert got is not None, why
 
 
-def test_a_prompt_read_that_stalls_is_ended_by_the_deadline():
-    """The owner never reads the prompt itself: a read held by its storage (here one that never returns) is
-    ended at the deadline and recorded as 124, so the owner still publishes."""
+def _stub_reader(monkeypatch, tmp_path, body):
+    """The reader program replaced by a shell stub (its arguments: the script, --read-prompt, PROMPT, DIGEST,
+    LENGTH, MEMFD, ANSWER_FD, so the answer descriptor is $7)."""
     import sys
-    import types
     sys.path.insert(0, str(REPO / "scripts/overnight"))
     import review_runtime_limit as rl
-    real = rl._read_prompt
-    rl._read_prompt = lambda *a, **k: (time.sleep(30), (None, "unreachable"))[1]
-    try:
-        began = time.monotonic()
-        fd, failed = rl._prompt_under_deadline(str(tmp_path_prompt()), "0" * 64, 1, rl.now_cs() + 50,
-                                               types.SimpleNamespace(sig=0, at=0))
+    stub = tmp_path / "reader"
+    stub.write_text("#!/bin/bash\n" + body + "\n")
+    stub.chmod(0o755)
+    monkeypatch.setattr(rl.sys, "executable", str(stub))
+    return rl
+
+
+@pytest.mark.parametrize("body", ["exec sleep 30", "printf '\\0' >&$7; exec sleep 30"])
+def test_a_prompt_read_that_stalls_is_ended_by_the_deadline(monkeypatch, tmp_path, body):
+    """The owner never reads the prompt itself: a reader held by its storage (one that never answers, or one
+    that answered and never exits) is ended at the deadline, so the owner still publishes on time."""
+    import types
+    rl = _stub_reader(monkeypatch, tmp_path, body)
+    began = time.monotonic()
+    fd, failed = rl._prompt_under_deadline(str(tmp_path / "prompt"), "0" * 64, 1, rl.now_cs() + 50,
+                                           types.SimpleNamespace(sig=0, at=0))
+    assert time.monotonic() - began < 0.5 + 1
+    if body.startswith("exec"):
         assert fd is None and failed[0] == 124, failed
-        assert time.monotonic() - began < 0.5 + 1
-    finally:
-        rl._read_prompt = real
+    else:
+        assert fd is not None and failed is None
+        os.close(fd)
+
+
+def test_a_prompt_reader_whose_start_is_held_is_given_up_on_by_the_deadline(monkeypatch, tmp_path):
+    """The reader's start is held past the deadline: the owner records 124 by then, and the reader that
+    starts afterwards is ended."""
+    import types
+    rl = _stub_reader(monkeypatch, tmp_path, f": > {tmp_path}/ran; exec sleep 30")
+    real = os.posix_spawn
+
+    def held(*a, **k):
+        time.sleep(1)
+        return real(*a, **k)
+    monkeypatch.setattr(os, "posix_spawn", held)
+    began = time.monotonic()
+    fd, failed = rl._prompt_under_deadline(str(tmp_path / "prompt"), "0" * 64, 1, rl.now_cs() + 40,
+                                           types.SimpleNamespace(sig=0, at=0))
+    assert fd is None and failed[0] == 124 and time.monotonic() - began < 0.4 + 0.5, failed
 
 
 def tmp_path_prompt():
@@ -1654,3 +1682,30 @@ def test_a_transcript_replaced_by_a_fifo_never_holds_the_publication(tmp_path):
                        timeout=20)
     assert r.returncode == 0 and pathlib.Path(str(log) + ".done").read_text() == "0\n", r
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp") and p.name != "r.out.done.tmp"]
+
+
+def test_the_direct_dispatcher_refuses_to_publish_into_a_directory(tmp_path):
+    """A directory has taken the status path while the review ran: the dispatcher reports it could not
+    publish (75) and leaves nothing inside it, rather than exiting 0 with no readable status."""
+    repo = _repo(tmp_path / "r")
+    fake = tmp_path / "companion.js"
+    fake.write_text("const fs = require('fs'); const d = '.claude/overnight/reviews';\n"
+                    "for (const f of fs.readdirSync(d)) if (f.endsWith('-direct.out')) fs.mkdirSync(d + '/' + f + '.done');\n"
+                    "process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+                       text=True, timeout=60, cwd=repo, env=env)
+    dirs = [p for p in (repo / ".claude/overnight/reviews").iterdir() if p.name.endswith(".done")]
+    assert r.returncode == 75 and dirs and all(p.is_dir() and not list(p.iterdir()) for p in dirs), (r, dirs)
+
+
+def test_a_teardown_walk_stops_at_its_cutoff(monkeypatch):
+    """A walk over a crowded /proc that has passed its cutoff stops there (WalkCut) instead of finishing."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    monkeypatch.setattr(rl.os, "listdir", lambda p: [str(n) for n in range(100000)])
+    began = time.monotonic()
+    with pytest.raises(rl.WalkCut):
+        rl.signal_all(0, cutoff=rl.now_cs() - 1)
+    assert time.monotonic() - began < 0.5

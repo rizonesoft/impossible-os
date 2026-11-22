@@ -422,8 +422,9 @@ if [ -n "$LOG_FILE" ]; then
     # and whoever it releases reads the receipt next.
     # Through a file created here under a fresh name (mktemp, exclusive): nothing
     # that took a shared temporary name, such as a FIFO, can hold the publication.
+    # -T: the status is renamed onto that exact path, never into a directory there.
     if ! { done_tmp=$(mktemp "$LOG_FILE.done.XXXXXX") && echo "$rc" > "$done_tmp" \
-           && mv -f "$done_tmp" "$LOG_FILE.done"; }; then
+           && mv -fT "$done_tmp" "$LOG_FILE.done"; }; then
         [ -n "${done_tmp:-}" ] && rm -f "$done_tmp"
         echo "[$SELF_NAME] could not publish $LOG_FILE.done; a waiter on this log will report it stale" >&2
         exit 75

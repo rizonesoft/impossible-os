@@ -312,16 +312,24 @@ def _exited(fd):
     return bool(p.poll(0))
 
 
-def signal_all(sig, sent=None):
+class WalkCut(Exception):
+    """A walk ended at its cutoff before it finished: `args` are (signalled, unheld) so far."""
+
+
+def signal_all(sig, sent=None, cutoff=None):
     """`sig` to every member of the attempt, each through a pidfd: a process counts only when its stat
     record, read while its pidfd showed it alive, names as parent a member whose own pidfd still shows it
     alive after that read, so a number freed and given to an unrelated process is never taken for a member.
     Each member is signalled once its children are proved and its pidfd closed, so the fds held at once are
     one path down the tree and its pending siblings. Returns (signalled, unheld): unheld counts members whose
     pidfd could not be had for a reason other than their exit (descriptor pressure), retried by the caller.
-    `sent` collects the numbers signalled."""
+    `sent` collects the numbers signalled. With `cutoff` (centiseconds, now_cs) the walk is checked against
+    it as it goes, listing included, and raises WalkCut once it has passed: a slow, crowded host never turns
+    one walk into a wait with no bound."""
     kids = {}
-    for name in os.listdir("/proc"):
+    for i, name in enumerate(os.listdir("/proc")):
+        if cutoff is not None and not i & 255 and now_cs() >= cutoff:
+            raise WalkCut(0, 0)
         if name.isdigit():
             st = _stat(name)
             if st is not None:
@@ -330,6 +338,8 @@ def signal_all(sig, sent=None):
     stack = [(os.getpid(), None)]
     try:
         while stack:
+            if cutoff is not None and now_cs() >= cutoff:
+                raise WalkCut(signalled, unheld)
             parent, parent_fd = stack.pop()
             for pid in kids.get(parent, ()):
                 try:
@@ -575,77 +585,103 @@ def _setup():
 
 
 def _prompt_under_deadline(prompt, digest, length, end, cancel):
-    """The registered prompt in an anonymous in-memory file the attempt inherits, read by a child of this
-    owner under the steps' deadline: (fd, None), or (None, (status, reason)). The owner itself never reads
-    the prompt, so a read held by its storage cannot keep the owner from publishing (and the reader holds
-    none of the owner's result locks): at the deadline (or a
-    second after a cancellation) the child is ended, left to finish its I/O on its own, and the attempt is
-    recorded as 124 (or the cancellation's status) with nothing run."""
+    """The registered prompt in an anonymous in-memory file the attempt inherits, read by a reader process
+    under the steps' deadline: (fd, None), or (None, (status, reason)). The owner never reads the prompt
+    itself, so a read held by its storage cannot keep it from publishing. The reader is a program of its own
+    (this file, `--read-prompt`), started through the supervised start: an exec'd process inherits none of
+    the owner's result locks (they are close-on-exec), so a held read never keeps a dead owner's lock, and a
+    start held by the host is given up on at the deadline. Its answer and its exit are both waited on only
+    until the deadline (or a second after a cancellation); then it is killed and left to end on its own, and
+    the attempt is recorded as 124 (or the cancellation's status) with nothing run."""
     fd = os.memfd_create("review-prompt", 0)
     rd, wr = os.pipe()
-    # LIFECYCLE-WAIVER: reads one REVIEW attempt's prompt for its owner; it does not relaunch or watch the session.
-    pid = os.fork()
-    if pid == 0:                                       # the reader: it only reads, checks and hands over
+
+    def spawn():
         try:
-            os.close(rd)
-            # The owner's result locks are open file descriptions this child shares: closing its copies (never
-            # unlocking them) leaves the lock with the owner alone, so recovery can take it once the owner dies,
-            # however long this read stays held.
-            for held in list(_result._HELD.values()):
-                os.close(held)
-            for sig in Cancel.WATCHED:
-                signal.signal(sig, signal.SIG_DFL)
-            text, why = _read_prompt(prompt, digest, length)
-            if text is None:
-                os.write(wr, why.encode("utf-8", "replace")[:PIPE_BUF - 1])
-                os._exit(1)
-            data = memoryview(text.encode("utf-8"))
-            while data:
-                data = data[os.write(fd, data):]
-            os.write(wr, b"\0")
-            os._exit(0)
-        except BaseException:                          # noqa: BLE001 -- the child never returns into the owner
-            os._exit(2)
-    os.close(wr)
-    try:
-        poller = select.poll()
-        poller.register(rd, select.POLLIN)
-        until = end
-        while True:
-            if cancel.sig:
-                until = min(until, cancel.at + 100)
-            left = until - now_cs()
-            if left <= 0:
-                break
-            try:
-                if poller.poll(min(left, 100) * 10):
-                    break
-            except InterruptedError:
-                continue
-        ready = poller.poll(0)
-        answer = os.read(rd, PIPE_BUF) if ready else None
-    finally:
-        os.close(rd)
-    if answer is None:
+            os.set_inheritable(fd, True)
+            os.set_inheritable(wr, True)
+            # LIFECYCLE-WAIVER: reads one REVIEW attempt's prompt for its owner; it does not relaunch or watch the session.
+            return os.posix_spawn(sys.executable, [sys.executable, os.path.abspath(__file__), "--read-prompt",
+                                                   prompt, digest, "" if length is None else str(length),
+                                                   str(fd), str(wr)],
+                                  _child_env(), file_actions=[(os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                                                              (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+                                                              (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+        finally:
+            os.close(wr)
+            os.set_inheritable(fd, False)
+
+    def end_it(pid):
         try:
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, os.WNOHANG)
         except OSError:
             pass                                       # fail-direction: the reader has already gone
+
+    def until():
+        return min(end, cancel.at + 100) if cancel.sig else end
+    try:
+        started, pid = _start(spawn, end, cancel, end_it)
+    except OSError:
+        os.close(rd)
+        os.close(fd)
+        raise
+    answer = None
+    try:
+        if started:
+            poller = select.poll()
+            poller.register(rd, select.POLLIN)
+            while (left := until() - now_cs()) > 0:
+                try:
+                    if poller.poll(min(left, 100) * 10):
+                        break
+                except InterruptedError:
+                    continue
+            if poller.poll(0):
+                answer = os.read(rd, PIPE_BUF)
+    finally:
+        os.close(rd)
+    if started and answer is not None:
+        # It has answered and is exiting: reaped by the deadline, or killed and left to end on its own.
+        while True:
+            try:
+                done, _raw = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if done or now_cs() >= until():
+                if not done:
+                    end_it(pid)
+                break
+            time.sleep(0.005)
+    elif started:
+        end_it(pid)
+    if answer is None:
         os.close(fd)
         if cancel.sig:
             return None, (cancel.sig, "the run was cancelled while the prompt was read")
         return None, (124, "the prompt could not be read by the deadline")
-    try:
-        os.waitpid(pid, 0)                             # it has written its answer and is exiting
-    except OSError:
-        pass                                           # fail-direction: already reaped
     if answer != b"\0":
         os.close(fd)
         return None, (1, answer.decode("utf-8", "replace") or "the prompt could not be read")
     os.lseek(fd, 0, os.SEEK_SET)
     os.set_inheritable(fd, True)
     return fd, None
+
+
+def _reader_main(argv):
+    """`--read-prompt PROMPT DIGEST LENGTH MEMFD ANSWER_FD`: the prompt read and checked (_read_prompt), its
+    text written to MEMFD, then one answer on ANSWER_FD: a NUL byte, or the reason it was not read."""
+    prompt, digest, fd, wr = argv[0], argv[1], int(argv[3]), int(argv[4])
+    length = int(argv[2]) if argv[2] else None
+    text, why = _read_prompt(prompt, digest, length)
+    if text is None:
+        os.write(wr, why.encode("utf-8", "replace")[:PIPE_BUF - 1])
+        return 1
+    data = memoryview(text.encode("utf-8"))
+    while data:
+        data = data[os.write(fd, data):]
+    os.write(wr, b"\0")
+    return 0
 
 
 def _prompt_fd(text):
@@ -864,25 +900,36 @@ def _attempt(cmd, end, broker, cancel):
     # budget of its own (two seconds, one after a cancellation) inside the deadline: a KILLed process is
     # reaped at once unless the kernel holds it in uninterruptible I/O, and then waiting longer (with no
     # deadline, for ever) only delays the result while each pass walks /proc.
+    # Every walk is bounded too: by the teardown's end and a last fifth of a second for the final passes,
+    # after which the result is published whatever the walk had reached.
     drain_end = max(min(end, now_cs() + (100 if cancel.sig else TEARDOWN_CS)), now_cs() + 5)
+    walk_end = drain_end + 20
+    cut = False
     while reap():
         if broker is not None:
             broker.drain()
-        signal_all(signal.SIGKILL)
+        try:
+            signal_all(signal.SIGKILL, cutoff=walk_end)
+        except WalkCut:
+            cut = True
         if not reap():
             break
-        if now_cs() >= drain_end:
+        if cut or now_cs() >= drain_end:
             # Every member still present is sent KILL once more, walked until a pass finds none it had not
             # signalled (a KILLed process cannot fork), so what is reported was KILLed, not merely seen.
             sent, unheld = set(), 0
-            for _ in range(8):
-                before = len(sent)
-                _n, unheld = signal_all(signal.SIGKILL, sent)
-                if len(sent) == before and not unheld:
-                    break
+            try:
+                for _ in range(8):
+                    before = len(sent)
+                    _n, unheld = signal_all(signal.SIGKILL, sent, cutoff=walk_end)
+                    if len(sent) == before and not unheld:
+                        break
+            except WalkCut:
+                cut = True
             print(f"review-runtime-limit: {len(sent)} process(es) of the attempt were KILLed and still ending at "
                   f"the deadline (uninterruptible I/O)"
-                  + (f"; {unheld} could not be held to be signalled" if unheld else ""), file=sys.stderr)
+                  + (f"; {unheld} could not be held to be signalled" if unheld else "")
+                  + ("; the walk for the rest did not finish by the deadline" if cut else ""), file=sys.stderr)
             break
         time.sleep(0.01)
     # Seen ending only after the deadline (this supervisor was not scheduled in between): the limit's.
@@ -937,4 +984,6 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--read-prompt"] and len(sys.argv) == 7:
+        sys.exit(_reader_main(sys.argv[2:]))
     sys.exit(main(sys.argv[1:]))

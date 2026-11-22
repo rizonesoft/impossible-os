@@ -428,8 +428,10 @@ def test_a_stalled_tail_never_hides_a_finished_wave():
     with tempfile.TemporaryDirectory() as d:
         bindir = pathlib.Path(d) / "bin"
         bindir.mkdir()
-        (bindir / "tail").write_text("#!/bin/sh\nexec sleep 5\n")
-        (bindir / "tail").chmod(0o755)
+        import shutil
+        real = shutil.which("python3")
+        (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in *" tail "*) sleep 5;; esac\nexec {real} "$@"\n')
+        (bindir / "python3").chmod(0o755)
         log = pathlib.Path(d) / "r.out"
         log.write_text("review\nTurn completed (rc=0)\n")
         pathlib.Path(str(log) + ".done").write_text("0\n")
@@ -457,3 +459,55 @@ def test_setup_runs_no_command_that_could_hold_the_clock():
                            capture_output=True, text=True, cwd=d, timeout=60,
                            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode in (3, 5) and time.monotonic() - began < 1 + 1.5, (r, time.monotonic() - began)
+
+
+def test_a_transcript_replaced_by_a_fifo_answers_done_and_leaves_nothing_behind():
+    """The status is published and the transcript has been replaced by a FIFO with no writer: the answer is
+    DONE at once, and no process of this call is left holding the FIFO open."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        os.mkfifo(log)
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "5", str(log)], capture_output=True, text=True, cwd=d,
+                           timeout=60)
+        assert r.returncode == 0 and "DONE:" in r.stdout and time.monotonic() - began < 3, r
+        time.sleep(0.5)
+        holders = []
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                if any(os.readlink(f"/proc/{pid}/fd/{n}") == str(log) for n in os.listdir(f"/proc/{pid}/fd")):
+                    holders.append(pid)
+            except OSError:
+                continue
+        assert not holders, holders
+
+
+def test_a_setup_warning_never_holds_the_call_on_a_full_stderr():
+    """The bare-number warning is written to a stderr pipe that is full and never drained: the call still
+    answers within --max of its start."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        rd, wr = os.pipe()
+        os.set_blocking(wr, False)
+        try:
+            while True:
+                os.write(wr, b"x" * 65536)
+        except BlockingIOError:
+            pass
+        os.set_blocking(wr, True)
+        try:
+            began = time.monotonic()
+            p = subprocess.Popen(["bash", str(TOOL), "--max", "1", "--no-stale", str(log), "300"], cwd=d,
+                                 stdout=subprocess.DEVNULL, stderr=wr)
+            os.close(wr)
+            wr = -1
+            p.wait(timeout=10)
+            assert p.returncode == 3 and time.monotonic() - began < 1 + 2.5, (p.returncode, time.monotonic() - began)
+        finally:
+            if wr >= 0:
+                os.close(wr)
+            os.close(rd)

@@ -122,6 +122,9 @@ def _exit_status(proc, deadline):
     return box[0] if box else None
 
 
+_NOTHING = object()
+
+
 def start_supervised(spawn, deadline, stopped, abandon=None):
     """(True, `spawn()`) once the start returns within `deadline` (a monotonic time) and before `stopped()`,
     else (False, None) at once. A start can stall: a spawn waits until its child has executed the program,
@@ -129,7 +132,8 @@ def start_supervised(spawn, deadline, stopped, abandon=None):
     waits on past the deadline. What the caller relies on is the gate every user of this keeps: the started
     process cannot act until its owner, still within the deadline, releases it (a pipe it reads first, or its
     input), so a start that is given up on runs nothing. A start that returns after it was given up on is
-    handed to `abandon` in the launch thread; a start that fails after that is dropped, its caller has gone."""
+    handed to `abandon` (by whichever of the two threads sees it last); a start that fails after that is
+    dropped, its caller has gone."""
     box, lock = {}, threading.Lock()
 
     def go():
@@ -151,12 +155,19 @@ def start_supervised(spawn, deadline, stopped, abandon=None):
         t.join(min(0.05, max(0.0, deadline - time.monotonic())))
         if not t.is_alive() or stopped() or time.monotonic() >= deadline:
             break
+    # The decision is made here, under the lock, against the clock and the stop as they are now: a start that
+    # returned while this caller was descheduled past its deadline, or after a stop, is given up on like one
+    # still held, so its gate is never released; it is handed to `abandon` here, once.
     with lock:
-        if "result" in box:
+        authorised = time.monotonic() < deadline and not stopped()
+        if "result" in box and authorised:
             return True, box["result"]
-        if "exc" in box:
+        if "exc" in box and authorised:
             raise box["exc"]
         box["late"] = True
+        returned = box.get("result", _NOTHING)
+    if returned is not _NOTHING and abandon is not None:
+        abandon(returned)
     return False, None
 
 

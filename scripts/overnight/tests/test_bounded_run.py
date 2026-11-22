@@ -466,3 +466,23 @@ def test_a_cancellation_during_a_stalled_start_ends_it_at_once(monkeypatch, tmp_
     assert got == [signal.SIGTERM] and time.monotonic() - began < 1
     time.sleep(1.5)
     assert not marker.exists()
+
+
+@pytest.mark.parametrize("why", ["deadline", "stop"])
+def test_a_start_that_returned_while_its_owner_slept_is_given_up_on(why):
+    """The launch thread finished, then the owner resumed past its deadline (or after a stop): the result is
+    not accepted, so its gate stays closed, and it is handed to the abandon path exactly once."""
+    abandoned = []
+    began = time.monotonic()
+    real_join = threading.Thread.join
+
+    def late_join(self, timeout=None):
+        real_join(self)                                # the launch thread has returned its result
+        time.sleep(0.3)                                # ... and the owner is descheduled past its deadline
+    threading.Thread.join = late_join
+    try:
+        got = bounded_run.start_supervised(lambda: 42, began + (0.1 if why == "deadline" else 30),
+                                           (lambda: why == "stop"), abandoned.append)
+    finally:
+        threading.Thread.join = real_join
+    assert got == (False, None) and abandoned == [42], (got, abandoned)
