@@ -24,6 +24,7 @@ off for back-compat, but the sequencer/skills SHOULD pass `--todo`.
 from __future__ import annotations
 
 import collections
+import errno
 import hashlib
 import json
 import os
@@ -52,6 +53,11 @@ LINE_KEEP = 4096          # bytes of one line kept for its finding and tail entr
 SCAN_OVERLAP = 128        # bytes carried between chunks, longer than any completion or crash marker
 
 
+# Read errors that say the storage failed this time, not that the artifact is wrong: the leg is read again,
+# never dispatched again over a result it already has.
+TRANSIENT_READ = frozenset({errno.EIO, errno.EINTR, errno.EAGAIN, errno.ETIMEDOUT, errno.ESTALE})
+
+
 def _scan(path: Path):
     """One streamed pass over a regular file, or None: its size, sha256, the last completion code, whether a
     crash signature appears, the finding lines (at most MAX_FINDING_LINES kept, all counted) and the last
@@ -59,8 +65,8 @@ def _scan(path: Path):
     time, so memory is bounded by the chunk and LINE_KEEP whatever the transcript's size."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
-    except OSError:
-        return None
+    except OSError as exc:
+        return exc if exc.errno in TRANSIENT_READ else None   # a storage fault is read again; anything else is no artifact
     digest, size, last_rc, crash = hashlib.sha256(), 0, None, False
     findings, found, tail = [], 0, collections.deque(maxlen=TAIL_LINES)
     line, carry = b"", b""
@@ -91,8 +97,8 @@ def _scan(path: Path):
             line = (line + parts[-1])[:LINE_KEEP]
         if line:
             finish(line)
-    except OSError:
-        return None
+    except OSError as exc:
+        return exc if exc.errno in TRANSIENT_READ else None   # a fault part way is read again
     finally:
         os.close(fd)
     return {"bytes": size, "sha256": digest.hexdigest(), "rc": last_rc, "crash": crash,
@@ -117,6 +123,9 @@ def leg_summary(entry: dict) -> dict:
         return out
     done_rc = int(status) if status is not None and status.isdigit() else None  # fail-direction: unfinished
     scan = _scan(path)
+    if isinstance(scan, OSError):
+        out["unreadable"] = f"its transcript could not be read ({scan.strerror})"
+        return out
     if scan is None:
         out["error"] = "artifact unreadable"
         return out

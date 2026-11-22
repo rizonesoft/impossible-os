@@ -526,3 +526,30 @@ def test_a_large_transcript_is_read_in_bounded_memory():
         leg = env["kinds"]["round"]
         assert r.returncode == 0 and leg["sha256"] == want and leg["bytes"] == out.stat().st_size, (r.stderr, leg)
         assert leg["findings_truncated"] > 0 and leg["tail"][-1] == "Turn completed (rc=0)", leg["tail"]
+
+
+def test_a_transcript_read_error_is_read_again_never_dispatched_again(monkeypatch):
+    """Status 0 and a checked receipt, then EIO while the transcript is read: the pass is unreadable and kept
+    out of needs_redispatch; a transcript that is no file at all still goes back for dispatch."""
+    import errno
+    env_mod = _envelope_module()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True})})
+        (rev / "round.out.done").write_text("0\n")
+        real_read = env_mod.os.read
+
+        def failing(fd, n):                  # only the transcript's reads fail; its status reads as usual
+            if env_mod.os.readlink(f"/proc/self/fd/{fd}").endswith("/round.out"):
+                raise OSError(errno.EIO, "Input/output error")
+            return real_read(fd, n)
+        monkeypatch.setattr(env_mod.os, "read", failing)
+        out = []
+        monkeypatch.setattr(env_mod, "print", lambda *a, **k: out.append(a[0]), raising=False)
+        rc = env_mod.main([str(root), "--kinds", "round", "--todo", "todo/x.md", "--section", "7"])
+        env = json.loads(out[-1])
+        assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], env
+        monkeypatch.setattr(env_mod.os, "read", real_read)
+        assert env_mod._scan(rev) is None

@@ -1982,3 +1982,36 @@ def test_a_start_pending_across_a_suspend_ends_at_its_deadline(monkeypatch):
         release.set()
         timer.cancel()
     assert started is False and time.monotonic() - began < 1.5, (started, pid, time.monotonic() - began)
+
+
+def test_a_busy_owner_lock_with_no_log_is_never_an_acknowledged_claim(tmp_path):
+    """Another process holds the owner lock and dies before creating the log: a publisher that claims first
+    waits for the lock, takes it and publishes, instead of reporting success for a result nobody owns."""
+    import fcntl
+    import os
+    import subprocess
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_result as rr
+    log = tmp_path / "r.out"
+    holder = subprocess.Popen([sys.executable, "-c",
+                               "import fcntl, os, sys, time\n"
+                               "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)\n"
+                               "fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); time.sleep(0.5)",
+                               str(log) + ".owner"], stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        assert rr.publish(str(log), "1", claim_first=True) == 0
+    finally:
+        holder.wait(10)
+    assert log.exists() and (tmp_path / "r.out.done").read_text() == "1\n"
+    # A competing claim that did create its log is another owner's result: 4, at once. (This process keeps
+    # the first claim's lock until it ends, so the second case uses a log of its own.)
+    other = tmp_path / "s.out"
+    other.write_text("")
+    fd = os.open(str(other) + ".owner", os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        assert rr.claim(str(other)) == 4
+    finally:
+        os.close(fd)

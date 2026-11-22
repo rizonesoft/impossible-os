@@ -2726,21 +2726,23 @@ def _spent_passes(root: Path, todo: str, section: str, cap: int | None = None) -
     """How many checked, complete passes this section has had: its spend against pass_cap. With `cap`, the
     count stops once it reaches the cap, since the caller asks only whether it has (each receipt checked
     reads its published statuses, and a section past its cap may have many more)."""
-    try:
-        lines = (root / _PASS_MANIFEST).read_text().splitlines()
-    except (OSError, UnicodeDecodeError):
-        return 0
+    _review_pin_path(root)
+    import review_pin
     spent = 0
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == section \
-                and e.get("kind") in _PASS_KINDS and _receipt_complete(e):
-            spent += 1
-            if cap is not None and spent >= cap:
-                break
+    try:
+        # Newest first (the manifest only grows, and a section's passes are near its end), stopping at the cap.
+        for line in review_pin._newest_first(root / _PASS_MANIFEST):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == section \
+                    and e.get("kind") in _PASS_KINDS and _receipt_complete(e):
+                spent += 1
+                if cap is not None and spent >= cap:
+                    break
+    except review_pin.Refused:
+        return 0                         # fail-direction: unreadable spend waives nothing (no cap reached)
     return spent
 
 

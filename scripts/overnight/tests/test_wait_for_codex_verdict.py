@@ -681,7 +681,7 @@ def _status_sequence(bindir, codes, recover=None):
     (bindir / "python3").write_text(
         "#!/bin/bash\n"
         f'case " $* " in *" status "*) read -ra c < "{seq}"; code=${{c[0]}}\n'
-        f'  [ ${{#c[@]}} -gt 1 ] && echo "${{c[@]:1}}" > "{seq}"; exit $code;; {rec} esac\n'
+        f'  [ ${{#c[@]}} -gt 1 ] && echo "${{c[@]:1}}" > "{seq}"; [ "$code" = 0 ] && echo 0; exit $code;; {rec} esac\n'
         f'exec {real} "$@"\n')
     (bindir / "python3").chmod(0o755)
 
@@ -716,3 +716,61 @@ def test_a_transient_unreadable_status_never_hides_a_later_unpublished_one():
         r = subprocess.run(["bash", str(TOOL), "--max", "20", "--no-stale", str(log)], capture_output=True,
                            text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode == 4 and f"UNPUBLISHED: {log}" in r.stdout and "UNREADABLE" not in r.stdout, r
+
+
+def test_a_status_found_after_a_recovery_is_done_not_stale():
+    """No status, a free owner lock, a recovery that fails, and then a status is there (another publisher
+    raced it), and every later read fails: the probe after the recovery decides, so the wait is DONE, not
+    left on the later unreadable reads."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        _status_sequence(bindir, [1, 1, 0, 3], recover=1)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = subprocess.run(["bash", str(TOOL), "--max", "4", "--no-stale", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 0 and "DONE:" in r.stdout and "UNREADABLE" not in r.stdout, r
+
+
+def test_a_usage_error_returns_inside_its_deadline():
+    """A usage error with a timeout that is slow to start: the message is written by the shell's own bounded
+    writer, so the call ends within --max instead of waiting on the slow command."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "timeout").write_text("#!/bin/bash\nsleep 3\nexec /usr/bin/timeout \"$@\"\n")
+        (bindir / "timeout").chmod(0o755)
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "1"], capture_output=True, text=True, cwd=d, timeout=30,
+                           env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 2 and time.monotonic() - began < 2.0, (r, time.monotonic() - began)
+
+
+def test_a_stalled_probe_ends_with_the_wait():
+    """The activity probe stalls (a stat held by storage): when the wait returns, that probe is gone too, so
+    a caller that waits again does not add another held process."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        pidfile = pathlib.Path(d) / "stat.pid"
+        (bindir / "stat").write_text(f"#!/bin/bash\necho $$ >> {pidfile}\nexec sleep 60\n")
+        (bindir / "stat").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(log)], capture_output=True, text=True,
+                           cwd=d, timeout=30, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 3, r
+        pids = [int(p) for p in pidfile.read_text().split()] if pidfile.exists() else []
+        assert pids, "the probe never ran"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and any(os.path.exists(f"/proc/{p}") for p in pids):
+            time.sleep(0.05)
+        alive = [p for p in pids if os.path.exists(f"/proc/{p}")]
+        for p in alive:
+            os.kill(p, 9)
+        assert not alive, alive

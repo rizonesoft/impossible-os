@@ -33,6 +33,7 @@ import os
 import re
 import stat
 import sys
+import time
 
 
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
@@ -57,18 +58,38 @@ def _owner(log: str) -> str:
     return log + ".owner"
 
 
+CLAIM_WAIT = 60.0      # seconds a claim waits on a busy owner lock for the competing claim to show its log
+
+
 def claim(log: str) -> int:
     """0 when this process now owns LOG's result (and holds its owner lock until it ends), 4 when another
-    owner has it (alive, or its result already created), 1 on an error."""
+    owner has it (its result created: LOG exists), 1 on an error or when that cannot be told.
+
+    A busy owner lock alone is not another owner's claim: its holder may still be creating LOG, and fail to.
+    So the claim waits (CLAIM_WAIT at most) until LOG exists (4) or the lock is free (taken, and LOG created
+    here); a caller with a deadline of its own ends that wait with it."""
     try:
         fd = os.open(_owner(log), os.O_RDWR | os.O_CREAT | CLOEXEC, 0o644)
     except OSError as exc:
         print(f"review_result: {_owner(log)} could not be opened ({exc.strerror})", file=sys.stderr)
         return 1
+    give_up = time.monotonic() + CLAIM_WAIT
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if os.path.lexists(log):
+                    os.close(fd)
+                    return 4
+                if time.monotonic() >= give_up:
+                    os.close(fd)
+                    print(f"review_result: {_owner(log)} stayed held with no result created", file=sys.stderr)
+                    return 1
+                time.sleep(0.05)
         os.close(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | CLOEXEC, 0o644))
-    except (BlockingIOError, FileExistsError):
+    except FileExistsError:
         os.close(fd)
         return 4
     except OSError as exc:

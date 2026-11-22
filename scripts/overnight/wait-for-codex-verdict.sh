@@ -77,8 +77,31 @@ exec {OUT_FD}>&1 {ERR_FD}>&2
 # Setup messages are kept and written at the end through the same bounded writer as the report (a caller
 # whose stderr pipe is full never holds this call), or by `_refuse` for a usage error.
 SETUP_ERR=""
+# Writes $1 to descriptor $2 by $3 (microseconds, as NOW_US). The write is made by a forked copy of this
+# shell, which starts no program (nothing to load from a stalled disk), and this shell waits for its word
+# only until the deadline: a write blocked on a full pipe is then ended, never waited for.
+_write_until() {
+    local done_fd pid left_us
+    _now
+    left_us=$(( $3 - NOW_US ))
+    [ "$left_us" -gt 0 ] || return 0
+    exec {done_fd}< <(exec 2>/dev/null; printf '%s' "$1" >&"$2"; echo written)
+    pid=$!
+    _now
+    left_us=$(( $3 - NOW_US ))
+    [ "$left_us" -gt 0 ] || left_us=1
+    local left
+    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
+    IFS= read -r -t "$left" -u "$done_fd" _ \
+        || kill -KILL "$pid" 2>/dev/null
+    exec {done_fd}<&-
+}
+
 _refuse() {
-    printf '%s\n' "$1" | timeout -k 1 1 cat >&2 2>/dev/null
+    # Bounded from the start of the call: --max when it is already known and valid, else a second.
+    local secs=1
+    [[ "${MAX:-}" =~ ^[1-9][0-9]{0,5}$ ]] && secs=$MAX
+    _write_until "$1"$'\n' "$ERR_FD" $(( START_US + secs * 1000000 ))
     exit 2
 }
 
@@ -155,7 +178,7 @@ _first_seen() {
     # reported MISSING at once rather than looking newly launched forever.
     local t=""
     [ -f "$side" ] || { date +%s > "$side.tmp.$$" && mv -f "$side.tmp.$$" "$side"; } 2>/dev/null || { echo 0; return; }
-    read -r t < "$side" 2>/dev/null || t=""
+    read -r t 2>/dev/null < "$side" || t=""
     case "$t" in ''|*[!0-9]*) echo 0 ;; *) echo "$t" ;; esac
 }
 
@@ -192,14 +215,24 @@ _observe() {
                 # A recovery started this call: read its status once it has ended (a zombie of this shell
                 # until waited on, so a still-running one is a live, non-zombie /proc entry).
                 pst=""
-                [ -r "/proc/$pid/stat" ] && read -r _ _ pst _ < "/proc/$pid/stat" 2>/dev/null
+                [ -r "/proc/$pid/stat" ] && read -r _ _ pst _ 2>/dev/null < "/proc/$pid/stat"
                 if [ -z "$pst" ] || [ "$pst" = Z ]; then
                     rc=0
                     wait "$pid" 2>/dev/null || rc=$?
                     rec_pid[$f]=ended
+                    # The probe after the recovery is judged as the first one is: a status found is done,
+                    # one that cannot be read is unreadable, and only "none" (1) goes on to the owner check.
                     src=0
-                    python3 "$RESULT_TOOL" status "$f" >/dev/null 2>&1 || src=$?
-                    if [ "$rc" -ne 0 ] && [ "$src" -eq 1 ] && flock -n "$f.owner" true 2>/dev/null; then
+                    st="$(python3 "$RESULT_TOOL" status "$f" 2>/dev/null)" || src=$?
+                    if [ "$src" -eq 0 ]; then
+                        status[$f]="$st"
+                        echo "done $st $f"
+                        continue
+                    elif [ "$src" -ne 1 ]; then
+                        echo "unreadable $f"
+                        continue
+                    fi
+                    if [ "$rc" -ne 0 ] && flock -n "$f.owner" true 2>/dev/null; then
                         unpublished[$f]=1
                         echo "unpublished $f"
                         continue
@@ -309,30 +342,36 @@ REPORT=""
 say() { REPORT+="$*"$'\n'; }
 # shellcheck disable=SC2059  # every caller passes a literal format, as printf itself would take it
 sayf() { local line; printf -v line "$@"; REPORT+="$line"; }
-# Writes $1 to descriptor $2 by $3 (microseconds, as NOW_US). The write is made by a forked copy of this
-# shell, which starts no program (nothing to load from a stalled disk), and this shell waits for its word
-# only until the deadline: a write blocked on a full pipe is then ended, never waited for.
-_write_until() {
-    local done_fd pid left_us
-    _now
-    left_us=$(( $3 - NOW_US ))
-    [ "$left_us" -gt 0 ] || return 0
-    exec {done_fd}< <(exec 2>/dev/null; printf '%s' "$1" >&"$2"; echo written)
-    pid=$!
-    _now
-    left_us=$(( $3 - NOW_US ))
-    [ "$left_us" -gt 0 ] || left_us=1
-    local left
-    printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
-    IFS= read -r -t "$left" -u "$done_fd" _ \
-        || kill -KILL "$pid" 2>/dev/null
-    exec {done_fd}<&-
+# Every process under the observer except a recovery (which is let finish, so a result is published) and
+# its children, found by reading /proc in this shell (no process is started to find them).
+_observer_tree() {
+    local -A kids=()
+    local st rest pid pp
+    for st in /proc/[0-9]*/stat; do
+        read -r rest 2>/dev/null < "$st" || continue
+        pid="${rest%% *}"
+        rest="${rest##*) }"
+        read -r _ pp _ <<< "$rest"
+        kids[$pp]+=" $pid"
+    done
+    local -a todo=("$OBS_PID")
+    TREE=()
+    while [ "${#todo[@]}" -gt 0 ]; do
+        pid="${todo[0]}"
+        todo=("${todo[@]:1}")
+        local -a argv=()
+        mapfile -d '' -t argv 2>/dev/null < "/proc/$pid/cmdline"
+        [ "$pid" != "$OBS_PID" ] && [ "${argv[2]:-}" = recover ] && continue
+        [ "$pid" != "$OBS_PID" ] && TREE+=("$pid")
+        for pp in ${kids[$pid]:-}; do todo+=("$pp"); done
+    done
 }
 
 deliver() {
-    # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
-    # for longer than that one probe.
-    kill -TERM "$OBS_PID" 2>/dev/null
+    # The observer is this call's own and ends with it, and so does every probe under it (a stat or status
+    # read stalled on storage), so a call waited on again never adds another held process.
+    _observer_tree
+    kill -TERM "$OBS_PID" ${TREE[@]+"${TREE[@]}"} 2>/dev/null
     # One absolute deadline for both writes, the end of --max (its last REPORT_US left for them, and never
     # extended): the report first, then the setup warning with whatever time remains, so a blocked stderr
     # never takes the report's time. A write whose time has gone is not made; the exit status still answers.

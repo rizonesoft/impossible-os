@@ -705,3 +705,18 @@ def test_a_verdict_reached_after_the_deadline_is_a_refusal():
         return 0
     assert gate._with_deadline(0.02, "harness", late) == 2
     assert gate._with_deadline(5.0, "harness", lambda: 0) == 0
+
+
+def test_the_pass_count_reads_the_manifest_newest_first(tmp_path, monkeypatch):
+    """A long history of other sections, then this section's passes: the count reads from the end and stops
+    at the cap, so the rows before it are never parsed."""
+    manifest = tmp_path / gate._PASS_MANIFEST
+    manifest.parent.mkdir(parents=True)
+    other = [json.dumps({"todo": "todo/y.md", "section": 1, "kind": "round"}) for _ in range(2000)]
+    mine = [json.dumps({"todo": "todo/x.md", "section": 7, "kind": "round"}) for _ in range(3)]
+    manifest.write_text("\n".join(other + mine) + "\n")
+    monkeypatch.setattr(gate, "_receipt_complete", lambda e: True)
+    parsed = []
+    real = gate.json.loads
+    monkeypatch.setattr(gate.json, "loads", lambda s, *a, **k: parsed.append(s) or real(s, *a, **k))
+    assert gate._spent_passes(tmp_path, "todo/x.md", "7", 3) == 3 and len(parsed) <= 3, len(parsed)
