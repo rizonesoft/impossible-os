@@ -118,10 +118,19 @@ def main():
         p = broker(man, {"CODEX_OUTAGE_OVERRIDE": "1"})
         if p.returncode == 75 or "codex-companion.mjs not found" not in p.stderr:
             fails.append(f"override did not pass the gate: rc {p.returncode} {p.stderr[:120]!r}")
+    with tempfile.TemporaryDirectory() as d:
+        # Two legs whose published status is damaged (empty), each with a transport signature: no valid exit
+        # status, so no outage, and the broker does not refuse.
+        man = manifest(d, [(OUTAGE, 120), (OUTAGE, 60)], time.time())
+        for i in range(2):
+            Path(d, f"leg{i}.out.done").write_text("")
+        p = broker(man, {})
+        if p.returncode == 75:
+            fails.append(f"damaged statuses were read as a backend outage: {p.stderr[:120]!r}")
     if fails:
         print("test_codex_outage_check FAIL:\n  " + "\n  ".join(fails))
         return 1
-    print(f"test_codex_outage_check OK ({len(CASES) + 3} cases)")
+    print(f"test_codex_outage_check OK ({len(CASES) + 4} cases)")
     return 0
 
 

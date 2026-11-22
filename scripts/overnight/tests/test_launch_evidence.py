@@ -1845,7 +1845,7 @@ def test_a_fallback_launch_not_confirmed_by_the_deadline_publishes_a_failure(mon
     sys.path.insert(0, str(REPO / "scripts/overnight"))
     import review_runtime_limit as rl
     monkeypatch.setattr(rl, "_start", lambda *a, **k: (False, None))
-    assert rl._launch("true", rl.now_cs() + 10) is False
+    assert rl._launch("true", "unused.out", rl.now_cs() + 10) is False
     steps = []
     monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None: steps.append(args) or 0)
     monkeypatch.setattr(rl, "_deliver", lambda b: True)
@@ -1930,7 +1930,7 @@ def test_a_fallback_start_and_its_failure_record_both_unconfirmed_fail_the_broke
     import review_runtime_limit as rl
     seen = {}
     monkeypatch.setattr(rl, "now_cs", lambda: 1000)
-    monkeypatch.setattr(rl, "_launch", lambda job, until, cancel=None: seen.setdefault("until", until) and False)
+    monkeypatch.setattr(rl, "_launch", lambda job, log, until, cancel=None: seen.setdefault("until", until) and False)
     monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None: None)
     delivered = []
     monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
@@ -1948,7 +1948,7 @@ def test_a_failed_failure_record_after_an_unconfirmed_start_fails_the_broker(mon
     sys.path.insert(0, str(REPO / "scripts/overnight"))
     import review_runtime_limit as rl
     for code in (1, -9, 137):
-        monkeypatch.setattr(rl, "_launch", lambda job, until, cancel=None: False)
+        monkeypatch.setattr(rl, "_launch", lambda job, log, until, cancel=None: False)
         monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None, code=code: code)
         delivered = []
         monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
@@ -2111,7 +2111,7 @@ def test_a_cancellation_during_the_fallback_start_releases_nothing(tmp_path, mon
         cancel.sig, cancel.at = 143, rl.now_cs()           # the signal arrives here, before the child exists
         return real(*a, **k)
     monkeypatch.setattr(rl.os, "posix_spawnp", spawnp)
-    assert rl._launch(f"touch {marker}", rl.now_cs() + 500, cancel) == "cancelled"
+    assert rl._launch(f"touch {marker}", str(marker), rl.now_cs() + 500, cancel) == "cancelled"
     time.sleep(1)
     assert not marker.exists(), "a cancelled start ran the job"
     monkeypatch.setattr(rl.os, "posix_spawnp", real)
@@ -2120,7 +2120,7 @@ def test_a_cancellation_during_the_fallback_start_releases_nothing(tmp_path, mon
     late = types.SimpleNamespace(sig=0, at=0)
     published, delivered = [], []
 
-    def launch(job, until, c=None):
+    def launch(job, log, until, c=None):
         late.sig, late.at = 143, rl.now_cs()               # cancelled while the job was being started
         return "cancelled"
     monkeypatch.setattr(rl, "_launch", launch)
@@ -2149,3 +2149,37 @@ def test_a_writer_seen_ending_only_past_the_deadline_is_not_a_delivery(tmp_path,
         assert rl._emit_through_writer(out, b"answer\n", real_now() + 500, None) is False
     finally:
         os.close(out)
+
+
+
+def test_a_fallback_job_that_ends_without_claiming_its_log_is_no_confirmed_start(tmp_path):
+    """The released job cannot claim its result (no inodes, say) and exits: the start is not confirmed, so
+    the broker records the failure through the exclusive claim rather than hand back a log nothing will
+    publish. A job that does claim (its log appears) is confirmed."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    log = tmp_path / "r.out"
+    assert rl._launch("exit 1", str(log), rl.now_cs() + 500) is False
+    assert rl._launch(f"touch {log}; exec sleep 1", str(log), rl.now_cs() + 500) is True
+
+
+def test_an_answer_whose_last_write_crosses_the_deadline_is_not_delivered_in_time(monkeypatch):
+    """The host suspends inside the answer's last write: the pipe took it, but only after the deadline, so
+    the answer is not delivered in time."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    rd, wr = os.pipe()
+    real_now, skew = rl.now_cs, [0]
+    monkeypatch.setattr(rl, "now_cs", lambda: real_now() + skew[0])
+
+    def write(view):
+        n = os.write(wr, view)
+        skew[0] = 10_000                                   # the write returns after a long suspend
+        return n
+    try:
+        assert rl._emit(memoryview(b"answer\n"), write, wr, real_now() + 200, None, late=False) is False
+    finally:
+        os.close(rd)
+        os.close(wr)

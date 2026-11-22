@@ -1088,3 +1088,24 @@ def test_a_suspend_during_a_gate_command_ends_its_wait_on_resume(monkeypatch):
     with pytest.raises(subprocess.TimeoutExpired):
         scg._proc.run(["sleep", "30"], timeout=10)
     assert time.monotonic() - began < 3, time.monotonic() - began
+
+
+
+def test_a_gate_command_is_fed_its_whole_input_whatever_the_wait_slices(monkeypatch):
+    """Input larger than a pipe, read only after the first wait slice has expired: the command gets it all,
+    and no wait is ever left with the command's stdin open and no input to write (on CPython 3.12 such a
+    retry stops the feed, and the command waits for EOF until the gate ends it)."""
+    import time
+
+    real, calls = subprocess.Popen.communicate, []
+
+    def communicate(self, input=None, timeout=None):
+        calls.append(input is None and self.stdin is not None and not self.stdin.closed)
+        return real(self, input, timeout)
+    monkeypatch.setattr(subprocess.Popen, "communicate", communicate)
+    data = b"x" * (256 << 10)
+    began = time.monotonic()
+    r = scg._proc.run(["sh", "-c", "sleep 1.5; wc -c"], input=data, capture_output=True, timeout=10)
+    assert r.returncode == 0 and r.stdout.strip() == str(len(data)).encode(), r
+    assert time.monotonic() - began < 5
+    assert not any(calls), calls

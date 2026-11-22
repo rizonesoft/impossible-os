@@ -1529,6 +1529,24 @@ def _read_git_commit(cmd: str) -> tuple[bool, bool]:
 # ----------------------------------------------------------------------
 
 
+def _feed(proc, data):
+    """Writes `data` to `proc`'s stdin and closes it, in a daemon thread; stdin is taken from the Popen so its
+    own waits never touch it. A command that ends, or is ended, before reading it all ends the write."""
+    import threading
+    pipe, proc.stdin = proc.stdin, None
+
+    def write():
+        try:
+            pipe.write(data)
+        except (OSError, ValueError):
+            pass                                       # fail-direction: the command has gone; its status says why
+        try:
+            pipe.close()
+        except (OSError, ValueError):
+            pass                                       # fail-direction: as above
+    threading.Thread(target=write, daemon=True).start()
+
+
 class _BoundedProcesses:
     """EVERY PROCESS THE GATE STARTS goes through here (`_proc.run`, `_proc.check_output`, the shapes of their
     subprocess namesakes). Each is given at most what the hook's own deadline leaves (`_hook_left`), runs in a
@@ -1571,19 +1589,22 @@ class _BoundedProcesses:
         proc = self._start(cmd, end, limit, cwd=cwd, env=env, stdin=subprocess.PIPE if input is not None else None,
                            stdout=stdout, stderr=stderr, text=text, errors=errors)
         try:
+            # Input is written by a thread of its own, through EOF: communicate stops writing on a retry
+            # that passes no input (CPython 3.12), so the feed is never left to a wait that times out.
+            if input is not None:
+                _feed(proc, input)
             # The start (Popen waits for the exec) spent part of the budget: only what is left is waited, in
             # slices of at most a second (communicate's own timeout does not count a suspend), the elapsed-time
-            # deadline read again after each. Input goes with the first call only, as communicate requires.
-            feed = input
+            # deadline read again after each.
             while True:
                 left = end - _clock()
                 if left <= 0:
                     raise subprocess.TimeoutExpired(cmd, limit)
                 try:
-                    out, err = proc.communicate(feed, timeout=min(1.0, max(0.001, left)))
+                    out, err = proc.communicate(timeout=min(1.0, max(0.001, left)))
                     break
                 except subprocess.TimeoutExpired:
-                    feed = None
+                    pass
         except subprocess.TimeoutExpired:
             self._end(proc)
             raise subprocess.TimeoutExpired(cmd, limit) from None

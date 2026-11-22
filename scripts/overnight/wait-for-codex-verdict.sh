@@ -271,6 +271,7 @@ while :; do
                          unset "UNREAD[$key]" "UNPUB[$key]"
                          EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
         "tail "*)        TAIL+=("${line#tail }") ;;
+        tailunread)      tail_unread=1 ;;
         statuses)        finished=1 ;;                      # done; the tail lines follow until alldone
         alldone)         tail_read=1; break ;;
         cycle)
@@ -316,6 +317,7 @@ if [ "$finished" -eq 1 ]; then
     say "--- verdict tail ($LAST) ---"
     for line in "${TAIL[@]}"; do say "$line"; done
     [ "$tail_read" -eq 1 ] || say "(the transcript's tail could not be read within --max; every status above is published)"
+    [ "${tail_unread:-0}" -eq 1 ] && say "(the transcript's tail could not be read; every status above is published)"
     # The next step, stated where the verdicts are read (2026-09-28: 85 of 309
     # refused calls in 21 run logs were an edit made right here, before the
     # wave was received).

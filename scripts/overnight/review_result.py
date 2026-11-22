@@ -198,8 +198,16 @@ def recover(log: str) -> int:
     if error is not None:
         print(f"review_result: {log}.done could not be read ({error.strerror}); it is left as it is", file=sys.stderr)
         return 1
-    if found is not None or not os.path.lexists(log):
-        return 0                                   # published, or not claimed yet: a claim may be in progress
+    if found is not None:
+        return 0                                   # published
+    try:
+        os.lstat(log)
+    except FileNotFoundError:
+        return 0                                   # not claimed yet: a claim may be in progress
+    except OSError as exc:
+        # Whether the result was claimed is unknown: an error, so the caller tries again, never "nothing to do".
+        print(f"review_result: {log} could not be checked ({exc.strerror})", file=sys.stderr)
+        return 1
     try:
         fd = os.open(_owner(log), os.O_RDWR | CLOEXEC)
     except FileNotFoundError:
@@ -292,21 +300,29 @@ TAIL_BYTES = 16384
 TAIL_LINES = 25
 
 
-def tail(log: str) -> int:
-    """The last lines of the transcript `log` (at most TAIL_LINES of its last TAIL_BYTES), printed; read only
-    from a regular file opened without blocking, so a FIFO or device that replaced it fails at once (1)."""
-    try:
-        fd = open_regular(log, os.O_RDONLY)
-    except OSError:
-        return 1
+def tail_lines(log: str) -> list:
+    """The last lines of the transcript `log` (at most TAIL_LINES of its last TAIL_BYTES), read only from a
+    regular file opened without blocking (a FIFO or device that replaced it fails at once). The tail is read
+    to the length its size at open gives: a file cut shorter while it is read raises OSError, never a tail
+    that silently lost its last lines. Every tail reader (`tail`, the waiter's observer) uses this one."""
+    fd = open_regular(log, os.O_RDONLY)
     try:
         size = os.fstat(fd).st_size
-        data = os.pread(fd, TAIL_BYTES, max(0, size - TAIL_BYTES))
-    except OSError:
-        return 1
+        want = min(size, TAIL_BYTES)
+        data = os.pread(fd, want, size - want)
     finally:
         os.close(fd)
-    lines = data.decode("utf-8", "replace").splitlines()[-TAIL_LINES:]
+    if len(data) != want:
+        raise OSError(errno.ENODATA, f"{log} shrank while its tail was read")
+    return data.decode("utf-8", "replace").splitlines()[-TAIL_LINES:]
+
+
+def tail(log: str) -> int:
+    """The last lines of the transcript `log` (tail_lines), printed; 1 when they cannot be read."""
+    try:
+        lines = tail_lines(log)
+    except OSError:
+        return 1
     sys.stdout.write("".join(line + "\n" for line in lines))
     return 0
 

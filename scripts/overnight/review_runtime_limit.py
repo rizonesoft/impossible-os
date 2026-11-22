@@ -243,7 +243,9 @@ def _emit(view, write, polled, until, cancel, late=True):
             continue
         except OSError:
             return False
-    return True
+    # The last write can itself cross the deadline (a suspend inside it): an answer is in time only if the
+    # clock still says so after it.
+    return late or now_cs() < until
 
 
 def _load_result():
@@ -556,12 +558,14 @@ def _child_env():
 LAUNCH_GATE = 'IFS= read -r -n 1 -u 3 go; exec 3<&-; [ "$go" = g ] || exit 0; exec bash -c "$1"'
 
 
-def _launch(job, until, cancel=None):
+def _launch(job, log, until, cancel=None):
     """Starts a job the broker handed over in a session of its own, its streams on /dev/null; it is this
     supervisor's child only until this exits, and is never ended by it. The job runs only once this releases
     it (one byte down a pipe it reads first, LAUNCH_GATE), and that happens only when no cancellation has
-    arrived: True when released, "cancelled" when a cancellation came during the start (the job runs nothing),
-    False when the start was not confirmed by the deadline."""
+    arrived: True when released and the job has claimed its result (LOG exists), "cancelled" when a
+    cancellation came during the start (the job runs nothing), False when the start or the claim was not
+    confirmed by the deadline or the job ended without claiming (its claim failed: nothing will publish it,
+    so the caller records the failure through the exclusive claim)."""
     rd, wr = os.pipe()
 
     def spawn():
@@ -580,7 +584,7 @@ def _launch(job, until, cancel=None):
     # claim (a job that started and claimed first keeps its own result, and one that starts later finds the
     # result owned and runs nothing). The answer then names a result that is published either way.
     try:
-        started, _pid = _start(spawn, until, cancel)
+        started, pid = _start(spawn, until, cancel)
     except BaseException:
         os.close(wr)
         raise
@@ -590,9 +594,29 @@ def _launch(job, until, cancel=None):
         if cancel is not None and cancel.sig:
             return "cancelled"                         # never released: the job runs nothing
         os.write(wr, b"g")                             # one byte to an empty pipe: never blocks
-        return True
     finally:
         os.close(wr)
+    return _claimed(log, pid, until)
+
+
+def _claimed(log, pid, until):
+    """Whether the released job claimed its result (LOG exists) by `until`; False when it ended first."""
+    while True:
+        try:
+            os.lstat(log)
+            return True
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass                                       # fail-direction: unknown yet; asked again until `until`
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                return os.path.lexists(log)            # ended: claimed only if its log is there
+        except ChildProcessError:
+            return os.path.lexists(log)
+        if now_cs() >= until:
+            return False
+        time.sleep(0.05)
 
 
 class Cancel:
@@ -1080,7 +1104,7 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
                 _publish(broker, cancel.sig, final, cancel)
                 return cancel.sig
             try:
-                started = _launch(broker.job, launch_until, cancel)
+                started = _launch(broker.job, broker.log, launch_until, cancel)
             except OSError as exc:
                 print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
                 _publish(broker, 1, final, cancel)

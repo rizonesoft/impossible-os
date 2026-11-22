@@ -124,20 +124,12 @@ def first_seen(log: str, act_dir: str) -> int:
     return int(text) if text.isdigit() and text.isascii() and len(text) < 20 else 0
 
 
-def read_tail(log: str) -> list:
-    """The last lines of LOG's transcript (review_result's bounded tail), or [] when it cannot be read."""
+def read_tail(log: str):
+    """The last lines of LOG's transcript (review_result.tail_lines), or None when they cannot be read."""
     try:
-        fd = review_result.open_regular(log, os.O_RDONLY)
+        return review_result.tail_lines(log)
     except OSError:
-        return []
-    try:
-        size = os.fstat(fd).st_size
-        data = os.pread(fd, review_result.TAIL_BYTES, max(0, size - review_result.TAIL_BYTES))
-    except OSError:
-        return []
-    finally:
-        os.close(fd)
-    return data.decode("utf-8", "replace").splitlines()[-review_result.TAIL_LINES:]
+        return None
 
 
 def start_recovery(log: str):
@@ -168,7 +160,8 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
     end = now() + secs
     status: dict = {}
     recovery: dict = {}            # log -> Popen, until its exit status has been judged
-    tried: set = set()             # logs recovered once in this call (at most once each)
+    tried: set = set()             # logs a recovery was started for in this call
+    retried: set = set()           # logs whose failed recovery was given its one more try
     unpublished: set = set()
     while True:
         soon = False
@@ -181,7 +174,10 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                 say(f"done {found} {n}")
                 continue
             if error is not None:
-                # What the status holds is unknown: never recovered, judged stale or reported unpublished.
+                # What the status holds is unknown: never recovered, judged stale or reported unpublished. A
+                # recovery in hand is looked at again a second later, as a running one is.
+                if f in recovery:
+                    soon = True
                 say(f"unreadable {n}")
                 continue
             if f in unpublished:
@@ -196,6 +192,18 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                     say(f"unknown {n}")
                     continue
                 else:
+                    if rc != 0 and f not in retried:
+                        # Ended in an error (the log or a status could not be read): one more recovery, started
+                        # now, so one transient fault never decides the result for the whole call and a
+                        # recovery stays in hand meanwhile (the transcript's age is not judged).
+                        retried.add(f)
+                        try:
+                            recovery[f] = start_recovery(f)
+                        except OSError:
+                            recovery[f] = _NOT_STARTED  # judged as a failed recovery, as a first one is
+                        soon = True
+                        say(f"unknown {n}")
+                        continue
                     # This round read "no status" conclusively: the recovery's result is judged now, once its
                     # owner's state is known too (an owner check that fails keeps it for the next round).
                     owner = owner_state(f) if rc != 0 else "held"
@@ -238,7 +246,10 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
             say(f"seen {exists} {size} {silent} {n}")
         if all(f in status for f in logs):
             say("statuses")
-            for line in read_tail(logs[-1]):
+            lines = read_tail(logs[-1])
+            if lines is None:
+                say("tailunread")
+            for line in lines or []:
                 say(f"tail {line}")
             say("alldone")
             return 0

@@ -26,6 +26,7 @@ Exit: 0 dispatch allowed, 75 backend down (reason on stdout).
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -37,18 +38,51 @@ OUTAGE_RE = re.compile(
     r"Codex error: (unexpected status \d{3}|stream disconnected before completion|Selected model is at capacity)")
 
 
+_RESULT = None
+
+
+def _review_result():
+    """review_result.py, beside this file: the one status parser and regular-file opener."""
+    global _RESULT
+    if _RESULT is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "review_result_for_outage", os.path.join(os.path.dirname(os.path.abspath(__file__)), "review_result.py"))
+        _RESULT = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_RESULT)
+    return _RESULT
+
+
+def _read_sized(path) -> bytes:
+    """A regular file's bytes, read to its size at open; OSError when it cannot be, or shrank while read."""
+    rr = _review_result()
+    fd = rr.open_regular(str(path), os.O_RDONLY)
+    try:
+        left, parts = os.fstat(fd).st_size, []
+        while left > 0:
+            chunk = os.read(fd, min(1 << 20, left))
+            if not chunk:
+                raise OSError(errno.ENODATA, f"{path} shrank while it was read")
+            parts.append(chunk)
+            left -= len(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(parts)
+
+
 def leg_state(log: Path):
     """('ok'|'outage'|'other'|'running', signature) for one leg's artifact."""
-    # The dispatcher's <log>.done holds the exit status once the review has
-    # exited; until then the leg is running, whatever its log says.
-    try:
-        rc = Path(str(log) + ".done").read_text().strip()
-    except OSError:
-        return "running", ""
+    # The dispatcher's <log>.done holds the exit status once the review has exited, read by the one parser
+    # every reader uses; until then the leg is running, whatever its log says. A damaged status is no exit
+    # status: never an outage, and a status that cannot be read is not known to have ended.
+    done = str(log) + ".done"
+    rc, error = _review_result().read_status_file(done)
+    if rc is None:
+        return ("other", "") if error is None and os.path.lexists(done) else ("running", "")
     if rc == "0":
         return "ok", ""
     try:
-        text = log.read_text(errors="replace")
+        text = _read_sized(log).decode("utf-8", "replace")
     except OSError:
         return "other", ""
     o = OUTAGE_RE.findall(text)
@@ -57,7 +91,7 @@ def leg_state(log: Path):
 
 def check(manifest: Path, window: int, threshold: int, now: float):
     try:
-        lines = manifest.read_text(errors="replace").splitlines()
+        lines = _read_sized(manifest).decode("utf-8", "replace").splitlines()
     except OSError:
         return True, ""
     # Completed attempts launched within the window, newest FINISH first:

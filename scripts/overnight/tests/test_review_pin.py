@@ -2032,22 +2032,22 @@ def test_the_prompt_shows_the_index_and_the_working_files_apart(tmp_path):
 
 def test_a_slow_outage_check_is_held_to_the_callers_limit(tmp_path):
     import os
+    import shutil
     import time
     repo, _git = _tmp_repo(tmp_path)
-    fifo = tmp_path / "manifest.jsonl"
-    os.mkfifo(fifo)                                    # opening it for reading waits for a writer that never comes
+    # The outage check itself stalls (its storage does not answer): the python3 it runs under sleeps.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("python3")
+    (bindir / "python3").write_text('#!/bin/bash\ncase "$1" in */codex-outage-check.py) exec sleep 30;; esac\n'
+                                    f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
     env = {**os.environ, "CODEX_COMPANION_PATH": str(tmp_path / "c.js"), "REVIEW_BASE": "HEAD",
-           "BROKER_MANIFEST": str(fifo), "CODEX_REVIEW_MAX_SECS": "2"}
+           "CODEX_REVIEW_MAX_SECS": "2", "PATH": f"{bindir}:{os.environ['PATH']}"}
     env.pop("CODEX_OUTAGE_OVERRIDE", None)
     (tmp_path / "c.js").write_text("\n")
     began = time.monotonic()
-    try:
-        done = _broker(repo, env, timeout=20)
-    finally:
-        try:                                           # release a reader the broker left behind
-            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
-        except OSError:                                # fail-direction: no reader is left to release
-            pass
+    done = _broker(repo, env, timeout=20)
     assert done.returncode == 2 and time.monotonic() - began < 2 + 1.2, done.stderr
     assert "outage check took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
 

@@ -10,6 +10,7 @@ since the log last GREW, and flags a log that has not grown for --stale-secs as
 STALE (exit 4) so a genuinely-hung review is re-dispatched while a slow-but-alive
 one keeps being waited on."""
 import pathlib
+import sys
 import subprocess
 import time
 import tempfile
@@ -1017,3 +1018,60 @@ def test_a_damaged_first_seen_record_never_hides_the_rest_of_the_wave():
         r = subprocess.run(["bash", str(TOOL), "--max", "6", str(first), str(second)],
                            capture_output=True, text=True, cwd=d, timeout=60)
         assert "b.out" not in r.stdout and "a.out" in r.stdout, (r.returncode, r.stdout)
+
+
+
+def test_a_tail_cut_while_it_is_read_is_reported_unreadable_never_short(tmp_path, monkeypatch):
+    """The transcript is cut between the tail's size read and its read: the tail is unreadable (the waiter
+    says so), never a tail that silently lost its last lines."""
+    import os
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_result as rr
+    import verdict_observer as vo
+    log = tmp_path / "r.out"
+    log.write_text("first\nverdict\n")
+    assert vo.read_tail(str(log)) == ["first", "verdict"]
+    real = os.pread
+
+    def pread(fd, n, off):
+        os.truncate(log, 6)                                # cut after the size was read
+        return real(fd, n, off)
+    monkeypatch.setattr(rr.os, "pread", pread)
+    assert vo.read_tail(str(log)) is None
+
+
+def test_a_recovery_that_meets_a_transient_fault_is_tried_again_in_the_same_wait(tmp_path, monkeypatch):
+    """One EIO on the recovery's look at the log: recover reports an error, never 'nothing to do', and the
+    observer tries the recovery once more in the same wait, which then publishes the result."""
+    import errno
+    import os
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_result as rr
+    log = tmp_path / "r.out"
+    log.write_text("partial\n")
+    (tmp_path / "r.out.owner").write_text("")
+    real, calls = os.lstat, [0]
+
+    def lstat(path, *a, **k):
+        if str(path) == str(log) and calls[0] == 0:
+            calls[0] += 1
+            raise OSError(errno.EIO, "Input/output error")
+        return real(path, *a, **k)
+    monkeypatch.setattr(rr.os, "lstat", lstat)
+    assert rr.recover(str(log)) == 1
+    assert rr.read_status(str(log))[0] is None
+    assert rr.recover(str(log)) == 0 and rr.read_status(str(log))[0] == "1"
+
+
+def test_a_recovery_that_fails_once_is_tried_again_and_publishes_in_the_same_wait():
+    """The owner is gone and the first recovery ends in an error (a transient fault): the observer tries it
+    once more on a later round, and the wait ends DONE with the recovered status, never UNPUBLISHED."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        mark = pathlib.Path(d) / "failed-once"
+        _faults(bindir, "", recover=f'[ -e {mark} ] || {{ : > {mark}; exit 1; }}')
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "20", "--no-stale", log)
+        assert mark.exists() and r.returncode == 0 and "Turn completed (rc=1)" in r.stdout, r
