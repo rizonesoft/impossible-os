@@ -431,3 +431,72 @@ def test_a_pass_its_broker_ended_before_its_own_status_is_dispatched_again():
         rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
         leg = env["kinds"]["round"]
         assert env["needs_redispatch"] == ["round"] and leg["crashed"] is True and leg["rc"] == 124, env
+
+
+def _envelope_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("review_envelope_t", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_manifest_replaced_by_a_fifo_is_refused_at_once():
+    """A FIFO with no writer at the manifest path: the envelope refuses at once, nonzero, never waits."""
+    import os
+    import time
+    with tempfile.TemporaryDirectory() as d:
+        rev = pathlib.Path(d) / ".claude/overnight/reviews"
+        rev.mkdir(parents=True)
+        os.mkfifo(rev / "manifest.jsonl")
+        began = time.monotonic()
+        r = subprocess.run([sys.executable, str(SCRIPT), d, "--kinds", "round", "--todo", "todo/x.md",
+                            "--section", "7"], text=True, capture_output=True, timeout=20)
+        assert r.returncode != 0 and time.monotonic() - began < 10, r
+        assert "cannot be read" in json.loads(r.stdout)["error"], r.stdout
+
+
+def test_a_torn_newest_row_never_exposes_an_older_clean_pass():
+    """A clean checked round, then a row cut short that may be this section's newer round: the round is
+    unknown (read again), never credited from the older row and never dispatched again."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n", _receipt(0, "none"))})
+        with open(rev / "manifest.jsonl", "a") as fh:
+            fh.write('{"ts": 9, "kind": "round", "todo": "todo/x.md", "sect\n')
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert rc != 0 and env["all_clean"] is False, env
+        assert env["unreadable"] == ["round"] and env["needs_redispatch"] == [], env
+        assert "do NOT dispatch it again" in env["next"], env["next"]
+
+
+def test_a_status_read_error_is_read_again_never_dispatched_again(monkeypatch):
+    """An I/O error reading the pass's own status, then its broker's: either way the pass is unreadable,
+    kept out of needs_redispatch, and the caller is told to read again."""
+    import errno
+    import types
+    env_mod = _envelope_module()
+    pin = env_mod._review_pin()
+    real = pin._review_result()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        broker = rev / "broker-round.out"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True, "parent": "detached:x",
+                                        "parent_log": str(broker)})})
+        (rev / "round.out.done").write_text("0\n")
+        broker.write_text("")
+        pathlib.Path(str(broker) + ".done").write_text("0\n")
+        for failing in (str(rev / "round.out.done"), str(broker) + ".done"):
+            def read(path, failing=failing):
+                if path == failing:
+                    return None, OSError(errno.EIO, "Input/output error")
+                return real.read_status_file(path)
+            monkeypatch.setattr(pin, "_review_result", lambda read=read: types.SimpleNamespace(read_status_file=read))
+            out = []
+            monkeypatch.setattr(env_mod, "print", lambda *a, **k: out.append(a[0]), raising=False)
+            rc = env_mod.main([str(root), "--kinds", "round", "--todo", "todo/x.md", "--section", "7"])
+            env = json.loads(out[-1])
+            assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], (failing, env)

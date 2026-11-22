@@ -67,6 +67,8 @@ else
     _now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
 fi
 START_US=$(_now_us)
+# The caller's streams, kept for the report: a forked writer reaches them through these descriptors.
+exec {OUT_FD}>&1 {ERR_FD}>&2
 
 # Setup messages are kept and written at the end through the same bounded writer as the report (a caller
 # whose stderr pipe is full never holds this call), or by `_refuse` for a usage error.
@@ -251,7 +253,8 @@ declare -A GOT=() UNPUB=() UNREAD=() EXISTS=() SIZE=() SILENT=()
 TAIL=()
 # The observer's streams are its own (exec, so no saved copy of the caller's stderr stays open in it): a
 # caller capturing this call's output sees EOF when this shell exits, not when the observer's sleep ends.
-exec {OBS}< <(exec </dev/null 2>/dev/null; _observe)
+# The observer holds none of the caller's streams (its stalled children would keep the caller's pipe open).
+exec {OBS}< <(exec </dev/null 2>/dev/null {OUT_FD}>&- {ERR_FD}>&-; _observe)
 OBS_PID=$!
 finished=0
 tail_read=0
@@ -291,22 +294,33 @@ REPORT=""
 say() { REPORT+="$*"$'\n'; }
 # shellcheck disable=SC2059  # every caller passes a literal format, as printf itself would take it
 sayf() { local line; printf -v line "$@"; REPORT+="$line"; }
+# Writes $1 to descriptor $2 by $3 (microseconds, _now_us). The write is made by a forked copy of this
+# shell, which starts no program (nothing to load from a stalled disk), and this shell waits for its word
+# only until the deadline: a write blocked on a full pipe is then ended, never waited for.
+_write_until() {
+    local done_fd pid left_us
+    left_us=$(( $3 - $(_now_us) ))
+    [ "$left_us" -ge 100000 ] || return 0
+    exec {done_fd}< <(exec 2>/dev/null; printf '%s' "$1" >&"$2"; echo written)
+    pid=$!
+    left_us=$(( $3 - $(_now_us) ))
+    [ "$left_us" -gt 0 ] || left_us=1
+    IFS= read -r -t "$(printf '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 )))" -u "$done_fd" _ \
+        || kill -KILL "$pid" 2>/dev/null
+    exec {done_fd}<&-
+}
+
 deliver() {
     # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
     # for longer than that one probe.
     kill -TERM "$OBS_PID" 2>/dev/null
     # One absolute deadline for both writes (what is left of --max, at least a second): the report first,
     # then the setup warning with whatever time remains, so a blocked stderr never takes the report's time.
-    local now_us until_us left_ms
+    local now_us until_us
     now_us=$(_now_us)
     until_us=$(( END_US > now_us + 1000000 ? END_US : now_us + 1000000 ))
-    left_ms=$(( (until_us - now_us) / 1000 ))
-    printf '%s' "$REPORT" | timeout -k 0.1 "$(( left_ms / 1000 )).$(printf '%03d' $(( left_ms % 1000 )))" cat 2>/dev/null
-    if [ -n "$SETUP_ERR" ]; then
-        left_ms=$(( (until_us - $(_now_us)) / 1000 - 100 ))
-        [ "$left_ms" -ge 100 ] && printf '%s' "$SETUP_ERR" \
-            | timeout -k 0.1 "$(( left_ms / 1000 )).$(printf '%03d' $(( left_ms % 1000 )))" cat >&2 2>/dev/null
-    fi
+    _write_until "$REPORT" "$OUT_FD" "$until_us"
+    [ -n "$SETUP_ERR" ] && _write_until "$SETUP_ERR" "$ERR_FD" $(( until_us - 100000 ))
     exit "$1"
 }
 

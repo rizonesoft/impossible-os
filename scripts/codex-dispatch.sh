@@ -333,14 +333,20 @@ fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
 # The transcript itself is created before the reviewer starts: an existing
 # directory this process cannot write would otherwise be found only by tee,
-# with the review already running and nowhere to keep it.
+# with the review already running and nowhere to keep it. It is created here,
+# once (noclobber: a fresh file of this process), and kept open for appending:
+# every later write and read goes through LOGFD (/dev/fd/N reaches the same
+# file), so nothing that later takes the path can hold this dispatcher in an open.
+# The process id is in the name: two passes of one kind started in the same
+# second must not share a transcript, or one is checked against the other's verdict.
 if mkdir -p "$REVIEWS_DIR" 2>/dev/null \
-        && _probe="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out" \
-        && : 2>/dev/null > "$_probe"; then
-    # The process id is in the name: two passes of one kind started in the same
-    # second must not share a transcript, or one is checked against the other's verdict.
-    LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out"
+        && LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out" \
+        && { set -C; exec {_created}>"$LOG_FILE"; } 2>/dev/null; then
+    set +C
+    exec {LOGFD}>>"/proc/self/fd/$_created" {_created}>&-
+    LOG_RW="/dev/fd/$LOGFD"
 else
+    set +C
     LOG_FILE=""
 fi
 if [ -n "$LOG_FILE" ]; then
@@ -367,11 +373,6 @@ if [ -n "$LOG_FILE" ]; then
     # Where the transcript goes (for the reader). The recorder's proof that a
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
-    # The transcript is opened once, here, for appending; every later write and read goes through this
-    # descriptor (/dev/fd/N reaches the same file), so a FIFO or anything else that later takes the path
-    # can never hold this dispatcher in an open.
-    exec {LOGFD}>>"$LOG_FILE" || { echo "[$SELF_NAME] BLOCK -- the transcript could not be created" >&2; exit 2; }
-    LOG_RW="/dev/fd/$LOGFD"
     node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then

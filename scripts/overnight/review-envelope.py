@@ -76,7 +76,12 @@ def leg_summary(entry: dict) -> dict:
     # snapshot taken afterwards is never older than the status it is paired with.
     # Both are opened without blocking and read only as regular files, so a path replaced by a FIFO or a
     # device reads as no status (or an unreadable artifact), never as a hang.
-    status = _review_pin().published_status(str(path) + ".done")
+    # Through the one status parser, keeping its read error: a status that is there but could not be read
+    # is unknown, read again later, never an unfinished pass to dispatch again.
+    status, error = _review_pin()._review_result().read_status_file(str(path) + ".done")
+    if error is not None:
+        out["unreadable"] = f"its status could not be read ({error.strerror})"
+        return out
     done_rc = int(status) if status is not None and status.isdigit() else None  # fail-direction: unfinished
     data = _regular_bytes(path)
     if data is None:
@@ -143,8 +148,11 @@ def leg_summary(entry: dict) -> dict:
     # failed attempt, dispatched again, even when the pass's own status never came (the broker ended it
     # between its receipt and its status).
     if entry.get("parent"):
-        broker_status = _broker_status(entry)
-        if broker_status is None:
+        broker_status, error = _broker_status(entry)
+        if error is not None:
+            out["complete"] = False
+            out["unreadable"] = f"its broker's status could not be read ({error.strerror})"
+        elif broker_status is None:
             out["complete"] = False
         elif broker_status != "0":
             out["complete"] = True
@@ -162,10 +170,11 @@ def _review_pin():
 
 
 def _broker_status(entry: dict):
-    """The status the broker that launched this pass published, or None (not yet, or not readable)."""
+    """(status, error) the broker that launched this pass published: (None, None) when there is none yet,
+    the read error when it is there but could not be read."""
     pin = _review_pin()
     broker = pin.broker_log(entry)
-    return None if broker is None else pin.published_status(broker + ".done")
+    return (None, None) if broker is None else pin._review_result().read_status_file(broker + ".done")
 
 
 PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
@@ -211,11 +220,26 @@ def main(argv) -> int:
             since = None
     manifest = project / ".claude/overnight/reviews/manifest.jsonl"
     latest: dict = {}
+    unknown: list = []
+    pin = _review_pin()
+    if not os.path.lexists(manifest):
+        print(json.dumps({"error": "no broker manifest", "kinds": {}}))
+        return 1
+    # The manifest is read as the commit gate reads it (review_pin._newest_first: newest first, a regular
+    # file opened without blocking) and by its rule: a line that cannot be read and may be one of these
+    # passes stops the read, and every kind not found before it is unknown, never credited from an older row.
     try:
-        for ln in manifest.read_text(encoding="utf-8").splitlines():
+        for ln in pin._newest_first(manifest):
+            if not ln.strip():
+                continue
             try:
                 e = json.loads(ln)
             except ValueError:
+                if want_todo is None or pin.unreadable_line_may_be(ln, want_todo):
+                    unknown = [k for k in kinds if k not in latest]
+                    break
+                continue
+            if not isinstance(e, dict):
                 continue
             if want_todo is not None:
                 etodo = str(e.get("todo") or "").replace("\\", "/").lstrip("./")
@@ -229,9 +253,11 @@ def main(argv) -> int:
                 ets = e.get("ts")
                 if not isinstance(ets, int) or ets < since:
                     continue
-            latest[e.get("kind")] = e  # later lines win (append order)
-    except OSError:
-        print(json.dumps({"error": "no broker manifest", "kinds": {}}))
+            latest.setdefault(e.get("kind"), e)  # read newest first: the first row of a kind wins
+            if all(k in latest for k in kinds):
+                break
+    except (OSError, pin.Refused) as exc:
+        print(json.dumps({"error": f"the broker manifest cannot be read ({exc})", "kinds": {}}))
         return 1
     # all_complete: every leg produced a completion marker (back-compat).
     # all_clean:    every leg completed AND did not crash (rc==0) -- the real
@@ -241,9 +267,14 @@ def main(argv) -> int:
     #               a completed clean leg is reused as-is.
     env = {"kinds": {}, "all_complete": True, "all_clean": True,
            "missing": [], "crashed": [], "incomplete": [], "blocking": [],
-           "needs_redispatch": []}
+           "unreadable": [], "needs_redispatch": []}
     levels = blocking_levels(project)
     for k in kinds:
+        if k in unknown:
+            # Its newest row may be the torn line: unknown, read again, not dispatched again.
+            env["unreadable"].append(k)
+            env["all_complete"] = env["all_clean"] = False
+            continue
         if k not in latest:
             env["missing"].append(k)
             env["all_complete"] = False
@@ -252,7 +283,10 @@ def main(argv) -> int:
             continue
         leg = leg_summary(latest[k])
         env["kinds"][k] = leg
-        if not leg["complete"]:
+        if leg.get("unreadable"):
+            env["unreadable"].append(k)
+            env["all_complete"] = env["all_clean"] = False
+        elif not leg["complete"]:
             env["all_complete"] = False
             env["all_clean"] = False
             env["needs_redispatch"].append(k)
@@ -285,7 +319,11 @@ def main(argv) -> int:
     # common refused call across 21 run logs (85 of 309) was an edit made right
     # after reading a wave's verdicts, before receiving it; 47 of those were
     # followed immediately by the receive. Saying it here costs one line.
-    if env["needs_redispatch"]:
+    if env["unreadable"]:
+        env["next"] = ("read the envelope again for " + ", ".join(env["unreadable"])
+                       + " (a status or receipt could not be read; do NOT dispatch it again)"
+                       + ("; re-dispatch ONLY " + ", ".join(env["needs_redispatch"]) if env["needs_redispatch"] else ""))
+    elif env["needs_redispatch"]:
         env["next"] = ("re-dispatch ONLY " + ", ".join(env["needs_redispatch"])
                        + "; receive the wave once all legs are clean")
     else:

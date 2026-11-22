@@ -336,12 +336,16 @@ def signal_all(sig, sent=None, cutoff=None):
                 kids.setdefault(st[1], []).append(int(name))
     signalled = unheld = 0
     stack = [(os.getpid(), None)]
+    parent_fd = None                       # the member being walked: held outside the stack, closed below
     try:
         while stack:
             if cutoff is not None and now_cs() >= cutoff:
                 raise WalkCut(signalled, unheld)
             parent, parent_fd = stack.pop()
             for pid in kids.get(parent, ()):
+                # Checked per child too: a member with many children is never a walk with no bound.
+                if cutoff is not None and now_cs() >= cutoff:
+                    raise WalkCut(signalled, unheld)
                 try:
                     fd = os.pidfd_open(pid)
                 except ProcessLookupError:   # fail-direction: gone before it was held; its orphans come here
@@ -364,7 +368,10 @@ def signal_all(sig, sent=None, cutoff=None):
                 except ProcessLookupError:   # fail-direction: it exited after it was proved a member
                     pass
                 os.close(parent_fd)
+            parent_fd = None
     finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
         for _pid, fd in stack:
             if fd is not None:
                 os.close(fd)
@@ -991,8 +998,11 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
     if step == "answered" and not cancelled and broker.response:
         # The submission succeeded: the result is the launched job's, whatever happens to the answer.
         if broker.job:
+            # The start is given half of what is left, so recording a failure for a start not confirmed
+            # always has time of its own; it never begins at a deadline that has already passed.
+            launch_until = now_cs() + max(0, final - now_cs()) // 2
             try:
-                started = _launch(broker.job, final, cancel)
+                started = _launch(broker.job, launch_until, cancel)
             except OSError as exc:
                 print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
                 _publish(broker, 1, final, cancel)
@@ -1000,7 +1010,14 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
             if not started:
                 print("[review-broker] the job's start was not confirmed by the deadline; its result is "
                       "recorded as failed unless the job claimed it first", file=sys.stderr)
-                _result_step(["publish", broker.log, "1", "--prompt", broker.prompt, "--claim"], final, cancel)
+                if _result_step(["publish", broker.log, "1", "--prompt", broker.prompt, "--claim"],
+                                final, cancel) is None:
+                    # Neither the job nor the record of its failure is confirmed: nothing may ever publish
+                    # this result, so the broker fails (its own nonzero status marks the pass crashed) rather
+                    # than hand back a job that may not exist.
+                    print("[review-broker] BLOCK -- neither the job's start nor the record of its failure was "
+                          "confirmed by the deadline; dispatch this pass again", file=sys.stderr)
+                    return 1
         return 0 if _deliver(broker) else 1
     if rc == 0:
         rc = 1                            # ended without the answer it owes: a failed dispatch

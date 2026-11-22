@@ -1853,3 +1853,88 @@ def test_a_fallback_launch_not_confirmed_by_the_deadline_publishes_a_failure(mon
                                    log="/x/r.out", prompt="/x/r.prompt")
     assert rl.finish_broker(broker, 0, False, False, rl.now_cs() + 10) == 0
     assert steps == [["publish", "/x/r.out", "1", "--prompt", "/x/r.prompt", "--claim"]], steps
+
+
+def test_the_direct_dispatcher_holds_its_transcript_from_its_creation(tmp_path):
+    """The transcript path is replaced by a FIFO with no reader while the candidate is identified, after the
+    transcript was created and before the reviewer starts: the dispatcher never opens the path again, so it
+    finishes and publishes its status."""
+    import shutil
+    repo = _repo(tmp_path / "r")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("python3")
+    (bindir / "python3").write_text(
+        "#!/bin/bash\n"
+        "case \" $* \" in *review_candidate.py*)\n"
+        "  for f in .claude/overnight/reviews/*-direct.out; do\n"
+        "    if [ -f \"$f\" ] && [ ! -p \"$f\" ]; then rm -f \"$f\"; mkfifo \"$f\"; fi; done;;\n"
+        f"esac\nexec {real} \"$@\"\n")
+    (bindir / "python3").chmod(0o755)
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
+           "PATH": f"{bindir}:{os.environ['PATH']}"}
+    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+                       text=True, timeout=60, cwd=repo, env=env)
+    reviews = repo / ".claude/overnight/reviews"
+    fifos = [p for p in reviews.iterdir() if p.name.endswith("-direct.out") and p.is_fifo()]
+    dones = [p for p in reviews.iterdir() if p.name.endswith("-direct.out.done")]
+    assert fifos and dones and dones[0].read_text().strip().isdigit(), (r, fifos, dones)
+
+
+def test_a_wide_member_never_carries_the_walk_past_its_cutoff(monkeypatch):
+    """One member with a hundred children, each pidfd open charged a centisecond: the walk stops within a
+    centisecond or two of its cutoff, and every descriptor it held is closed."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    me = os.getpid()
+    clock = [0]
+    held = set()
+    children = [str(100000 + i) for i in range(100)]
+    monkeypatch.setattr(rl, "now_cs", lambda: clock[0])
+    monkeypatch.setattr(rl.os, "listdir", lambda path: list(children))
+    monkeypatch.setattr(rl, "_stat", lambda pid: (b"S", me))
+    monkeypatch.setattr(rl, "_exited", lambda fd: False)
+
+    def pidfd_open(pid):
+        clock[0] += 1
+        fd = os.open(os.devnull, os.O_RDONLY)
+        held.add(fd)
+        return fd
+    real_close = os.close
+
+    def close(fd):
+        held.discard(fd)
+        real_close(fd)
+    monkeypatch.setattr(rl.os, "pidfd_open", pidfd_open, raising=False)
+    monkeypatch.setattr(rl.os, "close", close)
+    try:
+        rl.signal_all(15, cutoff=5)
+        raise AssertionError("the walk was not cut")
+    except rl.WalkCut:
+        pass
+    finally:
+        monkeypatch.undo()
+    assert clock[0] <= 6 and not held, (clock[0], held)
+
+
+def test_a_fallback_start_and_its_failure_record_both_unconfirmed_fail_the_broker(monkeypatch):
+    """The job's start is given half the time left, and when neither it nor the record of its failure is
+    confirmed by the deadline the broker fails (its nonzero status marks the pass crashed) instead of handing
+    back a job that may not exist."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    seen = {}
+    monkeypatch.setattr(rl, "now_cs", lambda: 1000)
+    monkeypatch.setattr(rl, "_launch", lambda job, until, cancel=None: seen.setdefault("until", until) and False)
+    monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None: None)
+    delivered = []
+    monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
+    broker = types.SimpleNamespace(read=lambda: None, step="answered", response="{}", job="true",
+                                   log="/x/r.out", prompt="/x/r.prompt")
+    assert rl.finish_broker(broker, 0, False, False, 1200) == 1
+    assert seen["until"] == 1100 and not delivered, (seen, delivered)

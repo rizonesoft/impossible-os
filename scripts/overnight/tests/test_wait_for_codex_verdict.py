@@ -602,3 +602,22 @@ def test_slow_bookkeeping_never_hides_a_published_verdict():
         r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
                            timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode == 0 and "DONE:" in r.stdout, r
+
+
+def test_a_report_writer_slow_to_start_never_holds_the_waiter():
+    """Every program the report could be written through takes three seconds to start: the report is
+    written by the shell itself, so the wait still answers within its budget."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        for name in ("timeout", "cat"):
+            (bindir / name).write_text(f"#!/bin/sh\nsleep 3\nexec /usr/bin/{name} \"$@\"\n")
+            (bindir / name).chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
+                           timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 0 and "DONE:" in r.stdout and time.monotonic() - began < 2.5, (r, time.monotonic() - began)
