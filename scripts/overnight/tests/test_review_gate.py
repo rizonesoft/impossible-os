@@ -983,3 +983,28 @@ def test_a_start_stalled_past_the_hook_deadline_never_runs_its_command():
         time.sleep(1.5)                                   # the stalled start completes, its gate closed
         scg.subprocess.Popen = real_popen
         assert not marker.exists()
+
+
+
+def test_a_suspend_past_the_hook_deadline_refuses_and_starts_nothing():
+    """Elapsed time jumps past the hook's budget (a suspend) while monotonic time stays inside it: the gate
+    starts no further command and its verdict is a refusal, never the success the checks reached."""
+    with tempfile.TemporaryDirectory() as d:
+        marker = pathlib.Path(d) / "ran"
+        real_clock, skew = scg._clock, [0.0]
+        scg._clock = lambda: real_clock() + skew[0]
+        started = []
+
+        def checks():
+            skew[0] = 120.0                                   # the host slept for two minutes
+            try:
+                scg._proc.run(["touch", str(marker)], timeout=5)
+                started.append(True)
+            except scg.subprocess.TimeoutExpired:
+                started.append(False)
+            return 0
+        try:
+            assert scg._with_deadline(30.0, "test", checks) == 2
+        finally:
+            scg._clock = real_clock
+        assert started == [False] and not marker.exists(), started

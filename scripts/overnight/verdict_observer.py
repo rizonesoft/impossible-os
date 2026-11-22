@@ -174,9 +174,22 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                         say(f"unpublished {n}")
                         continue
             elif f not in tried and os.path.lexists(f) and owner_free(f):
-                recovery[f] = start_recovery(f)
                 tried.add(f)
-                soon = True
+                try:
+                    recovery[f] = start_recovery(f)
+                    soon = True
+                except OSError:
+                    # The recovery could not be started (no descriptors, no memory): read the status once more
+                    # and, with no status and the owner still gone, nothing will publish it.
+                    found, error = probe_status(f)
+                    if found is not None:
+                        status[f] = found
+                        say(f"done {found} {n}")
+                        continue
+                    if error is None and owner_free(f):
+                        unpublished.add(f)
+                        say(f"unpublished {n}")
+                        continue
             meta = probe_meta(f)
             if meta is None:
                 say(f"unknown {n}")

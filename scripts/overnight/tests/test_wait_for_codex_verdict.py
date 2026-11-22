@@ -800,3 +800,71 @@ def test_a_log_path_holding_a_newline_keeps_its_published_status():
         r = subprocess.run(["bash", str(TOOL), "--max", "10", str(log)], capture_output=True, text=True, cwd=d,
                            timeout=30)
         assert r.returncode == 0 and "-- Turn completed (rc=124)" in r.stdout, (r.returncode, r.stdout)
+
+
+def test_a_recovery_that_cannot_be_started_never_hides_the_wave():
+    """The first log's recovery cannot start (EMFILE); the second has a published status: the first is
+    reported UNPUBLISHED and the second DONE, never the whole wave as still running."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import errno\n"
+                        "def start_recovery(log):\n"
+                        "    raise OSError(errno.EMFILE, 'Too many open files')\n"
+                        "o.start_recovery = start_recovery\n")
+        a = pathlib.Path(d) / "a.out"
+        a.write_text("partial\n")
+        pathlib.Path(str(a) + ".owner").write_text("")
+        b = pathlib.Path(d) / "b.out"
+        b.write_text("x\nTurn completed (rc=0)\n")
+        pathlib.Path(str(b) + ".done").write_text("0\n")
+        r = _wait(d, bindir, "--max", "5", a, b)
+        assert "UNPUBLISHED" in r.stdout and r.returncode != 3, (r.returncode, r.stdout)
+
+
+
+def test_a_cancelled_wait_ends_a_report_writer_blocked_on_a_full_pipe():
+    """stdout is a full pipe whose reader stays open: the report writer blocks, the waiter is sent TERM, and
+    it exits 143 with every child it started gone, the blocked writer included."""
+    import os
+    import signal
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("x\nTurn completed (rc=0)\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        rd, wr = os.pipe()
+        os.set_blocking(wr, False)
+        try:
+            while True:
+                os.write(wr, b"x" * 65536)
+        except BlockingIOError:
+            pass
+        os.set_blocking(wr, True)
+        try:
+            p = subprocess.Popen(["bash", str(TOOL), "--max", "30", str(log)], cwd=d, stdout=wr,
+                                 stderr=subprocess.DEVNULL)
+            children = set()
+            end = time.monotonic() + 10
+            while time.monotonic() < end and not children:
+                time.sleep(0.3)
+                for task in pathlib.Path(f"/proc/{p.pid}/task").iterdir():
+                    try:
+                        children |= {int(c) for c in (task / "children").read_text().split()}
+                    except OSError:
+                        pass
+            assert children, "the waiter never started its report writer"
+            time.sleep(0.3)
+            p.send_signal(signal.SIGTERM)
+            assert p.wait(timeout=5) == 143
+            end = time.monotonic() + 3
+            left = set(children)
+            while left and time.monotonic() < end:
+                for pid in list(left):
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        left.discard(pid)
+                time.sleep(0.05)
+            assert not left, f"children {left} outlived the cancelled wait"
+        finally:
+            os.close(wr)
+            os.close(rd)

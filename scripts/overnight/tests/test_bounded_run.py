@@ -486,3 +486,14 @@ def test_a_start_that_returned_while_its_owner_slept_is_given_up_on(why):
     finally:
         threading.Thread.join = real_join
     assert got == (False, None) and abandoned == [42], (got, abandoned)
+
+
+def test_a_helper_holding_both_pipes_never_delays_the_timeout():
+    """A command times out while a helper in a session of its own holds stdout and stderr for 2 s: run()
+    reports the timeout within a fraction of a second of its deadline, not after the helper lets go."""
+    import bounded_run
+    began = time.monotonic()
+    with pytest.raises(ValueError):
+        bounded_run.run(["bash", "-c", "setsid sleep 2 & sleep 10"], "the helper test", timeout=0.25,
+                        keep_stderr=True)
+    assert time.monotonic() - began < 1.0, time.monotonic() - began

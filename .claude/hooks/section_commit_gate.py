@@ -1544,21 +1544,21 @@ class _BoundedProcesses:
         limit = _hook_left(timeout)
         if limit <= 0:
             raise subprocess.TimeoutExpired(cmd, 0)
-        end = time.monotonic() + limit
+        end = _clock() + limit
         if capture_output:
             stdout = stderr = subprocess.PIPE
         proc = self._start(cmd, end, limit, cwd=cwd, env=env, stdin=subprocess.PIPE if input is not None else None,
                            stdout=stdout, stderr=stderr, text=text, errors=errors)
         try:
             # The start (Popen waits for the exec) spent part of the budget: only what is left is waited.
-            out, err = proc.communicate(input, timeout=max(0.001, end - time.monotonic()))
+            out, err = proc.communicate(input, timeout=max(0.001, end - _clock()))
         except subprocess.TimeoutExpired:
             self._end(proc)
             raise subprocess.TimeoutExpired(cmd, limit) from None
         except BaseException:
             self._end(proc)
             raise
-        if time.monotonic() > end:
+        if _clock() > end:
             raise subprocess.TimeoutExpired(cmd, limit)        # an answer first seen after its time is none
         if check and proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
@@ -1587,10 +1587,12 @@ class _BoundedProcesses:
             finally:
                 os.close(gate_rd)
         try:
-            started, proc = bounded_run.start_supervised(spawn, end, lambda: False, self._end)
+            # start_supervised waits on the monotonic clock; the elapsed-time deadline is checked as its stop.
+            started, proc = bounded_run.start_supervised(spawn, time.monotonic() + max(0.0, end - _clock()),
+                                                         lambda: _clock() >= end, self._end)
             if not started:
                 raise subprocess.TimeoutExpired(cmd, limit)
-            if time.monotonic() >= end:
+            if _clock() >= end:
                 self._end(proc)
                 raise subprocess.TimeoutExpired(cmd, limit)
             try:
@@ -1615,8 +1617,8 @@ class _BoundedProcesses:
                     pipe.close()
                 except OSError:
                     pass                               # fail-direction: a pipe already closed
-        until = time.monotonic() + self.REAP
-        while proc.poll() is None and time.monotonic() < until:
+        until = _clock() + self.REAP
+        while proc.poll() is None and _clock() < until:
             time.sleep(0.01)
         # Still in an uninterruptible wait: it ends with its I/O and is reaped by init after this hook exits.
 
@@ -2545,8 +2547,8 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     # Asked once a pair an invocation, inside the budget the commit comparisons share (one slow repository
     # cannot spend the hook's deadline on the same question three times).
     if not _commit_diff_deadline:
-        _commit_diff_deadline.append(time.monotonic() + _COMMIT_DIFF_BUDGET)
-    left = _commit_diff_deadline[0] - time.monotonic()
+        _commit_diff_deadline.append(_clock() + _COMMIT_DIFF_BUDGET)
+    left = _commit_diff_deadline[0] - _clock()
     if left <= 0:
         return False                                   # fail-direction: not shown to be covered refuses
     try:
@@ -2676,11 +2678,17 @@ _HOOK_BUDGET = 8.0
 _hook_deadline: list[float] = []
 
 
+def _clock() -> float:
+    """The gate's one clock: elapsed time that a suspend advances (CLOCK_BOOTTIME), so a host that slept past
+    the hook's deadline is past it on resume, for every bounded read, start and the verdict alike."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
 def _hook_left(timeout: float) -> float:
     """`timeout`, cut to what the hook has left; 0 when nothing is."""
     if not _hook_deadline:
         return timeout
-    return max(0.0, min(timeout, _hook_deadline[0] - time.monotonic()))
+    return max(0.0, min(timeout, _hook_deadline[0] - _clock()))
 
 
 def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
@@ -2711,8 +2719,8 @@ def _commit_diff(root: Path, mode: str, old: str, new: str, *paths: str) -> list
     key = (str(root), mode, old, new, paths)
     if key not in _commit_diffs:
         if not _commit_diff_deadline:
-            _commit_diff_deadline.append(time.monotonic() + _COMMIT_DIFF_BUDGET)
-        left = _commit_diff_deadline[0] - time.monotonic()
+            _commit_diff_deadline.append(_clock() + _COMMIT_DIFF_BUDGET)
+        left = _commit_diff_deadline[0] - _clock()
         if left <= 0:
             return None             # not remembered: the budget is this invocation's, not the comparison's
         tail = ("--", *paths) if paths else ()
@@ -4351,7 +4359,7 @@ def _step8_sections_stamped(root: Path, deadline: float | None = None) -> int | 
     """How many sections have gained a Verified stamp since STEP8_WARN_SINCE: stamped
     at HEAD and not at that commit. Refreshing a stamp, or a second stamp line, adds
     nothing. None when either tree cannot be read (a shallow clone without the commit)."""
-    deadline = time.monotonic() + STEP8_IO_BUDGET_S if deadline is None else deadline
+    deadline = _clock() + STEP8_IO_BUDGET_S if deadline is None else deadline
     try:
         return len(_step8_stamped_at(root, "HEAD", deadline)
                    - _step8_stamped_at(root, STEP8_WARN_SINCE, deadline))
@@ -4371,7 +4379,7 @@ STEP8_IO_BUDGET_S = 4.0
 
 def _left(deadline: float) -> float:
     """Seconds left before `deadline`; a spent budget raises TimeoutExpired."""
-    remaining = deadline - time.monotonic()
+    remaining = deadline - _clock()
     if remaining <= 0:
         raise subprocess.TimeoutExpired("step 8", STEP8_IO_BUDGET_S)
     return remaining
@@ -4383,7 +4391,7 @@ def _staged_texts(root: Path, paths: list[str], deadline: float | None = None) -
     however many paths. A failed or late read raises _StagedReadError: an unread file
     is missing evidence, never a file that needs no test.
     """
-    deadline = time.monotonic() + STEP8_IO_BUDGET_S if deadline is None else deadline
+    deadline = _clock() + STEP8_IO_BUDGET_S if deadline is None else deadline
     try:
         listing = _proc.run(
             ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
@@ -4457,7 +4465,7 @@ def _step8_test_wiring_check(
     import _test_coverage_by_symbol as tcs
 
     provenance = "src/libs/PROVENANCE.md"
-    io_deadline = time.monotonic() + STEP8_IO_BUDGET_S
+    io_deadline = _clock() + STEP8_IO_BUDGET_S
     test_paths = [p for p in staged_src
                   if any(td in p for td in _TEST_WIRING_TEST_DIRS.values())
                   and re.search(r"test_[\w-]+\.c$", p)]
@@ -5303,18 +5311,27 @@ def _deadline_exit(mode: str) -> None:
 def _with_deadline(budget: float, mode: str, run) -> int:
     """`run()` under the hook's one deadline: every bounded read sees it (_hook_left), and a watchdog refuses
     and exits if the deadline passes with no verdict (a stalled exec, a check another module runs)."""
-    deadline = time.monotonic() + budget
+    deadline = _clock() + budget
     _hook_deadline[:] = [deadline]
-    dog = threading.Timer(budget + _WATCHDOG_GRACE, _deadline_exit, args=(mode,))
-    dog.daemon = True
+    # The watchdog polls the elapsed-time clock (a timer would wait on the monotonic one, which a suspend
+    # does not advance, and so outlast a deadline that has passed).
+    stop = threading.Event()
+
+    def watch():
+        while not stop.is_set():
+            left = deadline + _WATCHDOG_GRACE - _clock()
+            if left <= 0:
+                _deadline_exit(mode)
+            stop.wait(min(0.25, left))
+    dog = threading.Thread(target=watch, daemon=True)
     dog.start()
     try:
         verdict = run()
         # A verdict reached after the deadline (a check that stalled and then returned, inside the
         # watchdog's grace) is not one the hook can give: it refuses, exactly as the watchdog would.
-        return verdict if time.monotonic() < deadline else 2
+        return verdict if _clock() < deadline else 2
     finally:
-        dog.cancel()
+        stop.set()
         _hook_deadline[:] = []
 
 

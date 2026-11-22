@@ -85,8 +85,11 @@ _write_until() {
     _now
     left_us=$(( $3 - NOW_US ))
     [ "$left_us" -gt 0 ] || return 0
+    _registering
     exec {done_fd}< <(exec 2>/dev/null; printf '%s' "$1" >&"$2"; echo written)
     pid=$!
+    WRITER_PID=$pid
+    _registered
     _now
     left_us=$(( $3 - NOW_US ))
     [ "$left_us" -gt 0 ] || left_us=1
@@ -94,8 +97,34 @@ _write_until() {
     printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
     IFS= read -r -t "$left" -u "$done_fd" _ \
         || kill -KILL "$pid" 2>/dev/null
+    WRITER_PID=""
     exec {done_fd}<&-
 }
+
+# A cancelled wait (HUP, INT, TERM) ends the children it owns: the observer (a probe stalled in it would
+# otherwise outlive the call) and a report writer (blocked on a full pipe, it would hold the caller's
+# streams), and exits with the signal's status. A recovery runs in a session of its own and is left to
+# publish. A signal that arrives while a child is being started is held until its pid is known, so the
+# child is never left unrecorded; the traps are set before the first child, the usage-error writer
+# included.
+OBS_PID=""
+WRITER_PID=""
+REGISTERING=0
+HELD_SIG=""
+_registering() { REGISTERING=1; }
+_registered() {
+    REGISTERING=0
+    if [ -n "$HELD_SIG" ]; then _cancelled "$HELD_SIG"; fi
+}
+_cancelled() {
+    if [ "$REGISTERING" -eq 1 ]; then HELD_SIG="$1"; return; fi
+    [ -n "$OBS_PID" ] && kill -KILL "$OBS_PID" 2>/dev/null
+    [ -n "$WRITER_PID" ] && kill -KILL "$WRITER_PID" 2>/dev/null
+    exit "$1"
+}
+trap '_cancelled 129' HUP
+trap '_cancelled 130' INT
+trap '_cancelled 143' TERM
 
 _refuse() {
     # Bounded from the start of the call: --max when it is already known and valid, else a second.
@@ -180,16 +209,11 @@ TAIL=()
 _now
 obs_us=$(( END_US - NOW_US > 1000 ? END_US - NOW_US : 1000 ))
 printf -v OBS_SECS '%d.%06d' $(( obs_us / 1000000 )) $(( obs_us % 1000000 ))
+_registering
 exec {OBS}< <(exec </dev/null 2>/dev/null {OUT_FD}>&- {ERR_FD}>&-
               exec python3 "$OBSERVER" --secs "$OBS_SECS" --poll "$POLL" --act-dir "$ACT_DIR" -- "${LOGS[@]}")
 OBS_PID=$!
-# A cancelled wait ends its observer too (a probe stalled in it would otherwise outlive the call), keeping
-# the signal's status; a recovery it started runs in a session of its own and is left to publish.
-# shellcheck disable=SC2329  # invoked from the traps below
-_cancelled() { kill -KILL "$OBS_PID" 2>/dev/null; exit "$1"; }
-trap '_cancelled 129' HUP
-trap '_cancelled 130' INT
-trap '_cancelled 143' TERM
+_registered
 finished=0
 tail_read=0
 while :; do

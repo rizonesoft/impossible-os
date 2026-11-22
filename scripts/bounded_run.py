@@ -33,7 +33,9 @@ import time
 
 CHUNK = 1 << 20
 STDERR_KEEP = 1 << 16        # the end of a long stderr is what names the failure
-GRACE = 5                    # seconds to wait for the pipes to close once the group is ended
+GRACE = 0.2                  # seconds, in all, the pumps are given to see the pipes close once the group is
+                             # ended; a writer outside the group may hold them, and the pumps are daemons left
+                             # to end with it, never waited on past the command's deadline
 REAP_LIMIT = 5               # seconds a KILLed leader may take to exit (uninterruptible I/O) before it is reported
 
 
@@ -307,9 +309,10 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         try:
             if proc is not None:
                 _end_group(proc, what)
+                until = time.monotonic() + GRACE           # one bound for every pump, not one each
                 for t in threads:
                     if t.ident is not None:                # started: a cancellation can land before a start
-                        t.join(GRACE)                      # the pipes close with the group
+                        t.join(max(0.0, until - time.monotonic()))
         finally:
             watch.finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
         if isinstance(exc, subprocess.TimeoutExpired):

@@ -490,7 +490,7 @@ def test_the_comparisons_share_one_budget_and_stop_when_it_is_spent(tmp_path, mo
         clock[0] += timeout          # it used its whole wait and gave nothing
         return None
 
-    monkeypatch.setattr(gate.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(gate, "_clock", lambda: clock[0])
     monkeypatch.setattr(gate, "_git_lines", lambda root, *args, timeout=10: (
         slow(root, *args, timeout=timeout) if args[:1] == ("diff",) and "--cached" not in args else
         gate.subprocess.check_output(["git", *args], cwd=str(root), text=True).splitlines()))
