@@ -18,8 +18,9 @@ import pytest
 import signal
 import time
 import shlex
-import subprocess
 import sys
+import textwrap
+import subprocess
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 HOOK = REPO / ".claude/hooks/codex_review_completed.py"
@@ -1553,3 +1554,37 @@ def test_a_checked_prompt_reaches_the_attempt_through_its_reader():
         assert os.read(fd, 1 << 16) == text
     finally:
         os.close(fd)
+
+
+def test_a_held_prompt_reader_never_keeps_a_dead_owners_lock(tmp_path):
+    """The owner claims its result, its prompt reader is held in I/O, and the owner is killed: the lock is
+    free at once (the reader closed its copies), so recovery can publish while the reader is still held."""
+    import fcntl
+    import signal
+    log = tmp_path / "r.out"
+    code = textwrap.dedent(f"""
+        import sys, time, types
+        sys.path.insert(0, {str(REPO / "scripts/overnight")!r})
+        import review_runtime_limit as rl
+        assert rl._result.claim({str(log)!r}) == 0
+        rl._read_prompt = lambda *a, **k: (time.sleep(30), (None, "x"))[1]
+        rl._prompt_under_deadline("p", "0" * 64, 1, rl.now_cs() + 3000, types.SimpleNamespace(sig=0, at=0))
+    """)
+    owner = subprocess.Popen([sys.executable, "-c", code], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not log.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.5)                                # the reader has forked and is held
+        os.kill(owner.pid, signal.SIGKILL)
+        owner.wait()
+        fd = os.open(str(log) + ".owner", os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # raises BlockingIOError while the reader holds it
+        finally:
+            os.close(fd)
+    finally:
+        try:
+            os.killpg(owner.pid, signal.SIGKILL)       # the held reader, in the owner's group
+        except ProcessLookupError:
+            pass

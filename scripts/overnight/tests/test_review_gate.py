@@ -145,6 +145,7 @@ def _broker_fixture(d, todo, legs):
     import shutil
     shutil.copy(REPO / "scripts/overnight/review-envelope.py",
                 root / "scripts/overnight/review-envelope.py")
+    shutil.copy(REPO / "scripts/review_pin.py", root / "scripts/review_pin.py")  # the envelope's status reader
     ts = int(time.time())
     lines = []
     for kind, how in legs.items():

@@ -274,9 +274,8 @@ def test_a_slow_start_is_spent_from_the_deadline(monkeypatch):
 
 def test_a_slow_start_is_spent_from_a_streams_deadline(monkeypatch):
     _slow_popen(monkeypatch, 0.4)
-    stream = bounded_run.Stream(["cat"], "a stream", timeout=0.2)
-    with pytest.raises(ValueError, match="did not finish within 0.2 s"):
-        stream.close()
+    with pytest.raises(ValueError, match="did not start within 0.2 s"):
+        bounded_run.Stream(["cat"], "a stream", timeout=0.2)
 
 
 def test_an_exit_seen_only_after_the_deadline_is_late(monkeypatch):
@@ -415,3 +414,50 @@ def test_a_hangup_ends_the_command_group_and_reaches_the_caller(tmp_path):
             proc.kill()
             proc.wait()
         _reap(pidfile)
+
+
+def _stalled_exec(monkeypatch, tmp_path):
+    """A start whose exec stalls (a binary on a failing mount): the child is forked at once, then the start
+    waits 30 s before it returns. The marker file records whether the command ever ran."""
+    real = subprocess.Popen
+    marker = tmp_path / "ran"
+
+    def popen(cmd, *a, **k):
+        proc = real(["sh", "-c", f"sleep 1; : > {marker}"], *a, **k)
+        time.sleep(30)
+        return proc
+    monkeypatch.setattr(bounded_run.subprocess, "Popen", popen)
+    return marker
+
+
+@pytest.mark.parametrize("kind", ["run", "stream"])
+def test_a_start_that_stalls_in_exec_returns_by_the_deadline_and_never_runs_late(monkeypatch, tmp_path, kind):
+    """The pre-push dash check starts git through these: a start held in exec returns control by the deadline,
+    and the child it forked is ended before the command could act."""
+    marker = _stalled_exec(monkeypatch, tmp_path)
+    began = time.monotonic()
+    with pytest.raises(ValueError, match="within 0.3 s"):
+        if kind == "run":
+            bounded_run.run(["git", "status"], "git status", timeout=0.3)
+        else:
+            bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=0.3)
+    assert time.monotonic() - began < 0.3 + 1
+    time.sleep(1.5)
+    assert not marker.exists(), "the stalled start's child ran after the call had returned"
+
+
+def test_a_cancellation_during_a_stalled_start_ends_it_at_once(monkeypatch, tmp_path):
+    """SIGTERM while the start is held: the caller's own handler gets it promptly, and nothing runs."""
+    marker = _stalled_exec(monkeypatch, tmp_path)
+    got = []
+    old = signal.signal(signal.SIGTERM, lambda s, f: got.append(s))
+    threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGTERM)).start()
+    began = time.monotonic()
+    try:
+        with pytest.raises(SystemExit):
+            bounded_run.run(["git", "status"], "git status", timeout=20)
+    finally:
+        signal.signal(signal.SIGTERM, old)
+    assert got == [signal.SIGTERM] and time.monotonic() - began < 2
+    time.sleep(1.5)
+    assert not marker.exists()

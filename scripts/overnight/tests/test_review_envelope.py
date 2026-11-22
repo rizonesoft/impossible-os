@@ -145,7 +145,7 @@ def test_missing_leg_needs_redispatch():
 
 def _run_args(root, *extra):
     r = subprocess.run([sys.executable, str(SCRIPT), str(root), *extra],
-                       text=True, capture_output=True)
+                       text=True, capture_output=True, timeout=30)
     return r.returncode, json.loads(r.stdout)
 
 
@@ -381,3 +381,23 @@ def test_a_pass_its_broker_ended_by_its_limit_is_dispatched_again():
         pathlib.Path(str(broker) + ".done").write_text("0\n")
         rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
         assert env["needs_redispatch"] == [] and rc == 0, env
+
+
+def test_a_status_or_transcript_replaced_by_a_fifo_never_hangs_the_envelope():
+    """A FIFO with no writer at the pass's .done (and then at its transcript): the envelope answers at once,
+    with the pass unfinished, rather than blocking in the open."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True})})
+        os.mkfifo(rev / "round.out.done")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["kinds"]["round"]["complete"] is False, env
+        os.unlink(rev / "round.out.done")
+        (rev / "round.out.done").write_text("0\n")
+        os.unlink(rev / "round.out")
+        os.mkfifo(rev / "round.out")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["kinds"]["round"]["complete"] is False and env["needs_redispatch"] == ["round"], env

@@ -121,6 +121,68 @@ def _exit_status(proc, deadline):
     return box[0] if box else None
 
 
+def _children(tid):
+    """The unreaped children the thread `tid` of this process started (Linux /proc)."""
+    try:
+        with open(f"/proc/self/task/{tid}/children") as f:
+            return [int(p) for p in f.read().split()]
+    except (OSError, ValueError):
+        return []                                          # fail-direction: the thread has gone, with its child
+
+
+def _launch(make, deadline, watch, what, timeout):
+    """`make()` (a Popen) run in a launch thread and supervised against the deadline and the caller's
+    cancellations, since a start itself can stall: Popen waits until the child has executed the command, and
+    loading it from a failing mount holds that wait. At the deadline, or on a cancellation, the child the
+    launch thread forked is killed by its id before it runs a single instruction of the command (a SIGKILL
+    pending through exec ends the process before the new program starts); a start that returns only after
+    that is ended and reaped by the launch thread itself, at once."""
+    box, lock = {}, threading.Lock()
+
+    def go():
+        box["tid"] = threading.get_native_id()
+        try:
+            proc = make()
+        except BaseException as exc:                       # noqa: BLE001 -- handed to the caller's thread
+            with lock:
+                box["exc"] = exc
+            return
+        with lock:
+            late = box.get("late", False)
+            if not late:
+                box["proc"] = proc
+        if late:                                           # the caller gave up on this start: nothing may run
+            _kill_group(proc)
+            try:
+                proc.wait(timeout=REAP_LIMIT)
+            except subprocess.TimeoutExpired:
+                pass                                       # fail-direction: subprocess reaps it when it exits
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    while True:
+        t.join(min(0.05, max(0.0, deadline - time.monotonic())))
+        if not t.is_alive() or watch.pending or time.monotonic() >= deadline:
+            break
+    with lock:
+        if "exc" in box:
+            raise box["exc"]
+        proc = box.get("proc")
+        if proc is None:
+            box["late"] = True
+            # WORKAROUND: Popen exposes no handle to a child whose exec it is still waiting on (with vfork its id
+            # is not even assigned yet), so the launch thread's own child list names it.
+            for pid in _children(box.get("tid", 0)):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass                                   # it has exited: nothing to end
+    if proc is None:
+        if watch.pending:
+            raise Cancelled(watch.pending)
+        raise subprocess.TimeoutExpired(what, timeout)
+    return proc
+
+
 def _pump(stream, put, errors):
     try:
         while chunk := stream.read1(CHUNK):
@@ -178,10 +240,11 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
     proc, out, err, errors, threads = None, [], _Tail(), [], []
     deadline = time.monotonic() + timeout                  # before the start: a slow start is spent from it
     try:
-        proc = subprocess.Popen(
+        proc = _launch(lambda: subprocess.Popen(
             cmd, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if keep_stderr else subprocess.DEVNULL, env=env,
-            start_new_session=True)  # LIFECYCLE-WAIVER: waited on here; on timeout or cancellation its whole group is ended
+            start_new_session=True),  # LIFECYCLE-WAIVER: waited on here; on timeout or cancellation its whole group is ended
+            deadline, watch, what, timeout)
         watch.hold = False
         if watch.pending:
             raise Cancelled(watch.pending)
@@ -264,9 +327,10 @@ class Stream:
         self._watch = _Watch(self._cancel)
         self._deadline = time.monotonic() + timeout        # before the start: a slow start is spent from it
         try:
-            self.proc = subprocess.Popen(
+            self.proc = _launch(lambda: subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
-                start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
+                start_new_session=True),  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
+                self._deadline, self._watch, what, timeout)
             self._in, self._out, self._buf = self.proc.stdin.fileno(), self.proc.stdout.fileno(), bytearray()
             os.set_blocking(self._in, False)
             os.set_blocking(self._out, False)
@@ -274,10 +338,12 @@ class Stream:
             self._timer.start()
             self._watch.hold = False
             pending = self._watch.pending
-        except BaseException:
+        except BaseException as exc:
             if self.proc is not None:
                 self._teardown(kill=True)
-            self._watch.finish()
+            self._watch.finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise ValueError(f"{what} did not start within {timeout:g} s") from None
             raise
         if pending:
             self._cancel(pending)

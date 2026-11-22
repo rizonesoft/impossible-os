@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -45,6 +47,25 @@ MAX_FINDING_LINES = 120
 TAIL_LINES = 30
 
 
+def _regular_bytes(path: Path):
+    """The whole of a regular file, or None: opened without blocking, so a FIFO or a device never hangs it."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks = []
+        while chunk := os.read(fd, 1 << 20):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def leg_summary(entry: dict) -> dict:
     path = Path(entry.get("logFile") or "")
     out = {"kind": entry.get("kind"), "jobId": entry.get("jobId"),
@@ -53,14 +74,12 @@ def leg_summary(entry: dict) -> dict:
     # The dispatcher's <log>.done (its exit status, written after the review
     # process exited and after its receipt) is read BEFORE the transcript, so a
     # snapshot taken afterwards is never older than the status it is paired with.
-    done_rc = None
-    try:
-        done_rc = int(Path(str(path) + ".done").read_text().strip())
-    except (OSError, ValueError):  # fail-direction: no status means not finished (or an older log)
-        done_rc = None
-    try:
-        data = path.read_bytes()
-    except OSError:
+    # Both are opened without blocking and read only as regular files, so a path replaced by a FIFO or a
+    # device reads as no status (or an unreadable artifact), never as a hang.
+    status = _review_pin().published_status(str(path) + ".done")
+    done_rc = int(status) if status is not None and status.isdigit() else None  # fail-direction: unfinished
+    data = _regular_bytes(path)
+    if data is None:
         out["error"] = "artifact unreadable"
         return out
     out["bytes"] = len(data)

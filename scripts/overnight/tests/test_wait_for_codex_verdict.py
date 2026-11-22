@@ -393,3 +393,48 @@ def test_slow_metadata_reads_after_the_deadline_never_delay_the_answer():
                            cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         took = time.monotonic() - began
         assert r.returncode == 3 and took < 1 + 1.5, (r, took)
+
+
+def test_a_full_stdout_pipe_never_holds_the_waiter_past_its_deadline():
+    """The caller waits for the exit before it drains stdout, and the pipe is already full: the report's one
+    write is bounded, so the waiter still exits by --max (plus the writer's second) with its verdict code."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\nTurn completed (rc=0)\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        rd, wr = os.pipe()
+        os.set_blocking(wr, False)
+        try:
+            while True:
+                os.write(wr, b"x" * 65536)
+        except BlockingIOError:
+            pass                                       # the pipe is full, as the test needs
+        os.set_blocking(wr, True)
+        began = time.monotonic()
+        try:
+            r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], stdout=wr, stderr=subprocess.DEVNULL,
+                               cwd=d, timeout=30)
+        finally:
+            os.close(wr)
+            os.close(rd)
+        assert r.returncode == 0 and time.monotonic() - began < 1 + 3, (r.returncode, time.monotonic() - began)
+
+
+def test_a_stalled_tail_never_hides_a_finished_wave():
+    """Every status is published and only the transcript's tail stalls: the answer is DONE (exit 0) at --max,
+    with a note that the tail was not read, never STILL RUNNING."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "tail").write_text("#!/bin/sh\nexec sleep 5\n")
+        (bindir / "tail").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\nTurn completed (rc=0)\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
+                           timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 0 and "DONE:" in r.stdout and "could not be read" in r.stdout, r
+        assert time.monotonic() - began < 1 + 3

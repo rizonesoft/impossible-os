@@ -528,7 +528,8 @@ def _setup():
 def _prompt_under_deadline(prompt, digest, length, end, cancel):
     """The registered prompt in an anonymous in-memory file the attempt inherits, read by a child of this
     owner under the steps' deadline: (fd, None), or (None, (status, reason)). The owner itself never reads
-    the prompt, so a read held by its storage cannot keep the owner from publishing: at the deadline (or a
+    the prompt, so a read held by its storage cannot keep the owner from publishing (and the reader holds
+    none of the owner's result locks): at the deadline (or a
     second after a cancellation) the child is ended, left to finish its I/O on its own, and the attempt is
     recorded as 124 (or the cancellation's status) with nothing run."""
     fd = os.memfd_create("review-prompt", 0)
@@ -538,6 +539,11 @@ def _prompt_under_deadline(prompt, digest, length, end, cancel):
     if pid == 0:                                       # the reader: it only reads, checks and hands over
         try:
             os.close(rd)
+            # The owner's result locks are open file descriptions this child shares: closing its copies (never
+            # unlocking them) leaves the lock with the owner alone, so recovery can take it once the owner dies,
+            # however long this read stays held.
+            for held in list(_result._HELD.values()):
+                os.close(held)
             for sig in Cancel.WATCHED:
                 signal.signal(sig, signal.SIG_DFL)
             text, why = _read_prompt(prompt, digest, length)

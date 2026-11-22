@@ -184,7 +184,10 @@ _observe() {
             echo "seen $exists ${size:-0} $silent $f"
         done
         if [ "$all" -eq 1 ]; then
-            tail -n 25 "$LAST" 2>/dev/null | while IFS= read -r line || [ -n "$line" ]; do
+            # Every status is in: the wave has finished whatever the tail read below costs. The tail is
+            # diagnostic, read last and bounded by bytes (one long line never reads a whole transcript).
+            echo "statuses"
+            tail -c 16384 "$LAST" 2>/dev/null | tail -n 25 | while IFS= read -r line || [ -n "$line" ]; do
                 printf 'tail %s\n' "$line"
             done
             echo "alldone"
@@ -215,6 +218,7 @@ TAIL=()
 # caller capturing this call's output sees EOF when this shell exits, not when the observer's sleep ends.
 exec {OBS}< <(exec </dev/null 2>/dev/null; _observe)
 finished=0
+tail_read=0
 while :; do
     left_us=$(( END_US - $(_now_us) ))
     [ "$left_us" -le 0 ] && break
@@ -226,7 +230,8 @@ while :; do
         "seen "*)        read -r _ ex sz sil key <<< "$line"
                          EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
         "tail "*)        TAIL+=("${line#tail }") ;;
-        alldone)         finished=1; break ;;
+        statuses)        finished=1 ;;                      # done; the tail lines follow until alldone
+        alldone)         tail_read=1; break ;;
         cycle)
             # A round of probes is complete: a log silent past --stale-secs, or one that has ended without a
             # status, ends the wait now rather than at --max.
@@ -243,17 +248,31 @@ while :; do
 done
 elapsed=$(( ($(_now_us) - START_US) / 1000000 ))
 
+# The report is assembled here and written once, by a child bounded by what is left of --max (at least a
+# second): a caller whose stdout pipe is full, with its reader not draining, never holds this exit.
+REPORT=""
+say() { REPORT+="$*"$'\n'; }
+# shellcheck disable=SC2059  # every caller passes a literal format, as printf itself would take it
+sayf() { local line; printf -v line "$@"; REPORT+="$line"; }
+deliver() {
+    local left_s=$(( (END_US - $(_now_us)) / 1000000 ))
+    [ "$left_s" -lt 1 ] && left_s=1
+    printf '%s' "$REPORT" | timeout -k 1 "$left_s" cat 2>/dev/null
+    exit "$1"
+}
+
 if [ "$finished" -eq 1 ]; then
     for f in "${LOGS[@]}"; do
-        echo "DONE: $f -- Turn completed (rc=${GOT[$f]:-})"
+        say "DONE: $f -- Turn completed (rc=${GOT[$f]:-})"
     done
-    echo "--- verdict tail ($LAST) ---"
-    for line in "${TAIL[@]}"; do printf '%s\n' "$line"; done
+    say "--- verdict tail ($LAST) ---"
+    for line in "${TAIL[@]}"; do say "$line"; done
+    [ "$tail_read" -eq 1 ] || say "(the transcript's tail could not be read within --max; every status above is published)"
     # The next step, stated where the verdicts are read (2026-09-28: 85 of 309
     # refused calls in 21 run logs were an edit made right here, before the
     # wave was received).
-    echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
-    exit 0
+    say "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
+    deliver 0
 fi
 
 # The report is made from the latest observations; nothing is read again.
@@ -268,34 +287,34 @@ for f in "${LOGS[@]}"; do
     stalled="${SILENT[$f]:-}"
     if [ -n "${UNPUB[$f]:-}" ]; then
         any_unpublished=1
-        printf '  UNPUBLISHED: %s (its owner ended and the recovery could not publish its status -- the review has ended; re-dispatch THIS log)\n' "$f"
+        sayf '  UNPUBLISHED: %s (its owner ended and the recovery could not publish its status -- the review has ended; re-dispatch THIS log)\n' "$f"
     elif [ -z "$stalled" ]; then
-        printf '  running: %s (no observation yet: its filesystem has not answered within --max)\n' "$f"
+        sayf '  running: %s (no observation yet: its filesystem has not answered within --max)\n' "$f"
     elif [ "$stalled" -ge "$STALE" ] && [ "${EXISTS[$f]:-0}" = 0 ]; then
         any_missing=1
-        printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
+        sayf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
                "$f" "$stalled"
     elif [ "$stalled" -ge "$STALE" ] && [ "$NO_STALE" -eq 0 ]; then
         any_stale=1
-        printf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
+        sayf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
                "$f" "$size" "$stalled" "$STALE"
     else
-        printf '  running: %s (%s bytes, last growth %ss ago)\n' "$f" "$size" "$stalled"
+        sayf '  running: %s (%s bytes, last growth %ss ago)\n' "$f" "$size" "$stalled"
     fi
 done
 
 if [ "$any_unpublished" -eq 1 ]; then
-    echo "UNPUBLISHED after ${elapsed}s -- >=1 review ended with no status that can be published (see above)."
-    exit 4
+    say "UNPUBLISHED after ${elapsed}s -- >=1 review ended with no status that can be published (see above)."
+    deliver 4
 fi
 if [ "$any_stale" -eq 1 ]; then
-    echo "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
-    exit 4
+    say "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
+    deliver 4
 fi
 if [ "$any_missing" -eq 1 ]; then
-    echo "MISSING after ${elapsed}s -- >=1 log path never appeared (see above). A missing file is a wrong path or a review that never started, never a hung one."
-    exit 5
+    say "MISSING after ${elapsed}s -- >=1 log path never appeared (see above). A missing file is a wrong path or a review that never started, never a hung one."
+    deliver 5
 fi
-echo "STILL RUNNING after ${elapsed}s -- pending: ${pending[*]} -- re-invoke to" \
+say "STILL RUNNING after ${elapsed}s -- pending: ${pending[*]} -- re-invoke to" \
      "keep waiting (reviews run detached; nothing is lost)."
-exit 3
+deliver 3
