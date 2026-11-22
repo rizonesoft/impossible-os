@@ -200,14 +200,6 @@ check_hooks() {
             "Check out the repo cleanly."
         return
     fi
-    local status_out
-    status_out=$(bash "$SCRIPT_DIR/install-hooks.sh" --status 2>/dev/null || echo "")
-    if [ -z "$status_out" ]; then
-        record hooks fail "install-hooks.sh --status" \
-            "install-hooks.sh --status produced no output" \
-            "Run: bash scripts/install-hooks.sh --status"
-        return
-    fi
     # Presence, scope and value come from git, NUL-delimited: a value can hold a newline, or read like a
     # display word such as '<unset>'. The last element is git's exit status.
     local got=() scope="" value="" shown read_rc
@@ -262,9 +254,9 @@ check_hooks() {
                     origin="${origin:+$origin, }$(printf '%q' "$o")"
                 done
                 if [ "$own" -gt 0 ] && [ "$own" -eq $(( ${#entries[@]} / 2 )) ]; then
-                    if [ "$scope" = "worktree" ] && git -C "$REPO_ROOT" config --local --includes --get-all core.hooksPath >/dev/null 2>&1; then
-                        # Unsetting the worktree value would expose the repository's own, which the installer
-                        # then refuses; set this worktree's entry to .githooks instead (--remove takes it out).
+                    if [ "$scope" = "worktree" ]; then
+                        # Repaired where it was set: unsetting it would let the installer write the shared
+                        # repository config (or expose a value there), which every sibling worktree reads.
                         fix="Check what that value is for; then run: git config --worktree --replace-all core.hooksPath .githooks"
                     else
                         fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
@@ -279,19 +271,18 @@ check_hooks() {
             "$fix"
     fi
 
-    # The opt-in pre-push build/test step (the rest of pre-push always runs).
-    # The label is install-hooks.sh --status's own; a status without it is a
-    # drift between the two scripts, reported rather than left out.
+    # The opt-in pre-push build/test step (the rest of pre-push always runs), from the installer's own one-line
+    # query, so the two scripts agree on the sentinel without the doctor parsing a display.
     local prepush_state
-    prepush_state=$(printf '%s\n' "$status_out" | sed -n 's|^Pre-push build/test step: ||p' | head -1)
+    prepush_state=$(bash "$SCRIPT_DIR/install-hooks.sh" --pre-push-state 2>/dev/null)
     if [ -n "$prepush_state" ]; then
         record hooks pass "pre-push build/test step" \
             "$prepush_state" \
             "-"
     else
         record hooks warn "pre-push build/test step" \
-            "install-hooks.sh --status printed no build/test step line" \
-            "Align scripts/tooling-doctor.sh with scripts/install-hooks.sh --status."
+            "install-hooks.sh --pre-push-state printed nothing" \
+            "Run: bash scripts/install-hooks.sh --pre-push-state"
     fi
 
     # Per-hook files exist

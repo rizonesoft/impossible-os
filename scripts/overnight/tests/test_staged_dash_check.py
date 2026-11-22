@@ -667,7 +667,7 @@ def test_a_binary_blob_is_counted_from_its_prefix_and_the_stream_stays_in_step(t
     reader = m.BlobReader()
     try:
         assert reader.count(oids[0]) == 0 and reader.count(oids[1]) == 1
-        assert reader.lines(oids[0]) == [] and reader.lines(oids[1]) == [(1, ("x " + DASH).encode())]
+        assert reader.lines(oids[0]) == [] and reader.lines(oids[1]) == [(1, m.line_key(("x " + DASH).encode()))]
     finally:
         assert reader.close() == 0
 
@@ -1169,7 +1169,7 @@ def test_dash_lines_names_exactly_the_lines_a_full_split_would():
     samples = [b"", b"x" + DASH.encode(), DASH.encode() * 3 + b"\n" + b"plain\r\n" + b"a" + DASH.encode() + b"\r\n",
                b"\n\n" + "\u2013".encode() + b"\nend" + DASH.encode(), b"no dash at all\n" * 4]
     for text in samples:
-        naive = [(n, ln.removesuffix(b"\r")) for n, ln in enumerate(text.split(b"\n"), 1)
+        naive = [(n, m.line_key(ln.removesuffix(b"\r"))) for n, ln in enumerate(text.split(b"\n"), 1)
                  if any(d in ln for d in m.DASHES)]
         assert m.dash_lines(text) == naive, text
 
@@ -1180,7 +1180,7 @@ def test_naming_the_lines_of_a_long_dash_dense_line_is_linear():
     began = time.monotonic()
     found = m.dash_lines(b"head\n" + line + b"\r\ntail " + DASH.encode())
     assert time.monotonic() - began < 1.0
-    assert [n for n, _ln in found] == [2, 3] and found[0][1] == line
+    assert [n for n, _ln in found] == [2, 3] and found[0][1] == m.line_key(line)
 
 
 def test_a_merge_with_nothing_changed_against_head_reads_no_other_parent(monkeypatch):
@@ -1321,3 +1321,32 @@ def test_a_refused_blobs_lines_are_read_as_a_stream(tmp_path, monkeypatch):
         reader.proc.stdout.read = real_read
         assert reader.close() == 0
     assert len(want) == 2 and 0 < max(largest) <= max(m.CHUNK, m.BINARY_PREFIX), max(largest)
+
+
+def test_dash_line_keys_fed_in_any_pieces_name_what_dash_lines_names():
+    import random
+    rng = random.Random(7)
+    d = DASH.encode()
+    text = b"a\r\n" + b"x" * 50 + d + b"\r\r\n" + b"plain\n" + d[:2] + b"|" + d[2:] + b"\n" + b"b" + d + b"\r"
+    want = m.dash_lines(text)
+    for _ in range(200):
+        cuts = sorted(rng.sample(range(1, len(text)), rng.randint(1, 12)))
+        keys = m.DashLineKeys()
+        for a, b in zip([0, *cuts], [*cuts, len(text)]):
+            keys.feed(text[a:b])
+        assert keys.end() == want, cuts
+
+
+def test_a_long_dash_free_line_is_never_held_while_naming_lines():
+    import tracemalloc
+    piece = b"y" * (1 << 16)
+    keys = m.DashLineKeys()
+    tracemalloc.start()
+    try:
+        for _ in range(128):                               # an 8 MiB line with no dash
+            keys.feed(piece)
+        keys.feed(b"\nz " + DASH.encode())
+        _now, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert keys.end() == [(2, m.line_key(("z " + DASH).encode()))] and peak < (1 << 18), peak

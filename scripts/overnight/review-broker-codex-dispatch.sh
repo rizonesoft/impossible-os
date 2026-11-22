@@ -190,6 +190,17 @@ PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 # Written by a JSON serializer, as the receipt is: a path holding a quote, a
 # backslash or a newline must not leave a line no reader can parse.
 MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"
+# ONE OWNER FOR A JOB'S RESULT. The log file is created exclusively (noclobber) by whichever comes first: the
+# detached job, at its start, before it reads the prompt or runs anything; or the broker, when the launch failed
+# or was cut short after the job's name was given out. The other leaves the result alone, so a unit that starts
+# late never writes over a published result, and a launch cut short still ends with exactly one.
+finalize_unlaunched() {   # $1: the status to publish when the broker owns the result
+  if ( set -C; : > "$LOG_FILE" ) 2>/dev/null; then
+    echo "Turn completed (rc=$1)" >> "$LOG_FILE"
+    echo "$1" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
+    rm -f "$PROMPT_FILE"
+  fi
+}
 REGISTER="python3 $(q "$MANIFEST_LINE") --append $(q "$MANIFEST")"
 for field in "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
     "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
@@ -199,6 +210,8 @@ done
 REGISTER_RC=0
 limited "$REGISTER" || REGISTER_RC=$?
 if [[ "$REGISTER_RC" != 0 ]]; then
+  # The row may have been written before the registrar was cut short: the attempt it names is ended here.
+  finalize_unlaunched "$REGISTER_RC"
   rm -f "$PROMPT_FILE"
   if [[ "$REGISTER_RC" == 124 && -n "$LIMIT_END" ]]; then
     echo "[review-broker] BLOCK -- registering the dispatch took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
@@ -207,7 +220,7 @@ if [[ "$REGISTER_RC" != 0 ]]; then
   echo "[review-broker] BLOCK -- the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
   exit 1
 fi
-JOB="$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT"
+JOB="( set -C; : > $Q_LOG ) 2>/dev/null || exit 0; $RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT"
 # LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above PROMPT_FILE); it does not relaunch or watch the session.
 SUBMIT="systemd-run --user --collect $(q "--unit=$UNIT") $(q "--setenv=CODEX_REVIEWER_DISPATCH=1") $(q "--setenv=HOME=$HOME") $(q "--setenv=PATH=$PATH") --same-dir /bin/bash -c $(q "$JOB") >/dev/null 2>&1"
 SUBMIT_RC=0
@@ -216,12 +229,10 @@ if [[ "$SUBMIT_RC" == 0 ]]; then
   :
 elif [[ "$SUBMIT_RC" == 124 && -n "$LIMIT_END" ]]; then
   # The limit ended the submission itself. Whether the unit was created is unknown, so no second copy is
-  # started and the service manager is not asked again (that wait would outlast the deadline): a unit that
-  # does start runs its job under the same deadline, which has passed, so it runs nothing and records 124
-  # too. The attempt is recorded here as the one the limit ended.
-  echo "Turn completed (rc=124)" >> "$LOG_FILE"
-  echo 124 > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
-  rm -f "$PROMPT_FILE"
+  # started and the service manager is not asked again (that wait would outlast the deadline). The result
+  # goes to its one owner: a unit that already started keeps it; otherwise it is recorded here as 124, and a
+  # unit that starts later finds the log taken and exits before it reads or writes anything.
+  finalize_unlaunched 124
 else
   # Non-systemd fallback: setsid detach (survives plain shells; NOT a
   # systemd cgroup -- callers inside a service should have systemd-run).

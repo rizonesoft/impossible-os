@@ -715,3 +715,51 @@ def test_a_failed_worktree_listing_fails_the_removal(tmp_path):
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
                        timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
     assert r.returncode != 0 and "could not be listed" in r.stderr and link.is_symlink(), r
+
+
+def test_the_doctor_repairs_a_worktree_value_without_touching_its_siblings(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    sibling = tmp_path / "sibling"
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit",
+                    "-q", "--allow-empty", "-m", "base"], check=True, timeout=60, env=_env())
+    subprocess.run(["git", "-C", str(root), "worktree", "add", "-q", "--detach", str(sibling)], check=True,
+                   timeout=60, env=_env())
+    _cfg(root, "--worktree", "core.hooksPath", "/mine")
+    fix = _doctor(root, _env())["fix"]
+    assert "--worktree --replace-all core.hooksPath .githooks" in fix, fix
+    subprocess.run(["bash", "-c", fix.split("then run: ", 1)[1]], cwd=root, check=True, timeout=60, env=_env())
+    assert _doctor(root, _env())["status"] == "pass"
+    assert _cfg(sibling, "--get", "core.hooksPath", check=False).returncode == 1
+
+
+def test_an_install_shadowed_by_a_worktree_githooks_is_undone(tmp_path):
+    """Even a competing .githooks in another scope leaves the repository-wide write latent: it is undone."""
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    (bindir / "git").write_text(
+        f'#!/bin/sh\n"{real}" "$@"; rc=$?\n'
+        f'case " $* " in *" --local --add core.hooksPath .githooks "*) "{real}" -C "{root}" config --worktree core.hooksPath .githooks ;; esac\n'
+        'exit $rc\n')
+    (bindir / "git").chmod(0o755)
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert r.returncode != 0 and "the write was undone" in r.stderr, r
+    assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1
+
+
+def test_a_legacy_hooks_directory_that_cannot_be_searched_fails_the_removal(tmp_path):
+    root = _plain_repo(tmp_path)
+    hooks = root / ".git/hooks"
+    hooks.mkdir(exist_ok=True)
+    (hooks / "pre-push").symlink_to(root / "scripts/hooks/pre-push")
+    hooks.chmod(0o600)
+    try:
+        r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True,
+                           text=True, timeout=60, env=_env())
+    finally:
+        hooks.chmod(0o755)
+    assert r.returncode != 0 and "cannot be searched" in r.stderr and (hooks / "pre-push").is_symlink(), r

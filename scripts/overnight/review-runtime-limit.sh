@@ -54,10 +54,13 @@ grace=3000
 setsid bash -c "$cmd" &
 pid=$!
 
+# The state is the first field after the name, and the name (in parentheses) can hold spaces and ')', so
+# it is read after the LAST ')'.
 alive() {
-    local st
-    read -r _ _ st _ 2>/dev/null < "/proc/$pid/stat" || return 1     # gone: nothing to read
-    [ "$st" != "Z" ]
+    local stat st
+    read -r stat 2>/dev/null < "/proc/$pid/stat" || return 1        # gone: nothing to read
+    st="${stat##*) }"
+    [ "${st%% *}" != "Z" ]
 }
 
 term_at=$(( end - grace ))
@@ -83,6 +86,9 @@ while alive; do
 done
 wait "$pid" 2>/dev/null
 status=$?
+# Seen ending only after the deadline (this supervisor was not scheduled in between): the limit's, not a pass.
+now_cs
+[ "$NOW" -ge "$end" ] && limited=1
 # The leader is gone; whatever it left in its group goes with it.
 kill -KILL -- "-$pid" 2>/dev/null
 [ "$limited" -eq 1 ] && exit 124

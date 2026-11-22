@@ -112,6 +112,9 @@ SELF_NAME="codex-dispatch"
 # `codex-dispatch.sh` (this wrapper). exec replaces this process with
 # node so the dispatched output streams directly to the parent shell.
 export CODEX_REVIEWER_DISPATCH=1
+# Stored objects only, for every git read this pass starts (the reviewer's included): a replacement ref would
+# show other bytes than the commit the receipt names and a push sends.
+export GIT_NO_REPLACE_OBJECTS=1
 
 # Retain the transcript and register the leg (v17 close-out, 2026-08-29). Two
 # live failures had one cause -- this wrapper streamed to stdout and kept

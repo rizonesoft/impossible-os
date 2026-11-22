@@ -31,6 +31,9 @@
 #                                                # just create the sentinel.
 #   bash scripts/install-hooks.sh --disable-pre-push
 #                                                # just remove the sentinel.
+#   bash scripts/install-hooks.sh --pre-push-state
+#                                                # one line: the build/test
+#                                                # step's state (the doctor).
 #   bash scripts/install-hooks.sh --remove       # unset core.hooksPath, drop
 #                                                # sentinel, prune any legacy
 #                                                # symlinks in .git/hooks/.
@@ -117,14 +120,18 @@ usage() {
     exit "${1:-0}"
 }
 
+pre_push_state() {
+    if [ -f "$SENTINEL" ]; then
+        echo "ENABLED (sentinel: $SENTINEL)"
+    else
+        echo "disabled (no sentinel)"
+    fi
+}
+
 status() {
     local configured pre_push_state
     configured="$(hooks_path_shown)"
-    if [ -f "$SENTINEL" ]; then
-        pre_push_state="ENABLED (sentinel: $SENTINEL)"
-    else
-        pre_push_state="disabled (no sentinel)"
-    fi
+    pre_push_state="$(pre_push_state)"
     # Every hook in .githooks/ runs on every commit or push; pre-push also
     # carries an opt-in build/test step behind the sentinel.
     local always_on
@@ -186,8 +193,11 @@ set_hooks_path() {
     git -C "$PROJECT" config "--$scope" --add core.hooksPath .githooks \
         || { echo "core.hooksPath could not be written to $scope config; nothing enabled" >&2; exit 1; }
     held="$(git -C "$PROJECT" config "--$scope" --includes --null --get-all core.hooksPath | tr '\0' '\001')" || held=""
-    if [ "$held" != $'.githooks\001' ] || ! hooks_path_is_ours; then
-        # Another value appeared beside the write, or one git reads before it: take out only what was added.
+    local landed=0
+    hooks_path_scoped && [ "$HP_SCOPE" = "$scope" ] && [ "$HP_VALUE" = ".githooks" ] && landed=1
+    if [ "$held" != $'.githooks\001' ] || [ "$landed" != 1 ]; then
+        # Another value appeared beside the write, or git reads one from another scope first (even .githooks,
+        # which would leave this repository-wide write latent): take out only what was added.
         if git -C "$PROJECT" config "--$scope" --fixed-value --unset core.hooksPath .githooks; then
             echo "core.hooksPath is not this installer's alone after writing it (another value is set, or a higher-priority one wins); the write was undone, nothing enabled" >&2
         else
@@ -252,9 +262,20 @@ prune_legacy_symlinks() {
         text="$(readlink -- "$1" && printf x)" || return 1
         printf '%s/%s' "$inode" "$text"
     }
-    local legacy
-    legacy="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$PROJECT/.git")/hooks"
-    [ -d "$legacy" ] || return 0
+    local common legacy
+    common="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir)" \
+        || { echo "The repository's git directory could not be found, so no legacy link was judged" >&2; return 1; }
+    legacy="$common/hooks"
+    # Absent is known only from a directory that can be searched; one that cannot hides what it holds.
+    if [ ! -e "$legacy" ] && [ ! -L "$legacy" ]; then
+        [ -x "$common" ] && return 0
+        echo "$common cannot be searched, so no legacy link in it was judged" >&2
+        return 1
+    fi
+    if [ ! -d "$legacy" ] || [ ! -x "$legacy" ]; then
+        echo "$legacy cannot be searched, so a legacy pre-push link in it was not judged" >&2
+        return 1
+    fi
     local removed=0 target
     target="$legacy/pre-push"
     # Judged in place first: a hook that is not ours is never moved, so no push in the meantime runs without
@@ -372,6 +393,9 @@ case "${1:-}" in
         ;;
     --status)
         status
+        ;;
+    --pre-push-state)
+        pre_push_state
         ;;
     --remove)
         remove_all

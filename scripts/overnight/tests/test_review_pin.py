@@ -2086,3 +2086,115 @@ def test_a_reset_during_the_status_walk_refuses_the_launch(tmp_path, monkeypatch
     monkeypatch.setattr(rc, "_status", status)
     with pytest.raises(rc.Refused, match="the candidate changed while it was read"):
         rc.launch()
+
+
+def _late_unit_broker(tmp_path, start_at_once):
+    """A broker run whose service manager takes the unit and then stalls past the deadline; with
+    start_at_once the unit starts at once (inside the grace), otherwise the test starts it afterwards."""
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    job = tmp_path / "job.sh"
+    start = f'setsid /bin/bash "{job}" </dev/null >/dev/null 2>&1 &\n' if start_at_once else ""
+    (bindir / "systemd-run").write_text(f'#!/bin/bash\nprintf "%s" "${{@: -1}}" > "{job}"\n{start}sleep 10\n')
+    (bindir / "systemctl").write_text("#!/bin/sh\nsleep 10\n")
+    for tool in ("systemd-run", "systemctl"):
+        (bindir / tool).chmod(0o755)
+    ran = tmp_path / "ran"
+    fake = tmp_path / "companion.js"
+    fake.write_text(f"require('fs').appendFileSync({str(ran)!r}, 'x');\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    done = _broker(repo, env)
+    return done, job, ran
+
+
+def test_a_unit_that_starts_after_the_timeout_is_published_runs_nothing(tmp_path):
+    import subprocess
+    done, job, ran = _late_unit_broker(tmp_path, start_at_once=False)
+    assert done.returncode == 0, done.stderr
+    status, text = _done_status(done.stdout)
+    assert status == "124", text
+    subprocess.run(["bash", str(job)], timeout=30, check=False)         # the unit the service manager took
+    status2, text2 = _done_status(done.stdout)
+    assert (status2, text2) == (status, text) and not ran.exists(), text2
+
+
+def test_a_unit_already_running_keeps_its_result_when_the_submission_times_out(tmp_path):
+    import time
+    done, _job, ran = _late_unit_broker(tmp_path, start_at_once=True)
+    assert done.returncode == 0, done.stderr
+    status, text = _done_status(done.stdout)
+    time.sleep(0.5)
+    # The job's own status (the fake review names no lenses, so the pass reports it incomplete), never 124.
+    assert status == "3" and text.count("Turn completed") == 1 and ran.read_text() == "x", text
+
+
+def test_a_registration_cut_short_after_its_row_ends_the_attempt(tmp_path):
+    import json
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    site = tmp_path / "site"
+    site.mkdir()
+    # The registrar writes its row, then stalls before it exits.
+    (site / "sitecustomize.py").write_text("import atexit, sys, time\n"
+                                           "if sys.argv[1:2] == ['--append']:\n"
+                                           "    atexit.register(time.sleep, 30)\n")
+    env = {**os.environ, "PYTHONPATH": str(site), "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    (tmp_path / "c.js").write_text("\n")
+    done = _broker(repo, env)
+    assert done.returncode == 2 and "registering the dispatch took" in done.stderr, done.stderr
+    rows = [json.loads(x) for x in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
+    log = pathlib.Path(rows[-1]["logFile"])
+    assert pathlib.Path(f"{log}.done").read_text().strip() == "124", log.read_text()
+
+
+def test_a_replacement_ref_does_not_change_what_the_candidate_names(tmp_path, monkeypatch):
+    import subprocess
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("1\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "one")
+    first = git("rev-parse", "HEAD")
+    (repo / "a.txt").write_text("2\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "two")
+    monkeypatch.chdir(repo)
+    clean = rc.launch()
+    subprocess.run(["git", "-C", str(repo), "replace", git("rev-parse", "HEAD"), first], check=True, timeout=30)
+    assert rc.launch() == clean
+    head = git("rev-parse", "HEAD")
+    assert rc.prepare(head, head)[1] == []
+
+
+def test_a_graft_file_refuses_the_candidate(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / ".git/info").mkdir(exist_ok=True)
+    (repo / ".git/info/grafts").write_text(git("rev-parse", "HEAD") + "\n")
+    with pytest.raises(rc.Refused, match="graft file"):
+        rc.launch()
+    (repo / ".git/info/grafts").unlink()
+    inherited = tmp_path / "grafts"
+    inherited.write_text(git("rev-parse", "HEAD") + "\n")
+    monkeypatch.setenv("GIT_GRAFT_FILE", str(inherited))
+    with pytest.raises(rc.Refused, match="graft file"):
+        rc.launch()
+
+
+def test_every_git_read_of_a_pass_uses_stored_objects(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    seen = tmp_path / "env.txt"
+    fake = tmp_path / "env.js"
+    fake.write_text(f"require('fs').writeFileSync({str(seen)!r}, String(process.env.GIT_NO_REPLACE_OBJECTS));\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    pin = _pin()
+    review = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["round"]) + "\nHIGHEST: none\n"
+    _dispatch_in(repo, tmp_path, "round", review, "HEAD", extra_env={"CODEX_COMPANION_PATH": str(fake)})
+    assert seen.read_text() == "1"

@@ -14,6 +14,8 @@ import json
 import os
 import pathlib
 import shutil
+import pytest
+import signal
 import time
 import shlex
 import subprocess
@@ -403,18 +405,29 @@ def test_the_limit_ends_a_command_that_has_not_yet_started_its_group(tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     real = shutil.which("setsid")
-    (bindir / "setsid").write_text(f'#!/bin/sh\nsleep 3\nexec "{real}" "$@"\n')
+    shim, sleeper = tmp_path / "shim.pid", tmp_path / "sleeper.pid"
+    (bindir / "setsid").write_text(f'#!/bin/sh\necho $$ > "{shim}"\nsleep 30 &\necho $! > "{sleeper}"\nwait\n'
+                                   f'exec "{real}" "$@"\n')
     (bindir / "setsid").chmod(0o755)
     ran = tmp_path / "ran"
     err = tmp_path / "err"
     began = time.monotonic()
-    with open(err, "w") as fh:                         # files, not pipes: the shim's own sleep would hold a pipe
-        done = subprocess.run(["bash", str(LIMIT), "1", f"touch {ran}; sleep 30"], stdout=subprocess.DEVNULL,
-                              stderr=fh, timeout=20, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-    assert done.returncode == 124 and time.monotonic() - began < 2.5, err.read_text()
-    assert "No such file" not in err.read_text(), err.read_text()
-    time.sleep(3)
-    assert not ran.exists()
+    try:
+        with open(err, "w") as fh:                     # files, not pipes: the shim's sleeper would hold a pipe
+            done = subprocess.run(["bash", str(LIMIT), "1", f"touch {ran}; sleep 30"], stdout=subprocess.DEVNULL,
+                                  stderr=fh, timeout=20,
+                                  env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert done.returncode == 124 and time.monotonic() - began < 2.5, err.read_text()
+        assert "No such file" not in err.read_text(), err.read_text()
+        with pytest.raises(ProcessLookupError):        # the shim was ended before it could start the command
+            os.kill(int(shim.read_text()), 0)
+        assert not ran.exists()
+    finally:
+        if sleeper.exists():
+            try:
+                os.kill(int(sleeper.read_text()), signal.SIGKILL)
+            except ProcessLookupError:                 # fail-direction: already gone
+                pass
 
 
 def test_the_limit_polls_without_starting_a_process(tmp_path):
@@ -427,3 +440,28 @@ def test_the_limit_polls_without_starting_a_process(tmp_path):
                           capture_output=True, text=True, timeout=30,
                           env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
     assert done.returncode == 0 and not used.exists(), done
+
+
+def test_the_limit_reads_the_state_after_a_name_holding_spaces(tmp_path):
+    named = tmp_path / "review Z job"
+    shutil.copy(shutil.which("sleep"), named)          # the process name is the executable's: "review Z job"
+    began = time.monotonic()
+    done = subprocess.run(["bash", str(LIMIT), "1", f"exec {shlex.quote(str(named))} 30"], capture_output=True,
+                          text=True, timeout=20)
+    assert done.returncode == 124 and time.monotonic() - began < 2.5, done
+
+
+def test_a_command_seen_ending_after_the_deadline_is_the_limits(tmp_path):
+    """The supervisor is not scheduled across the deadline and the command ends meanwhile: still 124."""
+    proc = subprocess.Popen(["bash", str(LIMIT), "1", f"{sys.executable} -c 'import time; time.sleep(1.15)'"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.3)
+        os.kill(proc.pid, signal.SIGSTOP)
+        time.sleep(1.5)
+        os.kill(proc.pid, signal.SIGCONT)
+        assert proc.wait(timeout=10) == 124
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

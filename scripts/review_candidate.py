@@ -46,7 +46,9 @@ class Refused(Exception):
 
 
 def _env():
-    return {k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}
+    # Stored objects only: a replacement ref would let the review read other bytes than the commit it names
+    # and a push sends (the dash check reads stored history the same way).
+    return {**{k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}, "GIT_NO_REPLACE_OBJECTS": "1"}
 
 
 def _run(top, args, sink=None):
@@ -213,6 +215,11 @@ def _read(top, scope):
     """(digest, HEAD, notes, status) of one candidate. HEAD is read before the status walk and again after
     the digest: a commit or a reset meanwhile would pair a status taken against one commit with another, so
     it refuses."""
+    grafts = os.environ.get("GIT_GRAFT_FILE") or os.fsdecode(
+        _git(top, "rev-parse", "--path-format=absolute", "--git-path", "info/grafts").strip())
+    if os.path.lexists(grafts):
+        raise Refused(f"a graft file ({grafts}) rewrites the history git shows, so the review could read other "
+                      "commits than the push sends; convert it (git replace --convert-graft-file) or remove it")
     head = _head(top)
     status = _status(top, scope)
     digest, _head_used, notes = _fingerprint(top, scope, status, head)

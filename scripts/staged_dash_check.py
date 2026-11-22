@@ -44,6 +44,7 @@ Exit 0 when clean, 1 with the refused files, 2 when the changes cannot be
 read. SKIP_DASH_CHECK=1 skips it.
 """
 import codecs
+import hashlib
 import collections
 import os
 import subprocess
@@ -111,11 +112,16 @@ def _str_dashes(text: str) -> int:
     return text.count(chr(0x2013)) + text.count(chr(0x2014))
 
 
+def line_key(line) -> bytes:
+    """What two dash lines are compared by: a digest of the line's bytes."""
+    return hashlib.sha256(line).digest()
+
+
 def dash_lines(text: bytes) -> list:
-    """(line number, line) for each line holding a dash; a CR before the LF is
-    not part of the line, so a change of line endings never names one new.
-    Only dash-bearing lines are built: a large file with one dash allocates
-    one line, not all of them."""
+    """(line number, line key) for each line holding a dash; a CR before the
+    LF is not part of the line, so a change of line endings never names one
+    new. Only dash-bearing lines are hashed, in place, so a large file with
+    one dash copies no line at all."""
     # One forward pass: the next dash of each kind is found once and kept until the scan passes it, and after
     # a hit the scan resumes past that line's end, so no byte is searched more than once per dash kind.
     out, pos, line_no, counted_to = [], 0, 1, 0
@@ -132,10 +138,59 @@ def dash_lines(text: bytes) -> list:
         line_no += text.count(b"\n", counted_to, start)
         counted_to = start
         end = text.find(b"\n", at)
-        out.append((line_no, text[start:len(text) if end < 0 else end].removesuffix(b"\r")))
+        stop = len(text) if end < 0 else end
+        stop -= text.endswith(b"\r", start, stop)
+        out.append((line_no, line_key(memoryview(text)[start:stop])))
         if end < 0:
             return out
         pos = end + 1
+
+
+class DashLineKeys:
+    """dash_lines over text fed in pieces. Lines that end inside a piece are
+    named as dash_lines names them; only the line still open at a piece's end
+    is carried, and only as a running digest, so a long line is never held."""
+
+    def __init__(self):
+        self.out, self.no = [], 1
+        self._open()
+
+    def _open(self):
+        self.h, self.dash, self.tail, self.cr = hashlib.sha256(), False, b"", False
+
+    def _extend(self, seg: bytes):                         # more of the open line
+        if not seg:
+            return
+        if not self.dash:
+            self.dash = any(d in seg or d in self.tail + seg[:2] for d in DASHES)
+        self.tail = seg[-2:] if len(seg) >= 2 else (self.tail + seg)[-2:]
+        if self.cr:                                        # a CR held back was not the line's last byte
+            self.h.update(b"\r")
+        self.cr = seg.endswith(b"\r")
+        self.h.update(memoryview(seg)[:-1] if self.cr else seg)
+
+    def _close(self):                                      # the open line ends; a CR held back is dropped
+        if self.dash:
+            self.out.append((self.no, self.h.digest()))
+        self.no += 1
+        self._open()
+
+    def feed(self, data: bytes):
+        first = data.find(b"\n")
+        if first < 0:
+            self._extend(data)
+            return
+        self._extend(data[:first])
+        self._close()
+        last = data.rfind(b"\n")
+        if last > first:
+            self.out.extend((self.no + n - 1, k) for n, k in dash_lines(data[first + 1:last + 1]))
+            self.no += data.count(b"\n", first + 1, last + 1)
+        self._extend(data[last + 1:])
+
+    def end(self) -> list:
+        self._close()
+        return self.out
 
 
 class BlobReader:
@@ -224,22 +279,8 @@ class BlobReader:
         left = size - len(head)
         if len(head) < min(size, BINARY_PREFIX):
             raise ValueError(f"cat-file returned blob {oid} short")
-        out, pending, base = [], [], 0
-
-        def feed(data: bytes, final=False):
-            nonlocal base
-            cut = len(data) if final else data.rfind(b"\n") + 1
-            if not cut and not final:
-                if data:
-                    pending.append(data)                   # inside one line: kept, joined once
-                return
-            done = b"".join((*pending, data[:cut]))
-            pending.clear()
-            if cut < len(data):
-                pending.append(data[cut:])
-            out.extend((base + n, ln) for n, ln in dash_lines(done))
-            base += done.count(b"\n")
-
+        keys = DashLineKeys()
+        feed = keys.feed
         if head[:2] in UTF16_BOMS:
             decoder = codecs.getincrementaldecoder("utf-16")()
             try:
@@ -247,7 +288,7 @@ class BlobReader:
                 for chunk in self._chunks(left):
                     left -= len(chunk)
                     feed(decoder.decode(chunk).encode("utf-8"))
-                feed(decoder.decode(b"", final=True).encode("utf-8"), final=True)
+                feed(decoder.decode(b"", final=True).encode("utf-8"))
             except UnicodeDecodeError as exc:
                 raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
         elif b"\0" in head:
@@ -258,9 +299,8 @@ class BlobReader:
             for chunk in self._chunks(left):
                 left -= len(chunk)
                 feed(chunk)
-            feed(b"", final=True)
         self._end(oid, left)
-        return out
+        return keys.end()
 
     def abort(self) -> None:
         self.stream.abort()
