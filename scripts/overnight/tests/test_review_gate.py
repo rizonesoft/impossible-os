@@ -654,25 +654,51 @@ if __name__ == "__main__":
 
 
 def test_a_stamp_diff_that_cannot_be_read_is_unknown_never_no_section():
-    """The staged list is read, the stamp file's own diff is not: the commit is "unknown" (refused), never read
-    as a commit with no section in it."""
+    """The staged list is read, the stamp file's copies are not (the batch read times out): the commit is
+    "unknown" (refused), never read as a commit with no section in it."""
     with tempfile.TemporaryDirectory() as d:
         root = _stamp_repo(d)
         (root / "todo/T.md").write_text(
             "## 1. Section\n\n| Item | Done |\n| A | [x] |\n\nbody\n\n"
             "> **Verified:** 2026-07-14 test\n")
         subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
-        real = scg._proc.check_output
+        real = scg._proc.run
 
         def failing(cmd, *a, **k):
-            if cmd[:3] == ["git", "diff", "--cached"] and cmd[-1] == "todo/T.md":
+            if cmd[:2] == ["git", "cat-file"]:
                 raise scg.subprocess.TimeoutExpired(cmd, 5)
             return real(cmd, *a, **k)
-        scg._proc.check_output = failing
+        scg._proc.run = failing
         try:
             assert scg._detect_signature(root)[0] == "unknown"
         finally:
-            scg._proc.check_output = real
+            scg._proc.run = real
+
+
+def test_stamp_detection_starts_two_git_processes_however_many_todos_change():
+    """Forty TODOs, each with a fresh stamp: the changed ones come from the staged listing and every copy is
+    read in one batch, so detection starts two git processes (the listing and the batch), not three per TODO,
+    and still finds every stamp."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        names = [f"todo/S{n}.md" for n in range(40)]
+        for name in names:
+            (root / name).write_text("## 1. Section\n\nbody\n")
+        subprocess.run(["git", "-C", str(root), "add", *names], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "s", "--no-verify"], check=True)
+        for name in names:
+            (root / name).write_text("## 1. Section\n\nbody\n\n> **Verified:** 2026-07-14 test\n")
+        subprocess.run(["git", "-C", str(root), "add", *names], check=True)
+        real, started = scg._proc.run, []
+        scg._proc.run = lambda cmd, *a, **k: started.append(cmd) or real(cmd, *a, **k)
+        try:
+            scg._staged_paths(root, fresh=True)
+            started.clear()
+            scg._staged_listing.pop(str(root), None)
+            assert sorted(scg._stamped_todos(root, names)) == sorted(names)
+        finally:
+            scg._proc.run = real
+        assert len(started) <= 2, started
 
 
 def test_the_readme_comparison_reads_stored_objects():

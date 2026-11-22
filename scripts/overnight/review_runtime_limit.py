@@ -48,6 +48,7 @@ import re
 import select
 import signal
 import sys
+import threading
 import time
 
 PR_SET_CHILD_SUBREAPER = 36
@@ -166,10 +167,10 @@ def emit(fd, data, until, cancel=None, late=True):
     fits at once is still written). True when all of it was written. No write blocks: another writer taking
     the room a poll reported only sends the loop back to wait for more."""
     view = memoryview(data)
-    try:
-        own = _writer(fd)
-    except OSError:
+    found = _classify(fd, until, cancel, late)
+    if found is False:
         return False
+    own = found
     if own is None:
         return _emit_through_writer(fd, data, until, cancel, late)
     write, polled, close = own
@@ -177,6 +178,36 @@ def emit(fd, data, until, cancel=None, late=True):
         return _emit(view, write, polled, until, cancel, late)
     finally:
         close()
+
+
+LATE_CLASSIFY_CS = 5      # a late write's one try may spend this long classifying its descriptor
+
+
+def _classify(fd, until, cancel, late=True):
+    """_writer(fd), made on a thread this supervisor waits for only until `until` (a second after a
+    cancellation): reading the descriptor's metadata, its /proc link or reopening it can wait on a stalled
+    filesystem, and the deadline owner never waits on storage. A late write (a diagnostic, which keeps one
+    try past the deadline) is given LATE_CLASSIFY_CS from now for that. False when it failed or did not
+    finish in time (the thread is a daemon and is left; the write is reported failed)."""
+    try_until = now_cs() + LATE_CLASSIFY_CS if late else None
+    box = {}
+
+    def run():
+        try:
+            box["own"] = _writer(fd)
+        except OSError:
+            box["own"] = False
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    while worker.is_alive():
+        limit = until if cancel is None or not cancel.sig else min(until, cancel.at + 100)
+        if try_until is not None:
+            limit = max(limit, try_until)
+        left = limit - now_cs()
+        if left <= 0:
+            return False
+        worker.join(min(left, 100) / 100)
+    return box.get("own", False)
 
 
 def _emit(view, write, polled, until, cancel, late=True):

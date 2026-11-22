@@ -271,41 +271,6 @@ def test_a_result_whose_owner_is_gone_is_recovered_by_the_waiter():
         assert "owner ended without publishing" in log.read_text()
 
 
-def test_a_stalled_recovery_never_holds_the_waiter_past_its_deadline():
-    """Recovery stalls (a filesystem that does not answer): it runs detached, so the waiter still returns
-    within --max, reporting the review pending; the time it spent counts against one deadline."""
-    import os
-    import signal
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        pidfile = pathlib.Path(d) / "stalled.pid"
-        fake = bindir / "python3"
-        fake.write_text("#!/bin/bash\n"
-                        f'if [ "$2" = recover ]; then echo $$ > {pidfile}; exec sleep 8; fi\n'
-                        'exec /usr/bin/python3 "$@"\n')
-        fake.chmod(0o755)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("partial\n")
-        pathlib.Path(str(log) + ".owner").write_text("")
-        began = time.monotonic()
-        try:
-            r = subprocess.run(["bash", str(TOOL), "--max", "3", str(log)], capture_output=True, text=True,
-                               cwd=d, timeout=30, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-            took = time.monotonic() - began
-            assert r.returncode in (3, 4) and took < 6, (r, took)
-            assert pidfile.exists(), "recovery was never started"
-        finally:
-            t = time.monotonic()
-            while time.monotonic() - t < 5 and not (pidfile.exists() and pidfile.read_text().strip()):
-                time.sleep(0.05)
-            if pidfile.exists() and pidfile.read_text().strip():
-                try:
-                    os.kill(int(pidfile.read_text()), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-
-
 def test_a_recovery_that_cannot_publish_is_reported_as_ended_not_running():
     """The owner is gone and its recovery cannot publish (a full filesystem): the review has ended and will
     never publish, so the waiter reports it UNPUBLISHED (exit 4, re-dispatch it), even with --no-stale."""
@@ -324,43 +289,6 @@ def test_a_recovery_that_cannot_publish_is_reported_as_ended_not_running():
         assert r.returncode == 4 and "UNPUBLISHED" in r.stdout, r
 
 
-def test_the_sleep_is_what_is_left_after_the_silence_scan():
-    """A slow silence scan (here each stat takes two seconds) is counted before the sleep, so the waiter
-    still returns close to --max instead of sleeping the time the scan already spent."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        (bindir / "stat").write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/stat "$@"\n')
-        (bindir / "stat").chmod(0o755)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("partial\n")
-        began = time.monotonic()
-        r = subprocess.run(["bash", str(TOOL), "--max", "3", "--stale-secs", "999", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        took = time.monotonic() - began
-        assert r.returncode == 3 and took < 6, (r.returncode, took)
-
-
-def test_a_stalled_owner_probe_never_holds_the_waiter_past_its_deadline():
-    """Opening the owner lock stalls (here flock takes thirty seconds): the probe runs in the observer, so the
-    waiter still answers within --max from what it has observed."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        (bindir / "flock").write_text("#!/bin/sh\nexec sleep 30\n")
-        (bindir / "flock").chmod(0o755)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("partial\n")
-        pathlib.Path(str(log) + ".owner").write_text("")
-        began = time.monotonic()
-        r = subprocess.run(["bash", str(TOOL), "--max", "3", "--no-stale", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        took = time.monotonic() - began
-        assert r.returncode == 3 and took < 3 + 1.5, (r, took)
-
-
 def test_a_damaged_status_beside_a_released_owner_is_recovered_not_read_as_done():
     """An empty .done (a write the host cut short) is no status: the waiter never reports it as a finished
     review, and the recovery replaces it with 1 once the owner is gone."""
@@ -372,27 +300,6 @@ def test_a_damaged_status_beside_a_released_owner_is_recovered_not_read_as_done(
         r = _run(log, maxw=8)
         assert r.returncode == 0 and "rc=1)" in r.stdout, r
         assert pathlib.Path(str(log) + ".done").read_text() == "1\n"
-
-
-def test_slow_metadata_reads_after_the_deadline_never_delay_the_answer():
-    """Three logs whose every stat takes two seconds: the answer comes at --max from the observations made so
-    far, never after a fresh read of each log."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        (bindir / "stat").write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/stat "$@"\n')
-        (bindir / "stat").chmod(0o755)
-        logs = []
-        for n in range(3):
-            log = pathlib.Path(d) / f"r{n}.out"
-            log.write_text("partial\n")
-            logs.append(str(log))
-        began = time.monotonic()
-        r = subprocess.run(["bash", str(TOOL), "--max", "1", "--no-stale", *logs], capture_output=True, text=True,
-                           cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        took = time.monotonic() - began
-        assert r.returncode == 3 and took < 1 + 1.5, (r, took)
 
 
 def test_a_full_stdout_pipe_never_holds_the_waiter_past_its_deadline():
@@ -419,27 +326,6 @@ def test_a_full_stdout_pipe_never_holds_the_waiter_past_its_deadline():
             os.close(wr)
             os.close(rd)
         assert r.returncode == 0 and time.monotonic() - began < 1 + 3, (r.returncode, time.monotonic() - began)
-
-
-def test_a_stalled_tail_never_hides_a_finished_wave():
-    """Every status is published and only the transcript's tail stalls: the answer is DONE (exit 0) at --max,
-    with a note that the tail was not read, never STILL RUNNING."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        import shutil
-        real = shutil.which("python3")
-        (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in *" tail "*) sleep 5;; esac\nexec {real} "$@"\n')
-        (bindir / "python3").chmod(0o755)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\nTurn completed (rc=0)\n")
-        pathlib.Path(str(log) + ".done").write_text("0\n")
-        began = time.monotonic()
-        r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
-                           timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 0 and "DONE:" in r.stdout and "could not be read" in r.stdout, r
-        assert time.monotonic() - began < 1 + 3
 
 
 def test_setup_runs_no_command_that_could_hold_the_clock():
@@ -542,68 +428,6 @@ def test_a_warning_and_a_report_on_full_pipes_share_one_budget():
             os.close(rd)
 
 
-def _python_stub(bindir, case):
-    import shutil
-    real = shutil.which("python3")
-    (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in {case} esac\nexec {real} "$@"\n')
-    (bindir / "python3").chmod(0o755)
-
-
-def test_an_unreadable_status_is_never_reported_unpublished():
-    """The owner has gone and its status cannot be read (the status reader answers 3, an I/O error): the
-    wait reports it UNREADABLE and still running, never UNPUBLISHED with advice to dispatch it again."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        _python_stub(bindir, '*" status "*) exit 3;;')
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        pathlib.Path(str(log) + ".done").write_text("0\n")
-        pathlib.Path(str(log) + ".owner").write_text("")
-        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 3 and "UNREADABLE" in r.stdout and "UNPUBLISHED" not in r.stdout, r
-
-
-def test_a_pending_log_replaced_by_a_fifo_never_stops_the_other_probes():
-    """The first log is still pending and reading its content stalls (any reader of it, wc here, never
-    returns, as an open of a FIFO that took the path would not); the second is done: the probe of the first
-    reads only metadata, so the second is still observed."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        (bindir / "wc").write_text("#!/bin/sh\nexec sleep 30\n")
-        (bindir / "wc").chmod(0o755)
-        first, second = pathlib.Path(d) / "a.out", pathlib.Path(d) / "b.out"
-        first.write_text("partial\n")
-        second.write_text("review\n")
-        pathlib.Path(str(second) + ".done").write_text("0\n")
-        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(first), str(second)],
-                           capture_output=True, text=True, cwd=d, timeout=60,
-                           env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 3 and f"running: {second}" not in r.stdout, r
-        assert f"running: {first} (" in r.stdout and "no observation" not in r.stdout, r
-
-
-def test_slow_bookkeeping_never_hides_a_published_verdict():
-    """The activity directory takes a second and a half to make: a published status is read first, so the
-    wait still answers DONE within --max."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        (bindir / "mkdir").write_text("#!/bin/sh\nsleep 1.5\nexec /bin/mkdir \"$@\"\n")
-        (bindir / "mkdir").chmod(0o755)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        pathlib.Path(str(log) + ".done").write_text("0\n")
-        r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
-                           timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 0 and "DONE:" in r.stdout, r
-
-
 def test_a_report_writer_slow_to_start_never_holds_the_waiter():
     """Every program the report could be written through takes three seconds to start: the report is
     written by the shell itself, so the wait still answers within its budget."""
@@ -621,23 +445,6 @@ def test_a_report_writer_slow_to_start_never_holds_the_waiter():
         r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
                            timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode == 0 and "DONE:" in r.stdout and time.monotonic() - began < 2.5, (r, time.monotonic() - began)
-
-
-def test_a_status_reader_that_was_ended_never_makes_a_log_stale():
-    """The status reader is ended by the host (exit 137) while the transcript is old and stale detection is
-    on: the status is unknown, so the wait reports it UNREADABLE, never STALE with advice to dispatch again."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        _python_stub(bindir, '*" status "*) exit 137;;')
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        pathlib.Path(str(log) + ".done").write_text("0\n")
-        os.utime(log, (1, 1))
-        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--stale-secs", "1", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 3 and "UNREADABLE" in r.stdout and "STALE" not in r.stdout, r
 
 
 def test_the_report_is_written_inside_max_even_on_a_full_pipe():
@@ -670,71 +477,6 @@ def test_the_report_is_written_inside_max_even_on_a_full_pipe():
             os.close(rd)
 
 
-def _status_sequence(bindir, codes, recover=None):
-    """A python3 stub whose status reads answer `codes` in turn (the last repeats); recover exits `recover`
-    when given, every other call runs the real interpreter."""
-    import shutil
-    real = shutil.which("python3")
-    seq = bindir / "seq"
-    seq.write_text(" ".join(str(c) for c in codes))
-    rec = f'*" recover "*) exit {recover};;' if recover is not None else ""
-    (bindir / "python3").write_text(
-        "#!/bin/bash\n"
-        f'case " $* " in *" status "*) read -ra c < "{seq}"; code=${{c[0]}}\n'
-        f'  [ ${{#c[@]}} -gt 1 ] && echo "${{c[@]:1}}" > "{seq}"; [ "$code" = 0 ] && echo 0; exit $code;; {rec} esac\n'
-        f'exec {real} "$@"\n')
-    (bindir / "python3").chmod(0o755)
-
-
-def test_a_transient_unreadable_status_never_hides_a_later_stale_log():
-    """The first status read fails, the next finds none and the transcript is old: the latest observation
-    decides, so the wait reports STALE (exit 4), not UNREADABLE."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        _status_sequence(bindir, [3, 1])
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        os.utime(log, (1, 1))
-        r = subprocess.run(["bash", str(TOOL), "--max", "20", "--stale-secs", "1", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 4 and "STALE:" in r.stdout and "UNREADABLE" not in r.stdout, r
-
-
-def test_a_transient_unreadable_status_never_hides_a_later_unpublished_one():
-    """The first status read fails, then there is none, its owner has gone and the recovery fails: the
-    latest observation decides, so the wait reports UNPUBLISHED for that log (exit 4)."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        _status_sequence(bindir, [3, 1], recover=1)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        pathlib.Path(str(log) + ".owner").write_text("")
-        r = subprocess.run(["bash", str(TOOL), "--max", "20", "--no-stale", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 4 and f"UNPUBLISHED: {log}" in r.stdout and "UNREADABLE" not in r.stdout, r
-
-
-def test_a_status_found_after_a_recovery_is_done_not_stale():
-    """No status, a free owner lock, a recovery that fails, and then a status is there (another publisher
-    raced it), and every later read fails: the probe after the recovery decides, so the wait is DONE, not
-    left on the later unreadable reads."""
-    import os
-    with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        _status_sequence(bindir, [1, 1, 0, 3], recover=1)
-        log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        pathlib.Path(str(log) + ".owner").write_text("")
-        r = subprocess.run(["bash", str(TOOL), "--max", "4", "--no-stale", str(log)], capture_output=True,
-                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 0 and "DONE:" in r.stdout and "UNREADABLE" not in r.stdout, r
-
-
 def test_a_usage_error_returns_inside_its_deadline():
     """A usage error with a timeout that is slow to start: the message is written by the shell's own bounded
     writer, so the call ends within --max instead of waiting on the slow command."""
@@ -750,27 +492,243 @@ def test_a_usage_error_returns_inside_its_deadline():
         assert r.returncode == 2 and time.monotonic() - began < 2.0, (r, time.monotonic() - began)
 
 
-def test_a_stalled_probe_ends_with_the_wait():
-    """The activity probe stalls (a stat held by storage): when the wait returns, that probe is gone too, so
-    a caller that waits again does not add another held process."""
+def _faults(bindir, patch, recover=""):
+    """A python3 on PATH that runs the waiter's observer with `patch` applied to it first (the module is `o`
+    in the patch), and handles a recovery with the shell snippet `recover` before running it as usual."""
+    import shutil
+    real = shutil.which("python3")
+    (bindir / "faults.py").write_text(patch)
+    boot = ("import os, sys; p = sys.argv[1]; sys.path.insert(0, os.path.dirname(p)); import verdict_observer as o; "
+            "exec(open(sys.argv[2]).read(), {'o': o}); sys.exit(o.main(sys.argv[3:]))")
+    (bindir / "python3").write_text(
+        "#!/bin/bash\n"
+        f'case "$1" in */verdict_observer.py) exec {real} -c "{boot}" "$1" "{bindir / "faults.py"}" "${{@:2}}";; esac\n'
+        f'if [ "$2" = recover ]; then :; {recover}\nfi\n'
+        f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+
+
+def _statuses(codes):
+    """A patch whose status reads answer `codes` in turn (the last repeats): 0 a status, 1 none, 3 an error."""
+    return ("import errno\n"
+            f"_seq = {list(codes)!r}\n"
+            "def probe_status(log):\n"
+            "    c = _seq.pop(0) if len(_seq) > 1 else _seq[0]\n"
+            "    if c == 0:\n"
+            "        return '0', None\n"
+            "    if c == 1:\n"
+            "        return None, None\n"
+            "    return None, OSError(errno.EIO, 'Input/output error')\n"
+            "o.probe_status = probe_status\n")
+
+
+def _wait(d, bindir, *args, timeout=60):
+    import os
+    return subprocess.run(["bash", str(TOOL), *[str(a) for a in args]], capture_output=True, text=True, cwd=d,
+                          timeout=timeout, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+
+
+def _setup(d):
+    bindir = pathlib.Path(d) / "bin"
+    bindir.mkdir()
+    return bindir
+
+
+def test_nothing_the_wait_starts_outlives_it_but_a_recovery_that_still_publishes():
+    """The class: a probe stalls for good (metadata held by storage) and a recovery is slow to start (its
+    interpreter held before exec). When the wait returns, no process of the call is left except that
+    recovery, which still publishes the result."""
     import os
     with tempfile.TemporaryDirectory() as d:
-        bindir = pathlib.Path(d) / "bin"
-        bindir.mkdir()
-        pidfile = pathlib.Path(d) / "stat.pid"
-        (bindir / "stat").write_text(f"#!/bin/bash\necho $$ >> {pidfile}\nexec sleep 60\n")
-        (bindir / "stat").chmod(0o755)
+        bindir = _setup(d)
+        marks = pathlib.Path(d) / "probe.pid"
+        _faults(bindir, "import os, time\n"
+                        "def probe_meta(log):\n"
+                        f"    open({str(marks)!r}, 'a').write(f'{{os.getpid()}}\\n')\n"
+                        "    time.sleep(60)\n"
+                        "o.probe_meta = probe_meta\n",
+                recover="sleep 2")
         log = pathlib.Path(d) / "r.out"
-        log.write_text("review\n")
-        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(log)], capture_output=True, text=True,
-                           cwd=d, timeout=30, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert r.returncode == 3, r
-        pids = [int(p) for p in pidfile.read_text().split()] if pidfile.exists() else []
-        assert pids, "the probe never ran"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        began = time.monotonic()
+        r = _wait(d, bindir, "--max", "1", "--no-stale", log)
+        assert r.returncode == 3 and time.monotonic() - began < 1.5, (r, time.monotonic() - began)
+        pids = [int(p) for p in marks.read_text().split()]
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline and any(os.path.exists(f"/proc/{p}") for p in pids):
             time.sleep(0.05)
-        alive = [p for p in pids if os.path.exists(f"/proc/{p}")]
-        for p in alive:
+        left = [p for p in pids if os.path.exists(f"/proc/{p}")]
+        for p in left:
             os.kill(p, 9)
-        assert not alive, alive
+        assert not left, left
+        deadline = time.monotonic() + 8
+        done = pathlib.Path(str(log) + ".done")
+        while time.monotonic() < deadline and not done.exists():
+            time.sleep(0.05)
+        assert done.exists() and done.read_text() == "1\n", "the recovery did not publish"
+
+
+def test_a_stalled_recovery_never_holds_the_waiter_past_its_deadline():
+    """Recovery stalls (a filesystem that does not answer): it runs in its own session, so the waiter still
+    returns within --max, reporting the review pending."""
+    import os
+    import signal
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        pidfile = pathlib.Path(d) / "stalled.pid"
+        _faults(bindir, "", recover=f"echo $$ > {pidfile}; exec sleep 8")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        began = time.monotonic()
+        try:
+            r = _wait(d, bindir, "--max", "3", log)
+            assert r.returncode in (3, 4) and time.monotonic() - began < 4, (r, time.monotonic() - began)
+            assert pidfile.exists(), "recovery was never started"
+        finally:
+            t = time.monotonic()
+            while time.monotonic() - t < 5 and not (pidfile.exists() and pidfile.read_text().strip()):
+                time.sleep(0.05)
+            if pidfile.exists() and pidfile.read_text().strip():
+                try:
+                    os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+def test_slow_metadata_reads_never_delay_the_answer():
+    """Every metadata read takes two seconds, for one log and for three: the answer comes at --max from the
+    observations made so far, never after a fresh read of each log."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import time\n_real = o.probe_meta\n"
+                        "o.probe_meta = lambda log: (time.sleep(2), _real(log))[1]\n")
+        logs = []
+        for n in range(3):
+            log = pathlib.Path(d) / f"r{n}.out"
+            log.write_text("partial\n")
+            logs.append(log)
+        for maxw, which in ((3, logs[:1]), (1, logs)):
+            began = time.monotonic()
+            r = _wait(d, bindir, "--max", maxw, "--no-stale", *which)
+            took = time.monotonic() - began
+            assert r.returncode == 3 and took < maxw + 0.5, (r, took)
+
+
+def test_a_stalled_owner_probe_never_holds_the_waiter_past_its_deadline():
+    """The owner lock's probe stalls: the waiter still answers within --max from what it has observed."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import time\no.owner_free = lambda log: time.sleep(30)\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        began = time.monotonic()
+        r = _wait(d, bindir, "--max", "3", "--no-stale", log)
+        assert r.returncode == 3 and time.monotonic() - began < 3.5, (r, time.monotonic() - began)
+
+
+def test_a_stalled_tail_never_hides_a_finished_wave():
+    """Every status is published and only the transcript's tail stalls: the answer is DONE (exit 0) at --max,
+    with a note that the tail was not read, never STILL RUNNING."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import time\no.read_tail = lambda log: time.sleep(5) or []\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\nTurn completed (rc=0)\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        began = time.monotonic()
+        r = _wait(d, bindir, "--max", "1", log)
+        assert r.returncode == 0 and "DONE:" in r.stdout and "could not be read" in r.stdout, r
+        assert time.monotonic() - began < 1.5
+
+
+def test_slow_bookkeeping_never_hides_a_published_verdict():
+    """The first-sighting bookkeeping takes a second and a half: a published status is read first, so the
+    wait still answers DONE within --max."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import time\n_real = o.first_seen\n"
+                        "o.first_seen = lambda log, a: (time.sleep(1.5), _real(log, a))[1]\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        r = _wait(d, bindir, "--max", "1", log)
+        assert r.returncode == 0 and "DONE:" in r.stdout, r
+
+
+def test_a_pending_log_replaced_by_a_fifo_never_stops_the_other_probes():
+    """The first log is a FIFO that took the path (opening it would block); the second is done: the probe of
+    the first reads only metadata, so the second is still observed."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        first, second = pathlib.Path(d) / "a.out", pathlib.Path(d) / "b.out"
+        os.mkfifo(first)
+        second.write_text("review\n")
+        pathlib.Path(str(second) + ".done").write_text("0\n")
+        r = _run(first, second, maxw=2, cwd=d)
+        assert r.returncode == 3 and f"running: {second}" not in r.stdout, r
+        assert f"running: {first} (" in r.stdout and "no observation" not in r.stdout, r
+
+
+def test_an_unreadable_status_is_never_reported_unpublished_or_stale():
+    """The owner has gone and the status cannot be read (an I/O error), with an old transcript: the status
+    is unknown, so the wait reports it UNREADABLE and still running, never UNPUBLISHED or STALE."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([3]))
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        os.utime(log, (1, 1))
+        for args in (("--no-stale",), ("--stale-secs", "1")):
+            r = _wait(d, bindir, "--max", "2", *args, log)
+            assert r.returncode == 3 and "UNREADABLE" in r.stdout, r
+            assert "UNPUBLISHED" not in r.stdout and "STALE" not in r.stdout, r
+
+
+def test_a_transient_unreadable_status_never_hides_a_later_stale_log():
+    """The first status read fails, the next finds none and the transcript is old: the latest observation
+    decides, so the wait reports STALE (exit 4), not UNREADABLE."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([3, 1]))
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        os.utime(log, (1, 1))
+        r = _wait(d, bindir, "--max", "20", "--stale-secs", "1", log)
+        assert r.returncode == 4 and "STALE:" in r.stdout and "UNREADABLE" not in r.stdout, r
+
+
+def test_a_failed_recovery_is_unpublished_even_after_a_transient_read_error():
+    """No status, the owner gone, a recovery that cannot publish, and a status read that fails once on either
+    side of it: the recovery's result is kept until a read finds no status, so the wait reports UNPUBLISHED
+    (exit 4), never a review still running."""
+    with tempfile.TemporaryDirectory() as d:
+        for codes in ([3, 1], [1, 3, 1]):
+            sub = pathlib.Path(d) / "x".join(map(str, codes))
+            sub.mkdir()
+            bindir = _setup(sub)
+            _faults(bindir, _statuses(codes), recover="exit 1")
+            log = sub / "r.out"
+            log.write_text("review\n")
+            pathlib.Path(str(log) + ".owner").write_text("")
+            r = _wait(sub, bindir, "--max", "20", "--no-stale", log)
+            assert r.returncode == 4 and f"UNPUBLISHED: {log}" in r.stdout and "UNREADABLE" not in r.stdout, (codes, r)
+
+
+def test_a_status_published_after_a_recovery_ends_the_wait_done():
+    """No status, a recovery that fails, then a status is there (another publisher raced it): completion is
+    decided from the statuses after the round, so a short wait answers DONE (exit 0), not STILL RUNNING."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, _statuses([1, 0, 3]), recover="exit 1")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "3", "--no-stale", log)
+        assert r.returncode == 0 and "DONE:" in r.stdout and "UNREADABLE" not in r.stdout, r
+

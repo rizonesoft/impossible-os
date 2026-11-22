@@ -2015,3 +2015,22 @@ def test_a_busy_owner_lock_with_no_log_is_never_an_acknowledged_claim(tmp_path):
         assert rr.claim(str(other)) == 4
     finally:
         os.close(fd)
+
+
+def test_a_held_metadata_read_of_the_output_never_holds_the_answer(monkeypatch):
+    """Classifying the broker's output descriptor waits on a stalled filesystem (fstat held): the delivery is
+    reported failed at its deadline instead of holding the supervisor until storage answers."""
+    import os
+    import sys
+    import time
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    monkeypatch.setattr(rl, "_writer", lambda fd: time.sleep(5))
+    rd, wr = os.pipe()
+    try:
+        began = time.monotonic()
+        assert rl.emit(wr, b"answer\n", rl.now_cs() + 50, late=False) is False
+        assert time.monotonic() - began < 1.5, time.monotonic() - began
+    finally:
+        os.close(rd)
+        os.close(wr)

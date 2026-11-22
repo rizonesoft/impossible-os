@@ -553,3 +553,50 @@ def test_a_transcript_read_error_is_read_again_never_dispatched_again(monkeypatc
         assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], env
         monkeypatch.setattr(env_mod.os, "read", real_read)
         assert env_mod._scan(rev) is None
+
+
+def test_a_full_file_table_on_the_transcript_open_is_read_again(monkeypatch):
+    """Status 0, then the transcript's open fails with ENFILE (the host's file table is full): that says
+    nothing about the transcript, so the pass is unreadable and never dispatched again."""
+    import errno
+    env_mod = _envelope_module()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True})})
+        (rev / "round.out.done").write_text("0\n")
+        real_open = env_mod.os.open
+
+        def opening(path, *a, **k):
+            if str(path).endswith("/round.out"):
+                raise OSError(errno.ENFILE, "Too many open files in system")
+            return real_open(path, *a, **k)
+        monkeypatch.setattr(env_mod.os, "open", opening)
+        out = []
+        monkeypatch.setattr(env_mod, "print", lambda *a, **k: out.append(a[0]), raising=False)
+        rc = env_mod.main([str(root), "--kinds", "round", "--todo", "todo/x.md", "--section", "7"])
+        env = json.loads(out[-1])
+        assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], env
+
+
+def test_a_transcript_still_growing_is_read_only_to_its_size_when_opened(monkeypatch):
+    """A review appends a MiB for every MiB read: the scan reads the size the file had when it was opened,
+    so it ends instead of chasing the end of a transcript that keeps growing."""
+    env_mod = _envelope_module()
+    with tempfile.TemporaryDirectory() as d:
+        f = pathlib.Path(d) / "r.out"
+        f.write_bytes(b"x" * (3 << 20) + b"\nHIGHEST: none\n")
+        size = f.stat().st_size
+        real_read, grown = env_mod.os.read, [0]
+
+        def reading(fd, n):
+            data = real_read(fd, n)
+            if grown[0] < 20:
+                grown[0] += 1
+                with open(f, "ab") as fh:
+                    fh.write(b"y" * (1 << 20))
+            return data
+        monkeypatch.setattr(env_mod.os, "read", reading)
+        scan = env_mod._scan(f)
+        assert isinstance(scan, dict) and scan["bytes"] == size and grown[0] <= 5, (scan and scan.get("bytes"), grown)

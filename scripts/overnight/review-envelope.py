@@ -53,20 +53,23 @@ LINE_KEEP = 4096          # bytes of one line kept for its finding and tail entr
 SCAN_OVERLAP = 128        # bytes carried between chunks, longer than any completion or crash marker
 
 
-# Read errors that say the storage failed this time, not that the artifact is wrong: the leg is read again,
-# never dispatched again over a result it already has.
-TRANSIENT_READ = frozenset({errno.EIO, errno.EINTR, errno.EAGAIN, errno.ETIMEDOUT, errno.ESTALE})
+# The open errors that establish there is no transcript to read (nothing at the path, or no regular file
+# there). Every other failure (a storage fault, a full file table, no memory) says nothing about the
+# transcript: the leg is read again, never dispatched again over a result it may already have.
+NO_ARTIFACT = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EISDIR, errno.ELOOP, errno.ENXIO})
 
 
 def _scan(path: Path):
     """One streamed pass over a regular file, or None: its size, sha256, the last completion code, whether a
     crash signature appears, the finding lines (at most MAX_FINDING_LINES kept, all counted) and the last
     TAIL_LINES lines. Opened without blocking, so a FIFO or a device never hangs it, and read a chunk at a
-    time, so memory is bounded by the chunk and LINE_KEEP whatever the transcript's size."""
+    time, so memory is bounded by the chunk and LINE_KEEP whatever the transcript's size. Only the size the
+    file had when opened is read, so a review still writing it never keeps the scan chasing its end. An
+    OSError that says nothing about the transcript is returned, for the caller to read it again."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
     except OSError as exc:
-        return exc if exc.errno in TRANSIENT_READ else None   # a storage fault is read again; anything else is no artifact
+        return None if exc.errno in NO_ARTIFACT else exc
     digest, size, last_rc, crash = hashlib.sha256(), 0, None, False
     findings, found, tail = [], 0, collections.deque(maxlen=TAIL_LINES)
     line, carry = b"", b""
@@ -80,9 +83,13 @@ def _scan(path: Path):
                     findings.append(ln.strip()[:400])
             tail.append(ln[:400])
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
             return None
-        while chunk := os.read(fd, 1 << 20):
+        left = st.st_size
+        # A file cut short while it is read ends the scan where its data ends.
+        while left > 0 and (chunk := os.read(fd, min(1 << 20, left))):
+            left -= len(chunk)
             digest.update(chunk)
             size += len(chunk)
             window = (carry + chunk).decode("utf-8", "replace")
@@ -98,7 +105,7 @@ def _scan(path: Path):
         if line:
             finish(line)
     except OSError as exc:
-        return exc if exc.errno in TRANSIENT_READ else None   # a fault part way is read again
+        return exc                       # a regular file that failed part way: read it again
     finally:
         os.close(fd)
     return {"bytes": size, "sha256": digest.hexdigest(), "rc": last_rc, "crash": crash,

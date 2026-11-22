@@ -1599,6 +1599,7 @@ def _staged_source_files(root: Path) -> list[str]:
 _staged_listing: dict[str, list[str]] = {}
 _staged_deleted: dict[str, set[str]] = {}
 _staged_docs: dict[tuple[str, str], list[str]] = {}
+_head_docs: dict[tuple[str, str], list[str]] = {}       # HEAD's copies, read with the staged ones
 
 
 def _staged_paths(root: Path, fresh: bool = False) -> list[str]:
@@ -1607,8 +1608,9 @@ def _staged_paths(root: Path, fresh: bool = False) -> list[str]:
     commit as no commit at all and pass it unchecked."""
     key = str(root)
     if fresh:
-        for doc in [k for k in _staged_docs if k[0] == key]:
-            del _staged_docs[doc]
+        for cache in (_staged_docs, _head_docs):
+            for doc in [k for k in cache if k[0] == key]:
+                del cache[doc]
     if fresh or key not in _staged_listing:
         try:
             out = _proc.check_output(
@@ -2336,21 +2338,55 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
     adversarial+consistency+perf dispatches. Only ADD lines without a
     matching removed counterpart count as fresh stamps.
     """
-    out: list[str] = []
-    for path in todo_files:
-        wait = _hook_left(5)
-        if wait <= 0:
-            raise subprocess.TimeoutExpired("git diff", 0)
-        # A diff that cannot be read raises: the caller reports "unknown" and the commit is refused. Skipping
-        # the file would read a stamp-only commit as no section commit at all, and pass it unreviewed.
-        diff = _proc.check_output(
-            ["git", "diff", "--cached", "-U0", "--", path],
-            cwd=str(root), text=True, timeout=wait,
-            stderr=subprocess.DEVNULL, env=_stored_env(),
-        )
-        if diff.strip() and _fresh_stamp_sections(root, path):
-            out.append(path)
-    return out
+    # The changed TODOs come from the staged listing already read (a listed path has a staged change), and
+    # every staged and HEAD copy is read in one batch: two git processes however many TODOs the commit
+    # touches. A listing or a copy that cannot be read raises: the caller reports "unknown" and the commit
+    # is refused, never read as no section commit at all.
+    listed = set(_staged_paths(root))
+    changed = [path for path in todo_files if path in listed]
+    _read_stamp_docs(root, changed)
+    return [path for path in changed if _fresh_stamp_sections(root, path)]
+
+
+def _read_stamp_docs(root: Path, paths: list[str]) -> None:
+    """The staged and HEAD copies of `paths`, read by one `git cat-file --batch` into the detection's caches
+    (a path holding a newline is left to the one-file readers). A staged copy the index lacks, or a batch
+    that fails or runs out of time, raises _StagedReadError; a HEAD copy HEAD lacks is an empty document."""
+    key = str(root)
+    deleted = _staged_deleted.get(key, set())
+    want = []
+    for path in paths:
+        if "\n" in path:
+            continue
+        if (key, path) not in _staged_docs and path not in deleted:
+            want.append((f":{path}", _staged_docs, path))
+        if (key, path) not in _head_docs:
+            want.append((f"HEAD:{path}", _head_docs, path))
+    if not want:
+        return
+    try:
+        done = _proc.run(["git", "cat-file", "--batch"], cwd=str(root), timeout=5, capture_output=True,
+                         input="".join(spec + "\n" for spec, _, _ in want).encode(), env=_stored_env())
+    except Exception as exc:
+        raise _StagedReadError("the staged and HEAD TODO copies") from exc
+    if done.returncode != 0:
+        raise _StagedReadError("the staged and HEAD TODO copies")
+    data, pos = done.stdout, 0
+    try:
+        for spec, cache, path in want:
+            end = data.index(b"\n", pos)
+            header = data[pos:end].decode()
+            pos = end + 1
+            if header.endswith(" missing"):
+                if cache is _staged_docs:
+                    raise _StagedReadError(path)
+                cache[(key, path)] = []                # a file HEAD does not have: nothing was removed from it
+                continue
+            size = int(header.split()[2])
+            cache[(key, path)] = data[pos:pos + size].decode("utf-8").splitlines()
+            pos += size + 1
+    except (ValueError, IndexError, UnicodeDecodeError) as exc:
+        raise _StagedReadError("the staged and HEAD TODO copies") from exc
 
 
 # A stamp line: 0-3 spaces of Markdown indent and any nesting of blockquote markers (`> > **`, `>> **`), as
@@ -2387,8 +2423,10 @@ def _fresh_stamp_sections(root: Path, path: str) -> list[str]:
 
 
 def _head_file_lines(root: Path, path: str) -> list[str]:
-    """HEAD's copy of `path` (none before the first commit, or for a file HEAD lacks); a read that fails or
-    runs out of time raises _StagedReadError."""
+    """HEAD's copy of `path` (none before the first commit, or for a file HEAD lacks), from the detection's
+    cache when the batch read it; a read that fails or runs out of time raises _StagedReadError."""
+    if (str(root), path) in _head_docs:
+        return _head_docs[(str(root), path)]
     try:
         done = _proc.run(["git", "show", f"HEAD:{path}"], cwd=str(root), capture_output=True, text=True,
                          timeout=5, env=_stored_env())
