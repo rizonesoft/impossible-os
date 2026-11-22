@@ -2710,10 +2710,13 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     for kind, receipt in (("round", receipts.get("round", (None, 0))[0]),
                           ("performance", receipts.get("performance", (None, 0))[0]),
                           (final_kind, final)):
-        # At the pass cap the round's LEVEL no longer holds the stamp, but where it was shown the section from
-        # still does: the base checks below apply to every pass.
+        # At the pass cap the round's LEVEL no longer holds the stamp, but its receipt must still be complete
+        # (a round that ended without a verdict is no round), and where it was shown the section from still
+        # holds: the base checks below apply to every pass.
         if kind == "round" and capped and receipt is not None:
-            ok, why = True, ""
+            ok = _receipt_complete(receipt)
+            why = "" if ok else ("round has no checked, complete receipt (still running, incomplete, or not "
+                                 "dispatched with scripts/codex-dispatch.sh)")
         else:
             ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
         if not ok:

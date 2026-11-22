@@ -82,20 +82,51 @@ class Bounded:
 
 
 def _writer(fd):
-    """A write function for `fd` that never blocks on a pipe or a socket, and leaves the inherited
-    descriptor's flags alone (another process shares them): a pipe is reopened as a private nonblocking
-    descriptor through /proc, a socket is sent to with MSG_DONTWAIT. Anything else (a file, a terminal, a
-    device) is written as it is. Returns (write, poll fd, close)."""
+    """A write function for `fd` that never blocks, and leaves the inherited descriptor's flags alone
+    (another process shares them): a pipe or a terminal is reopened as a private nonblocking descriptor
+    through /proc, and a socket is sent to with MSG_DONTWAIT. Returns (write, poll fd, close), or None for a
+    descriptor no write to can be made nonblocking (a regular file, a device), which emit hands to a
+    writer process instead."""
     import stat
     mode = os.fstat(fd).st_mode
-    if stat.S_ISFIFO(mode):
+    if stat.S_ISFIFO(mode) or (stat.S_ISCHR(mode) and os.isatty(fd)):
         own = os.open(f"/proc/self/fd/{fd}", os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
         return (lambda view: os.write(own, view)), own, (lambda: os.close(own))
     if stat.S_ISSOCK(mode):
         import socket
         sock = socket.socket(fileno=os.dup(fd))
         return (lambda view: sock.send(view, socket.MSG_DONTWAIT)), fd, sock.close
-    return (lambda view: os.write(fd, view)), fd, (lambda: None)
+    return None
+
+
+def _emit_through_writer(fd, data, until, cancel):
+    """`data` written to `fd` by a `cat` whose input is a pipe from here: what is waited on is that process,
+    only until `until` (a second after a cancellation). A filesystem that stalls the write holds the writer,
+    never this supervisor; the destination is not a pipe, so the writer holding it delays no reader's EOF."""
+    rd, wr = os.pipe()
+    try:
+        # LIFECYCLE-WAIVER: writes one answer or diagnostic for a REVIEW attempt; it does not relaunch or watch the session.
+        pid = os.posix_spawnp("cat", ["cat"], _child_env(), file_actions=[
+            (os.POSIX_SPAWN_DUP2, rd, 0), (os.POSIX_SPAWN_DUP2, fd, 1),
+            (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+    except OSError:
+        os.close(rd)
+        os.close(wr)
+        return False
+    os.close(rd)
+    os.set_blocking(wr, False)
+    sent = _emit(memoryview(data), lambda view: os.write(wr, view), wr, until, cancel)
+    os.close(wr)
+    while sent:
+        if cancel is not None and cancel.sig:
+            until = min(until, cancel.at + 100)
+        done, raw = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return os.waitstatus_to_exitcode(raw) == 0
+        if now_cs() >= until:
+            return False                       # still writing: it finishes on its own, outside this answer
+        time.sleep(0.01)
+    return False
 
 
 def emit(fd, data, until, cancel=None):
@@ -104,9 +135,12 @@ def emit(fd, data, until, cancel=None):
     the room a poll reported only sends the loop back to wait for more."""
     view = memoryview(data)
     try:
-        write, polled, close = _writer(fd)
+        own = _writer(fd)
     except OSError:
         return False
+    if own is None:
+        return _emit_through_writer(fd, data, until, cancel)
+    write, polled, close = own
     try:
         return _emit(view, write, polled, until, cancel)
     finally:
@@ -525,16 +559,20 @@ def _attempt(cmd, end, broker, cancel):
         # in the group outlives this supervisor, however it ends.
         life_rd, life_wr = os.pipe()
         _LIFELINES.append(life_wr)
+        said_rd, said_wr = os.pipe()
+        os.set_blocking(said_rd, False)
         try:
             os.set_inheritable(life_rd, True)
-            leader = os.posix_spawnp(sys.executable, [sys.executable, WARDEN, str(life_rd), cmd], os.environ,
-                                     setsid=True, setsigmask=())
+            os.set_inheritable(said_wr, True)
+            leader = os.posix_spawnp(sys.executable, [sys.executable, WARDEN, str(life_rd), str(said_wr), cmd],
+                                     os.environ, setsid=True, setsigmask=())
         except OSError as exc:
             # Not started (a process limit, a missing shell): a failed attempt, published by its owner.
             print(f"review-runtime-limit: the command could not be started ({exc.strerror})", file=sys.stderr)
             return (False, False, 1) if broker is not None else 1
         finally:
             os.close(life_rd)
+            os.close(said_wr)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, watched)
     if broker is not None:
@@ -552,7 +590,13 @@ def _attempt(cmd, end, broker, cancel):
             if pid == 0:
                 return True
             if pid == leader:
-                status = os.waitstatus_to_exitcode(raw)
+                # The command's own status, which the warden reports before it ends the group; a warden that
+                # reported nothing was ended itself (the limit's KILL) and its wait status stands.
+                try:
+                    said = os.read(said_rd, 32).strip()
+                except BlockingIOError:
+                    said = b""
+                status = int(said) if said.isdigit() else os.waitstatus_to_exitcode(raw)
 
     while status is None:
         reap()

@@ -2096,6 +2096,10 @@ def test_registration_is_held_to_the_callers_limit(tmp_path):
     assert done.returncode == 2 and time.monotonic() - began < 2 + 1.2, done.stderr
     assert "registering the dispatch took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
     assert not list(reviews.glob(".prompt.*"))
+    # The broker owned the result before the append (it says `owns` first), so the attempt it never
+    # registered still has its log and a published status: the limit's 124.
+    logs = [p for p in reviews.glob("*.out")]
+    assert len(logs) == 1 and pathlib.Path(f"{logs[0]}.done").read_text().strip() == "124", logs
 
 
 def test_a_reset_during_the_status_walk_refuses_the_launch(tmp_path, monkeypatch):

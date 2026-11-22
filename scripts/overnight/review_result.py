@@ -63,6 +63,9 @@ def claim(log: str) -> int:
     return 0
 
 
+RECOVERED = b"recovered\n"     # in LOG.owner once a recovery has written its note to the log
+
+
 def recover(log: str) -> int:
     """Publish 1 for a result whose owner ended without publishing it. 0 when there was nothing to do (a
     status is published, nothing is claimed yet, the owner is alive, or no owner was recorded) or the result
@@ -83,15 +86,24 @@ def recover(log: str) -> int:
             return 0                               # its owner is alive and publishes it
         if os.path.lexists(log + ".done"):
             return 0                               # published meanwhile
-        try:
-            out = os.open(log, os.O_WRONLY | os.O_APPEND | CLOEXEC)
+        # The log is written once per recovery, however many retries the status write needs: the mark is
+        # kept in the owner file this process holds locked, so a retry leaves the log (and the waiter's
+        # activity clock, which reads its mtime) as it was and the stall is reported.
+        if os.pread(fd, len(RECOVERED), 0) != RECOVERED:
             try:
-                _write_all(out, b"review_result: the result's owner ended without publishing it; recorded as 1\n")
-            finally:
-                os.close(out)
-        except OSError:
-            pass                                   # fail-direction: publish below reports a log it cannot write
-        return publish(log, "1")
+                out = os.open(log, os.O_WRONLY | os.O_APPEND | CLOEXEC)
+                try:
+                    _write_all(out, b"review_result: the result's owner ended without publishing it; "
+                                    b"recorded as 1\nTurn completed (rc=1)\n")
+                finally:
+                    os.close(out)
+            except OSError:
+                pass                               # fail-direction: the status below is still written
+            try:
+                os.pwrite(fd, RECOVERED, 0)
+            except OSError:
+                pass                               # fail-direction: a retry writes the note again
+        return publish(log, "1", log_line=False)
     finally:
         os.close(fd)
 
@@ -113,7 +125,7 @@ def discard(prompt: str) -> int:
     return 0
 
 
-def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = False) -> int:
+def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = False, log_line: bool = True) -> int:
     if not re.fullmatch(r"[0-9]{1,3}", status):
         print(f"review_result: {status!r} is not a status", file=sys.stderr)
         return 2
@@ -125,11 +137,12 @@ def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = Fals
             return 1
     tmp = f"{log}.done.tmp"
     try:
-        fd = os.open(log, os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0))
-        try:
-            _write_all(fd, f"Turn completed (rc={status})\n".encode())
-        finally:
-            os.close(fd)
+        if log_line:
+            fd = os.open(log, os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0))
+            try:
+                _write_all(fd, f"Turn completed (rc={status})\n".encode())
+            finally:
+                os.close(fd)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0), 0o644)
         try:
             _write_all(fd, f"{status}\n".encode())

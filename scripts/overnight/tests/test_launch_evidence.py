@@ -518,11 +518,14 @@ def test_a_session_started_by_a_term_handler_is_ended_with_the_attempt(tmp_path)
         done = subprocess.run(["bash", str(LIMIT), "2", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=20)
         assert done.returncode == 124
+        # Either the warden's group KILL ended the cleanup before it left the group (it never writes its id),
+        # or it reached its own session, wrote its id, and came back to the supervisor as an orphan. In both
+        # orders nothing it started may outlive the attempt.
         end = time.monotonic() + 3
-        while not pidfile.exists() or not pidfile.read_text().strip():
-            assert time.monotonic() < end
+        while (not pidfile.exists() or not pidfile.read_text().strip()) and time.monotonic() < end:
             time.sleep(0.05)
-        assert _gone(int(pidfile.read_text()))
+        if pidfile.exists() and pidfile.read_text().strip():
+            assert _gone(int(pidfile.read_text()))
     finally:
         if pidfile.exists() and pidfile.read_text().strip() and not _gone(int(pidfile.read_text()), 0):
             os.kill(int(pidfile.read_text()), signal.SIGKILL)
@@ -1060,3 +1063,107 @@ def test_a_prompt_that_is_not_the_registered_one_runs_nothing(tmp_path):
                         str(prompt), "--prompt-sha", hashlib.sha256(b"p\n").hexdigest(), "--no-deadline",
                         f"printf %s \"$REVIEW_PROMPT_TEXT\" > {mark}"], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and mark.read_text() == "p\n", r
+
+
+def test_the_warden_ends_what_the_command_left_in_its_group(tmp_path):
+    """The command exits and leaves a helper in its group: the warden reports the command's status, then ends
+    the group, so the helper never outlives it, even with the supervisor (the lifeline) still there or gone."""
+    import sys
+    pidfile = tmp_path / "helper"
+    life_rd, life_wr = os.pipe()
+    said_rd, said_wr = os.pipe()
+    os.set_inheritable(life_rd, True)
+    os.set_inheritable(said_wr, True)
+    helper = None
+    try:
+        warden = subprocess.Popen([sys.executable, str(REPO / "scripts/overnight/review_warden.py"), str(life_rd),
+                                   str(said_wr), f"sleep 30 & echo $! > {pidfile}; exit 3"],
+                                  close_fds=False, start_new_session=True)
+        os.close(life_rd)
+        os.close(said_wr)
+        warden.wait(timeout=20)
+        assert os.read(said_rd, 32).strip() == b"3"
+        helper = int(pidfile.read_text())
+        t = time.monotonic()
+        while os.path.exists(f"/proc/{helper}") and time.monotonic() - t < 5:
+            time.sleep(0.05)
+        assert not os.path.exists(f"/proc/{helper}"), "the command's helper outlived the command"
+    finally:
+        os.close(life_wr)
+        os.close(said_rd)
+        if helper is not None and os.path.exists(f"/proc/{helper}"):
+            os.kill(helper, signal.SIGKILL)
+
+
+def test_a_write_that_cannot_be_nonblocking_never_holds_the_supervisor(tmp_path):
+    """A regular file on a filesystem that stalls the write: it goes through a writer process, which is
+    waited on only until the deadline, so the supervisor returns by then."""
+    import sys
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "cat").write_text("#!/bin/sh\nexec sleep 5\n")      # a write the filesystem holds
+    (bindir / "cat").chmod(0o755)
+    out = tmp_path / "answer.txt"
+    script = _rl_script(tmp_path, f"os.environ['PATH'] = {str(bindir)!r} + ':' + os.environ['PATH']\n"
+                        f"fd = os.open({str(out)!r}, os.O_WRONLY | os.O_CREAT)\n"
+                        "began = time.monotonic()\n"
+                        "ok = rl.emit(fd, b'answer\\n', rl.now_cs() + 50)\n"
+                        "print(ok, round(time.monotonic() - began, 2), flush=True)\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    ok, took = r.stdout.split()
+    assert ok == "False" and float(took) < 1.5, r
+    # A regular file that accepts the write: delivered through the same writer.
+    script2 = _rl_script(tmp_path, f"fd = os.open({str(out)!r}, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)\n"
+                         "print(rl.emit(fd, b'answer\\n', rl.now_cs() + 500), flush=True)\n")
+    r = subprocess.run([sys.executable, str(script2)], capture_output=True, text=True, timeout=30)
+    assert r.stdout.strip() == "True" and out.read_text() == "answer\n", r
+
+
+def test_a_terminal_that_stops_draining_never_holds_the_supervisor(tmp_path):
+    """A terminal shared with another writer: poll reports room the other writer takes. The terminal is
+    reopened nonblocking too, so the supervisor returns by the deadline instead of blocking in write."""
+    import pty
+    import sys
+    master, slave = pty.openpty()
+    script = _rl_script(tmp_path, "import select\n"
+                        "fd = int(sys.argv[1])\n"
+                        "class Always:\n"
+                        "    def register(self, *a): pass\n"
+                        "    def poll(self, ms): return [(0, select.POLLOUT)]\n"
+                        "rl.select.poll = Always\n"
+                        "began = time.monotonic()\n"
+                        "ok = rl.emit(fd, b'x' * 200000, rl.now_cs() + 30)\n"
+                        "print(ok, round(time.monotonic() - began, 2), flush=True)\n")
+    try:
+        r = subprocess.run([sys.executable, str(script), str(slave)], capture_output=True, text=True, timeout=30,
+                           pass_fds=(slave,))
+    finally:
+        os.close(slave)
+        os.close(master)
+    ok, took = r.stdout.split()
+    assert ok == "False" and float(took) < 1.5, r
+
+
+def test_a_recovery_that_cannot_publish_writes_the_log_once(tmp_path):
+    """The status cannot be created (no room for the sidecar): each retry of the recovery leaves the log as
+    the first one left it, so the waiter's activity clock (the log's mtime) shows the stall."""
+    import sys
+    d = tmp_path / "reviews"
+    d.mkdir()
+    log = d / "r.out"
+    log.write_text("partial\n")
+    pathlib.Path(str(log) + ".owner").write_text("")
+    result = REPO / "scripts/overnight/review_result.py"
+    d.chmod(0o555)
+    try:
+        if os.access(d, os.W_OK):
+            pytest.skip("this user writes a read-only directory")
+        sizes = []
+        for _ in range(3):
+            r = subprocess.run([sys.executable, str(result), "recover", str(log)], capture_output=True, text=True,
+                               timeout=30)
+            assert r.returncode == 1 and not pathlib.Path(str(log) + ".done").exists(), r
+            sizes.append(log.stat().st_size)
+    finally:
+        d.chmod(0o755)
+    assert sizes[0] > len("partial\n") and sizes == [sizes[0]] * 3, sizes

@@ -634,3 +634,17 @@ def test_one_ancestry_question_is_asked_once(tmp_path):
         gate.subprocess.run = real
         gate._ancestry.clear()
     assert sum("--is-ancestor" in c for c in calls) == 1, calls
+
+
+def test_refusal_a_round_with_no_verdict_holds_the_stamp_at_the_pass_cap(tmp_path):
+    """The cap waives the round's level, never its verdict: a round that ended incomplete (rc 3, a lens it
+    did not report) still holds the stamp, beside a completed round with blocking findings, which does not."""
+    root, h = _history(tmp_path)
+    real = gate._pass_cap
+    gate._pass_cap = lambda _root: 1
+    try:
+        ok, why = _judge(root, receipt={"round": {"rc": 3}}, **_good(h))
+        assert not ok and "round has no checked, complete receipt" in why, why
+        assert _judge(root, highest={"round": "P1"}, **_good(h)) == (True, "")
+    finally:
+        gate._pass_cap = real

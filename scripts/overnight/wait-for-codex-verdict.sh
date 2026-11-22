@@ -168,6 +168,7 @@ while :; do
         echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
         exit 0
     fi
+    elapsed=$((SECONDS - started))        # the polls above spent time too
     [ "$elapsed" -ge "$MAX" ] && break
     _any_silent && break
     dur=$POLL
