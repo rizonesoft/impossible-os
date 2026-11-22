@@ -940,46 +940,103 @@ def test_diagnostics_to_a_full_stderr_end_at_the_deadline(tmp_path):
     assert r.returncode == 0 and float(r.stdout) < 1.5, r
 
 
-def test_a_job_whose_supervisor_died_is_recovered(tmp_path):
-    """The job's supervisor is KILLed mid-review (an OOM kill): it held the owner lock for its life, so the
-    waiter's recovery sees the owner gone, ends the review it left running, and publishes 1. A live owner's
-    result is never touched."""
+def test_a_job_whose_supervisor_died_takes_its_review_with_it_and_is_recovered(tmp_path):
+    """The job's supervisor ends without publishing (out of memory): the attempt's warden ends its whole group
+    the moment the supervisor's lifeline closes, so nothing it started keeps running; the owner lock is free,
+    so the waiter's recovery publishes 1. A live owner's result is never touched."""
     import sys
     log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
     prompt.write_text("p")
     result = REPO / "scripts/overnight/review_result.py"
-    owner = pathlib.Path(str(log) + ".owner")
+    pids = tmp_path / "pids"
+    cmd = f"sleep 60 & echo $$ $! > {pids}; wait"
     sup = subprocess.Popen([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
-                            str(prompt), "--no-deadline", "sleep 60"], stdout=subprocess.DEVNULL,
+                            str(prompt), "--no-deadline", cmd], stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL, start_new_session=True)
-    leader = None
+    live = []
     try:
         t = time.monotonic()
-        while time.monotonic() - t < 10:
-            got = owner.read_text().split() if owner.exists() else []
-            if len(got) == 2:
-                leader = int(got[0])
-                break
+        while time.monotonic() - t < 10 and len(live) < 2:
+            live = [int(x) for x in pids.read_text().split()] if pids.exists() else []
             time.sleep(0.05)
-        assert leader is not None
+        assert len(live) == 2
         r = subprocess.run([sys.executable, str(result), "recover", str(log)], capture_output=True, text=True,
                            timeout=30)
         assert r.returncode == 0 and not pathlib.Path(str(log) + ".done").exists(), r   # alive: untouched
         os.kill(sup.pid, signal.SIGKILL)
         sup.wait()
+        t = time.monotonic()
+        while any(os.path.exists(f"/proc/{p}") for p in live) and time.monotonic() - t < 5:
+            time.sleep(0.05)
+        assert not any(os.path.exists(f"/proc/{p}") for p in live), "the attempt outlived its supervisor"
         r = subprocess.run([sys.executable, str(result), "recover", str(log)], capture_output=True, text=True,
                            timeout=30)
         assert r.returncode == 0 and pathlib.Path(str(log) + ".done").read_text().strip() == "1", r
-        t = time.monotonic()
-        while os.path.exists(f"/proc/{leader}") and time.monotonic() - t < 5:
-            time.sleep(0.05)
-        assert not os.path.exists(f"/proc/{leader}"), "the review the dead owner left was not ended"
     finally:
         if sup.poll() is None:
             os.kill(sup.pid, signal.SIGKILL)
             sup.wait()
-        if leader is not None and os.path.exists(f"/proc/{leader}"):
-            os.killpg(leader, signal.SIGKILL)
+        for p in live:
+            if os.path.exists(f"/proc/{p}"):
+                os.kill(p, signal.SIGKILL)
+
+
+def test_recovery_never_takes_a_claim_in_progress(tmp_path):
+    """A claimant has opened LOG.owner but not yet locked it, and the waiter recovers then: recovery acts only
+    once LOG exists (a claim creates it only after holding the lock), so it never holds the lock a claim is
+    reaching for; the claim succeeds and nothing is published for it."""
+    import sys
+    log = tmp_path / "r.out"
+    pathlib.Path(str(log) + ".owner").write_text("")
+    rr_path = REPO / "scripts/overnight/review_result.py"
+    claimer = tmp_path / "claim.py"
+    claimer.write_text("import importlib.util, sys\n"
+                       f"spec = importlib.util.spec_from_file_location('rr', {str(rr_path)!r})\n"
+                       "rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)\n"
+                       f"sys.exit(rr.claim({str(log)!r}))\n")
+    during = tmp_path / "claim-during-recovery"
+    recoverer = tmp_path / "recover.py"
+    # The claim runs at the worst moment: while recovery holds the owner lock, if it ever takes it.
+    recoverer.write_text("import importlib.util, subprocess, sys\n"
+                         f"spec = importlib.util.spec_from_file_location('rr', {str(rr_path)!r})\n"
+                         "rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)\n"
+                         "real = rr.fcntl.flock\n"
+                         "def flock(fd, op):\n"
+                         "    real(fd, op)\n"
+                         f"    rc = subprocess.run([sys.executable, {str(claimer)!r}], timeout=30).returncode\n"
+                         f"    open({str(during)!r}, 'w').write(str(rc))\n"
+                         "rr.fcntl.flock = flock\n"
+                         f"sys.exit(rr.recover({str(log)!r}))\n")
+    r = subprocess.run([sys.executable, str(recoverer)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and not pathlib.Path(str(log) + ".done").exists(), r
+    assert not during.exists() or during.read_text() == "0", "recovery took the lock from a claim in progress"
+    if not during.exists():
+        assert subprocess.run([sys.executable, str(claimer)], timeout=30).returncode == 0 and log.exists()
+
+
+def test_a_writer_that_loses_the_room_to_another_never_blocks(tmp_path):
+    """Two writers share a full pipe: poll reports room, the other writer takes it, and this one's write
+    would block. Writes go through a private nonblocking descriptor, so the loop only waits again, until the
+    deadline; the inherited descriptor's flags are left alone."""
+    import sys
+    rd, wr = _full_pipe()
+    script = _rl_script(tmp_path, "import select\n"
+                        "fd = int(sys.argv[1])\n"
+                        "class Always:\n"
+                        "    def register(self, *a): pass\n"
+                        "    def poll(self, ms): return [(0, select.POLLOUT)]   # room, taken before the write\n"
+                        "rl.select.poll = Always\n"
+                        "began = time.monotonic()\n"
+                        "ok = rl.emit(fd, b'answer\\n', rl.now_cs() + 30)\n"
+                        "print(ok, round(time.monotonic() - began, 2), os.get_blocking(fd), flush=True)\n")
+    try:
+        r = subprocess.run([sys.executable, str(script), str(wr)], capture_output=True, text=True, timeout=30,
+                           pass_fds=(wr,))
+    finally:
+        os.close(wr)
+        os.close(rd)
+    ok, took, blocking = r.stdout.split()
+    assert ok == "False" and float(took) < 1.5 and blocking == "True", r
 
 
 def test_a_prompt_that_is_not_the_registered_one_runs_nothing(tmp_path):

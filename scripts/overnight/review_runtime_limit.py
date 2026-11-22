@@ -38,8 +38,9 @@ result (holding LOG.owner locked for its life, then creating LOG exclusively; a 
 left alone and nothing runs), reads PROMPT once and checks it against DIGEST (passed to COMMAND as
 REVIEW_PROMPT_TEXT), runs COMMAND (the review, its output appended to LOG) until the steps' deadline, and
 publishes COMMAND's status, or 124 when the limit ended it, as soon as the filesystem allows: no caller
-waits on this detached process. A publication that fails is this supervisor's exit 1; a supervisor that
-dies is recovered by the verdict waiter (review_result.py recover).
+waits on this detached process. A publication that fails is this supervisor's exit 1. Every attempt runs
+under review_warden.py, which ends its group when this supervisor ends, so a supervisor that dies leaves
+nothing running; the verdict waiter then publishes its result as 1 (review_result.py recover).
 """
 import ctypes
 import os
@@ -53,6 +54,8 @@ PR_SET_CHILD_SUBREAPER = 36
 POLL = 0.1              # the limit is kept to a tenth of a second
 NO_DEADLINE = 10 ** 12  # centiseconds: no caller limit (a supervisor still owns cancellation and the result)
 HERE = os.path.dirname(os.path.abspath(__file__))
+WARDEN = os.path.join(HERE, "review_warden.py")
+_LIFELINES: list[int] = []     # write ends of the attempts' lifelines, open until this process ends
 
 
 PIPE_BUF = 4096        # a write of at most this many bytes to a pipe that polls writable does not block
@@ -78,11 +81,41 @@ class Bounded:
         return False
 
 
+def _writer(fd):
+    """A write function for `fd` that never blocks on a pipe or a socket, and leaves the inherited
+    descriptor's flags alone (another process shares them): a pipe is reopened as a private nonblocking
+    descriptor through /proc, a socket is sent to with MSG_DONTWAIT. Anything else (a file, a terminal, a
+    device) is written as it is. Returns (write, poll fd, close)."""
+    import stat
+    mode = os.fstat(fd).st_mode
+    if stat.S_ISFIFO(mode):
+        own = os.open(f"/proc/self/fd/{fd}", os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        return (lambda view: os.write(own, view)), own, (lambda: os.close(own))
+    if stat.S_ISSOCK(mode):
+        import socket
+        sock = socket.socket(fileno=os.dup(fd))
+        return (lambda view: sock.send(view, socket.MSG_DONTWAIT)), fd, sock.close
+    return (lambda view: os.write(fd, view)), fd, (lambda: None)
+
+
 def emit(fd, data, until, cancel=None):
     """Write `data` to `fd`, waiting for room only until `until` (a second after a cancellation; past it, what
-    fits at once is still written). True when all of it was written."""
-    view, poller = memoryview(data), select.poll()
-    poller.register(fd, select.POLLOUT)
+    fits at once is still written). True when all of it was written. No write blocks: another writer taking
+    the room a poll reported only sends the loop back to wait for more."""
+    view = memoryview(data)
+    try:
+        write, polled, close = _writer(fd)
+    except OSError:
+        return False
+    try:
+        return _emit(view, write, polled, until, cancel)
+    finally:
+        close()
+
+
+def _emit(view, write, polled, until, cancel):
+    poller = select.poll()
+    poller.register(polled, select.POLLOUT)
     while view:
         if cancel is not None and cancel.sig:
             until = min(until, cancel.at + 100)
@@ -98,8 +131,10 @@ def emit(fd, data, until, cancel=None):
         if events[0][1] & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
             return False
         try:
-            view = view[os.write(fd, view[:PIPE_BUF]):]
+            view = view[write(view[:PIPE_BUF]):]
         except BlockingIOError:
+            if left <= 0:
+                return False                  # the room another writer took: no more waiting for it
             continue
         except OSError:
             return False
@@ -457,11 +492,11 @@ def _job(job, digest, cmd, end, cancel):
             status = 1
         else:
             os.environ["REVIEW_PROMPT_TEXT"] = text
-            status = _attempt(cmd, end, None, cancel, lambda leader: _result.record_attempt(log, leader))
+            status = _attempt(cmd, end, None, cancel)
     return status if _result.publish(log, str(status), prompt) == 0 else 1
 
 
-def _attempt(cmd, end, broker, cancel, started=None):
+def _attempt(cmd, end, broker, cancel):
     """COMMAND run under the limit and torn down: its exit status (for the broker, (cancelled, limited,
     status))."""
     watched = set(Cancel.WATCHED)
@@ -485,19 +520,25 @@ def _attempt(cmd, end, broker, cancel, started=None):
             return (False, True, 124) if broker is not None else 124
         # LIFECYCLE-WAIVER: groups one REVIEW attempt so it can be ended whole; it does not detach, relaunch or
         # watch the session (this supervisor waits for it and reaps everything it leaves).
+        # The group's leader is the warden (review_warden.py): it holds the read end of a pipe whose only write
+        # end this supervisor keeps for its life, and ends the whole group when that pipe closes, so nothing
+        # in the group outlives this supervisor, however it ends.
+        life_rd, life_wr = os.pipe()
+        _LIFELINES.append(life_wr)
         try:
-            leader = os.posix_spawnp("bash", ["bash", "-c", cmd], os.environ, setsid=True, setsigmask=(),
-                                     setsigdef=(signal.SIGPIPE, signal.SIGXFSZ))
+            os.set_inheritable(life_rd, True)
+            leader = os.posix_spawnp(sys.executable, [sys.executable, WARDEN, str(life_rd), cmd], os.environ,
+                                     setsid=True, setsigmask=())
         except OSError as exc:
             # Not started (a process limit, a missing shell): a failed attempt, published by its owner.
             print(f"review-runtime-limit: the command could not be started ({exc.strerror})", file=sys.stderr)
             return (False, False, 1) if broker is not None else 1
+        finally:
+            os.close(life_rd)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, watched)
     if broker is not None:
         broker.started()
-    if started is not None:
-        started(leader)
     status, limited, termed = None, False, False
 
     def reap():

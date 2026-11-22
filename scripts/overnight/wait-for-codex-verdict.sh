@@ -94,13 +94,19 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # status, written atomically after the review process exited). Log text never
 # ends a wait: the companion prints "[codex] Turn completed." before its
 # verdict, and a live review can print a line that looks like any sentinel.
-# A result whose owner ended without publishing it (an OOM kill, a crash) is recovered here: the owner holds
+# A result whose owner ended without publishing it (out of memory, a crash) is recovered here: the owner holds
 # <log>.owner locked for its life, so review_result.py recover publishes 1 only for an owner that is gone.
+# It runs detached with streams of its own, so a stalled filesystem delays the recovery, never this wait:
+# the status it publishes is read on a later poll, inside this call's deadline.
 RESULT_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_result.py"
 _log_done() {
     [ -f "$1.done" ] && return 0
-    [ -e "$1.owner" ] && python3 "$RESULT_TOOL" recover "$1" >/dev/null 2>&1
-    [ -f "$1.done" ]
+    # Only a free owner lock (flock -n, which never waits) is worth a recovery; a live owner holds it.
+    if [ -e "$1.owner" ] && [ -e "$1" ] && flock -n "$1.owner" true 2>/dev/null; then
+        # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
+        ( python3 "$RESULT_TOOL" recover "$1" </dev/null >/dev/null 2>&1 & )
+    fi
+    return 1
 }
 
 _all_done() {
@@ -144,8 +150,12 @@ _any_silent() {
 }
 for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
 
+# One deadline for the whole call, read from the shell's clock: time spent outside sleep (a slow stat, a
+# recovery started) counts against it.
+started=$SECONDS
 elapsed=0
-while [ "$elapsed" -lt "$MAX" ]; do
+while :; do
+    # Checked once more when the deadline comes, so a status published during the last sleep is seen.
     if _all_done; then
         for f in "${LOGS[@]}"; do
             echo "DONE: $f -- Turn completed (rc=$(cat "$f.done" 2>/dev/null))"
@@ -158,11 +168,12 @@ while [ "$elapsed" -lt "$MAX" ]; do
         echo "NEXT: python3 scripts/overnight/review-envelope.py for the combined wave, then Skill(superpowers:receiving-code-review) BEFORE any Edit, Write or fix."
         exit 0
     fi
+    [ "$elapsed" -ge "$MAX" ] && break
     _any_silent && break
     dur=$POLL
     [ $((MAX - elapsed)) -lt "$POLL" ] && dur=$((MAX - elapsed))
-    sleep "$dur"
-    elapsed=$((elapsed + dur))
+    [ "$dur" -gt 0 ] && sleep "$dur"
+    elapsed=$((SECONDS - started))
 done
 
 any_stale=0

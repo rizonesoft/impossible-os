@@ -269,3 +269,38 @@ def test_a_result_whose_owner_is_gone_is_recovered_by_the_waiter():
         r = _run(log, maxw=5)
         assert r.returncode == 0 and "rc=1" in r.stdout, r
         assert "owner ended without publishing" in log.read_text()
+
+
+def test_a_stalled_recovery_never_holds_the_waiter_past_its_deadline():
+    """Recovery stalls (a filesystem that does not answer): it runs detached, so the waiter still returns
+    within --max, reporting the review pending; the time it spent counts against one deadline."""
+    import os
+    import signal
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        pidfile = pathlib.Path(d) / "stalled.pid"
+        fake = bindir / "python3"
+        fake.write_text("#!/bin/bash\n"
+                        f'if [ "$2" = recover ]; then echo $$ > {pidfile}; exec sleep 8; fi\n'
+                        'exec /usr/bin/python3 "$@"\n')
+        fake.chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        began = time.monotonic()
+        try:
+            r = subprocess.run(["bash", str(TOOL), "--max", "3", str(log)], capture_output=True, text=True,
+                               cwd=d, timeout=30, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+            took = time.monotonic() - began
+            assert r.returncode in (3, 4) and took < 6, (r, took)
+            assert pidfile.exists(), "recovery was never started"
+        finally:
+            t = time.monotonic()
+            while time.monotonic() - t < 5 and not (pidfile.exists() and pidfile.read_text().strip()):
+                time.sleep(0.05)
+            if pidfile.exists() and pidfile.read_text().strip():
+                try:
+                    os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass

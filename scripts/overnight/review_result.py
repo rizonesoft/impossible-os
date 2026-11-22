@@ -14,10 +14,11 @@ no hand-off between processes can leave a claimed result unpublished.
 
 THE OWNER IS KNOWN TO BE ALIVE. A claim first takes an exclusive lock on LOG.owner and holds it for the
 owner's whole life (the kernel releases it when the process ends, however it ends), and only then creates
-LOG. The owner of a detached job records its review's process group there. `recover` (which the verdict
-waiter runs on a log with no status) takes that lock: a lock it gets with no LOG.done means the owner ended
-without publishing (an OOM kill, a crash), so it ends what is left of that process group and publishes 1.
-A live owner holds the lock, so recovery never touches its result. `publish` appends "Turn completed (rc=S)"
+LOG. `recover` (which the verdict waiter runs on a log with no status) acts only once LOG exists, so it
+never competes with a claim in progress, and then takes that lock: a lock it gets with LOG present and no
+LOG.done means the owner ended without publishing (out of memory, a crash), and it publishes 1. A live owner
+holds the lock, so recovery never touches its result. Recovery signals no process: the attempt's group
+leader (review_warden.py) ends its own group when the owner ends. `publish` appends "Turn completed (rc=S)"
 to LOG and then publishes S in LOG.done (written beside it and renamed over it, so a reader sees all or
 nothing); `--claim` claims first and leaves a result another owner holds alone (exit 0). `discard` removes
 the prompt of an attempt that was never registered, so no result is owed for it.
@@ -29,7 +30,6 @@ success or a published one into a failure.
 import fcntl
 import os
 import re
-import signal
 import sys
 
 
@@ -63,65 +63,12 @@ def claim(log: str) -> int:
     return 0
 
 
-def _stat(pid: int):
-    """(process group, start time) of a process from /proc, or None when it is gone."""
-    try:
-        with open(f"/proc/{pid}/stat", "rb") as f:
-            fields = f.read().rsplit(b") ", 1)[1].split()
-    except (OSError, IndexError):
-        return None
-    return int(fields[2]), int(fields[19])
-
-
-def record_attempt(log: str, leader: int) -> None:
-    """Record the review's process group (its leader's id and start time) in the held owner file, so a
-    recovery after this owner's death can end what is left of it. A record that cannot be written is
-    reported; recovery then still publishes the result."""
-    fd, st = _HELD.get(log), _stat(leader)
-    if fd is None or st is None:
-        return
-    try:
-        os.ftruncate(fd, 0)
-        os.pwrite(fd, f"{leader} {st[1]}\n".encode(), 0)
-    except OSError as exc:
-        print(f"review_result: the review's process group could not be recorded ({exc.strerror})",
-              file=sys.stderr)
-
-
-def _end_group(pgid: int, start: int) -> None:
-    """KILL every member of the recorded process group. The group is the recorded one: its leader, while it
-    exists, has the recorded start time, and a group id is never given to a new group while a member of the
-    old one is alive. Each member is signalled through a pidfd taken and checked first."""
-    lead = _stat(pgid)
-    if lead is not None and lead[1] != start:
-        return                                     # the id now names another process
-    for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        st = _stat(pid)
-        if st is None or st[0] != pgid:
-            continue
-        try:
-            pidfd = os.pidfd_open(pid)
-        except OSError:
-            continue
-        try:
-            st = _stat(pid)
-            if st is not None and st[0] == pgid:
-                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-        except OSError:
-            pass                                   # fail-direction: it ended meanwhile
-        finally:
-            os.close(pidfd)
-
-
 def recover(log: str) -> int:
-    """Publish 1 for a result whose owner ended without publishing it, ending what is left of its review.
-    0 when there was nothing to do (a status is published, the owner is alive, or no owner was recorded)
-    or the result was recovered; 1 on an error."""
-    if os.path.lexists(log + ".done"):
-        return 0
+    """Publish 1 for a result whose owner ended without publishing it. 0 when there was nothing to do (a
+    status is published, nothing is claimed yet, the owner is alive, or no owner was recorded) or the result
+    was recovered; 1 on an error."""
+    if os.path.lexists(log + ".done") or not os.path.lexists(log):
+        return 0                                   # published, or not claimed yet: a claim may be in progress
     try:
         fd = os.open(_owner(log), os.O_RDWR | CLOEXEC)
     except FileNotFoundError:
@@ -134,11 +81,8 @@ def recover(log: str) -> int:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0                               # its owner is alive and publishes it
-        if os.path.lexists(log + ".done") or not os.path.lexists(log):
-            return 0                               # published meanwhile, or the owner died before creating it
-        record = os.pread(fd, 64, 0).split()
-        if len(record) == 2 and record[0].isdigit() and record[1].isdigit():
-            _end_group(int(record[0]), int(record[1]))
+        if os.path.lexists(log + ".done"):
+            return 0                               # published meanwhile
         try:
             out = os.open(log, os.O_WRONLY | os.O_APPEND | CLOEXEC)
             try:
