@@ -438,3 +438,22 @@ def test_a_stalled_tail_never_hides_a_finished_wave():
                            timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode == 0 and "DONE:" in r.stdout and "could not be read" in r.stdout, r
         assert time.monotonic() - began < 1 + 3
+
+
+def test_setup_runs_no_command_that_could_hold_the_clock():
+    """Every command the setup once ran (a grep per argument, dirname) now takes three seconds: the setup
+    runs none of them, so the answer still comes within --max of the call's start."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        for name in ("grep", "dirname"):
+            (bindir / name).write_text("#!/bin/sh\nexec sleep 3\n")
+            (bindir / name).chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "1", "--no-stale", str(log), str(log) + "2"],
+                           capture_output=True, text=True, cwd=d, timeout=60,
+                           env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode in (3, 5) and time.monotonic() - began < 1 + 1.5, (r, time.monotonic() - began)

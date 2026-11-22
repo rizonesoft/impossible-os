@@ -115,16 +115,29 @@ def _emit_through_writer(fd, data, until, cancel, late=True):
     only until `until` (a second after a cancellation). A filesystem that stalls the write holds the writer,
     never this supervisor; the destination is not a pipe, so the writer holding it delays no reader's EOF."""
     rd, wr = os.pipe()
+
+    def spawn():
+        try:
+            # LIFECYCLE-WAIVER: writes one answer or diagnostic for a REVIEW attempt; it does not relaunch or watch the session.
+            return os.posix_spawnp("cat", ["cat"], _child_env(), file_actions=[
+                (os.POSIX_SPAWN_DUP2, rd, 0), (os.POSIX_SPAWN_DUP2, fd, 1),
+                (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+        finally:
+            os.close(rd)
+
+    def abandon(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)                    # given up on: its input never comes
+        except OSError:
+            pass                                           # fail-direction: it has already gone
     try:
-        # LIFECYCLE-WAIVER: writes one answer or diagnostic for a REVIEW attempt; it does not relaunch or watch the session.
-        pid = os.posix_spawnp("cat", ["cat"], _child_env(), file_actions=[
-            (os.POSIX_SPAWN_DUP2, rd, 0), (os.POSIX_SPAWN_DUP2, fd, 1),
-            (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+        started, pid = _start(spawn, until, cancel, abandon)
     except OSError:
-        os.close(rd)
         os.close(wr)
         return False
-    os.close(rd)
+    if not started:
+        os.close(wr)                                       # the gate: a writer that starts now reads nothing
+        return False
     os.set_blocking(wr, False)
     sent = _emit(memoryview(data), lambda view: os.write(wr, view), wr, until, cancel, late)
     os.close(wr)
@@ -210,6 +223,29 @@ def _load_result():
 
 
 _result = _load_result()
+
+
+def _load_bounded():
+    """scripts/bounded_run.py: its start_supervised is the one way this supervisor starts a process."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bounded_run", os.path.join(HERE, "..", "bounded_run.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_bounded = _load_bounded()
+
+
+def _start(spawn, until, cancel=None, abandon=None):
+    """(True, `spawn()`) or (False, None): the start supervised by bounded_run.start_supervised against
+    `until` (centiseconds, now_cs) and a second after a cancellation, so a spawn held by failing storage never
+    holds this supervisor. Every caller keeps the gate that makes a start given up on run nothing."""
+    deadline = time.monotonic() + max(0, until - now_cs()) / 100
+
+    def stopped():
+        return bool(cancel is not None and cancel.sig and now_cs() >= cancel.at + 100)
+    return _bounded.start_supervised(spawn, deadline, stopped, abandon)
 
 
 MAX_PROMPT = 1 << 17   # the longest prompt the reviewer takes as one argument (the kernel's limit)
@@ -385,14 +421,24 @@ def _result_step(args, until, cancel=None):
     its own: its diagnostics come through a pipe read here, and a caller capturing this supervisor's output
     sees EOF when the supervisor answers, not when the helper does."""
     rd, wr = os.pipe()
+
+    def spawn():
+        try:
+            # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
+            return os.posix_spawn(sys.executable, [sys.executable, os.path.join(HERE, "review_result.py"), *args],
+                                  _child_env(), file_actions=[(os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                                                              (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+                                                              (os.POSIX_SPAWN_DUP2, wr, 2)])
+        finally:
+            os.close(wr)
     try:
-        # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
-        pid = os.posix_spawn(sys.executable, [sys.executable, os.path.join(HERE, "review_result.py"), *args],
-                             _child_env(), file_actions=[(os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
-                                                         (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
-                                                         (os.POSIX_SPAWN_DUP2, wr, 2)])
-    finally:
-        os.close(wr)
+        started, pid = _start(spawn, until, cancel)
+    except BaseException:
+        os.close(rd)
+        raise
+    if not started:
+        os.close(rd)                                       # a helper that starts late publishes on its own
+        return None
     os.set_blocking(rd, False)
     said = b""
 
@@ -455,14 +501,17 @@ def _child_env():
     return env
 
 
-def _launch(job):
+def _launch(job, until, cancel=None):
     """Starts a job the broker handed over in a session of its own, its streams on /dev/null; it is this
     supervisor's child only until this exits, and is never ended by it."""
-    # LIFECYCLE-WAIVER: detaches a REVIEW on a host with no service manager; it does not relaunch or watch the session.
-    os.posix_spawnp("bash", ["bash", "-c", job], _child_env(), setsid=True, file_actions=[
-        (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
-        (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
-        (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+    def spawn():
+        # LIFECYCLE-WAIVER: detaches a REVIEW on a host with no service manager; it does not relaunch or watch the session.
+        return os.posix_spawnp("bash", ["bash", "-c", job], _child_env(), setsid=True, file_actions=[
+            (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+            (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+            (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
+    # A start still held at the deadline goes on in its thread: the job claims and publishes its own result.
+    _start(spawn, until, cancel)
 
 
 class Cancel:
@@ -660,7 +709,7 @@ def _read_prompt(prompt, digest, length=None):
 def _note(log, text):
     """A line in the job's log, for a reason the review was not run; best effort."""
     try:
-        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC)
+        fd = _result.open_regular(log, os.O_WRONLY | os.O_APPEND)   # a FIFO in its place fails at once
         try:
             os.write(fd, f"review-runtime-limit: {text}\n".encode())
         finally:
@@ -732,22 +781,44 @@ def _attempt(cmd, end, broker, cancel):
         # The group's leader is the warden (review_warden.py): it holds the read end of a pipe whose only write
         # end this supervisor keeps for its life, and ends the whole group when that pipe closes, so nothing
         # in the group outlives this supervisor, however it ends.
+        # The start itself is supervised (a spawn held by failing storage never holds this supervisor), and
+        # the lifeline is also the warden's gate: it starts COMMAND only after reading the "g" sent below,
+        # once the start returned in time, so a warden that starts after it was given up on runs nothing.
         life_rd, life_wr = os.pipe()
-        _LIFELINES.append(life_wr)
         said_rd, said_wr = os.pipe()
         os.set_blocking(said_rd, False)
+
+        def spawn():
+            try:
+                os.set_inheritable(life_rd, True)
+                os.set_inheritable(said_wr, True)
+                return os.posix_spawnp(sys.executable, [sys.executable, WARDEN, str(life_rd), str(said_wr), cmd],
+                                       os.environ, setsid=True, setsigmask=())
+            finally:
+                os.close(life_rd)
+                os.close(said_wr)
+
+        def stopped():
+            return bool(signal.sigpending() & watched) or now_cs() >= kill_at
         try:
-            os.set_inheritable(life_rd, True)
-            os.set_inheritable(said_wr, True)
-            leader = os.posix_spawnp(sys.executable, [sys.executable, WARDEN, str(life_rd), str(said_wr), cmd],
-                                     os.environ, setsid=True, setsigmask=())
+            started, leader = _bounded.start_supervised(
+                spawn, time.monotonic() + max(0, kill_at - now_cs()) / 100, stopped)
         except OSError as exc:
             # Not started (a process limit, a missing shell): a failed attempt, published by its owner.
+            os.close(life_wr)
             print(f"review-runtime-limit: the command could not be started ({exc.strerror})", file=sys.stderr)
             return (False, False, 1) if broker is not None else 1
-        finally:
-            os.close(life_rd)
-            os.close(said_wr)
+        if not started:
+            os.close(life_wr)                              # the gate: a warden that starts now runs nothing
+            pending = signal.sigpending() & watched
+            if pending:
+                rc = 128 + min(pending)
+                return (True, False, rc) if broker is not None else rc
+            print("review-runtime-limit: the command could not be started by the deadline; nothing was run",
+                  file=sys.stderr)
+            return (False, True, 124) if broker is not None else 124
+        _LIFELINES.append(life_wr)
+        os.write(life_wr, b"g")                            # one byte to an empty pipe: never blocks
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, watched)
     if broker is not None:
@@ -841,7 +912,7 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
         # The submission succeeded: the result is the launched job's, whatever happens to the answer.
         if broker.job:
             try:
-                _launch(broker.job)
+                _launch(broker.job, final, cancel)
             except OSError as exc:
                 print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
                 _publish(broker, 1, final, cancel)

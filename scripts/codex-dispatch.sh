@@ -420,7 +420,11 @@ if [ -n "$LOG_FILE" ]; then
     # Published LAST, after the receipt: the waiter ends on this file, never on
     # log text (a live review can print a line that looks like the one above),
     # and whoever it releases reads the receipt next.
-    if ! { echo "$rc" > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"; }; then
+    # Through a file created here under a fresh name (mktemp, exclusive): nothing
+    # that took a shared temporary name, such as a FIFO, can hold the publication.
+    if ! { done_tmp=$(mktemp "$LOG_FILE.done.XXXXXX") && echo "$rc" > "$done_tmp" \
+           && mv -f "$done_tmp" "$LOG_FILE.done"; }; then
+        [ -n "${done_tmp:-}" ] && rm -f "$done_tmp"
         echo "[$SELF_NAME] could not publish $LOG_FILE.done; a waiter on this log will report it stale" >&2
         exit 75
     fi

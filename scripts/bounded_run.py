@@ -23,6 +23,7 @@ leaves running in the background with its own streams (the credential cache daem
 is not ended.
 """
 import collections
+import fcntl
 import os
 import selectors
 import signal
@@ -121,28 +122,19 @@ def _exit_status(proc, deadline):
     return box[0] if box else None
 
 
-def _children(tid):
-    """The unreaped children the thread `tid` of this process started (Linux /proc)."""
-    try:
-        with open(f"/proc/self/task/{tid}/children") as f:
-            return [int(p) for p in f.read().split()]
-    except (OSError, ValueError):
-        return []                                          # fail-direction: the thread has gone, with its child
-
-
-def _launch(make, deadline, watch, what, timeout):
-    """`make()` (a Popen) run in a launch thread and supervised against the deadline and the caller's
-    cancellations, since a start itself can stall: Popen waits until the child has executed the command, and
-    loading it from a failing mount holds that wait. At the deadline, or on a cancellation, the child the
-    launch thread forked is killed by its id before it runs a single instruction of the command (a SIGKILL
-    pending through exec ends the process before the new program starts); a start that returns only after
-    that is ended and reaped by the launch thread itself, at once."""
+def start_supervised(spawn, deadline, stopped, abandon=None):
+    """(True, `spawn()`) once the start returns within `deadline` (a monotonic time) and before `stopped()`,
+    else (False, None) at once. A start can stall: a spawn waits until its child has executed the program,
+    and loading it from failing storage holds that wait. So it runs in a launch thread the caller never
+    waits on past the deadline. What the caller relies on is the gate every user of this keeps: the started
+    process cannot act until its owner, still within the deadline, releases it (a pipe it reads first, or its
+    input), so a start that is given up on runs nothing. A start that returns after it was given up on is
+    handed to `abandon` in the launch thread; a start that fails after that is dropped, its caller has gone."""
     box, lock = {}, threading.Lock()
 
     def go():
-        box["tid"] = threading.get_native_id()
         try:
-            proc = make()
+            result = spawn()
         except BaseException as exc:                       # noqa: BLE001 -- handed to the caller's thread
             with lock:
                 box["exc"] = exc
@@ -150,37 +142,66 @@ def _launch(make, deadline, watch, what, timeout):
         with lock:
             late = box.get("late", False)
             if not late:
-                box["proc"] = proc
-        if late:                                           # the caller gave up on this start: nothing may run
-            _kill_group(proc)
-            try:
-                proc.wait(timeout=REAP_LIMIT)
-            except subprocess.TimeoutExpired:
-                pass                                       # fail-direction: subprocess reaps it when it exits
+                box["result"] = result
+        if late and abandon is not None:
+            abandon(result)
     t = threading.Thread(target=go, daemon=True)
     t.start()
     while True:
         t.join(min(0.05, max(0.0, deadline - time.monotonic())))
-        if not t.is_alive() or watch.pending or time.monotonic() >= deadline:
+        if not t.is_alive() or stopped() or time.monotonic() >= deadline:
             break
     with lock:
+        if "result" in box:
+            return True, box["result"]
         if "exc" in box:
             raise box["exc"]
-        proc = box.get("proc")
-        if proc is None:
-            box["late"] = True
-            # WORKAROUND: Popen exposes no handle to a child whose exec it is still waiting on (with vfork its id
-            # is not even assigned yet), so the launch thread's own child list names it.
-            for pid in _children(box.get("tid", 0)):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass                                   # it has exited: nothing to end
-    if proc is None:
-        if watch.pending:
-            raise Cancelled(watch.pending)
-        raise subprocess.TimeoutExpired(what, timeout)
-    return proc
+        box["late"] = True
+    return False, None
+
+
+# The gate a command passes before it runs (bash, since dash takes only one-digit descriptors in a redirection): one line, "go", on the pipe whose number is the first argument,
+# then that pipe is closed and the command executed in this process. End of file or anything else runs
+# nothing (exit 125).
+_GATE = 'g=$1; shift; IFS= read -r go <&"$g" || exit 125; [ "$go" = go ] || exit 125; eval "exec $g<&-"; exec "$@"'
+
+
+def _launch(cmd, popen, deadline, watch, what, timeout):
+    """`cmd` started with `popen(argv, pass_fds)` through the gate, supervised by start_supervised: the gate
+    is released only once the start returned in time and is this call's own, so a start that stalled (before
+    its fork or in its exec) never runs the command after the call has given up on it. A start that returns
+    late is ended and reaped in the launch thread."""
+    low, gate_wr = os.pipe()
+    # Above the standard streams: with one of them closed in this process the pipe can take its number, and
+    # the child's own stream would then be duplicated over the gate.
+    gate_rd = fcntl.fcntl(low, fcntl.F_DUPFD_CLOEXEC, 3)
+    os.close(low)
+
+    def spawn():
+        try:
+            return popen(["/bin/bash", "-c", _GATE, "gate", str(gate_rd), *cmd], (gate_rd,))
+        finally:
+            os.close(gate_rd)                              # the child has its copy; a failed start, none
+
+    def abandon(proc):
+        _kill_group(proc)
+        try:
+            proc.wait(timeout=REAP_LIMIT)
+        except subprocess.TimeoutExpired:
+            pass                                           # fail-direction: subprocess reaps it when it exits
+    try:
+        started, proc = start_supervised(spawn, deadline, lambda: bool(watch.pending), abandon)
+        if not started:
+            if watch.pending:
+                raise Cancelled(watch.pending)
+            raise subprocess.TimeoutExpired(what, timeout)
+        try:
+            os.write(gate_wr, b"go\n")                    # a few bytes to an empty pipe: never blocks
+        except OSError:
+            pass                                           # fail-direction: the gate exited; its status says so
+        return proc
+    finally:
+        os.close(gate_wr)
 
 
 def _pump(stream, put, errors):
@@ -240,9 +261,9 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
     proc, out, err, errors, threads = None, [], _Tail(), [], []
     deadline = time.monotonic() + timeout                  # before the start: a slow start is spent from it
     try:
-        proc = _launch(lambda: subprocess.Popen(
-            cmd, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE if keep_stderr else subprocess.DEVNULL, env=env,
+        proc = _launch(cmd, lambda argv, fds: subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if keep_stderr else subprocess.DEVNULL, env=env, pass_fds=fds,
             start_new_session=True),  # LIFECYCLE-WAIVER: waited on here; on timeout or cancellation its whole group is ended
             deadline, watch, what, timeout)
         watch.hold = False
@@ -327,8 +348,8 @@ class Stream:
         self._watch = _Watch(self._cancel)
         self._deadline = time.monotonic() + timeout        # before the start: a slow start is spent from it
         try:
-            self.proc = _launch(lambda: subprocess.Popen(
-                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+            self.proc = _launch(cmd, lambda argv, fds: subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, pass_fds=fds,
                 start_new_session=True),  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
                 self._deadline, self._watch, what, timeout)
             self._in, self._out, self._buf = self.proc.stdin.fileno(), self.proc.stdout.fileno(), bytearray()

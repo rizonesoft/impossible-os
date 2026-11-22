@@ -1082,6 +1082,7 @@ def test_the_warden_ends_what_the_command_left_in_its_group(tmp_path):
                                   close_fds=False, start_new_session=True)
         os.close(life_rd)
         os.close(said_wr)
+        os.write(life_wr, b"g")                        # the gate: the start is the supervisor's own
         warden.wait(timeout=20)
         assert os.read(said_rd, 32).strip() == b"3"
         helper = int(pidfile.read_text())
@@ -1588,3 +1589,68 @@ def test_a_held_prompt_reader_never_keeps_a_dead_owners_lock(tmp_path):
             os.killpg(owner.pid, signal.SIGKILL)       # the held reader, in the owner's group
         except ProcessLookupError:
             pass
+
+
+def _held_spawn(monkeypatch, match):
+    """os.posix_spawnp held for a second before it forks, for the one program `match` names."""
+    real = os.posix_spawnp
+
+    def spawnp(path, argv, *a, **k):
+        if match(argv):
+            time.sleep(1)
+        return real(path, argv, *a, **k)
+    monkeypatch.setattr(os, "posix_spawnp", spawnp)
+
+
+def test_a_warden_start_held_past_the_deadline_returns_124_and_runs_nothing(monkeypatch, tmp_path):
+    """The attempt's start stalls: the supervisor answers 124 by its deadline, and the warden that starts
+    afterwards finds its gate closed and never runs the command."""
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    marker = tmp_path / "ran"
+    _held_spawn(monkeypatch, lambda argv: len(argv) > 1 and argv[1] == rl.WARDEN)
+    began = time.monotonic()
+    rc = rl._attempt(f": > {marker}", rl.now_cs() + 40, None, types.SimpleNamespace(sig=0, at=0))
+    assert rc == 124 and time.monotonic() - began < 0.4 + 0.5, rc
+    time.sleep(2)
+    assert not marker.exists(), "the warden ran the command after its start was given up on"
+
+
+def test_a_writer_start_held_past_the_deadline_delivers_nothing(monkeypatch, tmp_path):
+    """The answer's writer process starts late: the write is reported undelivered by its deadline, and the
+    writer that starts afterwards has no input, so the destination never receives a late answer."""
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    out = tmp_path / "out"
+    _held_spawn(monkeypatch, lambda argv: argv[:1] == ["cat"])
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        began = time.monotonic()
+        assert rl._emit_through_writer(fd, b"late answer\n", rl.now_cs() + 30, None, late=False) is False
+        assert time.monotonic() - began < 0.3 + 0.5
+    finally:
+        os.close(fd)
+    time.sleep(2)
+    assert out.read_bytes() == b""
+
+
+def test_a_transcript_replaced_by_a_fifo_never_holds_the_publication(tmp_path):
+    """After the claim the log is replaced by a FIFO with no reader, and a FIFO sits at the old shared
+    temporary status name: the publication refuses the log at once rather than blocking in its open, and its
+    status file is still written through a name of its own."""
+    log = tmp_path / "r.out"
+    log.write_text("")
+    os.mkfifo(str(log) + ".done.tmp")
+    tool = REPO / "scripts/overnight/review_result.py"
+    os.unlink(log)
+    os.mkfifo(log)
+    r = subprocess.run([sys.executable, str(tool), "publish", str(log), "0"], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 1 and "could not be published" in r.stderr, r
+    os.unlink(log)
+    log.write_text("")
+    r = subprocess.run([sys.executable, str(tool), "publish", str(log), "0"], capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0 and pathlib.Path(str(log) + ".done").read_text() == "0\n", r
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp") and p.name != "r.out.done.tmp"]

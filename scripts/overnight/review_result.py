@@ -27,6 +27,7 @@ Every required step is checked: a failed append, write or rename exits 1 (the st
 the removal of FILE that follows is cleanup, reported but never able to turn a failed publication into a
 success or a published one into a failure.
 """
+import errno
 import fcntl
 import os
 import re
@@ -36,6 +37,20 @@ import sys
 
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _HELD: dict[str, int] = {}     # LOG -> its owner lock, held (close-on-exec) until this process ends
+
+
+def open_regular(path: str, flags: int, mode: int = 0o644) -> int:
+    """`path` opened as a regular file, or OSError: opened without blocking, so a FIFO or device that replaced
+    it fails (or is refused) at once instead of holding the open, then made blocking again for its writes."""
+    fd = os.open(path, flags | os.O_NONBLOCK | CLOEXEC, mode)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def _owner(log: str) -> str:
@@ -73,7 +88,7 @@ def _note_once(owner_fd: int, log: str) -> None:
     # Only a whole record is trusted: `note-at N` and its newline, nothing else. A record cut short (a write
     # that stopped part way) was written before the log was touched, so the note is placed afresh at the end.
     found = re.fullmatch(rb"note-at ([0-9]{1,20})\n", os.pread(owner_fd, 64, 0))
-    out = os.open(log, os.O_RDWR | CLOEXEC)
+    out = open_regular(log, os.O_RDWR)
     try:
         if found:
             at = int(found.group(1))
@@ -188,21 +203,27 @@ def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = Fals
             return 0                       # another owner holds the result and publishes it
         if owned != 0:
             return 1
-    tmp = f"{log}.done.tmp"
+    # The status is written to a file created here, under a name no other publisher uses, so nothing that
+    # took a shared temporary name (a FIFO, a stale file) can hold or corrupt the publication.
+    tmp = f"{log}.done.{os.getpid()}-{os.urandom(4).hex()}.tmp"
     try:
         if log_line:
-            fd = os.open(log, os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0))
+            fd = open_regular(log, os.O_WRONLY | os.O_APPEND)
             try:
                 _write_all(fd, f"Turn completed (rc={status})\n".encode())
             finally:
                 os.close(fd)
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0), 0o644)
+        fd = open_regular(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
         try:
             _write_all(fd, f"{status}\n".encode())
         finally:
             os.close(fd)
         os.replace(tmp, f"{log}.done")
     except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                           # fail-direction: never created, or already renamed
         print(f"review_result: the result ({status}) could not be published to {log}.done ({exc.strerror})",
               file=sys.stderr)
         return 1

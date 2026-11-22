@@ -123,7 +123,10 @@ def leg_summary(entry: dict) -> dict:
     # A receipt from a dispatcher that publishes <log>.done is credited only
     # once that status is published (it is written after the receipt).
     if entry.get("pass_checked") is True and not (entry.get("done_file") is True and done_rc is None):
-        rc, highest = entry.get("rc"), entry.get("highest") or None
+        # The status the dispatcher published is its final word and decides: it can follow a receipt that
+        # said 0 with a failure (rc 3 when the manifest helper was lost, as codex-dispatch.sh specifies).
+        published = entry.get("done_file") is True and done_rc is not None
+        rc, highest = (done_rc if published else entry.get("rc")), entry.get("highest") or None
         out["pass"] = {"rc": rc, "highest": highest}
         out["rc"] = rc
         out["complete"] = True

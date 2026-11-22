@@ -10,7 +10,8 @@ SIGKILL from this process (itself included), at the first of two moments:
 - COMMAND exits: its status (128 + N for signal N) is written to STATUS_FD first, a pipe the supervisor reads,
   so a helper COMMAND left behind in the group never outlives it, whether or not the supervisor is still there
   to tear down;
-- LIFELINE_FD reaches end of file: it is the read end of a pipe whose only write end the supervisor holds,
+- LIFELINE_FD reaches end of file: it is the read end of a pipe whose only write end the supervisor holds
+  (its first byte, "g", is the gate COMMAND waits on: end of file before it runs nothing),
   so it closes when the supervisor ends, however it ends (an out-of-memory termination, a crash).
 
 Signalling its own group is the one signal that needs no identity check, because the group is the one it
@@ -37,6 +38,14 @@ def main(argv) -> int:
         signal.signal(sig, signal.SIG_IGN)
     os.set_inheritable(lifeline, False)
     os.set_inheritable(status, False)
+    # The lifeline's first byte is the gate: the supervisor sends it only once this start is its own, within
+    # its deadline. End of file instead means it gave up on this start (or ended): nothing is run.
+    try:
+        go = os.read(lifeline, 1)
+    except OSError:
+        go = b""                                # fail-direction: an unreadable lifeline runs nothing
+    if go != b"g":
+        return 0
     # The command gets the dispositions a shell started directly would (Python ignores SIGPIPE and
     # SIGXFSZ; the cancellations ignored here are restored too).
     child = os.posix_spawnp("bash", ["bash", "-c", argv[2]], os.environ, setsigmask=(),

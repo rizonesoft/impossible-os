@@ -416,39 +416,44 @@ def test_a_hangup_ends_the_command_group_and_reaches_the_caller(tmp_path):
         _reap(pidfile)
 
 
-def _stalled_exec(monkeypatch, tmp_path):
-    """A start whose exec stalls (a binary on a failing mount): the child is forked at once, then the start
-    waits 30 s before it returns. The marker file records whether the command ever ran."""
+def _stalled_start(monkeypatch, tmp_path, before_fork):
+    """A start that stalls for a second, before its fork or after it (an exec held by failing storage). The
+    command started through the gate is replaced by one whose first act is to create the marker file, so
+    the marker records whether the command ever ran."""
     real = subprocess.Popen
     marker = tmp_path / "ran"
 
-    def popen(cmd, *a, **k):
-        proc = real(["sh", "-c", f"sleep 1; : > {marker}"], *a, **k)
-        time.sleep(30)
+    def popen(argv, *a, **k):
+        argv = [*argv[:5], "sh", "-c", f": > {marker}"]  # the gate and its descriptor, then the command
+        if before_fork:
+            time.sleep(1)
+        proc = real(argv, *a, **k)
+        time.sleep(0.5 if before_fork else 1)          # an ungated command has acted by the time it returns
         return proc
     monkeypatch.setattr(bounded_run.subprocess, "Popen", popen)
     return marker
 
 
+@pytest.mark.parametrize("before_fork", [True, False])
 @pytest.mark.parametrize("kind", ["run", "stream"])
-def test_a_start_that_stalls_in_exec_returns_by_the_deadline_and_never_runs_late(monkeypatch, tmp_path, kind):
-    """The pre-push dash check starts git through these: a start held in exec returns control by the deadline,
-    and the child it forked is ended before the command could act."""
-    marker = _stalled_exec(monkeypatch, tmp_path)
+def test_a_start_that_stalls_returns_by_the_deadline_and_never_runs_late(monkeypatch, tmp_path, kind, before_fork):
+    """The pre-push dash check starts git through these: a start held before its fork or in its exec returns
+    control by the deadline, and the command never runs once the call has given up on it."""
+    marker = _stalled_start(monkeypatch, tmp_path, before_fork)
     began = time.monotonic()
     with pytest.raises(ValueError, match="within 0.3 s"):
         if kind == "run":
             bounded_run.run(["git", "status"], "git status", timeout=0.3)
         else:
             bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=0.3)
-    assert time.monotonic() - began < 0.3 + 1
+    assert time.monotonic() - began < 0.3 + 0.5
     time.sleep(1.5)
-    assert not marker.exists(), "the stalled start's child ran after the call had returned"
+    assert not marker.exists(), "the stalled start's command ran after the call had returned"
 
 
 def test_a_cancellation_during_a_stalled_start_ends_it_at_once(monkeypatch, tmp_path):
     """SIGTERM while the start is held: the caller's own handler gets it promptly, and nothing runs."""
-    marker = _stalled_exec(monkeypatch, tmp_path)
+    marker = _stalled_start(monkeypatch, tmp_path, before_fork=False)
     got = []
     old = signal.signal(signal.SIGTERM, lambda s, f: got.append(s))
     threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGTERM)).start()
@@ -458,6 +463,6 @@ def test_a_cancellation_during_a_stalled_start_ends_it_at_once(monkeypatch, tmp_
             bounded_run.run(["git", "status"], "git status", timeout=20)
     finally:
         signal.signal(signal.SIGTERM, old)
-    assert got == [signal.SIGTERM] and time.monotonic() - began < 2
+    assert got == [signal.SIGTERM] and time.monotonic() - began < 1
     time.sleep(1.5)
     assert not marker.exists()

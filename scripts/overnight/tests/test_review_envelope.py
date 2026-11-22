@@ -401,3 +401,16 @@ def test_a_status_or_transcript_replaced_by_a_fifo_never_hangs_the_envelope():
         os.mkfifo(rev / "round.out")
         rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
         assert env["kinds"]["round"]["complete"] is False and env["needs_redispatch"] == ["round"], env
+
+
+def test_a_published_failure_overrides_a_clean_receipt():
+    """The receipt says 0, then the dispatcher publishes 3 (its manifest helper was lost): the published
+    status decides, so the pass is incomplete and dispatched again, never a clean wave."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\nTurn completed (rc=0)\n",
+                                       {**_receipt(0, "none"), "done_file": True})})
+        (rev / "round.out.done").write_text("3\n")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        assert env["needs_redispatch"] == ["round"] and env["kinds"]["round"]["pass"]["rc"] == 3, env

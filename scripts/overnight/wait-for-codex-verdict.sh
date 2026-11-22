@@ -55,6 +55,12 @@
 # the INTERACTIVE-safe shape and stays.
 set -u
 
+# The --max clock starts here, before anything else runs, in microseconds (EPOCHREALTIME): SECONDS counts
+# wall-clock second boundaries, so a call started late in a second lost up to a second of --max. Nothing
+# before the observer starts touches the filesystem (no command lookup, no stat), so setup cannot hold it.
+_now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+START_US=$(_now_us)
+
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe
 POLL=10
 STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
@@ -73,10 +79,11 @@ while [ $# -gt 0 ]; do
         # not a signal, and every wait sleeps its full --max until .done.
         --no-stale)     NO_STALE=1; shift ;;
         *)
-            # J2a: a BARE number that is not a file is almost always a misused
-            # `--max` (`... .out 300` intending `--max 300`); adding it as a
-            # phantom log makes the wait never complete. Warn + skip it.
-            if printf '%s' "$1" | grep -qE '^[0-9]+$' && [ ! -f "$1" ]; then
+            # J2a: a BARE number is a misused `--max` (`... .out 300` intending
+            # `--max 300`); adding it as a phantom log makes the wait never
+            # complete. Warn + skip it. It is recognised by its shape alone (a
+            # log is a path, never a bare number), so no file is looked at here.
+            if [[ "$1" =~ ^[0-9]+$ ]]; then
                 echo "wait-for-codex-verdict.sh: ignoring bare number '$1' (not a log file) -- did you mean '--max $1'?" >&2
             else
                 LOGS+=("$1")
@@ -110,7 +117,11 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # at most once per log per call; its exit status is read once it ends, and a recovery that could not publish
 # (a full filesystem) while the owner is still gone leaves a review that has ended and will never publish,
 # reported UNPUBLISHED (exit 4, re-dispatch that log), never as a review still running.
-RESULT_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_result.py"
+# Beside this script, named by expansion alone (no lookup: the observer is the first to touch the filesystem).
+case "${BASH_SOURCE[0]}" in
+    */*) RESULT_TOOL="${BASH_SOURCE[0]%/*}/review_result.py" ;;
+    *)   RESULT_TOOL="./review_result.py" ;;
+esac
 
 # B2 activity. An existing log's silence is measured from its own mtime (when
 # it last grew), so a review silent since launch is STALE as soon as the
@@ -206,10 +217,7 @@ _observe() {
     done
 }
 
-# One deadline for the whole call, taken before anything starts, in microseconds (EPOCHREALTIME): SECONDS
-# counts wall-clock second boundaries, so a call started late in a second lost up to a second of --max.
-_now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
-START_US=$(_now_us)
+# One deadline for the whole call, counted from the clock taken at the top.
 END_US=$(( START_US + MAX * 1000000 ))
 DEADLINE=$(( END_US / 1000000 ))
 declare -A GOT=() UNPUB=() EXISTS=() SIZE=() SILENT=()
