@@ -231,11 +231,16 @@ prune_legacy_symlinks() {
     # hooks follows core.hooksPath and would name .githooks while it is set.
     # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link, or one
     # to another file whose name merely reads the same once a shell strips a newline, never does).
+    # 0: ours, 1: not ours, 2: the worktrees could not be listed (the listing's own status ends it).
     legacy_link_is_ours() {
-        local wt
-        while IFS= read -r -d '' wt; do
-            [ "$1" -ef "${wt#worktree }/scripts/hooks/pre-push" ] && return 0
-        done < <(git -C "$PROJECT" worktree list --porcelain -z | grep -z '^worktree ')
+        local entry listed=""
+        while IFS= read -r -d '' entry; do
+            case "$entry" in
+                "worktree "*) [ "$1" -ef "${entry#worktree }/scripts/hooks/pre-push" ] && return 0 ;;
+                "listed=0") listed=0 ;;
+            esac
+        done < <(git -C "$PROJECT" worktree list --porcelain -z && printf 'listed=0\0')
+        [ "$listed" = 0 ] || return 2
         return 1
     }
     local legacy
@@ -246,10 +251,22 @@ prune_legacy_symlinks() {
     # Judged in place first: a hook that is not ours is never moved, so no push in the meantime runs without
     # it. Ours is then renamed into a fresh directory and judged again there, so a hook another writer put
     # at that name in between is put back, never removed, and no earlier saved entry can be overwritten.
-    if [ -L "$target" ] && legacy_link_is_ours "$target"; then
+    [ -L "$target" ] || return 0
+    local ours=0
+    legacy_link_is_ours "$target" || ours=$?
+    if [ "$ours" = 2 ]; then
+        echo "The worktrees could not be listed, so the legacy link $target was not judged: left in place" >&2
+        return 1
+    fi
+    if [ "$ours" = 0 ]; then
         local aside
-        aside="$(mktemp -d "$legacy/.install-hooks.XXXXXX")" || return 1
-        if mv -T -- "$target" "$aside/pre-push" 2>/dev/null; then
+        aside="$(mktemp -d "$legacy/.install-hooks.XXXXXX")" \
+            || { echo "No private directory could be made in $legacy; the legacy link $target is left in place" >&2; return 1; }
+        if ! mv -T -- "$target" "$aside/pre-push"; then
+            rmdir -- "$aside" 2>/dev/null || true                         # fail-direction: empty, made above
+            echo "The legacy link $target could not be moved aside (see above): it is left in place and still runs" >&2
+            return 1
+        else
             if [ -L "$aside/pre-push" ] && legacy_link_is_ours "$aside/pre-push"; then
                 rm -f -- "$aside/pre-push"
                 removed=1
@@ -309,14 +326,17 @@ remove_all() {
         fi
     fi
     disable_pre_push
-    prune_legacy_symlinks
+    local pruned=0
+    prune_legacy_symlinks || pruned=1
     echo ""
+    hooks_path_scoped || return 1
     if hooks_run_from_repo; then
-        echo "This checkout still runs .githooks/: core.hooksPath ($(hooks_path_shown)) comes from $(git -C "$PROJECT" config --show-scope --get core.hooksPath | tail -1 | cut -f1) config, which --remove does not change."
+        echo "This checkout still runs .githooks/: core.hooksPath ($(hooks_path_shown)) comes from $HP_SCOPE config, which --remove does not change."
     else
         echo "Git hooks removed. Always-on hooks in .githooks/ are inert until"
         echo "'bash scripts/install-hooks.sh' reconfigures core.hooksPath."
     fi
+    return "$pruned"
 }
 
 case "${1:-}" in

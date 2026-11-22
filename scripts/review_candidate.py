@@ -29,13 +29,11 @@ import json
 import os
 import stat
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bounded_run                                         # the shared bounded runner beside this script
 
 TIMEOUT = 120
-DEADLINE = None                                            # a monotonic time the whole read must end by (--deadline)
 CHUNK = 1 << 20
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 PATHSPEC_ENV = ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
@@ -51,24 +49,12 @@ def _env():
     return {k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}
 
 
-def deadline_left():
-    """Seconds one git command may take: TIMEOUT, or less when the caller's deadline is nearer. A deadline
-    already passed refuses."""
-    if DEADLINE is None:
-        return TIMEOUT
-    left = DEADLINE - time.monotonic()
-    if left <= 0:
-        raise Refused("the candidate could not be read within the time the caller allowed")
-    return min(TIMEOUT, left)
-
-
 def _run(top, args, sink=None):
     """(exit status, stdout, stderr) of one git command, bounded as a process group (scripts/bounded_run.py):
     a helper git starts (a clean filter, a monitor hook) holding its pipes past the deadline is ended with it."""
     cmd = ["git", "--no-optional-locks", *(["-C", top] if top else []), *args]
     try:
-        return bounded_run.run(cmd, f"git {args[0]}", timeout=deadline_left(), env=_env(), sink=sink,
-                               keep_stderr=True)
+        return bounded_run.run(cmd, f"git {args[0]}", timeout=TIMEOUT, env=_env(), sink=sink, keep_stderr=True)
     except (OSError, ValueError) as exc:
         raise Refused(f"git {args[0]} could not run: {exc}") from None
 
@@ -104,7 +90,7 @@ def _status(top, scope):
     message from it refuses, rather than certify a tree with entries missing."""
     args = ("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", *scope)
     rc, raw, err = _run(top, args)
-    if rc != 0 or err.strip():
+    if rc != 0 or err:
         raise Refused(f"git status could not read the whole working tree (exit {rc}): "
                       f"{err.decode(errors='replace').strip()}")
     records = [rec for rec in raw.split(b"\0") if rec]
@@ -134,6 +120,9 @@ def _entry(top_fd, rel):
     directory above it) and without opening anything but a regular file. A regular file is read to the size it
     had when opened and refused if it changed meanwhile, so a file still being written can neither stall the
     read nor be half-read. `note` describes a non-file for the reviewer, or is None."""
+    # git lists a directory it does not descend into (a nested repository) with a trailing slash: the entry
+    # is that directory itself, recorded by its type.
+    rel = rel[:-1] if rel.endswith(b"/") and len(rel) > 1 else rel
     try:
         pfd, name = _parent(top_fd, rel)
     except OSError as exc:
@@ -223,24 +212,21 @@ def snapshot(exclude=""):
 
 
 def launch(exclude=""):
-    """(HEAD, index tree, digest) of one candidate, for a launch row: HEAD and the index are read before and
-    after the digest, and a commit or an index change meanwhile refuses, so the three name one candidate.
-    HEAD is "unknown" before the first commit. An index holding a conflict has no tree, so it is named by a
-    digest of every staged entry (stage, mode and object id), and a change to one stage still moves it; an
-    index that cannot be read for any other reason refuses."""
+    """(HEAD, index, digest) of one candidate, for a launch row: HEAD and the index are read before and after
+    the digest, and a commit or an index change meanwhile refuses, so the three name one candidate. HEAD is
+    "unknown" before the first commit. The index is named by a digest of every staged entry (`git ls-files -s`:
+    mode, object id, stage and path), a read that takes no lock: `git write-tree` locks the index and writes
+    tree objects, so two passes launched together refused each other, and a conflicted index has no tree
+    while its stages still identify it."""
     top = _top()
     scope = _scope(top, exclude)
 
-    deadline_left()
-
     def index():
-        rc, out, err = _run(top, ("write-tree",))
-        if rc == 0:
-            return out.decode("ascii", "replace").strip()
-        if _git(top, "ls-files", "-u", "-z"):
-            return "unmerged-" + hashlib.sha256(_git(top, "ls-files", "-s", "-z")).hexdigest()
-        raise Refused(f"the index could not be read (git write-tree exited {rc}: "
-                      f"{err.decode(errors='replace').strip()})")
+        rc, out, err = _run(top, ("ls-files", "-s", "-z"))
+        if rc != 0:
+            raise Refused(f"the index could not be read (git ls-files exited {rc}: "
+                          f"{err.decode(errors='replace').strip()})")
+        return "staged-" + hashlib.sha256(out).hexdigest()
     before = index()
     digest, head, _notes = _fingerprint(top, scope, _status(top, scope))
     if index() != before or _head(top) != head:
@@ -282,8 +268,6 @@ def main(argv=None):
     s.add_argument("--exclude", default="")
     s = sub.add_parser("launch")
     s.add_argument("--exclude", default="")
-    s.add_argument("--deadline", type=float, default=None,
-                   help="seconds the whole read may take (the caller's own limit)")
     p = sub.add_parser("prepare")
     p.add_argument("--base", required=True)
     p.add_argument("--head", required=True)
@@ -291,9 +275,6 @@ def main(argv=None):
     p.add_argument("--out", required=True)
     p.add_argument("--untracked-out", required=True)
     args = parser.parse_args(argv)
-    global DEADLINE
-    if getattr(args, "deadline", None) is not None:
-        DEADLINE = time.monotonic() + args.deadline
     try:
         if args.cmd == "snapshot":
             print(snapshot(args.exclude))

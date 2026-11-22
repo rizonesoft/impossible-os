@@ -424,12 +424,12 @@ def test_every_pass_after_the_plan_is_shown_an_owed_section_from_its_recorded_ba
         assert done.returncode == 0, (kind, done.stderr)
         assert receipts[-1]["kind"] == kind and receipts[-1]["base"] == start
         prompt = (tmp_path / "prompt.txt").read_text()
-        assert f"git diff {start} {late}" in prompt and f"plus the working tree (git diff {late})" in prompt, prompt
+        assert f"git diff {start} {late}" in prompt and f"plus the index (git diff --cached {late}) and the working files against it (git diff)" in prompt, prompt
     # An uncommitted repair is part of what the receipt fingerprints, so it is in the range the reviewer is shown.
     (root / "src.c").write_text("int a;\nint repaired;\n")
     done, receipts = _dispatch(root, tmp_path, "completion")
     assert done.returncode == 0, done.stderr
-    assert f"plus the working tree (git diff {late})" in (tmp_path / "prompt.txt").read_text()
+    assert f"plus the index (git diff --cached {late}) and the working files against it (git diff)" in (tmp_path / "prompt.txt").read_text()
 
 
 # ---- the phase guard's rollover (a frozen file: this change was made attended) ----

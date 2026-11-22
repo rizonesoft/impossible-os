@@ -158,7 +158,7 @@ EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # which reads each whole or refuses: links are not followed, a FIFO is never opened, a failed read is an error,
 # and environment pathspec settings are dropped. It leaves this dispatcher's own reviews directory out.
 CAND_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_candidate.py"
-# HEAD, the index tree and the working-tree fingerprint, read together (scripts/review_candidate.py launch).
+# HEAD, the index digest and the working-tree fingerprint, read together (scripts/review_candidate.py launch).
 candidate_id() { python3 "$CAND_TOOL" launch --exclude "$REVIEWS_DIR"; }
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
@@ -271,7 +271,7 @@ This section was built while the reviewer was unavailable."
         # The receipt names this range and fingerprints the working tree, so the reviewer is shown both.
         PROMPT="$PROMPT
 
-This pass reviews the whole section: git diff $BASE_OID $CAND_HEAD, the candidate HEAD $CAND_HEAD, plus the working tree (git diff $CAND_HEAD)."
+This pass reviews the whole section: git diff $BASE_OID $CAND_HEAD, the candidate HEAD $CAND_HEAD, plus the index (git diff --cached $CAND_HEAD) and the working files against it (git diff), shown apart because a staged change the working file undoes is in neither combined diff."
     fi
     # Untracked entries appear in no diff. A short list goes in the prompt; a long one is kept beside the
     # transcript (the reviews directory, which the fingerprint leaves out) and named, since the prompt is one
@@ -309,7 +309,7 @@ $(wc -l < "$UNTRACKED_FILE") untracked entries are part of the candidate and app
             echo "[$SELF_NAME] BLOCK -- the last reviewed candidate ${REPAIR_FROM:0:10} is not a commit in this history (a reset or rebase left its receipt behind); dispatch the completion again" >&2; exit 2; }
         PROMPT="$PROMPT
 
-The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the working tree: git diff $REPAIR_OID. Look there first, then review the whole section: git diff $BASE_OID HEAD"
+The newest repair runs from the last reviewed candidate, $REPAIR_OID, to the repaired candidate, HEAD $REPAIR_HEAD with the index (git diff --cached $REPAIR_OID) and the working files against it (git diff). Look there first, then review the whole section: git diff $BASE_OID HEAD"
     fi
     PROMPT="$PROMPT
 

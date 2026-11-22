@@ -208,14 +208,21 @@ check_hooks() {
             "Run: bash scripts/install-hooks.sh --status"
         return
     fi
-    # Parse: "Hooks path     : .githooks (expected: .githooks)"
-    local configured
-    configured=$(echo "$status_out" | awk -F': ' '/^Hooks path/{gsub(/ \(.*/,"",$2); print $2}')
-    if [ "$configured" = ".githooks" ]; then
-        record hooks pass "core.hooksPath" \
-            "Set to .githooks" \
-            "-"
-    elif [ "$configured" = "<unset>" ] || [ -z "$configured" ]; then
+    # Presence, scope and value come from git, NUL-delimited: a value can hold a newline, or read like a
+    # display word such as '<unset>'. The last element is git's exit status.
+    local got=() scope="" value="" shown read_rc
+    mapfile -d '' -t got < <(git -C "$REPO_ROOT" config -z --show-scope --get core.hooksPath 2>/dev/null; printf 'rc=%s\0' "$?")
+    read_rc="${got[${#got[@]}-1]#rc=}"
+    if [ "${#got[@]}" -ge 3 ]; then
+        scope="${got[0]}"
+        value="${got[1]}"
+    fi
+    if [[ "$value" =~ ^[[:graph:]]+$ ]]; then shown="$value"; else shown="$(printf '%q' "$value")"; fi
+    if [ "$read_rc" -gt 1 ]; then
+        record hooks fail "core.hooksPath" \
+            "core.hooksPath could not be read (git config exit $read_rc)" \
+            "Run: git config --show-origin --get-all core.hooksPath"
+    elif [ "${#got[@]}" -lt 3 ]; then
         # Unset is a workstation concern only: CI / fresh clones run
         # wrappers directly and do not need git hooks. Warn (not fail) so
         # the doctor still exits 0 on CI while telling a developer the
@@ -224,33 +231,48 @@ check_hooks() {
         record hooks warn "core.hooksPath" \
             "Unset; pre-commit + post-commit hooks will NOT fire (OK on CI and fresh clones; developers should configure)" \
             "Run: bash scripts/install-hooks.sh"
+    elif [ "$scope" = "command" ]; then
+        # A command-line or GIT_CONFIG_* value outranks every file, so what a plain git command runs is unknown.
+        record hooks warn "core.hooksPath" \
+            "Set to $shown on the command line or in GIT_CONFIG_* variables; the setting a plain git command reads cannot be checked under it" \
+            "Run the doctor without the core.hooksPath given on the command line or in GIT_CONFIG_* variables"
+    elif [ "$value" = ".githooks" ]; then
+        record hooks pass "core.hooksPath" \
+            "Set to .githooks" \
+            "-"
     else
         # The installer writes only where no value is set, so the operator's own value is changed by hand first.
-        local scope
-        scope=$(git -C "$REPO_ROOT" config --show-scope --get core.hooksPath 2>/dev/null | tail -1 | cut -f1)
-        local fix origin
+        local fix
         case "$scope" in
-            command) fix="Run without the core.hooksPath given on the command line or in GIT_CONFIG_* variables" ;;
             global|system)
                 # Shared with other repositories: left as it is. The installer adds this repository's own
                 # value above it, and --remove gives it back.
                 fix="Run: bash scripts/install-hooks.sh" ;;
             local|worktree)
-                # Unsetting the scope's own entries is enough only when no file it includes sets one too.
-                local own all
+                # One include-expanded read gives the count and the files; the scope's own count says whether
+                # unsetting it is enough.
+                local own entries=() origin="" o i
                 own=$(git -C "$REPO_ROOT" config "--$scope" --no-includes -z --get-all core.hooksPath 2>/dev/null | tr -cd '\0' | wc -c)
-                all=$(git -C "$REPO_ROOT" config "--$scope" --includes -z --get-all core.hooksPath 2>/dev/null | tr -cd '\0' | wc -c)
-                if [ "$own" -gt 0 ] && [ "$own" = "$all" ]; then
-                    fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
+                mapfile -d '' -t entries < <(git -C "$REPO_ROOT" config "--$scope" --includes -z --show-origin --get-all core.hooksPath 2>/dev/null)
+                for (( i = 0; i < ${#entries[@]}; i += 2 )); do
+                    o="${entries[i]#file:}"
+                    case ", $origin, " in *", $o, "*) ;; *) origin="${origin:+$origin, }$o" ;; esac
+                done
+                if [ "$own" -gt 0 ] && [ "$own" -eq $(( ${#entries[@]} / 2 )) ]; then
+                    if [ "$scope" = "worktree" ] && git -C "$REPO_ROOT" config --local --includes --get-all core.hooksPath >/dev/null 2>&1; then
+                        # Unsetting the worktree value would expose the repository's own, which the installer
+                        # then refuses; set this worktree's entry to .githooks instead (--remove takes it out).
+                        fix="Check what that value is for; then run: git config --worktree --replace-all core.hooksPath .githooks"
+                    else
+                        fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
+                    fi
                 else
-                    origin=$(git -C "$REPO_ROOT" config "--$scope" --includes -z --show-origin --get-all core.hooksPath 2>/dev/null \
-                        | awk -v RS='\0' 'NR % 2 == 1 { sub(/^file:/, ""); if (!seen[$0]++) printf "%s%s", (n++ ? ", " : ""), $0 }')
                     fix="It is set in ${origin:-a file} ($scope config and the files it includes): change it there, then run: bash scripts/install-hooks.sh"
                 fi ;;
             *) fix="Run: git config --show-origin --get-all core.hooksPath, and change the value it names" ;;
         esac
         record hooks warn "core.hooksPath" \
-            "Set to '$configured' in ${scope:-unknown} config instead of '.githooks'" \
+            "Set to $shown in $scope config instead of '.githooks'" \
             "$fix"
     fi
 

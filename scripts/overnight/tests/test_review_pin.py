@@ -814,9 +814,9 @@ def test_two_passes_of_one_kind_in_the_same_second_keep_their_own_transcripts(tm
     codes = []
     for proc in procs:
         # deadline: 120 s for a fake reviewer that answers at once.
-        proc.communicate(timeout=120)
-        codes.append(proc.returncode)
-    assert codes == [0, 3], codes
+        out = proc.communicate(timeout=120)
+        codes.append((proc.returncode, out[1][-600:]))
+    assert [c for c, _e in codes] == [0, 3], codes
     assert len(list((tmp_path / "reviews").glob("*-completion-direct.out"))) == 2
 
 
@@ -1534,7 +1534,12 @@ def test_the_launch_identity_names_head_index_and_digest(tmp_path, monkeypatch):
     monkeypatch.chdir(repo)
     (repo / "n.txt").write_text("x\n")
     head, index, digest = rc.launch()
-    assert head == git("rev-parse", "HEAD") and index == git("write-tree") and digest == rc.snapshot()
+    import hashlib
+    import subprocess
+    staged = subprocess.run(["git", "-C", str(repo), "ls-files", "-s", "-z"], capture_output=True, check=True,
+                            timeout=30).stdout
+    assert head == git("rev-parse", "HEAD") and digest == rc.snapshot()
+    assert index == "staged-" + hashlib.sha256(staged).hexdigest()
 
 
 def test_a_checkout_whose_name_ends_in_a_newline_is_read_as_itself(tmp_path, monkeypatch):
@@ -1620,18 +1625,27 @@ def test_refusal_an_untracked_file_saved_over_while_it_is_read(tmp_path, monkeyp
         rc.snapshot()
 
 
-def test_the_launch_identity_tells_a_conflict_from_an_unreadable_index(tmp_path, monkeypatch):
+def test_an_index_that_cannot_be_read_refuses_the_launch(tmp_path, monkeypatch):
     rc = _rc_module()
     repo, _git = _tmp_repo(tmp_path)
     monkeypatch.chdir(repo)
-    real_run, real_git = rc._run, rc._git
-    monkeypatch.setattr(rc, "_run", lambda top, args, sink=None: (128, b"", b"index.lock exists")
-                        if args[0] == "write-tree" else real_run(top, args, sink))
+    real_run = rc._run
+    monkeypatch.setattr(rc, "_run", lambda top, args, sink=None: (128, b"", b"index file corrupt")
+                        if args[0] == "ls-files" else real_run(top, args, sink))
     with pytest.raises(rc.Refused, match="the index could not be read"):
         rc.launch()
-    monkeypatch.setattr(rc, "_git", lambda top, *a, **k: b"100644 x 1\ta\0" if a[:2] == ("ls-files", "-u")
-                        else real_git(top, *a, **k))
-    assert rc.launch()[1].startswith("unmerged-")
+
+
+def test_two_launch_reads_at_once_do_not_refuse_each_other(tmp_path):
+    """git write-tree locked the index: three passes of one wave, launched together, refused each other."""
+    import subprocess
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("1\n")
+    git("add", "a.txt")
+    procs = [subprocess.Popen([sys.executable, str(REPO / "scripts/review_candidate.py"), "launch"], cwd=str(repo),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(8)]
+    outs = [p.communicate(timeout=60) for p in procs]
+    assert all(p.returncode == 0 for p in procs) and len({o for o, _e in outs}) == 1, outs
 
 
 def test_refusal_a_wrapper_handed_another_candidate_than_its_own(tmp_path):
@@ -1743,7 +1757,7 @@ def test_a_stage_only_change_in_a_conflict_moves_the_launch_identity(tmp_path, m
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge",
                     "-q", "side"], capture_output=True, timeout=60)
     first = rc.launch()
-    assert first[1].startswith("unmerged-"), first
+    assert first[1].startswith("staged-"), first
     blob = subprocess.run(
         ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input="other\n", text=True, capture_output=True,
         check=True, timeout=30).stdout.strip()
@@ -1819,7 +1833,7 @@ def test_the_broker_read_takes_from_the_callers_limit(tmp_path):
                            "[review-kind: round] todo/x.md section 9\nReview it."],
                           capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
     assert done.returncode == 2 and time.monotonic() - began < 10, done.stderr
-    assert "git status did not answer within" in done.stderr, done.stderr
+    assert "took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
 
 
 def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_path):
@@ -1831,3 +1845,112 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
     began = time.monotonic()
     assert list(rp._newest_first(m, block=64))[2] == long
     assert time.monotonic() - began < 0.15
+
+
+def _broker(repo, env, timeout=60):
+    import subprocess
+    return subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=timeout, cwd=str(repo), env=env)
+
+
+def _done_status(stdout, wait=60):
+    import json
+    import time
+    log = pathlib.Path(json.loads(stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and not pathlib.Path(f"{log}.done").exists():
+        time.sleep(0.1)
+    return pathlib.Path(f"{log}.done").read_text().strip(), log.read_text()
+
+
+def test_a_slow_untracked_read_is_held_to_the_callers_limit(tmp_path):
+    """Hashing a large untracked file stands in for any slow part of the read: one limit bounds all of it."""
+    import os
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "big.bin").write_bytes(b"x" * 4096)
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import os, time\n_read = os.read\n"
+        "def read(fd, n):\n"
+        "    try:\n        name = os.readlink(f'/proc/self/fd/{fd}')\n    except OSError:\n        name = ''\n"
+        "    if name.endswith('/big.bin'):\n        time.sleep(30)\n    return _read(fd, n)\n"
+        "os.read = read\n")
+    env = {**os.environ, "PYTHONPATH": str(site), "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    done = _broker(repo, env)
+    assert done.returncode == 2 and time.monotonic() - began < 10, done.stderr
+    assert "took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
+
+
+def test_a_detached_job_started_after_the_callers_deadline_runs_nothing(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # The service manager is slow, then declines: the setsid route starts the job after the deadline.
+    (bindir / "systemd-run").write_text("#!/bin/sh\nsleep 4\nexit 1\n")
+    (bindir / "systemd-run").chmod(0o755)
+    ran = tmp_path / "ran"
+    fake = tmp_path / "companion.js"
+    fake.write_text(f"require('fs').writeFileSync({str(ran)!r}, 'x');\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    done = _broker(repo, env)
+    assert done.returncode == 0, done.stderr
+    status, text = _done_status(done.stdout)
+    assert status == "124" and not ran.exists(), text
+
+
+def test_a_one_second_limit_still_launches(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
+           "CODEX_REVIEW_MAX_SECS": "1"}
+    done = _broker(repo, env)
+    assert done.returncode == 0 and "nothing was launched" not in done.stderr, done.stderr
+    _done_status(done.stdout)
+
+
+def test_a_nested_checkout_is_recorded_as_a_directory(tmp_path, monkeypatch):
+    import subprocess
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    subprocess.run(["git", "init", "-q", str(repo / "inner")], check=True, capture_output=True, timeout=30)
+    (repo / "inner/f.c").write_text("int x;\n")
+    head, _index, digest = rc.launch()
+    _d, covered, notes = rc.prepare(head, head)
+    assert covered == [b"inner/"] and "directory" in notes[0][1], (covered, notes)
+
+
+def test_refusal_a_status_that_writes_only_a_newline_to_stderr(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    real = rc._run
+    monkeypatch.setattr(rc, "_run", lambda top, args, sink=None: (0, b"", b"\n") if args[0] == "status"
+                        else real(top, args, sink))
+    with pytest.raises(rc.Refused, match="could not read the whole working tree"):
+        rc.snapshot()
+
+
+def test_the_prompt_shows_the_index_and_the_working_files_apart(tmp_path):
+    import subprocess
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("1\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "a")
+    (repo / "a.txt").write_text("2\n")
+    git("add", "a.txt")
+    (repo / "a.txt").write_text("1\n")                     # the staged change, undone in the working file
+    assert subprocess.run(["git", "-C", str(repo), "diff", "HEAD", "--quiet"], timeout=30).returncode == 0
+    _done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD")
+    assert "git diff --cached" in prompt and "(git diff)" in prompt, prompt

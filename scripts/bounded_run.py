@@ -159,6 +159,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
 
     watch = _Watch(cancel)
     proc, out, err, errors, threads = None, [], _Tail(), [], []
+    deadline = time.monotonic() + timeout                  # before the start: a slow start is spent from it
     try:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
@@ -167,7 +168,8 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         watch.hold = False
         if watch.pending:
             raise Cancelled(watch.pending)
-        deadline = time.monotonic() + timeout
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(what, timeout)
         threads.append(threading.Thread(target=_pump, args=(proc.stdout, sink or out.append, errors), daemon=True))
         if keep_stderr:
             threads.append(threading.Thread(target=_pump, args=(proc.stderr, err.put, errors), daemon=True))
@@ -219,12 +221,12 @@ class Stream:
         self.what, self.timeout, self.expired = what, timeout, False
         self.proc, self._timer, self._done = None, None, False
         self._watch = _Watch(self._cancel)
+        self._deadline = time.monotonic() + timeout        # before the start: a slow start is spent from it
         try:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
                 start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
-            self._deadline = time.monotonic() + timeout
-            self._timer = threading.Timer(timeout, self._expire)
+            self._timer = threading.Timer(max(0.0, self._deadline - time.monotonic()), self._expire)
             self._timer.daemon = True
             self._timer.start()
             self._watch.hold = False

@@ -451,7 +451,8 @@ def _newest_first(manifest, block=1 << 16):
                     pieces.append(chunk)
                     continue
                 parts = chunk.split(b"\n")
-                last = parts[-1] + b"".join(reversed(pieces))
+                pieces.append(parts[-1])
+                last = b"".join(reversed(pieces))
                 pieces = [parts[0]]
                 for raw in (last, *reversed(parts[1:-1])):
                     if raw:

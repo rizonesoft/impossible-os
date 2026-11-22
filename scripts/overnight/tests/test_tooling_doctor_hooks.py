@@ -568,3 +568,74 @@ def test_the_doctor_names_every_file_when_the_scope_and_an_include_both_set_it(t
                        capture_output=True, text=True, timeout=120, env=_env())
     fix = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]["fix"]
     assert str(inc) in fix and ".git/config" in fix and "--unset-all" not in fix, fix
+
+
+def _doctor(root, env):
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=env)
+    return {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]
+
+
+def _command_value(value):
+    return {**_env(), "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": value}
+
+
+def test_the_doctor_does_not_pass_a_hooks_path_given_for_one_command(tmp_path):
+    root = _plain_repo(tmp_path)
+    check = _doctor(root, _command_value(".githooks"))
+    assert check["status"] == "warn" and "command line" in check["detail"], check
+
+
+def test_the_doctor_reads_values_that_look_like_its_own_words(tmp_path):
+    root = _plain_repo(tmp_path)
+    for value in ("<unset>", "foo\nbar"):
+        check = _doctor(root, _command_value(value))
+        assert check["status"] == "warn" and "command line" in check["detail"], (value, check)
+        assert "Unset" not in check["detail"] and "bar config" not in check["detail"], (value, check)
+
+
+def test_the_doctor_remedy_for_a_worktree_value_over_a_local_one_works(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "extensions.worktreeConfig", "true")
+    _cfg(root, "--local", "core.hooksPath", "/shared")
+    _cfg(root, "--worktree", "core.hooksPath", "/mine")
+    fix = _doctor(root, _env())["fix"]
+    assert "--replace-all core.hooksPath .githooks" in fix, fix
+    done = subprocess.run(["bash", "-c", fix.split("then run: ", 1)[1]], cwd=root, capture_output=True, text=True,
+                          timeout=60, env=_env())
+    assert done.returncode == 0 and _doctor(root, _env())["status"] == "pass", done
+    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == "/shared\n"
+
+
+def test_a_legacy_link_that_cannot_be_moved_fails_the_removal_and_stays(tmp_path):
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("mv")
+    (bindir / "mv").write_text(f'#!/bin/sh\ncase " $* " in *"{link} "*) echo "mv: refused" >&2; exit 1 ;; esac\n'
+                               f'exec "{real}" "$@"\n')
+    (bindir / "mv").chmod(0o755)
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert r.returncode != 0 and "left in place" in r.stderr and link.is_symlink(), r
+    assert not list(link.parent.glob(".install-hooks.*"))
+
+
+def test_a_failed_worktree_listing_fails_the_removal(tmp_path):
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" worktree list "*) exit 128 ;; esac\n'
+                                f'exec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert r.returncode != 0 and "could not be listed" in r.stderr and link.is_symlink(), r

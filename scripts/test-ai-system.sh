@@ -330,12 +330,18 @@ check_zero_trailer_policy() {
     # another history than the one pushed, so replacements are not read and a graft file refuses the scan
     # (git reads one whenever it exists; pointing GIT_GRAFT_FILE elsewhere prints a deprecation hint on every
     # walk). A shallow clone cannot prove the range it scans is complete.
+    # The caller's GIT_GRAFT_FILE is judged first: git reads the file it names, so one that exists refuses
+    # as the repository's own does.
+    local inherited_grafts="${GIT_GRAFT_FILE:-}"
     # shellcheck disable=SC2034  # GIT_GRAFT_FILE is local only so the unset below ends with this check
     local GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE grafts
     export GIT_NO_REPLACE_OBJECTS
     unset GIT_GRAFT_FILE
     grafts="$(git rev-parse --path-format=absolute --git-path info/grafts 2>/dev/null)"
-    if [ -z "$grafts" ] || [ -e "$grafts" ]; then
+    if [ -n "$inherited_grafts" ] && [ -e "$inherited_grafts" ]; then
+        grafts="$inherited_grafts (GIT_GRAFT_FILE)"
+    fi
+    if [ -z "$grafts" ] || [ -e "${grafts% (GIT_GRAFT_FILE)}" ]; then
         t_fail "zero-trailer scan reads stored parents" \
                "a graft file ($grafts) rewrites the history git shows, or its path could not be read; convert it (git replace --convert-graft-file) or remove it and run again"
         return

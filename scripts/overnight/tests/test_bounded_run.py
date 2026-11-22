@@ -195,7 +195,7 @@ def test_a_signal_while_a_stream_closes_reaches_the_caller_at_once(tmp_path):
         sys.path.insert(0, {str(REPO / "scripts")!r})
         import bounded_run
         stream = bounded_run.Stream(["sleep", "61"], "a sleeper", timeout=60)
-        open({str(ready)!r}, "w").close()
+        open({str(ready)!r}, "w").write(str(stream.proc.pid))
         stream.close()
     """)
     proc = subprocess.Popen([sys.executable, "-c", script])
@@ -212,6 +212,11 @@ def test_a_signal_while_a_stream_closes_reaches_the_caller_at_once(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        if ready.exists() and ready.read_text():              # the sleeper's own group, whatever happened
+            try:
+                os.killpg(int(ready.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_a_stream_never_signals_its_group_after_the_leader_is_reaped(monkeypatch):
@@ -250,3 +255,25 @@ def test_the_exit_wait_does_not_spend_a_slow_start_twice(monkeypatch):
     with pytest.raises(ValueError, match="did not answer within 1.5 s"):
         bounded_run.run(["sleep", "30"], "a sleeper", timeout=1.5)
     assert time.monotonic() - began < 2.2
+
+
+def _slow_popen(monkeypatch, delay):
+    real = subprocess.Popen
+
+    def popen(*a, **k):
+        time.sleep(delay)
+        return real(*a, **k)
+    monkeypatch.setattr(bounded_run.subprocess, "Popen", popen)
+
+
+def test_a_slow_start_is_spent_from_the_deadline(monkeypatch):
+    _slow_popen(monkeypatch, 0.3)
+    with pytest.raises(ValueError, match="did not answer within 0.1 s"):
+        bounded_run.run(["true"], "a quick command", timeout=0.1)
+
+
+def test_a_slow_start_is_spent_from_a_streams_deadline(monkeypatch):
+    _slow_popen(monkeypatch, 0.4)
+    stream = bounded_run.Stream(["cat"], "a stream", timeout=0.2)
+    with pytest.raises(ValueError, match="did not finish within 0.2 s"):
+        stream.close()

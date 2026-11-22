@@ -197,3 +197,13 @@ def test_a_graft_file_cannot_hide_history_from_the_scan(tmp_path):
     (root / ".git/info/grafts").write_text(git("rev-parse", "HEAD") + "\n")         # HEAD as a root
     rc, out = _zero_scan(root, env)
     assert rc != 0 and "graft file" in out and "grafts is deprecated" not in out, out[-2000:]
+
+
+def test_an_inherited_graft_file_cannot_hide_history_from_the_scan(tmp_path):
+    root, env, git = _policy_repo(tmp_path)
+    git("commit", "-q", "--allow-empty", "-m", "later\n\nCo-Authored-By: S <s@example.org>")
+    git("commit", "-q", "--allow-empty", "-m", "clean")
+    grafts = tmp_path / "elsewhere-grafts"
+    grafts.write_text(git("rev-parse", "HEAD") + "\n")                           # HEAD as a root
+    rc, out = _zero_scan(root, {**env, "GIT_GRAFT_FILE": str(grafts)})
+    assert rc != 0 and "graft file" in out and "GIT_GRAFT_FILE" in out, out[-2000:]

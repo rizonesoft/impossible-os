@@ -112,21 +112,37 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 # second (two sections, say) must not write one transcript.
 LOG_FILE="$PWD/$MANIFEST_DIR/${STAMP}-$$-${KIND}.out"
 UNIT="codex-rev-${KIND}-${STAMP}-$$"
-# The launch row's HEAD, index tree and working-tree fingerprint, read together before anything is written for
+# The launch row's HEAD, index digest and working-tree fingerprint, read together before anything is written for
 # the job: the same reader the dispatcher checks against (scripts/review_candidate.py), leaving out the reviews
 # directory the detached wrapper is given below, so both digests cover one scope; a commit or an index change
 # during the read refuses, so the three name one candidate.
-# A caller's hard limit (CODEX_REVIEW_MAX_SECS, below) starts here, so the read takes from it too.
-LIMIT_START=$SECONDS
-DEADLINE_ARGS=()
+# Every value placed in the detached command is shell-quoted by printf %q. A
+# path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
+# which inside hand-written single quotes ends the quoting.
+q() { printf '%q' "$1"; }
+LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh"
+# A caller's hard limit (CODEX_REVIEW_MAX_SECS) is one absolute deadline, taken here: the candidate read below and
+# the detached job each run under review-runtime-limit.sh until it, so neither the read (a slow git, a large
+# untracked file) nor the wait for the service manager is given back.
+LIMIT_END=""
 if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
   [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
     echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
-  DEADLINE_ARGS=(--deadline "$CODEX_REVIEW_MAX_SECS")
+  read -r LIMIT_UP _ < /proc/uptime
+  LIMIT_END=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
 fi
-TREE_LAUNCH="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py" launch \
-    --exclude "$PWD/$MANIFEST_DIR" "${DEADLINE_ARGS[@]}")" || {
-    echo "[review-broker] BLOCK -- the working tree could not be read (reason above); nothing was launched" >&2; exit 2; }
+READ_CANDIDATE="python3 $(q "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py") launch --exclude $(q "$PWD/$MANIFEST_DIR")"
+READ_RC=0
+if [[ -n "$LIMIT_END" ]]; then
+  TREE_LAUNCH="$(bash "$LIMITER" --until-cs "$LIMIT_END" "$READ_CANDIDATE")" || READ_RC=$?
+else
+  TREE_LAUNCH="$(bash -c "$READ_CANDIDATE")" || READ_RC=$?
+fi
+if [[ "$READ_RC" == 124 ]]; then
+  echo "[review-broker] BLOCK -- reading the candidate took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2; exit 2
+elif [[ "$READ_RC" != 0 ]]; then
+  echo "[review-broker] BLOCK -- the working tree could not be read (reason above); nothing was launched" >&2; exit 2
+fi
 read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 
 # CGROUP SURVIVAL IS LOAD-BEARING (live incident 2026-07-11): a review
@@ -142,10 +158,6 @@ read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 # checkout) the file would change the tree the launch row names.
 PROMPT_FILE="$(mktemp "$PWD/$MANIFEST_DIR/.prompt.XXXXXX")"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
-# Every value placed in the detached command is shell-quoted by printf %q. A
-# path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
-# which inside hand-written single quotes ends the quoting.
-q() { printf '%q' "$1"; }
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
@@ -159,20 +171,15 @@ fi
 # WHOLE group within the limit (TERM, then KILL, the grace inside the budget),
 # before the job publishes its status (124). No process of the attempt can
 # outlive it or write to its log afterwards.
-if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
-  # What the read above left of the limit, a second taken off for the part of a second SECONDS does not show.
-  LIMIT_LEFT=$(( CODEX_REVIEW_MAX_SECS - (SECONDS - LIMIT_START) - 1 ))
-  (( LIMIT_LEFT >= 1 )) || {
-    echo "[review-broker] BLOCK -- reading the candidate used the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
-    rm -f "$PROMPT_FILE"; exit 2; }
-  RUN="bash $(q "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh") $LIMIT_LEFT $(q "$RUN")"
+if [[ -n "$LIMIT_END" ]]; then
+  RUN="bash $(q "$LIMITER") --until-cs $LIMIT_END $(q "$RUN")"
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
 # REGISTERED BEFORE IT IS LAUNCHED. The gate reads the newest manifest line for
 # a pass. Written after the launch, this line could land after a fast job's
 # finished receipt and hide it. Which tree the review examines is recorded at
-# the same moment (v16 carry, closed 2026-08-29: HEAD, the index tree and a
+# the same moment (v16 carry, closed 2026-08-29: HEAD, a digest of the index (the field keeps its index_tree name) and a
 # working-tree digest; all three are advisory strings).
 DETACH="detached:$UNIT"
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
