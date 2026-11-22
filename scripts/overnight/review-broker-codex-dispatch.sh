@@ -116,8 +116,16 @@ UNIT="codex-rev-${KIND}-${STAMP}-$$"
 # the job: the same reader the dispatcher checks against (scripts/review_candidate.py), leaving out the reviews
 # directory the detached wrapper is given below, so both digests cover one scope; a commit or an index change
 # during the read refuses, so the three name one candidate.
+# A caller's hard limit (CODEX_REVIEW_MAX_SECS, below) starts here, so the read takes from it too.
+LIMIT_START=$SECONDS
+DEADLINE_ARGS=()
+if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
+  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
+  DEADLINE_ARGS=(--deadline "$CODEX_REVIEW_MAX_SECS")
+fi
 TREE_LAUNCH="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/review_candidate.py" launch \
-    --exclude "$PWD/$MANIFEST_DIR")" || {
+    --exclude "$PWD/$MANIFEST_DIR" "${DEADLINE_ARGS[@]}")" || {
     echo "[review-broker] BLOCK -- the working tree could not be read (reason above); nothing was launched" >&2; exit 2; }
 read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 
@@ -130,7 +138,9 @@ read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 # NEXT session can still read a completed artifact. systemd-run --collect
 # gives it that scope; <logFile>.done (the exit status) is what the in-session
 # poll (and any recovering next session) watches for.
-PROMPT_FILE="$(mktemp)"
+# In the reviews directory, which the launch read above left out: anywhere else (a TMPDIR inside the
+# checkout) the file would change the tree the launch row names.
+PROMPT_FILE="$(mktemp "$PWD/$MANIFEST_DIR/.prompt.XXXXXX")"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
 # Every value placed in the detached command is shell-quoted by printf %q. A
 # path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
@@ -150,10 +160,12 @@ fi
 # before the job publishes its status (124). No process of the attempt can
 # outlive it or write to its log afterwards.
 if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
-  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
-    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2
+  # What the read above left of the limit, a second taken off for the part of a second SECONDS does not show.
+  LIMIT_LEFT=$(( CODEX_REVIEW_MAX_SECS - (SECONDS - LIMIT_START) - 1 ))
+  (( LIMIT_LEFT >= 1 )) || {
+    echo "[review-broker] BLOCK -- reading the candidate used the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
     rm -f "$PROMPT_FILE"; exit 2; }
-  RUN="bash $(q "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh") $CODEX_REVIEW_MAX_SECS $(q "$RUN")"
+  RUN="bash $(q "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-runtime-limit.sh") $LIMIT_LEFT $(q "$RUN")"
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 

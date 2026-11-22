@@ -1255,3 +1255,35 @@ def test_a_push_of_tips_the_destination_holds_walks_nothing(tmp_path, monkeypatc
     monkeypatch.setattr(m, "_git", lambda *a, **k: calls.append(a) or real(*a, **k))
     assert m.outgoing([(m.NULL_OID, tip)], dest) == ([], 0)
     assert not any(a and a[0] == "rev-list" for a in calls), calls
+
+
+def test_an_ordinary_commit_builds_no_merge_path_set(monkeypatch):
+    class Changes(list):
+        def __iter__(self):
+            raise AssertionError("the changed paths were walked for a merge")
+    changes = Changes([("a", "b", "p")])
+    monkeypatch.setattr(m, "_git", lambda *a, **k: b"")
+    monkeypatch.setattr(m, "changes_from_raw", lambda raw: changes)
+    result = m.staged(merging=False)
+    assert result[0][1][0] is changes
+
+
+def test_a_failed_read_of_the_ref_updates_refuses_the_push(tmp_path):
+    root = _repo(tmp_path)
+    shutil.copytree(REPO / ".githooks", root / ".githooks")
+    (root / "scripts").mkdir()
+    for rel in ("scripts/staged_dash_check.py", "scripts/bounded_run.py"):
+        shutil.copy(REPO / rel, root / rel)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    tip = _git(root, "rev-parse", "HEAD")
+    # git's records arrive through cat: one whole record, then a read error.
+    (bindir / "cat").write_text(f'#!/bin/sh\nif [ $# -eq 0 ]; then echo "refs/heads/main {tip} refs/heads/main '
+                                f'{"0" * 40}"; exit 1; fi\nexec "{shutil.which("cat")}" "$@"\n')
+    (bindir / "cat").chmod(0o755)
+    env = _clean_env({"PATH": f"{bindir}:{os.environ['PATH']}", "SKIP_PUSH_IDENTITY_CHECK": "1",
+                      "SKIP_HOST_GATES": "1", "SKIP_TOOLING_SUITE": "1", "SKIP_RUNNER_SUITE": "1",
+                      "SKIP_CI_PARITY": "1", "SKIP_CI_PARITY_REASON": "fixture", "SKIP_STATIC_ANALYSIS": "1"})
+    r = _sub(["bash", str(root / ".githooks/pre-push"), "origin", str(tmp_path / "nowhere.git")], cwd=root, env=env,
+             capture_output=True, text=True, timeout=120)
+    assert r.returncode == 1 and "could not be read from git" in r.stderr, r

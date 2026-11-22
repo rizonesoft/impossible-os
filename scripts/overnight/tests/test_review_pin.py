@@ -1174,10 +1174,23 @@ def test_a_link_to_a_fifo_is_fingerprinted_without_opening_it(tmp_path):
     import os
     repo, _git = _tmp_repo(tmp_path)
     os.mkfifo(tmp_path / "pipe")
+    before = _snapshot(repo).stdout
     os.symlink(tmp_path / "pipe", repo / "link")
-    os.mkfifo(repo / "own-pipe")
     done = _snapshot(repo)
-    assert done.returncode == 0 and len(done.stdout.strip()) == 64, done
+    assert done.returncode == 0 and len(done.stdout.strip()) == 64 and done.stdout != before, done
+
+
+def test_a_special_file_is_recorded_by_its_type_and_never_opened(tmp_path):
+    """git status does not list a standalone FIFO, so the reader's type-only record is checked directly."""
+    import os
+    rc = _rc_module()
+    os.mkfifo(tmp_path / "own-pipe")
+    top = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        record, note = rc._entry(top, b"own-pipe")
+    finally:
+        os.close(top)
+    assert record.startswith(b"T\0") and "named pipe" in note, (record, note)
 
 
 def test_a_retargeted_link_changes_the_fingerprint(tmp_path):
@@ -1618,7 +1631,7 @@ def test_the_launch_identity_tells_a_conflict_from_an_unreadable_index(tmp_path,
         rc.launch()
     monkeypatch.setattr(rc, "_git", lambda top, *a, **k: b"100644 x 1\ta\0" if a[:2] == ("ls-files", "-u")
                         else real_git(top, *a, **k))
-    assert rc.launch()[1] == "unknown"
+    assert rc.launch()[1].startswith("unmerged-")
 
 
 def test_refusal_a_wrapper_handed_another_candidate_than_its_own(tmp_path):
@@ -1682,3 +1695,139 @@ def test_refusal_a_candidate_that_moves_before_the_detached_pass_starts(tmp_path
         time.sleep(0.1)
     assert pathlib.Path(f"{log}.done").read_text().strip() == "2", log.read_text()
     assert "changed between the broker's launch" in log.read_text()
+
+
+def test_refusal_a_directory_git_status_cannot_open(tmp_path, monkeypatch):
+    import os
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "d").mkdir()
+    (repo / "d/hidden.c").write_text("int x;\n")
+    (repo / "d").chmod(0)
+    try:
+        if os.access(repo / "d", os.R_OK):
+            pytest.skip("this user reads a mode-0 directory")
+        for read in (rc.launch, lambda: rc.prepare("HEAD", "HEAD")):
+            with pytest.raises(rc.Refused, match="could not read the whole working tree"):
+                read()
+    finally:
+        (repo / "d").chmod(0o755)
+
+
+def test_the_owner_execute_bit_is_part_of_the_fingerprint(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, _git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "run.sh").write_text("echo hi\n")
+    (repo / "run.sh").chmod(0o755)
+    first = rc.snapshot()
+    (repo / "run.sh").chmod(0o655)                            # group and others may still execute it
+    assert rc.snapshot() != first
+
+
+def test_a_stage_only_change_in_a_conflict_moves_the_launch_identity(tmp_path, monkeypatch):
+    import subprocess
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "a.txt").write_text("base\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "base")
+    git("checkout", "-q", "-b", "side")
+    (repo / "a.txt").write_text("side\n")
+    git("commit", "-q", "-am", "side")
+    git("checkout", "-q", "-")
+    (repo / "a.txt").write_text("main\n")
+    git("commit", "-q", "-am", "main")
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge",
+                    "-q", "side"], capture_output=True, timeout=60)
+    first = rc.launch()
+    assert first[1].startswith("unmerged-"), first
+    blob = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input="other\n", text=True, capture_output=True,
+        check=True, timeout=30).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "update-index", "--index-info"], input=f"100644 {blob} 3\ta.txt\n",
+                   text=True, check=True, timeout=30)
+    second = rc.launch()
+    assert second[0] == first[0] and second[2] == first[2] and second[1] != first[1], (first, second)
+
+
+def test_a_dirty_tracked_candidate_against_head_takes_one_name_diff(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "k.c").write_text("int a;\n")
+    git("add", "k.c")
+    git("commit", "-q", "-m", "k")
+    (repo / "k.c").write_text("int b;\n")
+    calls = []
+    real = rc._git
+    monkeypatch.setattr(rc, "_git", lambda top, *a, **k: calls.append(a) or real(top, *a, **k))
+    head = git("rev-parse", "HEAD")
+    _digest, covered, _notes = rc.prepare(head, head)
+    assert covered == [b"k.c"]
+    assert sum(1 for a in calls if a[:2] == ("diff", "--name-only")) == 1, calls
+
+
+def test_a_checkout_local_tmpdir_does_not_move_the_candidate(tmp_path):
+    import os
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "t").mkdir()
+    done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", "HEAD", {"TMPDIR": str(repo / "t")})
+    assert prompt and "the candidate changed" not in done.stderr, done.stderr        # the reviewer ran
+    assert not os.listdir(repo / "t")
+
+
+def test_a_brokered_pass_with_a_checkout_local_tmpdir_runs(tmp_path):
+    import json
+    import os
+    import subprocess
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    (repo / "t").mkdir()
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
+           "TMPDIR": str(repo / "t")}
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not pathlib.Path(f"{log}.done").exists():
+        time.sleep(0.1)
+    assert "changed between the broker's launch" not in log.read_text(), log.read_text()
+
+
+def test_the_broker_read_takes_from_the_callers_limit(tmp_path):
+    import os
+    import subprocess
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True, timeout=10).stdout.strip()
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" status "*) sleep 30 ;; esac\nexec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 2 and time.monotonic() - began < 10, done.stderr
+    assert "git status did not answer within" in done.stderr, done.stderr
+
+
+def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_path):
+    import time
+    m = tmp_path / "manifest.jsonl"
+    long = "x" * (1 << 18)
+    m.write_text("first\n" + long + "\nnext\n\nlast")
+    assert list(rp._newest_first(m, block=7)) == ["last", "next", long, "first"]
+    began = time.monotonic()
+    assert list(rp._newest_first(m, block=64))[2] == long
+    assert time.monotonic() - began < 0.15

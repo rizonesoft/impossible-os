@@ -29,7 +29,8 @@ SENTINEL="$(git -C "$REPO_ROOT" rev-parse --git-path .impossible-os-prepush 2>/d
 
 # pre-push receives the ref updates on stdin. Capture verbatim so we can both
 # inspect the pushed range AND re-feed it to the delegated opt-in gate below.
-STDIN_DATA="$(cat)"
+STDIN_DATA="$(cat)" \
+  || { echo "[pre-push] the ref updates could not be read from git; push refused" >&2; exit 1; }
 # The loops below read four fields per record, split on ASCII space alone
 # (IFS=' ', so a tab stays in its field, as git keeps it); a local ref can
 # hold a space, so they read PUSH_RECORDS, the records with that ref's spaces

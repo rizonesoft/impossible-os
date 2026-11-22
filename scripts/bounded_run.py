@@ -86,9 +86,10 @@ def _end_group(proc):
     proc.wait()
 
 
-def _exit_status(proc, timeout):
-    """The leader's exit status once it exits, read without reaping it, or None at the timeout. The wait runs
-    in a thread so the caller's join stays open to signals."""
+def _exit_status(proc, deadline):
+    """The leader's exit status once it exits, read without reaping it, or None at `deadline` (a monotonic
+    time). The wait runs in a thread so the caller's join stays open to signals; the time left is read after
+    that thread has started, so a slow start is not spent twice."""
     box = []
 
     def wait():
@@ -99,7 +100,7 @@ def _exit_status(proc, timeout):
         box.append(info.si_status if info.si_code == os.CLD_EXITED else -info.si_status)
     t = threading.Thread(target=wait, daemon=True)
     t.start()
-    t.join(max(0.0, timeout))
+    t.join(max(0.0, deadline - time.monotonic()))
     return box[0] if box else None
 
 
@@ -174,7 +175,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             threads.append(threading.Thread(target=_feed, args=(proc.stdin, stdin, errors), daemon=True))
         for t in threads:
             t.start()
-        rc = _exit_status(proc, deadline - time.monotonic())
+        rc = _exit_status(proc, deadline)
         if rc is None:
             raise subprocess.TimeoutExpired(what, timeout)
         if rc != 0:
@@ -196,7 +197,7 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
         finally:
             watch.finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
         if isinstance(exc, subprocess.TimeoutExpired):
-            raise ValueError(f"{what} did not answer within {timeout} s") from None
+            raise ValueError(f"{what} did not answer within {timeout:g} s") from None
         raise
     watch.finish()
     if errors:
@@ -209,11 +210,14 @@ class Stream:
     process group. A timer ends the whole group at the deadline, so a read the group would never answer ends
     short (the caller treats a short read as an error); Ctrl-C and SIGTERM end the group at once and then
     reach the caller's own handler, whenever they arrive, `close` included. `close` ends input, waits for the
-    exit and for the output's end within the same deadline; `abort` ends the group."""
+    exit and for the output's end within the same deadline; `abort` ends the group.
+
+    Every way out goes through one teardown, which acts once: the timer is cancelled and joined while the
+    leader is still unreaped, so neither it nor a second abort can signal a group id after its release."""
 
     def __init__(self, cmd, what, *, timeout, env=None):
         self.what, self.timeout, self.expired = what, timeout, False
-        self.proc = None
+        self.proc, self._timer, self._done = None, None, False
         self._watch = _Watch(self._cancel)
         try:
             self.proc = subprocess.Popen(
@@ -227,7 +231,7 @@ class Stream:
             pending = self._watch.pending
         except BaseException:
             if self.proc is not None:
-                _end_group(self.proc)
+                self._teardown(kill=True)
             self._watch.finish()
             raise
         if pending:
@@ -235,14 +239,27 @@ class Stream:
 
     def _expire(self):
         self.expired = True
-        _kill_group(self.proc)
+        _kill_group(self.proc)                             # the leader is unreaped: teardown joins this first
+
+    def _teardown(self, kill):
+        """Disarm the timer and wait for a callback already running, end the group when `kill`, then reap the
+        leader. Only the first call acts."""
+        if self._done:
+            return
+        self._done = True
+        if self._timer is not None:
+            self._timer.cancel()
+            if self._timer.ident is not None:
+                self._timer.join()
+        if kill:
+            _kill_group(self.proc)
+        self.proc.wait()
 
     def _stop(self, signum=0):
         """End the group, reap it and give the caller its handlers back (delivering `signum`)."""
         self._watch.hold = True
         try:
-            _end_group(self.proc)
-            self._timer.cancel()
+            self._teardown(kill=True)
         finally:
             self._watch.finish(signum)
 
@@ -259,21 +276,19 @@ class Stream:
             self.proc.stdin.close()
         except OSError:
             pass                                           # fail-direction: the exit status below reports it
-        rc = _exit_status(self.proc, self._deadline - time.monotonic())
+        rc = _exit_status(self.proc, self._deadline)
         if rc is None:
             self._stop()
-            raise ValueError(f"{self.what} did not finish within {self.timeout} s")
+            raise ValueError(f"{self.what} did not finish within {self.timeout:g} s")
         if rc != 0:
             _kill_group(self.proc)                         # a failure leaves no helper of its own behind
         while self.proc.stdout.read(CHUNK):                # the end of output: every holder gone, or the timer
             pass
-        expired = self.expired
         self._watch.hold = True
         try:
-            self.proc.wait()                               # reaped only now, as in run()
-            self._timer.cancel()
+            self._teardown(kill=False)                     # reaped only now, as in run()
         finally:
             self._watch.finish()
-        if expired:
-            raise ValueError(f"{self.what} did not finish within {self.timeout} s")
+        if self.expired:
+            raise ValueError(f"{self.what} did not finish within {self.timeout:g} s")
         return rc

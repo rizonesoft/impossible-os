@@ -173,7 +173,9 @@ if [ "$PIN_KIND" = "1" ]; then
     # A pass is validated from its transcript, so one that cannot be kept is not dispatched.
     mkdir -p "$REVIEWS_DIR" 2>/dev/null || {
         echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR); a '$KIND' pass cannot be checked" >&2; exit 2; }
-    PATHS_FILE="$(mktemp -t codex-dispatch-paths.XXXXXX)" || exit 2
+    # Inside the reviews directory, which no candidate read covers: under a TMPDIR inside the checkout, the
+    # file would be part of the tree it describes.
+    PATHS_FILE="$(mktemp "$REVIEWS_DIR/.paths.XXXXXX")" || exit 2
     trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked"' EXIT
     # The candidate is pinned once, before anything is derived from it: the changed paths (and so the
     # lenses), the ancestry check, the prompt and the receipt all name this commit and this working tree,

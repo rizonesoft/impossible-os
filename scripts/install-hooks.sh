@@ -229,37 +229,39 @@ prune_legacy_symlinks() {
     # it back to them.
     # The legacy hooks directory is git's own, in the common dir: --git-path
     # hooks follows core.hooksPath and would name .githooks while it is set.
+    # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link, or one
+    # to another file whose name merely reads the same once a shell strips a newline, never does).
+    legacy_link_is_ours() {
+        local wt
+        while IFS= read -r -d '' wt; do
+            [ "$1" -ef "${wt#worktree }/scripts/hooks/pre-push" ] && return 0
+        done < <(git -C "$PROJECT" worktree list --porcelain -z | grep -z '^worktree ')
+        return 1
+    }
     local legacy
     legacy="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$PROJECT/.git")/hooks"
     [ -d "$legacy" ] || return 0
-    local removed=0 target wt
+    local removed=0 target
     target="$legacy/pre-push"
-    if [ -L "$target" ]; then
-        # Taken aside first, in one rename, and judged there: a hook another installer puts at that name
-        # meanwhile is then never the one removed, and an entry that is not ours goes back without replacing
-        # one that appeared since.
-        local aside="$legacy/.pre-push.install-hooks.$$" ours=0
-        mv -T -- "$target" "$aside" 2>/dev/null || return 0     # gone meanwhile: nothing of ours to remove
-        if [ -L "$aside" ]; then
-            # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling
-            # link, or one to another file whose name merely reads the same once a shell strips a newline,
-            # never does).
-            while IFS= read -r -d '' wt; do
-                if [ "$aside" -ef "${wt#worktree }/scripts/hooks/pre-push" ]; then
-                    ours=1
-                    break
+    # Judged in place first: a hook that is not ours is never moved, so no push in the meantime runs without
+    # it. Ours is then renamed into a fresh directory and judged again there, so a hook another writer put
+    # at that name in between is put back, never removed, and no earlier saved entry can be overwritten.
+    if [ -L "$target" ] && legacy_link_is_ours "$target"; then
+        local aside
+        aside="$(mktemp -d "$legacy/.install-hooks.XXXXXX")" || return 1
+        if mv -T -- "$target" "$aside/pre-push" 2>/dev/null; then
+            if [ -L "$aside/pre-push" ] && legacy_link_is_ours "$aside/pre-push"; then
+                rm -f -- "$aside/pre-push"
+                removed=1
+            else
+                mv -n -T -- "$aside/pre-push" "$target" 2>/dev/null || true   # fail-direction: checked below
+                if [ -e "$aside/pre-push" ] || [ -L "$aside/pre-push" ]; then
+                    echo "A new pre-push hook appeared at $target meanwhile; the earlier entry is kept at $aside/pre-push" >&2
+                    return 0
                 fi
-            done < <(git -C "$PROJECT" worktree list --porcelain -z | grep -z '^worktree ')
-        fi
-        if [ "$ours" = 1 ]; then
-            rm -f -- "$aside"
-            removed=1
-        else
-            mv -n -T -- "$aside" "$target" 2>/dev/null || true   # fail-direction: the check below reports it
-            if [ -e "$aside" ] || [ -L "$aside" ]; then
-                echo "A new pre-push hook appeared at $target meanwhile; the earlier entry is kept at $aside" >&2
             fi
         fi
+        rmdir -- "$aside" 2>/dev/null || true
     fi
     [ "$removed" -gt 0 ] && echo "Pruned $removed legacy symlink(s) from .git/hooks/"
     return 0

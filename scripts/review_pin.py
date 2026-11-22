@@ -441,18 +441,24 @@ def _newest_first(manifest, block=1 << 16):
     with fh:
         try:
             pos = fh.seek(0, 2)
-            carry = b""
+            pieces = []                                # the record being read, later pieces first
             while pos > 0:
                 step = min(block, pos)
                 pos -= step
                 fh.seek(pos)
-                parts = (fh.read(step) + carry).split(b"\n")
-                carry = parts[0]
-                for raw in reversed(parts[1:]):
+                chunk = fh.read(step)
+                if b"\n" not in chunk:                   # inside one long record: kept, never rescanned
+                    pieces.append(chunk)
+                    continue
+                parts = chunk.split(b"\n")
+                last = parts[-1] + b"".join(reversed(pieces))
+                pieces = [parts[0]]
+                for raw in (last, *reversed(parts[1:-1])):
                     if raw:
                         yield raw.decode("utf-8")
-            if carry:
-                yield carry.decode("utf-8")
+            first = b"".join(reversed(pieces))
+            if first:
+                yield first.decode("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise Refused(f"{manifest} cannot be read: {exc}") from exc
 

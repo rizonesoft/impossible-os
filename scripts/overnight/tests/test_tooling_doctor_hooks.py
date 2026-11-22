@@ -2,7 +2,9 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -449,8 +451,18 @@ def test_two_installs_at_once_leave_one_entry_that_removal_takes_out(tmp_path):
     (bindir / "git").chmod(0o755)
     env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
     runs = [subprocess.Popen(["bash", "scripts/install-hooks.sh"], cwd=root, env=env, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True) for _ in range(2)]
-    outs = [p.communicate(timeout=60) for p in runs]
+                             stderr=subprocess.PIPE, text=True, start_new_session=True) for _ in range(2)]
+    outs, deadline = [], time.monotonic() + 60
+    try:
+        for p in runs:
+            outs.append(p.communicate(timeout=max(1.0, deadline - time.monotonic())))
+    finally:
+        for p in runs:                                       # each installer's whole group, whatever happened
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
     assert all(p.returncode == 0 for p in runs), outs
     assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == ".githooks\n", outs
     r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
@@ -504,3 +516,55 @@ def test_the_doctor_names_the_included_file_a_value_comes_from(tmp_path):
                        capture_output=True, text=True, timeout=120, env=_env())
     fix = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]["fix"]
     assert str(inc) in fix and "--unset-all" not in fix, fix
+
+
+def test_a_removal_never_overwrites_an_entry_an_earlier_removal_kept(tmp_path):
+    """The old aside name held the process id: a later remover with that id renamed over the kept hook."""
+    root = _plain_repo(tmp_path)
+    hooks = root / ".git/hooks"
+    hooks.mkdir(exist_ok=True)
+    (hooks / "pre-push").symlink_to(root / "scripts/hooks/pre-push")
+
+    def keep_one():
+        (hooks / f".pre-push.install-hooks.{os.getpid()}").write_text("kept\n")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=_env(), preexec_fn=keep_one)
+    kept = list(hooks.glob(".pre-push.install-hooks.*"))
+    assert r.returncode == 0 and len(kept) == 1 and kept[0].read_text() == "kept\n", r
+    assert not (hooks / "pre-push").exists() and not (hooks / "pre-push").is_symlink()
+
+
+def test_a_hook_that_is_not_ours_stays_in_place_while_it_is_judged(tmp_path):
+    root = _plain_repo(tmp_path)
+    hooks = root / ".git/hooks"
+    hooks.mkdir(exist_ok=True)
+    theirs = tmp_path / "their-pre-push"
+    theirs.write_text("#!/bin/sh\nexit 0\n")
+    (hooks / "pre-push").symlink_to(theirs)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    seen = tmp_path / "seen"
+    real = shutil.which("git")
+    # Records, at every worktree scan, whether a push at that moment would find the hook.
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" worktree list "*) [ -L "{hooks}/pre-push" ] '
+                                f'&& echo present >> "{seen}" || echo missing >> "{seen}" ;; esac\n'
+                                f'exec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode == 0 and seen.read_text().split() and "missing" not in seen.read_text(), r
+    assert (hooks / "pre-push").resolve() == theirs.resolve()
+
+
+def test_the_doctor_names_every_file_when_the_scope_and_an_include_both_set_it(tmp_path):
+    root = _plain_repo(tmp_path)
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    inc = tmp_path / "inc.cfg"
+    inc.write_text("[core]\n\thooksPath = /included\n")
+    _cfg(root, "--local", "core.hooksPath", "/direct")
+    _cfg(root, "--local", "include.path", str(inc))
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=_env())
+    fix = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]["fix"]
+    assert str(inc) in fix and ".git/config" in fix and "--unset-all" not in fix, fix

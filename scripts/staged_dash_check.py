@@ -362,10 +362,12 @@ def staged(merging: bool = True, merge_head: str = "") -> list:
     # --no-relative: from a subdirectory with diff.relative set, git would list only the paths below it.
     diff = ("diff", "--cached", "--raw", "-z", "-M", "--no-abbrev", "--no-ext-diff", "--no-relative")
     per_parent = [changes_from_raw(_git(*diff))]
+    if not merging:
+        return [("", per_parent)]                          # one parent: nothing to intersect
     common = {path for _old, _new, path in per_parent[0]}
-    if merging and not common:
+    if not common:
         return [("", [[]])]                                # nothing changed against HEAD: MERGE_HEAD is not read
-    for parent in merge_heads(merge_head) if merging else []:
+    for parent in merge_heads(merge_head):
         if not common:
             return [("", [[]])]                            # a refused path changes against every parent: none can now
         per_parent.append(changes_from_raw(_git(*diff, parent)))

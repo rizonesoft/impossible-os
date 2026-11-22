@@ -212,3 +212,41 @@ def test_a_signal_while_a_stream_closes_reaches_the_caller_at_once(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_a_stream_never_signals_its_group_after_the_leader_is_reaped(monkeypatch):
+    """A timer callback already running at teardown, and a second abort, both come before the reap or not at all."""
+    late = []
+    real_kill = bounded_run._kill_group
+
+    def spy(proc):
+        late.append(proc.returncode is not None)             # True: the id was already released
+        real_kill(proc)
+    monkeypatch.setattr(bounded_run, "_kill_group", spy)
+    gate = threading.Event()
+    real_expire = bounded_run.Stream._expire
+
+    def paused(self):
+        gate.wait(10)                                         # the callback has started but not yet signalled
+        real_expire(self)
+    monkeypatch.setattr(bounded_run.Stream, "_expire", paused)
+    stream = bounded_run.Stream(["sleep", "30"], "a sleeper", timeout=0.2)
+    time.sleep(0.5)                                           # the timer has fired and is waiting on the gate
+    threading.Timer(0.5, gate.set).start()
+    stream.abort()
+    stream.abort()                                            # Ctrl-C through the dash check aborts a second time
+    assert late and not any(late), late
+
+
+def test_the_exit_wait_does_not_spend_a_slow_start_twice(monkeypatch):
+    real_start = threading.Thread.start
+
+    def start(self):
+        if getattr(self, "_target", None) is not None and self._target.__name__ == "wait":
+            time.sleep(1.0)                                   # the exit waiter itself starts late
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    began = time.monotonic()
+    with pytest.raises(ValueError, match="did not answer within 1.5 s"):
+        bounded_run.run(["sleep", "30"], "a sleeper", timeout=1.5)
+    assert time.monotonic() - began < 2.2

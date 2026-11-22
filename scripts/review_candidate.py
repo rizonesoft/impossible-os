@@ -29,11 +29,13 @@ import json
 import os
 import stat
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bounded_run                                         # the shared bounded runner beside this script
 
 TIMEOUT = 120
+DEADLINE = None                                            # a monotonic time the whole read must end by (--deadline)
 CHUNK = 1 << 20
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 PATHSPEC_ENV = ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
@@ -49,12 +51,24 @@ def _env():
     return {k: v for k, v in os.environ.items() if k not in PATHSPEC_ENV}
 
 
+def deadline_left():
+    """Seconds one git command may take: TIMEOUT, or less when the caller's deadline is nearer. A deadline
+    already passed refuses."""
+    if DEADLINE is None:
+        return TIMEOUT
+    left = DEADLINE - time.monotonic()
+    if left <= 0:
+        raise Refused("the candidate could not be read within the time the caller allowed")
+    return min(TIMEOUT, left)
+
+
 def _run(top, args, sink=None):
     """(exit status, stdout, stderr) of one git command, bounded as a process group (scripts/bounded_run.py):
     a helper git starts (a clean filter, a monitor hook) holding its pipes past the deadline is ended with it."""
     cmd = ["git", "--no-optional-locks", *(["-C", top] if top else []), *args]
     try:
-        return bounded_run.run(cmd, f"git {args[0]}", timeout=TIMEOUT, env=_env(), sink=sink, keep_stderr=True)
+        return bounded_run.run(cmd, f"git {args[0]}", timeout=deadline_left(), env=_env(), sink=sink,
+                               keep_stderr=True)
     except (OSError, ValueError) as exc:
         raise Refused(f"git {args[0]} could not run: {exc}") from None
 
@@ -85,11 +99,17 @@ def _scope(top, exclude):
 
 
 def _status(top, scope):
-    """(raw status bytes, untracked paths as bytes, whether any tracked path changed)."""
-    raw = _git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", *scope)
+    """(raw status bytes, untracked paths as bytes, tracked changed paths as bytes). git status exits 0 after a
+    directory it could not open, leaving that directory's files out and saying so only on stderr; so any
+    message from it refuses, rather than certify a tree with entries missing."""
+    args = ("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", *scope)
+    rc, raw, err = _run(top, args)
+    if rc != 0 or err.strip():
+        raise Refused(f"git status could not read the whole working tree (exit {rc}): "
+                      f"{err.decode(errors='replace').strip()}")
     records = [rec for rec in raw.split(b"\0") if rec]
     untracked = [rec[3:] for rec in records if rec[:3] == b"?? "]
-    return raw, untracked, len(untracked) < len(records)
+    return raw, untracked, [rec[3:] for rec in records if rec[:3] != b"?? "]
 
 
 def _parent(top_fd, rel):
@@ -155,7 +175,8 @@ def _entry_in(pfd, name, rel):
         now = os.stat(name, dir_fd=pfd, follow_symlinks=False)
         if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
             raise Refused(f"{os.fsdecode(rel)} was replaced while it was read")
-        return b"F\0" + (b"x" if opened.st_mode & 0o111 else b"-") + b"\0" + h.hexdigest().encode(), None
+        # The owner's execute bit is the one git stages (core.fileMode): 0755 and 0655 stage differently.
+        return b"F\0" + (b"x" if opened.st_mode & stat.S_IXUSR else b"-") + b"\0" + h.hexdigest().encode(), None
     except OSError as exc:
         raise Refused(f"the untracked entry {os.fsdecode(rel)} could not be read: {exc.strerror}") from None
 
@@ -204,17 +225,20 @@ def snapshot(exclude=""):
 def launch(exclude=""):
     """(HEAD, index tree, digest) of one candidate, for a launch row: HEAD and the index are read before and
     after the digest, and a commit or an index change meanwhile refuses, so the three name one candidate.
-    HEAD is "unknown" before the first commit, and the index "unknown" while it holds a conflict; an index
-    that cannot be read for any other reason refuses."""
+    HEAD is "unknown" before the first commit. An index holding a conflict has no tree, so it is named by a
+    digest of every staged entry (stage, mode and object id), and a change to one stage still moves it; an
+    index that cannot be read for any other reason refuses."""
     top = _top()
     scope = _scope(top, exclude)
+
+    deadline_left()
 
     def index():
         rc, out, err = _run(top, ("write-tree",))
         if rc == 0:
             return out.decode("ascii", "replace").strip()
         if _git(top, "ls-files", "-u", "-z"):
-            return "unknown"                               # unmerged entries: an index has no tree yet
+            return "unmerged-" + hashlib.sha256(_git(top, "ls-files", "-s", "-z")).hexdigest()
         raise Refused(f"the index could not be read (git write-tree exited {rc}: "
                       f"{err.decode(errors='replace').strip()})")
     before = index()
@@ -235,9 +259,13 @@ def prepare(base, head, exclude=""):
     found = {rel for rel, _note in notes}
     found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", base, head, *scope).split(b"\0")
                  if p)
-    if status[2] or head != current:
+    if head != current:
         found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", head, *scope).split(b"\0")
                      if p)
+    else:
+        # Against HEAD, the status walk already names every tracked path that differs (a staged change the
+        # working file undoes included, which only widens the lenses), so no second diff is taken.
+        found.update(status[2])
     return digest, sorted(found), sorted(notes)
 
 
@@ -254,6 +282,8 @@ def main(argv=None):
     s.add_argument("--exclude", default="")
     s = sub.add_parser("launch")
     s.add_argument("--exclude", default="")
+    s.add_argument("--deadline", type=float, default=None,
+                   help="seconds the whole read may take (the caller's own limit)")
     p = sub.add_parser("prepare")
     p.add_argument("--base", required=True)
     p.add_argument("--head", required=True)
@@ -261,6 +291,9 @@ def main(argv=None):
     p.add_argument("--out", required=True)
     p.add_argument("--untracked-out", required=True)
     args = parser.parse_args(argv)
+    global DEADLINE
+    if getattr(args, "deadline", None) is not None:
+        DEADLINE = time.monotonic() + args.deadline
     try:
         if args.cmd == "snapshot":
             print(snapshot(args.exclude))

@@ -236,11 +236,16 @@ check_hooks() {
                 # value above it, and --remove gives it back.
                 fix="Run: bash scripts/install-hooks.sh" ;;
             local|worktree)
-                if git -C "$REPO_ROOT" config "--$scope" --no-includes --get-all core.hooksPath >/dev/null 2>&1; then
+                # Unsetting the scope's own entries is enough only when no file it includes sets one too.
+                local own all
+                own=$(git -C "$REPO_ROOT" config "--$scope" --no-includes -z --get-all core.hooksPath 2>/dev/null | tr -cd '\0' | wc -c)
+                all=$(git -C "$REPO_ROOT" config "--$scope" --includes -z --get-all core.hooksPath 2>/dev/null | tr -cd '\0' | wc -c)
+                if [ "$own" -gt 0 ] && [ "$own" = "$all" ]; then
                     fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
                 else
-                    origin=$(git -C "$REPO_ROOT" config "--$scope" --includes --show-origin --get core.hooksPath 2>/dev/null | cut -f1)
-                    fix="It comes from ${origin:-a file} that $scope config includes: change it there, then run: bash scripts/install-hooks.sh"
+                    origin=$(git -C "$REPO_ROOT" config "--$scope" --includes -z --show-origin --get-all core.hooksPath 2>/dev/null \
+                        | awk -v RS='\0' 'NR % 2 == 1 { sub(/^file:/, ""); if (!seen[$0]++) printf "%s%s", (n++ ? ", " : ""), $0 }')
+                    fix="It is set in ${origin:-a file} ($scope config and the files it includes): change it there, then run: bash scripts/install-hooks.sh"
                 fi ;;
             *) fix="Run: git config --show-origin --get-all core.hooksPath, and change the value it names" ;;
         esac

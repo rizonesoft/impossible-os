@@ -32,15 +32,15 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     128 |     106947 |
+| **Shell scripts** (`.sh`)         |     128 |     106968 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      36 |       7473 |
-| **Python** (`.py`)                |     383 |     166134 |
+| **Python** (`.py`)                |     383 |     166473 |
 | **JavaScript** (`.js`)            |       2 |        858 |
 | **Include fragments** (`.inc`)    |       7 |       3250 |
 | **Makefile**                      |       3 |       2384 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **636** | **288300** |
+| **Subtotal**                      | **636** | **288660** |
 
 ## Documentation & Project Metadata
 
@@ -58,11 +58,11 @@
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1540** |  **787212** |
+| **Core code + tooling**                              | **1540** |  **787572** |
 | **Supporting text + metadata**                       |  **818** |  **197229** |
-| **Written here**                                     | **2358** |  **984441** |
+| **Written here**                                     | **2358** |  **984801** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2948** | **1460769** |
+| **All lines in tree**                                | **2948** | **1461129** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,460,769 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,461,129 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 20 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 787,212 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 787,572 lines
 > written here imply **110 developers** working for **8 month(s), 20 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-22 03:33 · commit `953ebfee4`*
+*Last updated: 2026-11-22 04:01 · commit `a1973f9b1`*
