@@ -387,6 +387,11 @@ def section_status(root, todo, section):
                 raise Refused(f"{MANIFEST} has an unreadable line after the newest checked plan of {todo} section "
                               f"{section}; it may be a newer pass, so the section's start is unknown")
             return ("passes", section_base(root, todo, section, e["head"]))
+    if unsure:
+        # The torn line may be this section's plan: "new" would start it again from HEAD, and section_start
+        # refuses the same manifest, so the resume refuses too.
+        raise Refused(f"{MANIFEST} has an unreadable line that may name {todo} section {section}; the "
+                      f"section's start is unknown")
     if seen:
         return ("passes", section_base(root, todo, section, ""))
     if older:

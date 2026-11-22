@@ -876,7 +876,7 @@ def test_a_cancelled_publication_wait_ends_and_the_helper_holds_no_caller_stream
     (here / "review_result.py").write_text("import sys, time\nprint('helper says', file=sys.stderr, flush=True)\n"
                                            "time.sleep(4)\n")
     script = _rl_script(tmp_path, f"rl.HERE = {str(here)!r}\n"
-                        "class C:\n    sig = 143\n"
+                        "class C:\n    sig = 143\n    at = rl.now_cs()\n"
                         "began = time.monotonic()\n"
                         "rc = rl._result_step(['publish', 'x', '1'], rl.now_cs() + 100_000, C())\n"
                         "print(rc, round(time.monotonic() - began, 2), flush=True)\n")
@@ -1061,7 +1061,7 @@ def test_a_prompt_that_is_not_the_registered_one_runs_nothing(tmp_path):
     prompt.write_text("p\n")
     r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log2),
                         str(prompt), "--prompt-sha", hashlib.sha256(b"p\n").hexdigest(), "--no-deadline",
-                        f"printf %s \"$REVIEW_PROMPT_TEXT\" > {mark}"], capture_output=True, text=True, timeout=30)
+                        f"cat /dev/fd/$REVIEW_PROMPT_FD > {mark}"], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and mark.read_text() == "p\n", r
 
 
@@ -1247,3 +1247,127 @@ def test_an_answer_to_a_pty_master_reaches_its_terminal(tmp_path):
     finally:
         os.close(slave)
         os.close(master)
+
+
+def test_a_cut_short_offset_record_never_moves_the_note_into_the_log(tmp_path):
+    """The owner record holds a digit prefix with no newline (a write that stopped part way): it is not
+    trusted, so the note goes at the end of the log and the transcript before it is unchanged."""
+    import sys
+    log = tmp_path / "r.out"
+    body = b"x" * 12345
+    log.write_bytes(body)
+    pathlib.Path(str(log) + ".owner").write_bytes(b"note-at 1")
+    r = subprocess.run([sys.executable, str(REPO / "scripts/overnight/review_result.py"), "recover", str(log)],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r
+    data = log.read_bytes()
+    assert data[:len(body)] == body and b"recorded as 1" in data[len(body):], data[:40]
+
+
+def test_a_writer_past_the_deadline_is_ended_and_delivers_nothing_late(tmp_path):
+    """A terminal that stopped reading: the answer is not delivered by the deadline, and the writer is ended
+    then, so draining the terminal afterwards finds nothing and no writer is left."""
+    import pty
+    import select
+    import sys
+    import termios
+    import tty
+    master, slave = pty.openpty()
+    tty.setraw(slave)
+    fill = b"f" * 4096
+    os.set_blocking(master, False)
+    # The pty moves what it holds on to the line discipline asynchronously, freeing room again: fill it until
+    # a pause frees nothing, so the buffer is full the way one whose reader stopped stays full.
+    for _ in range(20):
+        wrote = 0
+        for chunk in (fill, b"f"):
+            try:
+                while True:
+                    wrote += os.write(master, chunk)
+            except BlockingIOError:
+                pass                            # no room for this size: try the smaller one, then pause
+        if not wrote:
+            break
+        time.sleep(0.05)
+    os.set_blocking(master, True)
+    script = _rl_script(tmp_path, "fd = int(sys.argv[1])\n"
+                        "print(rl.emit(fd, b'LATEANSWER', rl.now_cs() + 20), flush=True)\n")
+    try:
+        r = subprocess.run([sys.executable, str(script), str(master)], capture_output=True, text=True, timeout=30,
+                           pass_fds=(master,))
+        assert r.stdout.strip() == "False", r
+        time.sleep(0.3)
+        got = b""
+        while select.select([slave], [], [], 0.5)[0]:
+            chunk = os.read(slave, 1 << 16)
+            if not chunk:
+                break
+            got += chunk
+        assert b"LATEANSWER" not in got
+        termios.tcflush(slave, termios.TCIFLUSH)
+    finally:
+        os.close(slave)
+        os.close(master)
+
+
+def test_a_cancelled_publication_waits_a_second_from_the_signal(tmp_path):
+    """The grace after a cancellation counts from the signal, not from when the publication wait sees it: a
+    grace spent in teardown leaves a stalled publication no further second."""
+    import sys
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "review_result.py").write_text("import time\ntime.sleep(5)\n")
+    script = _rl_script(tmp_path, "rl.HERE = sys.argv[3]\n"
+                        "c = rl.Cancel()\n"
+                        "c.sig, c.at = 143, rl.now_cs() - 100\n"
+                        "r = rl.Broker(sys.argv[1], sys.argv[2])\n"
+                        "began = time.monotonic()\n"
+                        "rl._publish(r, 1, rl.now_cs() + 1000, c)\n"
+                        "print(round(time.monotonic() - began, 2), flush=True)\n")
+    r = subprocess.run([sys.executable, str(script), str(tmp_path / "r.out"), str(tmp_path / "r.prompt"),
+                        str(here)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and float(r.stdout.split()[-1]) < 0.5, r
+
+
+def test_a_job_that_cannot_supervise_publishes_its_failure(tmp_path):
+    """The job claims before its setup checks: a host refusing the subreaper (prctl) still gets the result
+    published as 1, with the reason in the log, and the review is never started."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p\n")
+    mark = tmp_path / "ran"
+    script = _rl_script(tmp_path, "rl._setup = lambda: 'cannot supervise the attempt (test)'\n"
+                        "sys.argv = [sys.argv[0]] + sys.argv[1:]\n"
+                        "sys.exit(rl.main(sys.argv[1:]))\n")
+    r = subprocess.run([sys.executable, str(script), "--job", str(log), str(prompt), "--no-deadline",
+                        f"touch {mark}"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and not mark.exists(), r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "1"
+    assert "cannot supervise" in log.read_text()
+
+
+def test_a_prompt_at_the_argument_limit_reaches_the_reviewer_exactly(tmp_path):
+    """The longest prompt a reviewer can take as one argument (131071 bytes and its NUL) passes every
+    hand-off: no exec string or environment string on the way carries it, and the reviewer gets its bytes."""
+    import json
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight/tests"))
+    from test_review_pin import _tmp_repo
+    repo, _git = _tmp_repo(tmp_path)
+    got = tmp_path / "got"
+    fake = tmp_path / "c.js"
+    fake.write_text("require('fs').writeFileSync(%r, process.argv[process.argv.length - 1]);\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n" % str(got))
+    # A kind the broker runs the reviewer for directly, so the prompt is the reviewer's whole argument (a
+    # pass of the pin is given its lenses too, by the dispatcher both routes share).
+    head = "[review-kind: design] todo/x.md section 9\n"
+    prompt = head + "y" * (131071 - len(head))
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"), prompt],
+                       capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert r.returncode == 0, r.stderr[-2000:]
+    log = pathlib.Path(json.loads(r.stdout.strip().splitlines()[-1])["logFile"])
+    t = time.monotonic()
+    while not pathlib.Path(f"{log}.done").exists() and time.monotonic() - t < 60:
+        time.sleep(0.1)
+    assert got.exists() and got.read_text() == prompt, log.read_text()[-2000:]

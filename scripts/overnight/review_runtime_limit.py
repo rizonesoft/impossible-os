@@ -36,7 +36,7 @@ THE DETACHED JOB'S SUPERVISOR (--job LOG PROMPT [--prompt-sha DIGEST]). One supe
 never one nested in another (whose grace would end the inner one before it could answer): it claims the
 result (holding LOG.owner locked for its life, then creating LOG exclusively; a result another owner holds is
 left alone and nothing runs), reads PROMPT once and checks it against DIGEST (passed to COMMAND as
-REVIEW_PROMPT_TEXT), runs COMMAND (the review, its output appended to LOG) until the steps' deadline, and
+REVIEW_PROMPT_FD), runs COMMAND (the review, its output appended to LOG) until the steps' deadline, and
 publishes COMMAND's status, or 124 when the limit ended it, as soon as the filesystem allows: no caller
 waits on this detached process. A publication that fails is this supervisor's exit 1. Every attempt runs
 under review_warden.py, which ends its group when this supervisor ends, so a supervisor that dies leaves
@@ -135,8 +135,16 @@ def _emit_through_writer(fd, data, until, cancel):
         if done:
             return os.waitstatus_to_exitcode(raw) == 0
         if now_cs() >= until:
-            return False                       # still writing: it finishes on its own, outside this answer
+            break
         time.sleep(0.01)
+    # Past the deadline (or the input was not all taken): the writer is this process's own child, ended
+    # here so an answer that is too late is never delivered later and no writer outlives the call. Reaped
+    # if it has already gone; one held in an uninterruptible write is reaped by init once it ends.
+    try:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, os.WNOHANG)
+    except OSError:
+        pass                                   # fail-direction: it has already been reaped
     return False
 
 
@@ -394,7 +402,7 @@ def _result_step(args, until, cancel=None):
             if now_cs() >= until:
                 return None
             if cancel is not None and cancel.sig:
-                until = min(until, now_cs() + 100)
+                until = min(until, cancel.at + 100)    # the grace is counted from the signal itself
                 cancel = None
             time.sleep(0.01)
     finally:
@@ -460,26 +468,45 @@ def main(argv) -> int:
         print("review-runtime-limit: the deadline had passed before the command started; nothing was run",
               file=sys.stderr)
         return 124
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
-        print(f"review-runtime-limit: cannot supervise the attempt's processes "
-              f"(prctl: {os.strerror(ctypes.get_errno())}); nothing was run", file=sys.stderr)
-        return 2
-    try:
-        os.close(os.pidfd_open(os.getpid()))
-    except OSError as exc:
-        print(f"review-runtime-limit: cannot hold the attempt's processes (pidfd_open: {exc.strerror}); "
-              f"nothing was run", file=sys.stderr)
+    if opts["job"]:
+        # The job claims its result before anything can refuse, so a refusal is published (as 1).
+        return _job(opts["job"], opts["prompt_sha"], cmd, end, cancel)
+    why = _setup()
+    if why:
+        print(f"review-runtime-limit: {why}; nothing was run", file=sys.stderr)
         return 2
     broker = Broker(*opts["broker"]) if opts["broker"] else None
-    job = None
-    if opts["job"]:
-        return _job(opts["job"], opts["prompt_sha"], cmd, end, cancel)
     rc = _attempt(cmd, end, broker, cancel)
     if broker is None:
         return rc
     cancelled, limited, rc = rc
     return finish_broker(broker, rc, cancelled, limited, final, cancel)
+
+
+def _setup():
+    """What this supervisor needs before it starts an attempt: to be the subreaper its orphans return to,
+    and pidfds. "" when it has them, else why not."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        return f"cannot supervise the attempt's processes (prctl: {os.strerror(ctypes.get_errno())})"
+    try:
+        os.close(os.pidfd_open(os.getpid()))
+    except OSError as exc:
+        return f"cannot hold the attempt's processes (pidfd_open: {exc.strerror})"
+    return ""
+
+
+def _prompt_fd(text):
+    """The checked prompt in an anonymous in-memory file the attempt inherits (REVIEW_PROMPT_FD): no exec
+    string carries it until the reviewer's own argument, so the hand-off never shrinks the longest prompt
+    a reviewer can be given."""
+    fd = os.memfd_create("review-prompt", 0)
+    data = memoryview(text.encode("utf-8"))
+    while data:
+        data = data[os.write(fd, data):]
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.set_inheritable(fd, True)
+    return fd
 
 
 def _read_prompt(prompt, digest):
@@ -544,7 +571,11 @@ def _job(job, digest, cmd, end, cancel):
     if owned != 0:
         print("review-runtime-limit: the job's result could not be claimed; nothing was run", file=sys.stderr)
         return 1
-    if cancel.sig or now_cs() >= end:
+    why = _setup()
+    if why:
+        _note(log, why + "; nothing was run")
+        status = 1
+    elif cancel.sig or now_cs() >= end:
         status = cancel.sig or 124
     else:
         text, why = _read_prompt(prompt, digest)
@@ -552,8 +583,15 @@ def _job(job, digest, cmd, end, cancel):
             _note(log, why + "; nothing was run")
             status = 1
         else:
-            os.environ["REVIEW_PROMPT_TEXT"] = text
-            status = _attempt(cmd, end, None, cancel)
+            try:
+                fd = _prompt_fd(text)
+            except OSError as exc:
+                _note(log, f"the prompt could not be handed to the review ({exc.strerror}); nothing was run")
+                status = 1
+            else:
+                os.environ["REVIEW_PROMPT_FD"] = str(fd)
+                status = _attempt(cmd, end, None, cancel)
+                os.close(fd)
     return status if _result.publish(log, str(status), prompt) == 0 else 1
 
 

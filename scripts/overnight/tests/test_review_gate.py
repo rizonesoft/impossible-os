@@ -647,3 +647,46 @@ if __name__ == "__main__":
     test_f1_falls_back_to_first_staged_without_active()
     test_f1_orphaned_active_falls_back()
     print("PASS: review-gate P1.2/P1.3 + B3 + F1 + C-RECV")
+
+
+def test_a_stamp_diff_that_cannot_be_read_is_unknown_never_no_section():
+    """The staged list is read, the stamp file's own diff is not: the commit is "unknown" (refused), never read
+    as a commit with no section in it."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        (root / "todo/T.md").write_text(
+            "## 1. Section\n\n| Item | Done |\n| A | [x] |\n\nbody\n\n"
+            "> **Verified:** 2026-07-14 test\n")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        real = scg.subprocess.check_output
+
+        def failing(cmd, *a, **k):
+            if cmd[:3] == ["git", "diff", "--cached"] and cmd[-1] == "todo/T.md":
+                raise scg.subprocess.TimeoutExpired(cmd, 5)
+            return real(cmd, *a, **k)
+        scg.subprocess.check_output = failing
+        try:
+            assert scg._detect_signature(root)[0] == "unknown"
+        finally:
+            scg.subprocess.check_output = real
+
+
+def test_the_readme_comparison_reads_stored_objects():
+    """A replacement ref that makes the two README versions look alike does not exempt a hand-written change."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        g = lambda *a: subprocess.run(["git", "-C", str(root), *a], check=True, capture_output=True,
+                                      text=True).stdout.strip()
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        (root / "README.md").write_text("old text\n")
+        g("add", "README.md")
+        g("commit", "-qm", "a")
+        old = g("rev-parse", "HEAD:README.md")
+        (root / "README.md").write_text("new hand-written text\n")
+        g("add", "README.md")
+        g("commit", "-qm", "b")
+        new = g("rev-parse", "HEAD:README.md")
+        g("replace", old, new)
+        assert scg._readme_only_regenerated(root, "HEAD~1:README.md", "HEAD:README.md") is False

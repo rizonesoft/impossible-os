@@ -40,12 +40,16 @@ if [[ "${1:-}" == "--section-of" ]]; then
     exit 0
 fi
 
-# The inner run under the supervisor gets the prompt raw through the environment: quoted into its command it
-# could grow past the kernel's limit on one argument (printf %q doubles a prompt of spaces and quotes) and the
-# dispatch would fail before anything was registered.
-if [[ -n "${REVIEW_BROKER_INNER:-}" && $# -eq 0 && -n "${REVIEW_BROKER_PROMPT+set}" ]]; then
-    set -- "$REVIEW_BROKER_PROMPT"
-    unset REVIEW_BROKER_PROMPT
+# The inner run under the supervisor reads the prompt from this dispatch's prompt file, which the outer run
+# wrote: no exec string carries it (quoted into a command it doubled, and an environment string has the same
+# per-string limit as an argument), so the longest prompt a reviewer takes as its argument reaches it.
+if [[ -n "${REVIEW_BROKER_INNER:-}" && $# -eq 0 && -n "${REVIEW_BROKER_PROMPT_FILE:-}" ]]; then
+    if ! BROKER_PROMPT_TEXT="$(cat -- "$REVIEW_BROKER_PROMPT_FILE"; printf x)"; then
+        echo "[review-broker] BLOCK -- the dispatch's prompt file could not be read" >&2
+        exit 2
+    fi
+    set -- "${BROKER_PROMPT_TEXT%x}"
+    unset BROKER_PROMPT_TEXT
 fi
 if [[ $# -ne 1 ]]; then
     echo "[review-broker] BLOCK -- expected exactly one prompt argument. Usage: $0 '<[review-kind: X] todo-path body>'" >&2
@@ -100,14 +104,25 @@ MANIFEST_DIR=".claude/overnight/reviews"
 # before it starts, so it knows which result and prompt are this dispatch's.
 if [[ -z "${REVIEW_BROKER_INNER:-}" ]]; then
   printf -v BROKER_STAMP '%(%Y%m%d-%H%M%S)T' -1
-  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL REVIEW_BROKER_PROMPT="$PROMPT"
   LOG="$PWD/$MANIFEST_DIR/${BROKER_STAMP}-$$-${KIND}.out"
-  if [[ -n "$LIMIT_END" ]]; then
-    exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-      --publish-by "$LIMIT_FINAL" --until-cs "$LIMIT_END" "bash $(q "${BASH_SOURCE[0]}")"
+  REVIEW_BROKER_PROMPT_FILE="$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}"
+  # Created exclusively, before the supervisor starts; from then on the supervisor removes it whenever the
+  # dispatch ends before a unit takes it. Only an exec that fails leaves it to be removed here.
+  if ! mkdir -p "$MANIFEST_DIR" || ! ( set -C; printf '%s' "$PROMPT" > "$REVIEW_BROKER_PROMPT_FILE" ); then
+    echo "review-broker: the prompt could not be written to $MANIFEST_DIR; nothing was launched" >&2
+    exit 2
   fi
-  exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-    --no-deadline "bash $(q "${BASH_SOURCE[0]}")"
+  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL REVIEW_BROKER_PROMPT_FILE
+  shopt -s execfail
+  if [[ -n "$LIMIT_END" ]]; then
+    exec python3 "$LIMITER" --broker "$LOG" "$REVIEW_BROKER_PROMPT_FILE" \
+      --publish-by "$LIMIT_FINAL" --until-cs "$LIMIT_END" "bash $(q "${BASH_SOURCE[0]}")"
+  else
+    exec python3 "$LIMITER" --broker "$LOG" "$REVIEW_BROKER_PROMPT_FILE" --no-deadline "bash $(q "${BASH_SOURCE[0]}")"
+  fi
+  rm -f -- "$REVIEW_BROKER_PROMPT_FILE"
+  echo "review-broker: the supervisor could not be started; nothing was launched" >&2
+  exit 2
 fi
 # What the supervisor is told: the step under way (named when the limit ends it), that the result is now the
 # broker's to publish, the answer, and a job to start once the attempt is torn down.
@@ -189,8 +204,8 @@ read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 PROMPT_FILE="$PWD/$MANIFEST_DIR/.prompt.${STAMP}-${BROKER_ID}-${KIND}"
 tell "step writing the prompt"
 PREP=""
-if mkdir -p "$MANIFEST_DIR" && PREP="$(printf '%s' "$PROMPT" | sha256sum)" \
-    && ( set -C; printf '%s' "$PROMPT" > "$PROMPT_FILE" ); then
+# The outer run wrote the file (it is the one this run read its prompt from); the digest is of its bytes.
+if [[ "$PROMPT_FILE" == "${REVIEW_BROKER_PROMPT_FILE:-}" ]] && PREP="$(sha256sum < "$PROMPT_FILE")"; then
   PREP="${PREP%% *}"
 fi
 if [[ ! "$PREP" =~ ^[0-9a-f]{64}$ ]]; then
@@ -202,9 +217,9 @@ if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
   # CODEX_EXPECT_CANDIDATE: the candidate the launch row below names; the wrapper refuses another.
-  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$REVIEW_PROMPT_TEXT\""
+  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat /dev/fd/\$REVIEW_PROMPT_FD)\""
 else
-  RUN="node $(q "$COMPANION") adversarial-review -- \"\$REVIEW_PROMPT_TEXT\""
+  RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat /dev/fd/\$REVIEW_PROMPT_FD)\""
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 

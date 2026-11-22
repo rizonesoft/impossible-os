@@ -2573,3 +2573,16 @@ def test_the_repair_base_stops_at_the_newest_checked_pass(tmp_path, monkeypatch)
         raise AssertionError("read past the receipt that decides the answer")
     monkeypatch.setattr(rp, "_newest_first", lines)
     assert rp.repair_base(tmp_path / "m.jsonl", "todo/x.md", 9) == "d" * 8
+
+
+def test_a_torn_line_that_may_be_the_plan_refuses_the_resume(tmp_path):
+    """No checked plan, and a torn line naming this TODO: the resume refuses (as section_start does), never
+    "new", which would start the section again from HEAD."""
+    todo = "todo/00-x/TODO-01-x.md"
+    m = tmp_path / rp.MANIFEST
+    m.parent.mkdir(parents=True)
+    m.write_text(f'{{"ts": 1, "kind": "plan", "todo": "{todo}", "sec\n')
+    with pytest.raises(rp.Refused):
+        rp.section_status(tmp_path, todo, 7)
+    with pytest.raises(rp.Refused):
+        rp.section_start(m, todo, "7")

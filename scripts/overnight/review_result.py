@@ -69,22 +69,32 @@ NOTE = b"review_result: the result's owner ended without publishing it; recorded
 def _note_once(owner_fd: int, log: str) -> None:
     """NOTE written to `log` at the offset recorded in the owner file, recording the end of the log there
     first when no offset is recorded yet; a note already complete at that offset is left alone."""
-    record = os.pread(owner_fd, 32, 0).split()
+    # Only a whole record is trusted: `note-at N` and its newline, nothing else. A record cut short (a write
+    # that stopped part way) was written before the log was touched, so the note is placed afresh at the end.
+    found = re.fullmatch(rb"note-at ([0-9]{1,20})\n", os.pread(owner_fd, 64, 0))
     out = os.open(log, os.O_RDWR | CLOEXEC)
     try:
-        if len(record) == 2 and record[0] == b"note-at" and record[1].isdigit():
-            at = int(record[1])
+        if found:
+            at = int(found.group(1))
         else:
             at = os.fstat(out).st_size
             os.ftruncate(owner_fd, 0)
-            os.pwrite(owner_fd, f"note-at {at}\n".encode(), 0)
+            _pwrite_all(owner_fd, f"note-at {at}\n".encode(), 0)
         if os.pread(out, len(NOTE), at) == NOTE:
             return
-        view = memoryview(NOTE)
-        while view:
-            view = view[os.pwrite(out, view, at + len(NOTE) - len(view)):]
+        _pwrite_all(out, NOTE, at)
     finally:
         os.close(out)
+
+
+def _pwrite_all(fd: int, data: bytes, at: int) -> None:
+    """All of `data` at offset `at`, or OSError: a write that makes no progress raises."""
+    view = memoryview(data)
+    while view:
+        n = os.pwrite(fd, view, at + len(data) - len(view))
+        if n <= 0:
+            raise OSError(28, "no progress writing")
+        view = view[n:]
 
 
 def recover(log: str) -> int:

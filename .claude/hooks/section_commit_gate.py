@@ -1794,11 +1794,15 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
     sections_by_todo: dict[str, list[str]] = {}
     all_ok = True
     for path in todo_files:
+        wait = _hook_left(5)
+        if wait <= 0:
+            all_ok = False                             # fail-direction: an unread diff is "unknown", never clean
+            break
         try:
             diff = subprocess.check_output(
                 ["git", "diff", "--cached", "-U0", "--", path],
-                cwd=str(root), text=True, timeout=5,
-                stderr=subprocess.DEVNULL,
+                cwd=str(root), text=True, timeout=wait,
+                stderr=subprocess.DEVNULL, env=_stored_env(),
             )
         except Exception:
             all_ok = False
@@ -2203,17 +2207,16 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
     """
     out: list[str] = []
     for path in todo_files:
-        try:
-            diff = subprocess.check_output(
-                ["git", "diff", "--cached", "-U0", "--", path],
-                cwd=str(root), text=True, timeout=5,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            # Per-file diff failure: be conservative -- skip this
-            # file. The signature-detection layer's "unknown" path
-            # would have already routed this case via `todo_diff_ok`.
-            continue
+        wait = _hook_left(5)
+        if wait <= 0:
+            raise subprocess.TimeoutExpired("git diff", 0)
+        # A diff that cannot be read raises: the caller reports "unknown" and the commit is refused. Skipping
+        # the file would read a stamp-only commit as no section commit at all, and pass it unreviewed.
+        diff = subprocess.check_output(
+            ["git", "diff", "--cached", "-U0", "--", path],
+            cwd=str(root), text=True, timeout=wait,
+            stderr=subprocess.DEVNULL, env=_stored_env(),
+        )
         added = {"Verified": 0, "Quality reviewed": 0}
         removed = {"Verified": 0, "Quality reviewed": 0}
         for line in diff.splitlines():
@@ -2399,7 +2402,7 @@ def _readme_only_regenerated(root: Path, old_spec: str, new_spec: str) -> bool:
             return None                                # fail-direction: not shown regenerated-only refuses
         try:
             text = subprocess.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=wait,
-                                           stderr=subprocess.DEVNULL)
+                                           stderr=subprocess.DEVNULL, env=_stored_env())
         except Exception:
             return None
         return _README_REGION_RE.sub(lambda m: f"<!-- project:{m.group(1)} --><!-- /project -->", text)
