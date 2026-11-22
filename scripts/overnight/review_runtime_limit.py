@@ -221,7 +221,7 @@ def usage():
 
 
 def parse(argv):
-    opts = {"end": None, "final": None, "broker": None, "job": None, "prompt_sha": ""}
+    opts = {"end": None, "final": None, "broker": None, "job": None, "prompt_sha": "", "broker_prompt": None}
     args = list(argv)
     while args and args[0].startswith("--"):
         flag = args.pop(0)
@@ -229,6 +229,8 @@ def parse(argv):
             opts["end" if flag == "--until-cs" else "final"] = int(args.pop(0))
         elif flag == "--prompt-sha" and args and re.fullmatch(r"[0-9a-f]{64}", args[0]):
             opts["prompt_sha"] = args.pop(0)
+        elif flag == "--broker-prompt" and args:
+            opts["broker_prompt"] = args.pop(0)            # the raw prompt, handed to the broker in memory
         elif flag == "--no-deadline":
             opts["end"] = now_cs() + NO_DEADLINE
         elif flag in ("--broker", "--job") and len(args) >= 2 and args[0] and args[1]:
@@ -428,7 +430,7 @@ def _publish(result, status, final, cancel=None):
 
 def _child_env():
     env = dict(os.environ)
-    for name in ("REVIEW_BROKER_HANDOFF_FD", "REVIEW_BROKER_INNER"):
+    for name in ("REVIEW_BROKER_HANDOFF_FD", "REVIEW_BROKER_INNER", "REVIEW_BROKER_PROMPT_FD"):
         env.pop(name, None)
     return env
 
@@ -476,6 +478,13 @@ def main(argv) -> int:
         print(f"review-runtime-limit: {why}; nothing was run", file=sys.stderr)
         return 2
     broker = Broker(*opts["broker"]) if opts["broker"] else None
+    if broker is not None and opts["broker_prompt"] is not None:
+        try:
+            os.environ["REVIEW_BROKER_PROMPT_FD"] = str(_prompt_fd(opts["broker_prompt"]))
+        except (OSError, UnicodeEncodeError) as exc:
+            print(f"review-runtime-limit: the prompt could not be handed to the broker ({exc}); nothing was run",
+                  file=sys.stderr)
+            return 2
     rc = _attempt(cmd, end, broker, cancel)
     if broker is None:
         return rc

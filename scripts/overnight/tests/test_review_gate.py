@@ -690,3 +690,49 @@ def test_the_readme_comparison_reads_stored_objects():
         new = g("rev-parse", "HEAD:README.md")
         g("replace", old, new)
         assert scg._readme_only_regenerated(root, "HEAD~1:README.md", "HEAD:README.md") is False
+
+
+def _flip_repo(d):
+    root = _stamp_repo(d)
+    (root / "todo/T.md").write_text(
+        "## 1. Section\n\n| Section | Status |\n| 1 | [x] |\n| 2 | [x] |\n\nbody\n")
+    (root / "src").mkdir()
+    (root / "src/a.c").write_text("int a;\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    return root
+
+
+def test_the_staged_todo_is_read_once_however_many_rows_change():
+    """Every changed done row needs the table's header; the staged TODO is read once for all of them."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _flip_repo(d)
+        real = scg.subprocess.check_output
+        shows = []
+
+        def counting(cmd, *a, **k):
+            if cmd[:2] == ["git", "show"] and cmd[2] == ":todo/T.md":
+                shows.append(cmd)
+            return real(cmd, *a, **k)
+        scg.subprocess.check_output = counting
+        try:
+            scg._detect_signature(root)
+        finally:
+            scg.subprocess.check_output = real
+        assert len(shows) == 1, shows
+
+
+def test_a_staged_todo_that_cannot_be_read_is_unknown():
+    """The read the table header needs fails: the commit is unknown (refused), never judged without it."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _flip_repo(d)
+        real = scg.subprocess.check_output
+
+        def failing(cmd, *a, **k):
+            if cmd[:2] == ["git", "show"] and cmd[2] == ":todo/T.md":
+                raise scg.subprocess.TimeoutExpired(cmd, 5)
+            return real(cmd, *a, **k)
+        scg.subprocess.check_output = failing
+        try:
+            assert scg._detect_signature(root)[0] == "unknown"
+        finally:
+            scg.subprocess.check_output = real

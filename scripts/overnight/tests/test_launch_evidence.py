@@ -1371,3 +1371,70 @@ def test_a_prompt_at_the_argument_limit_reaches_the_reviewer_exactly(tmp_path):
     while not pathlib.Path(f"{log}.done").exists() and time.monotonic() - t < 60:
         time.sleep(0.1)
     assert got.exists() and got.read_text() == prompt, log.read_text()[-2000:]
+
+
+def _broker_repo(tmp_path):
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight/tests"))
+    from test_review_pin import _tmp_repo
+    return _tmp_repo(tmp_path)[0]
+
+
+def test_a_stall_creating_the_prompt_is_held_to_the_deadline(tmp_path):
+    """The supervisor starts before the broker touches the review directory: a mkdir that stalls is ended by
+    CODEX_REVIEW_MAX_SECS, and the caller gets 124 back within its limit."""
+    repo = _broker_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "mkdir").write_text("#!/bin/sh\nexec sleep 5\n")
+    (bindir / "mkdir").chmod(0o755)
+    (tmp_path / "c.js").write_text("\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "1"}
+    began = time.monotonic()
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                        "[review-kind: design] todo/x.md section 9\nReview it."],
+                       capture_output=True, text=True, timeout=30, cwd=str(repo), env=env)
+    assert time.monotonic() - began < 1 + 1.5 and r.returncode in (2, 124), (r.returncode, r.stderr[-1500:])
+
+
+def test_a_broker_refused_at_startup_leaves_no_prompt(tmp_path):
+    """The supervisor starts after the deadline has passed: it refuses with 124, and nothing was written to
+    the review directory first, so no prompt file is left behind."""
+    repo = _broker_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = subprocess.run(["sh", "-c", "command -v python3"], capture_output=True, text=True).stdout.strip()
+    (bindir / "python3").write_text('#!/bin/sh\ncase " $* " in *" --broker "*) sleep 1.6;; esac\n'
+                                    f'exec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+    (tmp_path / "c.js").write_text("\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "1"}
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                        "[review-kind: design] todo/x.md section 9\nReview it."],
+                       capture_output=True, text=True, timeout=30, cwd=str(repo), env=env)
+    assert r.returncode == 124, (r.returncode, r.stderr[-1500:])
+    reviews = repo / ".claude/overnight/reviews"
+    assert not (reviews.exists() and list(reviews.glob(".prompt.*")))
+
+
+def test_trailing_newlines_reach_the_reviewer(tmp_path):
+    """The prompt's bytes reach the reviewer as they were registered, trailing newlines included: both reads
+    on the way (the broker's and the job's) keep them."""
+    import json
+    repo = _broker_repo(tmp_path)
+    got = tmp_path / "got"
+    fake = tmp_path / "c.js"
+    fake.write_text("require('fs').writeFileSync(%r, process.argv[process.argv.length - 1]);\n"
+                    "process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n" % str(got))
+    prompt = "[review-kind: design] todo/x.md section 9\nReview it.\n\n"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    r = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"), prompt],
+                       capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert r.returncode == 0, r.stderr[-2000:]
+    log = pathlib.Path(json.loads(r.stdout.strip().splitlines()[-1])["logFile"])
+    t = time.monotonic()
+    while not pathlib.Path(f"{log}.done").exists() and time.monotonic() - t < 60:
+        time.sleep(0.1)
+    assert got.read_bytes() == prompt.encode(), got.read_bytes()[-40:]

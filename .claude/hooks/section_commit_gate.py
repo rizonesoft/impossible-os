@@ -1619,7 +1619,10 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str], dict[str, 
         # section commit by definition.
         return ("not_section", src, [], {})
     if src and todos:
-        flipped, todo_diff_ok, flipped_sections = _impl_order_flips_with_status(root, todos)
+        try:
+            flipped, todo_diff_ok, flipped_sections = _impl_order_flips_with_status(root, todos)
+        except _StagedReadError:
+            return ("unknown", src, [], {})            # a staged TODO that cannot be read rules out nothing
         if flipped:
             # Section signature: caller pulls all_staged_todos via
             # _staged_todo_files() to scan stamps in non-flipped TODOs
@@ -1691,22 +1694,34 @@ def _section_value(raw: object) -> str:
     return ""
 
 
-def _staged_file_lines(root: Path, path: str) -> list[str]:
+def _staged_file_lines(root: Path, path: str, cache: dict | None = None) -> list[str]:
+    """The staged TODO's lines, read once per detection (`cache`, keyed by path) under what the hook's
+    deadline leaves. A read that fails or runs out of time raises _StagedReadError: the caller reports the
+    commit as unknown, never as a section judged from no table header."""
+    if cache is not None and path in cache:
+        return cache[path]
+    wait = _hook_left(5)
+    if wait <= 0:
+        raise _StagedReadError(path)
     try:
         out = subprocess.check_output(
             ["git", "show", f":{path}"],
             cwd=str(root),
             text=True,
             stderr=subprocess.DEVNULL,
-            timeout=5,
+            timeout=wait,
+            env=_stored_env(),
         )
-    except Exception:
-        return []
-    return out.splitlines()
+    except Exception as exc:
+        raise _StagedReadError(path) from exc
+    lines = out.splitlines()
+    if cache is not None:
+        cache[path] = lines
+    return lines
 
 
-def _io_header_for_added_line(root: Path, todo: str, added_lineno: int) -> list[str]:
-    lines = _staged_file_lines(root, todo)
+def _io_header_for_added_line(root: Path, todo: str, added_lineno: int, cache: dict | None = None) -> list[str]:
+    lines = _staged_file_lines(root, todo, cache)
     if not lines:
         return []
     start = min(max(added_lineno - 1, 0), len(lines) - 1)
@@ -1720,13 +1735,13 @@ def _io_header_for_added_line(root: Path, todo: str, added_lineno: int) -> list[
     return []
 
 
-def _io_row_section(root: Path, todo: str, added_lineno: int, diff_line: str) -> str:
+def _io_row_section(root: Path, todo: str, added_lineno: int, diff_line: str, cache: dict | None = None) -> str:
     if not _IO_NEW_DONE_RE.match(diff_line):
         return ""
     cells = _table_cells(diff_line[1:])
     if not cells or cells[-1] != "[x]":
         return ""
-    header = _io_header_for_added_line(root, todo, added_lineno)
+    header = _io_header_for_added_line(root, todo, added_lineno, cache)
     labels = _table_labels(header)
     for wanted in ("section", "order"):
         if wanted in labels:
@@ -1745,11 +1760,12 @@ def _promoted_sections_for_hunk(
     todo: str,
     added_done: list[tuple[int, str]],
     removed_done: list[tuple[int, str]],
+    cache: dict | None = None,
 ) -> list[str]:
     added_sections = [
         sec
         for sec in (
-            _io_row_section(root, todo, lineno, row)
+            _io_row_section(root, todo, lineno, row, cache)
             for lineno, row in added_done
         )
         if sec
@@ -1757,7 +1773,7 @@ def _promoted_sections_for_hunk(
     removed_sections = [
         sec
         for sec in (
-            _io_row_section(root, todo, lineno, row)
+            _io_row_section(root, todo, lineno, row, cache)
             for lineno, row in removed_done
         )
         if sec
@@ -1793,6 +1809,7 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
     flips: list[str] = []
     sections_by_todo: dict[str, list[str]] = {}
     all_ok = True
+    staged_lines: dict = {}                            # each staged TODO is read once, whatever rows changed
     for path in todo_files:
         wait = _hook_left(5)
         if wait <= 0:
@@ -1818,7 +1835,7 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
             hm = _HUNK_RE.match(line)
             if hm:
                 # Settle the previous hunk before starting the next.
-                hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done)
+                hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done, staged_lines)
                 if hunk_promotions:
                     flipped_here = True
                     promoted_sections.extend(hunk_promotions)
@@ -1846,7 +1863,7 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
             if new_lineno:
                 new_lineno += 1
         # Settle the final hunk.
-        hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done)
+        hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done, staged_lines)
         if hunk_promotions:
             flipped_here = True
             promoted_sections.extend(hunk_promotions)
