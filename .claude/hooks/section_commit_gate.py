@@ -2792,7 +2792,7 @@ def _blocking_levels(root: Path) -> tuple[str, ...]:
         return _BLOCKING_FALLBACK   # a broken pin must not open the gate
 
 
-def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bool]:
+def _pass_receipts(root: Path, todo: str, section: str | None, kinds=None) -> tuple[dict, bool]:
     """(newest receipt per pass kind, readable) for one TODO, and one section when given: review_pin's
     newest_receipts, the one reader the dispatcher's bases use too, asked the gate's question: the newest row
     of each kind in any state, so a pass still running or failed is the one judged and revives nothing older.
@@ -2802,7 +2802,9 @@ def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bo
     _review_pin_path(root)
     try:
         import review_pin
-        return review_pin.newest_receipts(root / _PASS_MANIFEST, todo, section, _PASS_KINDS)
+        # `kinds` narrows the kinds looked for (all by default): a caller judging one kind stops at its newest
+        # row instead of reading back to the oldest of five.
+        return review_pin.newest_receipts(root / _PASS_MANIFEST, todo, section, tuple(kinds or _PASS_KINDS))
     except Exception:
         return ({}, False)                             # the manifest cannot be read: nothing may be assumed
 
@@ -4681,7 +4683,7 @@ def _step13_impl_adversarial_check(
         requires is enforced where it is owned: _pass_covers binds the round,
         the performance pass and the last pass to the committed candidate.
         """
-        receipt = _pass_receipts(root, todo, required_section)[0].get("round", (None, 0))[0]
+        receipt = _pass_receipts(root, todo, required_section, ("round",))[0].get("round", (None, 0))[0]
         if receipt is None or not _receipt_complete(receipt) or not current_head:
             return False
         head = receipt["head"]

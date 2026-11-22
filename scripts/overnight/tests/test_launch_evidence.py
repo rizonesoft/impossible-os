@@ -2057,3 +2057,39 @@ def test_a_cancellation_during_the_handoff_read_launches_nothing(monkeypatch):
     rc = rl.finish_broker(broker, 0, False, False, rl.now_cs() + 500, cancel)
     assert rc == 143 and launched == [] and delivered == [] and published == [143], (rc, launched, delivered,
                                                                                        published)
+
+
+
+def test_a_walk_cut_short_on_a_crowded_host_still_ends_the_attempt(tmp_path):
+    """Every /proc walk is cut at its cutoff before it signals anyone (a crowded host): the teardown's one
+    signal to the warden's own group, sent before any walk, ends the command before the attempt is
+    answered (the warden's own end of its group comes only when the supervisor exits)."""
+    import sys
+    pidfile = tmp_path / "pid"
+    script = _rl_script(tmp_path, "rl.signal_all = lambda sig, sent=None, cutoff=None: "
+                                  "(_ for _ in ()).throw(rl.WalkCut(0, 0))\n"
+                                  f"rc = rl._attempt('echo $$ > {pidfile}; exec sleep 30', rl.now_cs() + 150, None, "
+                                  "rl.Cancel())\n"
+                                  # judged inside the supervisor, before it exits and its lifeline closes
+                                  f"pid = int(open({str(pidfile)!r}).read())\n"
+                                  "end = time.monotonic() + 1\n"
+                                  "alive = True\n"
+                                  "while alive and time.monotonic() < end:\n"
+                                  "    try:\n"
+                                  "        os.kill(pid, 0); time.sleep(0.02)\n"
+                                  "    except ProcessLookupError:\n"
+                                  "        alive = False\n"
+                                  "print(rc, alive)\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
+    assert r.stdout.split() == ["124", "False"], r
+    pid = int(pidfile.read_text())
+    end = time.monotonic() + 3
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        raise AssertionError("the command outlived its teardown")

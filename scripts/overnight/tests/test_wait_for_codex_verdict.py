@@ -551,8 +551,12 @@ def test_nothing_the_wait_starts_outlives_it_but_a_recovery_that_still_publishes
         log = pathlib.Path(d) / "r.out"
         log.write_text("partial\n")
         pathlib.Path(str(log) + ".owner").write_text("")
+        # A second log, with no recovery in hand, is the one whose metadata probe stalls: a log being
+        # recovered is never age-judged, so its metadata is not probed.
+        other = pathlib.Path(d) / "q.out"
+        other.write_text("partial\n")
         began = time.monotonic()
-        r = _wait(d, bindir, "--max", "1", "--no-stale", log)
+        r = _wait(d, bindir, "--max", "1", "--no-stale", log, other)
         assert r.returncode == 3 and time.monotonic() - began < 1.5, (r, time.monotonic() - began)
         pids = [int(p) for p in marks.read_text().split()]
         deadline = time.monotonic() + 2
@@ -978,3 +982,38 @@ def test_an_aged_transcript_is_never_judged_stale_while_a_failed_recovery_awaits
         pathlib.Path(str(log) + ".owner").write_text("")
         r = _wait(d, bindir, "--max", "6", "--stale-secs", "1", log)
         assert "UNPUBLISHED" in r.stdout and "STALE" not in r.stdout, (r.returncode, r.stdout)
+
+
+
+def test_an_aged_transcript_is_never_judged_stale_in_the_round_that_starts_its_recovery():
+    """The owner has gone and the transcript is long past --stale-secs: the recovery that starts this round
+    publishes on a later one, and the wait reports that status, never STALE before it."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        log = pathlib.Path(d) / "r.out"
+        _faults(bindir, "import subprocess\n"
+                        "def start_recovery(f):\n"
+                        "    return subprocess.Popen(['bash', '-c', 'sleep 2; printf \"0\\\\n\" > \"$0.done\"', f])\n"
+                        "o.start_recovery = start_recovery\n")
+        log.write_text("x\nTurn completed (rc=0)\n")
+        os.utime(log, (0, 0))
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = _wait(d, bindir, "--max", "8", "--stale-secs", "1", log)
+        assert r.returncode == 0 and "STALE" not in r.stdout, (r.returncode, r.stdout)
+
+
+def test_a_damaged_first_seen_record_never_hides_the_rest_of_the_wave():
+    """The first log is missing and its first-seen record holds bytes that are not a timestamp; the second
+    has published. The observer reads the damage as the epoch and goes on: the second is not pending."""
+    import hashlib
+    with tempfile.TemporaryDirectory() as d:
+        first, second = pathlib.Path(d) / "a.out", pathlib.Path(d) / "b.out"
+        act = pathlib.Path(d) / ".claude/state/waiter-first-seen"
+        act.mkdir(parents=True)
+        (act / hashlib.md5(str(first).encode()).hexdigest()[:16]).write_bytes(b"\xff\xfe12\n")
+        second.write_text("x\nTurn completed (rc=0)\n")
+        pathlib.Path(str(second) + ".done").write_text("0\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "6", str(first), str(second)],
+                           capture_output=True, text=True, cwd=d, timeout=60)
+        assert "b.out" not in r.stdout and "a.out" in r.stdout, (r.returncode, r.stdout)

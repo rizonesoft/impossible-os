@@ -166,6 +166,9 @@ CAND_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_candidate.py"
 # storage refuses the pass, or reads the candidate as unreadable, instead of holding the dispatcher. A read
 # the kernel keeps uninterruptible ends only when its I/O does; that is a recorded limit of the lane machinery.
 CANDIDATE_READ_SECS="${CANDIDATE_READ_SECS:-300}"
+# Every git command this dispatcher runs is bounded the same way: a function in front of the binary, so a
+# slow ancestry walk or a stalled lookup refuses the pass (each caller's failure branch) instead of holding it.
+git() { timeout -k 5 "$CANDIDATE_READ_SECS" git "$@"; }
 candidate_id() { timeout -k 5 "$CANDIDATE_READ_SECS" python3 "$CAND_TOOL" launch --exclude "$REVIEWS_DIR"; }
 case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then

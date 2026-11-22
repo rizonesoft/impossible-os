@@ -975,6 +975,14 @@ def _attempt(cmd, end, broker, cancel):
     # deadline, for ever) only delays the result while each pass walks /proc.
     # Every walk is bounded too: by the teardown's end and a last fifth of a second for the final passes,
     # after which the result is published whatever the walk had reached.
+    if status is None:
+        # The warden leads a session of its own (setsid) and is not reaped yet, so its group id cannot have
+        # been given to anyone else: one signal to the group reaches what stayed in it before any /proc walk,
+        # so a crowded host that slows the walk never leaves the attempt unsignalled.
+        try:
+            os.killpg(leader, signal.SIGKILL)
+        except OSError:
+            pass                                       # fail-direction: the group has already ended
     drain_end = max(min(end, now_cs() + (100 if cancel.sig else TEARDOWN_CS)), now_cs() + 5)
     walk_end = drain_end + 20
     cut = False

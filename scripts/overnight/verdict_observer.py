@@ -111,11 +111,17 @@ def first_seen(log: str, act_dir: str) -> int:
             with open(tmp, "w") as fh:
                 fh.write(f"{int(time.time())}\n")
             os.replace(tmp, side)
-        with open(side) as fh:
-            text = fh.readline().strip()
+        fd = review_result.open_regular(side, os.O_RDONLY)
+        try:
+            raw = os.read(fd, 32)                      # a timestamp is a few digits: anything longer is damage
+        finally:
+            os.close(fd)
     except OSError:
         return 0
-    return int(text) if text.isdigit() else 0
+    text = raw.strip()
+    # A damaged record (not ASCII digits) reads as the epoch, as a missing one does: never an exception that
+    # would end the observer before it reaches the other logs.
+    return int(text) if text.isdigit() and text.isascii() and len(text) < 20 else 0
 
 
 def read_tail(log: str) -> list:
@@ -211,6 +217,9 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                 try:
                     recovery[f] = start_recovery(f)
                     soon = True
+                    # Started: the recovery is judged on a later round, and the transcript's age is not.
+                    say(f"unknown {n}")
+                    continue
                 except OSError:
                     # The recovery could not be started (no descriptors, no memory): it is judged as a recovery
                     # that failed, the next time "no status" is read conclusively (a read error first is

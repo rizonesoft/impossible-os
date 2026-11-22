@@ -2722,3 +2722,26 @@ def test_a_stalled_candidate_read_refuses_the_pass_instead_of_holding_the_dispat
     done, prompt = _dispatch(tmp_path, "completion", "x")
     assert done.returncode == 2 and "could not be read" in done.stderr, (done.returncode, done.stderr[-400:])
     assert prompt == "" and time.monotonic() - began < 20, time.monotonic() - began
+
+
+
+def test_every_git_command_the_dispatcher_runs_is_bounded(tmp_path, monkeypatch):
+    """git stalls on its first lookup (a slow ancestry walk, stalled storage): the dispatcher refuses within
+    CANDIDATE_READ_SECS and dispatches nothing, as for a stalled candidate read."""
+    import os
+    import shutil
+    import time
+    real = shutil.which("git")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in *"HEAD^{commit}"*) exec sleep 60;; esac\n'
+        f'exec {real} "$@"\n')
+    (bindir / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CANDIDATE_READ_SECS", "1")
+    began = time.monotonic()
+    done, prompt = _dispatch(tmp_path, "completion", "x")
+    assert done.returncode == 2 and prompt == "", (done.returncode, done.stderr[-400:])
+    assert time.monotonic() - began < 20, time.monotonic() - began

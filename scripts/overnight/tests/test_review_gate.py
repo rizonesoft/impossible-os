@@ -1054,3 +1054,20 @@ def test_the_watchdog_ends_a_command_it_started_before_it_refuses():
             time.sleep(0.05)
         else:
             raise AssertionError(f"command {pid} outlived the watchdog's refusal")
+
+
+
+def test_the_round_lookup_asks_the_manifest_for_the_round_alone(tmp_path, monkeypatch):
+    """The round check stops at the newest round row instead of reading back to the oldest of five kinds:
+    _pass_receipts hands the kinds it is asked for to the one reader, and the round check asks for round."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    import review_pin
+    asked = []
+    monkeypatch.setattr(review_pin, "newest_receipts",
+                        lambda manifest, todo, section, kinds, **k: (asked.append(kinds), ({}, True))[1])
+    scg._pass_receipts(tmp_path, "todo/x.md", "9", ("round",))
+    scg._pass_receipts(tmp_path, "todo/x.md", "9")
+    assert asked == [("round",), tuple(scg._PASS_KINDS)], asked
+    src = pathlib.Path(scg.__file__).read_text()
+    assert '_pass_receipts(root, todo, required_section, ("round",))' in src
