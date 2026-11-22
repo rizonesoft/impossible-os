@@ -278,12 +278,23 @@ def test_no_old_blob_is_read_when_the_new_blob_holds_no_dash():
 def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
     odd = ("ok " + DASH + "\n").encode("utf-16") + b"\n"            # a UTF-16 file cut mid-character
 
-    class Odd:
-        stdin = io.BytesIO()
-        stdout = io.BytesIO(b"abc blob %d\n" % len(odd) + odd + b"\n")
+    class Fake:
+        """A stream that answers from fixed bytes."""
 
-    reader = m.BlobReader.__new__(m.BlobReader)
-    reader.proc, reader.counts = Odd(), {}
+        def __init__(self, data):
+            self.out = io.BytesIO(data)
+
+        def write(self, data):
+            pass
+
+        def read(self, n):
+            return self.out.read(n)
+
+        def readline(self):
+            return self.out.readline()
+
+    reader = m.BlobReader()
+    reader.stream = Fake(b"abc blob %d\n" % len(odd) + odd + b"\n")
     try:
         reader.lines("abc")
     except ValueError as exc:
@@ -291,11 +302,7 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
     else:
         raise AssertionError("a truncated UTF-16 file read as clean")
 
-    class Short:
-        stdin = io.BytesIO()
-        stdout = io.BytesIO(b"abc blob 100\nclean")
-
-    reader.proc = Short()
+    reader.stream = Fake(b"abc blob 100\nclean")
     try:
         reader.lines("abc")
     except ValueError as exc:
@@ -1308,17 +1315,17 @@ def test_a_refused_blobs_lines_are_read_as_a_stream(tmp_path, monkeypatch):
     _production_git_in(root, monkeypatch)
     reader = m.BlobReader()
     largest = []
-    real_read = reader.proc.stdout.read
+    real_read = reader._io().read
 
-    def read(n=-1):
+    def read(n):
         largest.append(n)
         return real_read(n)
-    reader.proc.stdout.read = read
+    reader.stream.read = read
     try:
         for name in ("u8.md", "u16.md"):
             assert reader.lines(_git(root, "rev-parse", f"HEAD:{name}")) == want, name
     finally:
-        reader.proc.stdout.read = real_read
+        reader.stream.read = real_read
         assert reader.close() == 0
     assert len(want) == 2 and 0 < max(largest) <= max(m.CHUNK, m.BINARY_PREFIX), max(largest)
 
@@ -1350,3 +1357,10 @@ def test_a_long_dash_free_line_is_never_held_while_naming_lines():
     finally:
         tracemalloc.stop()
     assert keys.end() == [(2, m.line_key(("z " + DASH).encode()))] and peak < (1 << 18), peak
+
+
+def test_a_change_that_names_no_blob_starts_no_reader(monkeypatch):
+    def started(*_a, **_k):
+        raise AssertionError("a blob reader was started")
+    monkeypatch.setattr(m.bounded_run, "Stream", started)
+    assert m.judge([("", [[("a" * 40, m.NULL_OID, "gone.md")]])]) == []

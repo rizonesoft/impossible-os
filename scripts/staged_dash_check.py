@@ -198,13 +198,17 @@ class BlobReader:
     time (bounded_run.Stream): at the deadline, or on Ctrl-C or SIGTERM, the
     whole group ends, so a stalled read ends in a short read, which is an
     error. Each blob's dash count is cached by id and its text is not kept; a
-    refused file's blobs are read again, as a stream, to name lines."""
+    refused file's blobs are read again, as a stream, to name lines. The process
+    starts with the first blob asked for, so a change that names none starts none."""
 
     def __init__(self):
-        self.stream = bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=TIMEOUT,
-                                         env=_git_env())   # deadline: the stream's own timer
-        self.proc = self.stream.proc
-        self.counts = {}
+        self.stream, self.counts = None, {}
+
+    def _io(self):
+        if self.stream is None:
+            self.stream = bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=TIMEOUT,
+                                             env=_git_env())   # deadline: the stream's own
+        return self.stream
 
     def count(self, oid: str) -> int:
         if oid == NULL_OID:
@@ -214,20 +218,20 @@ class BlobReader:
         return self.counts[oid]
 
     def _header(self, oid: str) -> int:
-        self.proc.stdin.write(oid.encode() + b"\n")
-        self.proc.stdin.flush()
-        header = self.proc.stdout.readline().split(b" ")
+        io = self._io()
+        io.write(oid.encode() + b"\n")
+        header = io.readline().split(b" ")
         if len(header) < 3 or header[1] != b"blob":
             raise ValueError(f"cat-file did not return blob {oid}")
         return int(header[2])
 
     def _end(self, oid: str, left: int) -> None:
-        if left or self.proc.stdout.read(1) != b"\n":
+        if left or self.stream.read(1) != b"\n":
             raise ValueError(f"cat-file returned blob {oid} short")
 
     def _chunks(self, left: int):
         while left:
-            chunk = self.proc.stdout.read(min(left, CHUNK))
+            chunk = self.stream.read(min(left, CHUNK))
             if not chunk:
                 return
             left -= len(chunk)
@@ -238,7 +242,7 @@ class BlobReader:
         its prefix makes it binary (0), a UTF-16 byte-order mark is decoded as
         it streams, anything else is counted as UTF-8 bytes."""
         size = self._header(oid)
-        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
+        head = self.stream.read(min(size, BINARY_PREFIX))
         left = size - len(head)
         if len(head) < min(size, BINARY_PREFIX):
             raise ValueError(f"cat-file returned blob {oid} short")
@@ -276,7 +280,7 @@ class BlobReader:
         if oid == NULL_OID:
             return []
         size = self._header(oid)
-        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
+        head = self.stream.read(min(size, BINARY_PREFIX))
         left = size - len(head)
         if len(head) < min(size, BINARY_PREFIX):
             raise ValueError(f"cat-file returned blob {oid} short")
@@ -304,10 +308,11 @@ class BlobReader:
         return keys.end()
 
     def abort(self) -> None:
-        self.stream.abort()
+        if self.stream is not None:
+            self.stream.abort()
 
     def close(self) -> int:
-        return self.stream.close()
+        return 0 if self.stream is None else self.stream.close()
 
 
 def name_lines(old_texts, new_text):

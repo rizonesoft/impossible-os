@@ -303,7 +303,8 @@ def test_a_watchdog_started_late_still_ends_a_stream_at_its_deadline(monkeypatch
     began = time.monotonic()
     stream = bounded_run.Stream(["sleep", "30"], "a sleeper", timeout=0.2)
     try:
-        assert stream.proc.stdout.read(1) == b""          # ended by the watchdog, not answered
+        with pytest.raises(ValueError, match="did not answer"):
+            stream.read(1)                                 # ended at the deadline, not answered
         took = time.monotonic() - began
     finally:
         stream.abort()
@@ -342,3 +343,75 @@ def test_a_leader_that_does_not_go_after_its_kill_is_reported_and_never_signalle
     proc = type("P", (), {"pid": 1, "abandoned": True})()
     bounded_run._kill_group(proc)
     assert len(signalled) == calls
+
+
+def _escaped_cat_file(tmp_path, pidfile):
+    """git whose cat-file never answers and leaves a helper in a session of its own holding its stdout, out
+    of reach of the group's end."""
+    import shutil
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *" cat-file "*) setsid {_helper(pidfile)[:-1]} 2>/dev/null &\n'
+                                f' while [ ! -e "{pidfile}" ]; do :; done; exit 0 ;; esac\nexec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    return {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+
+def test_a_read_held_open_outside_the_group_ends_by_the_deadline(tmp_path):
+    pidfile, ready = tmp_path / "helper.pid", tmp_path / "ready"
+    env = _escaped_cat_file(tmp_path, pidfile)
+    script = _STREAM.format(scripts=str(REPO / "scripts"), timeout=1, ready=str(ready))
+    try:
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20, env=env)
+        assert done.returncode == 0 and done.stdout.startswith("refused"), done
+        assert float(done.stdout.split()[1]) < 2.5, done.stdout
+    finally:
+        _reap(pidfile)
+
+
+def test_closing_a_stream_held_open_outside_the_group_ends_by_the_deadline(tmp_path):
+    pidfile = tmp_path / "helper.pid"
+    script = textwrap.dedent(f"""
+        import sys, time
+        sys.path.insert(0, {str(REPO / "scripts")!r})
+        import bounded_run
+        stream = bounded_run.Stream(["sh", "-c", {f"setsid {_helper(pidfile)[:-1]} 2>/dev/null & while [ ! -e '{pidfile}' ]; do :; done; exit 0"!r}],
+                                    "a stream", timeout=1)
+        began = time.monotonic()
+        try:
+            stream.close()
+        except ValueError as exc:
+            print("refused", round(time.monotonic() - began, 1), exc)
+    """)
+    try:
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20)
+        assert done.stdout.startswith("refused") and float(done.stdout.split()[1]) < 2.5, done
+    finally:
+        _reap(pidfile)
+
+
+def test_a_hangup_ends_the_command_group_and_reaches_the_caller(tmp_path):
+    pidfile = tmp_path / "sleeper.pid"
+    script = textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, {str(REPO / "scripts")!r})
+        import bounded_run
+        bounded_run.run(["sh", "-c", {f"echo $$ > '{pidfile}.part' && mv '{pidfile}.part' '{pidfile}'; exec sleep 61"!r}],
+                        "a sleeper", timeout=60)
+    """)
+    proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not pidfile.exists():
+            time.sleep(0.05)
+        assert pidfile.exists(), "the command never started"
+        proc.send_signal(signal.SIGHUP)
+        proc.wait(timeout=10)
+        assert proc.returncode == -signal.SIGHUP, proc.returncode
+        assert _gone(int(pidfile.read_text())), "the command outlived its caller's hangup"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        _reap(pidfile)

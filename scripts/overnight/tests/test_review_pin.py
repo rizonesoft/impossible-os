@@ -2115,13 +2115,25 @@ def test_a_reset_during_the_status_walk_refuses_the_launch(tmp_path, monkeypatch
 
 def _late_unit_broker(tmp_path, start_at_once):
     """A broker run whose service manager takes the unit and then stalls past the deadline; with
-    start_at_once the unit starts at once (inside the grace), otherwise the test starts it afterwards."""
+    start_at_once the unit starts at once (inside the grace), otherwise the test starts it afterwards. A real
+    unit runs outside the broker's process tree, so the test starts it, never the fake service manager."""
     import os
+    import subprocess
+    import threading
     repo, _git = _tmp_repo(tmp_path)
     bindir = tmp_path / "bin"
     bindir.mkdir()
     job = tmp_path / "job.sh"
-    start = f'setsid /bin/bash "{job}" </dev/null >/dev/null 2>&1 &\n' if start_at_once else ""
+    start = ""
+    if start_at_once:
+        def unit():
+            import time
+            end = time.monotonic() + 20
+            while time.monotonic() < end and not (job.exists() and job.read_text()):
+                time.sleep(0.01)
+            subprocess.run(["bash", str(job)], cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=60, check=False)
+        threading.Thread(target=unit, daemon=True).start()
     (bindir / "systemd-run").write_text(f'#!/bin/bash\nprintf "%s" "${{@: -1}}" > "{job}"\n{start}sleep 10\n')
     (bindir / "systemctl").write_text("#!/bin/sh\nsleep 10\n")
     for tool in ("systemd-run", "systemctl"):
@@ -2249,6 +2261,41 @@ def test_a_pass_whose_success_was_never_published_sets_no_base(tmp_path):
     manifest = tmp_path / "manifest.jsonl"
     manifest.write_text(json.dumps(older) + "\n" + json.dumps(newer) + "\n")
     assert rp.section_start(manifest, "todo/x.md", 9) == "a" * 40
+
+
+def test_the_gate_and_the_bases_select_the_same_receipt(tmp_path):
+    """One manifest read by one reader for both questions, a newer pass of each kind still running: the gate
+    judges the running pass (and credits none), a base is read from the checked pass before it."""
+    import importlib.util
+    import json
+    spec = importlib.util.spec_from_file_location("scg_select", REPO / ".claude/hooks/section_commit_gate.py")
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    root = tmp_path / "root"
+    reviews = root / ".claude/overnight/reviews"
+    reviews.mkdir(parents=True)
+    rows = []
+    for n, kind in enumerate(("plan", "completion")):
+        done = {**_published_receipt(tmp_path, 2 * n, "a" * 40, "0"), "kind": kind,
+                "worktree_sha256": rp.CLEAN_WORKTREE}
+        running = {**_published_receipt(tmp_path, 2 * n + 1, "b" * 40, None), "kind": kind}
+        rows += [json.dumps(done), json.dumps(running)]
+    (reviews / "manifest.jsonl").write_text("\n".join(rows) + "\n")
+    found, readable = gate._pass_receipts(root, "todo/x.md", "9")
+    assert readable and {k: e["head"] for k, (e, _age) in found.items()} == {"plan": "b" * 40, "completion": "b" * 40}
+    assert not any(gate._receipt_complete(e) for e, _age in found.values())
+    checked, _ = rp.newest_receipts(reviews / "manifest.jsonl", "todo/x.md", "9", gate._PASS_KINDS, checked=True)
+    assert {k: e["head"] for k, (e, _age) in checked.items()} == {"plan": "a" * 40, "completion": "a" * 40}
+    assert rp.section_start(reviews / "manifest.jsonl", "todo/x.md", 9) == "a" * 40
+    assert rp.repair_base(reviews / "manifest.jsonl", "todo/x.md", 9) == "a" * 40
+    real = rp.newest_receipts                          # the gate asks through the shared reader, never its own
+    asked = []
+    rp.newest_receipts = lambda *a, **k: (asked.append(a), real(*a, **k))[1]
+    try:
+        gate._pass_receipts(root, "todo/x.md", "9")
+    finally:
+        rp.newest_receipts = real
+    assert asked, "the gate read the manifest with a reader of its own"
 
 
 def test_the_commit_gate_and_the_range_reads_credit_the_same_receipts(tmp_path):
@@ -2406,6 +2453,85 @@ def test_a_cancelled_submission_starts_no_fallback(tmp_path):
         assert proc.returncode != 0
         assert pathlib.Path(f"{log}.done").read_text().strip() == "143"
         assert "Turn completed (rc=143)" in log.read_text()        # the broker's, not a review's
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+
+def _result_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("review_result", REPO / "scripts/overnight/review_result.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_result_whose_publication_fails_is_reported_as_failed(tmp_path, capsys):
+    rr = _result_module()
+    log, prompt = tmp_path / "x.out", tmp_path / ".prompt.x"
+    log.write_text("")
+    prompt.write_text("p")
+    (tmp_path / "x.out.done").mkdir()                     # the rename over it fails
+    assert rr.publish(str(log), "0", str(prompt)) == 1
+    assert "could not be published" in capsys.readouterr().err
+
+
+def test_a_claimed_result_is_left_to_its_owner(tmp_path):
+    rr = _result_module()
+    log = tmp_path / "x.out"
+    assert rr.claim(str(log)) == 0 and rr.claim(str(log)) == 4
+    assert rr.publish(str(log), "124", claim_first=True) == 0
+    assert not (tmp_path / "x.out.done").exists() and log.read_text() == ""
+
+
+def test_a_signal_to_the_broker_alone_ends_a_stalled_submission_at_once(tmp_path):
+    import os
+    import signal
+    marker = tmp_path / "submitting"
+    repo, proc = _stalling_broker(tmp_path, False, submit=f"touch {marker}; exec sleep 30")
+    try:
+        log = _registered_log(repo)
+        import time
+        end = time.monotonic() + 20
+        while time.monotonic() < end and not marker.exists():
+            time.sleep(0.02)
+        os.kill(proc.pid, signal.SIGTERM)                 # the broker's own process id, not its group
+        proc.wait(timeout=5)
+        assert proc.returncode == 143, proc.stderr.read()
+        assert pathlib.Path(f"{log}.done").read_text().strip() == "143"
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+
+def test_a_signal_while_the_prompt_is_written_leaves_nothing(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    marker = tmp_path / "hashing"
+    (bindir / "sha256sum").write_text(f"#!/bin/sh\ntouch {marker}\nexec sleep 30\n")
+    (bindir / "sha256sum").chmod(0o755)
+    (tmp_path / "c.js").write_text("\n")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                             "[review-kind: round] todo/x.md section 9\nReview it."], cwd=str(repo), env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        end = time.monotonic() + 20
+        while time.monotonic() < end and not marker.exists():
+            time.sleep(0.02)
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=5)
+        reviews = repo / ".claude/overnight/reviews"
+        assert proc.returncode == 143, proc.stderr.read()
+        assert not list(reviews.glob(".prompt.*")) and not (reviews / "manifest.jsonl").exists()
     finally:
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)

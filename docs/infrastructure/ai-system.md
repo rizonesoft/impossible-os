@@ -5,7 +5,7 @@
 
 ## Authority Hierarchy (read this first)
 
-> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes named in `CLAUDE.md`. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
+> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes and attended sessions named in `CLAUDE.md`. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
 | Layer                        | Role                                                                                                                                                                                         | Authority over                                                                                                                       |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -22,7 +22,7 @@
 2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/skills/`, `.codex/skills/`, `.other-tool/skills/` etc.).
 3. **External reviewers return findings, never edits.** Codex review output is information the active orchestrator reads and judges. Each finding is verified at file:line and classified Fix / Reject / Accept-XREF before action.
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, do not fork the doctrine.
-5. **Only operator-started lanes commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, an attended Claude repair session in its own worktree is the one writer outside the lanes, and every writer passes the same gates and the same Astra review. External reviewers return findings only.
+5. **Only the operator's lanes and attended sessions commit.** Claude Code is the default implementation agent; neon-a (agy) commits inside its own directories, neon-b only reports, an attended Claude repair session in its own worktree is the one writer outside the lanes, and every writer passes the same gates and the same Astra review. External reviewers return findings only.
 
 ---
 
@@ -387,7 +387,7 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ## Autonomous-Agent Boundary Policy
 
-Third-party autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs on their own) are **refused** here. The operator-started lanes in [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set) are not such agents: the operator starts and stops each one, and each lane that commits (neon-b only writes reports) does so only through the repository's own gates and review. Before the lanes (2026-11-20), Impossible OS accepted commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Only operator-started lanes commit.") enforced as repo policy rather than implied: a third-party agent is not a lane.
+Third-party autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs on their own) are **refused** here. The operator-started lanes in [CLAUDE.md "Two engines, one gate set"](../../CLAUDE.md#two-engines-one-gate-set) are not such agents: the operator starts and stops each one, and each lane that commits (neon-b only writes reports) does so only through the repository's own gates and review. Before the lanes (2026-11-20), Impossible OS accepted commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Only the operator's lanes and attended sessions commit.") enforced as repo policy rather than implied: a third-party agent is not a lane.
 
 ### Why
 

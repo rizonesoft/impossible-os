@@ -24,6 +24,7 @@ is not ended.
 """
 import collections
 import os
+import selectors
 import signal
 import subprocess
 import threading
@@ -48,6 +49,8 @@ class _Watch:
         self.watched = [signal.SIGTERM]
         if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
             self.watched.append(signal.SIGINT)             # an ignored SIGINT (a background caller) stays ignored
+        if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+            self.watched.append(signal.SIGHUP)             # the terminal went away: as a cancellation, unless ignored
         self.previous = {sig: signal.signal(sig, self._on) for sig in self.watched}
 
     def _on(self, signum, _frame):
@@ -244,11 +247,13 @@ class _AtDeadline(threading.Thread):
 
 
 class Stream:
-    """A command the caller writes to and reads from as it goes (`proc.stdin`, `proc.stdout`), in its own
-    process group. A timer ends the whole group at the deadline, so a read the group would never answer ends
-    short (the caller treats a short read as an error); Ctrl-C and SIGTERM end the group at once and then
-    reach the caller's own handler, whenever they arrive, `close` included. `close` ends input, waits for the
-    exit and for the output's end within the same deadline; `abort` ends the group.
+    """A command the caller writes to (`write`) and reads from (`read`, `readline`) as it goes, in its own
+    process group. Every read and write waits on its pipe only until the deadline, so one no process will
+    answer (a process outside the group holding the pipe, or one the kernel keeps in uninterruptible I/O
+    after it was ended) is an error by it; a timer ends the whole group at the deadline. Ctrl-C, SIGTERM and
+    SIGHUP end the group at once and then reach the caller's own handler, whenever they arrive, `close`
+    included. `close` ends input, waits for the exit and for the output's end within the same deadline;
+    `abort` ends the group.
 
     Every way out goes through one teardown, which acts once: the timer is cancelled and joined while the
     leader is still unreaped, so neither it nor a second abort can signal a group id after its release."""
@@ -262,6 +267,9 @@ class Stream:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
                 start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
+            self._in, self._out, self._buf = self.proc.stdin.fileno(), self.proc.stdout.fileno(), bytearray()
+            os.set_blocking(self._in, False)
+            os.set_blocking(self._out, False)
             self._timer = _AtDeadline(self._deadline, self._expire)
             self._timer.start()
             self._watch.hold = False
@@ -273,6 +281,61 @@ class Stream:
             raise
         if pending:
             self._cancel(pending)
+
+    def _ready(self, fd, events):
+        """Wait until `fd` is ready or the deadline; at the deadline the group is ended and this is an error."""
+        with selectors.DefaultSelector() as sel:
+            sel.register(fd, events)
+            left = self._deadline - time.monotonic()
+            if left > 0 and sel.select(left):
+                return
+        self.expired = True
+        self.abort()
+        raise ValueError(f"{self.what} did not answer within {self.timeout:g} s")
+
+    def _fill(self) -> bool:
+        """More output into the buffer; False at its end."""
+        while True:
+            try:
+                chunk = os.read(self._out, CHUNK)
+            except BlockingIOError:
+                self._ready(self._out, selectors.EVENT_READ)
+                continue
+            if not chunk:
+                return False
+            self._buf += chunk
+            return True
+
+    def read(self, n: int) -> bytes:
+        """Up to `n` bytes of output, fewer only at its end."""
+        while len(self._buf) < n and self._fill():
+            pass
+        out = bytes(self._buf[:n])
+        del self._buf[:n]
+        return out
+
+    def readline(self) -> bytes:
+        """The next line of output with its newline, or what is left at its end."""
+        start = 0
+        while (i := self._buf.find(b"\n", start)) < 0:
+            start = len(self._buf)
+            if not self._fill():
+                i = len(self._buf) - 1
+                break
+        out = bytes(self._buf[:i + 1])
+        del self._buf[:i + 1]
+        return out
+
+    def write(self, data: bytes) -> None:
+        """All of `data` to the command's input; a command that stopped reading is an error."""
+        view = memoryview(data)
+        while view:
+            try:
+                view = view[os.write(self._in, view):]
+            except BlockingIOError:
+                self._ready(self._in, selectors.EVENT_WRITE)
+            except BrokenPipeError:
+                raise ValueError(f"{self.what} stopped reading its input") from None
 
     def _expire(self):
         self.expired = True
@@ -319,8 +382,11 @@ class Stream:
             raise ValueError(f"{self.what} did not finish within {self.timeout:g} s")
         if rc != 0:
             _kill_group(self.proc)                         # a failure leaves no helper of its own behind
-        while self.proc.stdout.read(CHUNK):                # the end of output: every holder gone, or the timer
-            pass
+        try:
+            while self._fill():                            # the end of output: every holder gone, or the deadline
+                del self._buf[:]
+        except ValueError:
+            raise ValueError(f"{self.what} did not finish within {self.timeout:g} s") from None
         # Judged here, not only by the watchdog: one the host runs late is cancelled below before it can say.
         late = self.expired or time.monotonic() >= self._deadline
         self._watch.hold = True

@@ -556,3 +556,20 @@ def test_refusal_a_pass_that_read_uncommitted_changes_does_not_count(tmp_path):
     for kind in ("round", "performance", "completion"):
         ok, why = _judge(root, receipt={kind: {"worktree_sha256": "f" * 64}}, **_good(h))
         assert not ok and f"{kind} read uncommitted changes" in why, (kind, why)
+
+
+def test_refusal_a_replacement_ref_does_not_put_a_pass_in_this_history(tmp_path):
+    """A replace ref that grafts another branch under this history: the gate walks stored objects, as the
+    candidate reader does, so a pass from that branch is still not in this history."""
+    root, h = _history(tmp_path)
+    _git(root, "replace", "--graft", h["plan"], h["elsewhere"])
+    ok, why = _judge(root, **_good(h, plan=(h["elsewhere"], 1)))
+    assert not ok and "not in this history" in why, why
+
+
+def test_refusal_a_graft_file_refuses_the_stamp(tmp_path):
+    root, h = _history(tmp_path)
+    (root / ".git/info").mkdir(exist_ok=True)
+    (root / ".git/info/grafts").write_text(f"{h['plan']} {h['elsewhere']}\n")
+    ok, why = _judge(root, **_good(h))
+    assert not ok and "graft file" in why, why

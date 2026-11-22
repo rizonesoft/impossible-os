@@ -2232,6 +2232,26 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
     return out
 
 
+def _stored_env() -> dict:
+    """The environment for a git read the stamp is judged on: stored objects only, as the candidate reader
+    (scripts/review_candidate.py) reads them, so a replacement ref cannot make the gate compare other
+    commits than the ones a pass named and a push sends."""
+    return {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
+
+
+def _graft_issue(root: Path) -> str:
+    """A refusal when a graft file rewrites the history the gate would walk (which GIT_NO_REPLACE_OBJECTS
+    does not undo), as the candidate reader refuses one; "" otherwise."""
+    lines = _git_lines(root, "rev-parse", "--path-format=absolute", "--git-path", "info/grafts")
+    path = os.environ.get("GIT_GRAFT_FILE") or (lines[0] if lines else "")
+    if not path:
+        return "where a graft file would be could not be read, so the history the passes read is not known"
+    if os.path.lexists(path):
+        return (f"a graft file ({path}) rewrites the history git shows, so the passes' candidates cannot be "
+                f"judged; convert it (git replace --convert-graft-file) or remove it")
+    return ""
+
+
 def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     """True if `sha` is an ancestor of (or equal to) `descendant_sha`.
 
@@ -2252,7 +2272,7 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "merge-base", "--is-ancestor", sha, descendant_sha],
-            cwd=str(root), timeout=3,
+            cwd=str(root), timeout=3, env=_stored_env(),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
@@ -2368,7 +2388,7 @@ def _unread_by_final_pass(root: Path, paths: list[str], old_spec: str, new_spec:
 def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
     try:
         out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=timeout,
-                                      stderr=subprocess.DEVNULL)
+                                      stderr=subprocess.DEVNULL, env=_stored_env())
     except Exception:
         return None
     return out.splitlines()
@@ -2432,11 +2452,24 @@ def _stamped_sections(root: Path, todo: str) -> set[str] | None:
     return sections or None
 
 
+def _review_pin_path(root: Path | None) -> None:
+    """Where review_pin is imported from: the checked tree's scripts/ when it has the module (the reader that
+    matches the manifest that tree's dispatcher writes), else this gate's own checkout, so a tree without the
+    module (a fixture, a checkout being repaired) is still judged by the one shared reader, never refused
+    as unreadable for want of a copy."""
+    own = str(Path(__file__).resolve().parents[2] / "scripts")
+    paths = [own]
+    if root is not None and (root / "scripts" / "review_pin.py").is_file():
+        paths.insert(0, str(root / "scripts"))
+    for path in reversed(paths):
+        if path in sys.path:
+            sys.path.remove(path)
+        sys.path.insert(0, path)
+
+
 def _blocking_levels(root: Path) -> tuple[str, ...]:
     """The levels that hold a stamp, from the reviewer pin; every level when the pin cannot be read."""
-    scripts = str(root / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
+    _review_pin_path(root)
     try:
         import review_pin
         return tuple(review_pin.load_pin(root / ".conclave" / "reviewers.toml")["blocking"])
@@ -2445,49 +2478,25 @@ def _blocking_levels(root: Path) -> tuple[str, ...]:
 
 
 def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bool]:
-    """(newest receipt per pass kind, readable) for one TODO, and one section when given.
-
-    The manifest is read newest first. A line that cannot be read may be a
-    newer, blocking receipt cut short while it was written; reading past it
-    would revive an older clean one. So when such a line names this TODO, or is
-    cut too short to say which TODO it was for, the scan stops there and
-    `readable` is False: a kind not found before it has no receipt that can be
-    trusted. An unreadable line that names another TODO is not this one's.
-    Each value is (receipt, age), a lower age being a newer line.
-    """
-    found: dict = {}
+    """(newest receipt per pass kind, readable) for one TODO, and one section when given: review_pin's
+    newest_receipts, the one reader the dispatcher's bases use too, asked the gate's question: the newest row
+    of each kind in any state, so a pass still running or failed is the one judged and revives nothing older.
+    A line that cannot be read and may be this TODO's ends the read with `readable` False; when the manifest
+    or the module cannot be read nothing is readable (the gate stays shut rather than trust an older
+    receipt). Each value is (receipt, age)."""
+    _review_pin_path(root)
     try:
-        lines = (root / _PASS_MANIFEST).read_text().splitlines()
-    except FileNotFoundError:
-        return (found, True)      # no pass has ever been dispatched here
-    except (OSError, UnicodeDecodeError):
-        return (found, False)     # it exists and cannot be read: nothing may be assumed absent
-    age = 0
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        age += 1
-        try:
-            e = json.loads(line)
-        except ValueError:
-            if _unreadable_line_may_be(root, line, todo):
-                return (found, False)
-            continue
-        if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") not in _PASS_KINDS:
-            continue
-        if section is not None and str(e.get("section", "")) != section:
-            continue
-        found.setdefault(e["kind"], (e, age))
-    return (found, True)
+        import review_pin
+        return review_pin.newest_receipts(root / _PASS_MANIFEST, todo, section, _PASS_KINDS)
+    except Exception:
+        return ({}, False)                             # the manifest cannot be read: nothing may be assumed
 
 
 def _unreadable_line_may_be(root: Path, line: str, todo: str) -> bool:
     """review_pin.unreadable_line_may_be: a damaged line is another TODO's only when its whole todo value says
     so (a cut inside the value revived an older receipt, review 2026-11-20). When the module cannot be loaded,
     every damaged line may be this TODO's: the gate stays shut rather than trust an older receipt."""
-    scripts = str(root / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
+    _review_pin_path(root)
     try:
         import review_pin
         return review_pin.unreadable_line_may_be(line, todo)
@@ -2497,9 +2506,7 @@ def _unreadable_line_may_be(root: Path, line: str, todo: str) -> bool:
 
 def _pass_cap(root: Path) -> int | None:
     """The reviewer pin's pass_cap, or None when the pin cannot be read (no waiver then)."""
-    scripts = str(root / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
+    _review_pin_path(root)
     try:
         import review_pin
         return int(review_pin.load_pin(root / ".conclave" / "reviewers.toml")["pass_cap"])
@@ -2538,9 +2545,7 @@ def _receipt_complete(receipt: dict) -> bool:
     next pass's base never disagree about which passes count."""
     global _RECEIPT_COMPLETE
     if _RECEIPT_COMPLETE is None:                      # loaded once; each receipt's markers are still read
-        scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-        if scripts not in sys.path:
-            sys.path.insert(0, scripts)
+        _review_pin_path(None)
         import review_pin
         _RECEIPT_COMPLETE = review_pin.receipt_complete
     return _RECEIPT_COMPLETE(receipt)
@@ -2625,6 +2630,9 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     pin_issue = _pin_issue(root)
     if pin_issue:
         parts.append(pin_issue)
+    graft = _graft_issue(root)
+    if graft:
+        parts.append(graft)
     blocking = _blocking_levels(root)
     # Receipts found before an unreadable line are newer than it and stand. Only
     # a pass that would have to be looked for PAST that line is affected, so

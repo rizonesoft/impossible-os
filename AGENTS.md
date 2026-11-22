@@ -11,7 +11,7 @@ Impossible OS uses **Claude Code** as its primary orchestrator. Doctrine lives i
 
 ## Authority (3-bullet summary of the 5 invariants)
 
-**Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes named in `CLAUDE.md`.
+**Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. The only other executors are the operator-started lanes and attended sessions named in `CLAUDE.md`.
 
 - **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skills, tool instructions, and reviewer prompts reference doctrine but never redefine it. On conflict, `CLAUDE.md` wins.
 - **External reviewers return findings, never edits.** Codex in reviewer mode and any future reviewer tool emit analysis that the active orchestrator reads under receiving-code-review discipline: verify at file:line, classify Fix / Reject / Accept, never blind-implement.

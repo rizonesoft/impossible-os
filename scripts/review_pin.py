@@ -366,7 +366,7 @@ def section_status(root, todo, section):
     root = pathlib.Path(root)
     section = str(section)
     seen, older, unsure = False, False, False
-    # One read from the manifest's end: the newest checked plan answers at once (the same lookup the
+    # One read from the manifest's end: the newest checked plan answers at once (the same selection the
     # dispatcher uses, so a resume and a dispatch name one base, and a torn line newer than the plan refuses
     # both); without one the whole history decides between the passes and the older kinds.
     for line in _newest_first(root / MANIFEST):
@@ -382,7 +382,7 @@ def section_status(root, todo, section):
         if e.get("kind") not in SECTION_KINDS:
             continue
         seen = True
-        if _checked(e, ("plan",)):
+        if e.get("kind") == "plan" and receipt_complete(e):   # a base's question, as newest_receipts(checked)
             if unsure:
                 raise Refused(f"{MANIFEST} has an unreadable line after the newest checked plan of {todo} section "
                               f"{section}; it may be a newer pass, so the section's start is unknown")
@@ -537,29 +537,54 @@ def broker_log(receipt):
     return os.path.join(os.path.dirname(log), f"{m.group(2)}-{m.group(1)}.out")
 
 
-def _checked(e, kinds):
-    """Whether receipt `e` is a pass of one of `kinds` the commit gate credits (receipt_complete)."""
-    return e.get("kind") in kinds and receipt_complete(e)
+def newest_receipts(manifest, todo, section, kinds, checked=False):
+    """(newest receipt per kind, readable) for one TODO, and one section unless `section` is None: the ONE
+    reader of the manifest the commit gate (section_commit_gate._pass_receipts) and this module's bases share.
+    Each value is (receipt, age), a lower age a newer line. Two questions, each named by its caller:
 
+    - the gate's (`checked` False): the newest row of each kind in any state, so a pass dispatched again and
+      still running, or one that failed, is the one judged and blocks the stamp until it completes;
+    - a base's (`checked` True): the newest CHECKED pass (receipt_complete), since a pass that failed or has
+      not answered read nothing and does not move where the section starts.
 
-def _newest(manifest, todo, section, kinds, what):
-    """The newest checked receipt of `kinds` for the section, or None. An unreadable line newer than it that
-    may belong to this TODO refuses: it may be a newer pass, so the answer is unknown."""
+    The manifest is read newest first and stops at a line that cannot be read and may be this TODO's (it may
+    be a newer pass cut short), with readable False: a kind not found before it has no receipt that can be
+    trusted. Refused when the manifest cannot be read at all."""
     import json
-    unsure = False
-    for line in _newest_first(manifest):
+    found, age = {}, 0
+    for line in _newest_first(manifest):               # Refused when the manifest cannot be read at all
+        if not line.strip():
+            continue
+        age += 1
         try:
             e = json.loads(line)
         except ValueError:
-            unsure = unsure or unreadable_line_may_be(line, todo)
+            if unreadable_line_may_be(line, todo):
+                return found, False
             continue
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
-                and _checked(e, kinds):
-            if unsure:
-                raise Refused(f"{manifest} has an unreadable line after the newest checked {e['kind']} of {todo} "
-                              f"section {section}; it may be a newer pass, so {what} is unknown")
-            return e
-    return None
+        if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") not in kinds:
+            continue
+        if section is not None and str(e.get("section", "")) != str(section):
+            continue
+        if checked and not receipt_complete(e):
+            continue
+        found.setdefault(e["kind"], (e, age))
+        if len(found) == len(kinds):
+            break                                      # every kind has its newest: older lines cannot matter
+    return found, True
+
+
+def _newest(manifest, todo, section, kinds, what):
+    """The newest checked receipt of `kinds` for the section (newest_receipts, a base's question), or None.
+    Refused when a line newer than any found cannot be read and may be this TODO's: it may be a newer pass,
+    so the answer is unknown."""
+    found, readable = newest_receipts(manifest, todo, section, kinds, checked=True)
+    if not found:
+        if not readable:
+            raise Refused(f"{manifest} has an unreadable line that may be a pass of {todo} section {section}, "
+                          f"so {what} is unknown")
+        return None
+    return min(found.values(), key=lambda pair: pair[1])[0]
 
 
 def section_start(manifest, todo, section):

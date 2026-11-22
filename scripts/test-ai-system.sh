@@ -202,7 +202,7 @@ check_authority_hierarchy() {
     local inv2="Skills live in"
     local inv3="External reviewers return findings"
     local inv4="CLAUDE.md wins on conflict"
-    local inv5="Only operator-started lanes commit."
+    local inv5="Only the operator's lanes and attended sessions commit."
     for file in "$todo" "$doc"; do
         for phrase in "$inv1" "$inv2" "$inv3" "$inv4" "$inv5"; do
             assert_fixed_string "invariant in $file: $phrase" "$file" "$phrase"
@@ -271,7 +271,7 @@ check_agents_md() {
     # (TODO-02 lines 21, 23 and the parallel paragraph in ai-system.md).
     local canonical_phrases=(
         "Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong."
-        "The only other executors are the operator-started lanes named in \`CLAUDE.md\`."
+        "The only other executors are the operator-started lanes and attended sessions named in \`CLAUDE.md\`."
         "Doctrine lives in \`CLAUDE.md\`. Nowhere else."
         "External reviewers return findings, never edits."
     )

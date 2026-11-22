@@ -762,7 +762,7 @@ def test_a_legacy_hooks_directory_that_cannot_be_searched_fails_the_removal(tmp_
                            text=True, timeout=60, env=_env())
     finally:
         hooks.chmod(0o755)
-    assert r.returncode != 0 and "cannot be searched" in r.stderr and (hooks / "pre-push").is_symlink(), r
+    assert r.returncode != 0 and "could not be looked up" in r.stderr and (hooks / "pre-push").is_symlink(), r
 
 
 def test_a_legacy_link_into_a_worktree_that_cannot_be_searched_fails_the_removal(tmp_path):
@@ -819,3 +819,11 @@ def test_an_io_error_naming_a_path_that_holds_the_absence_words_is_not_absence(t
     for probe in ("%F -- ", "%d:%i -- "):
         r = _remove_with(root, bindir, "stat", f'case " $* " in *"{probe}"*) echo "{msg}" >&2; exit 1 ;; esac')
         assert r.returncode != 0 and link.is_symlink(), (probe, r)
+
+
+def test_a_legacy_hooks_directory_that_cannot_be_looked_up_is_left_unjudged(tmp_path):
+    root, link, bindir = _legacy_link(tmp_path)
+    hooks = root / ".git/hooks"
+    r = _remove_with(root, bindir, "stat", f'case " $* " in *"-- {hooks} "*) echo "stat: cannot statx '
+                                           f"'{hooks}': Input/output error\" >&2; exit 1 ;; esac")
+    assert r.returncode != 0 and "could not be looked up" in r.stderr and link.is_symlink(), r

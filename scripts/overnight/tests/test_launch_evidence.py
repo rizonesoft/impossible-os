@@ -578,7 +578,7 @@ def test_a_number_given_up_and_reused_is_never_signalled(tmp_path):
                       "    if int(p) == pid and not told:\n        told.append(p); return (b'S', os.getpid())\n"
                       "    return real(p)\n"
                       "rl._stat = lying\n"
-                      "n = rl.signal_all(signal.SIGTERM)\n"
+                      "n = rl.signal_all(signal.SIGTERM)[0]\n"
                       "time.sleep(0.2)\n"
                       "alive = os.path.exists(f'/proc/{pid}') and "
                       "not open(f'/proc/{pid}/stat').read().rsplit(') ', 1)[1].startswith('Z')\n"
@@ -605,7 +605,7 @@ def test_an_attempt_that_never_finishes_ending_is_answered_by_the_deadline(tmp_p
     script.write_text("import importlib.util, os, sys, time\n"
                       f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
                       "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
-                      "rl.signal_all = lambda sig: 0\n"
+                      "rl.signal_all = lambda sig, sent=None: (0, 0)\n"
                       "os.waitpid = lambda pid, flags: (0, 0)\n"
                       "began = time.monotonic()\n"
                       "rc = rl.main(['2', 'true'])   # exits at once; the model never reaps it\n"
@@ -621,3 +621,90 @@ def test_an_attempt_that_never_finishes_ending_is_answered_by_the_deadline(tmp_p
             proc.wait()
     rc, took = out.split()
     assert rc == "124" and float(took) < 2.5, (out, err)
+
+
+def test_a_cancellation_held_behind_the_mask_runs_nothing(tmp_path):
+    # Delivered after the mask is taken: pending in the kernel, never seen by the handler before the start.
+    done = _limiter_in_process(tmp_path, "import signal\nreal_mask = signal.pthread_sigmask\n"
+                                         "def mask(how, sigs):\n    old = real_mask(how, sigs)\n"
+                                         "    if how == signal.SIG_BLOCK:\n        os.kill(os.getpid(), signal.SIGTERM)\n"
+                                         "    return old\n"
+                                         "signal.pthread_sigmask = mask\n")
+    assert done.returncode == 143 and "spawned 0" in done.stdout, done
+
+
+def test_a_member_whose_first_thread_ended_is_still_ended(tmp_path):
+    """A process whose leader thread exited while another runs shows Z in its stat record; it is still a
+    member and is ended with the attempt."""
+    import sys
+    pidfile = tmp_path / "member.pid"
+    member = ("import ctypes, os, threading, time\n"
+              f"open({str(pidfile)!r} + '.part', 'w').write(str(os.getpid()))\n"
+              f"os.rename({str(pidfile)!r} + '.part', {str(pidfile)!r})\n"
+              "threading.Thread(target=time.sleep, args=(60,)).start()\n"
+              "ctypes.CDLL(None).pthread_exit(None)\n")
+    script = tmp_path / "member.py"
+    script.write_text(member)
+    cmd = f"{sys.executable} {script} & wait"
+    try:
+        done = subprocess.run([str(LIMIT), "2", cmd], capture_output=True, text=True, timeout=30)
+        assert done.returncode == 124, done
+        pid = int(pidfile.read_text())
+        assert not os.path.exists(f"/proc/{pid}"), "a member outlived the attempt"
+    finally:
+        try:
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+        except (FileNotFoundError, ValueError, ProcessLookupError):   # never started, or already gone
+            pass
+
+
+def test_a_member_that_cannot_be_held_is_counted_not_skipped(tmp_path):
+    """pidfd_open failing for a reason other than the process's exit (descriptor pressure) is reported as
+    unheld, never taken for a finished member."""
+    import sys
+    script = tmp_path / "unheld.py"
+    script.write_text("import errno, importlib.util, os, signal, subprocess\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      "child = subprocess.Popen(['sleep', '30'])\n"
+                      "real = os.pidfd_open\n"
+                      "def full(pid, flags=0):\n"
+                      "    if pid == child.pid:\n        raise OSError(errno.EMFILE, 'Too many open files')\n"
+                      "    return real(pid, flags)\n"
+                      "os.pidfd_open = full\n"
+                      "print(*rl.signal_all(signal.SIGTERM))\n"
+                      "child.terminate(); child.wait()\n")
+    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert done.stdout.split() == ["0", "1"], done
+
+
+def _uptime_cs():
+    with open("/proc/uptime") as f:
+        up = f.read().split()[0]
+    whole, frac = up.split(".")
+    return int(whole) * 100 + int(frac[:2].ljust(2, "0"))
+
+
+def test_the_job_supervisor_publishes_a_review_its_deadline_ended(tmp_path):
+    """One supervisor for the detached job: the review it ends at the steps' deadline is published as 124 by
+    the final one (a limiter nested in another had its grace end the job before it could publish)."""
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    end = _uptime_cs() + 150
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                        str(prompt), "--publish-by", str(end + 20), "--until-cs", str(end),
+                        f"echo started >> {log}; sleep 30"], capture_output=True, text=True, timeout=30)
+    done = pathlib.Path(str(log) + ".done")
+    assert r.returncode == 124 and done.read_text().strip() == "124", (r, done.exists())
+    assert "started" in log.read_text() and not prompt.exists()
+
+
+def test_the_job_supervisor_leaves_a_claimed_result_alone(tmp_path):
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    log.write_text("owned elsewhere\n")
+    prompt.write_text("p")
+    mark = tmp_path / "ran"
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                        str(prompt), "--no-deadline", f"touch {mark}"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and not mark.exists() and log.read_text() == "owned elsewhere\n", r
+    assert not pathlib.Path(str(log) + ".done").exists()

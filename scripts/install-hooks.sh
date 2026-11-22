@@ -299,14 +299,16 @@ prune_legacy_symlinks() {
     common="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir)" \
         || { echo "The repository's git directory could not be found, so no legacy link was judged" >&2; return 1; }
     legacy="$common/hooks"
-    # Absent is known only from a directory that can be searched; one that cannot hides what it holds.
-    if [ ! -e "$legacy" ] && [ ! -L "$legacy" ]; then
-        [ -x "$common" ] && return 0
-        echo "$common cannot be searched, so no legacy link in it was judged" >&2
+    # Absent only when a lookup says so: one that fails otherwise (a directory that cannot be searched, an I/O
+    # error) hides what it holds. A directory that cannot be searched fails the entry's lookup below.
+    local dir_kind
+    if ! dir_kind="$(LC_ALL=C stat -L -c '%F' -- "$legacy" 2>&1)"; then
+        stat_says_absent "$dir_kind" && return 0
+        echo "$legacy could not be looked up ($dir_kind), so a legacy pre-push link in it was not judged" >&2
         return 1
     fi
-    if [ ! -d "$legacy" ] || [ ! -x "$legacy" ]; then
-        echo "$legacy cannot be searched, so a legacy pre-push link in it was not judged" >&2
+    if [ "$dir_kind" != "directory" ]; then
+        echo "$legacy is a $dir_kind, not a directory, so a legacy pre-push link in it was not judged" >&2
         return 1
     fi
     local removed=0 target
