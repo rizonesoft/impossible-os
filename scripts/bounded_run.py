@@ -2,17 +2,23 @@
 """Run a command bounded in time, as one process group that never outlives the call.
 
 Every git command the review candidate reader (scripts/review_candidate.py) and the dash check
-(scripts/staged_dash_check.py) start goes through `run`. git starts helpers of its own (a clean filter, a
-filesystem monitor hook, ssh, a credential helper), and a helper inherits git's pipes: ending git alone on a
-timeout leaves the helper holding them, and a reader waiting for their end never returns. So the command runs
-in its own process group, its output is read by threads the call waits on against one deadline, and on a
-timeout, on Ctrl-C and on SIGTERM the whole group is ended before the pipes are waited on again.
+(scripts/staged_dash_check.py) start goes through `run`, or `Stream` for the one command the dash check talks
+to as it goes (git cat-file --batch). git starts helpers of its own (a clean filter, a filesystem monitor
+hook, ssh, a credential helper), and a helper inherits git's pipes: ending git alone on a timeout leaves the
+helper holding them, and a reader waiting for their end never returns. So the command runs in its own process
+group, and on a timeout, on Ctrl-C and on SIGTERM the whole group is ended before the pipes are waited on
+again. `run` reads the output in threads it waits on against one deadline.
 
 The signals are caught before the group starts and held until it is registered, so no moment leaves it
 running unowned; a cancellation then ends the group and is delivered again to the caller's own handler. A
 timeout is a ValueError naming `what`, never the command, since a command line can carry a URL with a token.
-A helper that leaves the group on its own (setsid) is outside what a process group can end.
+
+Out of scope by decision: a helper that leaves the group on its own (setsid) is outside what a process group
+can end; and on success the call returns once the command has exited and its pipes have closed, so a helper
+git leaves running in the background with its own streams (the credential cache daemon, by design) is git's,
+and is not ended.
 """
+import collections
 import os
 import signal
 import subprocess
@@ -28,11 +34,51 @@ class Cancelled(BaseException):
     """Ctrl-C or SIGTERM reached the caller while a bounded command ran."""
 
 
-def _end_group(proc):
+class _Watch:
+    """The caller's SIGTERM (and SIGINT, unless the caller ignores it) replaced for one command's life. While
+    `hold` is set a signal is recorded and delivered later; otherwise `live(signum)` is called."""
+
+    def __init__(self, live):
+        self.hold, self.pending, self.live, self.done = True, 0, live, False
+        self.watched = [signal.SIGTERM]
+        if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+            self.watched.append(signal.SIGINT)             # an ignored SIGINT (a background caller) stays ignored
+        self.previous = {sig: signal.signal(sig, self._on) for sig in self.watched}
+
+    def _on(self, signum, _frame):
+        if self.hold:
+            self.pending = self.pending or signum          # not registered, or being ended: deliver later
+            return
+        self.live(signum)
+
+    def finish(self, signum=0):
+        """Put the caller's handlers back with the watched signals blocked, so none that arrives meanwhile is
+        recorded here and lost; one held by the block reaches the caller's handler as the mask lifts, and one
+        recorded earlier (or this cancellation) is delivered again. Only the first call acts."""
+        if self.done:
+            return
+        self.done = True
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, self.watched)
+        try:
+            for sig, handler in self.previous.items():
+                signal.signal(sig, handler)
+            signum = signum or self.pending
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old)
+        if signum:
+            signal.raise_signal(signum)
+            raise SystemExit(128 + signum)                 # the caller's handler returned: still a cancellation
+
+
+def _kill_group(proc):
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:                             # the group has already exited: nothing to end
         pass
+
+
+def _end_group(proc):
+    _kill_group(proc)
     proc.wait()
 
 
@@ -60,57 +106,49 @@ def _feed(stream, data, errors):
             pass
 
 
+class _Tail:
+    """The last STDERR_KEEP bytes written, exactly, kept in the chunks they arrived in."""
+
+    def __init__(self):
+        self.chunks, self.size = collections.deque(), 0
+
+    def put(self, chunk):
+        self.chunks.append(chunk)
+        self.size += len(chunk)
+        while self.size > STDERR_KEEP:
+            excess = self.size - STDERR_KEEP
+            if len(self.chunks[0]) <= excess:
+                self.size -= len(self.chunks.popleft())
+            else:
+                self.chunks[0] = self.chunks[0][excess:]
+                self.size -= excess
+
+    def value(self):
+        return b"".join(self.chunks)
+
+
 def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=False):
     """(exit status, stdout, stderr) of `cmd`. stdout is handed to `sink` chunk by chunk when one is given
     (and returned empty), else returned whole; stderr is kept (its last STDERR_KEEP bytes) only when
     `keep_stderr`, else discarded. `stdin` is bytes to write, or None for no input."""
-    st = {"proc": None, "hold": True, "pending": 0}
 
-    def on_signal(signum, _frame):
-        if st["hold"]:
-            st["pending"] = st["pending"] or signum        # not registered, or being ended: deliver later
-            return
+    def cancel(signum):
         raise Cancelled(signum)
 
-    watched = [signal.SIGTERM]
-    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
-        watched.append(signal.SIGINT)                      # an ignored SIGINT (a background caller) stays ignored
-    previous = {sig: signal.signal(sig, on_signal) for sig in watched}
-
-    def finish(signum=0):
-        """Put the caller's handlers back with the watched signals blocked, so none that arrives meanwhile is
-        recorded here and lost; one held by the block reaches the caller's handler as the mask lifts, and one
-        recorded earlier (or this cancellation) is delivered again."""
-        old = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
-        try:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            signum = signum or st["pending"]
-        finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, old)
-        if signum:
-            signal.raise_signal(signum)
-            raise SystemExit(128 + signum)                 # the caller's handler returned: still a cancellation
-
-    out, err, errors, threads = [], [], [], []
-
-    def keep(chunk):
-        err.append(chunk)
-        while len(err) > 1 and sum(map(len, err)) - len(err[0]) >= STDERR_KEEP:
-            err.pop(0)
-
+    watch = _Watch(cancel)
+    proc, out, err, errors, threads = None, [], _Tail(), [], []
     try:
-        st["proc"] = proc = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd, stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if keep_stderr else subprocess.DEVNULL, env=env,
             start_new_session=True)  # LIFECYCLE-WAIVER: waited on here; on timeout or cancellation its whole group is ended
-        st["hold"] = False
-        if st["pending"]:
-            raise Cancelled(st["pending"])
+        watch.hold = False
+        if watch.pending:
+            raise Cancelled(watch.pending)
         deadline = time.monotonic() + timeout
         threads.append(threading.Thread(target=_pump, args=(proc.stdout, sink or out.append, errors), daemon=True))
         if keep_stderr:
-            threads.append(threading.Thread(target=_pump, args=(proc.stderr, keep, errors), daemon=True))
+            threads.append(threading.Thread(target=_pump, args=(proc.stderr, err.put, errors), daemon=True))
         if stdin is not None:
             threads.append(threading.Thread(target=_feed, args=(proc.stdin, stdin, errors), daemon=True))
         for t in threads:
@@ -120,18 +158,84 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             t.join(max(0.0, deadline - time.monotonic()))
             if t.is_alive():                               # a helper still holds a pipe at the deadline
                 raise subprocess.TimeoutExpired(what, timeout)
-        st["hold"] = True
+        watch.hold = True
     except BaseException as exc:
-        st["hold"] = True
-        if st["proc"] is not None:
-            _end_group(st["proc"])
-            for t in threads:
-                t.join(GRACE)                              # the pipes close with the group
-        finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
+        watch.hold = True
+        try:
+            if proc is not None:
+                _end_group(proc)
+                for t in threads:
+                    if t.ident is not None:                # started: a cancellation can land before a start
+                        t.join(GRACE)                      # the pipes close with the group
+        finally:
+            watch.finish(exc.args[0] if isinstance(exc, Cancelled) else 0)
         if isinstance(exc, subprocess.TimeoutExpired):
             raise ValueError(f"{what} did not answer within {timeout} s") from None
         raise
-    finish()
+    watch.finish()
     if errors:
         raise errors[0]
-    return rc, b"".join(out), b"".join(err)
+    return rc, b"".join(out), err.value()
+
+
+class Stream:
+    """A command the caller writes to and reads from as it goes (`proc.stdin`, `proc.stdout`), in its own
+    process group. A timer ends the whole group at the deadline, so a read the group would never answer ends
+    short (the caller treats a short read as an error); Ctrl-C and SIGTERM end the group at once and then
+    reach the caller's own handler. `close` ends input and waits for the exit; `abort` ends the group."""
+
+    def __init__(self, cmd, what, *, timeout, env=None):
+        self.what, self.timeout = what, timeout
+        self.proc = None
+        self._watch = _Watch(self._cancel)
+        try:
+            self.proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+                start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
+            self._deadline = time.monotonic() + timeout
+            self._timer = threading.Timer(timeout, _kill_group, args=(self.proc,))
+            self._timer.daemon = True
+            self._timer.start()
+            self._watch.hold = False
+            pending = self._watch.pending
+        except BaseException:
+            if self.proc is not None:
+                _end_group(self.proc)
+            self._watch.finish()
+            raise
+        if pending:
+            self._cancel(pending)
+
+    def _cancel(self, signum):
+        self._watch.hold = True
+        _kill_group(self.proc)
+        self._timer.cancel()
+        self._watch.finish(signum)
+
+    def abort(self) -> None:
+        """End the group at once: after a failed read its output is never consumed, so a graceful close would
+        wait for a producer that cannot finish."""
+        self._watch.hold = True
+        try:
+            _end_group(self.proc)
+            self._timer.cancel()
+        finally:
+            self._watch.finish()
+
+    def close(self) -> int:
+        self._watch.hold = True
+        try:
+            try:
+                self.proc.stdin.close()
+            except OSError:
+                pass                                       # fail-direction: wait() below reports the exit
+            try:
+                rc = self.proc.wait(timeout=max(0.0, self._deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                _end_group(self.proc)
+                raise ValueError(f"{self.what} did not finish within {self.timeout} s") from None
+            finally:
+                self._timer.cancel()
+        finally:
+            self._watch.finish()
+        return rc

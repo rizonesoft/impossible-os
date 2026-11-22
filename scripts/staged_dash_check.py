@@ -47,7 +47,6 @@ import collections
 import os
 import subprocess
 import sys
-import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bounded_run                                         # the shared bounded runner beside this script
@@ -153,16 +152,16 @@ def dash_lines(text: bytes) -> list:
 
 
 class BlobReader:
-    """One `git cat-file --batch` process. Each blob's dash count is cached by
-    id and its text is not kept; a refused file's two blobs are read again to
-    name lines. A timer kills the process at the deadline, so a stalled read
-    ends in a short read, which is an error."""
+    """One `git cat-file --batch` process, run as a process group bounded in
+    time (bounded_run.Stream): at the deadline, or on Ctrl-C or SIGTERM, the
+    whole group ends, so a stalled read ends in a short read, which is an
+    error. Each blob's dash count is cached by id and its text is not kept; a
+    refused file's two blobs are read again to name lines."""
 
     def __init__(self):
-        self.proc = subprocess.Popen(["git", "cat-file", "--batch"], env=_git_env(), stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE)   # deadline: the timer below
-        self.timer = threading.Timer(TIMEOUT, self.proc.kill)
-        self.timer.start()
+        self.stream = bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=TIMEOUT,
+                                         env=_git_env())   # deadline: the stream's own timer
+        self.proc = self.stream.proc
         self.counts = {}
 
     def count(self, oid: str) -> int:
@@ -235,24 +234,10 @@ class BlobReader:
         return data
 
     def abort(self) -> None:
-        """End cat-file at once: after a failed read its output is never consumed, so a graceful close would
-        wait for a producer that cannot finish."""
-        self.proc.kill()
-        self.proc.wait()
-        self.timer.cancel()
+        self.stream.abort()
 
     def close(self) -> int:
-        try:
-            self.proc.stdin.close()
-        except OSError:
-            pass                                           # fail-direction: wait() below reports the exit
-        try:
-            rc = self.proc.wait(timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-            rc = self.proc.wait()
-        self.timer.cancel()
-        return rc
+        return self.stream.close()
 
 
 def name_lines(old_texts, new_text):
@@ -392,6 +377,10 @@ def _bounded(cmd: list, what: str) -> tuple:
     return rc, out
 
 
+NO_PROMPT = ("it cannot prompt on the terminal, so authenticate without a prompt (an ssh agent, a credential "
+             "helper, or SSH_ASKPASS)")
+
+
 def destination_oids(dest: str) -> set:
     """Every object id the push destination advertises (`git ls-remote`: its
     branches, tags, peeled tags and HEAD). `dest` is the URL git pushes to,
@@ -408,13 +397,15 @@ def destination_oids(dest: str) -> set:
     if rc != 0 or again != os.fsencode(dest) + b"\n":
         raise ValueError("a url.*.insteadOf rule rewrites the push URL again, so the destination's refs cannot "
                          "be listed safely; make the rewrite rules not chain")
-    rc, out = _bounded(["git", "ls-remote", "--end-of-options", dest], "the destination (git ls-remote)")
+    # The lookup runs in its own process group with no terminal, so it cannot ask for a passphrase or a
+    # password the way an attended push can (decided: the bounded lookup authenticates without a prompt). A
+    # helper waiting for an answer that never comes ends at the deadline, so both failures say so.
+    try:
+        rc, out = _bounded(["git", "ls-remote", "--end-of-options", dest], "the destination (git ls-remote)")
+    except ValueError as exc:
+        raise ValueError(f"{exc}; {NO_PROMPT}") from None
     if rc != 0:
-        # The lookup runs in its own process group with no terminal, so it cannot ask for a passphrase or a
-        # password the way an attended push can (decided: the bounded lookup authenticates without a prompt).
-        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {rc}); it cannot "
-                         "prompt on the terminal, so authenticate without a prompt (an ssh agent, a credential "
-                         "helper, or SSH_ASKPASS)")
+        raise ValueError(f"the destination's refs could not be listed (git ls-remote exit {rc}); {NO_PROMPT}")
     return {line.split("\t", 1)[0] for line in out.decode("ascii", "replace").splitlines() if line.strip()}
 
 

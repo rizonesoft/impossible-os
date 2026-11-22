@@ -814,6 +814,7 @@ def test_a_stalled_transport_is_stopped_with_its_whole_group(tmp_path, monkeypat
     with pytest.raises(ValueError) as err:
         m.destination_oids(f"ext::{helper} SECRET-TOKEN")
     assert "SECRET-TOKEN" not in str(err.value) and "within 2 s" in str(err.value)
+    assert "cannot prompt on the terminal" in str(err.value), err.value
     _assert_helper_ends(int(pidfile.read_text()))
 
 

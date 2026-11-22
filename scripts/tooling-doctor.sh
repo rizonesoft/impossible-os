@@ -225,9 +225,18 @@ check_hooks() {
             "Unset; pre-commit + post-commit hooks will NOT fire (OK on CI and fresh clones; developers should configure)" \
             "Run: bash scripts/install-hooks.sh"
     else
+        # The installer writes only where no value is set, so the operator's own value is changed by hand first.
+        local scope
+        scope=$(git -C "$REPO_ROOT" config --show-scope --get core.hooksPath 2>/dev/null | tail -1 | cut -f1)
+        local fix="Check what that value is for; then run: git config --$scope --unset-all core.hooksPath && bash scripts/install-hooks.sh"
+        case "$scope" in
+            command) fix="Run without the core.hooksPath given on the command line or in GIT_CONFIG_* variables" ;;
+            local|worktree|global|system) ;;
+            *) fix="Run: git config --show-origin --get-all core.hooksPath, and change the value it names" ;;
+        esac
         record hooks warn "core.hooksPath" \
-            "Set to '$configured' instead of '.githooks'" \
-            "Run: bash scripts/install-hooks.sh   # to restore the canonical path."
+            "Set to '$configured' in ${scope:-unknown} config instead of '.githooks'" \
+            "$fix"
     fi
 
     # The opt-in pre-push build/test step (the rest of pre-push always runs).

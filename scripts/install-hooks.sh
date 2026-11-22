@@ -77,6 +77,13 @@ hooks_path_scoped() {
 hooks_path_is_ours() {
     [ "$(hooks_path_raw)" = $'.githooks\001' ]
 }
+# Whether git runs this checkout's .githooks/, however the value spells it (an absolute path, ./.githooks):
+# the directory git resolves, compared by identity.
+hooks_run_from_repo() {
+    local dir
+    dir="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" || return 1
+    [ "$dir" -ef "$HOOKS_DIR" ]
+}
 # The value for a person to read: the exact one, quoted when it holds bytes
 # a plain print would hide.
 hooks_path_shown() {
@@ -139,7 +146,10 @@ set_hooks_path() {
     # success while git keeps using the other directory; a value given on the command line or in the
     # environment outranks every file, so writing any would change what sibling worktrees and later commands
     # run and still not take effect here. The effective value is checked after the write, and a write git does
-    # not then read is undone.
+    # not then read is undone. Every change is one git decides under its own lock: the value is added (--add
+    # never replaces another), and undone or removed by value (--fixed-value --unset takes out a single
+    # .githooks entry and nothing else), so a writer changing the setting between the check and the write
+    # loses nothing.
     hooks_path_scoped || exit 1
     # Checked first: a value from the command line or the environment, even .githooks itself, says nothing
     # about what the next plain git command reads.
@@ -163,13 +173,15 @@ set_hooks_path() {
         echo "core.hooksPath is already set in $scope config (or a file it includes) to ${shown//$'\001'/, }; this installer writes only where no value is set, so --remove can restore the config exactly. Remove or change that value, then run it again (nothing written)" >&2
         exit 1
     fi
-    git -C "$PROJECT" config "--$scope" core.hooksPath .githooks
-    if ! hooks_path_is_ours; then
-        # No value was there before (checked above), so the one entry in that file is the one just written.
-        if git -C "$PROJECT" config "--$scope" --unset-all core.hooksPath; then
-            echo "core.hooksPath is still not .githooks after writing it (a higher-priority value wins); the write was undone, nothing enabled" >&2
+    git -C "$PROJECT" config "--$scope" --add core.hooksPath .githooks \
+        || { echo "core.hooksPath could not be written to $scope config; nothing enabled" >&2; exit 1; }
+    held="$(git -C "$PROJECT" config "--$scope" --includes --null --get-all core.hooksPath | tr '\0' '\001')" || held=""
+    if [ "$held" != $'.githooks\001' ] || ! hooks_path_is_ours; then
+        # Another value appeared beside the write, or one git reads before it: take out only what was added.
+        if git -C "$PROJECT" config "--$scope" --fixed-value --unset core.hooksPath .githooks; then
+            echo "core.hooksPath is not this installer's alone after writing it (another value is set, or a higher-priority one wins); the write was undone, nothing enabled" >&2
         else
-            echo "core.hooksPath is still not .githooks after writing it (a higher-priority value wins), and the write could not be undone: unset core.hooksPath in $scope config by hand" >&2
+            echo "core.hooksPath changed while it was written, and no single .githooks entry was left to undo: check core.hooksPath in $scope config" >&2
         fi
         exit 1
     fi
@@ -257,8 +269,9 @@ remove_all() {
         # Only the single entry this installer writes: that scope's own file holds exactly .githooks. Several
         # entries, or a value from an include, are the operator's and are left as they are.
         if [ "$HP_VALUE" = ".githooks" ] && [ "$own" = $'.githooks\001' ]; then
-            git -C "$PROJECT" config "--$HP_SCOPE" --unset core.hooksPath \
-                || { echo "core.hooksPath could not be unset ($HP_SCOPE config)" >&2; return 1; }
+            # By value, under git's lock: a value written meanwhile in its place is left as it is.
+            git -C "$PROJECT" config "--$HP_SCOPE" --fixed-value --unset core.hooksPath .githooks \
+                || { echo "core.hooksPath changed in $HP_SCOPE config while it was removed (it no longer holds a single .githooks entry): left as it is" >&2; return 1; }
             echo "Unset: core.hooksPath ($HP_SCOPE config, was: .githooks)"
         elif [ "$HP_VALUE" = ".githooks" ] && [ -n "$HP_SCOPE" ] && [ "$HP_SCOPE" != "global" ] && [ "$HP_SCOPE" != "system" ]; then
             echo "core.hooksPath is .githooks in $HP_SCOPE config, but not as this installer's single entry (several values, or one from an included file): left as it is."
@@ -269,8 +282,8 @@ remove_all() {
     disable_pre_push
     prune_legacy_symlinks
     echo ""
-    if hooks_path_is_ours; then
-        echo "This checkout still runs .githooks/: core.hooksPath comes from $(git -C "$PROJECT" config --show-scope --get core.hooksPath | tail -1 | cut -f1) config, which --remove does not change."
+    if hooks_run_from_repo; then
+        echo "This checkout still runs .githooks/: core.hooksPath ($(hooks_path_shown)) comes from $(git -C "$PROJECT" config --show-scope --get core.hooksPath | tail -1 | cut -f1) config, which --remove does not change."
     else
         echo "Git hooks removed. Always-on hooks in .githooks/ are inert until"
         echo "'bash scripts/install-hooks.sh' reconfigures core.hooksPath."

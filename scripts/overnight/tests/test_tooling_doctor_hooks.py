@@ -374,7 +374,7 @@ def test_an_install_git_does_not_read_is_undone(tmp_path):
     # After the install writes the local value, a worktree value appears (as a racing writer would leave it).
     (bindir / "git").write_text(
         f'#!/bin/sh\n"{real}" "$@"; rc=$?\n'
-        f'case " $* " in *" --local core.hooksPath .githooks "*) "{real}" -C "{root}" config --worktree core.hooksPath /other ;; esac\n'
+        f'case " $* " in *" --local --add core.hooksPath .githooks "*) "{real}" -C "{root}" config --worktree core.hooksPath /other ;; esac\n'
         'exit $rc\n')
     (bindir / "git").chmod(0o755)
     env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
@@ -382,3 +382,57 @@ def test_an_install_git_does_not_read_is_undone(tmp_path):
                        env=env)
     assert r.returncode != 0 and "the write was undone" in r.stderr, r
     assert _cfg(root, "--local", "--get", "core.hooksPath", check=False).returncode == 1
+
+
+def _racing_git(tmp_path, root, when, then):
+    """git that, on a call whose arguments contain `when`, first runs `git config <then>` (another writer)."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = shutil.which("git")
+    (bindir / "git").write_text(f'#!/bin/sh\ncase " $* " in *"{when}"*) "{real}" -C "{root}" config {then} ;; esac\n'
+                                f'exec "{real}" "$@"\n')
+    (bindir / "git").chmod(0o755)
+    return {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+
+def test_an_install_racing_another_writer_loses_neither_value(tmp_path):
+    """Another writer sets the value between the installer's check and its write: theirs stays, ours goes."""
+    root = _plain_repo(tmp_path)
+    env = _racing_git(tmp_path, root, " core.hooksPath .githooks", "--local core.hooksPath /custom")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh"], cwd=root, capture_output=True, text=True, timeout=60,
+                       env=env)
+    assert r.returncode != 0 and "the write was undone" in r.stderr, r
+    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == "/custom\n"
+
+
+def test_a_removal_racing_another_writer_keeps_their_value(tmp_path):
+    root = _plain_repo(tmp_path)
+    _cfg(root, "--local", "core.hooksPath", ".githooks")
+    env = _racing_git(tmp_path, root, "--unset core.hooksPath", "--local core.hooksPath /custom")
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode != 0 and "left as it is" in r.stderr, r
+    assert _cfg(root, "--local", "--get-all", "core.hooksPath").stdout == "/custom\n"
+
+
+def test_remove_reports_hooks_that_still_run_under_another_spelling(tmp_path):
+    for spelling in ("{root}/.githooks", "./.githooks"):
+        root = _plain_repo(tmp_path / spelling.replace("/", "_").replace("{", "").replace("}", ""))
+        _cfg(root, "--local", "core.hooksPath", spelling.format(root=root))
+        r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True,
+                           text=True, timeout=60, env=_env())
+        assert r.returncode == 0 and "still runs .githooks/" in r.stdout and "inert" not in r.stdout, (spelling, r)
+
+
+def test_the_doctor_names_a_remedy_that_works_for_a_custom_local_value(tmp_path):
+    root = _plain_repo(tmp_path)
+    shutil.copy(REPO / "scripts/tooling-doctor.sh", root / "scripts/tooling-doctor.sh")
+    _cfg(root, "--local", "core.hooksPath", "my-hooks")
+    r = subprocess.run(["bash", str(root / "scripts/tooling-doctor.sh"), "--json", "--group=hooks"], cwd=root,
+                       capture_output=True, text=True, timeout=120, env=_env())
+    check = {c["name"]: c for c in json.loads(r.stdout)["checks"]}["core.hooksPath"]
+    fix = check["fix"]
+    assert "local config" in check["detail"] and fix.startswith("Check what that value is for; then run: "), check
+    done = subprocess.run(["bash", "-c", fix.split("then run: ", 1)[1]], cwd=root, capture_output=True, text=True,
+                          timeout=60, env=_env())
+    assert done.returncode == 0 and "Configured: core.hooksPath = .githooks" in done.stdout, done

@@ -68,9 +68,10 @@ def _git(top, *args, sink=None):
 
 def _top():
     rc, out, _err = _run("", ("rev-parse", "--show-toplevel"))
-    if rc != 0 or not out.strip():
+    # git ends the path with one LF; a directory name can itself end in LF, so exactly that one is taken off.
+    if rc != 0 or not out.endswith(b"\n") or len(out) < 2:
         raise Refused("not inside a git work tree")
-    return os.path.realpath(os.fsdecode(out.rstrip(b"\n")))
+    return os.path.realpath(os.fsdecode(out[:-1]))
 
 
 def _scope(top, exclude):
@@ -84,9 +85,11 @@ def _scope(top, exclude):
 
 
 def _status(top, scope):
-    """(raw status bytes, untracked paths as bytes)."""
+    """(raw status bytes, untracked paths as bytes, whether any tracked path changed)."""
     raw = _git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", *scope)
-    return raw, [rec[3:] for rec in raw.split(b"\0") if rec[:3] == b"?? "]
+    records = [rec for rec in raw.split(b"\0") if rec]
+    untracked = [rec[3:] for rec in records if rec[:3] == b"?? "]
+    return raw, untracked, len(untracked) < len(records)
 
 
 def _parent(top_fd, rel):
@@ -165,12 +168,12 @@ def _head(top):
 
 
 def _fingerprint(top, scope, status):
-    """(digest, HEAD's object id, [(path, note)] for the untracked entries). A clean status has no tracked
-    change, so no patch is taken."""
+    """(digest, HEAD's object id, [(path, note)] for the untracked entries). A status with no tracked change
+    has no patch to take."""
     h = hashlib.sha256()
     head = _head(top)
-    raw, untracked = status
-    if raw:
+    raw, untracked, tracked = status
+    if tracked:
         _git(top, "diff", head, "--binary", "--no-ext-diff", "--no-textconv", "--no-renames", *scope,
              sink=h.update)
     h.update(raw)
@@ -193,6 +196,23 @@ def snapshot(exclude=""):
     return _fingerprint(top, scope, _status(top, scope))[0]
 
 
+def launch(exclude=""):
+    """(HEAD, index tree, digest) of one candidate, for a launch row: HEAD and the index are read before and
+    after the digest, and a commit or an index change meanwhile refuses, so the three name one candidate.
+    HEAD is "unknown" before the first commit, and the index "unknown" while it holds a conflict."""
+    top = _top()
+    scope = _scope(top, exclude)
+
+    def index():
+        rc, out, _err = _run(top, ("write-tree",))
+        return out.decode("ascii", "replace").strip() if rc == 0 else "unknown"
+    before = index()
+    digest, head, _notes = _fingerprint(top, scope, _status(top, scope))
+    if index() != before or _head(top) != head:
+        raise Refused("the candidate changed while it was read (a commit, or a change to the index); run again")
+    return ("unknown" if head == EMPTY_TREE else head), before, digest
+
+
 def prepare(base, head, exclude=""):
     """(digest, sorted covered paths, [(untracked path, note)]) from one status walk. The working tree's own
     changes are listed against `head` (the candidate); when that is HEAD and the status is clean there are
@@ -204,7 +224,7 @@ def prepare(base, head, exclude=""):
     found = {rel for rel, _note in notes}
     found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", base, head, *scope).split(b"\0")
                  if p)
-    if status[0] or head != current:
+    if status[2] or head != current:
         found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", head, *scope).split(b"\0")
                      if p)
     return digest, sorted(found), sorted(notes)
@@ -221,6 +241,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("snapshot")
     s.add_argument("--exclude", default="")
+    s = sub.add_parser("launch")
+    s.add_argument("--exclude", default="")
     p = sub.add_parser("prepare")
     p.add_argument("--base", required=True)
     p.add_argument("--head", required=True)
@@ -231,6 +253,9 @@ def main(argv=None):
     try:
         if args.cmd == "snapshot":
             print(snapshot(args.exclude))
+            return 0
+        if args.cmd == "launch":
+            print(*launch(args.exclude))
             return 0
         digest, covered, notes = prepare(args.base, args.head, args.exclude)
         with open(args.out, "wb") as f:

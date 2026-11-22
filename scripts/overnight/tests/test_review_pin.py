@@ -12,6 +12,17 @@ import review_pin as rp  # noqa: E402
 GOOD = (REPO / ".conclave/reviewers.toml").read_text()
 
 
+@pytest.fixture(autouse=True)
+def _own_git_config(monkeypatch):
+    """Every git these tests start, directly or through the dispatchers, reads no config of the operator's:
+    a global commit.gpgSign or a hook path must not reach a fixture (a locked signing key waits at pinentry)."""
+    import os
+    for key in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
 def _pin(text=GOOD):
     return rp.load_pin(data=text.encode())
 
@@ -1464,26 +1475,94 @@ def test_the_section_status_reads_the_manifest_once(tmp_path, monkeypatch):
 
 
 def test_the_broker_and_its_reviewer_fingerprint_one_scope(tmp_path):
-    """An inherited CODEX_REVIEWS_DIR naming another directory does not change what the launch row covers."""
+    """A pinned pass through the broker: an inherited CODEX_REVIEWS_DIR naming another directory changes
+    neither digest, and the launch row and the wrapper's receipt name one candidate."""
     import json
     import os
     import subprocess
+    import time
     repo, _git = _tmp_repo(tmp_path)
     (repo / "other").mkdir()
     (repo / "other/new.txt").write_text("part of the candidate\n")
-    fake = tmp_path / "companion.js"
-    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nfine\\n');\n")
-    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
+    fake = tmp_path / "companion.js"                     # the detached job gets no test variables: self-contained
+    fake.write_text("process.stdout.write('[codex] working\\n# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
            "CODEX_REVIEWS_DIR": str(repo / "other")}
     done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
-                           "[review-kind: adversarial] todo/x.md section 9\nReview it."],
+                           "[review-kind: round] todo/x.md section 9\nReview it."],
                           capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
     assert done.returncode == 0, done.stderr
-    row = json.loads((repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()[0])
-    expect = subprocess.run([sys.executable, str(REPO / "scripts/review_candidate.py"), "snapshot", "--exclude",
-                             str(repo / ".claude/overnight/reviews")], capture_output=True, text=True, timeout=60,
-                            cwd=str(repo)).stdout.strip()
-    assert row["worktree_sha256"] == expect != rp.CLEAN_WORKTREE
+    log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not pathlib.Path(f"{log}.done").exists():
+        time.sleep(0.1)
+    assert pathlib.Path(f"{log}.done").exists(), "the detached pass never finished"   # its verdict is not the point
+    rows = [json.loads(line) for line in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
+    launch = next(r for r in rows if r.get("route") != "codex-dispatch.sh")
+    receipt = next(r for r in rows if r.get("route") == "codex-dispatch.sh")
+    assert launch["worktree_sha256"] == receipt["worktree_sha256"] != rp.CLEAN_WORKTREE, (launch, receipt)
+    assert launch["head"] == receipt["head"] and launch["index_tree"] == receipt["index_tree"], (launch, receipt)
+
+
+def test_refusal_a_commit_while_the_launch_identity_is_read(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    first = git("rev-parse", "HEAD")
+    heads = iter([first, "f" * 40])
+    monkeypatch.setattr(rc, "_head", lambda top: next(heads))
+    with pytest.raises(rc.Refused, match="changed while it was read"):
+        rc.launch()
+
+
+def test_the_launch_identity_names_head_index_and_digest(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "n.txt").write_text("x\n")
+    head, index, digest = rc.launch()
+    assert head == git("rev-parse", "HEAD") and index == git("write-tree") and digest == rc.snapshot()
+
+
+def test_a_checkout_whose_name_ends_in_a_newline_is_read_as_itself(tmp_path, monkeypatch):
+    import subprocess
+    rc = _rc_module()
+    for name, text in (("a", "sibling\n"), ("a\n", "this one\n")):
+        root = tmp_path / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, timeout=30)
+        (root / "f.txt").write_text(text)
+    monkeypatch.chdir(tmp_path / "a\n")
+    assert rc._top() == str(tmp_path / "a\n")
+    assert rc.prepare(rc.EMPTY_TREE, rc.EMPTY_TREE)[2] == [(b"f.txt", None)]
+    monkeypatch.chdir(tmp_path / "a")
+    assert rc.snapshot() != (monkeypatch.chdir(tmp_path / "a\n") or rc.snapshot())
+
+
+def test_an_untracked_only_candidate_takes_no_tracked_diff(tmp_path, monkeypatch):
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "new.c").write_text("int x;\n")
+    calls = []
+    real = rc._git
+    monkeypatch.setattr(rc, "_git", lambda top, *a, **k: calls.append(a) or real(top, *a, **k))
+    head = git("rev-parse", "HEAD")
+    digest, covered, _notes = rc.prepare(head, head)
+    assert digest != rp.CLEAN_WORKTREE and covered == [b"new.c"]
+    assert not any("--binary" in a for a in calls), calls
+    assert sum(1 for a in calls if a[:2] == ("diff", "--name-only")) == 1, calls   # only base..head
+
+
+def test_the_fixtures_read_no_git_config_of_the_operators(tmp_path, monkeypatch):
+    """A global config that signs every commit with a program that cannot sign does not reach a fixture."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text("[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+    repo, git = _tmp_repo(tmp_path)
+    assert git("rev-parse", "HEAD")
 
 
 def test_refusal_a_broker_that_cannot_read_the_tree_leaves_no_prompt_behind(tmp_path):
