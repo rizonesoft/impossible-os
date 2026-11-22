@@ -39,6 +39,8 @@
 #         .claude/overnight/reviews/manifest.jsonl before doing anything.
 #   4  -- bounded wait elapsed AND >=1 pending log has not grown for --stale-secs;
 #         that review is likely hung -- consider re-dispatching THAT log only.
+#         Also exit 4 (UNPUBLISHED, before STALE) for a review whose owner ended and whose recovery could not
+#         publish its status (a full filesystem): it has ended and will never publish, so re-dispatch THAT log.
 #   2  -- usage error.
 # Zero model tokens while it sleeps (one blocking Bash call, idle in `sleep`).
 #
@@ -96,15 +98,38 @@ ACT_DIR=".claude/state/waiter-first-seen"
 # verdict, and a live review can print a line that looks like any sentinel.
 # A result whose owner ended without publishing it (out of memory, a crash) is recovered here: the owner holds
 # <log>.owner locked for its life, so review_result.py recover publishes 1 only for an owner that is gone.
-# It runs detached with streams of its own, so a stalled filesystem delays the recovery, never this wait:
-# the status it publishes is read on a later poll, inside this call's deadline.
+# It runs in the background with streams of its own, at most once per log per call, so a stalled filesystem
+# delays the recovery, never this wait: the status it publishes is read on a later poll, inside this call's
+# deadline. Its own exit status is read too once it ends: a recovery that could not publish (a full
+# filesystem) while the owner is still gone leaves a review that has ended and will never publish, which is
+# reported UNPUBLISHED (exit 4, re-dispatch that log), never as a review still running.
 RESULT_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_result.py"
+declare -A REC_PID=() UNPUBLISHED=()
 _log_done() {
     [ -f "$1.done" ] && return 0
+    [ -n "${UNPUBLISHED[$1]:-}" ] && return 1
+    local pid="${REC_PID[$1]:-}"
+    [ "$pid" = ended ] && return 1                  # its one recovery this call has ended
+    if [ -n "$pid" ]; then
+        # A recovery already started this call: read its status once it has ended (a zombie of this shell
+        # until waited on, so a still-running one is a live, non-zombie /proc entry).
+        local st=""
+        [ -r "/proc/$pid/stat" ] && read -r _ _ st _ < "/proc/$pid/stat" 2>/dev/null
+        if [ -z "$st" ] || [ "$st" = Z ]; then
+            local rc=0
+            wait "$pid" 2>/dev/null || rc=$?
+            if [ "$rc" -ne 0 ] && [ ! -f "$1.done" ] && flock -n "$1.owner" true 2>/dev/null; then
+                UNPUBLISHED[$1]=1
+            fi
+            REC_PID[$1]=ended
+        fi
+        return 1
+    fi
     # Only a free owner lock (flock -n, which never waits) is worth a recovery; a live owner holds it.
     if [ -e "$1.owner" ] && [ -e "$1" ] && flock -n "$1.owner" true 2>/dev/null; then
         # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
-        ( python3 "$RESULT_TOOL" recover "$1" </dev/null >/dev/null 2>&1 & )
+        python3 "$RESULT_TOOL" recover "$1" </dev/null >/dev/null 2>&1 &
+        REC_PID[$1]=$!
     fi
     return 1
 }
@@ -143,16 +168,16 @@ _any_silent() {
     local f
     for f in "${LOGS[@]}"; do
         _log_done "$f" && continue
+        [ -n "${UNPUBLISHED[$f]:-}" ] && return 0      # ended without a status that can ever be published
         [ "$NO_STALE" -eq 1 ] && [ -f "$f" ] && continue
         [ "$(_silent_for "$f")" -ge "$STALE" ] && return 0
     done
     return 1
 }
-for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
-
-# One deadline for the whole call, read from the shell's clock: time spent outside sleep (a slow stat, a
-# recovery started) counts against it.
+# One deadline for the whole call, read from the shell's clock and taken before any bookkeeping: time spent
+# outside sleep (the first sightings, a slow stat, a recovery started, the silence scan) counts against it.
 started=$SECONDS
+for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
 elapsed=0
 while :; do
     # Checked once more when the deadline comes, so a status published during the last sleep is seen.
@@ -171,6 +196,8 @@ while :; do
     elapsed=$((SECONDS - started))        # the polls above spent time too
     [ "$elapsed" -ge "$MAX" ] && break
     _any_silent && break
+    elapsed=$((SECONDS - started))        # and so did the silence scan: the sleep is what is left after it
+    [ "$elapsed" -ge "$MAX" ] && break
     dur=$POLL
     [ $((MAX - elapsed)) -lt "$POLL" ] && dur=$((MAX - elapsed))
     [ "$dur" -gt 0 ] && sleep "$dur"
@@ -179,6 +206,7 @@ done
 
 any_stale=0
 any_missing=0
+any_unpublished=0
 pending=()
 for f in "${LOGS[@]}"; do
     _log_done "$f" && continue
@@ -186,7 +214,10 @@ for f in "${LOGS[@]}"; do
     size=0
     [ -f "$f" ] && size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
     stalled=$(_silent_for "$f")
-    if [ "$stalled" -ge "$STALE" ] && [ ! -f "$f" ]; then
+    if [ -n "${UNPUBLISHED[$f]:-}" ]; then
+        any_unpublished=1
+        printf '  UNPUBLISHED: %s (its owner ended and the recovery could not publish its status -- the review has ended; re-dispatch THIS log)\n' "$f"
+    elif [ "$stalled" -ge "$STALE" ] && [ ! -f "$f" ]; then
         any_missing=1
         printf '  MISSING: %s (no such file after %ss -- NOT a hung review: verify the path against the broker'"'"'s logFile / .claude/overnight/reviews/manifest.jsonl before re-dispatching anything)\n' \
                "$f" "$stalled"
@@ -199,6 +230,10 @@ for f in "${LOGS[@]}"; do
     fi
 done
 
+if [ "$any_unpublished" -eq 1 ]; then
+    echo "UNPUBLISHED after ${elapsed}s -- >=1 review ended with no status that can be published (see above)."
+    exit 4
+fi
 if [ "$any_stale" -eq 1 ]; then
     echo "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
     exit 4

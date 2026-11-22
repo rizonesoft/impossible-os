@@ -304,3 +304,39 @@ def test_a_stalled_recovery_never_holds_the_waiter_past_its_deadline():
                     os.kill(int(pidfile.read_text()), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+
+def test_a_recovery_that_cannot_publish_is_reported_as_ended_not_running():
+    """The owner is gone and its recovery cannot publish (a full filesystem): the review has ended and will
+    never publish, so the waiter reports it UNPUBLISHED (exit 4, re-dispatch it), even with --no-stale."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "python3").write_text('#!/bin/bash\nif [ "$2" = recover ]; then exit 1; fi\n'
+                                        'exec /usr/bin/python3 "$@"\n')
+        (bindir / "python3").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = subprocess.run(["bash", str(TOOL), "--max", "15", "--no-stale", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 4 and "UNPUBLISHED" in r.stdout, r
+
+
+def test_the_sleep_is_what_is_left_after_the_silence_scan():
+    """A slow silence scan (here each stat takes two seconds) is counted before the sleep, so the waiter
+    still returns close to --max instead of sleeping the time the scan already spent."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "stat").write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/stat "$@"\n')
+        (bindir / "stat").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        began = time.monotonic()
+        r = subprocess.run(["bash", str(TOOL), "--max", "3", "--stale-secs", "999", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        took = time.monotonic() - began
+        assert r.returncode == 3 and took < 6, (r.returncode, took)

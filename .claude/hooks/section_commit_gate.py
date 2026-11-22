@@ -67,10 +67,12 @@ import functools
 import json
 import os
 import re
+import select
 import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -176,26 +178,6 @@ _RE_ADV_TRIGGER_LIFECYCLE = re.compile(
 )
 _RE_ADV_LOC_THRESHOLD = 50  # >50 LOC C/H trigger
 
-# Stamp lines whose presence in the staged diff triggers the
-# four-dispatch check. `^\+\s{0,3}(?:>\s*)+\*\*` matches ADDED stamp
-# lines with 0-3 leading spaces of valid Markdown blockquote indent
-# AND tolerates nested blockquote markers (`> > **`, `>> **`).
-# Unchanged context lines starting with `>` (no leading `+`) do not
-# trigger. Codex M4 (review-pipeline post-impl): regex without
-# leading-space tolerance was evadable; Codex post-commit review_C:
-# the single-`>` form was also evadable via Markdown-valid nested
-# blockquote forms (`+> > **Verified:**` / `+>> **Quality reviewed:**`).
-_STAMP_ADDED_RE = re.compile(
-    r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*",
-)
-# Companion regex: REMOVED stamp line carrying the same label. When a
-# diff hunk has BOTH a removed `> **Verified:**` AND an added
-# `> **Verified:**`, that's an in-place UPDATE of an existing stamp
-# (e.g. counts changed during a gap-audit follow-up), not a fresh
-# section ship. The four-dispatch check should not fire on updates.
-_STAMP_REMOVED_RE = re.compile(
-    r"^-\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*",
-)
 
 # Wrapper / env tokens we walk past to find the real `git` command.
 # Hardcoded (round-7 perf fix) instead of importing from crc to avoid
@@ -1563,6 +1545,7 @@ class _BoundedProcesses:
         limit = _hook_left(timeout)
         if limit <= 0:
             raise subprocess.TimeoutExpired(cmd, 0)
+        end = time.monotonic() + limit
         if capture_output:
             stdout = stderr = subprocess.PIPE
         # LIFECYCLE-WAIVER: a group of its own only so a timed-out git read is ended whole; it never outlives the hook.
@@ -1570,13 +1553,16 @@ class _BoundedProcesses:
                                 stdin=subprocess.PIPE if input is not None else None,
                                 stdout=stdout, stderr=stderr, text=text, errors=errors)
         try:
-            out, err = proc.communicate(input, timeout=limit)
+            # The start (Popen waits for the exec) spent part of the budget: only what is left is waited.
+            out, err = proc.communicate(input, timeout=max(0.001, end - time.monotonic()))
         except subprocess.TimeoutExpired:
             self._end(proc)
             raise subprocess.TimeoutExpired(cmd, limit) from None
         except BaseException:
             self._end(proc)
             raise
+        if time.monotonic() > end:
+            raise subprocess.TimeoutExpired(cmd, limit)        # an answer first seen after its time is none
         if check and proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
@@ -2307,56 +2293,42 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
             cwd=str(root), text=True, timeout=wait,
             stderr=subprocess.DEVNULL, env=_stored_env(),
         )
-        if _fresh_stamp_sections(root, path, diff):
+        if diff.strip() and _fresh_stamp_sections(root, path):
             out.append(path)
     return out
 
 
-def _section_at(lines: list[str], lineno: int) -> str:
-    """The `## N.` section a 1-based line number of `lines` falls under ("" before the first)."""
-    for idx in range(min(lineno, len(lines)) - 1, -1, -1):
-        m = re.match(r"^##\s+(\d+)\.", lines[idx])
+# A stamp line: 0-3 spaces of Markdown indent and any nesting of blockquote markers (`> > **`, `>> **`), as
+# every form an editor renders as a quoted stamp (Codex M4 and review_C found the narrower forms evadable).
+_STAMP_LINE_RE = re.compile(r"^\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*")
+
+
+def _stamp_counts(lines: list[str]) -> collections.Counter:
+    """(section, label) -> how many stamp lines of that label the document's `## N.` section holds; a stamp
+    above every heading counts under section ""."""
+    counts: collections.Counter = collections.Counter()
+    section = ""
+    for line in lines:
+        h = re.match(r"^##\s+(\d+)\.", line)
+        if h:
+            section = h.group(1)
+            continue
+        m = _STAMP_LINE_RE.match(line)
         if m:
-            return m.group(1)
-    return ""
+            counts[(section, m.group(1))] += 1
+    return counts
 
 
-def _fresh_stamp_sections(root: Path, path: str, diff: str) -> list[str]:
-    """The sections of `path` whose staged diff ADDS a stamp line with no removed stamp of the same label IN
-    THE SAME SECTION: an in-place update (a stamp's count bumped) is not fresh, but a stamp removed in one
-    section never balances one added in another. Added lines are placed by the staged file, removed ones by
-    HEAD's."""
-    added: collections.Counter = collections.Counter()
-    removed: collections.Counter = collections.Counter()
-    staged = head = None
-    old_no = new_no = 0
-    for line in diff.splitlines():
-        hm = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
-        if hm:
-            old_no, new_no = int(hm.group(1)), int(hm.group(3))
-            # With -U0 a hunk that removes nothing names the line BEFORE it; one that adds nothing likewise.
-            if hm.group(2) == "0":
-                old_no += 1
-            if hm.group(4) == "0":
-                new_no += 1
-            continue
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-        if line.startswith("+"):
-            m = _STAMP_ADDED_RE.match(line)
-            if m:
-                if staged is None:
-                    staged = _staged_file_lines(root, path)
-                added[(_section_at(staged, new_no), m.group(1))] += 1
-            new_no += 1
-        elif line.startswith("-"):
-            m = _STAMP_REMOVED_RE.match(line)
-            if m:
-                if head is None:
-                    head = _head_file_lines(root, path)
-                removed[(_section_at(head, old_no), m.group(1))] += 1
-            old_no += 1
-    return sorted({key[0] for key, n in added.items() if n > removed[key]})
+def _fresh_stamp_sections(root: Path, path: str) -> list[str]:
+    """THE ONE RULE for a fresh stamp, used by signature detection and by the evidence check alike: the
+    sections of `path` whose staged copy holds more stamp lines of a label than HEAD's copy of the same
+    section. It compares the two documents, not the diff, so an update in place (a stamp's count bumped) is
+    not fresh, a stamp removed in one section never balances one added in another, and a heading inserted
+    above an unchanged stamp makes the new section's stamp fresh. A copy that cannot be read raises
+    _StagedReadError."""
+    staged = _stamp_counts(_staged_file_lines(root, path))
+    head = _stamp_counts(_head_file_lines(root, path))
+    return sorted({sec for key, n in staged.items() if n > head[key] for sec in [key[0]]})
 
 
 def _head_file_lines(root: Path, path: str) -> list[str]:
@@ -2622,35 +2594,15 @@ def _commit_diff(root: Path, mode: str, old: str, new: str, *paths: str) -> list
 
 
 def _stamped_sections(root: Path, todo: str) -> set[str] | None:
-    """The section numbers whose stamp the staged diff of `todo` adds; None when they cannot be read.
-
-    A stamp line belongs to the nearest `## N.` heading above it in the STAGED file.
-    """
-    diff = _git_lines(root, "diff", "--cached", "-U0", "--", todo)
-    staged = _git_lines(root, "show", f":{todo}")
-    if diff is None or staged is None:
+    """The sections of `todo` this commit stamps afresh (_fresh_stamp_sections, the rule detection used);
+    None when they cannot be read, or when a fresh stamp sits above every section heading."""
+    try:
+        fresh = set(_fresh_stamp_sections(root, todo))
+    except _StagedReadError:
         return None
-    sections: set[str] = set()
-    line_no = 0
-    for line in diff:
-        m = _HUNK_RE.match(line)
-        if m:
-            line_no = int(m.group(1))
-            continue
-        if not line.startswith("+") or line.startswith("+++"):
-            continue
-        if _STAMP_ADDED_RE.match(line):
-            found = None
-            for i in range(min(line_no, len(staged)) - 1, -1, -1):
-                h = _SECTION_HEADING_RE.match(staged[i])
-                if h:
-                    found = h.group(1)
-                    break
-            if found is None:
-                return None
-            sections.add(found)
-        line_no += 1
-    return sections or None
+    if not fresh or "" in fresh:
+        return None
+    return fresh
 
 
 def _review_pin_path(root: Path | None) -> None:
@@ -5203,14 +5155,52 @@ def _emit_section21_heuristics(root: Path, staged_src: list) -> None:
         pass
 
 
+_GIT_HOOK_BUDGET = 60.0     # the pre-commit gate's own deadline (git sets none; a commit must still end)
+_WATCHDOG_GRACE = 1.0      # past the budget, the time the checks are given to report their own refusal
+
+
+def _deadline_exit(mode: str) -> None:
+    """The hook's deadline has passed with no verdict: refuse the commit and exit at once, from this timer
+    thread, whatever the main thread is blocked in. The message is written only if stderr can take it now."""
+    msg = (f"[section-commit-gate] BLOCK -- the gate ran out of its time ({mode}) before it could judge this "
+           "commit; nothing was judged. Commit again when the host answers.\n").encode()
+    try:
+        poller = select.poll()
+        poller.register(2, select.POLLOUT)
+        if poller.poll(0):
+            os.write(2, msg[:512])
+    except OSError:
+        pass                                            # fail-direction: the refusal is the exit status
+    os._exit(2)
+
+
+def _with_deadline(budget: float, mode: str, run) -> int:
+    """`run()` under the hook's one deadline: every bounded read sees it (_hook_left), and a watchdog refuses
+    and exits if the deadline passes with no verdict (a stalled exec, a check another module runs)."""
+    _hook_deadline[:] = [time.monotonic() + budget]
+    dog = threading.Timer(budget + _WATCHDOG_GRACE, _deadline_exit, args=(mode,))
+    dog.daemon = True
+    dog.start()
+    try:
+        return run()
+    finally:
+        dog.cancel()
+        _hook_deadline[:] = []
+
+
 def main(argv: list[str]) -> int:
     if "--git-hook-mode" in argv:
-        root = _repo_root()
-        if root is None:
-            return 0  # not a git context; fail open
-        return _git_hook_mode_main(root)
-    _hook_deadline[:] = [time.monotonic() + _HOOK_BUDGET]     # the harness gives this hook ten seconds
-    return _harness_main()
+        def git_hook() -> int:
+            root = _repo_root()
+            if root is None:
+                # The pre-commit hook runs inside a commit: an unreadable root is a failed read, never "no
+                # repository", so the commit is refused rather than passed unjudged.
+                print("[section-commit-gate] BLOCK -- the repository root could not be read "
+                      "(git rev-parse --show-toplevel failed or ran out of time); commit again.", file=sys.stderr)
+                return 2
+            return _git_hook_mode_main(root)
+        return _with_deadline(_GIT_HOOK_BUDGET, "pre-commit", git_hook)
+    return _with_deadline(_HOOK_BUDGET, "harness", _harness_main)     # the harness gives this hook ten seconds
 
 
 if __name__ == "__main__":

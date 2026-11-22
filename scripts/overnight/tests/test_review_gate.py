@@ -17,6 +17,7 @@ import importlib.util
 import json
 import pathlib
 import subprocess
+import os
 import sys
 import time
 import tempfile
@@ -798,3 +799,77 @@ def test_a_timed_out_group_is_ended_within_the_hook_deadline():
     else:
         raise AssertionError("no timeout")
     assert time.monotonic() - began < 0.5 + 1.0
+
+
+def test_a_process_start_that_takes_the_time_left_is_a_timeout():
+    """The runner's budget covers the start too: a start (exec) that takes longer than the time left returns
+    a timeout, never a success first seen after the deadline."""
+    real = scg.subprocess.Popen
+
+    def slow(*a, **k):
+        time.sleep(0.18)
+        return real(*a, **k)
+    saved = list(scg._hook_deadline)
+    scg._hook_deadline[:] = [time.monotonic() + 0.1]
+    scg.subprocess.Popen = slow
+    try:
+        scg._proc.run(["true"], timeout=5)
+    except scg.subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError("a result seen after the deadline was returned")
+    finally:
+        scg.subprocess.Popen = real
+        scg._hook_deadline[:] = saved
+
+
+def test_the_hook_refuses_and_exits_when_its_deadline_passes_with_no_verdict():
+    """Whatever the hook is blocked in (here a check that never returns), its deadline ends it with a
+    refusal: exit 2 shortly after the budget."""
+    code = ("import sys, time; sys.path.insert(0, %r); import section_commit_gate as g; "
+            "sys.exit(g._with_deadline(0.3, 'test', lambda: time.sleep(30)))" % str(REPO / ".claude/hooks"))
+    began = time.monotonic()
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 2 and "ran out of its time" in r.stderr, (r.returncode, r.stderr)
+    assert time.monotonic() - began < 0.3 + scg._WATCHDOG_GRACE + 2
+
+
+def test_a_root_lookup_that_fails_in_the_commit_hook_refuses():
+    """Inside a commit, an unreadable repository root is a failed read: the pre-commit gate refuses."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        real = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
+        (bindir / "git").write_text('#!/bin/sh\ncase " $* " in *" --show-toplevel "*) exec sleep 30;; esac\n'
+                                    f'exec {real} "$@"\n')
+        (bindir / "git").chmod(0o755)
+        env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+        r = subprocess.run([sys.executable, str(REPO / ".claude/hooks/section_commit_gate.py"), "--git-hook-mode"],
+                           capture_output=True, text=True, timeout=30, cwd=str(root), env=env)
+        assert r.returncode == 2 and "root could not be read" in r.stderr, (r.returncode, r.stderr[-800:])
+
+
+def test_a_heading_inserted_above_an_unchanged_stamp_makes_that_stamp_fresh():
+    """Splitting a section by inserting a heading above its stamp gives the new section a stamp HEAD's copy
+    of that section lacked: it is fresh, and the evidence check owes it its own receipts."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        (root / "todo/T.md").write_text("## 1. One\n\nbody\n\n> **Verified:** 2026-11-20\n")
+        subprocess.run(["git", "-C", str(root), "commit", "-qam", "stamped"], check=True)
+        (root / "todo/T.md").write_text("## 1. One\n\nbody\n\n## 2. Two\n\n> **Verified:** 2026-11-20\n")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        assert scg._stamped_todos(root, ["todo/T.md"]) == ["todo/T.md"]
+        assert scg._stamped_sections(root, "todo/T.md") == {"2"}
+
+
+def test_an_updated_stamp_beside_a_fresh_one_owes_only_the_fresh_section():
+    """Detection and evidence share one rule: updating section 1's stamp in place while stamping section 2
+    owes receipts for section 2 alone."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        _two_sections(root, "> **Verified:** 2026-11-20 (3 rounds)", "")
+        subprocess.run(["git", "-C", str(root), "commit", "-qam", "one stamped"], check=True)
+        _two_sections(root, "> **Verified:** 2026-11-20 (4 rounds)", "> **Verified:** 2026-11-22")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        assert scg._stamped_sections(root, "todo/T.md") == {"2"}
