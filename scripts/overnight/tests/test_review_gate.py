@@ -146,6 +146,8 @@ def _broker_fixture(d, todo, legs):
     shutil.copy(REPO / "scripts/overnight/review-envelope.py",
                 root / "scripts/overnight/review-envelope.py")
     shutil.copy(REPO / "scripts/review_pin.py", root / "scripts/review_pin.py")  # the envelope's status reader
+    shutil.copy(REPO / "scripts/overnight/review_result.py",
+                root / "scripts/overnight/review_result.py")              # ... and the one status parser it uses
     ts = int(time.time())
     lines = []
     for kind, how in legs.items():

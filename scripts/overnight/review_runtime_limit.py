@@ -520,8 +520,12 @@ def _launch(job, until, cancel=None):
             (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
             (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
             (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
-    # A start still held at the deadline goes on in its thread: the job claims and publishes its own result.
-    _start(spawn, until, cancel)
+    # A start still held at the deadline is not this supervisor's to wait for, and its thread ends with this
+    # process: whether a job will ever exist is unknown, so the failure is published through the exclusive
+    # claim (a job that started and claimed first keeps its own result, and one that starts later finds the
+    # result owned and runs nothing). The answer then names a result that is published either way.
+    started, _pid = _start(spawn, until, cancel)
+    return started
 
 
 class Cancel:
@@ -988,11 +992,15 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
         # The submission succeeded: the result is the launched job's, whatever happens to the answer.
         if broker.job:
             try:
-                _launch(broker.job, final, cancel)
+                started = _launch(broker.job, final, cancel)
             except OSError as exc:
                 print(f"[review-broker] the job could not be started ({exc.strerror})", file=sys.stderr)
                 _publish(broker, 1, final, cancel)
                 return 1
+            if not started:
+                print("[review-broker] the job's start was not confirmed by the deadline; its result is "
+                      "recorded as failed unless the job claimed it first", file=sys.stderr)
+                _result_step(["publish", broker.log, "1", "--prompt", broker.prompt, "--claim"], final, cancel)
         return 0 if _deliver(broker) else 1
     if rc == 0:
         rc = 1                            # ended without the answer it owes: a failed dispatch

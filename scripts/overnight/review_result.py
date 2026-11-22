@@ -114,13 +114,19 @@ def _pwrite_all(fd: int, data: bytes, at: int) -> None:
 
 
 def read_status(log: str) -> tuple:
-    """(status, error) for `log`: the status <log>.done publishes when it is a small regular file holding one
+    """(status, error) for `log`: read_status_file on <log>.done."""
+    return read_status_file(log + ".done")
+
+
+def read_status_file(path: str) -> tuple:
+    """THE status parser every reader uses (the commit gate and envelope through review_pin, the waiter,
+    the recovery): (status, error) for the .done file `path`: the status it publishes when it is a small regular file holding one
     status (1 to 3 digits and a newline), read without blocking (a FIFO or device fails at once); None when
     there is none or the file is damaged (empty, cut short, not a status, not a regular file). `error` is
     the OSError met opening or reading a file that is there: what it holds is unknown, so it is never taken
     for a missing or damaged status (a recovery that replaced it could overwrite a published success)."""
     try:
-        fd = os.open(log + ".done", os.O_RDONLY | os.O_NONBLOCK | CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | CLOEXEC)
     except FileNotFoundError:
         return None, None
     except OSError as exc:
@@ -144,7 +150,12 @@ def status(log: str) -> str | None:
 
 
 def _print_status(log: str) -> int:
-    found = status(log)
+    """0 and the status; 1 when there is none or it is damaged; 3 when it could not be read (its content is
+    unknown: never a reason to recover or to dispatch the review again)."""
+    found, error = read_status(log)
+    if error is not None:
+        print(f"review_result: {log}.done could not be read ({error.strerror})", file=sys.stderr)
+        return 3
     if found is None:
         return 1
     print(found)

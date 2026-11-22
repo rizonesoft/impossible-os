@@ -58,7 +58,14 @@ set -u
 # The --max clock starts here, before anything else runs, in microseconds (EPOCHREALTIME): SECONDS counts
 # wall-clock second boundaries, so a call started late in a second lost up to a second of --max. Nothing
 # before the observer starts touches the filesystem (no command lookup, no stat), so setup cannot hold it.
-_now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+# The clock is the kernel's elapsed-time clock (/proc/uptime: CLOCK_BOOTTIME, held in memory, never on
+# storage), so a wall-clock step back or forward never lengthens or shortens --max; EPOCHREALTIME only where
+# /proc is unreadable, and then for the whole call.
+if read -r _up _ < /proc/uptime 2>/dev/null && [[ "$_up" =~ ^[0-9]+\.[0-9]{2}$ ]]; then
+    _now_us() { local up; read -r up _ < /proc/uptime; echo $(( ${up%.*} * 1000000 + 10#${up#*.} * 10000 )); }
+else
+    _now_us() { local t="$EPOCHREALTIME"; echo $(( ${t%.*} * 1000000 + 10#${t#*.} )); }
+fi
 START_US=$(_now_us)
 
 # Setup messages are kept and written at the end through the same bounded writer as the report (a caller
@@ -135,6 +142,8 @@ esac
 # threshold passes, within this call. A path that does not exist yet has its
 # first sighting recorded in a sidecar, which survives re-invocations.
 _first_seen() {
+    # Made only for a log that is missing, so a published status is read before any of this bookkeeping.
+    mkdir -p "$ACT_DIR" 2>/dev/null || true
     local side; side="$ACT_DIR/$(printf '%s' "$1" | md5sum 2>/dev/null | cut -c1-16)"
     # A sighting that cannot be kept reads as the epoch, so a missing log is
     # reported MISSING at once rather than looking newly launched forever.
@@ -150,20 +159,26 @@ _first_seen() {
 _observe() {
     local -A rec_pid=() unpublished=() status=()
     local f st rc pid pst now size silent exists
-    mkdir -p "$ACT_DIR" 2>/dev/null || true
-    for f in "${LOGS[@]}"; do _first_seen "$f" >/dev/null; done
     local soon left
     while :; do
         local all=1
         soon=0
         for f in "${LOGS[@]}"; do
             if [ -n "${status[$f]:-}" ]; then continue; fi
-            if st="$(python3 "$RESULT_TOOL" status "$f" 2>/dev/null)"; then
+            src=0
+            st="$(python3 "$RESULT_TOOL" status "$f" 2>/dev/null)" || src=$?
+            if [ "$src" -eq 0 ]; then
                 status[$f]="$st"
                 echo "done $st $f"
                 continue
             fi
             all=0
+            if [ "$src" -eq 3 ]; then
+                # The status is there but could not be read: its content is unknown, so it is neither
+                # recovered nor reported as unpublished; it is read again next round.
+                echo "unreadable $f"
+                continue
+            fi
             if [ -n "${unpublished[$f]:-}" ]; then echo "unpublished $f"; continue; fi
             pid="${rec_pid[$f]:-}"
             if [ -n "$pid" ] && [ "$pid" != ended ]; then
@@ -175,8 +190,9 @@ _observe() {
                     rc=0
                     wait "$pid" 2>/dev/null || rc=$?
                     rec_pid[$f]=ended
-                    if [ "$rc" -ne 0 ] && ! python3 "$RESULT_TOOL" status "$f" >/dev/null 2>&1 \
-                       && flock -n "$f.owner" true 2>/dev/null; then
+                    src=0
+                    python3 "$RESULT_TOOL" status "$f" >/dev/null 2>&1 || src=$?
+                    if [ "$rc" -ne 0 ] && [ "$src" -eq 1 ] && flock -n "$f.owner" true 2>/dev/null; then
                         unpublished[$f]=1
                         echo "unpublished $f"
                         continue
@@ -190,10 +206,13 @@ _observe() {
                 soon=1
             fi
             now=$(date +%s)
-            if [ -f "$f" ]; then
+            # Metadata only, from one stat (the file is never opened: a FIFO that took the path cannot hold
+            # this probe): a regular file's size and last growth.
+            meta=$(stat -c '%f %s %Y' -- "$f" 2>/dev/null) || meta=""
+            read -r mode size mtime <<< "$meta"
+            if [ -n "$meta" ] && [ $(( 0x$mode & 0xF000 )) -eq $(( 0x8000 )) ]; then
                 exists=1
-                size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
-                silent=$(( now - $(stat -c %Y "$f" 2>/dev/null || echo "$now") ))
+                silent=$(( now - mtime ))
             else
                 exists=0
                 size=0
@@ -217,7 +236,7 @@ _observe() {
         # The next round comes after POLL, or sooner: a second after a recovery started (its status is then
         # seen at once), and in any case a second before the deadline, so a status published during the
         # last interval is still observed in time.
-        left=$(( DEADLINE - $(date +%s) - 1 ))
+        left=$(( (END_US - $(_now_us)) / 1000000 - 1 ))
         dur=$POLL
         [ "$soon" -eq 1 ] && dur=1
         [ "$left" -lt "$dur" ] && dur=$left
@@ -228,8 +247,7 @@ _observe() {
 
 # One deadline for the whole call, counted from the clock taken at the top.
 END_US=$(( START_US + MAX * 1000000 ))
-DEADLINE=$(( END_US / 1000000 ))
-declare -A GOT=() UNPUB=() EXISTS=() SIZE=() SILENT=()
+declare -A GOT=() UNPUB=() UNREAD=() EXISTS=() SIZE=() SILENT=()
 TAIL=()
 # The observer's streams are its own (exec, so no saved copy of the caller's stderr stays open in it): a
 # caller capturing this call's output sees EOF when this shell exits, not when the observer's sleep ends.
@@ -245,6 +263,7 @@ while :; do
     case "$line" in
         "done "*)        read -r _ rc key <<< "$line"; GOT[$key]="$rc" ;;
         "unpublished "*) UNPUB["${line#unpublished }"]=1 ;;
+        "unreadable "*)  UNREAD["${line#unreadable }"]=1 ;;
         "seen "*)        read -r _ ex sz sil key <<< "$line"
                          EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
         "tail "*)        TAIL+=("${line#tail }") ;;
@@ -315,7 +334,9 @@ for f in "${LOGS[@]}"; do
     pending+=("$f")
     size="${SIZE[$f]:-0}"
     stalled="${SILENT[$f]:-}"
-    if [ -n "${UNPUB[$f]:-}" ]; then
+    if [ -n "${UNREAD[$f]:-}" ]; then
+        sayf '  UNREADABLE: %s (a status is there but its storage could not be read; NOT a reason to re-dispatch -- wait again)\n' "$f"
+    elif [ -n "${UNPUB[$f]:-}" ]; then
         any_unpublished=1
         sayf '  UNPUBLISHED: %s (its owner ended and the recovery could not publish its status -- the review has ended; re-dispatch THIS log)\n' "$f"
     elif [ -z "$stalled" ]; then

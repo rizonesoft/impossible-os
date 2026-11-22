@@ -540,3 +540,65 @@ def test_a_warning_and_a_report_on_full_pipes_share_one_budget():
             if wr >= 0:
                 os.close(wr)
             os.close(rd)
+
+
+def _python_stub(bindir, case):
+    import shutil
+    real = shutil.which("python3")
+    (bindir / "python3").write_text(f'#!/bin/sh\ncase " $* " in {case} esac\nexec {real} "$@"\n')
+    (bindir / "python3").chmod(0o755)
+
+
+def test_an_unreadable_status_is_never_reported_unpublished():
+    """The owner has gone and its status cannot be read (the status reader answers 3, an I/O error): the
+    wait reports it UNREADABLE and still running, never UNPUBLISHED with advice to dispatch it again."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        _python_stub(bindir, '*" status "*) exit 3;;')
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        pathlib.Path(str(log) + ".owner").write_text("")
+        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 3 and "UNREADABLE" in r.stdout and "UNPUBLISHED" not in r.stdout, r
+
+
+def test_a_pending_log_replaced_by_a_fifo_never_stops_the_other_probes():
+    """The first log is still pending and reading its content stalls (any reader of it, wc here, never
+    returns, as an open of a FIFO that took the path would not); the second is done: the probe of the first
+    reads only metadata, so the second is still observed."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "wc").write_text("#!/bin/sh\nexec sleep 30\n")
+        (bindir / "wc").chmod(0o755)
+        first, second = pathlib.Path(d) / "a.out", pathlib.Path(d) / "b.out"
+        first.write_text("partial\n")
+        second.write_text("review\n")
+        pathlib.Path(str(second) + ".done").write_text("0\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--no-stale", str(first), str(second)],
+                           capture_output=True, text=True, cwd=d, timeout=60,
+                           env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 3 and f"running: {second}" not in r.stdout, r
+        assert f"running: {first} (" in r.stdout and "no observation" not in r.stdout, r
+
+
+def test_slow_bookkeeping_never_hides_a_published_verdict():
+    """The activity directory takes a second and a half to make: a published status is read first, so the
+    wait still answers DONE within --max."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "mkdir").write_text("#!/bin/sh\nsleep 1.5\nexec /bin/mkdir \"$@\"\n")
+        (bindir / "mkdir").chmod(0o755)
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
+                           timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 0 and "DONE:" in r.stdout, r

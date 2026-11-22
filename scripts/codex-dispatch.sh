@@ -367,15 +367,20 @@ if [ -n "$LOG_FILE" ]; then
     # Where the transcript goes (for the reader). The recorder's proof that a
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
-    node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"
+    # The transcript is opened once, here, for appending; every later write and read goes through this
+    # descriptor (/dev/fd/N reaches the same file), so a FIFO or anything else that later takes the path
+    # can never hold this dispatcher in an open.
+    exec {LOGFD}>>"$LOG_FILE" || { echo "[$SELF_NAME] BLOCK -- the transcript could not be created" >&2; exit 2; }
+    LOG_RW="/dev/fd/$LOGFD"
+    node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_ID="$(candidate_id)" || NOW_ID="unreadable"
         if [ "$NOW_ID" != "$LAUNCH_ID" ]; then
             rc=3
             echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_ID:0:10}, or the index or the working tree moved)" \
-                | tee -a "$LOG_FILE" >&2
-            echo "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again." | tee -a "$LOG_FILE" >&2
+                | tee -a "$LOG_RW" >&2
+            echo "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again." | tee -a "$LOG_RW" >&2
         fi
     fi
     # The receipt below says whether THIS wrapper checked the pass. The review
@@ -384,26 +389,26 @@ if [ -n "$LOG_FILE" ]; then
     PASS_CHECKED=false; PASS_HIGHEST=""
     if [ "$PIN_KIND" = "1" ]; then PASS_CHECKED=true; fi
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file0 "$PATHS_FILE")"
+        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_RW" --paths-file0 "$PATHS_FILE")"
         case "$?" in
             0) ;;
             1) rc=3
                echo "[$SELF_NAME] INCOMPLETE -- the review gave no verdict line for: $(printf '%s' "$PIN_MISSING" | tr '\n' ' ')" \
-                   | tee -a "$LOG_FILE" >&2
-               echo "[$SELF_NAME]   This pass does not count as clean. Dispatch it again." | tee -a "$LOG_FILE" >&2 ;;
+                   | tee -a "$LOG_RW" >&2
+               echo "[$SELF_NAME]   This pass does not count as clean. Dispatch it again." | tee -a "$LOG_RW" >&2 ;;
             *) rc=3
-               echo "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" | tee -a "$LOG_FILE" >&2 ;;
+               echo "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" | tee -a "$LOG_RW" >&2 ;;
         esac
     fi
     # The worst level the review declares goes on the receipt: the commit gate
     # refuses a stamp whose pass ended at a blocking level, so a completion
     # that returned gaps cannot stand as the last word.
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
-        PASS_HIGHEST="$(python3 "$PIN_TOOL" --highest --transcript "$LOG_FILE")" || {
+        PASS_HIGHEST="$(python3 "$PIN_TOOL" --highest --transcript "$LOG_RW")" || {
             rc=3; PASS_HIGHEST=""
-            echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_FILE" >&2; }
+            echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_RW" >&2; }
     fi
-    echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
+    echo "Turn completed (rc=$rc)" >&"$LOGFD"
     PROMPT_SHA="$CALLER_PROMPT_SHA"
     # Written by a JSON serializer: a path or TODO name holding a quote, a
     # backslash or a newline must not produce a line no reader can parse.

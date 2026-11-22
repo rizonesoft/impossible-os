@@ -1778,3 +1778,78 @@ def test_a_term_walk_that_runs_into_the_kill_time_goes_straight_to_teardown(tmp_
     r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
     rc, took = r.stdout.split()
     assert rc == "124" and float(took) < 2 + 0.5, r
+
+
+def test_every_status_reader_parses_the_same_bytes_the_same_way(tmp_path):
+    """One parser: bytes the recovery would replace (an extra newline) are credited by no reader, and a
+    clean status is read alike by the gate and the recovery."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_pin
+    import review_result as rr
+    done = tmp_path / "r.out.done"
+    for data, want in ((b"0\n\n", None), (b" 0\n", None), (b"0\n", "0"), (b"124", "124")):
+        done.write_bytes(data)
+        assert review_pin.published_status(str(done)) == want == rr.read_status(str(tmp_path / "r.out"))[0], data
+
+
+def test_a_status_read_error_is_its_own_answer_from_the_status_tool(tmp_path, monkeypatch):
+    """The status tool answers 3 for a status it could not read, distinct from 1 (none, or damaged)."""
+    import errno
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_result as rr
+    log = tmp_path / "r.out"
+    pathlib.Path(str(log) + ".done").write_text("0\n")
+    monkeypatch.setattr(rr, "read_status_file", lambda p: (None, OSError(errno.EIO, "Input/output error")))
+    assert rr.main(["status", str(log)]) == 3
+    monkeypatch.undo()
+    assert rr.main(["status", str(tmp_path / "none.out")]) == 1
+
+
+def test_verdict_reads_refuse_a_transcript_replaced_by_a_fifo(tmp_path):
+    """--highest and --verdicts read the transcript only as a regular file: a FIFO with no writer at the
+    path is refused at once."""
+    import sys
+    fifo = tmp_path / "t.out"
+    os.mkfifo(fifo)
+    for args in (["--highest"], ["--verdicts", "round"]):
+        r = subprocess.run([sys.executable, str(REPO / "scripts/review_pin.py"), *args, "--transcript", str(fifo)],
+                           capture_output=True, text=True, timeout=20, cwd=REPO)
+        assert r.returncode != 0, (args, r)
+
+
+def test_the_direct_dispatcher_never_reopens_its_transcript(tmp_path):
+    """The review ends, then its transcript path is replaced by a FIFO with no reader: the dispatcher checks,
+    appends and publishes through the descriptor it opened, so it finishes and publishes its status."""
+    repo = _repo(tmp_path / "r")
+    fake = tmp_path / "companion.js"
+    fake.write_text("const fs = require('fs'); const cp = require('child_process');\n"
+                    "process.stdout.write('Verdict: approve\\nHIGHEST: none\\n', () => {\n"
+                    "  setTimeout(() => { const d = '.claude/overnight/reviews';\n"
+                    "    for (const f of fs.readdirSync(d)) if (f.endsWith('-direct.out')) {\n"
+                    "      fs.unlinkSync(d + '/' + f); cp.execFileSync('mkfifo', [d + '/' + f]); } }, 200); });\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
+    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+                       text=True, timeout=60, cwd=repo, env=env)
+    dones = [p for p in (repo / ".claude/overnight/reviews").iterdir() if p.name.endswith("-direct.out.done")]
+    assert dones and dones[0].read_text().strip().isdigit(), (r, dones)
+
+
+def test_a_fallback_launch_not_confirmed_by_the_deadline_publishes_a_failure(monkeypatch):
+    """The fallback job's start is still held at the deadline: the broker records the failure through the
+    exclusive claim (a job that started and claimed first keeps its own result) and still answers."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    monkeypatch.setattr(rl, "_start", lambda *a, **k: (False, None))
+    assert rl._launch("true", rl.now_cs() + 10) is False
+    steps = []
+    monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None: steps.append(args) or 0)
+    monkeypatch.setattr(rl, "_deliver", lambda b: True)
+    broker = types.SimpleNamespace(read=lambda: None, step="answered", response="{}", job="true",
+                                   log="/x/r.out", prompt="/x/r.prompt")
+    assert rl.finish_broker(broker, 0, False, False, rl.now_cs() + 10) == 0
+    assert steps == [["publish", "/x/r.out", "1", "--prompt", "/x/r.prompt", "--claim"]], steps

@@ -503,29 +503,46 @@ def receipt_complete(receipt) -> bool:
     return True
 
 
+_RESULT = None
+
+
+def _review_result():
+    """scripts/overnight/review_result.py, loaded once: its read_status_file is the one status parser."""
+    global _RESULT
+    if _RESULT is None:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location(
+            "review_result_for_pin", os.path.join(os.path.dirname(os.path.abspath(__file__)), "overnight",
+                                                  "review_result.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _RESULT = mod
+    return _RESULT
+
+
 def published_status(path):
-    """The status a .done file publishes, or None: it must be a small regular file (opened without blocking,
-    so a FIFO or device cannot hang the reader)."""
+    """The status a .done file publishes, or None (none, damaged, or unreadable), parsed by the one parser
+    the waiter and the recovery use (review_result.read_status_file), so no reader credits bytes another
+    reader would replace."""
+    return _review_result().read_status_file(str(path))[0]
+
+
+def read_transcript(path):
+    """A transcript's text, read only from a regular file opened without blocking (a FIFO or device that
+    replaced it fails at once with OSError)."""
     import os
-    import stat
+    fd = _review_result().open_regular(str(path), os.O_RDONLY)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        data = os.read(fd, 33)
-    except OSError:
-        return None
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
     finally:
         os.close(fd)
-    if len(data) > 32:
-        return None
-    try:
-        return data.decode("ascii").strip()
-    except UnicodeDecodeError:
-        return None
+    return b"".join(chunks).decode("utf-8", "replace")
 
 
 def broker_log(receipt):
@@ -693,7 +710,7 @@ def main(argv=None):
         if args.highest:
             _need(args.transcript, "--highest needs --transcript FILE")
             try:
-                text = pathlib.Path(args.transcript).read_text(errors="replace")
+                text = read_transcript(args.transcript)
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
             level = highest(text if args.raw else final_response(text))
@@ -702,7 +719,7 @@ def main(argv=None):
         if args.verdicts:
             _need(args.transcript, "--verdicts needs --transcript FILE")
             try:
-                text = pathlib.Path(args.transcript).read_text(errors="replace")
+                text = read_transcript(args.transcript)
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
             missing = missing_lens_verdicts(pin, args.verdicts, final_response(text), paths)
