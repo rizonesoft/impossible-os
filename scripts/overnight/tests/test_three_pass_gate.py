@@ -60,9 +60,14 @@ def _history(tmp_path, source="src/kernel/a.c"):
     return root, heads
 
 
+# The dispatcher's digest of a candidate with nothing uncommitted (review_pin.CLEAN_WORKTREE).
+CLEAN = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
 def _receipt(kind, head, order, section="7", **over):
     line = {"kind": kind, "todo": TODO, "section": int(section), "head": head, "jobId": f"direct:{order}",
-            "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True, "highest": "none"}
+            "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True, "highest": "none",
+            "worktree_sha256": CLEAN}
     line.update(over)
     return line
 
@@ -543,3 +548,11 @@ def test_refusal_a_stamp_needs_a_pin_that_loads(tmp_path):
     assert _judge(root, **_good(h)) == (True, "")
 
 
+
+
+def test_refusal_a_pass_that_read_uncommitted_changes_does_not_count(tmp_path):
+    """Those changes can be discarded before the stamp is staged, so the pass reviewed bytes it never carries."""
+    root, h = _history(tmp_path)
+    for kind in ("round", "performance", "completion"):
+        ok, why = _judge(root, receipt={kind: {"worktree_sha256": "f" * 64}}, **_good(h))
+        assert not ok and f"{kind} read uncommitted changes" in why, (kind, why)

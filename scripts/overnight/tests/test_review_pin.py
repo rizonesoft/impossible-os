@@ -1973,13 +1973,19 @@ def test_a_short_limit_still_launches(tmp_path):
     import os
     repo, _git = _tmp_repo(tmp_path)
     fake = tmp_path / "companion.js"
-    fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
-    # Two seconds: short enough that a poll costing a second would spend it, with room for a loaded host.
+    started = tmp_path / "started"
+    review = "# Codex Adversarial Review\n\n" + "".join(f"LENS {n}: clean\n" for n in _pin()["lenses"]["round"]) \
+        + "HIGHEST: none\n"
+    fake.write_text(f"require('fs').writeFileSync({str(started)!r}, 'x');\n"
+                    f"process.stdout.write({review!r});\n")
+    # A budget a whole pass fits in on a loaded host, far short of a review's real hour: the steps before the
+    # reviewer and the job itself all spend it, so a poll that cost seconds would show here.
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
-           "CODEX_REVIEW_MAX_SECS": "2"}
+           "CODEX_REVIEW_MAX_SECS": "8"}
     done = _broker(repo, env)
     assert done.returncode == 0 and "nothing was launched" not in done.stderr, done.stderr
-    _done_status(done.stdout)
+    status, text = _done_status(done.stdout)
+    assert status == "0" and started.exists(), text
 
 
 def test_a_nested_checkout_is_recorded_as_a_directory(tmp_path, monkeypatch):
@@ -2142,11 +2148,9 @@ def test_a_unit_that_starts_after_the_timeout_is_published_runs_nothing(tmp_path
 
 
 def test_a_unit_already_running_keeps_its_result_when_the_submission_times_out(tmp_path):
-    import time
     done, _job, ran = _late_unit_broker(tmp_path, start_at_once=True)
     assert done.returncode == 0, done.stderr
     status, text = _done_status(done.stdout)
-    time.sleep(0.5)
     # The job's own status (the fake review names no lenses, so the pass reports it incomplete), never 124.
     assert status == "3" and text.count("Turn completed") == 1 and ran.read_text() == "x", text
 
@@ -2283,3 +2287,49 @@ def test_making_the_answer_is_held_to_the_callers_limit(tmp_path):
     done = _broker(repo, env, timeout=20)
     assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
     assert "making the answer took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
+
+
+def test_a_brokered_pass_counts_only_once_its_broker_published_success(tmp_path):
+    inner = _published_receipt(tmp_path, 1, "a" * 40, "0")
+    receipt = {**inner, "parent": "detached:codex-rev-round-20261122-065522-123"}
+    broker = tmp_path / "20261122-065522-123-round.out"            # where that unit logs, beside the pass
+    assert not rp.receipt_complete(receipt)                         # the broker has published nothing yet
+    pathlib.Path(f"{broker}.done").write_text("124\n")
+    assert not rp.receipt_complete(receipt)                         # the broker's limit ended the attempt
+    pathlib.Path(f"{broker}.done").write_text("0\n")
+    assert rp.receipt_complete(receipt)
+    named = tmp_path / "elsewhere.out"
+    receipt = {**receipt, "parent_log": str(named)}                 # recorded by the dispatcher: it decides
+    assert not rp.receipt_complete(receipt)
+    pathlib.Path(f"{named}.done").write_text("0\n")
+    assert rp.receipt_complete(receipt)
+
+
+def test_a_completion_marker_that_is_not_a_regular_file_is_never_waited_on(tmp_path):
+    import json
+    import os
+    import time
+    r = _published_receipt(tmp_path, 1, "a" * 40, None)
+    os.mkfifo(r["logFile"] + ".done")                               # reading it would wait for a writer
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(json.dumps(r) + "\n")
+    began = time.monotonic()
+    assert rp.section_start(manifest, "todo/x.md", 9) == ""
+    assert time.monotonic() - began < 2
+
+
+def test_writing_the_prompt_is_held_to_the_callers_limit(tmp_path):
+    import os
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sha256sum").write_text("#!/bin/sh\nexec sleep 30\n")   # the prompt's hash stalls
+    (bindir / "sha256sum").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(tmp_path / "c.js"),
+           "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "3"}
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    done = _broker(repo, env, timeout=20)
+    assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
+    assert "writing the prompt took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr

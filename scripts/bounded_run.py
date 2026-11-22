@@ -307,11 +307,13 @@ class Stream:
             _kill_group(self.proc)                         # a failure leaves no helper of its own behind
         while self.proc.stdout.read(CHUNK):                # the end of output: every holder gone, or the timer
             pass
+        # Judged here, not only by the watchdog: one the host runs late is cancelled below before it can say.
+        late = self.expired or time.monotonic() >= self._deadline
         self._watch.hold = True
         try:
-            self._teardown(kill=False)                     # reaped only now, as in run()
+            self._teardown(kill=late)                      # reaped only now, as in run()
         finally:
             self._watch.finish()
-        if self.expired:
+        if late:
             raise ValueError(f"{self.what} did not finish within {self.timeout:g} s")
         return rc

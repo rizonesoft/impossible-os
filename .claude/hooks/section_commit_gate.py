@@ -2525,6 +2525,11 @@ def _spent_passes(root: Path, todo: str, section: str) -> int:
     return spent
 
 
+# The dispatcher's digest of a candidate with nothing staged, changed or untracked: sha256 of no output
+# (review_pin.CLEAN_WORKTREE).
+_CLEAN_WORKTREE = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
 def _receipt_complete(receipt: dict) -> bool:
     """review_pin.receipt_complete: the one predicate the review-range reads use too, so the gate and the
     next pass's base never disagree about which passes count."""
@@ -2564,6 +2569,10 @@ def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
     if not _receipt_complete(receipt):
         return (False, f"{kind} has no checked, complete receipt (still running, incomplete, or not "
                        f"dispatched with scripts/codex-dispatch.sh)")
+    # The pass must have read a commit, with nothing staged or changed beside it: one that read uncommitted
+    # changes reviewed bytes the stamp may not carry (they can be discarded before the stamp is staged).
+    if receipt.get("worktree_sha256") != _CLEAN_WORKTREE:
+        return (False, f"{kind} read uncommitted changes, not a commit; commit them and dispatch it again")
     head = receipt["head"]
     if not current_head:
         return (False, f"{kind}: HEAD could not be read")
@@ -2620,9 +2629,10 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
                      f"before it is not trusted (dispatch that pass again, or repair the line)")
 
     plan = receipts.get("plan", (None, 0))[0]
+    plan_complete = plan is not None and _receipt_complete(plan)      # judged once: one marker state
     if plan is None:
         parts.append("missing: plan")
-    elif not _receipt_complete(plan):
+    elif not plan_complete:
         parts.append("plan has no checked, complete receipt")
     elif not current_head or not _git_is_ancestor(root, plan["head"], current_head):
         parts.append(f"plan was dispatched at {plan['head'][:10]}, which is not in this history (cross-branch)")
@@ -2636,7 +2646,7 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     # came late. Each pass after the plan must have been shown the section from that base (the dispatcher
     # records it): one based at the late plan pass or at HEAD read little or nothing of it.
     owed_base = ""
-    if todo and plan is not None and _receipt_complete(plan):
+    if todo and plan_complete:
         try:
             import review_pin
             start = review_pin.section_base(root, todo, section, plan["head"])

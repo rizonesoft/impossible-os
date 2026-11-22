@@ -400,7 +400,7 @@ if [ -n "$LOG_FILE" ]; then
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
-        "opt:parent=${CODEX_BROKER_JOB:-}" \
+        "opt:parent=${CODEX_BROKER_JOB:-}" "opt:parent_log=${CODEX_BROKER_LOG:-}" \
         || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
              # A review with no receipt cannot be credited or found: report it
              # incomplete (rc 3, dispatched again), never as its own success.

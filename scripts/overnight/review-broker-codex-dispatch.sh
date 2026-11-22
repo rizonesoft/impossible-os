@@ -160,13 +160,25 @@ read -r TREE_HEAD TREE_INDEX TREE_WORK <<< "$TREE_LAUNCH"
 # poll (and any recovering next session) watches for.
 # In the reviews directory, which the launch read above left out: anywhere else (a TMPDIR inside the
 # checkout) the file would change the tree the launch row names.
-PROMPT_FILE="$(mktemp "$PWD/$MANIFEST_DIR/.prompt.XXXXXX")"
-printf '%s' "$PROMPT" > "$PROMPT_FILE"
+# Made under the caller's deadline, with its hash: a stalled write to the reviews filesystem ends with the limit.
+export PROMPT
+PREP_RC=0
+PREP="$(limited "f=\$(mktemp $(q "$PWD/$MANIFEST_DIR/.prompt.XXXXXX")) && printf '%s' \"\$PROMPT\" > \"\$f\" && s=\$(printf '%s' \"\$PROMPT\" | sha256sum) && printf '%s %s' \"\${s%% *}\" \"\$f\"")" || PREP_RC=$?
+if [[ "$PREP_RC" != 0 || ! "$PREP" =~ ^[0-9a-f]{64}\ (.+)$ ]]; then
+  if [[ "$PREP_RC" == 124 && -n "$LIMIT_END" ]]; then
+    echo "review-broker: writing the prompt took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
+  else
+    echo "review-broker: the prompt could not be written to $MANIFEST_DIR (exit $PREP_RC); nothing was launched" >&2
+  fi
+  exit 2
+fi
+PROMPT_SHA="${PREP%% *}"
+PROMPT_FILE="${PREP#* }"
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
   # CODEX_EXPECT_CANDIDATE: the candidate the launch row below names; the wrapper refuses another.
-  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
+  RUN="CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
 else
   RUN="node $(q "$COMPANION") adversarial-review -- \"\$(cat $(q "$PROMPT_FILE"))\""
 fi
@@ -186,7 +198,6 @@ Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 # the same moment (v16 carry, closed 2026-08-29: HEAD, a digest of the index (the field keeps its index_tree name) and a
 # working-tree digest; all three are advisory strings).
 DETACH="detached:$UNIT"
-PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 # Written by a JSON serializer, as the receipt is: a path holding a quote, a
 # backslash or a newline must not leave a line no reader can parse.
 MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"

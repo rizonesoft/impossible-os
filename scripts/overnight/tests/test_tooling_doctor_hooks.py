@@ -692,7 +692,7 @@ def test_a_listing_cut_short_after_a_match_fails_the_removal(tmp_path):
 
 def test_a_link_whose_identity_cannot_be_read_is_never_deleted(tmp_path):
     root, link, bindir = _legacy_link(tmp_path)
-    r = _remove_with(root, bindir, "stat", f'case " $* " in *" {link}"*) exit 1 ;; esac')
+    r = _remove_with(root, bindir, "stat", f'case " $* " in *"%d:%i -- {link}"*) exit 1 ;; esac')
     assert r.returncode != 0 and "could not be read: left in place" in r.stderr and link.is_symlink(), r
     (tmp_path / "again").mkdir()
     root, link, bindir = _legacy_link(tmp_path / "again")
@@ -783,3 +783,31 @@ def test_a_legacy_link_into_a_worktree_that_cannot_be_searched_fails_the_removal
         (wt / "scripts").chmod(0o755)
     assert r.returncode != 0 and "could not be read, so it was not judged" in r.stderr, r
     assert (hooks / "pre-push").is_symlink()
+
+
+def test_an_unreadable_sibling_worktree_outranks_a_match(tmp_path):
+    """The link matches this checkout's hook, but a sibling not read could hold the same file: not judged."""
+    root = _plain_repo(tmp_path)
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "add", "scripts", ".githooks"], check=True, timeout=60, env=_env())
+    subprocess.run([*git, "commit", "-q", "-m", "base"], check=True, timeout=60, env=_env())
+    wt = tmp_path / "wt"
+    subprocess.run([*git, "worktree", "add", "-q", "--detach", str(wt)], check=True, timeout=60, env=_env())
+    hooks = root / ".git/hooks"
+    hooks.mkdir(exist_ok=True)
+    (hooks / "pre-push").symlink_to(root / "scripts/hooks/pre-push")
+    (wt / "scripts").chmod(0o600)
+    try:
+        r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True,
+                           text=True, timeout=60, env=_env())
+    finally:
+        (wt / "scripts").chmod(0o755)
+    assert r.returncode != 0 and "could not be read, so it was not judged" in r.stderr, r
+    assert (hooks / "pre-push").is_symlink()
+
+
+def test_a_legacy_entry_that_cannot_be_looked_up_fails_the_removal(tmp_path):
+    root, link, bindir = _legacy_link(tmp_path)
+    r = _remove_with(root, bindir, "stat", 'case " $* " in *"%F -- "*) echo "stat: Input/output error" >&2; '
+                                           'exit 1 ;; esac')
+    assert r.returncode != 0 and "could not be looked up" in r.stderr and link.is_symlink(), r

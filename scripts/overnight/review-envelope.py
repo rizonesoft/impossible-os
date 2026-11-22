@@ -122,7 +122,8 @@ PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
 
 
 def blocking_levels(project: Path) -> tuple:
-    """The levels that hold a stamp, from the reviewer pin; P1 and P2 when it cannot be read."""
+    """The levels that hold a stamp, from the reviewer pin; every level when it cannot be read, as the
+    commit gate falls back (section_commit_gate._blocking_levels), so the two never disagree."""
     scripts = str(Path(__file__).resolve().parents[1])
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
@@ -130,7 +131,7 @@ def blocking_levels(project: Path) -> tuple:
         import review_pin
         return tuple(review_pin.load_pin(project / ".conclave" / "reviewers.toml")["blocking"])
     except Exception:  # noqa: BLE001 -- a broken pin must not make a blocking pass read as clear
-        return ("P1", "P2")
+        return ("P1", "P2", "P3")
 
 
 def main(argv) -> int:

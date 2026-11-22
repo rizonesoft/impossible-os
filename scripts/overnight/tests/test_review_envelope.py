@@ -349,3 +349,12 @@ if __name__ == "__main__":
     test_a_pass_with_no_checked_receipt_is_not_usable()
     test_an_older_kind_is_reported_exactly_as_before()
     print("PASS: review envelope passes")
+
+
+def test_an_unreadable_pin_blocks_every_level_as_the_commit_gate_does():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("review_envelope_fallback", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as d:
+        assert mod.blocking_levels(pathlib.Path(d)) == ("P1", "P2", "P3")

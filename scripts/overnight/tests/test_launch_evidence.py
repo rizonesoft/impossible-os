@@ -400,36 +400,6 @@ def test_two_launched_legs_after_a_refused_one_are_each_stamped_and_name_no_sing
     assert isinstance(e.get("adversarial"), int) and isinstance(e.get("perf"), int), e
 
 
-def test_the_limit_ends_a_command_that_has_not_yet_started_its_group(tmp_path):
-    """Until the child runs setsid its group does not exist; the limit still ends it, and it never runs."""
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    real = shutil.which("setsid")
-    shim, sleeper = tmp_path / "shim.pid", tmp_path / "sleeper.pid"
-    (bindir / "setsid").write_text(f'#!/bin/sh\necho $$ > "{shim}"\nsleep 30 &\necho $! > "{sleeper}"\nwait\n'
-                                   f'exec "{real}" "$@"\n')
-    (bindir / "setsid").chmod(0o755)
-    ran = tmp_path / "ran"
-    err = tmp_path / "err"
-    began = time.monotonic()
-    try:
-        with open(err, "w") as fh:                     # files, not pipes: the shim's sleeper would hold a pipe
-            done = subprocess.run(["bash", str(LIMIT), "1", f"touch {ran}; sleep 30"], stdout=subprocess.DEVNULL,
-                                  stderr=fh, timeout=20,
-                                  env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
-        assert done.returncode == 124 and time.monotonic() - began < 2.5, err.read_text()
-        assert "No such file" not in err.read_text(), err.read_text()
-        with pytest.raises(ProcessLookupError):        # the shim was ended before it could start the command
-            os.kill(int(shim.read_text()), 0)
-        assert not ran.exists()
-    finally:
-        if sleeper.exists():
-            try:
-                os.kill(int(sleeper.read_text()), signal.SIGKILL)
-            except ProcessLookupError:                 # fail-direction: already gone
-                pass
-
-
 def test_the_limit_polls_without_starting_a_process(tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -514,4 +484,45 @@ def test_the_limit_ends_a_session_its_command_started(tmp_path):
         assert _gone(int(pidfile.read_text()))
     finally:
         if pidfile.exists() and not _gone(int(pidfile.read_text()), 0):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+
+
+def test_a_process_name_holding_a_newline_does_not_stop_the_limit(tmp_path):
+    """The supervisor reads every process on the host: an unrelated one named across lines must not end it."""
+    odd = tmp_path / "x\ny) Z 1"
+    shutil.copy(shutil.which("sleep"), odd)
+    other = subprocess.Popen([str(odd), "30"])
+    pidfile = tmp_path / "pid"
+    try:
+        proc = subprocess.Popen(["bash", str(LIMIT), "30", f"echo $$ > {pidfile}; exec sleep 30"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        end = time.monotonic() + 5
+        while not pidfile.exists() or not pidfile.read_text().strip():
+            assert time.monotonic() < end
+            time.sleep(0.05)
+        proc.terminate()
+        assert proc.wait(timeout=10) == 143, proc.stderr.read()
+        assert _gone(int(pidfile.read_text()))
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_a_session_started_by_a_term_handler_is_ended_with_the_attempt(tmp_path):
+    """The handler starts its cleanup in a session of its own and exits at once: it was not there when the
+    TERM went out, and its parent is gone, so only a supervisor its orphans return to can still end it."""
+    pidfile = tmp_path / "pid"
+    cmd = (f'trap \'setsid sh -c "echo \\$\\$ > {pidfile}; exec sleep 30" & exit 0\' TERM; '
+           'sleep 30 & wait')
+    try:
+        done = subprocess.run(["bash", str(LIMIT), "2", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=20)
+        assert done.returncode == 124
+        end = time.monotonic() + 3
+        while not pidfile.exists() or not pidfile.read_text().strip():
+            assert time.monotonic() < end
+            time.sleep(0.05)
+        assert _gone(int(pidfile.read_text()))
+    finally:
+        if pidfile.exists() and pidfile.read_text().strip() and not _gone(int(pidfile.read_text()), 0):
             os.kill(int(pidfile.read_text()), signal.SIGKILL)

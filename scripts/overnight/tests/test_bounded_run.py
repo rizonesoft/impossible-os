@@ -308,3 +308,16 @@ def test_a_watchdog_started_late_still_ends_a_stream_at_its_deadline(monkeypatch
     finally:
         stream.abort()
     assert took < 0.45, took
+
+
+def test_a_stream_closed_after_its_deadline_is_late_before_its_watchdog_runs(monkeypatch):
+    run = bounded_run._AtDeadline.run
+
+    def late(self):
+        time.sleep(0.5)
+        return run(self)
+    monkeypatch.setattr(bounded_run._AtDeadline, "run", late)
+    stream = bounded_run.Stream(["true"], "a quick command", timeout=0.1)
+    time.sleep(0.2)                                        # the command is done; the caller resumes late
+    with pytest.raises(ValueError, match="did not finish"):
+        stream.close()

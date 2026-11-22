@@ -272,8 +272,8 @@ prune_legacy_symlinks() {
             esac
         done < <(git -C "$PROJECT" worktree list --porcelain -z && printf 'listed=0\0')
         [ "$listed" = 0 ] || return 2
+        [ "$unknown" = 1 ] && return 3                   # a worktree not read could hold a second copy
         [ "$found" = 0 ] && return 0
-        [ "$unknown" = 1 ] && return 3
         return 1
     }
     # The link's own identity: device and inode, then its text (the && keeps a failed readlink failing; the
@@ -303,7 +303,17 @@ prune_legacy_symlinks() {
     # Judged in place first: a hook that is not ours is never moved, so no push in the meantime runs without
     # it. Ours is then renamed into a fresh directory and judged again there, so a hook another writer put
     # at that name in between is put back, never removed, and no earlier saved entry can be overwritten.
-    [ -L "$target" ] || return 0
+    # Absent or not a link is known only from an lstat that succeeded or reported the entry missing; any other
+    # failure (an I/O error) leaves it unjudged.
+    local lookup
+    if ! lookup="$(LC_ALL=C stat -c '%F' -- "$target" 2>&1)"; then
+        case "$lookup" in
+            *"No such file or directory"*) return 0 ;;
+        esac
+        echo "The legacy pre-push entry $target could not be looked up ($lookup): left unjudged" >&2
+        return 1
+    fi
+    [ "$lookup" = "symbolic link" ] || return 0
     # The entry's own identity (the link itself, not what it names) and its text, so the entry moved aside
     # below is known to be the one judged: a relative link resolves differently once moved, so it is not
     # judged again there, and the text stands in where a freed inode number is given to a replacement.
@@ -371,7 +381,7 @@ remove_all() {
     # Before any cleanup: under a command-line value, what the next plain git command runs is unknown, so
     # neither the setting, the pre-push sentinel nor a legacy link is touched.
     if [ "$HP_SCOPE" = "command" ]; then
-        echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; run --remove without it (nothing changed)" >&2
+        echo "core.hooksPath is $(hooks_path_shown "$HP_VALUE"$'\001') from the command line or environment, which outranks every config file; run --remove without it (nothing changed)" >&2
         return 1
     fi
     if [ -z "$HP_SCOPE" ]; then
@@ -396,7 +406,7 @@ remove_all() {
         elif [ "$HP_VALUE" = ".githooks" ] && [ -n "$HP_SCOPE" ] && [ "$HP_SCOPE" != "global" ] && [ "$HP_SCOPE" != "system" ]; then
             echo "core.hooksPath is .githooks in $HP_SCOPE config, but not as this installer's single entry (several values, or one from an included file): left as it is."
         else
-            echo "core.hooksPath is $(hooks_path_shown) in $HP_SCOPE config, not this installer's .githooks here: left as it is."
+            echo "core.hooksPath is $(hooks_path_shown "$HP_VALUE"$'\001') in $HP_SCOPE config, not this installer's .githooks here: left as it is."
         fi
     fi
     disable_pre_push

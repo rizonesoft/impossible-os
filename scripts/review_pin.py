@@ -479,16 +479,58 @@ def receipt_complete(receipt) -> bool:
     dispatcher, checked, exit 0, naming its candidate, and, when the dispatcher publishes <log>.done after
     the receipt, with that status published as 0. The commit gate (section_commit_gate._receipt_complete)
     and every range read here use this one predicate, so a pass the gate refuses never sets a base."""
-    import pathlib
     if not (receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True
             and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7):
         return False
-    if receipt.get("done_file") is True:
-        try:
-            return pathlib.Path(str(receipt.get("logFile") or "") + ".done").read_text().strip() == "0"
-        except (OSError, UnicodeDecodeError):
+    log = str(receipt.get("logFile") or "")
+    if receipt.get("done_file") is True and published_status(log + ".done") != "0":
+        return False
+    # A pass the review broker launched is the broker's attempt: its own status can be 0 while the broker
+    # recorded the attempt as ended by its limit (124). The broker's published status decides.
+    if receipt.get("parent"):
+        broker = broker_log(receipt)
+        if broker is None or published_status(broker + ".done") != "0":
             return False
     return True
+
+
+def published_status(path):
+    """The status a .done file publishes, or None: it must be a small regular file (opened without blocking,
+    so a FIFO or device cannot hang the reader)."""
+    import os
+    import stat
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = os.read(fd, 33)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if len(data) > 32:
+        return None
+    try:
+        return data.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+
+
+def broker_log(receipt):
+    """The log of the broker job a receipt names as its parent: recorded in the receipt (parent_log), or, for
+    a receipt written before that field, named by the broker's unit (detached:codex-rev-<kind>-<stamp>-<pid>
+    logs to <stamp>-<pid>-<kind>.out beside the pass's own log). None when neither says."""
+    import os
+    if isinstance(receipt.get("parent_log"), str) and receipt["parent_log"]:
+        return receipt["parent_log"]
+    m = re.fullmatch(r"detached:codex-rev-([a-z-]+)-([0-9]{8}-[0-9]{6}-[0-9]+)", str(receipt.get("parent")))
+    log = str(receipt.get("logFile") or "")
+    if m is None or not log:
+        return None
+    return os.path.join(os.path.dirname(log), f"{m.group(2)}-{m.group(1)}.out")
 
 
 def _checked(e, kinds):
