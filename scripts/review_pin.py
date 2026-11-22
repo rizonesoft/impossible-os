@@ -432,12 +432,22 @@ def _newest_first(manifest, block=1 << 16):
     """The reviews manifest one line at a time from its end, so a lookup of the newest receipt stops there
     instead of decoding the whole history (it only grows). A missing manifest has no lines; one that cannot
     be read is refused."""
+    import os
+    import stat
     try:
-        fh = open(manifest, "rb")
+        # Without blocking, then checked: a FIFO or device would wait for a writer that may never come.
+        fd = os.open(manifest, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
     except FileNotFoundError:
         return
     except OSError as exc:
         raise Refused(f"{manifest} cannot be read: {exc}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise Refused(f"{manifest} is not a regular file, so its receipts cannot be read")
+        fh = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
     with fh:
         try:
             pos = fh.seek(0, 2)
@@ -464,10 +474,26 @@ def _newest_first(manifest, block=1 << 16):
             raise Refused(f"{manifest} cannot be read: {exc}") from exc
 
 
+def receipt_complete(receipt) -> bool:
+    """Whether a manifest receipt is a checked, successful pass the commit gate credits: written by the
+    dispatcher, checked, exit 0, naming its candidate, and, when the dispatcher publishes <log>.done after
+    the receipt, with that status published as 0. The commit gate (section_commit_gate._receipt_complete)
+    and every range read here use this one predicate, so a pass the gate refuses never sets a base."""
+    import pathlib
+    if not (receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True
+            and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7):
+        return False
+    if receipt.get("done_file") is True:
+        try:
+            return pathlib.Path(str(receipt.get("logFile") or "") + ".done").read_text().strip() == "0"
+        except (OSError, UnicodeDecodeError):
+            return False
+    return True
+
+
 def _checked(e, kinds):
-    """Whether receipt `e` is a checked, successful pass of one of `kinds` that names its candidate."""
-    return e.get("kind") in kinds and e.get("pass_checked") is True and e.get("rc") == 0 \
-        and isinstance(e.get("head"), str) and bool(e["head"])
+    """Whether receipt `e` is a pass of one of `kinds` the commit gate credits (receipt_complete)."""
+    return e.get("kind") in kinds and receipt_complete(e)
 
 
 def _newest(manifest, todo, section, kinds, what):

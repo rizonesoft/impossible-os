@@ -186,6 +186,8 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
             t.join(max(0.0, deadline - time.monotonic()))
             if t.is_alive():                               # a helper still holds a pipe at the deadline
                 raise subprocess.TimeoutExpired(what, timeout)
+        if time.monotonic() >= deadline:                   # seen only after it (this caller was descheduled)
+            raise subprocess.TimeoutExpired(what, timeout)
         watch.hold = True
         proc.wait()                                        # reaped only now: the id named the group until here
     except BaseException as exc:
@@ -207,6 +209,26 @@ def run(cmd, what, *, timeout, env=None, stdin=None, sink=None, keep_stderr=Fals
     return rc, b"".join(out), err.value()
 
 
+class _AtDeadline(threading.Thread):
+    """Calls `fn` at an absolute monotonic deadline unless cancelled first. The wait is measured when the
+    thread runs, so a watchdog the host starts late spends no extra time (a relative timer would)."""
+
+    def __init__(self, deadline, fn):
+        super().__init__(daemon=True)
+        self.deadline, self.fn, self._cancelled = deadline, fn, threading.Event()
+
+    def cancel(self):
+        self._cancelled.set()
+
+    def run(self):
+        while not self._cancelled.is_set():
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                self.fn()
+                return
+            self._cancelled.wait(left)
+
+
 class Stream:
     """A command the caller writes to and reads from as it goes (`proc.stdin`, `proc.stdout`), in its own
     process group. A timer ends the whole group at the deadline, so a read the group would never answer ends
@@ -226,8 +248,7 @@ class Stream:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
                 start_new_session=True)  # LIFECYCLE-WAIVER: ended by the timer, close() or abort(), group and all
-            self._timer = threading.Timer(max(0.0, self._deadline - time.monotonic()), self._expire)
-            self._timer.daemon = True
+            self._timer = _AtDeadline(self._deadline, self._expire)
             self._timer.start()
             self._watch.hold = False
             pending = self._watch.pending

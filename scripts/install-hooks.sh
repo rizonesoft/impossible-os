@@ -97,10 +97,11 @@ hooks_run_from_repo() {
     [ "$dir" -ef "$HOOKS_DIR" ]
 }
 # The value for a person to read: the exact one, quoted when it holds bytes
-# a plain print would hide.
+# a plain print would hide. With an argument, that value (as hooks_path_raw spells it) is shown without
+# reading the configuration again, so a diagnostic names the value it was judged on.
 hooks_path_shown() {
     local raw
-    raw="$(hooks_path_raw)"
+    if [ $# -gt 0 ]; then raw=$1; else raw="$(hooks_path_raw)"; fi
     if [ -z "$raw" ]; then
         echo '<unset>'                                     # no value at all: the key is absent
         return
@@ -171,7 +172,7 @@ set_hooks_path() {
     # Checked first: a value from the command line or the environment, even .githooks itself, says nothing
     # about what the next plain git command reads.
     if [ "$HP_SCOPE" = "command" ]; then
-        echo "core.hooksPath is $(hooks_path_shown) from the command line or environment, which outranks every config file; run the installer without it (nothing written)" >&2
+        echo "core.hooksPath is $(hooks_path_shown "$HP_VALUE"$'\001') from the command line or environment, which outranks every config file; run the installer without it (nothing written)" >&2
         exit 1
     fi
     if [ "$HP_VALUE" = ".githooks" ]; then
@@ -241,18 +242,39 @@ prune_legacy_symlinks() {
     # hooks follows core.hooksPath and would name .githooks while it is set.
     # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link, or one
     # to another file whose name merely reads the same once a shell strips a newline, never does).
-    # 0: ours, 1: not ours, 2: the worktrees could not be listed (the listing's own status ends it).
+    # 0: ours, 1: not ours, 2: the worktrees could not be listed (the listing's own status ends it), 3: an
+    # identity could not be read (a path stat cannot reach is not a different file: -ef alone would say no).
     # The whole listing is read before a match counts, so one cut short by a failure refuses.
+    resolved_id() {   # RESOLVED: device and inode of what $1 names. 0 read, 1 definitely absent, 2 unknown
+        local err
+        RESOLVED="$(LC_ALL=C stat -L -c '%d:%i' -- "$1" 2>/dev/null)" && return 0
+        err="$(LC_ALL=C stat -L -c '%d:%i' -- "$1" 2>&1 >/dev/null)"
+        case "$err" in *"No such file or directory"*|*"Not a directory"*) return 1 ;; esac
+        return 2
+    }
     legacy_link_is_ours() {
-        local entry listed="" found=1
+        local entry listed="" found=1 unknown=0 link_id rc=0
+        resolved_id "$1" || rc=$?
+        link_id=$RESOLVED
+        [ "$rc" = 2 ] && unknown=1
         while IFS= read -r -d '' entry; do
             case "$entry" in
-                "worktree "*) [ "$1" -ef "${entry#worktree }/scripts/hooks/pre-push" ] && found=0 ;;
+                "worktree "*)
+                    [ "$rc" = 0 ] || continue                # a dangling link names no worktree's hook
+                    local erc=0
+                    resolved_id "${entry#worktree }/scripts/hooks/pre-push" || erc=$?
+                    if [ "$erc" = 0 ] && [ "$RESOLVED" = "$link_id" ]; then
+                        found=0
+                    elif [ "$erc" = 2 ]; then
+                        unknown=1
+                    fi ;;
                 "listed=0") listed=0 ;;
             esac
         done < <(git -C "$PROJECT" worktree list --porcelain -z && printf 'listed=0\0')
         [ "$listed" = 0 ] || return 2
-        return "$found"
+        [ "$found" = 0 ] && return 0
+        [ "$unknown" = 1 ] && return 3
+        return 1
     }
     # The link's own identity: device and inode, then its text (the && keeps a failed readlink failing; the
     # x keeps a trailing newline the substitution would strip).
@@ -292,6 +314,10 @@ prune_legacy_symlinks() {
     legacy_link_is_ours "$target" || ours=$?
     if [ "$ours" = 2 ]; then
         echo "The worktrees could not be listed, so the legacy link $target was not judged: left in place" >&2
+        return 1
+    fi
+    if [ "$ours" = 3 ]; then
+        echo "The legacy link $target, or a worktree's hook it may name, could not be read, so it was not judged: left in place" >&2
         return 1
     fi
     if [ "$ours" = 0 ]; then
@@ -379,7 +405,7 @@ remove_all() {
     echo ""
     hooks_path_scoped || return 1
     if hooks_run_from_repo; then
-        echo "This checkout still runs .githooks/: core.hooksPath ($(hooks_path_shown)) comes from $HP_SCOPE config, which --remove does not change."
+        echo "This checkout still runs .githooks/: core.hooksPath ($(hooks_path_shown "$HP_VALUE"$'\001')) comes from $HP_SCOPE config, which --remove does not change."
     else
         echo "Git hooks removed. Always-on hooks in .githooks/ are inert until"
         echo "'bash scripts/install-hooks.sh' reconfigures core.hooksPath."

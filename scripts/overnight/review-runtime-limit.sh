@@ -10,7 +10,8 @@
 #
 # GNU timeout is not enough for that: once its direct child exits on TERM it
 # stops supervising, and a descendant that ignores TERM keeps running. Time is
-# read from /proc/uptime, which a wall-clock step does not move.
+# read from /proc/uptime, which a wall-clock step does not move. Cancelling
+# this script ends the attempt the same way and exits 128 + the signal.
 set -u
 # Hundredths of a second since boot (/proc/uptime), so a deadline is kept to a fraction of a second. Set in
 # NOW rather than printed, so a poll forks nothing to read the clock.
@@ -47,6 +48,13 @@ grace=3000
 [ "$left" -le 12000 ] && grace=$(( left / 4 ))
 [ "$grace" -lt 10 ] && grace=10
 
+# Cancelling this script (TERM, INT, HUP) ends the attempt the same way the deadline does, then reports the
+# signal: a caller that gives up leaves nothing of the attempt running.
+cancelled=0
+trap 'cancelled=143' TERM
+trap 'cancelled=130' INT
+trap 'cancelled=129' HUP
+
 # A background child of a non-interactive shell is not a group leader, so
 # setsid makes it one in place: its pid is its process group id.
 # LIFECYCLE-WAIVER: groups one REVIEW attempt so it can be ended whole; it
@@ -67,10 +75,49 @@ term_at=$(( end - grace ))
 limited=0
 # A pipe nothing writes to: a timed read of it is the poll's pause, a shell builtin with no process per poll.
 exec {pause_fd}<> <(:)
-# Until the child has run setsid its group does not exist and a signal to it fails; the child itself is then
-# signalled, which ends it before it can start anything (it has no children of its own until setsid).
-signal_job() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
+# The attempt is its whole process tree, not only its group: a step inside it can start its own session (the
+# candidate reader runs git that way, so its own timeout can end git's group), and a KILL that reached only
+# this group would orphan that session. So each signal goes to every process descended from the child, read
+# from /proc while the tree is still linked, and to every group those processes lead or belong to; groups
+# seen at an earlier signal are signalled again, since their leader may have gone since. Until the child
+# has run setsid its group does not exist; the child itself is then signalled, which ends it before it can
+# start anything.
+declare -A groups=()
+own_group=""
+read_stat() {   # STAT_PPID and STAT_PGRP of the /proc stat file $1, read after the name's last ')'
+    local stat fields
+    read -r stat 2>/dev/null < "$1" || return 1
+    read -r -a fields <<< "${stat##*) }"
+    STAT_PPID=${fields[1]} STAT_PGRP=${fields[2]}
+}
+read_stat "/proc/$$/stat" && own_group=$STAT_PGRP
+signal_job() {
+    local -A kids=() pgrp_of=()
+    local f p cur queue=("$pid") tree=()
+    for f in /proc/[0-9]*/stat; do
+        read_stat "$f" || continue
+        p=${f#/proc/}
+        p=${p%/stat}
+        kids[$STAT_PPID]+=" $p"
+        [ "$STAT_PGRP" = "$pid" ] || pgrp_of[$p]=$STAT_PGRP
+    done
+    while [ ${#queue[@]} -gt 0 ]; do
+        cur=${queue[0]}
+        queue=("${queue[@]:1}")
+        tree+=("$cur")
+        [ -n "${pgrp_of[$cur]:-}" ] && [ "${pgrp_of[$cur]}" != "$own_group" ] && groups[${pgrp_of[$cur]}]=1
+        for p in ${kids[$cur]:-}; do queue+=("$p"); done
+    done
+    kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null
+    for p in "${!groups[@]}"; do kill "-$1" -- "-$p" 2>/dev/null; done
+    [ ${#tree[@]} -gt 1 ] && kill "-$1" -- "${tree[@]:1}" 2>/dev/null
+    return 0
+}
 while alive; do
+    if [ "$cancelled" -ne 0 ]; then
+        signal_job KILL
+        break
+    fi
     now_cs
     now=$NOW
     if [ "$now" -ge "$end" ]; then
@@ -86,10 +133,17 @@ while alive; do
 done
 wait "$pid" 2>/dev/null
 status=$?
+if [ "$cancelled" -ne 0 ]; then
+    signal_job KILL                                    # a cancellation that arrived as the child ended
+    wait "$pid" 2>/dev/null
+fi
 # Seen ending only after the deadline (this supervisor was not scheduled in between): the limit's, not a pass.
 now_cs
 [ "$NOW" -ge "$end" ] && limited=1
-# The leader is gone; whatever it left in its group goes with it.
+# The leader is gone; whatever it left in its group goes with it, and so does what an ended attempt left in
+# a session of its own.
 kill -KILL -- "-$pid" 2>/dev/null
+for p in "${!groups[@]}"; do kill -KILL -- "-$p" 2>/dev/null; done
+[ "$cancelled" -ne 0 ] && exit "$cancelled"
 [ "$limited" -eq 1 ] && exit 124
 exit "$status"

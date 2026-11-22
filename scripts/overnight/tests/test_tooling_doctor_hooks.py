@@ -763,3 +763,23 @@ def test_a_legacy_hooks_directory_that_cannot_be_searched_fails_the_removal(tmp_
     finally:
         hooks.chmod(0o755)
     assert r.returncode != 0 and "cannot be searched" in r.stderr and (hooks / "pre-push").is_symlink(), r
+
+
+def test_a_legacy_link_into_a_worktree_that_cannot_be_searched_fails_the_removal(tmp_path):
+    root = _plain_repo(tmp_path)
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "add", "scripts", ".githooks"], check=True, timeout=60, env=_env())
+    subprocess.run([*git, "commit", "-q", "-m", "base"], check=True, timeout=60, env=_env())
+    wt = tmp_path / "wt"
+    subprocess.run([*git, "worktree", "add", "-q", "--detach", str(wt)], check=True, timeout=60, env=_env())
+    hooks = root / ".git/hooks"
+    hooks.mkdir(exist_ok=True)
+    (hooks / "pre-push").symlink_to(wt / "scripts/hooks/pre-push")
+    (wt / "scripts").chmod(0o600)                      # the link cannot be followed, nor the hook it names
+    try:
+        r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True,
+                           text=True, timeout=60, env=_env())
+    finally:
+        (wt / "scripts").chmod(0o755)
+    assert r.returncode != 0 and "could not be read, so it was not judged" in r.stderr, r
+    assert (hooks / "pre-push").is_symlink()

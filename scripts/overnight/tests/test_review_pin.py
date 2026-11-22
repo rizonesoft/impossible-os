@@ -327,7 +327,7 @@ def _receipt(kind, head, section=99, checked=True, rc=0, todo="todo/00-infrastru
     # The dispatcher's field order (manifest-line.py): ts, kind, todo first.
     return json.dumps({"ts": 1795170000, "kind": kind, "todo": todo, "section": section, "head": head,
                        "base": head if base is None else base,
-                       "pass_checked": checked, "rc": rc, "worktree_sha256": worktree})
+                       "pass_checked": checked, "rc": rc, "worktree_sha256": worktree, "route": "codex-dispatch.sh"})
 
 
 def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconciliation(tmp_path):
@@ -335,49 +335,49 @@ def test_a_reconciliation_starts_from_the_newest_checked_completion_or_reconcili
     manifest = tmp_path / "manifest.jsonl"
     assert rp.repair_base(manifest, todo, 99) == ""                         # no manifest yet
     manifest.write_text("\n".join([
-        _receipt("completion", "aaa"), _receipt("round", "bbb"),             # a round is not where a repair starts
-        _receipt("reconciliation", "ccc"), _receipt("reconciliation", "ddd", checked=False),
-        _receipt("completion", "eee", rc=3), _receipt("completion", "fff", section=98),
+        _receipt("completion", "aaaaaaaa"), _receipt("round", "bbbbbbbb"),             # a round is not where a repair starts
+        _receipt("reconciliation", "cccccccc"), _receipt("reconciliation", "dddddddd", checked=False),
+        _receipt("completion", "eeeeeeee", rc=3), _receipt("completion", "ffffffff", section=98),
         '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "not json']) + "\n")
-    assert rp.repair_base(manifest, todo, 99) == "ccc"
+    assert rp.repair_base(manifest, todo, 99) == "cccccccc"
     assert rp.repair_base(manifest, todo, 97) == ""
     # Review 2026-11-20: a newer line that cannot be read and names this TODO may be a newer pass of the section.
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + _receipt("reconciliation", "bbb")[:-30] + "\n")
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + _receipt("reconciliation", "bbbbbbbb")[:-30] + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
     # The dispatcher writes kind before todo: a newer line cut before its todo field may be this TODO's.
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "reconciliation", "to' + "\n")
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + '{"ts": 1, "kind": "reconciliation", "to' + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
     # Review 2026-11-20: a cut inside the todo value, or just before its closing quote, may be this TODO too.
     for cut in (f'{{"ts": 1, "kind": "reconciliation", "todo": "{todo[:12]}',
                 f'{{"ts": 1, "kind": "reconciliation", "todo": "{todo}'):
-        manifest.write_text(_receipt("completion", "aaa") + "\n" + cut + "\n")
+        manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + cut + "\n")
         with pytest.raises(rp.Refused, match="unreadable line"):
             rp.repair_base(manifest, todo, 99)
     assert rp.unreadable_line_may_be('{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec', todo) is False
     assert rp.unreadable_line_may_be(f'{{"ts": 1, "kind": "completion", "todo": "{todo}", "sec', todo) is True
     # Review 2026-11-20: another TODO's receipt that lost its newline, with this TODO's appended to it.
-    glued = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + _receipt("completion", "bbb")
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + glued + "\n")
+    glued = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + _receipt("completion", "bbbbbbbb")
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + glued + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
     torn = _receipt("completion", "zzz", todo="todo/other.md")[:-1] + '{"ts": 2, "kind": "completion"'
     assert rp.unreadable_line_may_be(torn, todo) is True
     # This TODO's receipt torn inside its timestamp, another TODO's complete receipt appended to it.
     stamp_cut = '{"ts": 1795170000' + _receipt("completion", "zzz", todo="todo/other.md")
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + stamp_cut + "\n")
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + stamp_cut + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
     # Another TODO's write cut after its section, then this TODO's append cut inside the opening ts key.
     short = _receipt("completion", "zzz", todo="todo/other.md").split(', "head"')[0] + '{"ts'
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + short + "\n")
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + short + "\n")
     with pytest.raises(rp.Refused, match="unreadable line"):
         rp.repair_base(manifest, todo, 99)
-    manifest.write_text(_receipt("completion", "aaa") + "\n" + '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec' + "\n")
-    assert rp.repair_base(manifest, todo, 99) == "aaa"                        # another TODO's broken line
+    manifest.write_text(_receipt("completion", "aaaaaaaa") + "\n" + '{"ts": 1, "kind": "completion", "todo": "todo/other.md", "sec' + "\n")
+    assert rp.repair_base(manifest, todo, 99) == "aaaaaaaa"                        # another TODO's broken line
     # A completion that read uncommitted changes: `git diff <head>` cannot show what its repair removed.
-    manifest.write_text(_receipt("completion", "aaa", worktree="0" * 64) + "\n")
+    manifest.write_text(_receipt("completion", "aaaaaaaa", worktree="0" * 64) + "\n")
     with pytest.raises(rp.Refused, match="uncommitted changes"):
         rp.repair_base(manifest, todo, 99)
 
@@ -982,7 +982,8 @@ def test_a_section_is_told_which_review_rules_it_is_on(tmp_path):
     manifest.parent.mkdir(parents=True)
     lines = [{"kind": "adversarial", "todo": todo, "section": 8, "head": "a" * 40},
              {"kind": "plan", "todo": todo, "section": 8, "head": "b" * 40, "rc": 3, "pass_checked": True},
-             {"kind": "plan", "todo": todo, "section": 9, "head": "c" * 40, "rc": 0, "pass_checked": True}]
+             {"kind": "plan", "todo": todo, "section": 9, "head": "c" * 40, "rc": 0, "pass_checked": True,
+              "route": "codex-dispatch.sh"}]
     # A torn last line that provably names another TODO; one that may be this TODO's refuses (tested below).
     torn = '{"ts": 1795170000, "kind": "plan", "todo": "todo/00-x/TODO-02-y.md", "sec'
     manifest.write_text("\n".join(json.dumps(e) for e in lines) + "\n" + torn + "\n")
@@ -1017,7 +1018,7 @@ def test_refusal_an_older_section_whose_stamp_was_overwritten_is_still_older(tmp
     # Both kinds of evidence for one section: a pass decides.
     with manifest.open("a") as f:
         f.write(json.dumps({"kind": "plan", "todo": todo, "section": 7, "head": "b" * 40, "rc": 0,
-                            "pass_checked": True}) + "\n")
+                            "pass_checked": True, "route": "codex-dispatch.sh"}) + "\n")
     assert rp.section_status(tmp_path, todo, 7) == ("passes", "b" * 40)
 
 
@@ -1644,9 +1645,25 @@ def test_two_launch_reads_at_once_do_not_refuse_each_other(tmp_path):
     repo, git = _tmp_repo(tmp_path)
     (repo / "a.txt").write_text("1\n")
     git("add", "a.txt")
-    procs = [subprocess.Popen([sys.executable, str(REPO / "scripts/review_candidate.py"), "launch"], cwd=str(repo),
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(8)]
-    outs = [p.communicate(timeout=60) for p in procs]
+    import time
+    procs, outs = [], []
+    deadline = time.monotonic() + 60                   # one deadline for the cohort, not one per reader
+    try:
+        for _ in range(8):
+            procs.append(subprocess.Popen([sys.executable, str(REPO / "scripts/review_candidate.py"), "launch"],
+                                          cwd=str(repo), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        for p in procs:
+            outs.append(p.communicate(timeout=max(0.1, deadline - time.monotonic())))
+    finally:
+        for p in procs:                                # TERM first: a reader ends its own git group on it
+            if p.poll() is None:
+                p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
     assert all(p.returncode == 0 for p in procs) and len({o for o, _e in outs}) == 1, outs
 
 
@@ -1845,7 +1862,6 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
     m.write_text("first\n" + long + "\nnext\n\nlast")
     assert list(rp._newest_first(m, block=7)) == ["last", "next", long, "first"]
     read = []
-    real_open = open
 
     class Counted:
         def __init__(self, fh):
@@ -1877,11 +1893,13 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
             added.append(len(self) + len(other))
             return bytes(other) + bytes(self)
 
-    rp.open = lambda *a, **k: Counted(real_open(*a, **k))
+    import os
+    real_fdopen = os.fdopen
+    os.fdopen = lambda *a, **k: Counted(real_fdopen(*a, **k))   # the reader opens a descriptor it checked
     try:
         assert list(rp._newest_first(m, block=64))[2] == long
     finally:
-        del rp.open
+        os.fdopen = real_fdopen
     assert sum(read) == m.stat().st_size                    # every byte read once: nothing rescanned
     assert sum(added) <= m.stat().st_size                   # and never copied onto a growing record
 
@@ -1951,13 +1969,14 @@ def test_a_detached_job_started_after_the_callers_deadline_runs_nothing(tmp_path
     assert status == "124" and not ran.exists(), text
 
 
-def test_a_one_second_limit_still_launches(tmp_path):
+def test_a_short_limit_still_launches(tmp_path):
     import os
     repo, _git = _tmp_repo(tmp_path)
     fake = tmp_path / "companion.js"
     fake.write_text("process.stdout.write('# Codex Adversarial Review\\n\\nHIGHEST: none\\n');\n")
+    # Two seconds: short enough that a poll costing a second would spend it, with room for a loaded host.
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
-           "CODEX_REVIEW_MAX_SECS": "1"}
+           "CODEX_REVIEW_MAX_SECS": "2"}
     done = _broker(repo, env)
     assert done.returncode == 0 and "nothing was launched" not in done.stderr, done.stderr
     _done_status(done.stdout)
@@ -2198,3 +2217,69 @@ def test_every_git_read_of_a_pass_uses_stored_objects(tmp_path):
     review = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["round"]) + "\nHIGHEST: none\n"
     _dispatch_in(repo, tmp_path, "round", review, "HEAD", extra_env={"CODEX_COMPANION_PATH": str(fake)})
     assert seen.read_text() == "1"
+
+
+def test_a_manifest_that_is_not_a_regular_file_refuses_at_once(tmp_path):
+    import os
+    import time
+    fifo = tmp_path / "manifest.jsonl"
+    os.mkfifo(fifo)                                    # opening it to read would wait for a writer
+    began = time.monotonic()
+    for lookup in (lambda: rp.section_start(fifo, "todo/x.md", 9), lambda: rp.repair_base(fifo, "todo/x.md", 9)):
+        with pytest.raises(rp.Refused, match="not a regular file"):
+            lookup()
+    assert time.monotonic() - began < 2
+
+
+def _published_receipt(tmp_path, n, head, published):
+    log = tmp_path / f"pass{n}.out"
+    log.write_text("x")
+    if published is not None:
+        pathlib.Path(f"{log}.done").write_text(published)
+    return {"todo": "todo/x.md", "section": "9", "kind": "plan", "route": "codex-dispatch.sh", "pass_checked": True,
+            "rc": 0, "head": head, "done_file": True, "logFile": str(log)}
+
+
+def test_a_pass_whose_success_was_never_published_sets_no_base(tmp_path):
+    import json
+    older, newer = _published_receipt(tmp_path, 1, "a" * 40, "0"), _published_receipt(tmp_path, 2, "b" * 40, None)
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(json.dumps(older) + "\n" + json.dumps(newer) + "\n")
+    assert rp.section_start(manifest, "todo/x.md", 9) == "a" * 40
+
+
+def test_the_commit_gate_and_the_range_reads_credit_the_same_receipts(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scg_shared", REPO / ".claude/hooks/section_commit_gate.py")
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    base = _published_receipt(tmp_path, 1, "c" * 40, "0")
+    cases = [base, {**base, "route": "other"}, {**base, "rc": 1}, {**base, "pass_checked": False},
+             {**base, "head": "abc"}, {**base, "done_file": False}, _published_receipt(tmp_path, 2, "d" * 40, "124"),
+             _published_receipt(tmp_path, 3, "e" * 40, None)]
+    assert [gate._receipt_complete(c) for c in cases] == [rp.receipt_complete(c) for c in cases]
+    assert [rp.receipt_complete(c) for c in cases] == [True, False, False, False, False, True, False, False]
+
+
+def test_making_the_answer_is_held_to_the_callers_limit(tmp_path):
+    import os
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    site = tmp_path / "site"
+    site.mkdir()
+    # The answer's writer stalls before it exits; the registration does not.
+    (site / "sitecustomize.py").write_text("import atexit, sys, time\n"
+                                           "if sys.argv[1:2] and sys.argv[1].startswith('kind='):\n"
+                                           "    atexit.register(time.sleep, 30)\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "systemd-run").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "systemd-run").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "PYTHONPATH": str(site),
+           "CODEX_COMPANION_PATH": str(tmp_path / "c.js"), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
+           "CODEX_REVIEW_MAX_SECS": "3"}
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    done = _broker(repo, env, timeout=20)
+    assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
+    assert "making the answer took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr

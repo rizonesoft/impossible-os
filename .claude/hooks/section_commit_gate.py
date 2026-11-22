@@ -2526,17 +2526,13 @@ def _spent_passes(root: Path, todo: str, section: str) -> int:
 
 
 def _receipt_complete(receipt: dict) -> bool:
-    if not (receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True
-            and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7):
-        return False
-    # A dispatcher that publishes <log>.done writes it after this receipt: the
-    # pass is credited once that status is published and agrees (0).
-    if receipt.get("done_file") is True:
-        try:
-            return Path(str(receipt.get("logFile") or "") + ".done").read_text().strip() == "0"
-        except OSError:
-            return False
-    return True
+    """review_pin.receipt_complete: the one predicate the review-range reads use too, so the gate and the
+    next pass's base never disagree about which passes count."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import review_pin
+    return review_pin.receipt_complete(receipt)
 
 
 def _pin_issue(root: Path) -> str:

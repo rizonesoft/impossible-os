@@ -465,3 +465,53 @@ def test_a_command_seen_ending_after_the_deadline_is_the_limits(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def _gone(pid, within=3.0):
+    """Whether `pid` is gone (or a zombie no one can signal into running again) within `within` seconds."""
+    end = time.monotonic() + within
+    while True:                                        # checked at least once, even with no time to wait
+        try:
+            with open(f"/proc/{pid}/stat") as fh:
+                if fh.read().rsplit(") ", 1)[1].startswith("Z"):
+                    return True
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.05)
+
+
+def test_cancelling_the_limit_ends_its_command(tmp_path):
+    pidfile = tmp_path / "pid"
+    proc = subprocess.Popen(["bash", str(LIMIT), "30", f"echo $$ > {pidfile}; exec sleep 30"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        end = time.monotonic() + 5
+        while not pidfile.exists() or not pidfile.read_text().strip():
+            assert time.monotonic() < end
+            time.sleep(0.05)
+        proc.terminate()
+        assert proc.wait(timeout=10) == 143
+        assert _gone(int(pidfile.read_text()))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        if pidfile.exists() and not _gone(int(pidfile.read_text()), 0):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+
+
+def test_the_limit_ends_a_session_its_command_started(tmp_path):
+    """A step that starts its own session (git under the candidate reader) is ended with the attempt, even
+    when the step's parent ignores TERM and only the KILL at the deadline ends it."""
+    pidfile = tmp_path / "pid"
+    cmd = f'trap "" TERM; setsid sh -c "echo \\$\\$ > {pidfile}; exec sleep 30" & wait'
+    try:
+        done = subprocess.run(["bash", str(LIMIT), "1", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=20)
+        assert done.returncode == 124
+        assert _gone(int(pidfile.read_text()))
+    finally:
+        if pidfile.exists() and not _gone(int(pidfile.read_text()), 0):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)

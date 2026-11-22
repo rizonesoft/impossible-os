@@ -277,3 +277,34 @@ def test_a_slow_start_is_spent_from_a_streams_deadline(monkeypatch):
     stream = bounded_run.Stream(["cat"], "a stream", timeout=0.2)
     with pytest.raises(ValueError, match="did not finish within 0.2 s"):
         stream.close()
+
+
+def test_an_exit_seen_only_after_the_deadline_is_late(monkeypatch):
+    real = bounded_run._exit_status
+
+    def late(proc, deadline):
+        rc = real(proc, deadline)
+        time.sleep(0.3)                                    # the caller is descheduled after the exit
+        return rc
+    monkeypatch.setattr(bounded_run, "_exit_status", late)
+    with pytest.raises(ValueError, match="did not answer"):
+        bounded_run.run(["sleep", "0.05"], "a short sleep", timeout=0.15)
+
+
+def test_a_watchdog_started_late_still_ends_a_stream_at_its_deadline(monkeypatch):
+    def delayed(run):
+        def go(self):
+            time.sleep(0.3)
+            return run(self)
+        return go
+    monkeypatch.setattr(threading.Timer, "run", delayed(threading.Timer.run))
+    if hasattr(bounded_run, "_AtDeadline"):
+        monkeypatch.setattr(bounded_run._AtDeadline, "run", delayed(bounded_run._AtDeadline.run))
+    began = time.monotonic()
+    stream = bounded_run.Stream(["sleep", "30"], "a sleeper", timeout=0.2)
+    try:
+        assert stream.proc.stdout.read(1) == b""          # ended by the watchdog, not answered
+        took = time.monotonic() - began
+    finally:
+        stream.abort()
+    assert took < 0.45, took

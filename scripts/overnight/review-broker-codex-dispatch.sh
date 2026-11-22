@@ -221,6 +221,19 @@ if [[ "$REGISTER_RC" != 0 ]]; then
   exit 1
 fi
 JOB="( set -C; : > $Q_LOG ) 2>/dev/null || exit 0; $RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT"
+# The broker's answer, made now under the deadline: after the submission only a builtin prints it.
+RESPONSE=""
+RESPONSE_RC=0
+RESPONSE="$(limited "python3 $(q "$MANIFEST_LINE") $(q "kind=$KIND") $(q "jobId=$DETACH") $(q "logFile=$LOG_FILE") $(q "manifest=$MANIFEST")")" || RESPONSE_RC=$?
+if [[ "$RESPONSE_RC" != 0 ]]; then
+  finalize_unlaunched "$RESPONSE_RC"
+  if [[ "$RESPONSE_RC" == 124 && -n "$LIMIT_END" ]]; then
+    echo "review-broker: making the answer took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
+  else
+    echo "review-broker: the answer could not be made (exit $RESPONSE_RC); nothing was launched" >&2
+  fi
+  exit 2
+fi
 # LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above PROMPT_FILE); it does not relaunch or watch the session.
 SUBMIT="systemd-run --user --collect $(q "--unit=$UNIT") $(q "--setenv=CODEX_REVIEWER_DISPATCH=1") $(q "--setenv=HOME=$HOME") $(q "--setenv=PATH=$PATH") --same-dir /bin/bash -c $(q "$JOB") >/dev/null 2>&1"
 SUBMIT_RC=0
@@ -241,4 +254,4 @@ else
   :
 fi
 
-python3 "$MANIFEST_LINE" "kind=$KIND" "jobId=$DETACH" "logFile=$LOG_FILE" "manifest=$MANIFEST"
+printf '%s\n' "$RESPONSE"
