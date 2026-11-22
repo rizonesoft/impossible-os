@@ -511,3 +511,32 @@ def test_a_setup_warning_never_holds_the_call_on_a_full_stderr():
             if wr >= 0:
                 os.close(wr)
             os.close(rd)
+
+
+def test_a_warning_and_a_report_on_full_pipes_share_one_budget():
+    """The wave is done, a setup warning is queued, and both stdout and stderr are one full pipe nobody
+    drains: the call still returns within one reporting budget, not two."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        rd, wr = os.pipe()
+        os.set_blocking(wr, False)
+        try:
+            while True:
+                os.write(wr, b"x" * 65536)
+        except BlockingIOError:
+            pass
+        os.set_blocking(wr, True)
+        try:
+            began = time.monotonic()
+            p = subprocess.Popen(["bash", str(TOOL), "--max", "3", str(log), "300"], cwd=d, stdout=wr, stderr=wr)
+            os.close(wr)
+            wr = -1
+            p.wait(timeout=20)
+            assert p.returncode == 0 and time.monotonic() - began < 3 + 0.8, (p.returncode, time.monotonic() - began)
+        finally:
+            if wr >= 0:
+                os.close(wr)
+            os.close(rd)

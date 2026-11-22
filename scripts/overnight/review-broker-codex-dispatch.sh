@@ -262,7 +262,7 @@ if ! "${REGISTER[@]}"; then
   exit 1
 fi
 # The job is ONE supervisor (review_runtime_limit.py --job): it claims the result, runs the review with its
-# output appended to the log, ends the WHOLE review by the steps' deadline (TERM, then KILL, the grace inside
+# output appended to the log (opened by the supervisor as a regular file, never reopened by the command), ends the WHOLE review by the steps' deadline (TERM, then KILL, the grace inside
 # the budget) when CODEX_REVIEW_MAX_SECS gives one, and publishes its status by the final deadline. One, not
 # one nested in another: an outer limiter's grace would end the inner one before it could publish.
 if [[ -n "$LIMIT_END" ]]; then
@@ -270,7 +270,7 @@ if [[ -n "$LIMIT_END" ]]; then
 else
   JOB_LIMIT="--no-deadline"
 fi
-JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT --prompt-sha $PROMPT_SHA --prompt-len $PROMPT_LEN $JOB_LIMIT $(q "{ $RUN; } >> $Q_LOG 2>&1")"
+JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT --prompt-sha $PROMPT_SHA --prompt-len $PROMPT_LEN $JOB_LIMIT $(q "{ $RUN; }")"
 # The broker's answer, made before the submission.
 tell "step making the answer"
 RESPONSE_RC=0

@@ -414,3 +414,20 @@ def test_a_published_failure_overrides_a_clean_receipt():
         (rev / "round.out.done").write_text("3\n")
         rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
         assert env["needs_redispatch"] == ["round"] and env["kinds"]["round"]["pass"]["rc"] == 3, env
+
+
+def test_a_pass_its_broker_ended_before_its_own_status_is_dispatched_again():
+    """The broker ended the pass between its receipt and its own status (no .done for the pass) and published
+    124: the leg is a finished failure, dispatched again, never pending for ever."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        broker = rev / "broker-round.out"
+        _build_passes(root, {"round": ("clean\nHIGHEST: none\n",
+                                       {**_receipt(0, "none"), "done_file": True, "parent": "detached:x",
+                                        "parent_log": str(broker)})})
+        broker.write_text("")
+        pathlib.Path(str(broker) + ".done").write_text("124\n")
+        rc, env = _run_args(root, "--kinds", "round", "--todo", "todo/x.md", "--section", "7")
+        leg = env["kinds"]["round"]
+        assert env["needs_redispatch"] == ["round"] and leg["crashed"] is True and leg["rc"] == 124, env

@@ -844,12 +844,16 @@ def test_a_review_that_cannot_be_started_after_the_claim_is_published_as_failed(
     log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
     prompt.write_text("p")
     script = _rl_script(tmp_path, "import errno\n"
-                        "def refuse(*a, **k):\n"
-                        "    raise OSError(errno.EAGAIN, 'Resource temporarily unavailable')\n"
+                        "real = os.posix_spawnp\n"
+                        "def refuse(path, argv, *a, **k):\n"
+                        "    if len(argv) > 1 and argv[1] == rl.WARDEN:\n"
+                        "        raise OSError(errno.EAGAIN, 'Resource temporarily unavailable')\n"
+                        "    return real(path, argv, *a, **k)\n"
                         "os.posix_spawnp = refuse\n"
                         f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', 'true']))\n")
     r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
-    assert r.returncode == 1 and "could not be started" in r.stderr, r
+    # The job's diagnostics for its attempt land in its log, with the review's own output.
+    assert r.returncode == 1 and "could not be started" in log.read_text(), (r, log.read_text())
     assert pathlib.Path(str(log) + ".done").read_text().strip() == "1"
 
 
@@ -1709,3 +1713,68 @@ def test_a_teardown_walk_stops_at_its_cutoff(monkeypatch):
     with pytest.raises(rl.WalkCut):
         rl.signal_all(0, cutoff=rl.now_cs() - 1)
     assert time.monotonic() - began < 0.5
+
+
+def test_a_job_log_replaced_by_a_fifo_never_holds_its_owner(tmp_path):
+    """Between the claim and the command's start the log is replaced by a FIFO with no reader, with no
+    deadline set: the job refuses it at once (the command never opens the path), runs nothing and
+    publishes 1."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    mark = tmp_path / "ran"
+    script = _rl_script(tmp_path, "orig = rl._attempt_into\n"
+                        "def into(log_, *a):\n"
+                        f"    os.unlink({str(log)!r}); os.mkfifo({str(log)!r})\n"
+                        "    return orig(log_, *a)\n"
+                        "rl._attempt_into = into\n"
+                        f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', "
+                        f"'touch {mark}']))\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "log could not be opened" in r.stderr and not mark.exists(), r
+
+
+def test_recovery_never_replaces_a_status_it_could_not_read(tmp_path, monkeypatch):
+    """A published status reads as EIO: recovery reports the error and leaves the status and transcript as
+    they are, rather than replacing a possible success with 1."""
+    import errno
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_result as rr
+    log = tmp_path / "r.out"
+    log.write_text("review\n")
+    done = pathlib.Path(str(log) + ".done")
+    done.write_text("0\n")
+    (tmp_path / "r.out.owner").write_text("")
+    real = rr.os.read
+
+    def eio(fd, n):
+        if os.readlink(f"/proc/self/fd/{fd}") == str(done):
+            raise OSError(errno.EIO, "Input/output error")
+        return real(fd, n)
+    monkeypatch.setattr(rr.os, "read", eio)
+    assert rr.recover(str(log)) == 1
+    monkeypatch.setattr(rr.os, "read", real)
+    assert done.read_text() == "0\n" and log.read_text() == "review\n"
+
+
+def test_a_term_walk_that_runs_into_the_kill_time_goes_straight_to_teardown(tmp_path):
+    """The TERM walk over a crowded /proc is still running at the KILL time: it stops there and the attempt
+    is torn down and answered by its deadline, the walk never holding it past that."""
+    import sys
+    script = _rl_script(tmp_path, "real = rl.signal_all\n"
+                        "def slow(sig, sent=None, cutoff=None):\n"
+                        "    if sig == signal.SIGTERM:\n"
+                        "        while cutoff is None or rl.now_cs() < cutoff:\n"
+                        "            time.sleep(0.01)\n"
+                        "            if cutoff is None and time.monotonic() > began + 10:\n"
+                        "                break\n"
+                        "        raise rl.WalkCut(0, 0)\n"
+                        "    return real(sig, sent, cutoff)\n"
+                        "rl.signal_all = slow\n"
+                        "began = time.monotonic()\n"
+                        "rc = rl._attempt('exec sleep 30', rl.now_cs() + 200, None, rl.Cancel())\n"
+                        "print(rc, round(time.monotonic() - began, 2))\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
+    rc, took = r.stdout.split()
+    assert rc == "124" and float(took) < 2 + 0.5, r

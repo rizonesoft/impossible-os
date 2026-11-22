@@ -140,12 +140,14 @@ def leg_summary(entry: dict) -> dict:
     # A pass the review broker launched is the broker's attempt, read as review_pin.receipt_complete (the
     # commit gate's predicate) reads it: its own status can be 0 while the broker published the attempt as
     # ended by its limit (124). Until the broker publishes, the pass is pending; any status but 0 is a
-    # failed attempt, dispatched again.
-    if entry.get("parent") and out["complete"]:
+    # failed attempt, dispatched again, even when the pass's own status never came (the broker ended it
+    # between its receipt and its status).
+    if entry.get("parent"):
         broker_status = _broker_status(entry)
         if broker_status is None:
             out["complete"] = False
         elif broker_status != "0":
+            out["complete"] = True
             out["crashed"] = True
             out["rc"] = int(broker_status) if broker_status.isdigit() else out["rc"]
     return out

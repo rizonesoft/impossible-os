@@ -113,25 +113,34 @@ def _pwrite_all(fd: int, data: bytes, at: int) -> None:
         view = view[n:]
 
 
-def status(log: str) -> str | None:
-    """THE status `log` publishes: the contents of <log>.done when it is a small regular file holding one
+def read_status(log: str) -> tuple:
+    """(status, error) for `log`: the status <log>.done publishes when it is a small regular file holding one
     status (1 to 3 digits and a newline), read without blocking (a FIFO or device fails at once); None when
-    there is none, or the file is damaged (empty, cut short, not a status). The recovery and the verdict
-    waiter read it here, so a damaged file is never read as a finished review."""
+    there is none or the file is damaged (empty, cut short, not a status, not a regular file). `error` is
+    the OSError met opening or reading a file that is there: what it holds is unknown, so it is never taken
+    for a missing or damaged status (a recovery that replaced it could overwrite a published success)."""
     try:
         fd = os.open(log + ".done", os.O_RDONLY | os.O_NONBLOCK | CLOEXEC)
-    except OSError:
-        return None
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, exc
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
+            return None, None
         data = os.read(fd, 33)
-    except OSError:
-        return None
+    except OSError as exc:
+        return None, exc
     finally:
         os.close(fd)
     found = re.fullmatch(rb"([0-9]{1,3})\n?", data)
-    return found.group(1).decode() if found else None
+    return (found.group(1).decode() if found else None), None
+
+
+def status(log: str) -> str | None:
+    """THE status `log` publishes (read_status), or None when there is none, it is damaged, or it could not
+    be read. The verdict waiter and the envelope read it here, so a damaged file is never a finished review."""
+    return read_status(log)[0]
 
 
 def _print_status(log: str) -> int:
@@ -147,7 +156,11 @@ def recover(log: str) -> int:
     status is published, nothing is claimed yet, the owner is alive, or no owner was recorded) or the result
     was recovered; 1 on an error. A damaged status (an empty or unreadable .done) is no status: once the owner
     is gone it is replaced by 1, as a missing one is."""
-    if status(log) is not None or not os.path.lexists(log):
+    found, error = read_status(log)
+    if error is not None:
+        print(f"review_result: {log}.done could not be read ({error.strerror}); it is left as it is", file=sys.stderr)
+        return 1
+    if found is not None or not os.path.lexists(log):
         return 0                                   # published, or not claimed yet: a claim may be in progress
     try:
         fd = os.open(_owner(log), os.O_RDWR | CLOEXEC)
@@ -161,7 +174,12 @@ def recover(log: str) -> int:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0                               # its owner is alive and publishes it
-        if status(log) is not None:
+        found, error = read_status(log)
+        if error is not None:
+            print(f"review_result: {log}.done could not be read ({error.strerror}); it is left as it is",
+                  file=sys.stderr)
+            return 1                               # never replace a status that may be a published success
+        if found is not None:
             return 0                               # published meanwhile
         # The note is written once, at one place in the log: that place is recorded in the owner file (held
         # locked) BEFORE the note is written, so a retry, even after a recovery that ended between the two,

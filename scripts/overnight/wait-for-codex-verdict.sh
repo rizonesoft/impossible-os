@@ -276,10 +276,18 @@ deliver() {
     # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
     # for longer than that one probe.
     kill -TERM "$OBS_PID" 2>/dev/null
-    local left_s=$(( (END_US - $(_now_us)) / 1000000 ))
-    [ "$left_s" -lt 1 ] && left_s=1
-    [ -n "$SETUP_ERR" ] && printf '%s' "$SETUP_ERR" | timeout -k 1 "$left_s" cat >&2 2>/dev/null
-    printf '%s' "$REPORT" | timeout -k 1 "$left_s" cat 2>/dev/null
+    # One absolute deadline for both writes (what is left of --max, at least a second): the report first,
+    # then the setup warning with whatever time remains, so a blocked stderr never takes the report's time.
+    local now_us until_us left_ms
+    now_us=$(_now_us)
+    until_us=$(( END_US > now_us + 1000000 ? END_US : now_us + 1000000 ))
+    left_ms=$(( (until_us - now_us) / 1000 ))
+    printf '%s' "$REPORT" | timeout -k 0.1 "$(( left_ms / 1000 )).$(printf '%03d' $(( left_ms % 1000 )))" cat 2>/dev/null
+    if [ -n "$SETUP_ERR" ]; then
+        left_ms=$(( (until_us - $(_now_us)) / 1000 - 100 ))
+        [ "$left_ms" -ge 100 ] && printf '%s' "$SETUP_ERR" \
+            | timeout -k 0.1 "$(( left_ms / 1000 )).$(printf '%03d' $(( left_ms % 1000 )))" cat >&2 2>/dev/null
+    fi
     exit "$1"
 }
 

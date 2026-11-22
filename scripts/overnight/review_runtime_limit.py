@@ -785,9 +785,35 @@ def _job(job, digest, cmd, end, cancel):
             status = failed[0]
         else:
             os.environ["REVIEW_PROMPT_FD"] = str(fd)
-            status = _attempt(cmd, end, None, cancel)
+            status = _attempt_into(log, cmd, end, cancel)
             os.close(fd)
     return status if _result.publish(log, str(status), prompt) == 0 else 1
+
+
+def _attempt_into(log, cmd, end, cancel):
+    """The job's attempt with its output appended to `log`: the log is opened here, as a regular file and
+    without blocking (a FIFO that replaced it is refused at once), and given to the command as its stdout
+    and stderr, so the command never opens the path itself and nothing can hold this owner in an open. The
+    supervisor's own diagnostics for the attempt land there too."""
+    try:
+        out = _result.open_regular(log, os.O_WRONLY | os.O_APPEND)
+    except OSError as exc:
+        print(f"review-runtime-limit: the log could not be opened ({exc.strerror}); nothing was run", file=sys.stderr)
+        return 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = os.dup(1), os.dup(2)
+    try:
+        os.dup2(out, 1)
+        os.dup2(out, 2)
+        return _attempt(cmd, end, None, cancel)
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved[0], 1)
+        os.dup2(saved[1], 2)
+        for fd in (*saved, out):
+            os.close(fd)
 
 
 def _attempt(cmd, end, broker, cancel):
@@ -892,7 +918,10 @@ def _attempt(cmd, end, broker, cancel):
             break
         if now >= term_at and not termed:
             limited = termed = True
-            signal_all(signal.SIGTERM)
+            try:
+                signal_all(signal.SIGTERM, cutoff=kill_at)
+            except WalkCut:
+                break                                  # the KILL time came during the walk: tear down now
         time.sleep(POLL)
     # One teardown for every way out: what is left of the attempt is killed and reaped, walked again until
     # nothing is (a process can fork between a walk and its signal, and its orphans come back here). No
