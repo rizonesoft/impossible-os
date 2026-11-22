@@ -1011,8 +1011,9 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
                 print("[review-broker] the job's start was not confirmed by the deadline; its result is "
                       "recorded as failed unless the job claimed it first", file=sys.stderr)
                 if _result_step(["publish", broker.log, "1", "--prompt", broker.prompt, "--claim"],
-                                final, cancel) is None:
-                    # Neither the job nor the record of its failure is confirmed: nothing may ever publish
+                                final, cancel) != 0:
+                    # Neither the job nor the record of its failure is confirmed (the recording was not
+                    # back by the deadline, or it failed): nothing may ever publish
                     # this result, so the broker fails (its own nonzero status marks the pass crashed) rather
                     # than hand back a job that may not exist.
                     print("[review-broker] BLOCK -- neither the job's start nor the record of its failure was "

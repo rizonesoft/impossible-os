@@ -621,3 +621,50 @@ def test_a_report_writer_slow_to_start_never_holds_the_waiter():
         r = subprocess.run(["bash", str(TOOL), "--max", "1", str(log)], capture_output=True, text=True, cwd=d,
                            timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
         assert r.returncode == 0 and "DONE:" in r.stdout and time.monotonic() - began < 2.5, (r, time.monotonic() - began)
+
+
+def test_a_status_reader_that_was_ended_never_makes_a_log_stale():
+    """The status reader is ended by the host (exit 137) while the transcript is old and stale detection is
+    on: the status is unknown, so the wait reports it UNREADABLE, never STALE with advice to dispatch again."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        _python_stub(bindir, '*" status "*) exit 137;;')
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("review\n")
+        pathlib.Path(str(log) + ".done").write_text("0\n")
+        os.utime(log, (1, 1))
+        r = subprocess.run(["bash", str(TOOL), "--max", "2", "--stale-secs", "1", str(log)], capture_output=True,
+                           text=True, cwd=d, timeout=60, env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        assert r.returncode == 3 and "UNREADABLE" in r.stdout and "STALE" not in r.stdout, r
+
+
+def test_the_report_is_written_inside_max_even_on_a_full_pipe():
+    """A pending review, --max 1, and a stdout pipe nobody drains: the report's time is reserved inside
+    --max, so the call ends by its deadline, not a second after it."""
+    import os
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        rd, wr = os.pipe()
+        os.set_blocking(wr, False)
+        try:
+            while True:
+                os.write(wr, b"x" * 65536)
+        except BlockingIOError:
+            pass
+        os.set_blocking(wr, True)
+        try:
+            began = time.monotonic()
+            p = subprocess.Popen(["bash", str(TOOL), "--max", "1", "--no-stale", str(log)], cwd=d, stdout=wr,
+                                 stderr=subprocess.DEVNULL)
+            os.close(wr)
+            wr = -1
+            p.wait(timeout=20)
+            took = time.monotonic() - began
+            assert p.returncode == 3 and took < 1.2, (p.returncode, took)
+        finally:
+            if wr >= 0:
+                os.close(wr)
+            os.close(rd)

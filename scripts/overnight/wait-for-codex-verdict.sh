@@ -175,9 +175,10 @@ _observe() {
                 continue
             fi
             all=0
-            if [ "$src" -eq 3 ]; then
-                # The status is there but could not be read: its content is unknown, so it is neither
-                # recovered nor reported as unpublished; it is read again next round.
+            if [ "$src" -ne 1 ]; then
+                # Only 1 means no status (none, or damaged). Anything else (3, a read error; or a reader that
+                # was itself ended or could not start) leaves the content unknown, so it is neither
+                # recovered, judged stale nor reported as unpublished; it is read again next round.
                 echo "unreadable $f"
                 continue
             fi
@@ -249,6 +250,10 @@ _observe() {
 
 # One deadline for the whole call, counted from the clock taken at the top.
 END_US=$(( START_US + MAX * 1000000 ))
+# The report's own time is inside --max: observation ends this much earlier, so writing the answer never
+# takes the call past the deadline its caller set.
+REPORT_US=$(( MAX * 1000000 / 4 < 300000 ? MAX * 1000000 / 4 : 300000 ))
+OBS_END_US=$(( END_US - REPORT_US ))
 declare -A GOT=() UNPUB=() UNREAD=() EXISTS=() SIZE=() SILENT=()
 TAIL=()
 # The observer's streams are its own (exec, so no saved copy of the caller's stderr stays open in it): a
@@ -259,7 +264,7 @@ OBS_PID=$!
 finished=0
 tail_read=0
 while :; do
-    left_us=$(( END_US - $(_now_us) ))
+    left_us=$(( OBS_END_US - $(_now_us) ))
     [ "$left_us" -le 0 ] && break
     left=$(printf '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 )))
     IFS= read -r -t "$left" -u "$OBS" line || break       # out of time, or the observer has gone
@@ -314,11 +319,12 @@ deliver() {
     # The observer is this call's own and ends with it: whatever probe it is in, nothing outlives the call
     # for longer than that one probe.
     kill -TERM "$OBS_PID" 2>/dev/null
-    # One absolute deadline for both writes (what is left of --max, at least a second): the report first,
+    # One absolute deadline for both writes (the end of --max, whose last REPORT_US observation left for them;
+    # a tenth of a second when observation overran): the report first,
     # then the setup warning with whatever time remains, so a blocked stderr never takes the report's time.
     local now_us until_us
     now_us=$(_now_us)
-    until_us=$(( END_US > now_us + 1000000 ? END_US : now_us + 1000000 ))
+    until_us=$(( END_US > now_us + 100000 ? END_US : now_us + 100000 ))
     _write_until "$REPORT" "$OUT_FD" "$until_us"
     [ -n "$SETUP_ERR" ] && _write_until "$SETUP_ERR" "$ERR_FD" $(( until_us - 100000 ))
     exit "$1"

@@ -500,3 +500,29 @@ def test_a_status_read_error_is_read_again_never_dispatched_again(monkeypatch):
             rc = env_mod.main([str(root), "--kinds", "round", "--todo", "todo/x.md", "--section", "7"])
             env = json.loads(out[-1])
             assert rc != 0 and env["unreadable"] == ["round"] and env["needs_redispatch"] == [], (failing, env)
+
+
+def test_a_large_transcript_is_read_in_bounded_memory():
+    """A 64 MiB transcript under a 200 MiB address-space limit: the envelope streams it, so the leg is read
+    with the right size and digest instead of failing on a copy of the whole file."""
+    import hashlib
+    import resource
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build_passes(root, {"round": ("", _receipt(0, "none"))})
+        out = root / ".claude/overnight/reviews/round.out"
+        line = b"- [low] a line of a long review that goes on " + b"x" * 60 + b"\n"
+        with open(out, "wb") as fh:
+            for _ in range((64 << 20) // len(line)):
+                fh.write(line)
+            fh.write(b"HIGHEST: none\nTurn completed (rc=0)\n")
+        want = hashlib.sha256(out.read_bytes()).hexdigest()
+
+        def limit():
+            resource.setrlimit(resource.RLIMIT_AS, (200 << 20, 200 << 20))
+        r = subprocess.run([sys.executable, str(SCRIPT), d, "--kinds", "round", "--todo", "todo/x.md",
+                            "--section", "7"], text=True, capture_output=True, timeout=120, preexec_fn=limit)
+        env = json.loads(r.stdout)
+        leg = env["kinds"]["round"]
+        assert r.returncode == 0 and leg["sha256"] == want and leg["bytes"] == out.stat().st_size, (r.stderr, leg)
+        assert leg["findings_truncated"] > 0 and leg["tail"][-1] == "Turn completed (rc=0)", leg["tail"]

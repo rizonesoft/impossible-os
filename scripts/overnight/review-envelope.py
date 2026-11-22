@@ -23,6 +23,7 @@ off for back-compat, but the sequencer/skills SHOULD pass `--todo`.
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -47,23 +48,55 @@ MAX_FINDING_LINES = 120
 TAIL_LINES = 30
 
 
-def _regular_bytes(path: Path):
-    """The whole of a regular file, or None: opened without blocking, so a FIFO or a device never hangs it."""
+LINE_KEEP = 4096          # bytes of one line kept for its finding and tail entry (both cut to 400 characters)
+SCAN_OVERLAP = 128        # bytes carried between chunks, longer than any completion or crash marker
+
+
+def _scan(path: Path):
+    """One streamed pass over a regular file, or None: its size, sha256, the last completion code, whether a
+    crash signature appears, the finding lines (at most MAX_FINDING_LINES kept, all counted) and the last
+    TAIL_LINES lines. Opened without blocking, so a FIFO or a device never hangs it, and read a chunk at a
+    time, so memory is bounded by the chunk and LINE_KEEP whatever the transcript's size."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
     except OSError:
         return None
+    digest, size, last_rc, crash = hashlib.sha256(), 0, None, False
+    findings, found, tail = [], 0, collections.deque(maxlen=TAIL_LINES)
+    line, carry = b"", b""
+
+    def finish(raw):
+        nonlocal found
+        for ln in raw.decode("utf-8", "replace").splitlines() or [""]:
+            if FINDING_RE.match(ln):
+                found += 1
+                if len(findings) < MAX_FINDING_LINES:
+                    findings.append(ln.strip()[:400])
+            tail.append(ln[:400])
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return None
-        chunks = []
         while chunk := os.read(fd, 1 << 20):
-            chunks.append(chunk)
-        return b"".join(chunks)
+            digest.update(chunk)
+            size += len(chunk)
+            window = (carry + chunk).decode("utf-8", "replace")
+            for m in RC_RE.finditer(window):
+                last_rc = int(m.group(1))
+            crash = crash or any(sig in window for sig in CRASH_SIGNATURES)
+            carry = chunk[-SCAN_OVERLAP:]
+            parts = chunk.split(b"\n")
+            for part in parts[:-1]:
+                finish((line + part)[:LINE_KEEP])
+                line = b""
+            line = (line + parts[-1])[:LINE_KEEP]
+        if line:
+            finish(line)
     except OSError:
         return None
     finally:
         os.close(fd)
+    return {"bytes": size, "sha256": digest.hexdigest(), "rc": last_rc, "crash": crash,
+            "findings": findings, "found": found, "tail": list(tail)}
 
 
 def leg_summary(entry: dict) -> dict:
@@ -83,13 +116,12 @@ def leg_summary(entry: dict) -> dict:
         out["unreadable"] = f"its status could not be read ({error.strerror})"
         return out
     done_rc = int(status) if status is not None and status.isdigit() else None  # fail-direction: unfinished
-    data = _regular_bytes(path)
-    if data is None:
+    scan = _scan(path)
+    if scan is None:
         out["error"] = "artifact unreadable"
         return out
-    out["bytes"] = len(data)
-    out["sha256"] = hashlib.sha256(data).hexdigest()
-    text = data.decode("utf-8", "replace")
+    out["bytes"] = scan["bytes"]
+    out["sha256"] = scan["sha256"]
     # Finished means the dispatcher said so: its <log>.done, or (an older log
     # without one) a "Turn completed (rc=N)" line it appended, the LAST one,
     # since a review can quote an earlier one. Log text such as the companion's
@@ -102,21 +134,17 @@ def leg_summary(entry: dict) -> dict:
     elif entry.get("done_file") is True:
         pass  # its dispatcher writes <log>.done; without it the review is still running
     else:
-        rc_all = RC_RE.findall(text)
-        if rc_all:
+        if scan["rc"] is not None:
             out["complete"] = True
-            out["rc"] = int(rc_all[-1])
+            out["rc"] = scan["rc"]
         if out["rc"] is not None:
             out["crashed"] = out["rc"] != 0
-        elif any(sig in text for sig in CRASH_SIGNATURES):
+        elif scan["crash"]:
             out["crashed"] = True
-    lines = text.splitlines()
-    findings = [ln.strip()[:400] for ln in lines if FINDING_RE.match(ln)]
-    if len(findings) > MAX_FINDING_LINES:
-        out["findings_truncated"] = len(findings) - MAX_FINDING_LINES
-        findings = findings[:MAX_FINDING_LINES]
-    out["findings"] = findings
-    out["tail"] = [ln[:400] for ln in lines[-TAIL_LINES:]]
+    if scan["found"] > MAX_FINDING_LINES:
+        out["findings_truncated"] = scan["found"] - MAX_FINDING_LINES
+    out["findings"] = scan["findings"]
+    out["tail"] = scan["tail"]
     # A pass of the reviewer pin (.conclave/reviewers.toml) carries its result
     # on the receipt scripts/codex-dispatch.sh wrote: whether every lens gave a
     # verdict, and the review's worst level. rc 3 there is an INCOMPLETE pass

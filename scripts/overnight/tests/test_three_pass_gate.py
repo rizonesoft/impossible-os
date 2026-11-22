@@ -681,3 +681,17 @@ def test_the_stamp_path_reads_share_the_hooks_deadline(tmp_path):
     finally:
         gate._hook_deadline[:] = saved
     assert gate._git_lines(root, "rev-parse", "HEAD")
+
+
+def test_the_pass_count_stops_at_the_cap(tmp_path, monkeypatch):
+    """Asked only whether a section has reached its cap, the count stops there: receipts past the cap (each
+    one costs its status reads) are never checked."""
+    manifest = tmp_path / gate._PASS_MANIFEST
+    manifest.parent.mkdir(parents=True)
+    rows = [json.dumps({"todo": "todo/x.md", "section": 7, "kind": "round"}) for _ in range(10)]
+    manifest.write_text("\n".join(rows) + "\n")
+    checked = []
+    monkeypatch.setattr(gate, "_receipt_complete", lambda e: checked.append(e) or True)
+    assert gate._spent_passes(tmp_path, "todo/x.md", "7", 3) == 3 and len(checked) == 3
+    checked.clear()
+    assert gate._spent_passes(tmp_path, "todo/x.md", "7") == 10 and len(checked) == 10

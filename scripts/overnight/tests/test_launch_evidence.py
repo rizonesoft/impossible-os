@@ -1938,3 +1938,20 @@ def test_a_fallback_start_and_its_failure_record_both_unconfirmed_fail_the_broke
                                    log="/x/r.out", prompt="/x/r.prompt")
     assert rl.finish_broker(broker, 0, False, False, 1200) == 1
     assert seen["until"] == 1100 and not delivered, (seen, delivered)
+
+
+def test_a_failed_failure_record_after_an_unconfirmed_start_fails_the_broker(monkeypatch):
+    """The record of the failure is back but failed (exit 1, a full disk; or ended by a signal): the broker
+    fails and hands back no job, exactly as when the record is not back at all."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    for code in (1, -9, 137):
+        monkeypatch.setattr(rl, "_launch", lambda job, until, cancel=None: False)
+        monkeypatch.setattr(rl, "_result_step", lambda args, until, cancel=None, code=code: code)
+        delivered = []
+        monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
+        broker = types.SimpleNamespace(read=lambda: None, step="answered", response="{}", job="true",
+                                       log="/x/r.out", prompt="/x/r.prompt")
+        assert rl.finish_broker(broker, 0, False, False, rl.now_cs() + 100) == 1 and not delivered, code

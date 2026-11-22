@@ -2722,8 +2722,10 @@ def _pass_cap(root: Path) -> int | None:
         return None
 
 
-def _spent_passes(root: Path, todo: str, section: str) -> int:
-    """How many checked, complete passes this section has had: its spend against pass_cap."""
+def _spent_passes(root: Path, todo: str, section: str, cap: int | None = None) -> int:
+    """How many checked, complete passes this section has had: its spend against pass_cap. With `cap`, the
+    count stops once it reaches the cap, since the caller asks only whether it has (each receipt checked
+    reads its published statuses, and a section past its cap may have many more)."""
     try:
         lines = (root / _PASS_MANIFEST).read_text().splitlines()
     except (OSError, UnicodeDecodeError):
@@ -2737,6 +2739,8 @@ def _spent_passes(root: Path, todo: str, section: str) -> int:
         if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == section \
                 and e.get("kind") in _PASS_KINDS and _receipt_complete(e):
             spent += 1
+            if cap is not None and spent >= cap:
+                break
     return spent
 
 
@@ -2967,7 +2971,7 @@ def _four_dispatch_evidence(
                 legacy.append(todo)
                 continue
             cap = _pass_cap(root)
-            capped = cap is not None and _spent_passes(root, todo, section) >= cap
+            capped = cap is not None and _spent_passes(root, todo, section, cap) >= cap
             owed = _three_pass_issues(root, section, receipts, readable, current_head, capped, todo)
         if owed:
             issues.append(
