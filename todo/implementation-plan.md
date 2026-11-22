@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **996 of 2754 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **996 of 2760 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2648,6 +2648,7 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T04 §6`  | Account Management + Credential Store              | none        |     6 |
 | [ ]  | `D11 T04 §8`  | Contacts Store                                     | none        |     9 |
 | [ ]  | `D11 T04 §5`  | Compose Window                                     | none        |     8 |
+| [ ]  | `D11 T14 §1`  | Inkeys Source Import and Provenance                | none        |     9 |
 
 ### Phase 12 -- User platform and SDK
 
@@ -2722,6 +2723,11 @@ The kernel libraries, the process ABI, ntdll, the Win32 subsystem in user mode, 
 | [ ]  | `D12 T07 §9`  | Tier 7 -- Full Win32 Window + Controls                                      | none           |     3 |
 | [ ]  | `D12 T07 §12` | CI Compatibility Gate                                                       | none           |     4 |
 | [ ]  | `D12 T07 §13` | Tier 9 -- WinRT + DirectX + WinUI 3 / Windows App SDK Apps                  | none           |     5 |
+| [ ]  | `D11 T14 §2`  | Inkeys API Inventory                                                        | none           |     5 |
+| [ ]  | `D11 T14 §3`  | Inkeys Compatibility Probes                                                 | none           |     7 |
+| [ ]  | `D11 T14 §4`  | Inkeys Build for Impossible OS                                              | third-party    |     5 |
+| [ ]  | `D11 T14 §5`  | Inkeys App on Impossible OS                                                 | none           |     7 |
+| [ ]  | `D11 T14 §6`  | Inkeys Conformance and Performance                                          | none           |     4 |
 
 ### Phase 13 -- Tools and accessories
 

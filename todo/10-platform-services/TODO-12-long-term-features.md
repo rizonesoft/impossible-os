@@ -162,6 +162,8 @@ F12 debug overlay and shell diagnostics. All gated by registry flags (disabled b
 
 Multi-touch input pipeline from USB HID Digitizer to WM events. Depends on USB HID driver (XREF: `04-drivers-hardware/TODO-10-usb-stack.md`).
 
+- -> XREF: `11-apps/TODO-14-inkeys.md §5` -- Inkeys, the bundled annotation app, draws with the pen pressure and touch contacts this section delivers
+
 - [ ] Create `include/kernel/drivers/touch.h`:
   - `struct touch_point { uint8_t id; int32_t x, y; uint16_t pressure; uint8_t phase; /* TOUCH_DOWN/MOVE/UP */ }`
   - `struct touch_event { uint8_t count; struct touch_point points[10]; uint64_t timestamp_ms; }`

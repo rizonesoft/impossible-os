@@ -365,6 +365,7 @@ Modern Windows 11 apps (WinUI 3, Windows App SDK, and the .NET / C++ apps built 
 - [ ] **`tier9/tier9_d2d.c`**: `D3D11CreateDevice(WARP)` + `D2D1CreateFactory` + `DrawRectangle` into an HWND render target + DirectWrite `DrawText`
   - Expected: a rendered window and `D2D test passed`
 - [ ] **Real binary targets**: WinUI 3 Gallery (self-contained build) main window renders and navigates; a `Microsoft.WindowsAppSDK` "Hello World" self-contained app opens
+  - -> XREF: `11-apps/TODO-14-inkeys.md §3,§5` -- Inkeys (D3D11, Direct2D 1.1, DirectComposition, layered windows) is a bundled real-application target; its §2 inventory lists the APIs this tier owes it
   - Pass criteria as Tier 8: badge rows in `sdk/docs/win32-compat.md`
 - [ ] Extend the §2 ladder, §11 stub log and §12 `compat-check.sh` with Tier 9; the score denominator grows only once Tier 9 programs exist
 

@@ -13,6 +13,7 @@ One page per apps or tools roadmap file, each following the [page contract](../c
 | [SSH Client](ssh-client.md) | Shipped Monocypher, Ed25519, SHA-256 and terminal calls; planned `ssh.exe`, host trust, `scp`, `sftp` |
 | [Email Client App](email-client.md) | Shipped codecs and Registry; planned mail window, compose, encrypted credentials, spam filter |
 | [PDF Viewer App](pdf-viewer.md) | Shipped image and inflate decoders; planned viewer window, search, file association, engine owner |
+| [Inkeys Screen Annotation](inkeys.md) | Nothing built yet; planned source import, API inventory, compatibility probes and the bundled annotation app |
 | [Video Player](video-player.md) | Drawing, timing and SSE2 build support; planned pl_mpeg player, A/V sync, playlist, subtitles |
 | [Collaboration and Network Client Apps](collaboration-apps.md) | Shipped ARP and ICMP; planned VNC client, IRC, feed reader, `arp` and `route` commands |
 | [Notepad App](notepad.md) | Text and file calls; planned line-ending aware editor, associations, recent files |

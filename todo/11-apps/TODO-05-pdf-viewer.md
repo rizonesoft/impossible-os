@@ -25,6 +25,7 @@ title: "TODO-05 -- PDF Viewer"
 - -> XREF: `08-graphics-ui/TODO-19-fluent-component-library.md §17,§22` -- the tab view and title bar Recto's window uses (§15)
 - -> XREF: `07-networking/TODO-10-pdf-viewer.md §9` -- PDFs opened from the network are handed to Recto (§18)
 - -> XREF: `10-platform-services/TODO-09-compiler-sdk.md §11` -- on-device C++ compilers stay there; the C++ runtime for bundled apps is §11 here
+- -> XREF: `11-apps/TODO-14-inkeys.md §4` -- Inkeys, the bundled annotation app, also builds on the C++ runtime of §11
 - `02-kernel-core/TODO-03-kernel-libraries.md §4` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
 - `include/kernel/image.h` -- `image_load_mem(img, data, size)` -- §5 image rendering
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §4 text rendering
