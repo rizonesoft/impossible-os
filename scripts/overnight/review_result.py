@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """review_result.py: the one publisher of a review attempt's result.
 
-    review_result.py claim LOG
+    review_result.py claim LOG [--expire-at UPTIME_CS --prompt FILE --parent PID]
     review_result.py publish LOG STATUS [--prompt FILE] [--claim]
     review_result.py discard FILE
 
 A result has ONE OWNER: whoever first creates LOG exclusively (the detached job at its start, or the broker's
 supervisor once it ended an attempt it had not handed off). `claim` creates it: exit 0 when this caller owns
-it, 4 when another already does, 1 when it could not be created. `publish` appends "Turn completed (rc=S)"
+it, 4 when another already does, 1 when it could not be created. With --expire-at, a claim won at or after
+that deadline (CLOCK_BOOTTIME hundredths, as the supervisor counts), or after the supervisor PID stopped
+waiting for it, publishes 124 itself and exits 5: whoever owns a result publishes it. `publish` appends "Turn completed (rc=S)"
 to LOG and then publishes S in LOG.done (written beside it and renamed over it, so a reader sees all or
 nothing); `--claim` claims first and leaves a result another owner holds alone (exit 0). `discard` removes
 the prompt of an attempt that was never registered, so no result is owed for it.
@@ -19,6 +21,7 @@ success or a published one into a failure.
 import os
 import re
 import sys
+import time
 
 
 def claim(log: str) -> int:
@@ -81,7 +84,21 @@ def publish(log: str, status: str, prompt: str = "", *, claim_first: bool = Fals
     return 0
 
 
+def claim_by(log: str, expire_at: int, prompt: str, parent: int) -> int:
+    owned = claim(log)
+    if owned != 0:
+        return owned
+    late = int(time.clock_gettime(time.CLOCK_BOOTTIME) * 100) >= expire_at
+    if late or os.getppid() != parent:
+        # Nobody will run the review or publish its result: the owner publishes the limit's status.
+        return 5 if publish(log, "124", prompt) == 0 else 1
+    return 0
+
+
 def main(argv) -> int:
+    if (len(argv) == 8 and argv[0] == "claim" and argv[2] == "--expire-at" and argv[4] == "--prompt"
+            and argv[6] == "--parent" and re.fullmatch(r"[0-9]+", argv[3]) and re.fullmatch(r"[0-9]+", argv[7])):
+        return claim_by(argv[1], int(argv[3]), argv[5], int(argv[7]))
     if len(argv) == 2 and argv[0] in ("claim", "discard"):
         return (claim if argv[0] == "claim" else discard)(argv[1])
     if len(argv) >= 3 and argv[0] == "publish":
@@ -97,7 +114,7 @@ def main(argv) -> int:
                 break
         else:
             return publish(log, status, prompt, claim_first=claim_first)
-    print("usage: review_result.py claim LOG | publish LOG STATUS [--prompt FILE] [--claim] | discard FILE",
+    print("usage: review_result.py claim LOG [--expire-at CS --prompt FILE --parent PID] | publish LOG STATUS [--prompt FILE] [--claim] | discard FILE",
           file=sys.stderr)
     return 2
 

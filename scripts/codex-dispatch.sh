@@ -230,6 +230,18 @@ if [ "$PIN_KIND" = "1" ]; then
     elif [ -n "${REVIEW_BASE:-}" ]; then
         BASE_OID="$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" || {
             echo "[$SELF_NAME] BLOCK -- REVIEW_BASE is not a commit here: $REVIEW_BASE" >&2; exit 2; }
+        # A pass after the plan reviews the whole section: a base past the section's recorded start would
+        # leave its first commits unreviewed while the receipt names its last one. The stamp gate refuses
+        # such a pass; refusing it here saves the review.
+        if [ "$KIND" != "plan" ]; then
+            SECTION_START="$(python3 "$PIN_TOOL" --section-start "$TODO_PATH" "$SECTION" --manifest "$REVIEWS_DIR/manifest.jsonl")" || {
+                echo "[$SELF_NAME] BLOCK -- where this section started could not be read (reason above)" >&2; exit 2; }
+            if [ -n "$SECTION_START" ] && [ "$BASE_OID" != "$EMPTY_TREE_OID" ] \
+                    && ! git merge-base --is-ancestor "$BASE_OID" "$SECTION_START" 2>/dev/null; then
+                echo "[$SELF_NAME] BLOCK -- REVIEW_BASE ${BASE_OID:0:10} is past where this section started (${SECTION_START:0:10}), so its first commits would go unreviewed; leave REVIEW_BASE unset or give a commit at or before the start" >&2
+                exit 2
+            fi
+        fi
     elif [ "$KIND" = "plan" ]; then
         # Before the code: the last commit, for the lenses only.
         BASE_OID="$(git rev-parse --quiet --verify "${CAND_HEAD}~1^{commit}" 2>/dev/null)" \

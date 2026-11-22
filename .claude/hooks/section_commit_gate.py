@@ -2252,6 +2252,17 @@ def _graft_issue(root: Path) -> str:
     return ""
 
 
+_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _base_covers(root: Path, base, start: str) -> bool:
+    """Whether a pass shown the range base..candidate saw everything from `start` on: its base is `start`, an
+    ancestor of it, or the empty tree (a section from the first commit)."""
+    if not isinstance(base, str) or not base:
+        return False
+    return base == _EMPTY_TREE or _git_is_ancestor(root, base, start)
+
+
 def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     """True if `sha` is an ancestor of (or equal to) `descendant_sha`.
 
@@ -2659,7 +2670,10 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     # A section built while the reviewer was down starts at its recorded base, before its code; its plan pass
     # came late. Each pass after the plan must have been shown the section from that base (the dispatcher
     # records it): one based at the late plan pass or at HEAD read little or nothing of it.
-    owed_base = ""
+    # Every pass after the plan reviews the whole section, so it must have been shown it from where it starts
+    # (the plan's candidate, the commit before the code): a caller's REVIEW_BASE past that start omits the
+    # first commits of the section from the review while the receipt still names its last one.
+    owed_base = start = ""
     if todo and plan_complete:
         try:
             import review_pin
@@ -2679,6 +2693,10 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
             parts.append(f"{kind} was shown this section from {str(receipt.get('base'))[:10]}, but it was built "
                          f"while the reviewer was down and starts at {owed_base[:10]}: dispatch it again "
                          f"(scripts/codex-dispatch.sh takes the recorded base when REVIEW_BASE is unset)")
+        elif start and not owed_base and not _base_covers(root, receipt.get("base"), start):
+            parts.append(f"{kind} was shown this section from {(str(receipt.get('base'))[:10] if receipt.get('base') else 'no recorded base')}, "
+                         f"which is not at or before where it starts ({start[:10]}), so part of it went "
+                         f"unreviewed: dispatch it again with REVIEW_BASE unset (the dispatcher takes the start)")
 
     staged = _git_lines(root, "diff", "--cached", "--no-renames", "--name-only")
     if staged is None:

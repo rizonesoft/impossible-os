@@ -665,8 +665,13 @@ def test_a_pass_whose_receipt_cannot_be_written_is_not_published_as_success(tmp_
     pin = _pin()
     full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
     (tmp_path / "reviews").mkdir()
-    (tmp_path / "reviews/manifest.jsonl").mkdir()          # the append fails; the log dir stays writable
-    done, _ = _dispatch(tmp_path, "completion", full)
+    manifest = tmp_path / "reviews/manifest.jsonl"
+    manifest.write_text("")
+    manifest.chmod(0o444)                                  # readable, so the start is read; the append fails
+    try:
+        done, _ = _dispatch(tmp_path, "completion", full)
+    finally:
+        manifest.chmod(0o644)
     assert done.returncode == 3, (done.returncode, done.stderr)
     dones = list((tmp_path / "reviews").glob("*.out.done"))
     assert len(dones) == 1 and dones[0].read_text().strip() == "3"
@@ -2536,3 +2541,31 @@ def test_a_signal_while_the_prompt_is_written_leaves_nothing(tmp_path):
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
+
+
+def test_refusal_a_review_base_past_the_section_start(tmp_path):
+    """A caller's REVIEW_BASE after the section's recorded start would leave its first commits unreviewed:
+    the dispatcher refuses it; the start itself, or an earlier commit, is taken."""
+    repo, git = _tmp_repo(tmp_path)
+    start = git("rev-parse", "HEAD")
+    git("commit", "-q", "--allow-empty", "-m", "build")
+    build = git("rev-parse", "HEAD")
+    git("commit", "-q", "--allow-empty", "-m", "fix")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text(_receipt("plan", start, todo="todo/x.md", section=9) + "\n")
+    done, prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", build)
+    assert done.returncode == 2 and "past where this section started" in done.stderr, done.stderr
+    assert prompt == ""
+    done, _prompt = _dispatch_in(repo, tmp_path, "round", "HIGHEST: none\n", start)
+    assert "past where this section started" not in done.stderr, done.stderr
+
+
+def test_the_repair_base_stops_at_the_newest_checked_pass(tmp_path, monkeypatch):
+    """The newest checked completion answers the repair base: the read ends there, never walking back over
+    older history for a reconciliation that does not exist yet."""
+    def lines(_manifest):
+        yield _receipt("completion", "d" * 8, todo="todo/x.md", section=9)
+        raise AssertionError("read past the receipt that decides the answer")
+    monkeypatch.setattr(rp, "_newest_first", lines)
+    assert rp.repair_base(tmp_path / "m.jsonl", "todo/x.md", 9) == "d" * 8

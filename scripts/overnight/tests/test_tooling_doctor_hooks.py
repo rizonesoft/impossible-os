@@ -827,3 +827,27 @@ def test_a_legacy_hooks_directory_that_cannot_be_looked_up_is_left_unjudged(tmp_
     r = _remove_with(root, bindir, "stat", f'case " $* " in *"-- {hooks} "*) echo "stat: cannot statx '
                                            f"'{hooks}': Input/output error\" >&2; exit 1 ;; esac")
     assert r.returncode != 0 and "could not be looked up" in r.stderr and link.is_symlink(), r
+
+
+def test_a_replacement_that_cannot_be_put_back_fails_the_removal(tmp_path):
+    """Another installer's hook was moved aside and the put-back fails with the name empty: no pre-push hook
+    runs, so the removal fails and names where the hook is, never reports a new hook appeared."""
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    flag = tmp_path / "raced"
+    real = shutil.which("mv")
+    (bindir / "mv").write_text(
+        f'#!/bin/sh\ncase " $* " in *" -n "*) echo "mv: cannot move: Input/output error" >&2; exit 1 ;; esac\n'
+        f'case " $* " in *"{link} "*|*"{link}") [ -e "{flag}" ] || {{ : > "{flag}"; '
+        f'"{shutil.which("rm")}" -f "{link}"; echo replacement > "{link}"; }} ;; esac\nexec "{real}" "$@"\n')
+    (bindir / "mv").chmod(0o755)
+    env = {**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"}
+    r = subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                       timeout=60, env=env)
+    assert r.returncode != 0 and "could not be put back" in r.stderr and not link.exists(), r
+    kept = list((root / ".git/hooks").glob(".install-hooks.*/pre-push"))
+    assert kept and kept[0].read_text() == "replacement\n"

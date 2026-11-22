@@ -708,3 +708,118 @@ def test_the_job_supervisor_leaves_a_claimed_result_alone(tmp_path):
                         str(prompt), "--no-deadline", f"touch {mark}"], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and not mark.exists() and log.read_text() == "owned elsewhere\n", r
     assert not pathlib.Path(str(log) + ".done").exists()
+
+
+def test_a_stuck_teardown_with_no_deadline_ends_within_its_own_budget(tmp_path):
+    """No deadline: a process the kernel keeps after KILL is reported once the teardown's own budget is spent,
+    never waited for until the 'no deadline' horizon (centuries) with a /proc walk every few milliseconds."""
+    import sys
+    script = tmp_path / "stuck.py"
+    script.write_text("import importlib.util, os, sys, time\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      "rl.signal_all = lambda sig, sent=None: (0, 0)\n"
+                      "real = os.waitpid\n"
+                      "seen = []\n"
+                      "def waitpid(pid, flags):\n"
+                      "    if not seen:\n"
+                      "        got = real(pid, flags)\n"
+                      "        if got[0]:\n"
+                      "            seen.append(got)\n"
+                      "        return got\n"
+                      "    return (0, 0)\n"
+                      "os.waitpid = waitpid\n"
+                      "began = time.monotonic()\n"
+                      "rc = rl.main(['--no-deadline', 'true'])\n"
+                      "print(rc, round(time.monotonic() - began, 2), flush=True)\n"
+                      "os._exit(0)\n")
+    proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+    rc, took = out.split()
+    assert rc == "0" and float(took) < 5, (out, err)
+
+
+def test_a_job_first_scheduled_after_its_deadline_publishes_the_limit(tmp_path):
+    """A detached job the broker handed off but which first ran after the steps' deadline: it still claims the
+    result and publishes 124, so the waiter sees a finished attempt, never a review pending for ever."""
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    mark = tmp_path / "ran"
+    end = _uptime_cs() - 50                    # the steps' deadline has passed; the final one has not
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(log),
+                        str(prompt), "--publish-by", str(end + 1000), "--until-cs", str(end), f"touch {mark}"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 124 and not mark.exists(), r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == "124" and not prompt.exists()
+    # A result another owner holds is left alone, late or not.
+    other = tmp_path / "o.out"
+    other.write_text("owned\n")
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--job", str(other),
+                        str(prompt), "--publish-by", str(end + 1000), "--until-cs", str(end), f"touch {mark}"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and other.read_text() == "owned\n" and not pathlib.Path(str(other) + ".done").exists()
+
+
+def test_a_claim_won_after_its_supervisor_stopped_waiting_publishes_itself(tmp_path):
+    """The claim step a supervisor gave up on (a stalled filesystem, a cancellation) still owns the result
+    when it wins: it publishes 124 itself rather than leave a claimed log with no status."""
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    far = _uptime_cs() + 100_000
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_result.py"), "claim", str(log),
+                        "--expire-at", str(far), "--prompt", str(prompt), "--parent", "1"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 5 and pathlib.Path(str(log) + ".done").read_text().strip() == "124", r
+    log2 = tmp_path / "s.out"
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_result.py"), "claim", str(log2),
+                        "--expire-at", str(far), "--prompt", str(prompt), "--parent", str(os.getpid())],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and log2.exists() and not pathlib.Path(str(log2) + ".done").exists(), r
+
+
+def test_a_cancellation_during_the_claim_is_published(tmp_path):
+    """TERM to the job's supervisor while its claim runs: the cancellation is watched from the start, so the
+    claimed result is published with the cancellation's status and nothing is run."""
+    import sys
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    mark = tmp_path / "ran"
+    script = tmp_path / "cancel.py"
+    script.write_text("import importlib.util, os, signal, sys\n"
+                      f"spec = importlib.util.spec_from_file_location('rl', {str(LIMIT.parent / 'review_runtime_limit.py')!r})\n"
+                      "rl = importlib.util.module_from_spec(spec); spec.loader.exec_module(rl)\n"
+                      "real = rl._result_step\n"
+                      "def step(args, until, cancel=None):\n"
+                      "    got = real(args, until, cancel)\n"
+                      "    if args[0] == 'claim':\n"
+                      "        os.kill(os.getpid(), signal.SIGTERM)   # lands after the claim, before the review\n"
+                      "    return got\n"
+                      "rl._result_step = step\n"
+                      f"sys.exit(rl.main(['--job', {str(log)!r}, {str(prompt)!r}, '--no-deadline', 'touch {mark}']))\n")
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 128 + signal.SIGTERM and not mark.exists(), r
+    assert pathlib.Path(str(log) + ".done").read_text().strip() == str(128 + signal.SIGTERM)
+
+
+def test_a_handoff_larger_than_the_pipe_does_not_stall_the_broker(tmp_path):
+    """The fallback job's command can outgrow the pipe (a long checkout path, quoted several times): the
+    supervisor reads the hand-off while the broker runs, so the broker's write completes and it exits."""
+    log, prompt = tmp_path / "r.out", tmp_path / "r.prompt"
+    prompt.write_text("p")
+    mark = tmp_path / "launched"
+    writer = ("import os; fd = int(os.environ['REVIEW_BROKER_HANDOFF_FD']); "
+              f"os.write(fd, b'job touch {mark} #' + b'x' * 100000 + b'\\nstep answered\\n')")
+    r = subprocess.run(["python3", str(REPO / "scripts/overnight/review_runtime_limit.py"), "--broker", str(log),
+                        str(prompt), "--no-deadline", f"python3 -c {shlex.quote(writer)}"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r
+    t = time.monotonic()
+    while not mark.exists() and time.monotonic() - t < 10:
+        time.sleep(0.1)
+    assert mark.exists()

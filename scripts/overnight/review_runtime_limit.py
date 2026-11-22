@@ -52,6 +52,9 @@ NO_DEADLINE = 10 ** 12  # centiseconds: no caller limit (a supervisor still owns
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+TEARDOWN_CS = 200      # the teardown's own budget once the command has ended or been ended
+
+
 def now_cs() -> int:
     return int(time.clock_gettime(time.CLOCK_BOOTTIME) * 100)
 
@@ -170,23 +173,29 @@ class Broker(Result):
         os.set_inheritable(self.write_end, True)
         os.environ["REVIEW_BROKER_HANDOFF_FD"] = str(self.write_end)
         self.step, self.response, self.job = "", "", ""
+        self.buf = b""
+        os.set_blocking(self.read_end, False)
 
     def started(self):
         os.close(self.write_end)
 
-    def read(self):
-        os.set_blocking(self.read_end, False)
-        data = b""
-        while True:
+    def drain(self):
+        """What the broker has written so far, read without blocking. Called while it runs, so a long
+        record (the fallback job's command) never leaves it blocked on a full pipe."""
+        while self.read_end is not None:
             try:
                 chunk = os.read(self.read_end, 1 << 16)
             except BlockingIOError:          # a writer the kernel still holds: what it wrote is here
-                break
+                return
             if not chunk:
-                break
-            data += chunk
+                return
+            self.buf += chunk
+
+    def read(self):
+        self.drain()
         os.close(self.read_end)
-        for line in data.decode("utf-8", "replace").split("\n"):
+        self.read_end = None
+        for line in self.buf.decode("utf-8", "replace").split("\n"):
             kind, _, value = line.partition(" ")
             if kind == "step":
                 self.step = value
@@ -198,9 +207,10 @@ class Broker(Result):
                 self.owns = True
 
 
-def _result_step(args, until):
-    """review_result.py `args` in a child, waited on until `until` (a stalled filesystem leaves it to finish
-    on its own, outside this supervisor's answer): its exit status, or None at the deadline."""
+def _result_step(args, until, cancel=None):
+    """review_result.py `args` in a child, waited on until `until`, or a second after a cancellation (a
+    stalled filesystem leaves it to finish on its own, outside this supervisor's answer): its exit status,
+    or None when it was not back by then."""
     # LIFECYCLE-WAIVER: publishes one REVIEW attempt's result; it does not relaunch or watch the session.
     pid = os.posix_spawn(sys.executable, [sys.executable, os.path.join(HERE, "review_result.py"), *args],
                          _child_env())
@@ -210,6 +220,9 @@ def _result_step(args, until):
             return os.waitstatus_to_exitcode(raw)
         if now_cs() >= until:
             return None
+        if cancel is not None and cancel.sig:
+            until = min(until, now_cs() + 100)
+            cancel = None
         time.sleep(0.01)
 
 
@@ -244,10 +257,26 @@ def _launch(job):
         (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0)])
 
 
+class Cancel:
+    """The first cancellation (TERM, INT or HUP) this supervisor received, as 128 + the signal, or 0."""
+    WATCHED = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+    def __init__(self):
+        self.sig = 0
+        for sig in self.WATCHED:
+            signal.signal(sig, self._handle)
+
+    def _handle(self, signum, _frame):
+        self.sig = self.sig or 128 + signum
+
+
 def main(argv) -> int:
     opts, cmd = parse(argv)
     end, final = opts["end"], opts["final"]
-    if end - now_cs() <= 0:
+    # Watched before anything starts, so a cancellation during the job's claim is seen, never the default
+    # action that would leave a claimed result unpublished.
+    cancel = Cancel()
+    if end - now_cs() <= 0 and not opts["job"]:
         print("review-runtime-limit: the deadline had passed before the command started; nothing was run",
               file=sys.stderr)
         return 124
@@ -265,16 +294,26 @@ def main(argv) -> int:
     broker = Broker(*opts["broker"]) if opts["broker"] else None
     job = None
     if opts["job"]:
-        # The claim, before anything runs: a result another owner holds is left alone.
-        claimed = _result_step(["claim", opts["job"][0]], end)
+        # The claim, before anything runs: a result another owner holds is left alone. Whoever wins the claim
+        # owns the result, so the claim step itself publishes 124 when it wins after the steps' deadline (a
+        # job first scheduled late, a claim the filesystem held) or once this supervisor stopped waiting for
+        # it; nothing is ever claimed and left unpublished.
+        log, prompt = opts["job"]
+        claimed = _result_step(["claim", log, "--expire-at", str(end), "--prompt", prompt,
+                                "--parent", str(os.getpid())], final, cancel)
         if claimed == 4:
-            return 0
+            return 0                                   # another owner holds the result and publishes it
+        if claimed == 5:
+            return 124                                 # claimed after the deadline: published as 124
+        if claimed is None:
+            print("review-runtime-limit: the job's result was still being claimed at the deadline; the claim "
+                  "publishes 124 when it completes", file=sys.stderr)
+            return cancel.sig or 124
         if claimed != 0:
-            print("review-runtime-limit: the job's result could not be claimed"
-                  + (" by the deadline" if claimed is None else "") + "; nothing was run", file=sys.stderr)
-            return 124 if claimed is None else 1
-        job = Result(*opts["job"], owns=True, claimed=True)
-    rc = _attempt(cmd, end, broker)
+            print("review-runtime-limit: the job's result could not be claimed; nothing was run", file=sys.stderr)
+            return 1
+        job = Result(log, prompt, owns=True, claimed=True)
+    rc = _attempt(cmd, end, broker, cancel)
     if job is not None:
         return rc if _publish(job, rc, final) else 1
     if broker is None:
@@ -283,17 +322,10 @@ def main(argv) -> int:
     return finish_broker(broker, rc, cancelled, limited, final)
 
 
-def _attempt(cmd, end, broker):
+def _attempt(cmd, end, broker, cancel):
     """COMMAND run under the limit and torn down: its exit status (for the broker, (cancelled, limited,
     status))."""
-    cancelled = 0
-    watched = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
-
-    def cancel(signum, _frame):
-        nonlocal cancelled
-        cancelled = cancelled or 128 + signum
-    for sig in watched:
-        signal.signal(sig, cancel)
+    watched = set(Cancel.WATCHED)
     left = end - now_cs()
     # TERM a grace before the end (30 s, or a quarter of a limit up to 120 s, at least a tenth of a second),
     # KILL a margin before it (half a second at most), so what is left is reaped by the end, not after it.
@@ -305,8 +337,8 @@ def _attempt(cmd, end, broker):
     signal.pthread_sigmask(signal.SIG_BLOCK, watched)
     try:
         pending = signal.sigpending() & watched
-        if cancelled or pending:
-            rc = cancelled or 128 + min(pending)
+        if cancel.sig or pending:
+            rc = cancel.sig or 128 + min(pending)
             return (True, False, rc) if broker is not None else rc
         if now_cs() >= kill_at:
             print("review-runtime-limit: the deadline passed before the command started; nothing was run",
@@ -337,7 +369,9 @@ def _attempt(cmd, end, broker):
 
     while status is None:
         reap()
-        if status is not None or cancelled:
+        if broker is not None:
+            broker.drain()
+        if status is not None or cancel.sig:
             break
         now = now_cs()
         if now >= kill_at:
@@ -349,10 +383,14 @@ def _attempt(cmd, end, broker):
         time.sleep(POLL)
     # One teardown for every way out: what is left of the attempt is killed and reaped, walked again until
     # nothing is (a process can fork between a walk and its signal, and its orphans come back here). No
-    # child left means no descendant left, so a command that left nothing costs no walk at all. It is held
-    # to the deadline (a second at most after a cancellation).
-    drain_end = max(min(end, now_cs() + 100) if cancelled else end, now_cs() + 5)
+    # child left means no descendant left, so a command that left nothing costs no walk at all. It has a
+    # budget of its own (two seconds, one after a cancellation) inside the deadline: a KILLed process is
+    # reaped at once unless the kernel holds it in uninterruptible I/O, and then waiting longer (with no
+    # deadline, for ever) only delays the result while each pass walks /proc.
+    drain_end = max(min(end, now_cs() + (100 if cancel.sig else TEARDOWN_CS)), now_cs() + 5)
     while reap():
+        if broker is not None:
+            broker.drain()
         signal_all(signal.SIGKILL)
         if not reap():
             break
@@ -373,8 +411,8 @@ def _attempt(cmd, end, broker):
     # Seen ending only after the deadline (this supervisor was not scheduled in between): the limit's.
     if now_cs() >= end:
         limited = True
-    rc = cancelled or (124 if limited or status is None else (status if status >= 0 else 128 - status))
-    return rc if broker is None else (bool(cancelled), limited and not cancelled, rc)
+    rc = cancel.sig or (124 if limited or status is None else (status if status >= 0 else 128 - status))
+    return rc if broker is None else (bool(cancel.sig), limited and not cancel.sig, rc)
 
 
 def finish_broker(broker, rc, cancelled, limited, final):

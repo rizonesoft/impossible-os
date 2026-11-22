@@ -537,7 +537,7 @@ def broker_log(receipt):
     return os.path.join(os.path.dirname(log), f"{m.group(2)}-{m.group(1)}.out")
 
 
-def newest_receipts(manifest, todo, section, kinds, checked=False):
+def newest_receipts(manifest, todo, section, kinds, checked=False, first=False):
     """(newest receipt per kind, readable) for one TODO, and one section unless `section` is None: the ONE
     reader of the manifest the commit gate (section_commit_gate._pass_receipts) and this module's bases share.
     Each value is (receipt, age), a lower age a newer line. Two questions, each named by its caller:
@@ -549,7 +549,8 @@ def newest_receipts(manifest, todo, section, kinds, checked=False):
 
     The manifest is read newest first and stops at a line that cannot be read and may be this TODO's (it may
     be a newer pass cut short), with readable False: a kind not found before it has no receipt that can be
-    trusted. Refused when the manifest cannot be read at all."""
+    trusted. With `first`, the read ends at the first match of any kind (a question about the newest of
+    several kinds together). Refused when the manifest cannot be read at all."""
     import json
     found, age = {}, 0
     for line in _newest_first(manifest):               # Refused when the manifest cannot be read at all
@@ -569,7 +570,7 @@ def newest_receipts(manifest, todo, section, kinds, checked=False):
         if checked and not receipt_complete(e):
             continue
         found.setdefault(e["kind"], (e, age))
-        if len(found) == len(kinds):
+        if first or len(found) == len(kinds):
             break                                      # every kind has its newest: older lines cannot matter
     return found, True
 
@@ -578,7 +579,7 @@ def _newest(manifest, todo, section, kinds, what):
     """The newest checked receipt of `kinds` for the section (newest_receipts, a base's question), or None.
     Refused when a line newer than any found cannot be read and may be this TODO's: it may be a newer pass,
     so the answer is unknown."""
-    found, readable = newest_receipts(manifest, todo, section, kinds, checked=True)
+    found, readable = newest_receipts(manifest, todo, section, kinds, checked=True, first=True)
     if not found:
         if not readable:
             raise Refused(f"{manifest} has an unreadable line that may be a pass of {todo} section {section}, "

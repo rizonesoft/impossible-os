@@ -366,10 +366,22 @@ prune_legacy_symlinks() {
                 }
                 removed=1
             else
-                mv -n -T -- "$aside/pre-push" "$target" 2>/dev/null || true   # fail-direction: checked below
+                # Another writer's hook was moved aside: it is put back. Whether that worked is judged from
+                # what is at the name now, by a checked lookup: an entry there is a newer hook (the earlier
+                # one stays aside), an absent one means the put-back failed and no hook runs.
+                local restore_err="" now_kind
+                restore_err="$(mv -n -T -- "$aside/pre-push" "$target" 2>&1)" || true   # fail-direction: judged below
                 if [ -e "$aside/pre-push" ] || [ -L "$aside/pre-push" ]; then
-                    echo "A new pre-push hook appeared at $target meanwhile; the earlier entry is kept at $aside/pre-push" >&2
-                    return 0
+                    if now_kind="$(LC_ALL=C stat -c '%F' -- "$target" 2>&1)"; then
+                        echo "A new pre-push hook appeared at $target meanwhile; the earlier entry is kept at $aside/pre-push" >&2
+                        return 0
+                    fi
+                    if stat_says_absent "$now_kind"; then
+                        echo "The pre-push hook another writer put at $target could not be put back (${restore_err:-no reason given}); no pre-push hook runs until it is moved from $aside/pre-push to $target" >&2
+                    else
+                        echo "$target could not be looked up ($now_kind) after another writer's hook was put back; that hook may still be at $aside/pre-push" >&2
+                    fi
+                    return 1
                 fi
             fi
         fi

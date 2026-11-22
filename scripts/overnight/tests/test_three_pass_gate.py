@@ -27,6 +27,9 @@ def _pin():
     return (REPO / ".conclave/reviewers.toml").read_text()
 
 
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def _git(root, *args):
     done = subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
                            "-c", "core.hooksPath=/dev/null", *args], capture_output=True, text=True, timeout=60)
@@ -67,7 +70,7 @@ CLEAN = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 def _receipt(kind, head, order, section="7", **over):
     line = {"kind": kind, "todo": TODO, "section": int(section), "head": head, "jobId": f"direct:{order}",
             "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True, "highest": "none",
-            "worktree_sha256": CLEAN}
+            "worktree_sha256": CLEAN, "base": EMPTY_TREE}
     line.update(over)
     return line
 
@@ -573,3 +576,17 @@ def test_refusal_a_graft_file_refuses_the_stamp(tmp_path):
     (root / ".git/info/grafts").write_text(f"{h['plan']} {h['elsewhere']}\n")
     ok, why = _judge(root, **_good(h))
     assert not ok and "graft file" in why, why
+
+
+def test_refusal_a_pass_shown_the_section_from_past_its_start(tmp_path):
+    """A caller's REVIEW_BASE at the section's second commit: the reviewer saw build..final and never the build
+    commit itself, so the pass does not cover the section even though its receipt names the candidate."""
+    root, h = _history(tmp_path)
+    late = {k: {"base": h["build"]} for k in ("round", "performance", "completion")}
+    ok, why = _judge(root, receipt=late, **_good(h))
+    assert not ok and "not at or before where it starts" in why, why
+    early = {k: {"base": h["plan"]} for k in ("round", "performance", "completion")}
+    assert _judge(root, receipt=early, **_good(h)) == (True, "")
+    none = {"round": {"base": None}}
+    ok, why = _judge(root, receipt=none, **_good(h))
+    assert not ok and "no recorded base" in why, why
