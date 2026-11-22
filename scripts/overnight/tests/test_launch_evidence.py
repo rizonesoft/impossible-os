@@ -1438,3 +1438,74 @@ def test_trailing_newlines_reach_the_reviewer(tmp_path):
     while not pathlib.Path(f"{log}.done").exists() and time.monotonic() - t < 60:
         time.sleep(0.1)
     assert got.read_bytes() == prompt.encode(), got.read_bytes()[-40:]
+
+
+def test_a_malformed_dispatch_with_a_full_stderr_returns_by_its_deadline(tmp_path):
+    """Nothing runs before the supervisor: a malformed prompt whose diagnostic meets a full stderr pipe (its
+    reader still open) is ended by CODEX_REVIEW_MAX_SECS, never left blocked on the write."""
+    repo = _broker_repo(tmp_path)
+    rd, wr = os.pipe()
+    os.set_blocking(wr, False)
+    try:
+        while True:
+            os.write(wr, b"x" * 65536)
+    except BlockingIOError:
+        pass
+    os.set_blocking(wr, True)
+    env = {**os.environ, "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "1"}
+    began = time.monotonic()
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                             "not a review prompt"], stdout=subprocess.DEVNULL, stderr=wr, cwd=str(repo),
+                            env=env, start_new_session=True)
+    try:
+        proc.wait(timeout=1 + 1.5)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        proc.wait()
+        raise AssertionError("the dispatch was still blocked on its diagnostic past its deadline")
+    finally:
+        os.close(wr)
+        os.close(rd)
+    assert time.monotonic() - began < 1 + 1.5
+
+
+def test_an_answer_past_its_deadline_is_never_delivered():
+    """The broker's answer is written only before its deadline: past it, a writable pipe still gets nothing
+    and the delivery reports failure (a diagnostic keeps its one late try)."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    rd, wr = os.pipe()
+    try:
+        assert rl.emit(wr, b"answer\n", rl.now_cs() - 100, late=False) is False
+        os.set_blocking(rd, False)
+        try:
+            got = os.read(rd, 64)
+        except BlockingIOError:
+            got = b""
+        assert got == b"", got
+        assert rl.emit(wr, b"late diagnostic\n", rl.now_cs() - 100) is True
+    finally:
+        os.close(rd)
+        os.close(wr)
+
+
+def test_a_replaced_prompt_of_another_size_is_refused_before_it_is_read(tmp_path):
+    """The job reads no more than the registered prompt: a replacement of another size (here a sparse file
+    of a gibibyte) is refused from its size, and growth past the registered length is never held."""
+    import sys
+    import hashlib
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    text = b"[review-kind: design] todo/x.md section 9\nReview it.\n"
+    digest = hashlib.sha256(text).hexdigest()
+    p = tmp_path / "prompt"
+    with open(p, "wb") as f:
+        f.truncate(1 << 30)
+    began = time.monotonic()
+    got, why = rl._read_prompt(str(p), digest, len(text))
+    assert got is None and "size differs" in why, why
+    assert time.monotonic() - began < 1
+    p.write_bytes(text)
+    got, why = rl._read_prompt(str(p), digest, len(text))
+    assert got is not None, why

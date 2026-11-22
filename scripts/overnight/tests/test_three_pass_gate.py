@@ -461,7 +461,7 @@ def test_one_comparison_of_two_commits_is_run_once_and_given_a_short_wait(tmp_pa
             seen.append((tuple(cmd), kw.get("timeout")))
         return real(cmd, **kw)
 
-    monkeypatch.setattr(gate.subprocess, "check_output", counting)
+    monkeypatch.setattr(gate._proc, "check_output", counting)
     # Three routed passes at one commit before HEAD: one list of changed files serves all of them.
     assert _judge(root, **_good(h)) == (True, "")
     commands = [cmd for cmd, _ in seen]
@@ -624,14 +624,14 @@ def test_one_ancestry_question_is_asked_once(tmp_path):
     """Three passes sharing one base ask git once, inside the budget the commit comparisons share."""
     root, h = _history(tmp_path)
     calls = []
-    real = gate.subprocess.run
-    gate.subprocess.run = lambda cmd, *a, **k: (calls.append(cmd), real(cmd, *a, **k))[1]
+    real = gate._proc.run
+    gate._proc.run = lambda cmd, *a, **k: (calls.append(cmd), real(cmd, *a, **k))[1]
     gate._ancestry.clear()
     try:
         for _ in range(3):
             assert gate._git_is_ancestor(root, h["plan"], h["build"])
     finally:
-        gate.subprocess.run = real
+        gate._proc.run = real
         gate._ancestry.clear()
     assert sum("--is-ancestor" in c for c in calls) == 1, calls
 

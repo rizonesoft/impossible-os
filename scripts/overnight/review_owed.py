@@ -174,22 +174,12 @@ def stamps(root, todo, section, committed=False):
 
 
 def plan_head(root, todo, section):
-    """The commit of the section's checked plan pass, or "" (read as review_pin.section_status reads it)."""
-    try:
-        lines = (pathlib.Path(root) / MANIFEST).read_text().splitlines()
-    except (OSError, UnicodeDecodeError):
-        return ""
-    head = ""
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
-                and e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
-                and isinstance(e.get("head"), str):
-            head = e["head"]
-    return head
+    """The commit of the section's newest checked plan pass, or "" when none is on record: review_pin's own
+    reader (section_start), the one the dispatcher and the stamp gate use, so a debt never records a base
+    they would not. Raises review_pin.Refused when the manifest cannot be read or a torn line may be the
+    plan."""
+    import review_pin
+    return review_pin.section_start(pathlib.Path(root) / MANIFEST, todo, str(section))
 
 
 def git(root, *args):
@@ -252,7 +242,11 @@ def main(argv=None):
             head = git(root, "rev-parse", "HEAD")
             if head.returncode != 0:
                 return refuse("HEAD cannot be read")
-            base = plan_head(root, args.todo, args.section) or head.stdout.strip()
+            import review_pin
+            try:
+                base = plan_head(root, args.todo, args.section) or head.stdout.strip()
+            except review_pin.Refused as exc:
+                return refuse(str(exc))
             if git(root, "merge-base", "--is-ancestor", base, "HEAD").returncode != 0:
                 return refuse(f"the section's plan pass was dispatched at {base[:10]}, which is not in this history")
             records.append({"todo": args.todo, "section": args.section, "base": base, "since": int(time.time())})

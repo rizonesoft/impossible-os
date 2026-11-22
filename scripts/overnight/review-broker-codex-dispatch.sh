@@ -40,6 +40,59 @@ if [[ "${1:-}" == "--section-of" ]]; then
     exit 0
 fi
 
+# THE SUPERVISOR FIRST. A dispatch (not the --section-of helper above) starts review_runtime_limit.py before
+# anything else: no file is read or written, no diagnostic is printed and no helper is sourced until every step
+# runs as its child, under the one deadline CODEX_REVIEW_MAX_SECS gives (taken here, at entry) and its one
+# cancellation. The supervisor learns the result's names when the inner run says which kind it is (`kind`),
+# before the inner run writes anything; the prompt reaches the inner run in memory. What is wrong with the call
+# (the argument count, a malformed limit) is reported by the inner run, supervised: a malformed limit is given
+# ten seconds to say so.
+if [[ "${1:-}" != "--section-of" && -z "${REVIEW_BROKER_INNER:-}" ]]; then
+  printf -v BROKER_STAMP '%(%Y%m%d-%H%M%S)T' -1
+  case "${BASH_SOURCE[0]}" in */*) BROKER_HERE="${BASH_SOURCE[0]%/*}" ;; *) BROKER_HERE="." ;; esac
+  REVIEW_BROKER_REFUSE=""
+  LIMIT_END=""
+  LIMIT_FINAL=""
+  read -r LIMIT_UP _ < /proc/uptime
+  LIMIT_NOW=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} ))
+  if [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
+    if [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]{0,8}$ ]]; then
+      LIMIT_FINAL=$(( LIMIT_NOW + CODEX_REVIEW_MAX_SECS * 100 ))
+      # The steps end a reserve before the deadline (a tenth of the limit, a tenth of a second to a second),
+      # kept for publishing a result the broker owns, so even that is done by the deadline.
+      RESERVE=$(( CODEX_REVIEW_MAX_SECS * 10 ))
+      (( RESERVE < 10 )) && RESERVE=10
+      (( RESERVE > 100 )) && RESERVE=100
+      LIMIT_END=$(( LIMIT_FINAL - RESERVE ))
+    else
+      REVIEW_BROKER_REFUSE="CODEX_REVIEW_MAX_SECS must be a whole number of seconds"
+      LIMIT_FINAL=$(( LIMIT_NOW + 1000 ))
+      LIMIT_END=$(( LIMIT_FINAL - 100 ))
+    fi
+  fi
+  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL REVIEW_BROKER_REFUSE
+  export REVIEW_BROKER_ARGC="$#"
+  BROKER_DIR="$PWD/.claude/overnight/reviews"
+  BROKER_SELF="$(printf '%q' "${BASH_SOURCE[0]}")"
+  if [[ -n "$LIMIT_END" ]]; then
+    exec python3 "$BROKER_HERE/review_runtime_limit.py" --broker "$BROKER_DIR/${BROKER_STAMP}-$$-{kind}.out" \
+      "$BROKER_DIR/.prompt.${BROKER_STAMP}-$$-{kind}" --broker-prompt "${1-}" --publish-by "$LIMIT_FINAL" \
+      --until-cs "$LIMIT_END" "bash $BROKER_SELF"
+  fi
+  exec python3 "$BROKER_HERE/review_runtime_limit.py" --broker "$BROKER_DIR/${BROKER_STAMP}-$$-{kind}.out" \
+    "$BROKER_DIR/.prompt.${BROKER_STAMP}-$$-{kind}" --broker-prompt "${1-}" --no-deadline "bash $BROKER_SELF"
+fi
+LIMIT_END="${LIMIT_END:-}"
+LIMIT_FINAL="${LIMIT_FINAL:-}"
+if [[ -n "${REVIEW_BROKER_REFUSE:-}" ]]; then
+    echo "[review-broker] BLOCK -- $REVIEW_BROKER_REFUSE" >&2
+    exit 2
+fi
+if [[ -n "${REVIEW_BROKER_INNER:-}" && "${REVIEW_BROKER_ARGC:-1}" != 1 ]]; then
+    echo "[review-broker] BLOCK -- expected exactly one prompt argument. Usage: $0 '<[review-kind: X] todo-path body>'" >&2
+    exit 2
+fi
+
 # The inner run under the supervisor reads the prompt from an in-memory file the supervisor made from its own
 # raw argument (REVIEW_BROKER_PROMPT_FD): no exec string carries it quoted (that doubled it) or as an
 # environment string (the same per-string limit as an argument), so the longest prompt a reviewer takes as its
@@ -62,24 +115,6 @@ PROMPT="$1"
 # which inside hand-written single quotes ends the quoting.
 q() { printf '%q' "$1"; }
 LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_runtime_limit.py"
-# A caller's hard limit (CODEX_REVIEW_MAX_SECS) is one absolute deadline, taken at entry. The steps end a
-# reserve before it (a tenth of the limit, a tenth of a second to a second), which is kept for publishing a
-# result the broker owns, so even that is done by the deadline.
-if [[ -n "${REVIEW_BROKER_INNER:-}" ]]; then
-  :                                          # the supervised broker: the deadline was taken at entry
-elif [[ -n "${CODEX_REVIEW_MAX_SECS:-}" ]]; then
-  [[ "$CODEX_REVIEW_MAX_SECS" =~ ^[1-9][0-9]*$ ]] || {
-    echo "[review-broker] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
-  read -r LIMIT_UP _ < /proc/uptime
-  LIMIT_FINAL=$(( ${LIMIT_UP%.*} * 100 + 10#${LIMIT_UP#*.} + CODEX_REVIEW_MAX_SECS * 100 ))
-  RESERVE=$(( CODEX_REVIEW_MAX_SECS * 10 ))
-  (( RESERVE < 10 )) && RESERVE=10
-  (( RESERVE > 100 )) && RESERVE=100
-  LIMIT_END=$(( LIMIT_FINAL - RESERVE ))
-else
-  LIMIT_END=""
-  LIMIT_FINAL=""
-fi
 # Prompt parsing shared by the three dispatchers, in memory (no pipeline).
 # shellcheck source=scripts/lib/review-prompt.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/review-prompt.sh"
@@ -98,27 +133,11 @@ SELF_NAME="review-broker"
 
 KIND="${BASH_REMATCH[1],,}"
 MANIFEST_DIR=".claude/overnight/reviews"
-# ONE SUPERVISOR FOR THE WHOLE DISPATCH. The broker runs its every step as a child of review_runtime_limit.py
-# (it takes this process's place, so a signal to the broker's process id reaches it): one deadline and one
-# cancellation cover every step and every moment between steps, every process a step leaves is ended with the
-# attempt, and the supervisor is the one place a result the broker owns is published. The names are fixed here,
-# before it starts, so it knows which result and prompt are this dispatch's.
-if [[ -z "${REVIEW_BROKER_INNER:-}" ]]; then
-  printf -v BROKER_STAMP '%(%Y%m%d-%H%M%S)T' -1
-  # Nothing here touches the filesystem: the supervisor starts first, so every step that can stall (the
-  # directory, the prompt file) runs under its deadline.
-  LOG="$PWD/$MANIFEST_DIR/${BROKER_STAMP}-$$-${KIND}.out"
-  export REVIEW_BROKER_INNER=1 BROKER_STAMP BROKER_ID="$$" LIMIT_END LIMIT_FINAL
-  if [[ -n "$LIMIT_END" ]]; then
-    exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-      --broker-prompt "$PROMPT" --publish-by "$LIMIT_FINAL" --until-cs "$LIMIT_END" "bash $(q "${BASH_SOURCE[0]}")"
-  fi
-  exec python3 "$LIMITER" --broker "$LOG" "$PWD/$MANIFEST_DIR/.prompt.${BROKER_STAMP}-$$-${KIND}" \
-    --broker-prompt "$PROMPT" --no-deadline "bash $(q "${BASH_SOURCE[0]}")"
-fi
 # What the supervisor is told: the step under way (named when the limit ends it), that the result is now the
 # broker's to publish, the answer, and a job to start once the attempt is torn down.
 tell() { printf '%s\n' "$*" >&"$REVIEW_BROKER_HANDOFF_FD"; }
+# The result's names follow from the kind: the supervisor learns it before anything is written.
+tell "kind $KIND"
 # A pass of the reviewer pin (.conclave/reviewers.toml) is run by
 # scripts/codex-dispatch.sh inside the detached job below: that wrapper checks
 # the pin, appends the pass's lenses, reads the returned review for a verdict
@@ -205,6 +224,7 @@ if [[ ! "$PREP" =~ ^[0-9a-f]{64}$ ]]; then
   exit 2
 fi
 PROMPT_SHA="$PREP"
+PROMPT_LEN="$(LC_ALL=C; printf '%s' "${#PROMPT}")"
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
@@ -250,7 +270,7 @@ if [[ -n "$LIMIT_END" ]]; then
 else
   JOB_LIMIT="--no-deadline"
 fi
-JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT --prompt-sha $PROMPT_SHA $JOB_LIMIT $(q "{ $RUN; } >> $Q_LOG 2>&1")"
+JOB="python3 $(q "$LIMITER") --job $Q_LOG $Q_PROMPT --prompt-sha $PROMPT_SHA --prompt-len $PROMPT_LEN $JOB_LIMIT $(q "{ $RUN; } >> $Q_LOG 2>&1")"
 # The broker's answer, made before the submission.
 tell "step making the answer"
 RESPONSE_RC=0

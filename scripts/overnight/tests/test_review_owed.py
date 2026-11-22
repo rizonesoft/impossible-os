@@ -545,7 +545,8 @@ def test_a_push_is_refused_while_a_review_is_owed(tmp_path):
     shutil.copy(REPO / ".githooks/lib/dash-gate.sh", fx / ".githooks/lib/dash-gate.sh")
     shutil.copy(REPO / ".githooks/lib/push-records.sh", fx / ".githooks/lib/push-records.sh")
     for rel in ("scripts/overnight/review_owed.py", "scripts/overnight/codex-outage-check.py", "scripts/todo_fence.py",
-                "scripts/todo-graph/cache_schema.py", "scripts/staged_dash_check.py", "scripts/bounded_run.py"):
+                "scripts/todo-graph/cache_schema.py", "scripts/staged_dash_check.py", "scripts/bounded_run.py",
+                "scripts/review_pin.py"):
         shutil.copy(REPO / rel, fx / rel)
     (fx / TODO).write_text(BODY)
     (fx / ".gitignore").write_text(".claude/\n")
@@ -577,3 +578,27 @@ def test_a_push_is_refused_while_a_review_is_owed(tmp_path):
     # The check sits before every costly gate of the hook.
     text = (REPO / ".githooks/pre-push").read_text()
     assert text.index("review_owed.py") < text.index("# Files changed across every non-delete ref update")
+
+
+def test_a_debt_records_the_base_the_dispatcher_reads(tmp_path):
+    """An older checked plan, then a newer plan whose dispatcher published 124: the debt starts from the
+    older plan, the one review_pin.section_start (and so every pass and the stamp gate) reads."""
+    root = _repo(tmp_path)
+    older = _git(root, "rev-parse", "HEAD")
+    (root / "src.c").write_text("int a;\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "build")
+    newer = _git(root, "rev-parse", "HEAD")
+    _reviewer(root, down=True)
+    reviews = root / ".claude/overnight/reviews"
+    log = reviews / "late-plan.out"
+    log.write_text("")
+    (reviews / "late-plan.out.done").write_text("124\n")
+    manifest = reviews / "manifest.jsonl"
+    rows = [{"ts": 1, "kind": "plan", "todo": TODO, "section": 7, "head": older, "rc": 0, "pass_checked": True,
+             "route": "codex-dispatch.sh"},
+            {"ts": 2, "kind": "plan", "todo": TODO, "section": 7, "head": newer, "rc": 0, "pass_checked": True,
+             "route": "codex-dispatch.sh", "done_file": True, "logFile": str(log)}]
+    manifest.write_text("".join(json.dumps(r) + "\n" for r in rows) + manifest.read_text())
+    assert _run(root, "add", "--todo", TODO, "--section", "7").returncode == 0
+    assert _owed(root)[0]["base"] == older

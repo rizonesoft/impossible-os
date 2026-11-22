@@ -110,7 +110,7 @@ def _writer(fd):
     return None
 
 
-def _emit_through_writer(fd, data, until, cancel):
+def _emit_through_writer(fd, data, until, cancel, late=True):
     """`data` written to `fd` by a `cat` whose input is a pipe from here: what is waited on is that process,
     only until `until` (a second after a cancellation). A filesystem that stalls the write holds the writer,
     never this supervisor; the destination is not a pipe, so the writer holding it delays no reader's EOF."""
@@ -126,7 +126,7 @@ def _emit_through_writer(fd, data, until, cancel):
         return False
     os.close(rd)
     os.set_blocking(wr, False)
-    sent = _emit(memoryview(data), lambda view: os.write(wr, view), wr, until, cancel)
+    sent = _emit(memoryview(data), lambda view: os.write(wr, view), wr, until, cancel, late)
     os.close(wr)
     while sent:
         if cancel is not None and cancel.sig:
@@ -148,7 +148,7 @@ def _emit_through_writer(fd, data, until, cancel):
     return False
 
 
-def emit(fd, data, until, cancel=None):
+def emit(fd, data, until, cancel=None, late=True):
     """Write `data` to `fd`, waiting for room only until `until` (a second after a cancellation; past it, what
     fits at once is still written). True when all of it was written. No write blocks: another writer taking
     the room a poll reported only sends the loop back to wait for more."""
@@ -158,21 +158,25 @@ def emit(fd, data, until, cancel=None):
     except OSError:
         return False
     if own is None:
-        return _emit_through_writer(fd, data, until, cancel)
+        return _emit_through_writer(fd, data, until, cancel, late)
     write, polled, close = own
     try:
-        return _emit(view, write, polled, until, cancel)
+        return _emit(view, write, polled, until, cancel, late)
     finally:
         close()
 
 
-def _emit(view, write, polled, until, cancel):
+def _emit(view, write, polled, until, cancel, late=True):
+    """`late`: past the deadline, what fits at once is still written (a diagnostic). Without it nothing is
+    written once the deadline has passed (an answer, whose success must mean it arrived in time)."""
     poller = select.poll()
     poller.register(polled, select.POLLOUT)
     while view:
         if cancel is not None and cancel.sig:
             until = min(until, cancel.at + 100)
         left = until - now_cs()
+        if left <= 0 and not late:
+            return False
         try:
             events = poller.poll(max(0, min(left, 100)) * 10)   # past the deadline: one try, no wait
         except InterruptedError:
@@ -183,6 +187,8 @@ def _emit(view, write, polled, until, cancel):
             continue
         if events[0][1] & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
             return False
+        if not late and now_cs() >= until:
+            return False                      # the poll itself took the time that was left
         try:
             view = view[write(view[:PIPE_BUF]):]
         except BlockingIOError:
@@ -206,6 +212,7 @@ def _load_result():
 _result = _load_result()
 
 
+MAX_PROMPT = 1 << 17   # the longest prompt the reviewer takes as one argument (the kernel's limit)
 TEARDOWN_CS = 200      # the teardown's own budget once the command has ended or been ended
 
 
@@ -221,7 +228,8 @@ def usage():
 
 
 def parse(argv):
-    opts = {"end": None, "final": None, "broker": None, "job": None, "prompt_sha": "", "broker_prompt": None}
+    opts = {"end": None, "final": None, "broker": None, "job": None, "prompt_sha": "", "broker_prompt": None,
+            "prompt_len": None}
     args = list(argv)
     while args and args[0].startswith("--"):
         flag = args.pop(0)
@@ -229,6 +237,8 @@ def parse(argv):
             opts["end" if flag == "--until-cs" else "final"] = int(args.pop(0))
         elif flag == "--prompt-sha" and args and re.fullmatch(r"[0-9a-f]{64}", args[0]):
             opts["prompt_sha"] = args.pop(0)
+        elif flag == "--prompt-len" and args and re.fullmatch(r"[0-9]{1,12}", args[0]):
+            opts["prompt_len"] = int(args.pop(0))
         elif flag == "--broker-prompt" and args:
             opts["broker_prompt"] = args.pop(0)            # the raw prompt, handed to the broker in memory
         elif flag == "--no-deadline":
@@ -364,6 +374,8 @@ class Broker(Result):
                 self.job = value
             elif kind == "owns":
                 self.owns = True
+            elif kind == "kind" and re.fullmatch(r"[a-z][a-z-]{0,40}", value):
+                self.log, self.prompt = (_named(self.log, value), _named(self.prompt, value))
 
 
 def _result_step(args, until, cancel=None):
@@ -414,9 +426,17 @@ def _result_step(args, until, cancel=None):
             sys.stderr.flush()
 
 
+def _named(path, kind):
+    """`path` with its last `{kind}` placeholder replaced by the kind the broker named."""
+    head, mark, tail = path.rpartition("{kind}")
+    return head + kind + tail if mark else path
+
+
 def _publish(result, status, final, cancel=None):
     """The result published by `final`. True when it was published or another owner holds it; for an attempt
-    never registered, only its prompt is removed."""
+    never registered, only its prompt is removed, and an attempt that never named its kind wrote nothing."""
+    if "{kind}" in result.prompt and not result.owns:
+        return True
     if result.owns:
         args = ["publish", result.log, str(status), "--prompt", result.prompt] + ([] if result.claimed else ["--claim"])
     else:
@@ -472,7 +492,7 @@ def main(argv) -> int:
         return 124
     if opts["job"]:
         # The job claims its result before anything can refuse, so a refusal is published (as 1).
-        return _job(opts["job"], opts["prompt_sha"], cmd, end, cancel)
+        return _job(opts["job"], (opts["prompt_sha"], opts["prompt_len"]), cmd, end, cancel)
     why = _setup()
     if why:
         print(f"review-runtime-limit: {why}; nothing was run", file=sys.stderr)
@@ -518,9 +538,11 @@ def _prompt_fd(text):
     return fd
 
 
-def _read_prompt(prompt, digest):
-    """The prompt's text, read whole and checked against the digest the broker registered, or None (with
-    the reason) when it cannot be read whole or is not the registered prompt."""
+def _read_prompt(prompt, digest, length=None):
+    """The prompt's text, read whole and checked against the digest (and byte length) the broker
+    registered, or None (with the reason) when it cannot be read whole or is not the registered prompt. A
+    file of another size is refused before any of it is read, and no more than its registered length and
+    one byte is ever read, so a replaced file cannot make this owner hold more than the prompt."""
     import hashlib
     import stat
     try:
@@ -530,15 +552,22 @@ def _read_prompt(prompt, digest):
     except OSError as exc:
         return None, f"the prompt could not be read ({exc.strerror})"
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
             return None, "the prompt is not a regular file"
-        chunks = []
-        while True:
-            chunk = os.read(fd, 1 << 16)
+        if length is not None and info.st_size != length:
+            return None, "the prompt read is not the one registered (its size differs)"
+        cap = (length if length is not None else MAX_PROMPT) + 1
+        chunks, got = [], 0
+        while got < cap:
+            chunk = os.read(fd, min(1 << 16, cap - got))
             if not chunk:
                 break
             chunks.append(chunk)
+            got += len(chunk)
         data = b"".join(chunks)
+        if len(data) >= cap:
+            return None, "the prompt read is not the one registered (it is longer)"
     except OSError as exc:
         return None, f"the prompt could not be read ({exc.strerror})"
     finally:
@@ -574,6 +603,7 @@ def _job(job, digest, cmd, end, cancel):
     waits on; the review itself is still held to the steps' deadline. A claim won after that deadline, or
     after a cancellation, runs nothing and publishes 124 or the cancellation's status."""
     log, prompt = job
+    digest, length = digest
     owned = _result.claim(log)
     if owned == 4:
         return 0                                       # another owner holds the result and publishes it
@@ -587,7 +617,7 @@ def _job(job, digest, cmd, end, cancel):
     elif cancel.sig or now_cs() >= end:
         status = cancel.sig or 124
     else:
-        text, why = _read_prompt(prompt, digest)
+        text, why = _read_prompt(prompt, digest, length)
         if text is None:
             _note(log, why + "; nothing was run")
             status = 1
@@ -722,7 +752,7 @@ def _attempt(cmd, end, broker, cancel):
 
 def _deliver(broker):
     """The broker's answer (the job to poll) written to the caller and checked: True when it was."""
-    if emit(1, (broker.response + "\n").encode(), broker.final, broker.cancel):
+    if emit(1, (broker.response + "\n").encode(), broker.final, broker.cancel, late=False):
         return True
     print(f"[review-broker] the answer could not be delivered by the deadline; the review was launched "
           f"and publishes its result to {broker.log}.done", file=sys.stderr)

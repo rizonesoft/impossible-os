@@ -68,6 +68,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -1456,7 +1457,7 @@ def _bash_rejects_from(cmd: str, line: int) -> bool:
         return False  # fail-direction: past the budget the text is read conservatively
     _SYNTAX_CHECKS_LEFT -= 1
     try:
-        done = subprocess.run(["bash", "-n", "-c", cmd], capture_output=True, text=True,
+        done = _proc.run(["bash", "-n", "-c", cmd], capture_output=True, text=True,
                               timeout=5)  # deadline: 5 s, a parse only
     except (OSError, subprocess.SubprocessError):
         return False  # fail-direction: False keeps the conservative reading
@@ -1547,11 +1548,86 @@ def _read_git_commit(cmd: str) -> tuple[bool, bool]:
 # ----------------------------------------------------------------------
 
 
+class _BoundedProcesses:
+    """EVERY PROCESS THE GATE STARTS goes through here (`_proc.run`, `_proc.check_output`, the shapes of their
+    subprocess namesakes). Each is given at most what the hook's own deadline leaves (`_hook_left`), runs in a
+    process group of its own, and on a timeout the whole group is ended and reaped within a short bound, never
+    by an unbounded wait: a git held in I/O, or a child it left holding a pipe, cannot keep the hook past its
+    deadline. A call with no time left is refused before anything starts. One runner, so a new git read cannot
+    be added with a wait of its own (test_the_gate_starts_processes_only_through_its_runner)."""
+
+    REAP = 0.2         # seconds a timed-out group is given to be reaped before it is left to init
+
+    def run(self, cmd, *, cwd=None, timeout=10, env=None, input=None, capture_output=False, stdout=None,
+            stderr=None, text=False, check=False, errors=None):
+        limit = _hook_left(timeout)
+        if limit <= 0:
+            raise subprocess.TimeoutExpired(cmd, 0)
+        if capture_output:
+            stdout = stderr = subprocess.PIPE
+        # LIFECYCLE-WAIVER: a group of its own only so a timed-out git read is ended whole; it never outlives the hook.
+        proc = subprocess.Popen(cmd, start_new_session=True, cwd=cwd, env=env,
+                                stdin=subprocess.PIPE if input is not None else None,
+                                stdout=stdout, stderr=stderr, text=text, errors=errors)
+        try:
+            out, err = proc.communicate(input, timeout=limit)
+        except subprocess.TimeoutExpired:
+            self._end(proc)
+            raise subprocess.TimeoutExpired(cmd, limit) from None
+        except BaseException:
+            self._end(proc)
+            raise
+        if check and proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+    def check_output(self, cmd, **kw):
+        return self.run(cmd, stdout=subprocess.PIPE, check=True, **kw).stdout
+
+    def _end(self, proc):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass                                       # fail-direction: the group has already gone
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass                               # fail-direction: a pipe already closed
+        until = time.monotonic() + self.REAP
+        while proc.poll() is None and time.monotonic() < until:
+            time.sleep(0.01)
+        # Still in an uninterruptible wait: it ends with its I/O and is reaped by init after this hook exits.
+
+
+_proc = _BoundedProcesses()
+
+
 def _staged_source_files(root: Path) -> list[str]:
-    """Same definition as crc._staged_source_files (which we import).
-    Wrapped here for readability at the call sites.
-    """
-    return crc._staged_source_files(root)
+    """The staged source paths (crc's definition of a source), from the one staged listing."""
+    return [p for p in _staged_paths(root) if crc._is_source_path(p)]
+
+
+# The staged path list, read once per signature detection and kept for the rest of the invocation.
+_staged_listing: dict[str, list[str]] = {}
+
+
+def _staged_paths(root: Path, fresh: bool = False) -> list[str]:
+    """Every staged path, read once (`fresh` reads again, as each detection does). A listing that fails or
+    runs out of time raises _StagedReadError, never an empty list: an empty list would read a stamp-only
+    commit as no commit at all and pass it unchecked."""
+    key = str(root)
+    if fresh or key not in _staged_listing:
+        try:
+            out = _proc.check_output(
+                ["git", "diff", "--cached", "--name-only", "-z"],
+                cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            raise _StagedReadError("the staged path list") from exc
+        _staged_listing[key] = [p for p in out.split("\x00") if p]
+    return _staged_listing[key]
 
 
 def _index_worktree_desync(root: Path, paths: list[str]) -> list[str]:
@@ -1563,7 +1639,7 @@ def _index_worktree_desync(root: Path, paths: list[str]) -> list[str]:
     if not paths:
         return []
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "diff", "--name-only", "-z", "--", *paths],
             cwd=str(root), text=True, timeout=5,
             stderr=subprocess.DEVNULL,
@@ -1575,15 +1651,8 @@ def _index_worktree_desync(root: Path, paths: list[str]) -> list[str]:
 
 
 def _staged_todo_files(root: Path) -> list[str]:
-    try:
-        out = subprocess.check_output(
-            ["git", "diff", "--cached", "--name-only", "-z"],
-            cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        return []
-    paths = [p for p in out.split("\x00") if p]
-    return [p for p in paths if p.startswith("todo/") and p.endswith(".md")]
+    """The staged TODO files, from the one staged listing (raises _StagedReadError when it cannot be read)."""
+    return [p for p in _staged_paths(root) if p.startswith("todo/") and p.endswith(".md")]
 
 
 def _detect_signature(root: Path) -> tuple[str, list[str], list[str], dict[str, list[str]]]:
@@ -1611,8 +1680,12 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str], dict[str, 
         per-TODO `git diff` failed (timeout/error), so we know there
         IS a commit happening but cannot see its full shape.
     """
-    src = _staged_source_files(root)
-    todos = _staged_todo_files(root)
+    try:
+        _staged_paths(root, fresh=True)
+        src = _staged_source_files(root)
+        todos = _staged_todo_files(root)
+    except _StagedReadError:
+        return ("unknown", [], [], {})                 # the commit's shape cannot be read: it is refused
     if not src and not todos:
         # Empty index AND no error -- this is a commit attempt
         # against staging that has no source / no TODO. Cannot be a
@@ -1704,7 +1777,7 @@ def _staged_file_lines(root: Path, path: str, cache: dict | None = None) -> list
     if wait <= 0:
         raise _StagedReadError(path)
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "show", f":{path}"],
             cwd=str(root),
             text=True,
@@ -1816,7 +1889,7 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
             all_ok = False                             # fail-direction: an unread diff is "unknown", never clean
             break
         try:
-            diff = subprocess.check_output(
+            diff = _proc.check_output(
                 ["git", "diff", "--cached", "-U0", "--", path],
                 cwd=str(root), text=True, timeout=wait,
                 stderr=subprocess.DEVNULL, env=_stored_env(),
@@ -2229,27 +2302,78 @@ def _stamped_todos(root: Path, todo_files: list[str]) -> list[str]:
             raise subprocess.TimeoutExpired("git diff", 0)
         # A diff that cannot be read raises: the caller reports "unknown" and the commit is refused. Skipping
         # the file would read a stamp-only commit as no section commit at all, and pass it unreviewed.
-        diff = subprocess.check_output(
+        diff = _proc.check_output(
             ["git", "diff", "--cached", "-U0", "--", path],
             cwd=str(root), text=True, timeout=wait,
             stderr=subprocess.DEVNULL, env=_stored_env(),
         )
-        added = {"Verified": 0, "Quality reviewed": 0}
-        removed = {"Verified": 0, "Quality reviewed": 0}
-        for line in diff.splitlines():
-            m = _STAMP_ADDED_RE.match(line)
-            if m:
-                added[m.group(1)] += 1
-                continue
-            m = _STAMP_REMOVED_RE.match(line)
-            if m:
-                removed[m.group(1)] += 1
-        # Fresh = added beyond what was removed. An update (added==removed
-        # > 0) leaves a 0 net count and does not trigger the gate.
-        net_fresh = sum(max(0, added[k] - removed[k]) for k in added)
-        if net_fresh > 0:
+        if _fresh_stamp_sections(root, path, diff):
             out.append(path)
     return out
+
+
+def _section_at(lines: list[str], lineno: int) -> str:
+    """The `## N.` section a 1-based line number of `lines` falls under ("" before the first)."""
+    for idx in range(min(lineno, len(lines)) - 1, -1, -1):
+        m = re.match(r"^##\s+(\d+)\.", lines[idx])
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _fresh_stamp_sections(root: Path, path: str, diff: str) -> list[str]:
+    """The sections of `path` whose staged diff ADDS a stamp line with no removed stamp of the same label IN
+    THE SAME SECTION: an in-place update (a stamp's count bumped) is not fresh, but a stamp removed in one
+    section never balances one added in another. Added lines are placed by the staged file, removed ones by
+    HEAD's."""
+    added: collections.Counter = collections.Counter()
+    removed: collections.Counter = collections.Counter()
+    staged = head = None
+    old_no = new_no = 0
+    for line in diff.splitlines():
+        hm = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+        if hm:
+            old_no, new_no = int(hm.group(1)), int(hm.group(3))
+            # With -U0 a hunk that removes nothing names the line BEFORE it; one that adds nothing likewise.
+            if hm.group(2) == "0":
+                old_no += 1
+            if hm.group(4) == "0":
+                new_no += 1
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            m = _STAMP_ADDED_RE.match(line)
+            if m:
+                if staged is None:
+                    staged = _staged_file_lines(root, path)
+                added[(_section_at(staged, new_no), m.group(1))] += 1
+            new_no += 1
+        elif line.startswith("-"):
+            m = _STAMP_REMOVED_RE.match(line)
+            if m:
+                if head is None:
+                    head = _head_file_lines(root, path)
+                removed[(_section_at(head, old_no), m.group(1))] += 1
+            old_no += 1
+    return sorted({key[0] for key, n in added.items() if n > removed[key]})
+
+
+def _head_file_lines(root: Path, path: str) -> list[str]:
+    """HEAD's copy of `path` (none before the first commit, or for a file HEAD lacks); a read that fails or
+    runs out of time raises _StagedReadError."""
+    try:
+        done = _proc.run(["git", "show", f"HEAD:{path}"], cwd=str(root), capture_output=True, text=True,
+                         timeout=5, env=_stored_env())
+    except Exception as exc:
+        raise _StagedReadError(path) from exc
+    if done.returncode != 0:
+        exists = _proc.run(["git", "cat-file", "-e", f"HEAD:{path}"], cwd=str(root), capture_output=True,
+                           timeout=3, env=_stored_env())
+        if exists.returncode == 0:
+            raise _StagedReadError(path)
+        return []                                      # a file HEAD does not have: nothing was removed from it
+    return done.stdout.splitlines()
 
 
 def _stored_env() -> dict:
@@ -2326,7 +2450,7 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     if left <= 0:
         return False                                   # fail-direction: not shown to be covered refuses
     try:
-        result = subprocess.run(
+        result = _proc.run(
             ["git", "merge-base", "--is-ancestor", sha, descendant_sha],
             cwd=str(root), timeout=_hook_left(min(3, left)) or 0.001, env=_stored_env(),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -2362,7 +2486,7 @@ def _dispatch_content_fresh(root: Path, disp_head: str,
         return (False, f"dispatch head {disp_head[:10]} not ancestor of "
                        f"HEAD {current_head[:10]} (cross-branch)")
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "diff", "--name-only", disp_head, current_head],
             cwd=str(root), text=True, timeout=10,
             stderr=subprocess.DEVNULL)
@@ -2418,7 +2542,7 @@ def _readme_only_regenerated(root: Path, old_spec: str, new_spec: str) -> bool:
         if wait <= 0:
             return None                                # fail-direction: not shown regenerated-only refuses
         try:
-            text = subprocess.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=wait,
+            text = _proc.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=wait,
                                            stderr=subprocess.DEVNULL, env=_stored_env())
         except Exception:
             return None
@@ -2464,7 +2588,7 @@ def _git_lines(root: Path, *args: str, timeout: float = 10) -> list[str] | None:
     if timeout <= 0:
         return None                                    # fail-direction: a read not made refuses, never passes
     try:
-        out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=timeout,
+        out = _proc.check_output(["git", *args], cwd=str(root), text=True, timeout=timeout,
                                       stderr=subprocess.DEVNULL, env=_stored_env())
     except Exception:
         return None
@@ -2810,7 +2934,7 @@ def _four_dispatch_evidence(
         return (True, "")
     current_head = ""
     try:
-        current_head = subprocess.check_output(
+        current_head = _proc.check_output(
             ["git", "rev-parse", "HEAD"], cwd=str(root),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -2908,7 +3032,7 @@ def _legacy_dispatch_evidence(
     # Resolve current HEAD once for the ancestry check (Codex M2).
     current_head = ""
     try:
-        current_head = subprocess.check_output(
+        current_head = _proc.check_output(
             ["git", "rev-parse", "HEAD"], cwd=str(root),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -3019,7 +3143,7 @@ def _staged_diff_text(root: Path, paths: list[str]) -> str | None:
     if not paths:
         return ""
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "diff", "--cached", "--unified=0", "--"] + paths,
             cwd=str(root), text=True, timeout=10,
             stderr=subprocess.DEVNULL,
@@ -3036,7 +3160,7 @@ def _staged_loc_delta(root: Path, paths: list[str]) -> int | None:
     if not paths:
         return 0
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "diff", "--cached", "--numstat", "--"] + paths,
             cwd=str(root), text=True, timeout=10,
             stderr=subprocess.DEVNULL,
@@ -3436,7 +3560,7 @@ def _re_adversarial_trigger_check(
     if re_adv_ts > 0 and re_adv_head:
         current_head = ""
         try:
-            current_head = subprocess.check_output(
+            current_head = _proc.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=str(root),
                 text=True, timeout=2, stderr=subprocess.DEVNULL,
             ).strip()
@@ -3572,7 +3696,7 @@ def _emit_block(reason_label: str, details: list[str], head: str = "") -> None:
 
 def _repo_root() -> Path | None:
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "rev-parse", "--show-toplevel"],
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -3707,7 +3831,7 @@ def _commit_target_root(cmd: str) -> Path | None:
     if len(toks) < 4 or toks[:2] != ["git", "-C"] or toks[3] != "commit":
         return None
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "-C", toks[2], "rev-parse", "--show-toplevel"],
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -3739,7 +3863,7 @@ def commit_landed_roots(session_id: str, consumer: str) -> list[str]:
             or not re.fullmatch(r"[a-z-]{1,32}", consumer or ""):
         return []
     try:
-        common = subprocess.check_output(
+        common = _proc.check_output(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             text=True, timeout=5, stderr=subprocess.DEVNULL,
         ).strip()
@@ -3858,7 +3982,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             return 0
         head = ""
         try:
-            head = subprocess.check_output(
+            head = _proc.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=str(root),
                 text=True, timeout=2, stderr=subprocess.DEVNULL,
             ).strip()
@@ -3895,7 +4019,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         if skip_req and skip_reason:
             head = ""
             try:
-                head = subprocess.check_output(
+                head = _proc.check_output(
                     ["git", "rev-parse", "HEAD"], cwd=str(root),
                     text=True, timeout=2, stderr=subprocess.DEVNULL,
                 ).strip()
@@ -3944,7 +4068,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             return 0
         head = ""
         try:
-            head = subprocess.check_output(
+            head = _proc.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=str(root),
                 text=True, timeout=2, stderr=subprocess.DEVNULL,
             ).strip()
@@ -3964,7 +4088,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         # Opt-out path. Audit + reset state, then allow.
         head = ""
         try:
-            head = subprocess.check_output(
+            head = _proc.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=str(root),
                 text=True, timeout=2, stderr=subprocess.DEVNULL,
             ).strip()
@@ -4030,8 +4154,12 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
     # piggyback stamps (commit flips TODO-A while adding a stamp to
     # TODO-B; B's dispatches were never verified).
     all_staged_todos = _staged_todo_files(root)
-    stamped = _stamped_todos(root, all_staged_todos)
-    fourd_ok, fourd_err = _four_dispatch_evidence(root, stamped)
+    try:
+        stamped = _stamped_todos(root, all_staged_todos)
+    except Exception as exc:                           # an unread stamp diff refuses, never passes
+        stamped, fourd_ok, fourd_err = [], False, f"a staged TODO's stamp diff could not be read ({exc})"
+    else:
+        fourd_ok, fourd_err = _four_dispatch_evidence(root, stamped)
     # TODO-08 §17: re-adversarial trigger gate.
     re_adv_ok, re_adv_err = _re_adversarial_trigger_check(
         root, staged_src, all_staged_todos
@@ -4064,7 +4192,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         missing.append(f"step-16 smoke-test evidence: {smoke_err}")
     head = ""
     try:
-        head = subprocess.check_output(
+        head = _proc.check_output(
             ["git", "rev-parse", "HEAD"], cwd=str(root),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -4118,7 +4246,7 @@ def _step8_stamped_at(root: Path, rev: str, deadline: float) -> set[tuple[str, s
     """The (TODO file, section number) pairs carrying a `> **Verified:**` stamp at
     `rev`: one git grep over todo/, so the cost follows the roadmap's size, never the
     length of history."""
-    out = subprocess.run(
+    out = _proc.run(
         ["git", "grep", "-n", "-e", "^## [0-9]", "-e", "^> \\*\\*Verified:\\*\\*", rev, "--", "todo/"],
         cwd=str(root), capture_output=True, text=True, timeout=_left(deadline), check=True,
         errors="replace").stdout  # deadline: step 8's shared I/O deadline
@@ -4171,7 +4299,7 @@ def _staged_texts(root: Path, paths: list[str], deadline: float | None = None) -
     """
     deadline = time.monotonic() + STEP8_IO_BUDGET_S if deadline is None else deadline
     try:
-        listing = subprocess.run(
+        listing = _proc.run(
             ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
             cwd=str(root), capture_output=True, timeout=_left(deadline),
             check=True).stdout  # deadline: step 8's shared I/O deadline
@@ -4183,7 +4311,7 @@ def _staged_texts(root: Path, paths: list[str], deadline: float | None = None) -
         shas = sorted(set(blob_of.values()))
         content: dict[str, bytes] = {}
         if shas:
-            data = subprocess.run(
+            data = _proc.run(
                 ["git", "cat-file", "--batch"], cwd=str(root), input="\n".join(shas).encode() + b"\n",
                 capture_output=True, timeout=_left(deadline),
                 check=True).stdout  # deadline: what is left of step 8's shared I/O deadline
@@ -4388,7 +4516,7 @@ def _step13_impl_adversarial_check(
     # within TTL) could satisfy the gate.
     current_head = ""
     try:
-        current_head = subprocess.check_output(
+        current_head = _proc.check_output(
             ["git", "rev-parse", "HEAD"], cwd=str(root),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
@@ -4704,7 +4832,7 @@ def _index_is_nonempty(root: Path) -> bool:
     means we must not fail open in the load-bearing git-hook layer.
     """
     try:
-        subprocess.check_output(
+        _proc.check_output(
             ["git", "diff", "--cached", "--quiet"],
             cwd=str(root), timeout=3, stderr=subprocess.DEVNULL,
         )
@@ -4724,7 +4852,7 @@ def _is_small_section(root: Path, staged_src: list[str]) -> bool:
     drops a skip-log WARN line.
     """
     try:
-        out = subprocess.check_output(
+        out = _proc.check_output(
             ["git", "diff", "--cached", "--numstat", "--", *staged_src],
             cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
         )
@@ -4849,7 +4977,7 @@ def _heuristic_step9_test_coverage(root: Path, staged_src: list, todo_path: str,
             return
         for f in test_files:
             try:
-                diff = subprocess.check_output(
+                diff = _proc.check_output(
                     ["git", "diff", "--cached", "--unified=0", "--", f],
                     cwd=str(root), text=True, timeout=5,
                     stderr=subprocess.DEVNULL,

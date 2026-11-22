@@ -273,7 +273,7 @@ def test_refusal_acpica_without_its_provenance_record():
 def test_hundreds_of_staged_files_are_read_in_two_git_calls():
     files = {f"src/kernel/x/f{i}.c": f"int f{i}(void) {{\n    return {i};\n}}\n" for i in range(300)}
     files["src/kernel/test/test_x.c"] = suite(" ".join(f"f{i}();" for i in range(300)))
-    real, calls = gate.subprocess.run, []
+    real, calls = gate._proc.run, []
 
     def counting(*a, **k):
         calls.append(a[0][:3])
@@ -281,11 +281,11 @@ def test_hundreds_of_staged_files_are_read_in_two_git_calls():
     with tempfile.TemporaryDirectory() as d:
         repo = _repo(d)
         staged = _stage(repo, files)
-        gate.subprocess.run = counting
+        gate._proc.run = counting
         try:
             texts = gate._staged_texts(repo, staged)
         finally:
-            gate.subprocess.run = real
+            gate._proc.run = real
     assert len(calls) == 2 and texts["src/kernel/x/f7.c"].startswith("int f7"), calls
 
 

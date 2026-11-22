@@ -658,17 +658,17 @@ def test_a_stamp_diff_that_cannot_be_read_is_unknown_never_no_section():
             "## 1. Section\n\n| Item | Done |\n| A | [x] |\n\nbody\n\n"
             "> **Verified:** 2026-07-14 test\n")
         subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
-        real = scg.subprocess.check_output
+        real = scg._proc.check_output
 
         def failing(cmd, *a, **k):
             if cmd[:3] == ["git", "diff", "--cached"] and cmd[-1] == "todo/T.md":
                 raise scg.subprocess.TimeoutExpired(cmd, 5)
             return real(cmd, *a, **k)
-        scg.subprocess.check_output = failing
+        scg._proc.check_output = failing
         try:
             assert scg._detect_signature(root)[0] == "unknown"
         finally:
-            scg.subprocess.check_output = real
+            scg._proc.check_output = real
 
 
 def test_the_readme_comparison_reads_stored_objects():
@@ -706,18 +706,18 @@ def test_the_staged_todo_is_read_once_however_many_rows_change():
     """Every changed done row needs the table's header; the staged TODO is read once for all of them."""
     with tempfile.TemporaryDirectory() as d:
         root = _flip_repo(d)
-        real = scg.subprocess.check_output
+        real = scg._proc.check_output
         shows = []
 
         def counting(cmd, *a, **k):
             if cmd[:2] == ["git", "show"] and cmd[2] == ":todo/T.md":
                 shows.append(cmd)
             return real(cmd, *a, **k)
-        scg.subprocess.check_output = counting
+        scg._proc.check_output = counting
         try:
             scg._detect_signature(root)
         finally:
-            scg.subprocess.check_output = real
+            scg._proc.check_output = real
         assert len(shows) == 1, shows
 
 
@@ -725,14 +725,76 @@ def test_a_staged_todo_that_cannot_be_read_is_unknown():
     """The read the table header needs fails: the commit is unknown (refused), never judged without it."""
     with tempfile.TemporaryDirectory() as d:
         root = _flip_repo(d)
-        real = scg.subprocess.check_output
+        real = scg._proc.check_output
 
         def failing(cmd, *a, **k):
             if cmd[:2] == ["git", "show"] and cmd[2] == ":todo/T.md":
                 raise scg.subprocess.TimeoutExpired(cmd, 5)
             return real(cmd, *a, **k)
-        scg.subprocess.check_output = failing
+        scg._proc.check_output = failing
         try:
             assert scg._detect_signature(root)[0] == "unknown"
         finally:
-            scg.subprocess.check_output = real
+            scg._proc.check_output = real
+
+
+def test_a_staged_listing_that_fails_is_unknown_not_a_plain_commit():
+    """A stamp-only commit whose staged path list cannot be read is unknown (refused), never read as a
+    commit with nothing staged."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        (root / "todo/T.md").write_text((root / "todo/T.md").read_text() + "\n> **Verified:** 2026-11-22\n")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        real = scg._proc.check_output
+
+        def failing(cmd, *a, **k):
+            if cmd[:3] == ["git", "diff", "--cached"] and "--name-only" in cmd:
+                raise scg.subprocess.TimeoutExpired(cmd, 3)
+            return real(cmd, *a, **k)
+        scg._proc.check_output = failing
+        try:
+            assert scg._detect_signature(root)[0] == "unknown"
+        finally:
+            scg._proc.check_output = real
+
+
+def _two_sections(root, a_stamp, b_stamp):
+    (root / "todo/T.md").write_text(
+        "## 1. One\n\nbody\n" + (a_stamp + "\n" if a_stamp else "")
+        + "\n## 2. Two\n\nbody\n" + (b_stamp + "\n" if b_stamp else ""))
+
+
+def test_a_stamp_removed_in_one_section_never_balances_a_new_stamp_in_another():
+    """Reopening section 1 (its stamp removed) while stamping section 2 still counts section 2's stamp as
+    new; an in-place update of one section's stamp does not."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        _two_sections(root, "> **Verified:** 2026-11-20", "")
+        subprocess.run(["git", "-C", str(root), "commit", "-qam", "one stamped"], check=True)
+        _two_sections(root, "", "> **Verified:** 2026-11-22")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        assert scg._stamped_todos(root, ["todo/T.md"]) == ["todo/T.md"]
+        _two_sections(root, "> **Verified:** 2026-11-22 (updated)", "")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        assert scg._stamped_todos(root, ["todo/T.md"]) == []
+
+
+def test_the_gate_starts_processes_only_through_its_runner():
+    """Every process the gate starts goes through its bounded runner, so none has a wait of its own."""
+    import re
+    text = (REPO / ".claude/hooks/section_commit_gate.py").read_text()
+    direct = re.findall(r"subprocess\.(?:run|check_output|check_call|call|Popen)\(", text)
+    assert direct == ["subprocess.Popen("], direct     # the one inside the runner
+
+
+def test_a_timed_out_group_is_ended_within_the_hook_deadline():
+    """A git read that outlives its time, with a child holding its pipe, is ended and the call returns
+    within a bounded time of its timeout."""
+    began = time.monotonic()
+    try:
+        scg._proc.run(["sh", "-c", "sleep 30 & sleep 30"], capture_output=True, timeout=0.5)
+    except scg.subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError("no timeout")
+    assert time.monotonic() - began < 0.5 + 1.0
