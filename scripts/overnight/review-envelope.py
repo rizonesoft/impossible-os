@@ -44,7 +44,7 @@ from pathlib import Path
 RC_RE = re.compile(r"Turn completed \(rc=(\d+)\)")
 CRASH_SIGNATURES = ("app-server exited unexpectedly", "exited unexpectedly, rc=")
 FINDING_RE = re.compile(
-    r"(?i)^\s*(?:[-*\d.\s]*)?\[?(critical|high|medium|low|C\d|H\d|M\d|L\d)\b")
+    r"(?i)^[-*\d.\s]*\[?(critical|high|medium|low|C\d|H\d|M\d|L\d)\b")   # one prefix class: linear on padding
 MAX_FINDING_LINES = 120
 TAIL_LINES = 30
 

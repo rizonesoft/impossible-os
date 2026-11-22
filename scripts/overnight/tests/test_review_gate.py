@@ -954,3 +954,32 @@ def test_one_detection_reads_each_staged_todo_once_across_flip_and_stamp_detecti
         finally:
             scg._proc.check_output = real
         assert len(shows) <= 1, shows
+
+
+
+def test_a_start_stalled_past_the_hook_deadline_never_runs_its_command():
+    """The gate's start of a command stalls in Popen (storage holding the exec) past what the hook has left:
+    run() refuses at the deadline, and when the stalled start completes afterwards the command never runs."""
+    with tempfile.TemporaryDirectory() as d:
+        marker = pathlib.Path(d) / "ran"
+        real_popen = scg.subprocess.Popen
+
+        def slow_popen(*a, **k):
+            time.sleep(1.0)
+            return real_popen(*a, **k)
+        real_left = scg._hook_left
+        scg.subprocess.Popen = slow_popen
+        scg._hook_left = lambda timeout: 0.3
+        try:
+            began = time.monotonic()
+            try:
+                scg._proc.run(["touch", str(marker)], timeout=5)
+                raise AssertionError("a start past the deadline was answered")
+            except scg.subprocess.TimeoutExpired:
+                pass
+            assert time.monotonic() - began < 0.8, time.monotonic() - began
+        finally:
+            scg._hook_left = real_left
+        time.sleep(1.5)                                   # the stalled start completes, its gate closed
+        scg.subprocess.Popen = real_popen
+        assert not marker.exists()

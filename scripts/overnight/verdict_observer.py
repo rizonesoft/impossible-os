@@ -4,16 +4,20 @@
 The waiter's shell owns the deadline and touches no file. This process probes each log, recovers a result
 whose owner is gone, and writes what it saw to stdout, one line per observation:
 
-    done RC LOG             LOG has published status RC
-    unreadable LOG          LOG's status is there but could not be read (unknown: never recovered or judged)
-    unpublished LOG         LOG's owner ended and its recovery could not publish (it never will)
-    seen EXISTS SIZE SILENT LOG
-                            LOG's metadata: a regular file (1) or not (0), its size, seconds since it grew
+    done RC N               log N has published status RC
+    unreadable N            log N's status is there but could not be read (unknown: never recovered or judged)
+    unpublished N           log N's owner ended and its recovery could not publish (it never will)
+    seen EXISTS SIZE SILENT N
+                            log N's metadata: a regular file (1) or not (0), its size, seconds since it grew
                             (since it was first looked for, when it does not exist)
+    unknown N               log N's metadata could not be read (a storage fault): nothing is known of it
     cycle                   a round of probes is complete
     statuses                every log has a status; the last log's tail follows
     tail TEXT               a line of that tail
     alldone                 the end of the tail; this process exits
+
+A log is named by N, its position among the arguments (from 0), never by its path: a path may hold a
+newline, and every line here is one record.
 
 Every probe runs here, in this one process, so the waiter ends all of them by ending this process: a read
 stalled on storage never outlives the call as a process of its own. A recovery is the one process started
@@ -25,6 +29,7 @@ the round, never from a flag set during it. A recovery's exit status is kept unt
 conclusively and checks the owner: only then is a failed recovery reported unpublished.
 """
 import argparse
+import errno
 import fcntl
 import hashlib
 import os
@@ -52,11 +57,18 @@ def probe_status(log: str):
     return review_result.read_status(log)
 
 
+ABSENT = frozenset({errno.ENOENT, errno.ENOTDIR})   # the lstat errors that show nothing is at the path
+
+
 def probe_meta(log: str):
-    """(exists, size, mtime) from one lstat: metadata only, so a FIFO that took the path never holds it."""
+    """(exists, size, mtime) from one lstat: metadata only, so a FIFO that took the path never holds it.
+    None when the lstat failed for a reason that does not show the path is empty (EIO, EACCES, ...): such a
+    log is not known to be missing, and never starts or advances the missing-log clock."""
     try:
         st = os.lstat(log)
-    except OSError:
+    except OSError as exc:
+        if exc.errno not in ABSENT:
+            return None
         return 0, 0, None
     if not stat_mod.S_ISREG(st.st_mode):
         return 0, 0, None
@@ -134,20 +146,20 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
     unpublished: set = set()
     while True:
         soon = False
-        for f in logs:
+        for n, f in enumerate(logs):
             if f in status:
                 continue
             found, error = probe_status(f)
             if found is not None:
                 status[f] = found
-                say(f"done {found} {f}")
+                say(f"done {found} {n}")
                 continue
             if error is not None:
                 # What the status holds is unknown: never recovered, judged stale or reported unpublished.
-                say(f"unreadable {f}")
+                say(f"unreadable {n}")
                 continue
             if f in unpublished:
-                say(f"unpublished {f}")
+                say(f"unpublished {n}")
                 continue
             proc = recovery.get(f)
             if proc is not None:
@@ -159,16 +171,20 @@ def observe(logs: list, secs: float, poll: int, act_dir: str) -> int:
                     del recovery[f]
                     if rc != 0 and owner_free(f):
                         unpublished.add(f)
-                        say(f"unpublished {f}")
+                        say(f"unpublished {n}")
                         continue
             elif f not in tried and os.path.lexists(f) and owner_free(f):
                 recovery[f] = start_recovery(f)
                 tried.add(f)
                 soon = True
-            exists, size, mtime = probe_meta(f)
+            meta = probe_meta(f)
+            if meta is None:
+                say(f"unknown {n}")
+                continue
+            exists, size, mtime = meta
             wall = int(time.time())
             silent = wall - mtime if exists else wall - first_seen(f, act_dir)
-            say(f"seen {exists} {size} {silent} {f}")
+            say(f"seen {exists} {size} {silent} {n}")
         if all(f in status for f in logs):
             say("statuses")
             for line in read_tail(logs[-1]):

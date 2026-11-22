@@ -1027,6 +1027,10 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
     cancellation ended."""
     broker.read()
     broker.final, broker.cancel = final, cancel
+    # A cancellation that arrived after the attempt's snapshot (during the handoff read) is a cancellation:
+    # nothing is launched for it, and its status is the broker's exit status.
+    if cancel is not None and cancel.sig and not cancelled:
+        cancelled, rc = True, cancel.sig
     step = broker.step or "the dispatch"
     if step == "answered" and not cancelled and broker.response:
         # The submission succeeded: the result is the launched job's, whatever happens to the answer.
@@ -1034,6 +1038,12 @@ def finish_broker(broker, rc, cancelled, limited, final, cancel=None):
             # The start is given half of what is left, so recording a failure for a start not confirmed
             # always has time of its own; it never begins at a deadline that has already passed.
             launch_until = now_cs() + max(0, final - now_cs()) // 2
+            if cancel is not None and cancel.sig:
+                # Cancelled between the read and the start: no review is started for a caller that has gone.
+                print(f"[review-broker] cancelled before the job was started (exit {cancel.sig}); its result is "
+                      f"recorded as {cancel.sig}", file=sys.stderr)
+                _publish(broker, cancel.sig, final, cancel)
+                return cancel.sig
             try:
                 started = _launch(broker.job, launch_until, cancel)
             except OSError as exc:

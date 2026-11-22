@@ -600,3 +600,16 @@ def test_a_transcript_still_growing_is_read_only_to_its_size_when_opened(monkeyp
         monkeypatch.setattr(env_mod.os, "read", reading)
         scan = env_mod._scan(f)
         assert isinstance(scan, dict) and scan["bytes"] == size and grown[0] <= 5, (scan and scan.get("bytes"), grown)
+
+
+def test_a_space_padded_line_is_matched_in_linear_time():
+    """A non-finding line of 8,192 spaces then text costs the finding matcher no more than a millisecond or
+    two; the accepted bullet, numbered and bracketed prefixes still match."""
+    env_mod = _envelope_module()
+    import time
+    began = time.monotonic()
+    for _ in range(20):
+        assert env_mod.FINDING_RE.match(" " * 8192 + "x") is None
+    assert time.monotonic() - began < 0.2, time.monotonic() - began
+    for line in ("- [high] P2: x", "  * medium thing", "1. [critical] y", "H1 z", "-  - low w"):
+        assert env_mod.FINDING_RE.match(line), line

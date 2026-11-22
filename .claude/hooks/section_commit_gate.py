@@ -1547,10 +1547,8 @@ class _BoundedProcesses:
         end = time.monotonic() + limit
         if capture_output:
             stdout = stderr = subprocess.PIPE
-        # LIFECYCLE-WAIVER: a group of its own only so a timed-out git read is ended whole; it never outlives the hook.
-        proc = subprocess.Popen(cmd, start_new_session=True, cwd=cwd, env=env,
-                                stdin=subprocess.PIPE if input is not None else None,
-                                stdout=stdout, stderr=stderr, text=text, errors=errors)
+        proc = self._start(cmd, end, limit, cwd=cwd, env=env, stdin=subprocess.PIPE if input is not None else None,
+                           stdout=stdout, stderr=stderr, text=text, errors=errors)
         try:
             # The start (Popen waits for the exec) spent part of the budget: only what is left is waited.
             out, err = proc.communicate(input, timeout=max(0.001, end - time.monotonic()))
@@ -1565,6 +1563,43 @@ class _BoundedProcesses:
         if check and proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+    def _start(self, cmd, end, limit, **popen):
+        """`cmd` started behind the shared start gate (bounded_run): the start runs in a launch thread waited
+        on only until `end`, and the command runs only once this hook holds its process handle in time and
+        releases the gate. A start stalled on storage that returns after the hook gave up, or after its
+        watchdog ended it, finds the gate closed and runs nothing."""
+        own = str(Path(__file__).resolve().parents[2] / "scripts")
+        if own not in sys.path:
+            sys.path.insert(0, own)
+        import fcntl
+        import bounded_run
+        low, gate_wr = os.pipe()
+        gate_rd = fcntl.fcntl(low, fcntl.F_DUPFD_CLOEXEC, 3)       # above the standard streams
+        os.close(low)
+
+        def spawn():
+            try:
+                return subprocess.Popen(["/bin/bash", "-c", bounded_run._GATE, "gate", str(gate_rd), *cmd],
+                                        pass_fds=(gate_rd,),
+                                        # LIFECYCLE-WAIVER: a group of its own only so a timed-out git read is ended whole; it never outlives the hook.
+                                        start_new_session=True, **popen)
+            finally:
+                os.close(gate_rd)
+        try:
+            started, proc = bounded_run.start_supervised(spawn, end, lambda: False, self._end)
+            if not started:
+                raise subprocess.TimeoutExpired(cmd, limit)
+            if time.monotonic() >= end:
+                self._end(proc)
+                raise subprocess.TimeoutExpired(cmd, limit)
+            try:
+                os.write(gate_wr, b"go\n")                      # a few bytes to an empty pipe: never blocks
+            except OSError:
+                pass                                           # fail-direction: the gate exited; its status says so
+            return proc
+        finally:
+            os.close(gate_wr)
 
     def check_output(self, cmd, **kw):
         return self.run(cmd, stdout=subprocess.PIPE, check=True, **kw).stdout

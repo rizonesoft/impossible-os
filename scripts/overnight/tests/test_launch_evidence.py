@@ -2034,3 +2034,26 @@ def test_a_held_metadata_read_of_the_output_never_holds_the_answer(monkeypatch):
     finally:
         os.close(rd)
         os.close(wr)
+
+
+
+def test_a_cancellation_during_the_handoff_read_launches_nothing(monkeypatch):
+    """SIGTERM lands while the broker's handoff is read (after the attempt's cancellation snapshot): no job is
+    started, the answer is not delivered, and the broker exits with the cancellation's status."""
+    import sys
+    import types
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import review_runtime_limit as rl
+    cancel = types.SimpleNamespace(sig=0, at=0)
+
+    def read():
+        cancel.sig, cancel.at = 143, rl.now_cs()
+    broker = types.SimpleNamespace(read=read, step="answered", response='{"logFile": 1}', job="true",
+                                   log="r.out", prompt="r.prompt", owns=True, claimed=True)
+    launched, delivered, published = [], [], []
+    monkeypatch.setattr(rl, "_launch", lambda *a, **k: launched.append(a) or True)
+    monkeypatch.setattr(rl, "_deliver", lambda b: delivered.append(b) or True)
+    monkeypatch.setattr(rl, "_publish", lambda b, status, *a, **k: published.append(status) or True)
+    rc = rl.finish_broker(broker, 0, False, False, rl.now_cs() + 500, cancel)
+    assert rc == 143 and launched == [] and delivered == [] and published == [143], (rc, launched, delivered,
+                                                                                       published)

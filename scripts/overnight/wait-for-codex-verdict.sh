@@ -183,6 +183,13 @@ printf -v OBS_SECS '%d.%06d' $(( obs_us / 1000000 )) $(( obs_us % 1000000 ))
 exec {OBS}< <(exec </dev/null 2>/dev/null {OUT_FD}>&- {ERR_FD}>&-
               exec python3 "$OBSERVER" --secs "$OBS_SECS" --poll "$POLL" --act-dir "$ACT_DIR" -- "${LOGS[@]}")
 OBS_PID=$!
+# A cancelled wait ends its observer too (a probe stalled in it would otherwise outlive the call), keeping
+# the signal's status; a recovery it started runs in a session of its own and is left to publish.
+# shellcheck disable=SC2329  # invoked from the traps below
+_cancelled() { kill -KILL "$OBS_PID" 2>/dev/null; exit "$1"; }
+trap '_cancelled 129' HUP
+trap '_cancelled 130' INT
+trap '_cancelled 143' TERM
 finished=0
 tail_read=0
 while :; do
@@ -191,13 +198,23 @@ while :; do
     [ "$left_us" -le 0 ] && break
     printf -v left '%d.%06d' $(( left_us / 1000000 )) $(( left_us % 1000000 ))
     IFS= read -r -t "$left" -u "$OBS" line || break       # out of time, or the observer has gone
+    # A log is named by its position among the arguments, never by its path (which may hold a newline).
+    key=""
     case "$line" in
-        "done "*)        read -r _ rc key <<< "$line"; GOT[$key]="$rc" ;;
+        "done "*|"unpublished "*|"unreadable "*|"unknown "*|"seen "*)
+            n="${line##* }"
+            [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -lt "${#LOGS[@]}" ] || continue
+            key="${LOGS[$n]}" ;;
+    esac
+    case "$line" in
+        "done "*)        read -r _ rc _ <<< "$line"; GOT[$key]="$rc" ;;
         # Each probe of a log replaces what the previous one said about it: the latest observation decides.
-        "unpublished "*) key="${line#unpublished }"; UNPUB[$key]=1; unset "UNREAD[$key]" ;;
-        "unreadable "*)  key="${line#unreadable }"; UNREAD[$key]=1
+        "unpublished "*) UNPUB[$key]=1; unset "UNREAD[$key]" ;;
+        "unreadable "*)  UNREAD[$key]=1
                          unset "UNPUB[$key]" "EXISTS[$key]" "SIZE[$key]" "SILENT[$key]" ;;
-        "seen "*)        read -r _ ex sz sil key <<< "$line"
+        # Its metadata could not be read: nothing is known of it, so it is never judged missing or stale.
+        "unknown "*)     unset "UNREAD[$key]" "UNPUB[$key]" "EXISTS[$key]" "SIZE[$key]" "SILENT[$key]" ;;
+        "seen "*)        read -r _ ex sz sil _ <<< "$line"
                          unset "UNREAD[$key]" "UNPUB[$key]"
                          EXISTS[$key]="$ex"; SIZE[$key]="$sz"; SILENT[$key]="$sil" ;;
         "tail "*)        TAIL+=("${line#tail }") ;;

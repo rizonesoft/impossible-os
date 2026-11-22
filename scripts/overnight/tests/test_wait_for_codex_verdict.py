@@ -732,3 +732,71 @@ def test_a_status_published_after_a_recovery_ends_the_wait_done():
         r = _wait(d, bindir, "--max", "3", "--no-stale", log)
         assert r.returncode == 0 and "DONE:" in r.stdout and "UNREADABLE" not in r.stdout, r
 
+
+
+
+def test_a_cancelled_wait_ends_its_observer_even_while_a_probe_is_held():
+    """SIGTERM to the waiter while its observer is held in a metadata probe: the waiter exits 143 and the
+    observer is gone with it, never left behind one per cancelled call."""
+    import os
+    import signal
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        marks = pathlib.Path(d) / "probe.pid"
+        _faults(bindir, "import os, time\n"
+                        "def probe_meta(log):\n"
+                        f"    open({str(marks)!r}, 'a').write(f'{{os.getpid()}}\\n')\n"
+                        "    time.sleep(60)\n"
+                        "o.probe_meta = probe_meta\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        p = subprocess.Popen(["bash", str(TOOL), "--max", "30", "--no-stale", str(log)], cwd=d,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+        end = time.monotonic() + 10
+        while not (marks.exists() and marks.read_text().strip()) and time.monotonic() < end:
+            time.sleep(0.05)
+        pid = int(marks.read_text().split()[0])
+        p.send_signal(signal.SIGTERM)
+        assert p.wait(timeout=5) == 143
+        end = time.monotonic() + 3
+        while time.monotonic() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f"observer {pid} outlived the cancelled wait")
+
+
+def test_a_log_whose_metadata_cannot_be_read_is_never_reported_missing():
+    """A live log with no status whose lstat fails with EIO, and a first-sighting store that cannot be
+    written: past --stale-secs the waiter still reports it running (exit 3), never MISSING (exit 5)."""
+    with tempfile.TemporaryDirectory() as d:
+        bindir = _setup(d)
+        _faults(bindir, "import errno, os\n"
+                        "_real = os.lstat\n"
+                        "def lstat(p, *a, **k):\n"
+                        "    if str(p).endswith('r.out'):\n"
+                        "        raise OSError(errno.EIO, 'Input/output error')\n"
+                        "    return _real(p, *a, **k)\n"
+                        "o.os.lstat = lstat\n"
+                        "o.first_seen = lambda log, act: 0\n")
+        log = pathlib.Path(d) / "r.out"
+        log.write_text("partial\n")
+        r = _wait(d, bindir, "--max", "4", "--stale-secs", "1", log)
+        assert r.returncode == 3 and "MISSING" not in r.stdout, (r.returncode, r.stdout)
+
+
+def test_a_log_path_holding_a_newline_keeps_its_published_status():
+    """A review directory whose name holds a newline: the published 124 is reported for that log."""
+    with tempfile.TemporaryDirectory() as d:
+        rev = pathlib.Path(d) / "a\nb"
+        rev.mkdir()
+        log = rev / "r.out"
+        log.write_text("x\nTurn completed (rc=124)\n")
+        pathlib.Path(str(log) + ".done").write_text("124\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "10", str(log)], capture_output=True, text=True, cwd=d,
+                           timeout=30)
+        assert r.returncode == 0 and "-- Turn completed (rc=124)" in r.stdout, (r.returncode, r.stdout)
