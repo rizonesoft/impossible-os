@@ -39,7 +39,7 @@ Minimize, maximize and restore are owned by the canonical window manager roadmap
 
 **Files:** `src/desktop/wm.c`, `include/desktop/wm.h`
 
-> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §1 (item: "#define WM_FLAG_MINIMIZED 0x40" at line 68)
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §1 (item: "#define WM_FLAG_MINIMIZED 0x40" at line 69)
 
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §1`, which follows `docs/design/shell.md#window-chrome`; do not build a second minimize/maximize/restore path here
 
@@ -65,7 +65,7 @@ Snapping is owned by `08-graphics-ui/TODO-08` §3: the six-layout snap flyout (m
 
 **Files:** `src/desktop/wm.c`
 
-> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §3 (item: "void wm_snap" at line 125)
+> **Deferred:** [L] superseded: owned by `08-graphics-ui/TODO-08-window-manager.md` -> XREF: 08-graphics-ui/TODO-08 §3 (item: "void wm_snap" at line 126)
 
 - [/] Superseded: implemented by `todo/08-graphics-ui/TODO-08-window-manager.md §3`, which follows `docs/design/shell.md#snap-layouts`; do not build a second snap implementation here
 

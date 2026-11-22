@@ -424,7 +424,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
 > **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
 > **Notes:** Reopened 2026-11-11: Q19 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q19: Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
-> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 304)
+> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 305)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---

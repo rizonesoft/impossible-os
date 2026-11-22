@@ -263,7 +263,7 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 > - re-adversarial skipped: §3 review made no §3-scope code change (the [Critical] handler-probe gap is owned by §6; the perf TPR-write fix is deferred).
 
 > **Verified:** 2026-06-28 | 4/6 items | build OK | tests 346+16 PASS (tree unchanged; §3 findings out-of-scope/deferred)
-> **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers (design-reviewed into 4 items) -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 365)
+> **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers (design-reviewed into 4 items) -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 366)
 > **Notes:** Reopened 2026-11-07, was Deferred: [M] syscall IRQL entry wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80
 > **Notes:** Reopened 2026-11-07, was Deferred: [L] INT 0x2E + SYSCALL entry read only 4 register args; >4-arg syscalls kludge via extended-args struct
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit accepted-XREF + 1M+1L deferred | scope: kernel-code-quality
@@ -338,9 +338,9 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 > - re-adversarial skipped: §5 review made no §5-scope code change (migration is correct; trust-boundary criticals Accepted to §29; the alias [M] is a TODO-contract fix).
 
 > **Verified:** 2026-06-28 | 18/18 items | build OK | tests 346+16 PASS (tree unchanged; findings Accepted to §29)
-> **Accepted:** [Critical] NtShutdownSystem (+ legacy SYS_SHUTDOWN) lets any ring-3 caller power off the machine with no SeShutdownPrivilege gate -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege" at line 1273)
-> **Accepted:** [Critical] NtTerminateProcess kills any process by raw PID with no handle/PROCESS_TERMINATE check -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE" at line 1275)
-> **Accepted:** [Critical] SystemProcessInformation writes through unprobed user pointers (kernel-write primitive) -> XREF: 02-kernel-core/TODO-12 §29 (item: "SystemProcessInformation: ProbeForWriteIfUser + copy_to_user" at line 1277)
+> **Accepted:** [Critical] NtShutdownSystem (+ legacy SYS_SHUTDOWN) lets any ring-3 caller power off the machine with no SeShutdownPrivilege gate -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege" at line 1274)
+> **Accepted:** [Critical] NtTerminateProcess kills any process by raw PID with no handle/PROCESS_TERMINATE check -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE" at line 1276)
+> **Accepted:** [Critical] SystemProcessInformation writes through unprobed user pointers (kernel-write primitive) -> XREF: 02-kernel-core/TODO-12 §29 (item: "SystemProcessInformation: ProbeForWriteIfUser + copy_to_user" at line 1278)
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 3Crit accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -498,7 +498,7 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 > **Accepted:** [H] auto-reset event_set publishes state before waking a queued waiter, so a timeout=0 poll on another CPU can steal the wake -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- names the direct-handoff-to-queued-waiter requirement)
 > **Accepted:** [M] sem_release_checked check-then-signal + WaitAll rollback are not serialized against a concurrent NtReleaseSemaphore -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- serialize max-guard + rollback)
 > **Accepted:** [M] multi-wait polls stay READY with no backoff (interim poll design; blocking waitable not built) -> XREF: 03-memory-concurrency/TODO-08 §8 (item: "`wait_any(waitable_t *handles[], count, timeout_ms)`" at line 220 -- the blocking waitable_t multi-wait that replaces the poll)
-> **Accepted:** [M] sync SSDT handlers deref ring-3 handle-array/timeout/out pointers without probe/copy (systemic NT trust-boundary gap) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Sync syscalls deref raw user pointers (`nt_sync.c`)" at line 1279)
+> **Accepted:** [M] sync SSDT handlers deref ring-3 handle-array/timeout/out pointers without probe/copy (systemic NT trust-boundary gap) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Sync syscalls deref raw user pointers (`nt_sync.c`)" at line 1280)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5H+2M fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -819,7 +819,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Scope boundary: missing probes -> §29 probe list; lookup-then-ref UAF -> TODO-05 §3; native directory ABI + RootDirectory -> §17; UTF-16 decode -> TODO-14 §5.
 > - Test gap: ReturnSingleEntry/RestartScan packed-flag paths + relative-name (RootDirectory) create/open are untested.
 > **Verified:** 2026-07-02 | commit `517cb921` | 6/8 items | build OK | ob 426/426 PASS
-> **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1280)
+> **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1281)
 > **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 273)
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI
@@ -1070,7 +1070,7 @@ Catch-all for global atom table, locale management, environment variables, and d
 > - Scope boundary: full Unicode case-folding, per-user locale hives, the production hash-indexed atom table, copy_*_user fault-recovery, and >4-arg (a5/a6) stack marshalling are owned elsewhere (see Accepted stamps).
 > **Verified:** 2026-07-03 | commit `ce9d7387` | 14/14 items | build OK | tests 974 kernel + 16 user PASS
 > **Accepted:** [M] copy_*_user is not fault-recoverable (ProbeFor* validates range not page-presence; an in-range-unmapped user page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`" at line 126 -- nt_misc.c added to retrofit list)
-> **Accepted:** [M] NtRaiseHardError Response/OptionShutdownSystem + NtQueryInformationAtom ReturnLength need >4-arg stack marshalling (entry path drops a5/a6) -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 247)
+> **Accepted:** [M] NtRaiseHardError Response/OptionShutdownSystem + NtQueryInformationAtom ReturnLength need >4-arg stack marshalling (entry path drops a5/a6) -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 248)
 > **Accepted:** [M] atom lookup holds the irqsave `s_atom_lock` across an O(512x255) name scan (unprivileged full-table miss -> ~130us IRQ-disabled) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §3 (item: "Bound the locked atom lookup ... add a per-slot case-folded hash / bucket index or a thread-context mutex")
 > **Quality reviewed:** 2026-07-03 | Codex 16x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 3H+10M fixed, 3M accepted-XREF | scope: kernel-code-quality
 
@@ -1139,7 +1139,7 @@ Per-process syscall restrictions allow a process to lock down which system servi
 > **Verified:** 2026-07-03 | commit `269eccd9` | 8/8 items | build OK | tests 13686 kernel + 16 user PASS
 > **Accepted:** [H] KernelMode bypass + filtered-task resolution read the global current-thread cursor (not SMP-closed); on real SMP a filtered user syscall could be misclassified as KernelMode -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]` ... closes the cross-CPU probe-gating half of 02-kernel-core/TODO-12 §12 (`ssdt_previous_mode`)" at line 116)
 > **Accepted:** [H] snapshot free at the reap barrier has no cross-CPU reader grace period; safe on the single-cursor scheduler, a sibling reader on another CPU could race the free once per-CPU run queues land -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §6 (item: "`call_rcu(cb)` defers callbacks to a per-CPU list drained after each quiescent state" at line 171)
-> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 433)
+> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 434)
 > **Accepted:** [H] `NtCreateProcess` leaks the unstarted child task if `ObpAllocateHandle` fails after `task_create` (the inherited filter clone is freed, but the child TCB is not); the child is inert (no returned handle, never scheduled/exec'd) so it is not an unfiltered-runnable escape -> XREF: 02-kernel-core/TODO-05-object-manager.md (item: "Atomic CreateProcess teardown on failure ... add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown" at line 359)
 > **Accepted:** [M] the active-count drop at `TASK_DEAD` precedes a proven all-threads-off-CPU quiescence; correct on the single-cursor scheduler (a DEAD task's threads never run), but on real SMP a still-running sibling could see the count reach zero -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor ... proven-off-CPU-on-all-CPUs reap barrier" at line 116)
 > **Accepted:** [M] the audit-mode log throttle bumps one global `s_audit_log_seq` atomic on the blocked-audit branch; uncontended on the single-cursor scheduler but a shared cacheline under real per-CPU run queues (a multi-core audited loop would bounce it) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (per-CPU state; replace the global audit sample counter with a per-CPU cacheline-isolated one at line 116)

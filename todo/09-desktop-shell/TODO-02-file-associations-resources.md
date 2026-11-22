@@ -179,7 +179,7 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 
 ## 8. Font Manager App
 
-> **Deferred:** [L] superseded 2026-11-14: this app is owned by `11-apps/TODO-13-calendar-utilities.md` and the section body moved there -> XREF: 11-apps/TODO-13 §10 (item: "void fontmgr_open" at line 311)
+> **Deferred:** [L] superseded 2026-11-14: this app is owned by `11-apps/TODO-13-calendar-utilities.md` and the section body moved there -> XREF: 11-apps/TODO-13 §10 (item: "void fontmgr_open" at line 314)
 
 - [/] Superseded: moved to `11-apps/TODO-13-calendar-utilities.md` §10; do not build a second copy here
 

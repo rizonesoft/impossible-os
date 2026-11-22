@@ -250,7 +250,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Canonical doc: [include/kernel/env.h](../../include/kernel/env.h) (argv/env API) + the `task.c` frame builder.
 > - Scope boundary: §6 owns `GetCommandLineW/A`; §15 owns `CommandLineToArgvW` decode + round-trip; envp -> PEB Environment PAGE owned by TODO-11 §21; the non-recoverable `copy_from_user` gap by TODO-02 §4.
 > **Verified:** 2026-07-13 | commit `bda8324f` | 8/9 items | build OK | 20644 kernel + 16 user tests PASS, smoke PASS
-> **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 1711)
+> **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 1710)
 > **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "Wire `env_copy()` into every child path")
 > **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 198)
 > **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 132)
@@ -489,7 +489,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary:** §11 owns only the default var; the `shell_find_command` PATHEXT consumer is owned by §7 (deferred) + `12-user-platform-sdk/TODO-02` §5 (Extension precedence).
 
 > **Verified:** 2026-07-14 | commit `7a8842a8` | 1/4 items | build OK | tests abi 1656/1656 PASS
-> **Accepted:** [M] session-cache CWD + VFS-generation coherency + `where` cache-free enumeration (reason: pre-existing SDK cache design, surfaced reviewing PATHEXT invalidation) -> XREF: 12-user-platform-sdk/TODO-02 §5 (item: "Cache coherency" at line 182)
+> **Accepted:** [M] session-cache CWD + VFS-generation coherency + `where` cache-free enumeration (reason: pre-existing SDK cache design, surfaced reviewing PATHEXT invalidation) -> XREF: 12-user-platform-sdk/TODO-02 §5 (item: "Cache coherency" at line 178)
 > **Quality reviewed:** 2026-07-14 | Codex 8x (design + adversarial + consistency + perf + re-adversarial) | 7M fixed, 1M accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---
