@@ -581,3 +581,13 @@ Sections 60 to 67 (review receipts, repro tests, review depth per path, the rede
 - **B:** section 48, then 49 to 59, then 60 to 67 in number order.
 
 A: (operator asked, run decided, 2026-11-21) A. The review sections make every later review safer or faster, so the eleven lane sections are reviewed under them. Section 64 was first ordered last, after the scoped-re-dispatch trial on 48 to 59; the operator then ended that trial (a scoped pass is one fewer full look at the section) and section 64 became "Re-dispatched passes name the repair", which scopes nothing and builds with the other review sections. The run now follows the plan's row order inside a file as well as between files (`sequencer_triage.py` `plan_order`, `advance-work.py` `_next_section`); before this it took the lowest-numbered runnable section in the file. Reversing it costs a reorder of the plan rows and dropping 64's dependency.
+
+## Q51 (00-infrastructure/TODO-08 §48): the section is past its pass cap and every wave returns new failing-host edge cases; wait for clean passes or stamp?
+
+Nine consecutive final-candidate waves each returned about five new P2 findings on the slow, full or failing host threat model; each was fixed with a regression, and each fix exposed the next layer. The pin requires clean performance and completion passes on the stamped candidate even at the cap.
+
+- **A:** stamp at the cap with the last wave's findings fixed in the same cycle and not re-reviewed, and move the open-ended scope to a pinned threat model (section 62).
+- **B:** keep dispatching waves until performance and completion both come back clean.
+
+A: (operator direction, 2026-11-23, after more than 24 hours on the section) A. The global review rule bounds review so work finishes, and a clean pass on this scope was not predictable. Reversal cost: one review wave (about 30 minutes) on `3b57a38b1`, with any finding filed as a follow-up section; the stamp stays valid for the code it names.
+

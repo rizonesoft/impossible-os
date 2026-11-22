@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **995 of 2754 sections complete (36%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **996 of 2754 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -38,10 +38,10 @@ Everything later is proven by these gates, so they come first: the build and ana
 
 | Done | Section       | Deliverable                                                                                                           | Needs      | Items |
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ---------- | ----: |
-| [/]  | `D00 T08 §48` | Two engines, one gate set: the lane policy                                                                            | none       |     5 |
+| [x]  | `D00 T08 §48` | Two engines, one gate set: the lane policy                                                                            | none       |     5 |
 | [ ]  | `D00 T08 §60` | Review receipts are written atomically                                                                                | none       |     3 |
 | [ ]  | `D00 T08 §61` | A P2 comes with a failing test                                                                                        | none       |     3 |
-| [ ]  | `D00 T08 §62` | Review depth per path                                                                                                 | none       |     3 |
+| [ ]  | `D00 T08 §62` | Review depth per path                                                                                                 | none       |     4 |
 | [ ]  | `D00 T08 §63` | A repeated finding dispatches a redesign pass                                                                         | none       |     2 |
 | [ ]  | `D00 T08 §64` | Re-dispatched passes name the repair                                                                                  | none       |     2 |
 | [ ]  | `D00 T08 §65` | Tools run in front of the review lenses                                                                               | none       |     2 |

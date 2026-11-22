@@ -1650,6 +1650,14 @@ Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/pla
 - Out of scope by decision: source encodings other than UTF-8 and BOM-marked UTF-16 (the tree holds none), and partial clones.
 - The zero-trailer gate refuses any message line that starts with a forbidden key, in any case: `git interpret-trailers` let a lowercase key and trailers around a `---` or scissors line pass in turn, and on the gate's whole range the line test matches only the two grandfathered commits (`test_ai_trailer_filter.py`).
 
+> **Notes:**
+> - What shipped: the lane policy (CLAUDE.md, ai-system.md, AGENTS.md, CONTRIBUTING.md, GEMINI.md), the lane-wide dash gate at pre-commit, commit-msg and pre-push, and the bounded supervisor, waiter and commit-gate machinery its review demanded (the Notes list above).
+> - Stamped at the pass cap on operator direction (Q51): the last wave's findings are fixed with regressions and were not re-reviewed.
+> - Scope boundary: a pinned threat model for host-tooling reviews belongs to section 62.
+
+> **Verified:** 2026-11-23 | commit `3b57a38b1` | 5/5 items | runner files 473 passed, gate set 250 passed, `scripts/overnight/tests/run-all.sh` 100 passed, 0 failed | ruff and shellcheck clean | `review_pin.py --check` ok | `site/build.py --check` ok | `test-ai-system.sh` 93 passed | lint 0 errors
+> **Quality reviewed:** 2026-11-23 | Codex 202x (plan, round 67x, performance 67x, completion 67x) | every returned finding fixed with a regression that fails on the commit before it, 0 open | stamped at the pass cap on operator direction without clean performance and completion passes on `3b57a38b1` (the last wave's six findings were fixed in the same cycle and not re-reviewed; todo/answers.md Q51) | the open-ended failing-host scope that kept each wave finding new cases is owned by [section 62](#62-review-depth-per-path) (item: "Host-tooling paths carry a pinned threat model")
+
 ## 49. The lane map and the commit check
 
 > **Spawned-by:** root
@@ -1836,6 +1844,7 @@ Operator decision 2026-11-21: every level blocks on every path, so this section 
 
 - [ ] `deep_paths` in `.conclave/reviewers.toml` names `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
 - [ ] A section touching a deep path gets every lens in every pass, and [section 66](#66-lens-yield-is-measured) never removes a lens there
+- [ ] Host-tooling paths carry a pinned threat model and recorded-limit list in the pin, quoted by every pass, so a pass never re-derives an open-ended failing-host scope (section 48 took 202 passes on it)
 - [ ] Commit: `"review: review depth per path"`
 
 **Test checkpoint:** `review_pin.py` gives a pass over `src/kernel/` every lens, including one lens yield would drop elsewhere.
