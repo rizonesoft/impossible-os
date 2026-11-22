@@ -14,11 +14,11 @@
 #                            skipped pre-commit (--no-verify in any spelling).
 #   - .githooks/post-commit  always-on: regenerates COUNT.md (core code +
 #                            supporting text counts), amends commit.
-#   - .githooks/pre-push     always-on dash check over outgoing commits;
-#                            opt-in: delegates to scripts/hooks/pre-push
-#                            (full build + test.sh) when
-#                            .git/.impossible-os-prepush sentinel exists;
-#                            no-ops otherwise.
+#   - .githooks/pre-push     always-on: the branch policy, the review debt,
+#                            the dash check over outgoing commits and the
+#                            conditional suites; the sentinel
+#                            .git/.impossible-os-prepush adds only the
+#                            delegated build + test.sh (scripts/hooks/pre-push).
 #
 # Usage:
 #   bash scripts/install-hooks.sh                # set core.hooksPath=.githooks
@@ -232,16 +232,25 @@ prune_legacy_symlinks() {
     # Identity, not spelling: -ef holds only when the link resolves to that very file (a dangling link, or one
     # to another file whose name merely reads the same once a shell strips a newline, never does).
     # 0: ours, 1: not ours, 2: the worktrees could not be listed (the listing's own status ends it).
+    # The whole listing is read before a match counts, so one cut short by a failure refuses.
     legacy_link_is_ours() {
-        local entry listed=""
+        local entry listed="" found=1
         while IFS= read -r -d '' entry; do
             case "$entry" in
-                "worktree "*) [ "$1" -ef "${entry#worktree }/scripts/hooks/pre-push" ] && return 0 ;;
+                "worktree "*) [ "$1" -ef "${entry#worktree }/scripts/hooks/pre-push" ] && found=0 ;;
                 "listed=0") listed=0 ;;
             esac
         done < <(git -C "$PROJECT" worktree list --porcelain -z && printf 'listed=0\0')
         [ "$listed" = 0 ] || return 2
-        return 1
+        return "$found"
+    }
+    # The link's own identity: device and inode, then its text (the && keeps a failed readlink failing; the
+    # x keeps a trailing newline the substitution would strip).
+    link_identity() {
+        local inode text
+        inode="$(stat -c '%d:%i' -- "$1")" || return 1
+        text="$(readlink -- "$1" && printf x)" || return 1
+        printf '%s/%s' "$inode" "$text"
     }
     local legacy
     legacy="$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$PROJECT/.git")/hooks"
@@ -256,7 +265,7 @@ prune_legacy_symlinks() {
     # below is known to be the one judged: a relative link resolves differently once moved, so it is not
     # judged again there, and the text stands in where a freed inode number is given to a replacement.
     local id
-    id="$(stat -c '%d:%i' -- "$target")/$(readlink -- "$target")" \
+    id="$(link_identity "$target")" \
         || { echo "The legacy link $target could not be read: left in place" >&2; return 1; }
     local ours=0
     legacy_link_is_ours "$target" || ours=$?
@@ -273,8 +282,16 @@ prune_legacy_symlinks() {
             echo "The legacy link $target could not be moved aside (see above): it is left in place and still runs" >&2
             return 1
         else
-            if [ -L "$aside/pre-push" ] \
-                && [ "$(stat -c '%d:%i' -- "$aside/pre-push" 2>/dev/null)/$(readlink -- "$aside/pre-push")" = "$id" ]; then
+            local now=""
+            if [ -L "$aside/pre-push" ] && ! now="$(link_identity "$aside/pre-push")"; then
+                # A link that cannot be read is not known to be the one judged: it is put back, and the
+                # removal fails.
+                mv -n -T -- "$aside/pre-push" "$target" \
+                    || echo "It could not be put back either; it is kept at $aside/pre-push" >&2
+                echo "The legacy link moved aside could not be read again, so it was not deleted" >&2
+                return 1
+            fi
+            if [ -n "$now" ] && [ "$now" = "$id" ]; then
                 rm -f -- "$aside/pre-push" || {
                     echo "The legacy link could not be deleted; it stays, inactive, at $aside/pre-push" >&2
                     return 1

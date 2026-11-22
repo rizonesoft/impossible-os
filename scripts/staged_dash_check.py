@@ -103,20 +103,6 @@ def changes_by_header(raw: bytes) -> list:
     return blocks
 
 
-def as_text(blob: bytes):
-    """The blob as UTF-8 text bytes without a byte-order mark, or None for a
-    binary blob. A BOM-marked UTF-16 file is decoded; one that cannot be
-    decoded is a read error, never clean."""
-    if blob[:2] in UTF16_BOMS:
-        try:
-            return blob.decode("utf-16").encode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
-    if b"\0" in blob[:BINARY_PREFIX]:
-        return None
-    return blob[3:] if blob.startswith(UTF8_BOM) else blob
-
-
 def dash_count(text) -> int:
     return 0 if text is None else sum(text.count(d) for d in DASHES)
 
@@ -157,7 +143,7 @@ class BlobReader:
     time (bounded_run.Stream): at the deadline, or on Ctrl-C or SIGTERM, the
     whole group ends, so a stalled read ends in a short read, which is an
     error. Each blob's dash count is cached by id and its text is not kept; a
-    refused file's two blobs are read again to name lines."""
+    refused file's blobs are read again, as a stream, to name lines."""
 
     def __init__(self):
         self.stream = bounded_run.Stream(["git", "cat-file", "--batch"], "git cat-file", timeout=TIMEOUT,
@@ -171,9 +157,6 @@ class BlobReader:
         if oid not in self.counts:
             self.counts[oid] = self._count(oid)
         return self.counts[oid]
-
-    def text(self, oid: str):
-        return None if oid == NULL_OID else as_text(self._read(oid))
 
     def _header(self, oid: str) -> int:
         self.proc.stdin.write(oid.encode() + b"\n")
@@ -228,11 +211,56 @@ class BlobReader:
         self._end(oid, left)
         return n
 
-    def _read(self, oid: str) -> bytes:
+    def lines(self, oid: str) -> list:
+        """dash_lines of the blob as text, read in chunks like the count: only
+        the line being read is carried from one chunk to the next, so the blob
+        is never held whole. A UTF-16 byte-order mark is decoded as it streams
+        (a file that cannot be decoded is a read error, never clean), a UTF-8
+        one is dropped, and a binary blob (a NUL in its prefix) has none."""
+        if oid == NULL_OID:
+            return []
         size = self._header(oid)
-        data = self.proc.stdout.read(size)
-        self._end(oid, size - len(data))
-        return data
+        head = self.proc.stdout.read(min(size, BINARY_PREFIX))
+        left = size - len(head)
+        if len(head) < min(size, BINARY_PREFIX):
+            raise ValueError(f"cat-file returned blob {oid} short")
+        out, pending, base = [], [], 0
+
+        def feed(data: bytes, final=False):
+            nonlocal base
+            cut = len(data) if final else data.rfind(b"\n") + 1
+            if not cut and not final:
+                if data:
+                    pending.append(data)                   # inside one line: kept, joined once
+                return
+            done = b"".join((*pending, data[:cut]))
+            pending.clear()
+            if cut < len(data):
+                pending.append(data[cut:])
+            out.extend((base + n, ln) for n, ln in dash_lines(done))
+            base += done.count(b"\n")
+
+        if head[:2] in UTF16_BOMS:
+            decoder = codecs.getincrementaldecoder("utf-16")()
+            try:
+                feed(decoder.decode(head).encode("utf-8"))
+                for chunk in self._chunks(left):
+                    left -= len(chunk)
+                    feed(decoder.decode(chunk).encode("utf-8"))
+                feed(decoder.decode(b"", final=True).encode("utf-8"), final=True)
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"a UTF-16 file could not be decoded ({exc.reason})") from exc
+        elif b"\0" in head:
+            for chunk in self._chunks(left):
+                left -= len(chunk)
+        else:
+            feed(head[3:] if head.startswith(UTF8_BOM) else head)
+            for chunk in self._chunks(left):
+                left -= len(chunk)
+                feed(chunk)
+            feed(b"", final=True)
+        self._end(oid, left)
+        return out
 
     def abort(self) -> None:
         self.stream.abort()
@@ -275,7 +303,7 @@ def refused(per_parent: list, reader, lines=None) -> list:
 
     def blob(oid):                                         # a blob's dash lines, whichever side it is on
         if ("blob", oid) not in lines:
-            lines["blob", oid] = dash_lines(reader.text(oid))
+            lines["blob", oid] = reader.lines(oid)
         return lines["blob", oid]
 
     if not per_parent:

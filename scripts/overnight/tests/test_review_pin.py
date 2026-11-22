@@ -1834,7 +1834,7 @@ def test_the_broker_read_takes_from_the_callers_limit(tmp_path):
     done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
                            "[review-kind: round] todo/x.md section 9\nReview it."],
                           capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
-    assert done.returncode == 2 and time.monotonic() - began < 10, done.stderr
+    assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
     assert "took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
 
 
@@ -1863,7 +1863,19 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
         def read(self, n):
             data = self.fh.read(n)
             read.append(len(data))
-            return data
+            return Joined(data)
+
+    added = []
+
+    class Joined(bytes):
+        """A chunk that counts the bytes an accumulator copies by concatenating onto it."""
+        def __add__(self, other):
+            added.append(len(self) + len(other))
+            return bytes(self) + bytes(other)
+
+        def __radd__(self, other):
+            added.append(len(self) + len(other))
+            return bytes(other) + bytes(self)
 
     rp.open = lambda *a, **k: Counted(real_open(*a, **k))
     try:
@@ -1871,6 +1883,7 @@ def test_the_manifest_is_read_from_its_end_without_rescanning_a_long_record(tmp_
     finally:
         del rp.open
     assert sum(read) == m.stat().st_size                    # every byte read once: nothing rescanned
+    assert sum(added) <= m.stat().st_size                   # and never copied onto a growing record
 
 
 def _broker(repo, env, timeout=60):
@@ -1909,7 +1922,7 @@ def test_a_slow_untracked_read_is_held_to_the_callers_limit(tmp_path):
     (tmp_path / "c.js").write_text("\n")
     began = time.monotonic()
     done = _broker(repo, env)
-    assert done.returncode == 2 and time.monotonic() - began < 10, done.stderr
+    assert done.returncode == 2 and time.monotonic() - began < 3 + 1.2, done.stderr
     assert "took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
 
 
@@ -1918,9 +1931,11 @@ def test_a_detached_job_started_after_the_callers_deadline_runs_nothing(tmp_path
     repo, _git = _tmp_repo(tmp_path)
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    # The service manager is slow, then declines: the setsid route starts the job after the deadline.
+    # The service manager stalls past the deadline, and would stall again if asked to stop the unit.
     (bindir / "systemd-run").write_text("#!/bin/sh\nsleep 4\nexit 1\n")
-    (bindir / "systemd-run").chmod(0o755)
+    (bindir / "systemctl").write_text("#!/bin/sh\nsleep 10\n")
+    for tool in ("systemd-run", "systemctl"):
+        (bindir / tool).chmod(0o755)
     ran = tmp_path / "ran"
     fake = tmp_path / "companion.js"
     fake.write_text(f"require('fs').writeFileSync({str(ran)!r}, 'x');\n"
@@ -2003,7 +2018,7 @@ def test_a_slow_outage_check_is_held_to_the_callers_limit(tmp_path):
             os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
         except OSError:                                # fail-direction: no reader is left to release
             pass
-    assert done.returncode == 2 and time.monotonic() - began < 6, done.stderr
+    assert done.returncode == 2 and time.monotonic() - began < 2 + 1.2, done.stderr
     assert "outage check took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
 
 
@@ -2027,3 +2042,47 @@ def test_a_chmod_while_an_untracked_file_is_read_refuses(tmp_path, monkeypatch):
     monkeypatch.setattr(rc.os, "read", read)
     with pytest.raises(rc.Refused, match="changed while it was read"):
         rc.snapshot()
+
+
+def test_registration_is_held_to_the_callers_limit(tmp_path):
+    import os
+    import time
+    repo, _git = _tmp_repo(tmp_path)
+    reviews = repo / ".claude/overnight/reviews"
+    reviews.mkdir(parents=True)
+    fifo = reviews / "manifest.jsonl"
+    os.mkfifo(fifo)                                    # opening it to append waits for a reader that never comes
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(tmp_path / "c.js"), "REVIEW_BASE": "HEAD",
+           "CODEX_OUTAGE_OVERRIDE": "1", "CODEX_REVIEW_MAX_SECS": "2"}
+    (tmp_path / "c.js").write_text("\n")
+    began = time.monotonic()
+    try:
+        done = _broker(repo, env, timeout=20)
+    finally:
+        try:                                           # release a writer the broker left behind
+            os.close(os.open(fifo, os.O_RDONLY | os.O_NONBLOCK))
+        except OSError:                                # fail-direction: no writer is left to release
+            pass
+    assert done.returncode == 2 and time.monotonic() - began < 2 + 1.2, done.stderr
+    assert "registering the dispatch took the whole CODEX_REVIEW_MAX_SECS" in done.stderr, done.stderr
+    assert not list(reviews.glob(".prompt.*"))
+
+
+def test_a_reset_during_the_status_walk_refuses_the_launch(tmp_path, monkeypatch):
+    """HEAD is read before the walk: a soft reset meanwhile would pair a clean status with another commit."""
+    import subprocess
+    rc = _rc_module()
+    repo, git = _tmp_repo(tmp_path)
+    (repo / "a.txt").write_text("2\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "second")
+    monkeypatch.chdir(repo)
+    real = rc._status
+
+    def status(top, scope):
+        seen = real(top, scope)
+        subprocess.run(["git", "-C", str(repo), "reset", "-q", "--soft", "HEAD~1"], check=True, timeout=30)
+        return seen
+    monkeypatch.setattr(rc, "_status", status)
+    with pytest.raises(rc.Refused, match="the candidate changed while it was read"):
+        rc.launch()

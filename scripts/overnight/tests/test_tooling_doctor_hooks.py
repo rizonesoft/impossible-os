@@ -666,6 +666,41 @@ def test_the_doctor_names_every_file_when_one_name_holds_another(tmp_path):
     assert fix.count(str(plain)) == 2, fix                # once inside the longer name, once on its own
 
 
+def _legacy_link(tmp_path):
+    root = _plain_repo(tmp_path)
+    link = root / ".git/hooks/pre-push"
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(root / "scripts/hooks/pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    return root, link, bindir
+
+
+def _remove_with(root, bindir, tool, body):
+    (bindir / tool).write_text(f'#!/bin/sh\n{body}\nexec "{shutil.which(tool)}" "$@"\n')
+    (bindir / tool).chmod(0o755)
+    return subprocess.run(["bash", "scripts/install-hooks.sh", "--remove"], cwd=root, capture_output=True, text=True,
+                          timeout=60, env={**_env(), "PATH": f"{bindir}:{os.environ['PATH']}"})
+
+
+def test_a_listing_cut_short_after_a_match_fails_the_removal(tmp_path):
+    root, link, bindir = _legacy_link(tmp_path)
+    r = _remove_with(root, bindir, "git", f'case " $* " in *" worktree list "*) "{shutil.which("git")}" "$@"; '
+                                          'exit 128 ;; esac')
+    assert r.returncode != 0 and "could not be listed" in r.stderr and link.is_symlink(), r
+
+
+def test_a_link_whose_identity_cannot_be_read_is_never_deleted(tmp_path):
+    root, link, bindir = _legacy_link(tmp_path)
+    r = _remove_with(root, bindir, "stat", f'case " $* " in *" {link}"*) exit 1 ;; esac')
+    assert r.returncode != 0 and "could not be read: left in place" in r.stderr and link.is_symlink(), r
+    (tmp_path / "again").mkdir()
+    root, link, bindir = _legacy_link(tmp_path / "again")
+    r = _remove_with(root, bindir, "stat", 'case " $* " in *"/.install-hooks."*) exit 1 ;; esac')
+    assert r.returncode != 0 and "could not be read again" in r.stderr and link.is_symlink(), r
+    assert not list(link.parent.glob(".install-hooks.*/pre-push"))
+
+
 def test_a_failed_worktree_listing_fails_the_removal(tmp_path):
     root = _plain_repo(tmp_path)
     link = root / ".git/hooks/pre-push"

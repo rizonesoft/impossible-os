@@ -276,8 +276,16 @@ def test_no_old_blob_is_read_when_the_new_blob_holds_no_dash():
 
 
 def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
+    odd = ("ok " + DASH + "\n").encode("utf-16") + b"\n"            # a UTF-16 file cut mid-character
+
+    class Odd:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(b"abc blob %d\n" % len(odd) + odd + b"\n")
+
+    reader = m.BlobReader.__new__(m.BlobReader)
+    reader.proc, reader.counts = Odd(), {}
     try:
-        m.as_text(("ok " + DASH + "\n").encode("utf-16") + b"\n")
+        reader.lines("abc")
     except ValueError as exc:
         assert "UTF-16" in str(exc)
     else:
@@ -287,10 +295,9 @@ def test_reads_that_fail_are_errors_not_clean(monkeypatch, capsys):
         stdin = io.BytesIO()
         stdout = io.BytesIO(b"abc blob 100\nclean")
 
-    reader = m.BlobReader.__new__(m.BlobReader)
-    reader.proc, reader.counts = Short(), {}
+    reader.proc = Short()
     try:
-        reader._read("abc")
+        reader.lines("abc")
     except ValueError as exc:
         assert "short" in str(exc)
     else:
@@ -660,7 +667,7 @@ def test_a_binary_blob_is_counted_from_its_prefix_and_the_stream_stays_in_step(t
     reader = m.BlobReader()
     try:
         assert reader.count(oids[0]) == 0 and reader.count(oids[1]) == 1
-        assert reader.text(oids[1]).count(DASH.encode()) == 1
+        assert reader.lines(oids[0]) == [] and reader.lines(oids[1]) == [(1, ("x " + DASH).encode())]
     finally:
         assert reader.close() == 0
 
@@ -726,9 +733,9 @@ def test_a_refusal_reads_only_the_parents_that_hold_a_dash(tmp_path):
         def count(self, oid):
             return {"new": 1, "bin": 0, "dash": 0}[oid]
 
-        def text(self, oid):
+        def lines(self, oid):
             reads.append(oid)
-            return ("x " + DASH + "\n").encode()
+            return m.dash_lines(("x " + DASH + "\n").encode())
 
     found = m.refused([[("bin", "new", "f.md")], [("bin", "new", "f.md")]], Reader())
     assert [f[0] for f in found] == ["f.md"] and reads == ["new"], reads
@@ -742,7 +749,7 @@ def test_a_merge_parent_holding_as_many_decides_without_reading_the_rest():
             counted.append(oid)
             return {"new": 1, "p1": 1, "p2": 0}[oid]
 
-        def text(self, oid):
+        def lines(self, oid):
             raise AssertionError("a clean file is never read")
 
     assert m.refused([[("p1", "new", "f.md")], [("p2", "new", "f.md")]], Reader()) == []
@@ -831,9 +838,9 @@ def test_one_refused_change_at_many_paths_is_diagnosed_once():
         def count(self, oid):
             return {"new": 1, "old": 0}[oid]
 
-        def text(self, oid):
+        def lines(self, oid):
             texts.append(oid)
-            return ("x " + DASH + "\n").encode()
+            return m.dash_lines(("x " + DASH + "\n").encode())
 
     found = m.refused([[("old", "new", f"f{i}.md") for i in range(5)]], Reader(), {})
     assert len(found) == 5 and texts == ["new"], texts
@@ -1077,9 +1084,9 @@ def test_a_series_of_refused_edits_reads_each_version_once():
         def count(self, oid):
             return {"v0": 0, "v1": 1, "v2": 2}[oid]
 
-        def text(self, oid):
+        def lines(self, oid):
             texts.append(oid)
-            return "".join(f"line {i} {DASH}\n" for i in range(self.count(oid))).encode()
+            return m.dash_lines("".join(f"line {i} {DASH}\n" for i in range(self.count(oid))).encode())
 
     lines = {}
     assert m.refused([[("v0", "v1", "f.md")]], Reader(), lines)
@@ -1287,3 +1294,30 @@ def test_a_failed_read_of_the_ref_updates_refuses_the_push(tmp_path):
     r = _sub(["bash", str(root / ".githooks/pre-push"), "origin", str(tmp_path / "nowhere.git")], cwd=root, env=env,
              capture_output=True, text=True, timeout=120)
     assert r.returncode == 1 and "could not be read from git" in r.stderr, r
+
+
+def test_a_refused_blobs_lines_are_read_as_a_stream(tmp_path, monkeypatch):
+    """Naming the lines reads the blob in chunks like the count: never one read of the whole file, and lines
+    that cross a chunk edge come out whole, in UTF-8 and BOM-marked UTF-16 alike."""
+    root = _repo(tmp_path)
+    filler = "x" * (m.CHUNK - 5) + "\n"
+    text = "a\n" + filler + "edge " + DASH + " here\r\n" + filler * 3 + "tail " + DASH
+    _stage(root, {"u8.md": text.encode(), "u16.md": text.encode("utf-16")})
+    _commit(root, "big")
+    want = m.dash_lines(text.encode())
+    _production_git_in(root, monkeypatch)
+    reader = m.BlobReader()
+    largest = []
+    real_read = reader.proc.stdout.read
+
+    def read(n=-1):
+        largest.append(n)
+        return real_read(n)
+    reader.proc.stdout.read = read
+    try:
+        for name in ("u8.md", "u16.md"):
+            assert reader.lines(_git(root, "rev-parse", f"HEAD:{name}")) == want, name
+    finally:
+        reader.proc.stdout.read = real_read
+        assert reader.close() == 0
+    assert len(want) == 2 and 0 < max(largest) <= max(m.CHUNK, m.BINARY_PREFIX), max(largest)

@@ -415,3 +415,15 @@ def test_the_limit_ends_a_command_that_has_not_yet_started_its_group(tmp_path):
     assert "No such file" not in err.read_text(), err.read_text()
     time.sleep(3)
     assert not ran.exists()
+
+
+def test_the_limit_polls_without_starting_a_process(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    used = tmp_path / "used"
+    (bindir / "sleep").write_text(f'#!/bin/sh\n: > "{used}"\nexec "{shutil.which("sleep")}" "$@"\n')
+    (bindir / "sleep").chmod(0o755)
+    done = subprocess.run(["bash", str(LIMIT), "5", f"{sys.executable} -c 'import time; time.sleep(0.6)'"],
+                          capture_output=True, text=True, timeout=30,
+                          env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"})
+    assert done.returncode == 0 and not used.exists(), done

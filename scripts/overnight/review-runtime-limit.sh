@@ -62,6 +62,8 @@ alive() {
 
 term_at=$(( end - grace ))
 limited=0
+# A pipe nothing writes to: a timed read of it is the poll's pause, a shell builtin with no process per poll.
+exec {pause_fd}<> <(:)
 # Until the child has run setsid its group does not exist and a signal to it fails; the child itself is then
 # signalled, which ends it before it can start anything (it has no children of its own until setsid).
 signal_job() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
@@ -77,7 +79,7 @@ while alive; do
         limited=1
         signal_job TERM
     fi
-    sleep 0.1                # the limit is kept to a tenth of a second
+    read -r -t 0.1 -u "$pause_fd" _       # the limit is kept to a tenth of a second; it times out by design
 done
 wait "$pid" 2>/dev/null
 status=$?

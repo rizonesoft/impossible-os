@@ -190,14 +190,23 @@ PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 # Written by a JSON serializer, as the receipt is: a path holding a quote, a
 # backslash or a newline must not leave a line no reader can parse.
 MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"
-python3 "$MANIFEST_LINE" --append "$MANIFEST" \
-    "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
+REGISTER="python3 $(q "$MANIFEST_LINE") --append $(q "$MANIFEST")"
+for field in "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
     "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
-    "worktree_sha256=$TREE_WORK" "bool:done_file=true" || {
-  echo "[review-broker] BLOCK -- the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
+    "worktree_sha256=$TREE_WORK" "bool:done_file=true"; do
+  REGISTER+=" $(q "$field")"
+done
+REGISTER_RC=0
+limited "$REGISTER" || REGISTER_RC=$?
+if [[ "$REGISTER_RC" != 0 ]]; then
   rm -f "$PROMPT_FILE"
+  if [[ "$REGISTER_RC" == 124 && -n "$LIMIT_END" ]]; then
+    echo "[review-broker] BLOCK -- registering the dispatch took the whole CODEX_REVIEW_MAX_SECS; nothing was launched" >&2
+    exit 2
+  fi
+  echo "[review-broker] BLOCK -- the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
   exit 1
-}
+fi
 JOB="$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; echo \$rc > $Q_LOG.done.tmp && mv -f $Q_LOG.done.tmp $Q_LOG.done; rm -f $Q_PROMPT"
 # LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above PROMPT_FILE); it does not relaunch or watch the session.
 SUBMIT="systemd-run --user --collect $(q "--unit=$UNIT") $(q "--setenv=CODEX_REVIEWER_DISPATCH=1") $(q "--setenv=HOME=$HOME") $(q "--setenv=PATH=$PATH") --same-dir /bin/bash -c $(q "$JOB") >/dev/null 2>&1"
@@ -207,9 +216,9 @@ if [[ "$SUBMIT_RC" == 0 ]]; then
   :
 elif [[ "$SUBMIT_RC" == 124 && -n "$LIMIT_END" ]]; then
   # The limit ended the submission itself. Whether the unit was created is unknown, so no second copy is
-  # started: a unit that exists is stopped (its own limiter would end it at once anyway), and the attempt is
-  # recorded as one the limit ended, as the job would have recorded it.
-  timeout 5 systemctl --user stop "$UNIT" >/dev/null 2>&1 || true   # fail-direction: a unit never made has nothing to stop
+  # started and the service manager is not asked again (that wait would outlast the deadline): a unit that
+  # does start runs its job under the same deadline, which has passed, so it runs nothing and records 124
+  # too. The attempt is recorded here as the one the limit ended.
   echo "Turn completed (rc=124)" >> "$LOG_FILE"
   echo 124 > "$LOG_FILE.done.tmp" && mv -f "$LOG_FILE.done.tmp" "$LOG_FILE.done"
   rm -f "$PROMPT_FILE"

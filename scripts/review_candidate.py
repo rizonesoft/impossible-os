@@ -186,11 +186,11 @@ def _head(top):
     raise Refused("HEAD names no commit and no branch")
 
 
-def _fingerprint(top, scope, status):
-    """(digest, HEAD's object id, [(path, note)] for the untracked entries). A status with no tracked change
-    has no patch to take."""
+def _fingerprint(top, scope, status, head):
+    """(digest, HEAD's object id, [(path, note)] for the untracked entries), the tracked changes taken
+    against `head`, the HEAD read before the status walk. A status with no tracked change has no patch to
+    take."""
     h = hashlib.sha256()
-    head = _head(top)
     raw, untracked, tracked = status
     if tracked:
         _git(top, "diff", head, "--binary", "--no-ext-diff", "--no-textconv", "--no-renames", *scope,
@@ -209,10 +209,22 @@ def _fingerprint(top, scope, status):
     return h.hexdigest(), head, notes
 
 
+def _read(top, scope):
+    """(digest, HEAD, notes, status) of one candidate. HEAD is read before the status walk and again after
+    the digest: a commit or a reset meanwhile would pair a status taken against one commit with another, so
+    it refuses."""
+    head = _head(top)
+    status = _status(top, scope)
+    digest, _head_used, notes = _fingerprint(top, scope, status, head)
+    if _head(top) != head:
+        raise Refused("the candidate changed while it was read (a commit, or a change to the index); run again")
+    return digest, head, notes, status
+
+
 def snapshot(exclude=""):
     top = _top()
     scope = _scope(top, exclude)
-    return _fingerprint(top, scope, _status(top, scope))[0]
+    return _read(top, scope)[0]
 
 
 def launch(exclude=""):
@@ -233,8 +245,8 @@ def launch(exclude=""):
                           f"{err.decode(errors='replace').strip()})")
         return "staged-" + h.hexdigest()
     before = index()
-    digest, head, _notes = _fingerprint(top, scope, _status(top, scope))
-    if index() != before or _head(top) != head:
+    digest, head, _notes, _status_read = _read(top, scope)
+    if index() != before:
         raise Refused("the candidate changed while it was read (a commit, or a change to the index); run again")
     return ("unknown" if head == EMPTY_TREE else head), before, digest
 
@@ -245,8 +257,7 @@ def prepare(base, head, exclude=""):
     none to list."""
     top = _top()
     scope = _scope(top, exclude)
-    status = _status(top, scope)
-    digest, current, notes = _fingerprint(top, scope, status)
+    digest, current, notes, status = _read(top, scope)
     found = {rel for rel, _note in notes}
     found.update(p for p in _git(top, "diff", "--name-only", "-z", "--no-renames", base, head, *scope).split(b"\0")
                  if p)
