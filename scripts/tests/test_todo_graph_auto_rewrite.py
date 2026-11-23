@@ -90,10 +90,11 @@ def git(*args):
 
 
 def repair_tree_choice():
-    """(linked worktree repaired there, unrelated repository left alone). The hook runs with the session's
+    """(linked worktree repaired there, unrelated or unregistered tree left alone). The hook runs with the session's
     primary tree as its cwd. An edit in a linked worktree must be repaired in THAT worktree (on 2026-11-23 an edit
     in ../impossible-os-gh rewrote 22 primary-tree TODO files under a live run), and an edit in an unrelated
-    checkout must run no code from it."""
+    checkout must run no code from it, and neither must a tree that points at this repository's git metadata
+    without being one of its registered worktrees (plan review, 2026-11-23)."""
     with tempfile.TemporaryDirectory() as tmp:
         a, b, c = (os.path.join(tmp, n) for n in "abc")
         git("init", "-q", a)
@@ -104,13 +105,17 @@ def repair_tree_choice():
         git("-C", a, "worktree", "add", "-q", "--detach", b)
         git("init", "-q", c)
         fake_validator(c)
+        d = os.path.join(tmp, "d")                     # an unregistered tree sharing a's metadata
+        os.makedirs(d)
+        pathlib.Path(d, ".git").write_text(f"gitdir: {os.path.join(a, '.git')}\n")
+        fake_validator(d)
         results = []
-        for tree in (b, c):
+        for tree in (b, c, d):
             event = {"tool_input": {"file_path": os.path.join(tree, "todo", "TODO-01.md")}}
             subprocess.run([sys.executable, hook], input=json.dumps(event),
                            capture_output=True, text=True, cwd=a, timeout=60)
             results.append(pathlib.Path(tree, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists())
-        return results[0], not pathlib.Path(c, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
+        return results[0], not any(pathlib.Path(t, "ran-here").exists() for t in (a, c, d))
 
 
 def main():

@@ -30,14 +30,15 @@ import subprocess
 import sys
 
 
-def _common_dir(where):
-    """The canonical git common directory of the repository holding `where`, or None when there is none."""
+def _registered_worktrees(where):
+    """The canonical roots of every worktree git has registered for the repository holding `where`, or an empty
+    set when that cannot be read. A tree that merely points at the repository's metadata is not among them."""
     try:
-        out = subprocess.check_output(["git", "-C", where, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                                      stderr=subprocess.DEVNULL, timeout=10).decode().strip()
-    except Exception:  # fail-direction: no repository means no repair, which is silent and safe
-        return None
-    return os.path.realpath(out) if out else None
+        out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain"],
+                                      stderr=subprocess.DEVNULL, timeout=10).decode("utf-8", "surrogateescape")
+    except Exception:  # fail-direction: no list means no repair, which is silent and safe
+        return set()
+    return {os.path.realpath(line[len("worktree "):]) for line in out.splitlines() if line.startswith("worktree ")}
 
 
 def main() -> int:
@@ -64,9 +65,10 @@ def main() -> int:
         ).decode().strip()
     except Exception:
         return 0
-    # Only a worktree of the repository that installed this hook: the validator is code from the edited tree, and
-    # an edit in an unrelated checkout must never run that checkout's code.
-    if _common_dir(root) is None or _common_dir(root) != _common_dir(os.path.dirname(os.path.abspath(__file__))):
+    # Only a registered worktree of the repository that installed this hook: the validator is code from the edited
+    # tree, so an edit in an unrelated checkout, or in a tree that only points at this repository's metadata, must
+    # never run that tree's code.
+    if os.path.realpath(root) not in _registered_worktrees(os.path.dirname(os.path.abspath(__file__))):
         return 0
 
     validator = root + "/scripts/todo-graph/validate.py"
