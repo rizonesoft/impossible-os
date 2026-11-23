@@ -132,13 +132,14 @@ SUB="$(git_subcommand "$PPID")" || SUB=commit
 # A revert or cherry-pick authors a new change without pre-commit, so the lane check
 # (TODO-08 section 49) runs here on its staged paths (`git am` runs no prepare-commit-msg;
 # pre-applypatch judges it). A merge is judged on the paths it authors (lanes.py reads
-# MERGE_HEAD: a result equal to a parent's is inherited). A rebase replays commits already
-# judged, so it is judged only on who may commit at all: a reports lane never does.
+# MERGE_HEAD: a result equal to a parent's is inherited). A rebase's clean pick replays a
+# commit already judged, so it is judged only on who may commit at all (a reports lane never
+# does); a pick it stopped on is judged on what was added to it (lanes.py reads REBASE_HEAD).
 HISTORY_OP=
 lane_check_history() {
     case "$1" in
         revert|cherry-pick|merge|pull) python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1 ;;
-        *) python3 "$REPO_ROOT/scripts/lanes.py" check-staged --committer-only || exit 1 ;;
+        *) python3 "$REPO_ROOT/scripts/lanes.py" check-staged --replay || exit 1 ;;
     esac
 }
 if is_history_op "$SUB" "$PPID"; then lane_check_history "$HISTORY_OP"; exit 0; fi

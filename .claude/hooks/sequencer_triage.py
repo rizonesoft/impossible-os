@@ -64,6 +64,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
 QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*")
@@ -624,6 +625,9 @@ def _work_order(s):
     return (2, s["plan_order"]) if "plan_order" in s else (2, float("inf"))
 
 
+LANE_MAP_SECS = 2                                      # inside the Stop hook's 5 s, beside the classification
+
+
 def _lane_context(root):
     """(lane map, each extra lane's state) from scripts/lanes.py, or (None, error text) when the map cannot be
     read. Scheduling only: the commit check refuses a commit into a live lane's paths whatever triage picks,
@@ -633,7 +637,13 @@ def _lane_context(root):
         spec = importlib.util.spec_from_file_location("lanes_for_triage", os.path.join(root, "scripts", "lanes.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        lane_map = mod.committed_map(Path(root))        # the map the commit check judges by
+        # No record at all: no lane is live or damaged, and the map need not be read (this runs inside the
+        # Stop hook's five-second budget, so the common case spends no git call).
+        recs = mod.state_dir()
+        if not recs.is_dir() or not any(recs.glob("*.json")):
+            return None, ""
+        # The map the commit check judges by, read within a budget the Stop hook can afford.
+        lane_map = mod.committed_map(Path(root), deadline=time.monotonic() + LANE_MAP_SECS)
         lane_states = mod.states(lane_map)
         if not mod.any_reserving(lane_map, lane_states):
             return None, ""                            # no lane holds anything: no file needs a second read

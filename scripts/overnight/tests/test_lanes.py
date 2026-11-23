@@ -515,3 +515,93 @@ def test_triage_schedules_by_the_committed_map_not_an_edit_in_progress(triage):
     held = []
     t.pick_next({}, root, ready=None, reserved=held)
     assert {"file": "todo/00-x/TODO-01-x.md", "section": 2, "lane": "userland"} in held, held
+
+
+def test_a_lane_that_starts_while_a_merge_message_is_written_holds_the_resolution(repo):
+    git(repo["userland"], "checkout", "-q", "-b", "ul")
+    stage(repo["userland"], "user/a.c", "ul\n")
+    git(repo["userland"], "commit", "-qm", "ul")
+    stage(repo["primary"], "src/kernel/k.c")
+    git(repo["primary"], "commit", "-qm", "main")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    git(repo["primary"], "merge", "--no-ff", "--no-commit", "ul", env=os.environ.copy())
+    stage(repo["primary"], "user/a.c", "neither parent\n")           # judged while userland is off
+    starter = repo["tmp"] / "start_userland.py"
+    starter.write_text(f"import sys\nsys.path.insert(0, {str(LANES_PY.parent)!r})\nimport lanes\n"
+                       f"lanes.beat('userland', {os.getpid()}, 't')\n")
+    editor = repo["tmp"] / "editor.sh"
+    editor.write_text(f'#!/bin/sh\n"{sys.executable}" "{starter}" || exit 1\necho msg > "$1"\n')
+    editor.chmod(0o755)
+    r = git(repo["primary"], "commit", check=False, env={**os.environ, "GIT_EDITOR": str(editor)})
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    assert head(repo["primary"]) == "main"
+
+
+def _rebase_onto_main(repo, branch_edits):
+    """A branch from seed with one commit of `branch_edits`, while main moved src/kernel/k.c on."""
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "feat")
+    for rel, text in branch_edits.items():
+        stage(p, rel, text)
+    git(p, "commit", "-qm", "feat")
+    git(p, "checkout", "-q", "main")
+    stage(p, "src/kernel/k.c", "main\n")
+    git(p, "commit", "-qm", "main")
+    git(p, "checkout", "-q", "feat")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    return git(p, "rebase", "main", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+
+
+def test_a_clean_rebase_replays_a_commit_into_a_live_lanes_path(repo):
+    r = _rebase_onto_main(repo, {"user/a.c": "feat\n"})               # authored while userland was off
+    assert r.returncode == 0 and head(repo["primary"]) == "feat", r
+
+
+def test_an_edit_added_to_a_stopped_rebase_pick_is_judged(repo):
+    r = _rebase_onto_main(repo, {"src/kernel/k.c": "feat\n"})
+    assert r.returncode != 0                                          # conflict in k.c: the rebase stops
+    p = repo["primary"]
+    stage(p, "src/kernel/k.c", "resolved\n")
+    stage(p, "user/a.c", "extra\n")                                   # an unrelated edit staged with it
+    r = git(p, "rebase", "--continue", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+
+
+def test_a_worktree_must_be_relative_and_one_tree_is_one_lane(repo):
+    toml = repo["primary"] / ".conclave" / "lanes.toml"
+    good = toml.read_text()
+    toml.write_text(good.replace('worktree = "../wt-neon-b"', f'worktree = "{repo["primary"]}"'))
+    with pytest.raises(lanes.LaneError, match="must be relative"):
+        lanes.load_map(repo["primary"])
+    (repo["tmp"] / "alias").symlink_to(repo["userland"])
+    toml.write_text(good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"'))
+    git(repo["primary"], "add", "--", ".conclave/lanes.toml")
+    git(repo["primary"], "commit", "-qm", "alias map")
+    stage(repo["primary"], "COUNT.md")
+    r = check(repo["primary"])                                        # judged by the alias map now at HEAD
+    assert r.returncode == 2 and "name the same worktree" in r.stderr, r
+
+
+def test_a_fifo_in_place_of_merge_head_refuses_promptly_through_pre_commit(repo):
+    stage(repo["primary"], "src/kernel/k.c")
+    os.mkfifo(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
+              if os.path.isabs(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
+              else repo["primary"] / git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
+    r = subprocess.run(["bash", str(repo["hooks"] / "pre-commit")], cwd=repo["primary"], capture_output=True,
+                       text=True, timeout=30, env=os.environ.copy())
+    assert r.returncode != 0 and "MERGE_HEAD is not a small regular file" in r.stderr, r
+
+
+def test_triage_spends_no_git_call_when_no_lane_has_a_record(tmp_path, monkeypatch):
+    t = _load("triage_no_git", TRIAGE_PY)
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(LANES_PY, tmp_path / "scripts" / "lanes.py")          # not a git repository: any git call fails
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert t._lane_context(str(tmp_path)) == (None, "")
+    (tmp_path / "state" / "impossible-os" / "lanes").mkdir(parents=True)
+    (tmp_path / "state" / "impossible-os" / "lanes" / "userland.json").write_text("{}")
+    ctx, err = t._lane_context(str(tmp_path))
+    assert ctx is None and "lanes.toml" in err, err
+    with pytest.raises(lanes.LaneError, match="no time left"):
+        lanes._git(tmp_path, "status", deadline=time.monotonic() - 1)

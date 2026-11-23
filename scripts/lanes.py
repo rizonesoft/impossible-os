@@ -11,7 +11,7 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
     python3 scripts/lanes.py owner <path>                   # the extra lane whose paths hold it, else main
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
-    python3 scripts/lanes.py check-staged --committer-only  # who may commit at all (a rebase)
+    python3 scripts/lanes.py check-staged --replay          # a rebase's own commit of a pick
 
 check-staged exits 0 to allow, 1 to refuse, 2 when it cannot judge (a commit is refused for both).
 SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the reason.
@@ -22,6 +22,7 @@ import errno
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -92,6 +93,7 @@ def parse_map(text: str) -> dict:
               f"[lane.{name}] needs exactly {sorted(LANE_KEYS)}")
         _need(all(isinstance(lane[k], str) and lane[k] for k in ("engine", "model", "worktree")),
               f"[lane.{name}] engine, model and worktree must be non-empty strings")
+        _need(not os.path.isabs(lane["worktree"]), f"[lane.{name}] worktree must be relative to the primary tree")
         _need(lane["output"] in OUTPUTS, f"[lane.{name}] output must be one of {OUTPUTS}")
         _need(isinstance(lane["limits"], dict), f"[lane.{name}] limits must be a table")
         _need(_strings(lane["paths"]), f"[lane.{name}] paths must be a list of relative paths")
@@ -221,11 +223,15 @@ def clear(name: str) -> None:
         pass
 
 
-def _git(root: Path, *args: str) -> bytes:
+def _git(root: Path, *args: str, deadline: float | None = None) -> bytes:
+    """git's stdout, bounded by GIT_SECS, and by `deadline` (time.monotonic()) when a caller shares a budget."""
+    secs = GIT_SECS if deadline is None else min(GIT_SECS, deadline - time.monotonic())
+    if secs <= 0:
+        raise LaneError(f"git {args[0]} has no time left in its caller's budget")
     try:
         # A local replacement ref must not change what the check sees: it judges the objects git stores.
         r = subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args], capture_output=True,
-                           timeout=GIT_SECS)
+                           timeout=secs)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise LaneError(f"git {args[0]} could not run ({type(exc).__name__})") from exc
     if r.returncode != 0:
@@ -238,10 +244,13 @@ def committer(lane_map: dict, toplevel: Path) -> str | None:
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
     primary = common.resolve().parent
     here = Path(toplevel).resolve()
+    seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
-        if (primary / lane["worktree"]).resolve() == here:
-            return name
-    return None
+        tree = (primary / lane["worktree"]).resolve()
+        if tree in seen:                           # a symlink alias of another lane's tree: whose would it be?
+            raise LaneError(f"lanes {seen[tree]} and {name} name the same worktree {tree}")
+        seen[tree] = name
+    return seen.get(here)
 
 
 def staged_paths(toplevel: Path, base: str | None = None) -> list[str]:
@@ -277,48 +286,75 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
     return reasons
 
 
-def _blob(toplevel: Path, spec: str) -> str | None:
+def _blob(toplevel: Path, spec: str, deadline: float | None = None) -> str | None:
     try:
-        return _git(toplevel, "show", spec).decode("utf-8")
+        return _git(toplevel, "show", spec, deadline=deadline).decode("utf-8")
     except (LaneError, UnicodeDecodeError):
         return None
 
 
-def committed_map(toplevel: Path) -> dict:
+def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
     """The map in force before this commit: HEAD's, so an edit in progress (staged or not) never releases a
-    reservation. Only the commit that first adds the map is judged by the copy it stages."""
-    text = _blob(toplevel, f"HEAD:{MAP}")
+    reservation. Only the commit that first adds the map is judged by the copy it stages. `deadline` bounds
+    both reads together (triage runs inside the Stop hook's budget)."""
+    text = _blob(toplevel, f"HEAD:{MAP}", deadline)
     if text is None:
-        text = _blob(toplevel, f":{MAP}")
+        text = _blob(toplevel, f":{MAP}", deadline)
     if text is None:
         raise LaneError(f"{MAP} is in neither HEAD nor the index")
     return parse_map(text)
 
 
-def merge_parents(toplevel: Path) -> list[str]:
-    """The other parents of a pending merge (MERGE_HEAD, one line each for an octopus), or [] for no merge."""
-    path = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD").decode().strip())
+STATE_FILE_MAX = 64 * 1024
+
+
+def _git_path(toplevel: Path, name: str) -> Path:
+    return Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", name).decode().strip())
+
+
+def _state_lines(path: Path) -> list[str]:
+    """The lines of a small git state file (MERGE_HEAD, REBASE_HEAD), [] when it is absent. Anything but a
+    small regular file refuses: a FIFO in its place would otherwise hold the commit forever."""
     try:
-        return [line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()]
+        st = os.stat(path)
     except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise LaneError(f"{path.name} cannot be read ({type(exc).__name__})") from exc
+    if not stat.S_ISREG(st.st_mode) or st.st_size > STATE_FILE_MAX:
+        raise LaneError(f"{path.name} is not a small regular file")
+    try:
+        return [line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()]
     except (OSError, UnicodeDecodeError) as exc:
-        raise LaneError(f"MERGE_HEAD cannot be read ({type(exc).__name__})") from exc
+        raise LaneError(f"{path.name} cannot be read ({type(exc).__name__})") from exc
 
 
-def authored_paths(toplevel: Path) -> list[str]:
-    """The paths this commit authors. For a merge, a path whose result equals some parent's is inherited from
-    a commit already judged; only a result that differs from every parent (a resolution) is this commit's."""
+def other_parents(toplevel: Path) -> list[str]:
+    """The commits this commit's result is also measured against: a pending merge's other parents (MERGE_HEAD,
+    one line each for an octopus), or, in a rebase stopped on a commit, that commit (REBASE_HEAD)."""
+    merging = _state_lines(_git_path(toplevel, "MERGE_HEAD"))
+    if merging:
+        return merging
+    if _git_path(toplevel, "rebase-merge").is_dir() or _git_path(toplevel, "rebase-apply").is_dir():
+        return _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
+    return []
+
+
+def authored_paths(toplevel: Path, parents: list[str]) -> list[str]:
+    """The paths this commit authors. A path whose result equals some parent's (a merge's other parent, the
+    commit a stopped rebase replays) is inherited from a commit already judged; only a result that differs from
+    every one of them (a resolution, an extra edit) is this commit's."""
     paths = staged_paths(toplevel)
-    for parent in merge_parents(toplevel):
+    for parent in parents:
         theirs = set(staged_paths(toplevel, parent))
         paths = [p for p in paths if p in theirs]
     return paths
 
 
-def check_staged(cwd: Path, committer_only: bool = False) -> int:
-    """Judge the staged commit. A merge is judged on the paths it authors (`authored_paths`); a rebase
-    (`committer_only`) replays commits already judged, so only who may commit at all is judged."""
+def check_staged(cwd: Path, replay: bool = False) -> int:
+    """Judge the staged commit on the paths it authors (`authored_paths`). `replay` is a rebase's own commit
+    of a pick: a clean pick replays a commit already judged, so only who may commit at all is judged; a pick the
+    rebase stopped on (REBASE_HEAD) is judged on what was added to it."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
         lane_map = committed_map(toplevel)
@@ -330,7 +366,8 @@ def check_staged(cwd: Path, committer_only: bool = False) -> int:
             if staged is None:
                 raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
             parse_map(staged)
-        paths = [] if committer_only else authored_paths(toplevel)
+        parents = other_parents(toplevel)
+        paths = [] if replay and not parents else authored_paths(toplevel, parents)
         reasons = judge(lane_map, me, paths, states(lane_map))
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
@@ -359,8 +396,8 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
-    if cmd == "check-staged" and rest in ([], ["--committer-only"]):
-        return check_staged(Path.cwd(), committer_only=bool(rest))
+    if cmd == "check-staged" and rest in ([], ["--replay"]):
+        return check_staged(Path.cwd(), replay=bool(rest))
     root = Path(__file__).resolve().parent.parent
     try:
         lane_map = load_map(root)

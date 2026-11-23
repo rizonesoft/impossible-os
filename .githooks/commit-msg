@@ -7,7 +7,7 @@
 # parent, as pre-push does. It judges a merge the user commits too, so
 # pre-commit leaves every merge to it; any other commit already passed
 # pre-commit's dash gate, so without MERGE_HEAD the hook only judges the lanes again
-# (TODO-08 section 49). `--no-verify` skips it, as it skips pre-commit; each gate names its
+# (TODO-08 section 49), as it also does for a merge. `--no-verify` skips it, as it skips pre-commit; each gate names its
 # own opt-out.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +25,9 @@ if [ "$rc" -ne 0 ]; then
     echo -e "\033[31mcommit-msg: whether this is a merge could not be read (storage stalled or failed); commit again\033[0m"
     exit 1
 fi
+# A merge's lanes are judged again too: a lane that started while the message was written holds
+# the paths this merge authors (lanes.py measures them against every parent).
+python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1
 # The parents the bounded probe read are handed over: the checker reads no file of its own for them.
 mapfile -t PARENTS <<< "$MERGE_PARENTS"
 dash_gate --merge-parents "${PARENTS[@]}"
