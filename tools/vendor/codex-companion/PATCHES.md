@@ -13,6 +13,11 @@ This tree is OpenAI's Codex plugin for Claude Code (`openai/codex-plugin-cc`, `p
 - `scripts/app-server-broker.mjs`: when the broker's own app-server exits, it ends every client connection and stops, so a brokered client sees the close too. A shutdown the broker started itself (SIGTERM, SIGINT) is not treated as that exit.
 - Test: `tests/effort.test.mjs` "a turn whose app-server exits after accepting it fails instead of waiting forever" (the generated fake acknowledges `turn/start` and exits); without both patches it waits until its outer timeout.
 
+## Patch: an untracked special file never blocks the review
+
+- `scripts/lib/git.mjs` (`formatUntrackedFile`): an untracked path is `lstat`ed, never followed: a symlink is shown by its link text (as the dispatcher's candidate reader keys it), anything but a regular file is skipped, and the content is read through a no-follow, non-blocking descriptor checked to be a regular file and capped at the byte limit. Upstream followed links with `statSync`, so a symlink to a FIFO with no writer (which reports 0 bytes) blocked `readFileSync` before the reviewer started.
+- Test: `tests/effort.test.mjs` "an untracked symlink to an idle FIFO never blocks the review"; without the patch it blocks until its timeout.
+
 ## Not patched: the shared job state
 
 Upstream reads, changes and rewrites `state.json` with no lock, so two companion processes sharing one plugin-data directory can delete each other's job records. That is left as upstream wrote it: `scripts/codex-dispatch.sh` gives every review pass its own `CLAUDE_PLUGIN_DATA`, so no two of our passes share that state or a broker, and it runs each pass under `scripts/overnight/review_runtime_limit.py`, the child subreaper the review broker uses, which ends and reaps every process of the pass (the detached broker and its app-server included) within the pass's limit.

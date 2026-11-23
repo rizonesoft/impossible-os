@@ -49,7 +49,9 @@ set -u
 # writes there is short (far under a pipe's 64 KiB), so a caller that keeps stderr open without reading can stall
 # only the relay, never the review, its receipt or its .done (performance review, 2026-11-23). The relay ends at
 # its own bound. The review's own output reaches stdout the same way (run_companion).
-exec 2> >(exec timeout -k 1 600 cat >&2)
+# A caller that closes its stderr ends only the delivery: the relay ignores SIGPIPE and drains the rest into
+# /dev/null, so a later diagnostic never kills this script (the first cat is bounded past the longest pass).
+exec 2> >(trap '' PIPE; timeout -k 1 2400 cat >&2; exec cat >/dev/null)
 
 if [ "$#" -ne 1 ]; then
     cat >&2 <<EOF
@@ -172,8 +174,14 @@ PASS_SUPERVISOR=""; PASS_TAIL=""
 # pass's limit. The directory is removed after.
 LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/review_runtime_limit.py"
 end_companion_pass() {
-    # A dispatcher ended early (a signal its EXIT trap runs for) takes its pass down with it.
-    [ -z "${PASS_SUPERVISOR:-}" ] || kill -TERM "$PASS_SUPERVISOR" 2>/dev/null
+    # A dispatcher ended early (TERM, INT and HUP run the EXIT trap below) takes its pass down with it: the
+    # supervisor ends every process of the pass on TERM, and its directory goes once it has (or 3 s on).
+    local waited=0
+    if [ -n "${PASS_SUPERVISOR:-}" ]; then
+        kill -TERM "$PASS_SUPERVISOR" 2>/dev/null
+        while running "$PASS_SUPERVISOR" && [ "$waited" -lt 30 ]; do sleep 0.1; waited=$(( waited + 1 )); done
+        PASS_SUPERVISOR=""
+    fi
     [ -z "${PASS_TAIL:-}" ] || kill -KILL "$PASS_TAIL" 2>/dev/null
     [ -n "$PASS_DATA" ] || return 0
     rm -rf -- "$PASS_DATA"
@@ -193,6 +201,17 @@ say() {
     [ -z "${LOG_RW:-}" ] || printf '%s\n' "$1" >> "$LOG_RW"
     timeout -k 1 5 bash -c 'printf "%s\n" "$1" >&3' _ "$1" 3>&2 2>/dev/null || true
 }
+# One cleanup for every route, installed before any pass starts: the paths files of a pinned pass and the pass
+# itself (its supervisor and tail, its directory). A signal runs it too (bash skips the EXIT trap on an untrapped
+# TERM), so a dispatcher stopped mid-pass never leaves its reviewer running.
+cleanup() {
+    [ -z "${PATHS_FILE:-}" ] || rm -f -- "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest" "$PATHS_FILE.effort-err"
+    end_companion_pass
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 # The one way a pass runs the companion (the logged path and the unlogged fallback alike): its own data
 # directory under $1 (CLAUDE_PLUGIN_DATA and TMPDIR, no inherited broker endpoint), the prompt handed over in a
 # file there (an environment entry has a smaller exec limit than the one argument it becomes), everything under
@@ -231,10 +250,13 @@ run_companion() {
         sleep 0.1; waited=$(( waited + 1 ))
     done
     if running "$PASS_TAIL"; then
+        # Signalled, never waited for: a tail in uninterruptible I/O on the caller's file holds its KILL until
+        # that write returns, and the receipt must not wait for it.
         kill -KILL "$PASS_TAIL" 2>/dev/null
         say "[$SELF_NAME] the caller's copy of the review was cut short (it stopped reading); the transcript $log holds all of it"
+    else
+        wait "$PASS_TAIL" 2>/dev/null
     fi
-    wait "$PASS_TAIL" 2>/dev/null
     PASS_TAIL=""
     if [ "$rc" = "124" ]; then
         say "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${secs}s limit and was ended"
@@ -272,7 +294,6 @@ if [ "$PIN_KIND" = "1" ]; then
     # Inside the reviews directory, which no candidate read covers: under a TMPDIR inside the checkout, the
     # file would be part of the tree it describes.
     PATHS_FILE="$(mktemp "$REVIEWS_DIR/.paths.XXXXXX")" || exit 2
-    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest" "$PATHS_FILE.effort-err"; end_companion_pass' EXIT
     # The candidate is pinned once, before anything is derived from it: the changed paths (and so the
     # lenses), the ancestry check, the prompt and the receipt all name this commit and this working tree,
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
@@ -572,6 +593,5 @@ if [ "$KIND" != "direct" ]; then
 fi
 # An unmarked review with nowhere to keep a transcript: still one bounded pass with its own data, as above.
 LOG_RW=""
-trap 'end_companion_pass' EXIT
 run_companion "${TMPDIR:-/tmp}" ""
 exit "$rc"

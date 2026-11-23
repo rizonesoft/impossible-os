@@ -195,24 +195,51 @@ function formatSection(title, body) {
 
 function formatUntrackedFile(cwd, relativePath) {
   const absolutePath = path.join(cwd, relativePath);
+  // Impossible OS patch (../../PATCHES.md): never follow a link and never open what is not a regular file. A
+  // symlink to a FIFO with no writer passed the size check (a FIFO reports 0 bytes) and blocked readFileSync
+  // before the reviewer started. A link is shown by its link text, as the dispatcher's candidate reader keys it.
   let stat;
   try {
-    stat = fs.statSync(absolutePath);
+    stat = fs.lstatSync(absolutePath);
   } catch {
-    return `### ${relativePath}\n(skipped: broken symlink or unreadable file)`;
+    return `### ${relativePath}\n(skipped: unreadable file)`;
+  }
+  if (stat.isSymbolicLink()) {
+    try {
+      return `### ${relativePath}\n(symlink to ${fs.readlinkSync(absolutePath)})`;
+    } catch {
+      return `### ${relativePath}\n(skipped: unreadable symlink)`;
+    }
   }
   if (stat.isDirectory()) {
     return `### ${relativePath}\n(skipped: directory)`;
+  }
+  if (!stat.isFile()) {
+    return `### ${relativePath}\n(skipped: not a regular file)`;
   }
   if (stat.size > MAX_UNTRACKED_BYTES) {
     return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
   }
 
   let buffer;
+  let fd = null;
   try {
-    buffer = fs.readFileSync(absolutePath);
+    fd = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    if (!fs.fstatSync(fd).isFile()) {
+      return `### ${relativePath}\n(skipped: not a regular file)`;
+    }
+    const limit = Buffer.alloc(MAX_UNTRACKED_BYTES + 1);
+    const read = fs.readSync(fd, limit, 0, limit.length, 0);
+    if (read > MAX_UNTRACKED_BYTES) {
+      return `### ${relativePath}\n(skipped: exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
+    }
+    buffer = limit.subarray(0, read);
   } catch {
-    return `### ${relativePath}\n(skipped: broken symlink or unreadable file)`;
+    return `### ${relativePath}\n(skipped: unreadable file)`;
+  } finally {
+    if (fd !== null) {
+      fs.closeSync(fd);
+    }
   }
   if (!isProbablyText(buffer)) {
     return `### ${relativePath}\n(skipped: binary file)`;

@@ -153,3 +153,15 @@ test("a turn whose app-server exits after accepting it fails instead of waiting 
   assert.match(`${result.stdout}${result.stderr}`, /closed|exited/i, "the failure was not the lost connection");
 });
 
+
+test("an untracked symlink to an idle FIFO never blocks the review", (t) => {
+  const { repo, env } = repoWithChange(t);
+  const fifo = path.join(makeTempDir(), "idle.fifo");
+  assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+  fs.symlinkSync(fifo, path.join(repo, "untracked-link"));
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "check the guard"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.error?.code, undefined, `the review blocked: ${result.error?.code}`);
+  assert.equal(result.status, 0, result.stderr);
+});
+

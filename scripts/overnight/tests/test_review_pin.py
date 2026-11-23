@@ -3267,3 +3267,108 @@ def test_a_zero_padded_section_reads_the_same_history(tmp_path):
         assert rp.effort_for(_pin(), manifest, EFFORT_TODO, n, "round", ["docs/x.md"]) == "low", n
     found, _ok = rp.newest_receipts(manifest, EFFORT_TODO, "07", ("plan",), checked=True)
     assert "plan" in found
+
+
+def test_term_to_a_logged_dispatch_ends_its_review_and_removes_its_data(tmp_path):
+    """Only pinned passes had cleanup: TERM to a logged older-kind dispatch left its reviewer running and its
+    private directory behind (round review, 2026-11-23)."""
+    import json
+    import os
+    import signal
+    import subprocess
+    import time
+    probe = tmp_path / "probe.json"
+    fake = tmp_path / "companion.js"
+    fake.write_text(f"require('fs').writeFileSync({json.dumps(str(probe))}, JSON.stringify({{pid: process.pid}}));"
+                    "setInterval(() => {}, 1000);\n")
+    reviews = tmp_path / "reviews"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews), "REVIEW_BASE": "HEAD"}
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                             "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(_fixture_repo(tmp_path)),
+                            env=env, start_new_session=True)
+    try:
+        for _ in range(100):
+            if probe.exists():
+                break
+            time.sleep(0.1)
+        companion = json.loads(probe.read_text())["pid"]
+        os.kill(proc.pid, signal.SIGTERM)                     # the dispatcher alone, not its group
+        proc.wait(timeout=20)
+        stat = pathlib.Path(f"/proc/{companion}/stat")
+        for _ in range(50):
+            if not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z":
+                break
+            time.sleep(0.1)
+        assert not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z", "the reviewer outlived its dispatcher"
+        assert not list(reviews.glob(".cp.*")), list(reviews.iterdir())
+    finally:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_term_to_an_older_broker_job_removes_its_data(tmp_path):
+    """A broker deadline TERMs the job's processes: the older-kind job removed its private directory only after a
+    normal exit, so every deadline left one behind (round review, 2026-11-23)."""
+    import os
+    import signal
+    import subprocess
+    import time
+    line = _broker_run("node $(q \"$COMPANION\")")
+    fake = tmp_path / "companion.js"
+    fake.write_text("setInterval(() => {}, 1000);\n")
+    (tmp_path / "reviews").mkdir()
+    (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
+    script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
+              + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 exec bash -c "$RUN"')
+    proc = subprocess.Popen(["bash", "-c", script], cwd=str(tmp_path), start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            if list((tmp_path / "reviews").glob(".cp.*")):
+                break
+            time.sleep(0.1)
+        assert list((tmp_path / "reviews").glob(".cp.*"))
+        time.sleep(0.3)
+        os.killpg(proc.pid, signal.SIGTERM)                   # as the job supervisor ends the attempt
+        proc.wait(timeout=20)
+        assert not list((tmp_path / "reviews").glob(".cp.*"))
+    finally:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_caller_that_closes_stderr_early_still_gets_a_receipt(tmp_path):
+    """The caller reads the first stderr line and closes the pipe: the relay used to die and the next diagnostic
+    killed the dispatcher with SIGPIPE before its receipt (round review, 2026-11-23)."""
+    import os
+    import subprocess
+    import time
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('HIGHEST: none\\n');\n")
+    reviews = tmp_path / "reviews"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews), "REVIEW_BASE": "HEAD"}
+    r, w = os.pipe()
+    os.close(r)                                               # the caller is gone before the first line
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                             "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it $(x)."],
+                            stdout=subprocess.DEVNULL, stderr=w, cwd=str(_fixture_repo(tmp_path)),
+                            env=env, start_new_session=True)
+    os.close(w)
+    try:
+        proc.wait(timeout=60)
+        for _ in range(50):
+            if list(reviews.glob("*.out.done")):
+                break
+            time.sleep(0.1)
+        assert list(reviews.glob("*.out.done")), "no status published after the caller closed stderr"
+        assert proc.returncode == 0, proc.returncode
+    finally:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass

@@ -234,7 +234,7 @@ else
   # An older kind runs the companion here, but in its own data directory with no inherited broker endpoint, as
   # every pinned pass does (codex-dispatch.sh run_companion): passes in one checkout never share the companion's
   # unlocked job state or its broker. The job's supervisor reaps whatever it starts; the directory goes after.
-  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && _d=\"\$(mktemp -d $(q "$PWD/$MANIFEST_DIR")/.cp.XXXXXX)\" && { env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA=\"\$_d\" TMPDIR=\"\$_d\" node $(q "$COMPANION") adversarial-review -- \"\${_review_prompt%x}\"; _rc=\$?; rm -rf -- \"\$_d\"; exit \$_rc; }"
+  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && _d=\"\$(mktemp -d $(q "$PWD/$MANIFEST_DIR")/.cp.XXXXXX)\" && trap 'rm -rf -- \"\$_d\"; exit 143' TERM INT HUP && { env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA=\"\$_d\" TMPDIR=\"\$_d\" node $(q "$COMPANION") adversarial-review -- \"\${_review_prompt%x}\"; _rc=\$?; rm -rf -- \"\$_d\"; exit \$_rc; }"
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
