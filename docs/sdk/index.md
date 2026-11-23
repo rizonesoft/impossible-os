@@ -2,6 +2,8 @@
 
 How programs are built for and run on Impossible OS: the libraries compiled into the system, the environment and command-line contract, loadable modules, the user-mode runtime (`ntdll`) and the Win32 subsystem server, the SDK package, and the ladder that will measure Win32 compatibility. Most of this roadmap domain has not started. Where the kernel already ships the substrate (the TEB and PEB, the environment API, the PE import tables, the random generator), each page says so plainly and links the roadmap section that owns each gap.
 
+To write programs, use [Impossible SDK](https://sdk.impossibleos.co/): its site has the guide, the API reference and the list of Windows functions a program may call. The pages here describe the operating system's own side.
+
 ## Roadmap Overviews
 
 One page per SDK roadmap file, each following the [page contract](../contributing/docs-page-contract.md).
