@@ -34,6 +34,10 @@ Environment:
   SMOKE_KEEP_DISK=1  Second boot of the same machine: keep the previous
                  run's disk and variable store instead of a fresh image.
   SMOKE_TREND_BOOTS=N  Require X:\Perf\boot-trend.json to hold N boots.
+  SMOKE_MACHINE  QEMU machine type (default: QEMU's own). The release boots
+                 q35, the machine docs/getting-started/qemu.md tells people to use.
+  SMOKE_DESKTOP=1  Also require the wallpaper, the icon pack and the compositor
+                 on serial (the release boots).
   SMOKE_SHUTDOWN=1  End the boot with the ACPI power button and require a
                  clean power-off (SMOKE_SHUTDOWN_SEC, default 30).
 
@@ -1174,6 +1178,16 @@ if [ "$VALID_STORE" = "1" ] && [ "$ERROR_SCREEN" != "1" ] && [ -z "$UKI_MODE" ];
     PASS_PATTERNS_ALL+=("BOOT: health: entry marked good (id=")
 fi
 
+# A C:\> prompt says nothing about the desktop: the March 2026 release shipped
+# without its icon pack and booted to a prompt all the same.
+if [ "${SMOKE_DESKTOP:-0}" = "1" ]; then
+    PASS_PATTERNS_ALL+=(
+        "DESKTOP: wallpaper loaded"
+        "ICON: IRES loaded: icons.ires"
+        "anti-rollback: compositor steady latched"
+    )
+fi
+
 # The trend file is written after the prompt; wait for it, not the grace period.
 if [ -n "$TREND_BOOTS" ]; then
     PASS_PATTERNS_ALL+=('boot_trend: wrote X:\Perf\boot-trend.json (')
@@ -1208,6 +1222,9 @@ QEMU_FLAGS=(
     -no-shutdown
     -display none
 )
+if [ -n "${SMOKE_MACHINE:-}" ]; then
+    QEMU_FLAGS+=(-machine "$SMOKE_MACHINE")
+fi
 if [ -n "$CT_MODE" ]; then
     # The double-panic legs warm-reset the guest through the monitor and judge
     # the NEXT boot, which -no-reboot would turn into a QEMU exit.

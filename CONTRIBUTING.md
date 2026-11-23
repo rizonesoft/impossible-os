@@ -250,8 +250,9 @@ We use annotated tags for releases, matching our **CalVer** (`YY.M.D`) scheme:
 | `v{YY}.{M}.{D}-alpha.{n}` | `v26.3.18-alpha.1` | Early testing |
 | `v{YY}.{M}.{D}-beta.{n}` | `v26.3.18-beta.1` | Feature-complete testing |
 | `v{YY}.{M}.{D}-rc.{n}` | `v26.3.18-rc.1` | Release candidates |
+| `demo-{YY}.{M}.{D}` | `demo-26.11.29` | Weekly demos, tagged by the release workflow, never by hand |
 
-Tags are always annotated:
+Version tags (`v*`) are always annotated:
 
 ```bash
 git tag -a v26.3.18 -m "Release v26.3.18"
@@ -260,6 +261,8 @@ git push origin v26.3.18
 
 Pushing a `v*` tag triggers the automated release CI workflow, which builds
 the disk image and publishes a GitHub Release with the auto-generated changelog.
+The same workflow publishes a demo of `main` every Sunday at 00:00 South African
+time, only when every check on that commit is green and the packaged image boots.
 
 ---
 

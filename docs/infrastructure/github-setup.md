@@ -202,16 +202,20 @@ graph LR
 
 ### Automated Release (`release.yml`)
 
-Triggers on **tag push matching `v*`**.
+Triggers on **tag push matching `v*`**, every **Sunday at 00:00 South African time** (`0 22 * * 6` UTC), and by hand.
+
+The Sunday run publishes the pre-release `demo-YY.M.D` from `main`, only if everything works: [`demo_gate.py`](../../scripts/release/demo_gate.py) needs every workflow of that commit green (Build, Visual Regression and GitHub Pages among them) and skips a commit that already has a demo; the release job then repeats lint, build, unit tests and the release-image proofs, and boots the packaged image at 1, 2 and 4 CPUs on the Q35 machine the [QEMU guide](../getting-started/qemu.md) describes. After it publishes, [`demo_prune.py`](../../scripts/release/demo_prune.py) keeps the 5 newest demos and deletes older ones with their tags; it never touches a `v*` release. A refusal is a failed run, publishes nothing, creates no tag and leaves the previous demo in place. GitHub may start a scheduled run late. A manual run (`gh workflow run release.yml`) builds, tests and boots without publishing; `-f publish=true` publishes. The tag is `demo-*`, not `v*`, so a demo never freezes a docs tree on the site.
 
 ```mermaid
 graph LR
     A["Push tag v26.3.18"] --> B[Checkout full history]
-    B --> C[Install deps + VirtualBox]
+    S["Sunday 00:00 SAST"] --> Q[Demo gate] --> B
+    B --> C[Pinned CI image]
     C --> D[Build + verify]
-    D --> E["VBoxManage → .vdi"]
-    E --> F[Generate changelog]
-    F --> G["GitHub Release (softprops/action-gh-release@v2)"]
+    D --> E["qemu-img → .vdi"]
+    E --> H[Boot at 1, 2 and 4 CPUs]
+    H --> F[Generate changelog]
+    F --> G["GitHub Release (gh, published last)"]
 ```
 
 **Release assets:**
@@ -226,11 +230,11 @@ graph LR
 
 | Setting        | Detail                                                    |
 | -------------- | --------------------------------------------------------- |
-| Pre-release    | Auto-detected via regex: `-(alpha\|beta\|rc)` in tag      |
+| Pre-release    | Auto-detected via regex: `^demo-` or `-(alpha\|beta\|rc)` in tag |
 | Changelog      | `git log --pretty` between previous tag and HEAD          |
-| VDI conversion | `VBoxManage convertfromraw` (from `virtualbox` package)   |
-| Permissions    | `contents: write` (for release creation)                  |
-| LLVM cache     | Shared key with `build.yml`                               |
+| VDI conversion | `qemu-img convert`, compared with the raw image           |
+| Permissions    | `contents: write` (release creation), `actions: read` (demo gate) |
+| Compile cache  | None: a release is compiled from source                   |
 
 ### Stale Issue Cleanup (`stale.yml`)
 

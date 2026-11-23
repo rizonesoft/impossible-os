@@ -6,6 +6,16 @@
 # and publishes a GitHub Release.
 #
 # Stable releases (no suffix) auto-delete old pre-releases (alpha/beta/rc).
+#
+# Every Sunday at 00:00 South African time it also publishes a demo of main as
+# the pre-release demo-YY.M.D, but only if everything works: the gate job needs
+# every workflow of that commit green, and the release job rebuilds, retests
+# and boots the packaged image before it publishes. A refusal is a failed run
+# and leaves the previous demo in place. The newest 5 demos are kept and older
+# ones deleted, after a new one is out. The tag is created by the publish step,
+# so a refused demo leaves no tag. demo-* is not v*, on purpose: a v* tag
+# freezes a docs tree (about 35 MB) on the site for good, and one a week would
+# pass its 900 MB budget in six months.
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -13,9 +23,26 @@ name: Release
 on:
   push:
     tags: ['v*']
+  schedule:
+    - cron: '0 22 * * 6'   # Sunday 00:00 SAST (UTC+2, no daylight saving)
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the demo (unticked: build, test and boot it, publish nothing)'
+        required: false
+        default: false
+        type: boolean
+
+# One publishing demo at a time. Each v* tag and each dry run has its own group:
+# GitHub keeps one pending run per group and cancels the rest, so a shared group
+# would let a dry run cancel a pending release.
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref || (github.event_name == 'workflow_dispatch' && !inputs.publish && github.run_id) || 'demo' }}
+  cancel-in-progress: false
 
 permissions:
   contents: write          # Needed to create/delete releases and upload assets
+  actions: read            # The demo gate reads this commit's workflow runs
   packages: read
 
 env:
@@ -28,8 +55,51 @@ defaults:
     shell: bash
 
 jobs:
+  # A pushed v* tag is the operator's own decision; only a demo is gated.
+  gate:
+    name: Is main good enough for a demo
+    runs-on: ubuntu-26.04
+    container:
+      image: ghcr.io/rizonesoft/impossible-os-ci@sha256:d5d684cc6bc2740e127b72c56189f9a424c800041db489844d1939e39b019176
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # --init: GitHub makes `tail -f /dev/null` PID 1, which never reaps an orphan.
+      options: --init --user 1001:1001
+    timeout-minutes: 75
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Name the release
+        id: tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=demo-$(date -u -d '+2 hours' +%y.%-m.%-d)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require a green commit that has no demo yet
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && '--dry-run' || '' }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            python3 scripts/release/demo_gate.py --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --tag "$TAG" $DRY_RUN
+          fi
+
   release:
     name: Build & Publish Release
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-26.04
     # The pinned CI image holds the whole toolchain (scripts/ci/image/Dockerfile);
     # this job installs nothing, so a package-mirror outage cannot fail it.
@@ -40,7 +110,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
       # --init: GitHub makes `tail -f /dev/null` PID 1, which never reaps an orphan.
       options: --init --user 1001:1001
-    timeout-minutes: 40
+    timeout-minutes: 120
     # A release is compiled from source: no cache is restored (check-compile-cache.py),
     # and the image's ccache is not used either, as before the image held one.
     env:
@@ -57,17 +127,17 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ needs.gate.outputs.tag }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-          # Detect pre-release (alpha, beta, rc)
-          if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
+          # Detect pre-release (demo, alpha, beta, rc)
+          if [[ "$TAG" =~ ^demo-|-(alpha|beta|rc) ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✅ Tag: $TAG (pre-release: $(echo "$TAG" | grep -qE '-(alpha|beta|rc)' && echo yes || echo no))"
+          echo "✅ Tag: $TAG (pre-release: $(echo "$TAG" | grep -qE '^demo-|-(alpha|beta|rc)' && echo yes || echo no))"
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
       - name: Verify toolchain sentinels and version floors
@@ -91,7 +161,7 @@ jobs:
       # case where main was tagged between a regression landing and the
       # post-commit test advisory surfacing. Do NOT `|| true` this.
       - name: Run unit tests
-        run: bash scripts/test.sh QUIET=1
+        run: TIMEOUT=300 bash scripts/test.sh QUIET=1   # TCG on a shared runner, as in build.yml
 
       # ── Verify build success ────────────────────────────────────────────
       - name: Verify build sentinel
@@ -130,7 +200,11 @@ jobs:
       # a clean rebuild also regenerates the release-flavor system-disk.img that
       # the packaging steps below consume. (Release-flavor proof gate.)
       - name: Rebuild release flavor (KERNEL_TESTS=off)
-        run: KERNEL_TESTS=off bash scripts/build.sh clean
+        run: |
+          # A fresh checkout has no build counter, so every image called itself
+          # build 1. Count commits, as release tags do (build.sh adds one).
+          echo "$(( $(git rev-list --count HEAD) - 1 ))" > .build_number
+          KERNEL_TESTS=off bash scripts/build.sh clean
 
       - name: Verify release build sentinel
         run: |
@@ -203,6 +277,7 @@ jobs:
       - name: Convert disk image to VDI
         run: |
           qemu-img convert -f raw -O vdi build/system-disk.img build/system-disk.vdi
+          qemu-img compare -f raw -F vdi build/system-disk.img build/system-disk.vdi
           SIZE=$(stat -c%s build/system-disk.vdi)
           echo "✅ system-disk.vdi: $(( SIZE / 1024 / 1024 )) MiB"
 
@@ -246,6 +321,20 @@ jobs:
           echo "zip_path=build/$ZIP_NAME" >> "$GITHUB_OUTPUT"
         id: package
 
+      # ── Boot what people will download ──────────────────────────────────
+      # The March 2026 demo was published without ever being booted and hung on
+      # every machine with two or more CPUs (issue 6). This boots the image that
+      # is in the archive, on the machine the QEMU guide describes, at 1, 2 and 4
+      # CPUs: a composited desktop with its icons, a C:\> prompt and no fatal line, or no release.
+      - name: Boot the packaged image
+        run: |
+          cp build/build-receipt.json build/release/system-disk.img.receipt
+          for cpus in 1 2 4; do
+            echo "== $cpus CPU(s)"
+            SMOKE_DESKTOP=1 SMOKE_MACHINE=q35 SMOKE_SMP=$cpus TIMEOUT_SEC=180 \
+              SMOKE_PRISTINE_IMAGE="$PWD/build/release/system-disk.img" bash scripts/test-smoke.sh
+          done
+
       # ── Generate release notes (summary for GitHub page) ────────────────
       - name: Generate release notes
         run: |
@@ -253,9 +342,13 @@ jobs:
           ZIP_NAME="${{ steps.package.outputs.zip_name }}"
 
           # Get most recent 20 commits since previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # A version lists everything since the last version; a demo, since the last demo or version.
+          MATCH=(--match 'v*')
+          case "$TAG" in demo-*) MATCH+=(--match 'demo-*') ;; esac
+          PREV_TAG=$(git describe --tags --abbrev=0 "${MATCH[@]}" HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            BODY=$(git log --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD | head -20)
+            # -20, not a pipe to head: head closing the pipe fails the step under pipefail.
+            BODY=$(git log -20 --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD)
             COUNT=$(git rev-list --count "$PREV_TAG"..HEAD)
           else
             BODY=$(git log --pretty=format:"- %s (\`%h\`)" -20 HEAD)
@@ -267,22 +360,17 @@ jobs:
             BODY="$BODY"$'\n'"- ... and $(( COUNT - 20 )) more commits — see \`CHANGELOG.md\` in the zip for the full categorized list"
           fi
 
-          # Extract build info (build number from tag, rest from build_info.h)
-          BUILD_NUM=$(echo "$TAG" | grep -oP '\.\K[0-9]+$' || echo "0")
+          # Extract build info from build_info.h, so it matches what the image prints
+          BUILD_NUM=$(awk '$2 == "BUILD_NUMBER" {print $3}' include/build_info.h)
           BUILD_COMMIT=$(grep '#define BUILD_COMMIT' include/build_info.h | awk '{print $3}' | tr -d '"')
           BUILD_TIME=$(grep '#define BUILD_TIMESTAMP' include/build_info.h | awk '{print $3}' | tr -d '"')
 
           # Write release notes
+          GUIDE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/getting-started"
           {
-            echo "## What's Changed"
+            echo "### 📦 Download and run"
             echo ""
-            echo "$BODY"
-            echo ""
-            echo "---"
-            echo ""
-            echo "### 📦 Download"
-            echo ""
-            echo "Download **\`$ZIP_NAME\`** — it contains everything you need:"
+            echo "Download **\`$ZIP_NAME\`** below and follow the [QEMU guide]($GUIDE/qemu.md) or the [VirtualBox guide]($GUIDE/virtualbox.md). Give the VM 2 GB of RAM and UEFI firmware without Secure Boot. This image was booted in QEMU with 1, 2 and 4 CPUs, to a running desktop and command prompt, before it was published. It is an early preview, not ready for daily use."
             echo ""
             echo "| File | Description |"
             echo "|------|-------------|"
@@ -301,19 +389,36 @@ jobs:
             echo "| **Commit** | \`${BUILD_COMMIT}\` |"
             echo "| **Built** | ${BUILD_TIME} |"
             echo "| **Toolchain** | clang-19 / lld-19 |"
+            echo ""
+            echo "### What's Changed"
+            echo ""
+            echo "$BODY"
           } > build/RELEASE_NOTES.md
 
           echo "✅ Release notes generated ($COUNT commits, showing $(echo "$BODY" | wc -l))"
 
       # ── Create GitHub Release ───────────────────────────────────────────
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "Impossible OS ${{ steps.version.outputs.tag }}"
-          body_path: build/RELEASE_NOTES.md
-          prerelease: ${{ steps.version.outputs.prerelease }}
-          files: ${{ steps.package.outputs.zip_path }}
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
+        # gh uploads into a draft, publishes it last and refuses a tag that
+        # already has a release. So an interrupted upload leaves no public
+        # release and no demo tag, and re-running an old failed run cannot put
+        # its archive on a newer release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ARCHIVE: ${{ steps.package.outputs.zip_path }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          gh release create "$TAG" "$ARCHIVE" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Impossible OS $TAG" --notes-file build/RELEASE_NOTES.md --prerelease="$PRERELEASE"
+
+      # ── Keep the newest 5 demos ─────────────────────────────────────────
+      - name: Delete older demos
+        if: startsWith(steps.version.outputs.tag, 'demo-') && (github.event_name != 'workflow_dispatch' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/demo_prune.py --repo "$GITHUB_REPOSITORY"
 
       # A tag is the only way its release's docs reach the docs-releases store
       # (docs-release.yml renders from tags), so the cleanup below deletes a tag
@@ -347,7 +452,9 @@ jobs:
             catch (e) { console.log('Docs retention unknown: keeping every pre-release tag'); }
             const releases = await github.rest.repos.listReleases({ owner, repo, per_page: 100 });
 
-            const preReleases = releases.data.filter(r => r.prerelease);
+            // Weekly demos have their own retention (demo_prune.py) and are not replaced by a version.
+            // A draft is another tag's upload in progress.
+            const preReleases = releases.data.filter(r => r.prerelease && !r.draft && !r.tag_name.startsWith('demo-'));
             let deleted = 0;
 
             for (const release of preReleases) {

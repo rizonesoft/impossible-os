@@ -1390,6 +1390,7 @@ _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_capture.py" inventory_cap
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_baselines.py" inventory_baselines
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_report.py" inventory_report
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_demo_gate.py" demo_gate
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_format_check.py" todo_format_check
@@ -1548,6 +1549,21 @@ if [ -f "$IMG_BIND_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_release_image_binding.py not found"
+fi
+
+# Weekly demo gate (scripts/tests/test_demo_gate.py): what it accepts, and that
+# release.yml boots the packaged image before it publishes.
+DEMO_GATE_TEST="$REPO_ROOT/scripts/tests/test_demo_gate.py"
+if [ -f "$DEMO_GATE_TEST" ]; then
+    DEMO_GATE_OUT=$(_tt_nested_collect demo_gate python3 "$DEMO_GATE_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_demo_gate.py PASS ($(printf '%s\n' "$DEMO_GATE_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_demo_gate.py FAIL ($(printf '%s\n' "$DEMO_GATE_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_demo_gate" "$DEMO_GATE_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_demo_gate.py not found"
 fi
 
 # Fence-awareness of the four TODO GATE parsers (scripts/tests/test_todo_fence.py).

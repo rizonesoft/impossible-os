@@ -473,6 +473,16 @@
             color: var(--accent-cyan);
         }
 
+        .demo-note {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .demo-note strong, .demo-note code {
+            color: var(--accent-cyan);
+        }
+
         /* ── Feature Pillars ──────────────────────────────────────────── */
         .pillars {
             display: grid;
@@ -895,10 +905,17 @@
         </p>
         <div class="hero-buttons">
 
+            <a href="{{repo_url}}/releases" class="btn btn-primary" target="_blank" rel="noopener" data-github>
+                Download the demo
+            </a>
+            <a href="docs/getting-started/qemu.html" class="btn btn-secondary">
+                Run it in QEMU
+            </a>
             <a href="{{repo_url}}" class="btn btn-secondary" target="_blank" rel="noopener" data-github>
                 ⭐ Star on GitHub
             </a>
         </div>
+        <p class="demo-note">Running the March 2026 demo? Give the virtual machine <strong>1 CPU</strong> (<code>-smp 1</code>). With more, it stops during startup.</p>
         <div class="countdown-section">
             <p class="countdown-label">Countdown to First Release</p>
             <div class="countdown" id="countdown-timer">
@@ -1060,7 +1077,7 @@
     <div class="container">
         <div class="cta-box">
             <h2>Join the Journey</h2>
-            <p>Impossible OS is fully open source. Star the repo, download the alpha, or contribute code.</p>
+            <p>Impossible OS is fully open source. Star the repo, <a href="{{repo_url}}/releases" target="_blank" rel="noopener" data-github>download the demo</a>, or contribute code.</p>
             <div class="cta-buttons">
 
                 <a href="{{repo_url}}" class="btn btn-secondary" target="_blank" rel="noopener" data-github>View Source on GitHub</a>

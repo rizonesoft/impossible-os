@@ -3,6 +3,9 @@
 VirtualBox provides a user-friendly GUI for running Impossible OS. It requires
 UEFI mode and a VDI disk image (included in releases).
 
+> [!IMPORTANT]
+> **Running the March 2026 demo (`v26.3.18-alpha.821`)? Use 1 CPU.** Set Processors to 1 (`VBoxManage modifyvm "Impossible OS" --cpus 1`). The same setting was tested in QEMU; it has not been tested in VirtualBox. With 2 or more CPUs and an AHCI (SATA) disk, that build stops at "Timer: sleeping 1 second" ([issue 6](https://github.com/rizonesoft/impossible-os/issues/6)). Later builds boot with several CPUs.
+
 ---
 
 ## Prerequisites
@@ -40,7 +43,7 @@ VBoxManage convertfromraw system-disk.img system-disk.vdi --format VDI
 ### Via GUI
 
 1. **New** → Name: `Impossible OS`, Type: `Other`, Version: `Other/Unknown (64-bit)`
-2. **Memory:** 256 MB minimum (512 MB recommended)
+2. **Memory:** 2048 MB (current builds halt at 1 GiB or less)
 3. **Hard Disk:** "Use an existing virtual hard disk file" → select `system-disk.vdi`
 4. **Settings → System:**
    - ✅ **Enable EFI** (required -- Impossible OS does not boot in legacy BIOS)
@@ -57,7 +60,8 @@ VBoxManage createvm --name "Impossible OS" --ostype Other_64 --register
 
 # Configure
 VBoxManage modifyvm "Impossible OS" \
-    --memory 512 \
+    --memory 2048 \
+    --cpus 1 \
     --firmware efi \
     --graphicscontroller vmsvga \
     --vram 64 \
@@ -88,7 +92,8 @@ VBoxManage startvm "Impossible OS"
 | Setting | Value | Why |
 |---------|-------|-----|
 | Firmware | **EFI** | UEFI required -- legacy BIOS will NOT boot |
-| RAM | 256–512 MB | 256 MB minimum for desktop |
+| RAM | 2048 MB | Current builds halt at 1 GiB or less ([open bug](../../todo/00-infrastructure/TODO-08-automation-hardening.md#72-the-direct-map-check-passes-on-machines-with-1-gib-or-less)) |
+| Processors | 1 | Required by the March 2026 demo; later builds run with more |
 | VRAM | 64 MB | Recommended for 1280×720 framebuffer |
 | Storage | AHCI/SATA | Impossible OS uses AHCI DMA drivers |
 | Network | NAT + Intel PRO/1000 | Default works; RTL8139 also supported |

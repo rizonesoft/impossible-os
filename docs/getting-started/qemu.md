@@ -3,6 +3,9 @@
 QEMU is the fastest way to run Impossible OS. It supports UEFI boot via OVMF
 firmware and AHCI storage out of the box.
 
+> [!IMPORTANT]
+> **Running the March 2026 demo (`v26.3.18-alpha.821`)? Use 1 CPU.** In the QEMU command below, change `-smp 2` to `-smp 1`, or set 1 vCPU in virt-manager. Tested on QEMU 10.2 with KVM and with software emulation (TCG). To keep 2 CPUs instead, replace the `-device ahci` and `-device ide-hd` lines with `-device virtio-blk-pci,drive=disk,disable-modern=on`. With 2 or more CPUs and an AHCI (SATA) disk, that build stops at "Timer: sleeping 1 second" ([issue 6](https://github.com/rizonesoft/impossible-os/issues/6)). Later builds boot with several CPUs.
+
 ---
 
 ## Prerequisites
@@ -45,7 +48,8 @@ cp /usr/share/OVMF/OVMF_VARS_4M.fd ./OVMF_VARS.fd
 
 qemu-system-x86_64 \
     -machine q35 \
-    -m 512M \
+    -smp 2 \
+    -m 2G \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
     -drive if=none,id=disk,file=system-disk.img,format=raw \
@@ -53,6 +57,8 @@ qemu-system-x86_64 \
     -device ide-hd,drive=disk,bus=ahci.0 \
     -serial file:serial.log
 ```
+
+`-smp` is the number of CPUs: use `-smp 1` for the March 2026 demo. On Linux, add `-accel kvm -cpu host` to run at full speed.
 
 Older guides use `-bios /usr/share/OVMF/OVMF_CODE.fd`. Current Ubuntu releases no longer ship that file, so QEMU reports that it cannot find the firmware. Use the `_4M` files above.
 
@@ -64,13 +70,15 @@ Older guides use `-bios /usr/share/OVMF/OVMF_CODE.fd`. Current Ubuntu releases n
 2. For the operating system, pick **Generic** or **Generic Linux**, not Windows 11. The Windows 11 template adds Hyper-V enlightenments, a TPM and Secure Boot, and disables HPET.
 3. Tick **Customize configuration before install**. Under **Overview**, set Chipset to **Q35** and Firmware to the UEFI entry **without** `secboot` in its name.
 4. Under the disk, set the bus to **SATA** (AHCI).
-5. Add a **Serial** device with **Device type: Output to a file**, so the boot log is saved if anything goes wrong.
+5. Under **CPUs**, set 1 vCPU for the March 2026 demo. Under **Memory**, set 2048 MiB.
+6. Add a **Serial** device with **Device type: Output to a file**, so the boot log is saved if anything goes wrong.
 
 ## Recommended Settings
 
 | Setting | Value | Why |
 |---------|-------|-----|
-| RAM | `-m 256M` | Minimum. 512M recommended for desktop |
+| RAM | `-m 2G` | Current builds halt at 1 GiB or less ([open bug](../../todo/00-infrastructure/TODO-08-automation-hardening.md#72-the-direct-map-check-passes-on-machines-with-1-gib-or-less)) |
+| CPUs | `-smp 2` | Use `-smp 1` for the March 2026 demo |
 | Storage | AHCI (`-device ahci`) | Impossible OS uses AHCI DMA -- no IDE/PIO |
 | Firmware | OVMF CODE + VARS (`-drive if=pflash`) | UEFI required -- legacy BIOS will NOT boot |
 | Display | Default SDL or `-display gtk` | VGA framebuffer via GOP |
@@ -97,7 +105,8 @@ File names change between distro releases. If a path is missing, list what your 
 ```bash
 qemu-system-x86_64 \
     -machine q35 \
-    -m 512M \
+    -smp 2 \
+    -m 2G \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=./OVMF_VARS.fd \
     -drive if=none,id=disk,file=system-disk.img,format=raw \
@@ -118,7 +127,8 @@ qemu-system-x86_64 \
 |-------|----------|
 | "Could not open" the firmware file | The path is wrong for your distro; see [Common OVMF Paths](#common-ovmf-paths) |
 | Black screen | Verify both OVMF files exist and that the VARS copy is writable |
-| Boot stops at "Timer test (1s sleep)" | Timer interrupts are not arriving. Use a plain Q35 machine (not a Windows 11 template) and attach `serial.log` to an issue |
+| Boot stops at "Timer test (1s sleep)" | On the March 2026 demo: use 1 CPU (`-smp 1`). On a later build: attach `serial.log` to an issue |
+| "HHDM: identity vs direct-map readback mismatch" | The VM has 1 GiB of RAM or less. Use `-m 2G` |
 | No disk detected | Must use `-device ahci` + `-device ide-hd`. Legacy `-hda` won't work |
 | Mouse stuck in corner | Add `-device virtio-tablet-pci` for absolute positioning |
 | Kernel panic on boot | Check `serial.log` for the full stack trace |
