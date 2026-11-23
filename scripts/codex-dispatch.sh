@@ -127,7 +127,8 @@ export GIT_NO_REPLACE_OBJECTS=1
 # dispatch routes can no longer disagree about what happened.
 # The vendored companion (tools/vendor/codex-companion/PATCHES.md): the upstream plugin with --effort on
 # adversarial-review, so the pin's effort reaches the reviewer.
-COMPANION="${CODEX_COMPANION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/vendor/codex-companion/scripts/codex-companion.mjs}"
+VENDORED_COMPANION="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/vendor/codex-companion/scripts/codex-companion.mjs"
+COMPANION="${CODEX_COMPANION_PATH:-$VENDORED_COMPANION}"
 REVIEWS_DIR="${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}"
 # Prompt parsing shared by the three dispatchers, in memory (no pipeline).
 # shellcheck source=scripts/lib/review-prompt.sh
@@ -289,17 +290,30 @@ if [ "$PIN_KIND" = "1" ]; then
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
     # The pin's effort for this pass, read only now that the base and range are settled. An answer that cannot
     # be read never stops the review: it runs at the Codex config's effort and the transcript says why.
-    if EFFORT_ANSWER="$(python3 "$PIN_TOOL" --effort "$KIND" --todo "$TODO_PATH" --section-n "$SECTION" \
-            --manifest "$REVIEWS_DIR/manifest.jsonl" --paths-file0 "$PATHS_FILE" 2>"$PATHS_FILE.effort-err")"; then
-        read -r EFFORT TIER <<< "$EFFORT_ANSWER"
-    else
+    # Only a companion known to apply --effort gets it: the vendored one, or an override that declares it
+    # (CODEX_COMPANION_ACCEPTS_EFFORT=1). The stock companion reads an unknown --effort as review focus text and
+    # runs at the config effort, so a receipt naming an effort for it would be false.
+    COMPANION_TAKES_EFFORT=0
+    if [ "$(realpath -e -- "$COMPANION" 2>/dev/null)" = "$(realpath -e -- "$VENDORED_COMPANION" 2>/dev/null)" ] \
+            || [ "${CODEX_COMPANION_ACCEPTS_EFFORT:-}" = "1" ]; then
+        COMPANION_TAKES_EFFORT=1
+    fi
+    # One answer: "<effort> <tier> <schedule>", "-" for none. The schedule mark (a plan pass under the effort
+    # table) is kept whatever happens to the effort: a section whose first plan receipt has no mark started
+    # before the table and keeps the Codex config's effort to the end.
+    EFFORT_ANSWER="$(python3 "$PIN_TOOL" --effort "$KIND" --todo "$TODO_PATH" --section-n "$SECTION" \
+            --manifest "$REVIEWS_DIR/manifest.jsonl" --paths-file0 "$PATHS_FILE" 2>"$PATHS_FILE.effort-err")"
+    EFFORT_RC=$?
+    read -r EFFORT TIER SCHEDULE <<< "$EFFORT_ANSWER"
+    [ "$EFFORT" = "-" ] && EFFORT=""
+    [ "$TIER" = "-" ] && TIER=""
+    [ "$SCHEDULE" = "effort" ] || SCHEDULE=""
+    if [ "$EFFORT_RC" != "0" ]; then
         EFFORT_NOTE="[$SELF_NAME] effort unknown ($(tr '\n' ' ' < "$PATHS_FILE.effort-err" 2>/dev/null)); the Codex config value applies"
         EFFORT=""; TIER=""
-    fi
-    # A plan pass under the effort table marks its receipt: a section whose first plan receipt has no mark
-    # started before the table and keeps the Codex config's effort to the end.
-    if [ "$KIND" = "plan" ] && python3 "$PIN_TOOL" --has-effort; then
-        SCHEDULE="effort"
+    elif [ -n "$EFFORT" ] && [ "$COMPANION_TAKES_EFFORT" != "1" ]; then
+        EFFORT_NOTE="[$SELF_NAME] effort not applied: the companion $COMPANION is not the vendored one and does not declare --effort; the Codex config value applies"
+        EFFORT=""; TIER=""
     fi
     if [ -n "$OWED_BASE" ]; then
         PROMPT="$PROMPT

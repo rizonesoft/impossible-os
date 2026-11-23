@@ -28,20 +28,27 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 
-def _registered_worktrees(where):
+def _left(deadline):
+    """Seconds left before the hook's one deadline (never below a tenth, so a call still gets a bounded try)."""
+    return max(0.1, deadline - time.monotonic())
+
+
+def _registered_worktrees(where, deadline):
     """The canonical roots of every worktree git has registered for the repository holding `where`, or an empty
     set when that cannot be read. A tree that merely points at the repository's metadata is not among them."""
     try:
         out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain"],
-                                      stderr=subprocess.DEVNULL, timeout=10).decode("utf-8", "surrogateescape")
+                                      stderr=subprocess.DEVNULL, timeout=_left(deadline)).decode("utf-8", "surrogateescape")
     except Exception:  # fail-direction: no list means no repair, which is silent and safe
         return set()
     return {os.path.realpath(line[len("worktree "):]) for line in out.splitlines() if line.startswith("worktree ")}
 
 
 def main() -> int:
+    deadline = time.monotonic() + BUDGET_S              # one deadline for every step, inside the harness's
     try:
         d = json.load(sys.stdin)
     except Exception:
@@ -61,20 +68,25 @@ def main() -> int:
     try:
         root = subprocess.check_output(
             ["git", "-C", here, "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=_left(deadline),
         ).decode().strip()
     except Exception:
         return 0
     # Only a registered worktree of the repository that installed this hook: the validator is code from the edited
     # tree, so an edit in an unrelated checkout, or in a tree that only points at this repository's metadata, must
     # never run that tree's code.
-    if os.path.realpath(root) not in _registered_worktrees(os.path.dirname(os.path.abspath(__file__))):
+    if os.path.realpath(root) not in _registered_worktrees(os.path.dirname(os.path.abspath(__file__)), deadline):
         return 0
 
     validator = root + "/scripts/todo-graph/validate.py"
     if not os.path.exists(validator):
         return 0
 
+    if deadline - time.monotonic() < MIN_REPAIR_S:
+        print(json.dumps({"systemMessage": f"{PREFIX} was not run: the git lookups spent the hook's {BUDGET_S}s "
+                          "budget, so stamp line numbers were not checked. Run it by hand: python3 "
+                          "scripts/todo-graph/validate.py --fix-line-numbers --write"}))
+        return 0
     try:
         result = subprocess.run(
             [
@@ -83,7 +95,7 @@ def main() -> int:
                 "--write",
                 "--quiet",
             ],
-            cwd=root, capture_output=True, text=True, timeout=TIMEOUT_S,
+            cwd=root, capture_output=True, text=True, timeout=_left(deadline),
         )
     except subprocess.TimeoutExpired:
         msg = message_for(None, "", "", timed_out=True)
@@ -97,7 +109,11 @@ def main() -> int:
     return 0
 
 
-TIMEOUT_S = 15
+# The harness allows this hook 20 s (.claude/settings.json); every step shares BUDGET_S of it, the rest is kept
+# to print the result. A repair with less than MIN_REPAIR_S left is reported as not run.
+BUDGET_S = 17
+MIN_REPAIR_S = 2
+TIMEOUT_S = BUDGET_S
 PREFIX = "[todo-graph auto-rewrite] validate.py --fix-line-numbers"
 SUMMARY = re.compile(r"\[validate\.py\] fix-line-numbers: \d+ update\(s\), .*")
 

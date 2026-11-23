@@ -808,7 +808,6 @@ def main(argv=None):
     group.add_argument("--repair-range", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--section-start", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--effort", metavar="KIND", choices=SECTION_KINDS)
-    group.add_argument("--has-effort", action="store_true")
     parser.add_argument("--todo")
     parser.add_argument("--section-n")
     parser.add_argument("--manifest")
@@ -843,13 +842,18 @@ def main(argv=None):
             _need(args.manifest, "--repair-base needs --manifest FILE")
             print(repair_base(args.manifest, args.repair_base[0], args.repair_base[1]))
             return 0
-        if args.has_effort:
-            return 0 if pin["effort"] is not None else 1
         if args.effort:
+            # One line, "<effort> <tier> <schedule>" with "-" for none, so the dispatcher asks once per pass. The
+            # schedule mark depends only on the pin, so it is printed even when the chain cannot be read (exit 3).
             _need(args.manifest and args.todo and args.section_n, "--effort needs --todo, --section-n and --manifest")
-            level = effort_for(pin, args.manifest, args.todo, args.section_n, args.effort, paths)
-            if level:
-                print(f"{level} {tier_for(pin, paths)}")
+            schedule = EFFORT_SCHEDULE if pin["effort"] is not None and args.effort == "plan" else "-"
+            try:
+                level = effort_for(pin, args.manifest, args.todo, args.section_n, args.effort, paths)
+            except Refused as exc:
+                print(f"- - {schedule}")
+                print(f"review_pin: {exc}", file=sys.stderr)
+                return 3
+            print(f"{level or '-'} {tier_for(pin, paths) if level else '-'} {schedule}")
             return 0
         if args.section_start:
             _need(args.manifest, "--section-start needs --manifest FILE")

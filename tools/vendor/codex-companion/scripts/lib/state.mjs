@@ -11,6 +11,11 @@ const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), "codex-companion");
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
+// Impossible OS patch (../../PATCHES.md): one lock around every read, change and write of the state file, so two
+// companion processes in one workspace (a round and a performance review) never drop each other's jobs.
+const LOCK_FILE_NAME = "state.lock";
+const LOCK_WAIT_MS = 10000;
+const LOCK_STALE_MS = 30000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -89,7 +94,49 @@ function removeFileIfExists(filePath) {
   }
 }
 
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withStateLock(cwd, fn) {
+  ensureStateDir(cwd);
+  const lockFile = path.join(resolveStateDir(cwd), LOCK_FILE_NAME);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let fd = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lockFile, "wx");
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockFile);         // a holder that died: no live writer holds a lock this long
+          continue;
+        }
+      } catch {
+        continue;                          // released between the open and the stat
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`The companion state lock ${lockFile} was held for over ${LOCK_WAIT_MS} ms.`);
+      }
+      sleepMs(5);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(lockFile, { force: true });
+  }
+}
+
 export function saveState(cwd, state) {
+  return withStateLock(cwd, () => writeState(cwd, state));
+}
+
+function writeState(cwd, state) {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
   const nextJobs = pruneJobs(state.jobs ?? []);
@@ -116,9 +163,11 @@ export function saveState(cwd, state) {
 }
 
 export function updateState(cwd, mutate) {
-  const state = loadState(cwd);
-  mutate(state);
-  return saveState(cwd, state);
+  return withStateLock(cwd, () => {
+    const state = loadState(cwd);
+    mutate(state);
+    return writeState(cwd, state);
+  });
 }
 
 export function generateJobId(prefix = "job") {

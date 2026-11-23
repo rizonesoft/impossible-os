@@ -118,8 +118,58 @@ def repair_tree_choice():
         return results[0], not any(pathlib.Path(t, "ran-here").exists() for t in (a, c, d))
 
 
+def validator_gets_only_the_remaining_budget():
+    """The harness gives this hook 20 s (.claude/settings.json). The git lookups and the validator share ONE
+    deadline: when the lookups take most of it, the validator gets only what is left (performance review,
+    2026-11-23: an 8 s lookup and a 13 s repair each fit their own limit and still overran the hook's)."""
+    import io
+    spec = importlib.util.spec_from_file_location("hook_budget", HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    clock = [1000.0]
+    seen = {}
+    import types
+    hook.time = types.SimpleNamespace(monotonic=lambda: clock[0])   # this module's clock only
+
+    def check_output(cmd, **kw):
+        clock[0] += hook.BUDGET_S - 1.0              # the lookups use all but one second of the budget
+        seen.setdefault("lookup", kw.get("timeout"))
+        if "worktree" in cmd:
+            return f"worktree {os.path.realpath(tmp)}\n".encode()
+        return f"{tmp}\n".encode()
+
+    def run(cmd, **kw):
+        seen["validator"] = kw.get("timeout")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_validator(tmp)
+        hook.subprocess = types.SimpleNamespace(check_output=check_output, run=run, DEVNULL=subprocess.DEVNULL,
+                                                TimeoutExpired=subprocess.TimeoutExpired,
+                                                CompletedProcess=subprocess.CompletedProcess)
+        sys_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO(json.dumps({"tool_input": {"file_path": os.path.join(tmp, "todo", "a.md")}}))
+            out = io.StringIO()
+            sys_stdout, sys.stdout = sys.stdout, out
+            try:
+                hook.main()
+            finally:
+                sys.stdout = sys_stdout
+        finally:
+            sys.stdin = sys_stdin
+    lookup_ok = seen.get("lookup") is not None and seen["lookup"] <= hook.BUDGET_S
+    validator = seen.get("validator")
+    # Two lookups each used BUDGET_S - 1: the budget is spent before the validator, which must not run at all,
+    # and the hook must say so rather than stay silent.
+    return lookup_ok and validator is None and "budget" in out.getvalue()
+
+
 def main():
     bad = 0
+    budget = validator_gets_only_the_remaining_budget()
+    bad += not budget
+    print(f"{'PASS' if budget else 'FAIL'} the lookups and the validator share one deadline")
     linked, unrelated = repair_tree_choice()
     bad += (not linked) + (not unrelated)
     print(f"{'PASS' if linked else 'FAIL'} the repair runs in the linked worktree that holds the edited file")
@@ -144,7 +194,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 3
+    total = len(CLASSES) + 4
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 

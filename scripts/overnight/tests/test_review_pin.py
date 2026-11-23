@@ -254,7 +254,7 @@ def _dispatch(tmp_path, kind, review, base="HEAD", marker=None, body="Review it.
     fake = tmp_path / "companion.js"
     fake.write_text(FAKE_COMPANION)
     (tmp_path / "review.txt").write_text(review)
-    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake),
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_COMPANION_ACCEPTS_EFFORT": "1",
            "CODEX_REVIEWS_DIR": str(reviews_dir or tmp_path / "reviews"),
            "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt"),
            "REVIEW_BASE": base}
@@ -2912,12 +2912,16 @@ def test_cli_effort(tmp_path, capsys):
     paths.write_bytes(b"src/kernel/a.c\0")
     args = ["--effort", "round", "--todo", EFFORT_TODO, "--section-n", "99", "--manifest", str(manifest),
             "--paths-file0", str(paths)]
-    assert rp.main(args) == 0 and capsys.readouterr().out == "high deep\n"
+    assert rp.main(args) == 0 and capsys.readouterr().out == "high deep -\n"
+    plan = ["--effort", "plan"] + args[2:]
+    assert rp.main(plan) == 0 and capsys.readouterr().out == "medium deep effort\n"
     pin = tmp_path / "pin.toml"
     pin.write_text(NO_EFFORT)
-    assert rp.main(args + ["--pin", str(pin)]) == 0 and capsys.readouterr().out == ""
-    assert rp.main(["--has-effort"]) == 0
-    assert rp.main(["--has-effort", "--pin", str(pin)]) == 1
+    assert rp.main(args + ["--pin", str(pin)]) == 0 and capsys.readouterr().out == "- - -\n"
+    assert rp.main(plan + ["--pin", str(pin)]) == 0 and capsys.readouterr().out == "- - -\n"
+    with manifest.open("a") as fh:                       # an unreadable line: the effort is unknown, the mark is not
+        fh.write('{"ts": 1795170001, "kind": "round", "todo": "todo/00-infr\n')
+    assert rp.main(plan) == 3 and capsys.readouterr().out == "- - effort\n"
 
 
 def _argv(tmp_path):
@@ -2963,6 +2967,7 @@ def test_dispatch_effort_refusal_falls_back(tmp_path):
     assert "--effort" not in _argv(tmp_path), done.stderr
     log = next(reviews.glob("*-plan-direct.out")).read_text()
     assert "effort unknown" in log and "the Codex config value applies" in log
+    assert _last_receipt(tmp_path)["schedule"] == "effort"          # the mark depends on the pin alone
 
 
 def test_dispatch_unknown_base_still_refuses(tmp_path):
@@ -2984,3 +2989,24 @@ def test_default_companion_is_vendored():
 def test_the_effort_answer_leaves_no_file_behind(tmp_path):
     _dispatch(tmp_path, "plan", "HIGHEST: none\n")
     assert not list((tmp_path / "reviews").glob(".paths.*")), list((tmp_path / "reviews").iterdir())
+
+
+def test_an_override_companion_that_does_not_declare_effort_gets_none(tmp_path):
+    """A stale CODEX_COMPANION_PATH to the stock companion would take --effort as focus text and run at the config
+    effort while the receipt named another: it gets no --effort, and the transcript says why."""
+    import os
+    import subprocess
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION)
+    (tmp_path / "review.txt").write_text("HIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+           "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt"),
+           "REVIEW_BASE": _rev(tmp_path, "HEAD~4")}
+    env.pop("CODEX_COMPANION_ACCEPTS_EFFORT", None)
+    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                    "[review-kind: round] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                   capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
+    assert "--effort" not in _argv(tmp_path)
+    assert "effort" not in _last_receipt(tmp_path)
+    log = next((tmp_path / "reviews").glob("*-round-direct.out")).read_text()
+    assert "effort not applied" in log
