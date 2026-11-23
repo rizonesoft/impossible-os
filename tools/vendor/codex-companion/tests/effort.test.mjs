@@ -165,3 +165,26 @@ test("an untracked symlink to an idle FIFO never blocks the review", (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+
+test("an untracked file whose name git quotes still reaches the review with its contents", (t) => {
+  const { repo, env, statePath } = repoWithChange(t);
+  fs.writeFileSync(path.join(repo, "tab\tname.txt"), "QUOTED-NAME-CONTENT\n");
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "check the guard"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  assert.match(prompt, /QUOTED-NAME-CONTENT/);
+});
+
+test("in self-collection mode untracked files are listed, not read into the prompt", (t) => {
+  const { repo, env, statePath } = repoWithChange(t);
+  for (const n of [1, 2, 3]) {
+    fs.writeFileSync(path.join(repo, `extra-${n}.txt`), `SUMMARY-BODY-${n}\n`);
+  }
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "check the guard"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  assert.match(prompt, /extra-1\.txt/);
+  assert.doesNotMatch(prompt, /SUMMARY-BODY-/);
+});

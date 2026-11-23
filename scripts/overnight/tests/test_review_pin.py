@@ -3372,3 +3372,72 @@ def test_a_caller_that_closes_stderr_early_still_gets_a_receipt(tmp_path):
             os.killpg(proc.pid, 9)
         except ProcessLookupError:
             pass
+
+
+def test_the_stderr_relay_never_holds_the_callers_stdout(tmp_path):
+    """The relay inherited the caller's stdout, so a caller reading stdout to EOF with a full stderr pipe still
+    open waited for the relay's 2,400 s bound after the dispatcher exited (performance review, 2026-11-23)."""
+    import fcntl
+    import os
+    import subprocess
+    import time
+    r, w = os.pipe()
+    fcntl.fcntl(w, fcntl.F_SETFL, os.O_NONBLOCK)
+    try:
+        while True:
+            os.write(w, b"z" * 4096)
+    except BlockingIOError:
+        pass
+    fcntl.fcntl(w, fcntl.F_SETFL, 0)
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"), "one", "two"],   # a refusal, at once
+                            stdout=subprocess.PIPE, stderr=w, start_new_session=True)
+    try:
+        started = time.monotonic()
+        proc.stdout.read()                                     # to EOF
+        assert time.monotonic() - started < 10, "stdout stayed open after the dispatcher exited"
+        proc.wait(timeout=10)
+    finally:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+        os.close(r)
+        os.close(w)
+
+
+def test_a_dead_passs_private_directory_is_swept_by_the_next(tmp_path):
+    """A broker job cancelled with SIGKILL runs no cleanup: its .cp.<pid>.* directory is removed by the next pass,
+    and a directory whose owner still runs is left alone (round review, 2026-11-23)."""
+    import os
+    import subprocess
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    stale = reviews / f".cp.{dead.pid}.abcdef"
+    live = reviews / f".cp.{os.getpid()}.ghijkl"
+    stale.mkdir()
+    live.mkdir()
+    _dispatch(tmp_path, "adversarial", "no lens lines at all\n")
+    assert not stale.exists() and live.exists()
+
+
+def test_an_older_broker_job_ends_at_its_limit(tmp_path):
+    """An older-kind broker job with no CODEX_REVIEW_MAX_SECS had no deadline at all (round review, 2026-11-23):
+    the companion now runs under the pass limit, 1800 s by default, and a stalled one ends with 124."""
+    import os
+    import subprocess
+    import time
+    line = _broker_run("node $(q \"$COMPANION\")")
+    assert 'timeout --foreground -k 10 $(q "${CODEX_REVIEW_MAX_SECS:-1800}")' in line
+    fake = tmp_path / "companion.js"
+    fake.write_text("setInterval(() => {}, 1000);\n")
+    (tmp_path / "reviews").mkdir()
+    (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
+    script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; CODEX_REVIEW_MAX_SECS=2; '
+              + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 exec bash -c "$RUN"')
+    started = time.monotonic()
+    done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
+                          start_new_session=True)
+    assert done.returncode == 124 and time.monotonic() - started < 30, (done.returncode, done.stderr)
+    assert not list((tmp_path / "reviews").glob(".cp.*"))

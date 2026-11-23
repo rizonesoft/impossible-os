@@ -119,9 +119,13 @@ export function getCurrentBranch(cwd) {
 }
 
 export function getWorkingTreeState(cwd) {
-  const staged = gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const unstaged = gitChecked(cwd, ["diff", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const untracked = gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout.trim().split("\n").filter(Boolean);
+  // Impossible OS patch (../../PATCHES.md): NUL-delimited names, untrimmed. A display name git quotes (a tab, or
+  // a non-ASCII byte under core.quotePath) is not the file's path, so an untracked file read by it was
+  // "unreadable".
+  const names = (args) => gitChecked(cwd, [...args, "-z"]).stdout.split("\0").filter(Boolean);
+  const staged = names(["diff", "--cached", "--name-only"]);
+  const unstaged = names(["diff", "--name-only"]);
+  const untracked = names(["ls-files", "--others", "--exclude-standard"]);
 
   return {
     staged,
@@ -267,7 +271,9 @@ function collectWorkingTreeContext(cwd, state, options = {}) {
   } else {
     const stagedStat = gitChecked(cwd, ["diff", "--shortstat", "--cached"]).stdout.trim();
     const unstagedStat = gitChecked(cwd, ["diff", "--shortstat"]).stdout.trim();
-    const untrackedBody = state.untracked.map((file) => formatUntrackedFile(cwd, file)).join("\n\n");
+    // Impossible OS patch (../../PATCHES.md): in self-collection mode the reviewer reads the checkout, so the
+    // untracked files are listed, not read into the prompt (128 files of 24 KiB were 3 MiB of input here).
+    const untrackedBody = state.untracked.map((file) => `- ${file} (untracked; inspect it in the checkout)`).join("\n");
     parts = [
       formatSection("Git Status", status),
       formatSection("Staged Diff Stat", stagedStat),

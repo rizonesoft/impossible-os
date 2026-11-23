@@ -51,7 +51,9 @@ set -u
 # its own bound. The review's own output reaches stdout the same way (run_companion).
 # A caller that closes its stderr ends only the delivery: the relay ignores SIGPIPE and drains the rest into
 # /dev/null, so a later diagnostic never kills this script (the first cat is bounded past the longest pass).
-exec 2> >(trap '' PIPE; timeout -k 1 2400 cat >&2; exec cat >/dev/null)
+# Its own stdout is /dev/null: holding the caller's stdout open would keep a caller waiting for EOF after this
+# script exited.
+exec 2> >(exec >/dev/null; trap '' PIPE; timeout -k 1 2400 cat >&2; exec cat >/dev/null)
 
 if [ "$#" -ne 1 ]; then
     cat >&2 <<EOF
@@ -201,6 +203,17 @@ say() {
     [ -z "${LOG_RW:-}" ] || printf '%s\n' "$1" >> "$LOG_RW"
     timeout -k 1 5 bash -c 'printf "%s\n" "$1" >&3' _ "$1" 3>&2 2>/dev/null || true
 }
+# The private directory of a pass whose owner is gone: named .cp.<owner pid>.*, so one a killed pass left (a broker
+# job cancelled with SIGKILL runs no trap) is removed by the next pass. A reused pid only keeps one longer.
+sweep_pass_dirs() {
+    local d owner
+    for d in "$1"/.cp.*; do
+        [ -d "$d" ] && [ -O "$d" ] || continue
+        owner="${d##*/.cp.}"; owner="${owner%%.*}"
+        [[ "$owner" =~ ^[0-9]+$ ]] || continue
+        kill -0 "$owner" 2>/dev/null || rm -rf -- "$d"
+    done
+}
 # One cleanup for every route, installed before any pass starts: the paths files of a pinned pass and the pass
 # itself (its supervisor and tail, its directory). A signal runs it too (bash skips the EXIT trap on an untrapped
 # TERM), so a dispatcher stopped mid-pass never leaves its reviewer running.
@@ -223,7 +236,8 @@ run_companion() {
     if ! [[ "$secs" =~ ^[1-9][0-9]{0,8}$ ]]; then
         say "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds"; rc=2; return
     fi
-    if ! PASS_DATA="$(mktemp -d "$1/.cp.XXXXXX")" || ! printf '%s' "$PROMPT" > "$PASS_DATA/prompt"; then
+    sweep_pass_dirs "$1"
+    if ! PASS_DATA="$(mktemp -d "$1/.cp.$$.XXXXXX")" || ! printf '%s' "$PROMPT" > "$PASS_DATA/prompt"; then
         say "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass under $1"
         rc=2; return
     fi
