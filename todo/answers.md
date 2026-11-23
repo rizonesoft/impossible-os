@@ -591,3 +591,12 @@ Nine consecutive final-candidate waves each returned about five new P2 findings 
 
 A: (operator direction, 2026-11-23, after more than 24 hours on the section) A. The global review rule bounds review so work finishes, and a clean pass on this scope was not predictable. Reversal cost: one review wave (about 30 minutes) on `3b57a38b1`, with any finding filed as a follow-up section; the stamp stays valid for the code it names.
 
+## Q53 (Operating Mandate, 00-infrastructure/TODO-08 §48, §70): who shapes the machinery, and what stops it growing at the product's cost?
+
+The operator ended two review chains by hand in two days (section 48 after 202 passes, section 70 at 12 rounds) and said on 2026-11-23 that shaping the mechanics takes too much of their time. Over the 14 days before, 923 of 1,331 review passes went to `00-infrastructure` and 30 to kernel and boot, and `scripts/overnight` took 710 file changes against 245 in `src/kernel`.
+
+- **A:** delegate the mechanics in full, and bind them: product first while infrastructure takes over a third of the passes, and a 12-round stop for sections that change no product code.
+- **B:** delegate and add a self-improvement subsystem that proposes and reviews changes to the machinery.
+- **C:** leave the cap at 55 everywhere and keep asking.
+
+A: (operator direction, 2026-11-23, "wire it in"; the session chose the form) A. B adds machinery to a repository whose measured problem is too much of it. The cap is the one part that lowers verification, so it never covers deep or risky code and never files a finding that loses data, exposes something or reports a false success. Reversal cost: delete three bullets in CLAUDE.md and two items in sections 62 and 66; no code depends on them yet.

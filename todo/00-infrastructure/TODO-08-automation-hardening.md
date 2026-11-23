@@ -1852,6 +1852,8 @@ Operator decision 2026-11-21: every level blocks on every path, so this section 
 - [ ] The deep set is every tier above `standard` in the pin's `[schedule.effort]`, never a second path list -> XREF: [§70](#70-reviewer-effort-follows-the-area-and-the-chain)
   - That covers `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
 - [ ] A section touching a deep path gets every lens in every pass, and [section 66](#66-lens-yield-is-measured) never removes a lens there
+- [ ] The pin carries a pass cap per tier, and the round guard and stamp gate read it: a section changing no deep or risky code stops at 12 rounds, the rest at `pass_cap`
+  - The rule and its limits are in CLAUDE.md, Operating Mandate (`todo/answers.md` Q53); until this lands the gate still reads 55, so a stamp at 12 takes the logged opt-out
 - [ ] Host-tooling paths carry a pinned threat model and recorded-limit list in the pin, quoted by every pass, so a pass never re-derives an open-ended failing-host scope (section 48 took 202 passes on it)
 - [ ] Commit: `"review: review depth per path"`
 
@@ -1896,6 +1898,7 @@ Changed 2026-11-21 (operator): this section was "Re-dispatched passes review onl
 
 - [ ] Each finding's verdict (fixed, rejected, accepted) is stored with its lens
 - [ ] `scripts/overnight/lens-yield.py` scores each lens
+- [ ] `run-health.json` carries the product share: review passes and commits on `src/`, `user/` and `include/` against the rest, over 14 days, and the plan order reads it (CLAUDE.md, Operating Mandate)
 - [ ] A lens is removed only after a replay on known defects shows no loss, as the agent-model rule requires (CLAUDE.md, Model Roles), and never on a [section 62](#62-review-depth-per-path) deep path
 - [ ] Commit: `"review: lens yield is measured"`
 
@@ -1969,7 +1972,7 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 > - The round count ended at 12 by operator decision (2026-11-23), with the section already on `origin/main` (`b5b0558d2`). Its last performance pass found a P1 that a stalled external reviews directory can hang a logged pass; it needs the whole dispatch under one deadline and is an item of [§60](#60-review-receipts-are-written-atomically). The completion pass's findings were fixed after it and were not re-reviewed by Astra.
 
 > **Verified:** 2026-11-23 | commit `b39949aa4` (rebased; reviewed as `89d29f53b` and, for the first landing, `b5b0558d2`) | 4/7 items, 3 parked with blockers | runner suite, `test_review_pin.py` and companions 431 passed, hook tests 21 passed, companion `effort.test.mjs` 14 passed, `scripts/overnight/tests/run-all.sh` green at commit | lint 0 errors | `site/build.py --check` ok | landed on `origin/main` at `b5b0558d2`, CI green (Build, Pages, TODO graph, Visual Regression) | everything after `b5b0558d2` (the round 12 and completion fixes, the stamp) lands with the stamp's own push
-> **Quality reviewed:** 2026-11-23 | Codex: plan 3 (2 credited, 1 voided by a moved candidate), round 12 (11 credited, 1 voided), performance 13, completion 1 | every returned finding fixed with a regression that fails on the commit before it, and the operator stopped the rounds at 12 (2026-11-23) | stamped at that cap without a clean round or performance pass on the stamped candidate: the last performance pass's P1 (a `CODEX_REVIEWS_DIR` on a mount that stops responding) is filed in [§60](#60-review-receipts-are-written-atomically), the completion pass's findings are fixed on `b39949aa4` after it and were not re-reviewed | the completion pass found no P1 and no missing work | imported code: the vendored companion tree was read in full by a read-only agent (2026-11-23) and reviewed by the same Astra passes
+> **Quality reviewed:** 2026-11-23 | Codex: plan 3 (2 credited, 1 voided by a moved candidate), round 12 (11 credited, 1 voided), performance 13, completion 1 | code findings fixed, with a regression that fails on the commit before it except one (a caller's `tail` held in uninterruptible I/O, which needs a stalled filesystem to reproduce); documentation findings fixed as text; one P1 filed, not fixed; the operator stopped the rounds at 12 (2026-11-23) | stamped at that cap without a clean round or performance pass on the stamped candidate: the last performance pass's P1 (a `CODEX_REVIEWS_DIR` on a mount that stops responding) is filed in [§60](#60-review-receipts-are-written-atomically), the completion pass's findings are fixed on `b39949aa4` after it and were not re-reviewed | the completion pass found no P1, three P2 and three P3, two promised tests missing among them, all fixed after it | imported code: a read-only agent read most of the vendored tree before it landed; `render.mjs`, `app-server-protocol.d.ts`, `stop-review-gate.md`, the rest of the output schema and the two test support files were read only after the landing (2026-11-23, nothing unsafe found); the first version of this line said the whole tree had been read
 
 ## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
 
