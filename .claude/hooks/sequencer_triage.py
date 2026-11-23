@@ -612,7 +612,50 @@ def _work_order(s):
     return (2, s["plan_order"]) if "plan_order" in s else (2, float("inf"))
 
 
-def pick_next(cache, root, ready="unset", want_ready=False):
+def _lane_context(root):
+    """(lane map, each extra lane's state) from scripts/lanes.py, or (None, error text) when the map cannot be
+    read. Scheduling only: the commit check refuses a commit into a live lane's paths whatever triage picks,
+    so an unreadable map leaves triage choosing as before and the packet says why."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("lanes_for_triage", os.path.join(root, "scripts", "lanes.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        lane_map = mod.load_map(Path(root))
+        return (mod, lane_map, mod.states(lane_map)), ""
+    except Exception as exc:                           # fail-direction: the commit check still refuses a clash
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def lane_reservations(entry, per, root, ctx):
+    """(per with every section a live lane holds turned BLOCKED, [{file, section, lane}] for each). A section
+    is held when its TODO file is a live lane's, or its text names a path in one (it cannot be finished outside
+    that lane). `ctx` is _lane_context's value; None reserves nothing."""
+    if ctx is None or not any(c == NEEDS_WORK for _n, c in per):
+        return per, []
+    mod, lane_map, lane_states = ctx
+    file_path = entry["file_path"]
+    whole = mod.reserved_by(lane_map, lane_states, file_path)
+    texts = {}
+    if not whole:
+        try:
+            with open(os.path.join(root, file_path), encoding="utf-8") as fh:
+                scan, sections = _scan_sections(fh.read())
+            texts = {num: "\n".join(scan.lines[start:end]) for num, _ln, start, end in sections if num is not None}
+        except OSError:
+            texts = {}
+    out, held = [], []
+    for n, c in per:
+        lane = whole or (mod.names_reserved_path(lane_map, lane_states, texts.get(n, "")) if c == NEEDS_WORK else None)
+        if c == NEEDS_WORK and lane:
+            out.append((n, BLOCKED))
+            held.append({"file": file_path, "section": n, "lane": lane})
+        else:
+            out.append((n, c))
+    return out, held
+
+
+def pick_next(cache, root, ready="unset", want_ready=False, reserved=None):
     """The next file to work, else (None, BLOCKED) when only recoverable-deferred
     files remain, else (None, None) at true DONE. Returns (entry, class, waiting).
 
@@ -629,9 +672,18 @@ def pick_next(cache, root, ready="unset", want_ready=False):
     needs = {}
     order = []
     blocked, recovered = owed_reviews(root)
+    ctx, lane_err = _lane_context(root)
+    held_all = [] if reserved is None else reserved
+    if lane_err:
+        held_all.append({"lanes_error": lane_err})     # the packet says why no lane reservation was applied
     for entry in traversal_order(cache):
         cls, per = classify_file(entry, root)
         if cls == NEEDS_WORK:
+            per, held = lane_reservations(entry, per, root, ctx)
+            held_all.extend(held)
+            if held and not any(c == NEEDS_WORK for _n, c in per):
+                saw_blocked = True                     # every open section waits on a live lane: never DONE
+                continue
             built = {s.get("n") for s in entry.get("sections") or [] if (s.get("status") or "").strip() == "x"}
             if all((entry["file_path"], n) in blocked and n in built for n, c in per if c == NEEDS_WORK):
                 # Everything this file still owes is a review the reviewer cannot give yet.
@@ -707,11 +759,13 @@ def cmd_blockers(cache, root):
 
 
 def cmd_next(cache, root):
-    entry, cls, waiting, ready, per = pick_next(cache, root, want_ready=True)
+    reserved = []
+    entry, cls, waiting, ready, per = pick_next(cache, root, want_ready=True, reserved=reserved)
+    lanes = {"lane_reserved": reserved} if reserved else {}
     if entry is None:
         if cls == BLOCKED:
             print(json.dumps({"status": BLOCKED, "file": None,
-                              "blockers": collect_blockers(cache, root)}))
+                              "blockers": collect_blockers(cache, root), **lanes}))
             return 0
         print(json.dumps({"status": "DONE", "file": None}))
         return 0
@@ -728,6 +782,7 @@ def cmd_next(cache, root):
         # The chosen file's sections from the same plan snapshot, so a caller
         # needs no second `--classify` (and no second plan computation).
         "sections": section_list(entry, per, ready, owed_reviews(root)),
+        **lanes,
     }))
     return 0
 

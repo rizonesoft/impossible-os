@@ -591,6 +591,15 @@ Nine consecutive final-candidate waves each returned about five new P2 findings 
 
 A: (operator direction, 2026-11-23, after more than 24 hours on the section) A. The global review rule bounds review so work finishes, and a clean pass on this scope was not predictable. Reversal cost: one review wave (about 30 minutes) on `3b57a38b1`, with any finding filed as a follow-up section; the stamp stays valid for the code it names.
 
+## Q52 (00-infrastructure/TODO-08 §60-§67): section 70 is being built in an attended worktree over the same review files; build 60 to 67 now or after it lands?
+
+Section 70 (attended, ../impossible-os-repair) rewrites `scripts/review_pin.py`, the dispatcher, the lens prompt and the pin. Sections 60, 61, 63, 64, 65 and 66 change those files, and 67 adds a phase to the frozen `run_phase_guard.py`.
+
+- **A:** build 49 to 59 (and 71) first, and 60 to 66 after section 70 lands; 67 goes to an attended session for its frozen-file phase.
+- **B:** build 60 to 67 now and merge against section 70 later.
+
+A: (run decided, 2026-11-23) A. Two writers on one file set turn every rebase into a conflict resolution, and section 70 changes the reviewer those sections build on. Reversal cost: none; it changes only the order.
+
 ## Q53 (Operating Mandate, 00-infrastructure/TODO-08 §48, §70): who shapes the machinery, and what stops it growing at the product's cost?
 
 The operator ended two review chains by hand in two days (section 48 after 202 passes, section 70 at 12 rounds) and said on 2026-11-23 that shaping the mechanics takes too much of their time. Over the 14 days before, 923 of 1,331 review passes went to `00-infrastructure` and 30 to kernel and boot, and `scripts/overnight` took 710 file changes against 245 in `src/kernel`.
@@ -648,4 +657,3 @@ A: (operator, 2026-11-23) A, with the program and its tests copied and no agent 
 - **C:** controls and engines stay here and are planned twice.
 
 A: (operator, 2026-11-23) A. A moved section is not parked: it stays open behind its import section, so that what depends on it waits properly. The Windows 11 inventory (`08-graphics-ui/TODO-17`) stays here and goes on; Impossible SDK copies its control records at a pinned commit. The session chose the form: rows under `needs`, the line `**Need:**`, a section for every need (`10-platform-services/TODO-13`, written by `imports.py --file-needs`) and an error of Check 42 while one is missing. Reversal cost: each moved section's items are kept in its program's repository under `docs/os-roadmap`, and in this history.
-

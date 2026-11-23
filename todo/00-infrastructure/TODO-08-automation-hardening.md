@@ -114,7 +114,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  46   |   §46   | The second reviewer's switched-off machinery is removed                                          | §45                        |  [x]   |
 | ⭐  |  47   |   §47   | The Bash safety guards read commands with a shell grammar                                        | §32                        |  [ ]   |
 | ⭐  |  48   |   §48   | Two engines, one gate set: the lane policy                                                       | --                         |  [x]   |
-| ⭐  |  49   |   §49   | The lane map and the commit check                                                                | §48                        |  [ ]   |
+| ⭐  |  49   |   §49   | The lane map and the commit check                                                                | §48                        |  [x]   |
 | ⭐  |  50   |   §50   | Section claims on origin                                                                         | §49                        |  [ ]   |
 | ⭐  |  51   |   §51   | One push queue for every lane                                                                    | §49                        |  [ ]   |
 | ⭐  |  52   |   §52   | Extra lanes stay light                                                                           | §51                        |  [ ]   |
@@ -136,6 +136,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
 | ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [x]   |
+| ⭐  |  71   |   §71   | A lane's ship is judged by its Astra receipt                                                     | §49                        |  [ ]   |
 | 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
@@ -1669,14 +1670,18 @@ Operator decision 2026-11-20, design in [the parallel lanes plan](../../docs/pla
 
 A lane reserves its directories only while it is live; when it is off, main takes its sections.
 
-- [ ] `.conclave/lanes.toml` names each lane's engine, model, worktree, directories, output (commits or reports) and resource limits
-- [ ] A live lane writes `~/.local/state/impossible-os/lanes/<lane>.json` (pid, heartbeat time, current task)
-- [ ] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
-- [ ] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
-- [ ] The section-commit gate judges a Neon ship by its Astra receipt, not Claude's skill progress, with a regression through `git commit` and no Claude state
-- [ ] Commit: `"lanes: the lane map and the commit check"`
+- [x] `.conclave/lanes.toml` names each lane's engine, model, worktree, directories, output (commits or reports) and resource limits
+- [x] A live lane writes `~/.local/state/impossible-os/lanes/<lane>.json` (pid, heartbeat time, current task)
+- [x] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
+  - An extra lane commits only inside its own paths and only while its own record is fresh; a damaged record reserves its paths against main and grants the lane nothing
+  - A reports-only lane is refused before the empty-index exit, generated files included; a revert or cherry-pick is checked in `prepare-commit-msg`, which runs where pre-commit does not
+- [x] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
+  - A section is reserved when its TODO file is the lane's or its text names a path in the lane; when only reserved work remains, `--next` reports BLOCKED naming the lane, never DONE
+- [x] Commit: `"lanes: the lane map and the commit check"`
 
 **Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file always passes.
+
+The commit gate's judgment of a lane's ship (its Astra receipt instead of Claude's session state) is [§71](#71-a-lanes-ship-is-judged-by-its-astra-receipt), split from this section on 2026-11-23 because it is a separate mechanism in the gate. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §71 (item: "The section-commit gate judges a lane's section ship by its Astra pass receipts")
 
 ## 50. Section claims on origin
 
@@ -1972,6 +1977,19 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 
 > **Verified:** 2026-11-23 | commit `b39949aa4` (rebased; reviewed as `89d29f53b` and, for the first landing, `b5b0558d2`) | 4/7 items, 3 parked with blockers | runner suite, `test_review_pin.py` and companions 431 passed, hook tests 21 passed, companion `effort.test.mjs` 14 passed, `scripts/overnight/tests/run-all.sh` green at commit | lint 0 errors | `site/build.py --check` ok | landed on `origin/main` at `b5b0558d2`, CI green (Build, Pages, TODO graph, Visual Regression) | everything after `b5b0558d2` (the round 12 and completion fixes, the stamp) lands with the stamp's own push
 > **Quality reviewed:** 2026-11-23 | Codex: plan 3 (2 credited, 1 voided by a moved candidate), round 12 (11 credited, 1 voided), performance 13, completion 1 | code findings fixed, with a regression that fails on the commit before it except one (a caller's `tail` held in uninterruptible I/O, which needs a stalled filesystem to reproduce); documentation findings fixed as text; one P1 filed, not fixed; the operator stopped the rounds at 12 (2026-11-23) | stamped at that cap without a clean round or performance pass on the stamped candidate: the last performance pass's P1 (a `CODEX_REVIEWS_DIR` on a mount that stops responding) is filed in [§60](#60-review-receipts-are-written-atomically), the completion pass's findings are fixed on `b39949aa4` after it and were not re-reviewed | the completion pass found no P1, three P2 and three P3, two promised tests missing among them, all fixed after it | imported code: a read-only agent read most of the vendored tree before it landed; `render.mjs`, `app-server-protocol.d.ts`, `stop-review-gate.md`, the rest of the output schema and the two test support files were read only after the landing (2026-11-23, nothing unsafe found); the first version of this line said the whole tree had been read
+
+## 71. A lane's ship is judged by its Astra receipt
+
+> **Spawned-by:** section 49 (split)
+> **User impact:** a Neon lane commits from a worktree with no Claude session, so a gate that reads Claude's skill progress and review state refuses every section it ships, or would pass one it cannot judge.
+
+Split from [§49](#49-the-lane-map-and-the-commit-check) on 2026-11-23. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §49 (item: "`.githooks/pre-commit` refuses a commit touching another live lane's directories")
+
+- [ ] The section-commit gate judges a lane's section ship by its Astra pass receipts for that section and commit, never by Claude's skill progress or `last-codex-review.json`
+- [ ] A regression commits through `git commit` in a lane worktree with no Claude state: refused without the receipts, passed with them
+- [ ] Commit: `"lanes: a lane's ship is judged by its Astra receipt"`
+
+**Test checkpoint:** the lane ship with complete receipts passes the gate, and the same ship with one pass missing is refused naming it.
 
 ## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
 

@@ -40,6 +40,11 @@ def _repo(root: pathlib.Path, post_commit: bool = False) -> pathlib.Path:
     shutil.copy(REPO / ".githooks/prepare-commit-msg", hooks / "prepare-commit-msg")
     shutil.copy(REPO / ".githooks/lib/pre-commit-mark.sh", hooks / "lib/pre-commit-mark.sh")
     (hooks / "pre-commit").write_text(STUB_PRE_COMMIT)
+    # prepare-commit-msg runs the lane check for a revert or cherry-pick, as in a real checkout.
+    (root / "repo" / "scripts").mkdir()
+    shutil.copy(REPO / "scripts/lanes.py", root / "repo" / "scripts/lanes.py")
+    (root / "repo" / ".conclave").mkdir()
+    shutil.copy(REPO / ".conclave/lanes.toml", root / "repo" / ".conclave/lanes.toml")
     if post_commit:
         (hooks / "post-commit").write_text(STUB_POST_COMMIT_AMEND)
     for h in hooks.iterdir():

@@ -28,6 +28,10 @@ anchor_git_env
 . "$REPO_ROOT/.githooks/lib/pre-commit-mark.sh"
 mark_pre_commit_ran  # before any early exit: prepare-commit-msg refuses a commit without it
 
+# The lane check (TODO-08 section 49), before the empty-index exit: a reports-only lane
+# may not commit at all, an empty commit included. It reads only the staged index.
+python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1
+
 # If nothing is staged (e.g., `git commit --allow-empty`), skip.
 # Against the stored HEAD: a local replacement ref must not make a changed index look unchanged.
 # No external diff driver either: one that calls two different blobs equal would skip every check below.

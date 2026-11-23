@@ -439,6 +439,13 @@ def test_a_staged_merge_resolution_is_judged_against_every_parent(tmp_path):
     assert "f.md:2" not in r.stderr, r
 
 
+def _lane_files(root):
+    """pre-commit's lane check reads these, as in a real checkout (the lane map and the commit check, in the automation-hardening TODO)."""
+    shutil.copy(REPO / "scripts/lanes.py", root / "scripts/lanes.py")
+    (root / ".conclave").mkdir(exist_ok=True)
+    shutil.copy(REPO / ".conclave/lanes.toml", root / ".conclave/lanes.toml")
+
+
 def _hooked_repo(tmp_path):
     root = _repo(tmp_path)
     hooks = root / ".githooks"
@@ -448,6 +455,7 @@ def _hooked_repo(tmp_path):
     shutil.copy(GATE, hooks / "lib/dash-gate.sh")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
     shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
+    _lane_files(root)
     _git(root, "config", "core.hooksPath", ".githooks")
     return root
 
@@ -713,6 +721,7 @@ def test_an_ordinary_commit_is_refused_by_the_shipped_pre_commit_hook(tmp_path):
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
     shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
+    _lane_files(root)
     (root / "scripts/lint.sh").write_text("exit 0\n")       # the lint has its own suite; this test is the dash step
     _git(root, "config", "core.hooksPath", ".githooks")
     before = _git(root, "rev-parse", "HEAD")
@@ -975,6 +984,7 @@ def test_the_empty_index_shortcut_reads_the_stored_head(tmp_path):
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
     shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
+    _lane_files(root)
     (root / "scripts/lint.sh").write_text("exit 0\n")
     _git(root, "config", "core.hooksPath", ".githooks")
     _stage(root, {"doc.md": "new " + DASH + "\n"})
@@ -1223,6 +1233,7 @@ def test_an_external_diff_that_calls_a_dash_equal_cannot_skip_pre_commit(tmp_pat
     shutil.copytree(REPO / ".githooks", root / ".githooks")
     shutil.copy(CHECK, root / "scripts/staged_dash_check.py")
     shutil.copy(REPO / "scripts/bounded_run.py", root / "scripts/bounded_run.py")
+    _lane_files(root)
     (root / "scripts/lint.sh").write_text("exit 0\n")
     (root / "same.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "same.sh").chmod(0o755)
