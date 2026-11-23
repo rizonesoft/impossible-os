@@ -633,7 +633,7 @@ def _lane_context(root):
         spec = importlib.util.spec_from_file_location("lanes_for_triage", os.path.join(root, "scripts", "lanes.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        lane_map = mod.load_map(Path(root))
+        lane_map = mod.committed_map(Path(root))        # the map the commit check judges by
         lane_states = mod.states(lane_map)
         if not mod.any_reserving(lane_map, lane_states):
             return None, ""                            # no lane holds anything: no file needs a second read

@@ -11,7 +11,7 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
     python3 scripts/lanes.py owner <path>                   # the extra lane whose paths hold it, else main
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
-    python3 scripts/lanes.py check-staged --committer-only  # who may commit at all (a merge or rebase)
+    python3 scripts/lanes.py check-staged --committer-only  # who may commit at all (a rebase)
 
 check-staged exits 0 to allow, 1 to refuse, 2 when it cannot judge (a commit is refused for both).
 SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the reason.
@@ -45,8 +45,17 @@ def _need(cond, msg):
         raise LaneError(f".conclave/lanes.toml: {msg}")
 
 
+def _canonical(v) -> bool:
+    """A repository path in git's own spelling: relative, `/`-separated, no `.`, `..` or empty component. Git
+    reports `user/x.c`, so a map entry spelled `./user/` would match nothing and release its reservation."""
+    if not isinstance(v, str) or not v or v.startswith("/") or "\\" in v:
+        return False
+    parts = v[:-1].split("/") if v.endswith("/") else v.split("/")
+    return all(p not in ("", ".", "..") for p in parts)
+
+
 def _strings(value) -> bool:
-    return isinstance(value, list) and all(isinstance(v, str) and v and not v.startswith("/") for v in value)
+    return isinstance(value, list) and all(_canonical(v) for v in value)
 
 
 MAP = ".conclave/lanes.toml"
@@ -76,6 +85,7 @@ def parse_map(text: str) -> dict:
     lanes = data.get("lane")
     _need(isinstance(lanes, dict) and MAIN in lanes, "needs a [lane.main] table")
     owned: dict[str, str] = {}
+    trees: dict[str, str] = {}
     for name, lane in lanes.items():
         _need(re.fullmatch(r"[a-z][a-z0-9-]*", name) is not None, f"lane name {name!r} is not lower-case-with-dashes")
         _need(isinstance(lane, dict) and set(lane) == LANE_KEYS,
@@ -88,6 +98,10 @@ def parse_map(text: str) -> dict:
         if name == MAIN:
             _need(not lane["paths"] and lane["worktree"] == ".",
                   "[lane.main] owns the remainder: paths = [] and worktree = \".\"")
+        # The committing lane is found by its worktree, so two lanes in one tree would share permissions.
+        tree = os.path.normpath(lane["worktree"])
+        _need(tree not in trees, f"[lane.{name}] worktree {lane['worktree']!r} is also lane {trees.get(tree)}'s")
+        trees[tree] = name
         for p in lane["paths"]:
             for q, other in owned.items():
                 _need(not (_covers(p, q) or _covers(q, p)), f"{name} path {p!r} overlaps {other} path {q!r}")
@@ -112,6 +126,13 @@ def state_dir() -> Path:
     return Path(base) / "impossible-os" / "lanes"
 
 
+PID_MAX = 2**31 - 1                                # the largest process id any supported host hands out
+
+
+def _pid_ok(pid) -> bool:
+    return isinstance(pid, int) and not isinstance(pid, bool) and 0 < pid <= PID_MAX
+
+
 def _pid_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -132,8 +153,8 @@ def lane_state(lane_map: dict, name: str, now: float | None = None) -> str:
     try:
         rec = json.loads(raw)
         pid, beat = rec["pid"], rec["heartbeat"]
-        ok = (isinstance(rec, dict) and rec.get("lane") == name and isinstance(pid, int) and pid > 0
-              and not isinstance(pid, bool) and isinstance(beat, (int, float)) and not isinstance(beat, bool))
+        ok = (isinstance(rec, dict) and rec.get("lane") == name and _pid_ok(pid)
+              and isinstance(beat, (int, float)) and not isinstance(beat, bool))
     except (ValueError, KeyError, TypeError):
         ok = False
     if not ok:
@@ -159,12 +180,13 @@ def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str) 
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
     a file in a lane cannot be finished outside that lane."""
     # A repository-relative `./user/x` names the same file as `user/x`; a nested `vendor/user/x` does not.
-    text = re.sub(r"(?<![\w./-])\./", " ", text)
+    if "./" in text:
+        text = re.sub(r"(?<![\w./-])\./", " ", text)
     for name, lane in lane_map["lanes"].items():
         if name == MAIN or lane_states.get(name) not in (LIVE, DAMAGED):
             continue
         for p in lane["paths"]:
-            if re.search(r"(?<![\w./-])" + re.escape(p), text):
+            if p in text and re.search(r"(?<![\w./-])" + re.escape(p), text):
                 return name
     return None
 
@@ -176,6 +198,8 @@ def any_reserving(lane_map: dict, lane_states: dict[str, str]) -> bool:
 
 
 def beat(name: str, pid: int, task: str) -> Path:
+    if not _pid_ok(pid):
+        raise LaneError(f"pid {pid} is not a process id (1 to {PID_MAX})")
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{name}.json"
@@ -220,8 +244,10 @@ def committer(lane_map: dict, toplevel: Path) -> str | None:
     return None
 
 
-def staged_paths(toplevel: Path) -> list[str]:
-    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff")
+def staged_paths(toplevel: Path, base: str | None = None) -> list[str]:
+    """The paths the index changes against HEAD, or against commit `base`."""
+    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff",
+               *([base] if base else []))
     return [p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p]
 
 
@@ -269,25 +295,42 @@ def committed_map(toplevel: Path) -> dict:
     return parse_map(text)
 
 
-def merge_pending(toplevel: Path) -> bool:
+def merge_parents(toplevel: Path) -> list[str]:
+    """The other parents of a pending merge (MERGE_HEAD, one line each for an octopus), or [] for no merge."""
     path = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD").decode().strip())
-    return path.exists()
+    try:
+        return [line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()]
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError) as exc:
+        raise LaneError(f"MERGE_HEAD cannot be read ({type(exc).__name__})") from exc
+
+
+def authored_paths(toplevel: Path) -> list[str]:
+    """The paths this commit authors. For a merge, a path whose result equals some parent's is inherited from
+    a commit already judged; only a result that differs from every parent (a resolution) is this commit's."""
+    paths = staged_paths(toplevel)
+    for parent in merge_parents(toplevel):
+        theirs = set(staged_paths(toplevel, parent))
+        paths = [p for p in paths if p in theirs]
+    return paths
 
 
 def check_staged(cwd: Path, committer_only: bool = False) -> int:
-    """Judge the staged commit. A merge (or rebase) is judged only on who may commit at all: it carries changes
-    other lanes already committed and were judged for, so its index is not this lane's to judge."""
+    """Judge the staged commit. A merge is judged on the paths it authors (`authored_paths`); a rebase
+    (`committer_only`) replays commits already judged, so only who may commit at all is judged."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
         lane_map = committed_map(toplevel)
         me = committer(lane_map, toplevel)
-        committer_only = committer_only or merge_pending(toplevel)
-        paths = [] if committer_only else staged_paths(toplevel)
-        if MAP in paths:
+        # The map the commit leaves behind is validated on every path, a merge or rebase included: a map
+        # that does not validate never lands, because every later commit is judged by it.
+        if MAP in staged_paths(toplevel):
             staged = _blob(toplevel, f":{MAP}")
             if staged is None:
                 raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
-            parse_map(staged)                                   # a map that does not validate never lands
+            parse_map(staged)
+        paths = [] if committer_only else authored_paths(toplevel)
         reasons = judge(lane_map, me, paths, states(lane_map))
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)

@@ -309,6 +309,9 @@ def test_the_skip_needs_a_stated_reason(repo, monkeypatch):
     (lambda t: t.replace('worktree = "."\npaths = []', 'worktree = "."\npaths = ["x/"]', 1), "owns the remainder"),
     (lambda t: t.replace("stale_secs = 180", "stale_secs = 180\nbogus = 1"), "unknown keys"),
     (lambda t: t.replace('output = "reports"', 'output = "logs"'), "output must be one of"),
+    (lambda t: t.replace('paths = ["user/"', 'paths = ["./user/"'), "paths must be a list"),
+    (lambda t: t.replace('"src/shell/"', '"src//shell/"'), "paths must be a list"),
+    (lambda t: t.replace('worktree = "../wt-neon-b"', 'worktree = "../wt-userland/"'), "is also lane userland"),
 ])
 def test_a_map_that_does_not_validate_never_lands(repo, edit, why):
     toml = repo["primary"] / ".conclave" / "lanes.toml"
@@ -456,3 +459,59 @@ def test_the_reservation_pass_scans_no_todo_classification_already_scanned(triag
     assert held and len(calls) == 1, calls
     lanes.clear("userland")
     assert t._lane_context(root) == (None, "")                 # nothing held: no context, no second read
+
+
+def _paused_merge(repo):
+    """main mid-merge of a userland branch that changed user/a.c, with userland live and the hooks on."""
+    git(repo["userland"], "checkout", "-q", "-b", "ul")
+    stage(repo["userland"], "user/a.c", "ul\n")
+    git(repo["userland"], "commit", "-qm", "ul")
+    stage(repo["primary"], "src/kernel/k.c")
+    git(repo["primary"], "commit", "-qm", "main")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    git(repo["primary"], "merge", "--no-ff", "--no-commit", "ul", env=os.environ.copy())
+
+
+def test_a_merge_resolution_authored_in_a_live_lanes_file_is_refused(repo):
+    _paused_merge(repo)
+    stage(repo["primary"], "user/a.c", "neither parent\n")
+    r = git(repo["primary"], "commit", "--no-edit", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    assert head(repo["primary"]) == "main"
+
+
+@pytest.mark.parametrize("damage,why", [("bad", "cannot be read"), ("delete", "deletes .conclave/lanes.toml")])
+def test_a_merge_never_lands_a_broken_lane_map(repo, damage, why):
+    _paused_merge(repo)
+    if damage == "bad":
+        stage(repo["primary"], ".conclave/lanes.toml", "[lane.main\n")
+    else:
+        git(repo["primary"], "rm", "-q", "--", ".conclave/lanes.toml")
+    r = git(repo["primary"], "commit", "--no-edit", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and why in r.stderr, r
+    assert head(repo["primary"]) == "main"
+
+
+def test_a_pid_out_of_range_is_never_written_and_a_record_holding_one_reserves_only_its_lane(repo):
+    with pytest.raises(lanes.LaneError):
+        lanes.beat("userland", 2**31, "t")
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    (d / "userland.json").write_text(json.dumps({"lane": "userland", "pid": 2**40, "heartbeat": time.time()}))
+    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    stage(repo["primary"], "src/kernel/k.c")
+    assert check(repo["primary"]).returncode == 0
+    stage(repo["primary"], "user/a.c")
+    r = check(repo["primary"])
+    assert r.returncode == 1 and "reserved (its record cannot be read)" in r.stderr, r
+
+
+def test_triage_schedules_by_the_committed_map_not_an_edit_in_progress(triage):
+    t, root, _ = triage
+    toml = Path(root) / ".conclave" / "lanes.toml"
+    toml.write_text(toml.read_text().replace('"src/shell/", ', ""))
+    live("userland")
+    held = []
+    t.pick_next({}, root, ready=None, reserved=held)
+    assert {"file": "todo/00-x/TODO-01-x.md", "section": 2, "lane": "userland"} in held, held
