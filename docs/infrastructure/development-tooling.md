@@ -1063,9 +1063,10 @@ bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-p
 
 | Hook | Path | Default | Blocks | Re-run manually |
 | ---- | ---- | ------- | ------ | --------------- |
-| `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure or a staged file that gains a Unicode dash | `bash scripts/lint.sh`; `python3 scripts/staged_dash_check.py` |
-| `commit-msg` | [`.githooks/commit-msg`](../../.githooks/commit-msg) | **always on** (acts only while `MERGE_HEAD` exists) | a merge, committed by `git merge` itself or by `git commit` after a conflict, whose files gain a Unicode dash over every parent (`pre-merge-commit` runs before `MERGE_HEAD` is written, so it cannot judge the merge) | `python3 scripts/staged_dash_check.py --merge-head "$(git rev-parse --git-path MERGE_HEAD)"` |
-| `prepare-commit-msg` | [`.githooks/prepare-commit-msg`](../../.githooks/prepare-commit-msg) | **always on** | a `git commit` that skipped `pre-commit` (`--no-verify`, `-n`, in any spelling) | runs on every commit |
+| `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on a path a live lane holds (`.conclave/lanes.toml`), lint failure or a staged file that gains a Unicode dash | `python3 scripts/lanes.py check-staged`; `bash scripts/lint.sh`; `python3 scripts/staged_dash_check.py` |
+| `commit-msg` | [`.githooks/commit-msg`](../../.githooks/commit-msg) | **always on** | a merge, committed by `git merge` itself or by `git commit` after a conflict, whose files gain a Unicode dash over every parent (`pre-merge-commit` runs before `MERGE_HEAD` is written, so it cannot judge the merge); any other commit, on a path a lane that started after `pre-commit` judged it now holds | `python3 scripts/staged_dash_check.py --merge-head "$(git rev-parse --git-path MERGE_HEAD)"` |
+| `prepare-commit-msg` | [`.githooks/prepare-commit-msg`](../../.githooks/prepare-commit-msg) | **always on** | a `git commit` that skipped `pre-commit` (`--no-verify`, `-n`, in any spelling); a revert or cherry-pick into a live lane's paths, and a merge or rebase by a lane that may not commit | runs on every commit |
+| `pre-applypatch` | [`.githooks/pre-applypatch`](../../.githooks/pre-applypatch) | **always on** | a `git am` patch into a live lane's paths | `python3 scripts/lanes.py check-staged` |
 | `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `COUNT_ONLY=1 bash .githooks/post-commit` (refresh only) or `bash .githooks/post-commit` (will amend `HEAD`) |
 | `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **always on** for the dash check; the build/test gate is **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on an outgoing commit whose files gain a Unicode dash, or (opt-in) build or test failure | `python3 scripts/staged_dash_check.py --push "$(git remote get-url --push origin)" < records` with the push's ref records on stdin, one `<local ref> <local oid> <remote ref> <remote oid>` a line, as the hook judges them against what that URL advertises (a single update is a one-line record on the same `--push` call; `--range OLD NEW` judges exactly that range by hand) |
 
@@ -1256,7 +1257,7 @@ Categories tested (~36 assertions):
 - Doctor + setup invariants: `tooling-doctor.sh --quiet` and `setup.sh --verify` both exit 0; lint's `--help` advertises the current check count.
 - Hook lifecycle in a throwaway git repo: default install sets `core.hooksPath`, is idempotent on re-run; `--enable-pre-push` creates the worktree-local sentinel and `--status` reports ENABLED; `--disable-pre-push` removes it; `--remove` clears `core.hooksPath`.
 - Workflow YAML: every `.github/workflows/*.yml` parses; `build.yml` and `release.yml` both invoke the canonical wrappers.
-- `.githooks/{pre-commit,prepare-commit-msg,commit-msg,post-commit,pre-push}` executable bits still set.
+- `.githooks/{pre-commit,prepare-commit-msg,commit-msg,pre-applypatch,post-commit,pre-push}` executable bits still set.
 - Doc mentions: `CLAUDE.md` and `README.md` reference `install-hooks.sh`; `development-tooling.md` mentions `tooling-doctor`.
 
 Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) so wrapper drift surfaces on every PR, before the expensive build stage runs. Run locally with `bash scripts/test-tooling.sh` (or `--quiet`).
@@ -1329,6 +1330,7 @@ scripts/
 | `compile_commands.json`           | Bear compilation database (generated on clean build) |
 | `.githooks/pre-commit`            | Active pre-commit lint hook                          |
 | `.githooks/prepare-commit-msg`    | Refuses a commit that skipped `pre-commit`           |
+| `.githooks/pre-applypatch`        | The lane check for `git am`                          |
 | `.githooks/post-commit`           | Active `COUNT.md` refresh hook                       |
 | `src/kernel/test/test_runner.c`   | Unit test framework runner                           |
 | `src/kernel/test/test_*.c`        | Kernel test files; live per-file counts in the generated coverage report below (a hand-kept number here goes stale on every new suite) |

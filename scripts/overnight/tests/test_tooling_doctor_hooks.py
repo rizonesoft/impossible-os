@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "pre-push")
+HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg", "pre-applypatch", "post-commit", "pre-push")
 
 
 def _env():

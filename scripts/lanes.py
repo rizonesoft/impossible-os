@@ -11,6 +11,7 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
     python3 scripts/lanes.py owner <path>                   # the extra lane whose paths hold it, else main
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
+    python3 scripts/lanes.py check-staged --committer-only  # who may commit at all (a merge or rebase)
 
 check-staged exits 0 to allow, 1 to refuse, 2 when it cannot judge (a commit is refused for both).
 SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the reason.
@@ -145,6 +146,8 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
 def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str) -> str | None:
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
     a file in a lane cannot be finished outside that lane."""
+    # A repository-relative `./user/x` names the same file as `user/x`; a nested `vendor/user/x` does not.
+    text = re.sub(r"(?<![\w./-])\./", " ", text)
     for name, lane in lane_map["lanes"].items():
         if name == MAIN or lane_states.get(name) not in (LIVE, DAMAGED):
             continue
@@ -152,6 +155,12 @@ def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str) 
             if re.search(r"(?<![\w./-])" + re.escape(p), text):
                 return name
     return None
+
+
+def any_reserving(lane_map: dict, lane_states: dict[str, str]) -> bool:
+    """Whether any extra lane with paths holds them now: when none does, nothing can be reserved."""
+    return any(name != MAIN and lane["paths"] and lane_states.get(name) in (LIVE, DAMAGED)
+               for name, lane in lane_map["lanes"].items())
 
 
 def beat(name: str, pid: int, task: str) -> Path:
@@ -226,12 +235,15 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
     return reasons
 
 
-def check_staged(cwd: Path) -> int:
+def check_staged(cwd: Path, committer_only: bool = False) -> int:
+    """Judge the staged commit. `committer_only` judges only who may commit at all: a merge or rebase carries
+    changes other lanes already committed and were judged for, so its index is not this lane's to judge."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
         lane_map = load_map(toplevel)
         me = committer(lane_map, toplevel)
-        reasons = judge(lane_map, me, staged_paths(toplevel), states(lane_map))
+        paths = [] if committer_only else staged_paths(toplevel)
+        reasons = judge(lane_map, me, paths, states(lane_map))
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
         return 2
@@ -259,8 +271,8 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
-    if cmd == "check-staged" and not rest:
-        return check_staged(Path.cwd())
+    if cmd == "check-staged" and rest in ([], ["--committer-only"]):
+        return check_staged(Path.cwd(), committer_only=bool(rest))
     root = Path(__file__).resolve().parent.parent
     try:
         lane_map = load_map(root)

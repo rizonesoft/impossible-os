@@ -287,7 +287,7 @@ check_hooks() {
 
     # Per-hook files exist
     local h
-    for h in pre-commit prepare-commit-msg commit-msg post-commit pre-push; do
+    for h in pre-commit prepare-commit-msg commit-msg pre-applypatch post-commit pre-push; do
         if [ -x "$REPO_ROOT/.githooks/$h" ]; then
             record hooks pass ".githooks/$h" \
                 "Present and executable" \

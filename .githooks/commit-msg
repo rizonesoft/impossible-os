@@ -6,8 +6,9 @@
 # before HEAD moves, so staged_dash_check.py judges the merge against every
 # parent, as pre-push does. It judges a merge the user commits too, so
 # pre-commit leaves every merge to it; any other commit already passed
-# pre-commit, so the hook does nothing without MERGE_HEAD. `--no-verify` skips it, as it skips
-# pre-commit; the gate names its own opt-out.
+# pre-commit's dash gate, so without MERGE_HEAD the hook only judges the lanes again
+# (TODO-08 section 49). `--no-verify` skips it, as it skips pre-commit; each gate names its
+# own opt-out.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=.githooks/lib/dash-gate.sh
@@ -15,7 +16,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The merge check is bounded (dash_merge_head): storage that stalls it refuses the commit.
 rc=0
 MERGE_PARENTS="$(dash_merge_head)" || rc=$?
-[ "$rc" -eq 1 ] && exit 0
+if [ "$rc" -eq 1 ]; then
+    # Not a merge: judge the lanes again (TODO-08 section 49). pre-commit judged them before
+    # the message editor opened, and a lane that started since then holds its paths now.
+    exec python3 "$REPO_ROOT/scripts/lanes.py" check-staged
+fi
 if [ "$rc" -ne 0 ]; then
     echo -e "\033[31mcommit-msg: whether this is a merge could not be read (storage stalled or failed); commit again\033[0m"
     exit 1

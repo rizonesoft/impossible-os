@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# .githooks/pre-applypatch -- the lane check for `git am` (TODO-08 section 49). am runs
+# neither pre-commit nor prepare-commit-msg; git runs this hook after a patch is applied
+# to the index and before it is committed, so the staged paths are the patch's.
+# `--no-verify` skips it, as it skips pre-commit; the check names its own opt-out.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$REPO_ROOT/scripts/lanes.py" check-staged

@@ -1909,6 +1909,10 @@ Changed 2026-11-21 (operator): this section was "Re-dispatched passes review onl
 
 ## 67. The push wait overlaps the next plan review
 
+**Needs:** attended
+
+> **Why attended:** the new phase goes in the frozen `run_phase_guard.py` (todo/answers.md Q52).
+
 > **Spawned-by:** root
 > **User impact:** the run idles for the whole CI wait after each push.
 

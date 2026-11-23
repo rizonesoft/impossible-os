@@ -2,8 +2,7 @@
 
 Each repository has real linked worktrees for its lanes and runs the repository's own .githooks/pre-commit and
 prepare-commit-msg (core.hooksPath points at a copy holding only those two and their lib), so a refusal is the
-hook's. An allowed commit is judged by the same `lanes.py check-staged` the hook runs, because past the lane
-check the real pre-commit goes on to the full lint, which a throwaway repository cannot carry.
+hook's, and an allowed commit lands through the same hooks (the lint, which has its own suite, is stubbed).
 """
 import importlib.util
 import json
@@ -74,6 +73,11 @@ def repo(tmp_path, monkeypatch):
     (primary / ".conclave").mkdir()
     (primary / ".conclave" / "lanes.toml").write_text(MAP)
     shutil.copy(LANES_PY, primary / "scripts" / "lanes.py")
+    # The rest of pre-commit's chain, so an allowed commit lands through the real hooks: the dash gate runs
+    # for real, and the lint (with its own suite) is stubbed.
+    for helper in ("staged_dash_check.py", "bounded_run.py"):
+        shutil.copy(REPO / "scripts" / helper, primary / "scripts" / helper)
+    (primary / "scripts" / "lint.sh").write_text("exit 0\n")
     for d in ("user", "src/shell", "src/kernel", "todo/11-apps"):
         (primary / d).mkdir(parents=True, exist_ok=True)
     (primary / "user" / "a.c").write_text("a\n")
@@ -87,7 +91,7 @@ def repo(tmp_path, monkeypatch):
     # (untracked: never part of a staged change).
     hooks = primary / ".githooks"
     (hooks / "lib").mkdir(parents=True)
-    for name in ("pre-commit", "prepare-commit-msg"):
+    for name in ("pre-commit", "prepare-commit-msg", "commit-msg", "pre-applypatch"):
         shutil.copy(REPO / ".githooks" / name, hooks / name)
     for lib in (REPO / ".githooks" / "lib").iterdir():
         shutil.copy(lib, hooks / "lib" / lib.name)
@@ -114,6 +118,10 @@ def hooked_commit(r, tree, *args):
     return git(tree, "commit", "-qm", "x", *args, check=False, env=os.environ.copy())
 
 
+def head(tree):
+    return git(tree, "log", "-1", "--format=%s").stdout.strip()
+
+
 def stage(tree, rel, text="changed\n"):
     p = tree / rel
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -126,16 +134,101 @@ def test_a_commit_into_a_live_lanes_path_is_refused_and_passes_with_the_lane_off
     live("userland")
     r = hooked_commit(repo, repo["primary"])
     assert r.returncode != 0 and "user/a.c belongs to lane userland, which is live" in r.stderr, r
+    assert head(repo["primary"]) == "seed"
     lanes.clear("userland")
-    assert check(repo["primary"]).returncode == 0
+    r = hooked_commit(repo, repo["primary"])
+    assert r.returncode == 0 and head(repo["primary"]) == "x", r
 
 
 def test_a_generated_file_always_passes(repo):
     live("userland")
     stage(repo["primary"], "COUNT.md")
-    assert check(repo["primary"]).returncode == 0
-    stage(repo["userland"], "COUNT.md")
-    assert check(repo["userland"]).returncode == 0
+    r = hooked_commit(repo, repo["primary"])
+    assert r.returncode == 0 and head(repo["primary"]) == "x", r
+    stage(repo["userland"], "COUNT.md", "userland\n")
+    r = hooked_commit(repo, repo["userland"])
+    assert r.returncode == 0 and head(repo["userland"]) == "x", r
+
+
+def test_a_lane_that_starts_while_the_message_is_written_holds_its_paths_at_commit_msg(repo):
+    # pre-commit judged userland off; the lane started before the message was saved.
+    stage(repo["primary"], "user/a.c")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    starter = repo["tmp"] / "start_userland.py"
+    starter.write_text(f"import sys\nsys.path.insert(0, {str(LANES_PY.parent)!r})\nimport lanes\n"
+                       f"lanes.beat('userland', {os.getpid()}, 't')\n")
+    editor = repo["tmp"] / "editor.sh"
+    editor.write_text(f'#!/bin/sh\n"{sys.executable}" "{starter}" || exit 1\necho msg > "$1"\n')
+    editor.chmod(0o755)
+    r = git(repo["primary"], "commit", check=False, env={**os.environ, "GIT_EDITOR": str(editor)})
+    assert r.returncode != 0 and "user/a.c belongs to lane userland, which is live" in r.stderr, r
+    assert head(repo["primary"]) == "seed"
+
+
+def test_a_mail_patch_into_a_live_lanes_path_is_refused_and_applies_with_the_lane_off(repo):
+    stage(repo["primary"], "user/a.c", "patched\n")
+    git(repo["primary"], "commit", "-qm", "patch")             # authored before any hook is installed
+    patch = git(repo["primary"], "format-patch", "-1", "--stdout").stdout
+    git(repo["primary"], "reset", "-q", "--hard", "HEAD~1")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "am"], input=patch, capture_output=True, text=True,
+                       timeout=60, env=os.environ.copy())
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    assert head(repo["primary"]) == "seed"
+    git(repo["primary"], "am", "--abort")
+    lanes.clear("userland")
+    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "am"], input=patch, capture_output=True, text=True,
+                       timeout=60, env=os.environ.copy())
+    assert r.returncode == 0 and head(repo["primary"]) == "patch", r
+
+
+def test_a_reports_lane_never_creates_a_merge_commit(repo):
+    nb = repo["neon-b"]
+    git(nb, "checkout", "-q", "-b", "side")
+    stage(nb, "COUNT.md", "side\n")
+    git(nb, "commit", "-qm", "side")                          # before any hook is installed
+    stage(repo["primary"], "src/kernel/k.c")
+    git(repo["primary"], "commit", "-qm", "main")
+    git(nb, "config", "core.hooksPath", str(repo["hooks"]))
+    live("neon-b")
+    r = git(nb, "merge", "--no-edit", "main", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and "lane neon-b only writes reports" in r.stderr, r
+    assert head(nb) == "side"
+
+
+def test_a_main_merge_carrying_a_live_lanes_commits_is_not_refused(repo):
+    # The merge carries userland's own commit; it was judged when userland made it.
+    git(repo["userland"], "checkout", "-q", "-b", "ul")
+    stage(repo["userland"], "user/a.c", "ul\n")
+    git(repo["userland"], "commit", "-qm", "ul")
+    stage(repo["primary"], "src/kernel/k.c")
+    git(repo["primary"], "commit", "-qm", "main")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    r = git(repo["primary"], "merge", "--no-edit", "ul", check=False, env=os.environ.copy())
+    assert r.returncode == 0 and git(repo["primary"], "rev-list", "--count", "HEAD").stdout.strip() == "4", r
+
+
+def test_a_revert_read_through_ps_is_judged_too(repo, monkeypatch):
+    stage(repo["primary"], "user/a.c", "two\n")
+    git(repo["primary"], "commit", "-qm", "edit")
+    live("userland")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    monkeypatch.setenv("PREPARE_COMMIT_MSG_PROC_ROOT", str(repo["tmp"] / "no-proc"))
+    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "revert", "--no-edit", "HEAD"], capture_output=True,
+                       text=True, timeout=60, env=os.environ.copy())
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    assert head(repo["primary"]) == "edit"
+
+
+def test_a_path_spelled_from_the_root_is_a_lane_path_and_a_nested_one_is_not(repo):
+    m = lanes.load_map(repo["primary"])
+    on = {"userland": lanes.LIVE}
+    assert lanes.names_reserved_path(m, on, "edit `./user/hello/x.c`") == "userland"
+    assert lanes.names_reserved_path(m, on, "edit user/hello/x.c") == "userland"
+    assert lanes.names_reserved_path(m, on, "edit vendor/user/hello/x.c") is None
+    assert lanes.names_reserved_path(m, on, "edit a./user/x.c") is None
 
 
 def test_a_stale_heartbeat_or_a_dead_pid_is_a_lane_that_is_off(repo):
@@ -283,3 +376,18 @@ def test_triage_reports_blocked_never_done_when_only_lane_work_remains_and_resum
     lanes.clear("userland")
     entry, cls, _w = t.pick_next({}, root, ready=None)
     assert entry["file_path"] == "todo/11-apps/TODO-01-app.md" and cls == t.NEEDS_WORK
+
+
+def test_classify_offers_no_section_a_live_lane_holds(triage, capsys, monkeypatch):
+    t, root, entries = triage
+    monkeypatch.setattr(t, "plan_ready", lambda root, cache: None)
+    cache = [{"file_path": "todo/00-x/TODO-01-x.md", "domain": "00-x", "sections": []}]
+    live("userland")
+    assert t.cmd_classify(cache, root, "todo/00-x/TODO-01-x.md") == 0
+    out = json.loads(capsys.readouterr().out)
+    cls = {s["n"]: s["class"] for s in out["sections"]}
+    assert cls == {1: t.NEEDS_WORK, 2: t.BLOCKED} and out["lane_reserved"], out
+    lanes.clear("userland")
+    assert t.cmd_classify(cache, root, "todo/00-x/TODO-01-x.md") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert {s["n"]: s["class"] for s in out["sections"]} == {1: t.NEEDS_WORK, 2: t.NEEDS_WORK}, out

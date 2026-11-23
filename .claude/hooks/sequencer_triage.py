@@ -622,7 +622,10 @@ def _lane_context(root):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         lane_map = mod.load_map(Path(root))
-        return (mod, lane_map, mod.states(lane_map)), ""
+        lane_states = mod.states(lane_map)
+        if not mod.any_reserving(lane_map, lane_states):
+            return None, ""                            # no lane holds anything: no file needs a second read
+        return (mod, lane_map, lane_states), ""
     except Exception as exc:                           # fail-direction: the commit check still refuses a clash
         return None, f"{type(exc).__name__}: {exc}"
 
@@ -795,6 +798,11 @@ def cmd_classify(cache, root, target):
         return 1
     entry = match[0]
     cls, per = classify_file(entry, root)
+    # The same reservations --next applies: a section a live lane holds is never offered here either.
+    ctx, lane_err = _lane_context(root)
+    per, held = lane_reservations(entry, per, root, ctx)
+    if held and cls == NEEDS_WORK and not any(c == NEEDS_WORK for _n, c in per):
+        cls = BLOCKED
     lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
     print(json.dumps({
         "file": entry["file_path"],
@@ -803,6 +811,8 @@ def cmd_classify(cache, root, target):
         "stages_1_2_done": lc["validated"] and lc["gap_audited"],
         # `waiting`: still needs work, but a section it depends on is not done.
         "sections": section_list(entry, per, plan_ready(root, cache), owed_reviews(root)),
+        "lane_reserved": held,
+        **({"lanes_error": lane_err} if lane_err else {}),
     }, indent=1))
     return 0
 

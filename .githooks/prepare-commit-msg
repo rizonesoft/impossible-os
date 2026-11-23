@@ -88,6 +88,7 @@ git_subcommand() {
 is_history_op() {
     local sub="${1%\?}" unsure=
     [ "$sub" != "$1" ] && unsure=1
+    HISTORY_OP="$sub"
     if [ -z "$unsure" ]; then
         case "$sub" in
             cherry-pick|revert|merge|pull|rebase|am) return 0 ;;
@@ -105,6 +106,7 @@ is_history_op() {
         esac
     done
     [ -n "$sub" ] || return 1
+    HISTORY_OP="$sub"  # the operation the unsure reading resolved to, for the lane check
     commits=" commit $(git config --get-regexp '^alias\.' 2>/dev/null \
         | awk '$2 == "commit" { sub(/^alias\./, "", $1); printf "%s ", $1 }')"
     for word in "${ARGV[@]:1}"; do
@@ -127,15 +129,18 @@ is_history_op() {
 # Only the operations that commit without running pre-commit are let through. A command
 # line that cannot be read at all is treated as a commit and refused.
 SUB="$(git_subcommand "$PPID")" || SUB=commit
-# A revert, cherry-pick or am authors a new change without pre-commit, so the lane check
-# (TODO-08 section 49) runs here for them. A merge or rebase replays changes already
-# judged when they were committed, and is left to the gates that judged them.
+# A revert or cherry-pick authors a new change without pre-commit, so the lane check
+# (TODO-08 section 49) runs here on its staged paths (`git am` runs no prepare-commit-msg;
+# pre-applypatch judges it). A merge or rebase carries changes other lanes committed and
+# were judged for, so it is judged only on who may commit at all: a reports lane never does.
+HISTORY_OP=
 lane_check_history() {
     case "$1" in
-        revert|cherry-pick|am) python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1 ;;
+        revert|cherry-pick) python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1 ;;
+        *) python3 "$REPO_ROOT/scripts/lanes.py" check-staged --committer-only || exit 1 ;;
     esac
 }
-if is_history_op "$SUB" "$PPID"; then lane_check_history "$SUB"; exit 0; fi
+if is_history_op "$SUB" "$PPID"; then lane_check_history "$HISTORY_OP"; exit 0; fi
 # The sequencer of rebase, cherry-pick and revert runs a child `git commit -n` (a
 # squash, a continue after a conflict). Its parent is that git process, never a
 # shell, so a hand-typed `git commit -n` during a paused rebase is refused. The
@@ -146,7 +151,7 @@ PARENT="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
 read_argv "$PPID" && ARGV0="${ARGV[0]}" || ARGV0=
 if [ -n "$PARENT" ] && [ -n "${GIT_REFLOG_ACTION:-}" ] && [ -n "${GIT_EXEC_PATH:-}" ] \
     && [ "${ARGV0%.exe}" = "$GIT_EXEC_PATH/git" ] && PSUB="$(git_subcommand "$PARENT")"; then
-    if is_history_op "$PSUB" "$PARENT"; then lane_check_history "$PSUB"; exit 0; fi
+    if is_history_op "$PSUB" "$PARENT"; then lane_check_history "$HISTORY_OP"; exit 0; fi
 fi
 
 cat >&2 <<'MSG'
