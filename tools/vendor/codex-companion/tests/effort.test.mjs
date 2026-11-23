@@ -209,3 +209,41 @@ test("two untracked names that decode alike each bring their own contents", (t) 
   assert.match(prompt, /REPLACEMENT-NAME-CONTENT/);
 });
 
+
+test("three names that decode alike are three files for the inline limit", (t) => {
+  const { env, statePath } = repoWithChange(t);
+  const repo = makeTempDir();
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  for (const byte of [0x80, 0x81, 0x82]) {
+    fs.writeFileSync(Buffer.concat([Buffer.from(repo + "/same-"), Buffer.from([byte])]), `ALIKE-BODY-${byte}\n`);
+  }
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "--scope", "working-tree", "check"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  assert.match(prompt, /3 untracked file\(s\)/);
+  assert.doesNotMatch(prompt, /ALIKE-BODY-/);
+});
+
+test("a worktree whose name ends in a space is reviewed, not its trimmed sibling", (t) => {
+  const { env, statePath } = repoWithChange(t);
+  const base = makeTempDir();
+  const main = path.join(base, "repair");
+  fs.mkdirSync(main);
+  initGitRepo(main);
+  fs.writeFileSync(path.join(main, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: main });
+  run("git", ["commit", "-m", "init"], { cwd: main });
+  const spaced = path.join(base, "repair ");
+  run("git", ["worktree", "add", "--detach", spaced], { cwd: main });
+  fs.writeFileSync(path.join(spaced, "only-in-spaced.txt"), "SPACED-WORKTREE-BODY\n");
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "--scope", "working-tree", "check"],
+                           { cwd: spaced, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  assert.match(prompt, /SPACED-WORKTREE-BODY/);
+});
+

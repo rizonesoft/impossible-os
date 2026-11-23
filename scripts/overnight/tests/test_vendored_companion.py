@@ -98,7 +98,7 @@ def test_a_real_pass_applies_its_effort_and_leaves_nothing_behind(tmp_path):
     assert receipt.get("pass_checked") is True and receipt.get("rc") == 0, receipt
     assert pathlib.Path(receipt["logFile"] + ".done").read_text().strip() == "0"
     assert not any(inside.iterdir()), list(inside.iterdir())
-    assert not list(reviews.glob(".cp.*")), list(reviews.iterdir())
+    assert not list(reviews.glob(".cp/[0-9]*")), list(reviews.iterdir())
     for _ in range(40):
         if not _marked(str(reviews)):
             break

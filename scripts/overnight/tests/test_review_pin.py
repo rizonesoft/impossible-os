@@ -3040,7 +3040,7 @@ fs.writeFileSync({json.dumps(str(probe))}, JSON.stringify({{
                    capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
     seen = json.loads(probe.read_text())
     try:
-        assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp.")), seen
+        assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp") + "/"), seen
         assert seen["endpoint"] == "", "the pass inherited a shared broker endpoint"
         assert not pathlib.Path(seen["data"]).exists(), "the pass's companion data outlived it"
         for _ in range(40):
@@ -3130,7 +3130,7 @@ setInterval(() => {{}}, 1000);
                 break
             time.sleep(0.05)
         assert not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z", "a late child outlived the pass"
-        assert not list((tmp_path / "reviews").glob(".cp.*"))
+        assert not list((tmp_path / "reviews").glob(".cp/[0-9]*"))
     finally:
         if pid:
             try:
@@ -3155,7 +3155,7 @@ def test_the_unlogged_fallback_is_bounded_too(tmp_path):
     done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), "plain review, no marker"],
                           capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
     assert done.returncode == 124 and time.monotonic() - started < 30, (done.returncode, done.stderr[-800:])
-    assert not list(tmp_path.glob(".cp.*"))
+    assert not list(tmp_path.glob(".cp/[0-9]*"))
 
 
 def test_a_prompt_at_the_argument_limit_reaches_the_companion_whole(tmp_path):
@@ -3247,10 +3247,10 @@ def test_an_older_broker_kind_runs_the_companion_in_its_own_data(tmp_path):
                           env={**os.environ, "CODEX_COMPANION_APP_SERVER_ENDPOINT": "unix:/shared/broker.sock"})
     assert done.returncode == 0, done.stderr
     seen = json.loads(probe.read_text())
-    assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp.")) and seen["tmp"] == seen["data"], seen
+    assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp") + "/") and seen["tmp"] == seen["data"], seen
     assert seen["endpoint"] == "", seen
     assert seen["argv"][-1] == "[review-kind: adversarial] x\nbody\n"
-    assert not list((tmp_path / "reviews").glob(".cp.*"))
+    assert not list((tmp_path / "reviews").glob(".cp/[0-9]*"))
 
 
 def test_the_broker_forwards_the_pass_limit():
@@ -3302,7 +3302,7 @@ def test_term_to_a_logged_dispatch_ends_its_review_and_removes_its_data(tmp_path
                 break
             time.sleep(0.1)
         assert not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z", "the reviewer outlived its dispatcher"
-        assert not list(reviews.glob(".cp.*")), list(reviews.iterdir())
+        assert not list(reviews.glob(".cp/[0-9]*")), list(reviews.iterdir())
     finally:
         try:
             os.killpg(proc.pid, 9)
@@ -3329,14 +3329,14 @@ def test_term_to_an_older_broker_job_removes_its_data(tmp_path):
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(100):
-            if list((tmp_path / "reviews").glob(".cp.*")):
+            if list((tmp_path / "reviews").glob(".cp/[0-9]*")):
                 break
             time.sleep(0.1)
-        assert list((tmp_path / "reviews").glob(".cp.*"))
+        assert list((tmp_path / "reviews").glob(".cp/[0-9]*"))
         time.sleep(0.3)
         os.killpg(proc.pid, signal.SIGTERM)                   # as the job supervisor ends the attempt
         proc.wait(timeout=20)
-        assert not list((tmp_path / "reviews").glob(".cp.*"))
+        assert not list((tmp_path / "reviews").glob(".cp/[0-9]*"))
     finally:
         try:
             os.killpg(proc.pid, 9)
@@ -3408,7 +3408,7 @@ def test_the_stderr_relay_never_holds_the_callers_stdout(tmp_path):
 
 
 def test_a_dead_passs_private_directory_is_swept_by_the_next(tmp_path):
-    """A broker job cancelled with SIGKILL runs no cleanup: its .cp.<pid>.* directory is removed by the next pass,
+    """A broker job cancelled with SIGKILL runs no cleanup: its .cp/<pid>.* directory is removed by the next pass,
     and a directory whose owner still runs is left alone (round review, 2026-11-23)."""
     import os
     import subprocess
@@ -3416,8 +3416,11 @@ def test_a_dead_passs_private_directory_is_swept_by_the_next(tmp_path):
     reviews.mkdir()
     dead = subprocess.Popen(["true"])
     dead.wait()
-    stale = reviews / f".cp.{dead.pid}.abcdef"
-    live = reviews / f".cp.{os.getpid()}.ghijkl"
+    parent = reviews / ".cp"
+    parent.mkdir(mode=0o700)
+    (parent / ".codex-dispatch-passes").write_text("")
+    stale = parent / f"{dead.pid}.abcdef"
+    live = parent / f"{os.getpid()}.ghijkl"
     stale.mkdir()
     live.mkdir()
     _dispatch(tmp_path, "adversarial", "no lens lines at all\n")
@@ -3443,7 +3446,7 @@ def test_an_older_broker_job_ends_at_its_limit(tmp_path):
     done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
                           start_new_session=True)
     assert done.returncode == 124 and time.monotonic() - started < 30, (done.returncode, done.stderr)
-    assert not list((tmp_path / "reviews").glob(".cp.*"))
+    assert not list((tmp_path / "reviews").glob(".cp/[0-9]*"))
 
 
 def test_the_fallback_never_sweeps_the_operators_tmpdir(tmp_path):
@@ -3460,9 +3463,10 @@ def test_the_fallback_never_sweeps_the_operators_tmpdir(tmp_path):
     mine = tmp_path / f".cp.{dead.pid}.backup"
     mine.mkdir()
     (mine / "keep.txt").write_text("operator data\n")
-    parent = tmp_path / f"codex-dispatch.{os.getuid()}"
+    parent = tmp_path / ".cp"
     parent.mkdir(mode=0o700)
-    stale = parent / f".cp.{dead.pid}.zzzzzz"
+    (parent / ".codex-dispatch-passes").write_text("")
+    stale = parent / f"{dead.pid}.zzzzzz"
     stale.mkdir()
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(blocked / "reviews"),
            "TMPDIR": str(tmp_path)}
@@ -3485,7 +3489,10 @@ def test_an_older_broker_job_sweeps_a_dead_passs_directory(tmp_path):
     reviews.mkdir()
     dead = subprocess.Popen(["true"])
     dead.wait()
-    stale = reviews / f".cp.{dead.pid}.qqqqqq"
+    parent = reviews / ".cp"
+    parent.mkdir(mode=0o700)
+    (parent / ".codex-dispatch-passes").write_text("")
+    stale = parent / f"{dead.pid}.qqqqqq"
     stale.mkdir()
     (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
     script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
@@ -3495,3 +3502,44 @@ def test_an_older_broker_job_sweeps_a_dead_passs_directory(tmp_path):
                           start_new_session=True)
     assert done.returncode == 0, done.stderr
     assert not stale.exists()
+
+
+def test_a_reviews_directory_set_to_a_shared_place_exposes_nothing_to_the_sweep(tmp_path):
+    """A logged review with CODEX_REVIEWS_DIR=/tmp swept /tmp itself (round review, 2026-11-23, P1). Passes live in
+    the helper's own .cp (marked as made by it), so a sibling backup survives, and a .cp it did not make is never
+    swept."""
+    import os
+    import subprocess
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    backup = shared / f".cp.{dead.pid}.backup"
+    backup.mkdir()
+    (backup / "keep.txt").write_text("operator data\n")
+    _dispatch(tmp_path, "adversarial", "no lens lines at all\n", reviews_dir=shared)
+    assert (backup / "keep.txt").read_text() == "operator data\n"
+    foreign = tmp_path / "foreign"
+    (foreign / ".cp" / f"{dead.pid}.theirs").mkdir(parents=True)
+    (foreign / ".cp" / f"{dead.pid}.theirs" / "keep.txt").write_text("not ours\n")
+    done, _prompt = _dispatch(tmp_path, "adversarial", "no lens lines at all\n", reviews_dir=foreign)
+    assert (foreign / ".cp" / f"{dead.pid}.theirs" / "keep.txt").exists(), "a .cp the helper did not make was swept"
+
+
+
+def test_a_broker_jobs_deadline_is_the_brokers_not_a_tighter_inner_one(tmp_path):
+    """A detached pass whose broker job already holds CODEX_REVIEW_MAX_SECS ran the companion under a second limit
+    of the same length, which ends its command a grace before the end: a pass the outer limit allows was cut at
+    124 (2026-11-23, a 3 s broker test under load). Under a broker job the inner supervisor only reaps."""
+    import os
+    import subprocess
+    fake = tmp_path / "companion.js"
+    fake.write_text("setTimeout(() => process.stdout.write('HIGHEST: none\\n'), 1500);\n")
+    reviews = tmp_path / "reviews"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews), "REVIEW_BASE": "HEAD",
+           "CODEX_REVIEW_MAX_SECS": "2", "CODEX_BROKER_JOB": "detached:test", "CODEX_BROKER_LOG": str(tmp_path / "b.log")}
+    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                    "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                   capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
+    done = next(reviews.glob("*.out.done")).read_text().strip()
+    assert done != "124", "the inner limit cut a pass its broker job's limit allows"

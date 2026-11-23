@@ -239,8 +239,15 @@ run_companion() {
     local log="${2:-$PASS_DATA/out}" start waited=0
     : >> "$log"
     start="$(stat -L -c %s -- "$log" 2>/dev/null || echo 0)"
+    # Under a broker job that holds CODEX_REVIEW_MAX_SECS, that job's supervisor owns the deadline: a second limit
+    # of the same length here ends its command a grace early and cut passes the job allows. This one then only
+    # reaps. Every other pass (foreground, or a broker job with no limit) keeps its own, the default included.
+    local deadline=("$secs")
+    if [ -n "${CODEX_BROKER_JOB:-}" ] && [ -n "${CODEX_REVIEW_MAX_SECS:-}" ]; then
+        deadline=(--no-deadline)
+    fi
     PASS_COMPANION="$COMPANION" PASS_EFFORT="$EFFORT" PASS_DIR="$PASS_DATA" \
-        python3 "$LIMITER" "$secs" 'p="$(cat -- "$PASS_DIR/prompt" && printf x)" || exit 2
+        python3 "$LIMITER" "${deadline[@]}" 'p="$(cat -- "$PASS_DIR/prompt" && printf x)" || exit 2
             exec env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
                 -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DIR" TMPDIR="$PASS_DIR" \
                 node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "${p%x}"' \
@@ -598,8 +605,6 @@ if [ "$KIND" != "direct" ]; then
 fi
 # An unmarked review with nowhere to keep a transcript: still one bounded pass with its own data, as above.
 LOG_RW=""
-# Its pass directory goes in a parent of its own under TMPDIR, never TMPDIR itself, which other programs share.
-FALLBACK_PARENT="$(pass_dir_parent)" || {
-    say "[$SELF_NAME] BLOCK -- no private directory under ${TMPDIR:-/tmp} for this review"; exit 2; }
-run_companion "$FALLBACK_PARENT" ""
+# Its pass directory goes in the helper's private .cp under TMPDIR, never TMPDIR itself.
+run_companion "${TMPDIR:-/tmp}" ""
 exit "$rc"

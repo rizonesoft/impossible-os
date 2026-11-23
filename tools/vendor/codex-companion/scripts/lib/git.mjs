@@ -84,11 +84,17 @@ export function ensureGitRepository(cwd) {
   if (result.status !== 0) {
     throw new Error("This command must run inside a Git repository.");
   }
-  return result.stdout.trim();
+  return withoutNewline(result.stdout);
+}
+
+// Impossible OS patch (../../PATCHES.md): only git's own newline is removed. trim() also removed a root's
+// trailing spaces, so a worktree named "repair " was reviewed as its sibling "repair".
+function withoutNewline(text) {
+  return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
 export function getRepoRoot(cwd) {
-  return gitChecked(cwd, ["rev-parse", "--show-toplevel"]).stdout.trim();
+  return withoutNewline(gitChecked(cwd, ["rev-parse", "--show-toplevel"]).stdout);
 }
 
 export function detectDefaultBranch(cwd) {
@@ -120,35 +126,49 @@ export function getCurrentBranch(cwd) {
 }
 
 export function getWorkingTreeState(cwd) {
-  // Impossible OS patch (../../PATCHES.md): NUL-delimited names, untrimmed. A display name git quotes (a tab, or
-  // a non-ASCII byte under core.quotePath) is not the file's path, so an untracked file read by it was
-  // "unreadable".
-  const names = (args) => gitChecked(cwd, [...args, "-z"]).stdout.split("\0").filter(Boolean);
-  const staged = names(["diff", "--cached", "--name-only"]);
-  const unstaged = names(["diff", "--name-only"]);
-  // The untracked names are kept as the bytes git printed: a name that is not UTF-8 decodes to the same string as
-  // another (U+FFFD), so a decoded name could open the wrong file. Decoded names are for display only.
-  const listed = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "-z"],
-                           { cwd, maxBuffer: 1 << 28 });
-  if (listed.error || listed.status !== 0) {
-    throw listed.error ?? new Error(`git ls-files failed: ${String(listed.stderr ?? "")}`);
-  }
-  const untrackedRaw = [];
-  for (let start = 0; start < listed.stdout.length;) {
-    const end = listed.stdout.indexOf(0, start);
-    const stop = end === -1 ? listed.stdout.length : end;
-    if (stop > start) {
-      untrackedRaw.push(listed.stdout.subarray(start, stop));
+  // Impossible OS patch (../../PATCHES.md): every list is read as the NUL-delimited bytes git printed. A display
+  // name git quotes (a tab, a non-ASCII byte) is not the file's path, and a name that is not UTF-8 decodes to the
+  // same string as another (U+FFFD), so files are opened and counted by their bytes; decoded names are for display.
+  const rawNames = (args) => {
+    const listed = spawnSync("git", [...args, "-z"], { cwd, maxBuffer: 1 << 28 });
+    if (listed.error || listed.status !== 0) {
+      throw listed.error ?? new Error(`git ${args.join(" ")} failed: ${String(listed.stderr ?? "")}`);
     }
-    start = stop + 1;
-  }
-  const untracked = untrackedRaw.map((raw) => raw.toString("utf8"));
+    const out = [];
+    for (let start = 0; start < listed.stdout.length;) {
+      const end = listed.stdout.indexOf(0, start);
+      const stop = end === -1 ? listed.stdout.length : end;
+      if (stop > start) {
+        out.push(listed.stdout.subarray(start, stop));
+      }
+      start = stop + 1;
+    }
+    return out;
+  };
+  const stagedRaw = rawNames(["diff", "--cached", "--name-only"]);
+  const unstagedRaw = rawNames(["diff", "--name-only"]);
+  const untrackedRaw = rawNames(["ls-files", "--others", "--exclude-standard"]);
+  // A name that is not UTF-8 is displayed with its bytes escaped, so distinct files never show as one name.
+  const display = (raw) => {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    } catch {
+      return Array.from(raw, (byte) => (byte >= 0x20 && byte < 0x7f && byte !== 0x5c
+        ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`)).join("");
+    }
+  };
+  const staged = stagedRaw.map(display);
+  const unstaged = unstagedRaw.map(display);
+  const untracked = untrackedRaw.map(display);
+  // The number of distinct files, by their bytes: the inline-review gate counts this, never decoded names.
+  const changedCount = new Set([...stagedRaw, ...unstagedRaw, ...untrackedRaw].map((raw) => raw.toString("hex"))).size;
 
   return {
     staged,
     unstaged,
     untracked,
     untrackedRaw,
+    changedCount,
     isDirty: staged.length > 0 || unstaged.length > 0 || untracked.length > 0
   };
 }
@@ -272,13 +292,13 @@ function formatUntrackedFile(cwd, relativePath, rawPath = null) {
 
 function collectWorkingTreeContext(cwd, state, options = {}) {
   const includeDiff = options.includeDiff !== false;
-  const status = gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout.trim();
   const changedFiles = listUniqueFiles(state.staged, state.unstaged, state.untracked);
 
   let parts;
   if (includeDiff) {
     const stagedDiff = gitChecked(cwd, ["diff", "--cached", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout;
     const unstagedDiff = gitChecked(cwd, ["diff", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout;
+    const status = gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout.trim();
     const untrackedBody = state.untracked
       .map((file, index) => formatUntrackedFile(cwd, file, state.untrackedRaw?.[index] ?? null))
       .join("\n\n");
@@ -374,7 +394,7 @@ export function collectReviewContext(cwd, target, options = {}) {
     );
     includeDiff =
       options.includeDiff ??
-      (listUniqueFiles(state.staged, state.unstaged, state.untracked).length <= maxInlineFiles &&
+      (state.changedCount <= maxInlineFiles &&
         diffBytes <= maxInlineDiffBytes);
     details = collectWorkingTreeContext(repoRoot, state, { includeDiff });
   } else {
