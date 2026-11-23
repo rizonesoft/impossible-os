@@ -7,7 +7,7 @@ This roadmap plans how developers get and use the Impossible OS SDK: a `make sdk
 
 ## How does it work?
 
-**Today.** This repository ships no application SDK. Its old `sdk/` folder (one header of file API declarations, one example, a hand-written reference and an empty library folder) was removed on 2026-11-23 in favour of Impossible SDK, which is developed separately and has no public release yet. Impossible SDK programs run on Windows today and not yet on Impossible OS. The host tools that shared the folder moved to [`tools/`](../host-tools/sdk-build-system.md).
+**Today.** This repository ships no application SDK. Its old `sdk/` folder (one header of file API declarations, one example, a hand-written reference and an empty library folder) was removed on 2026-11-23 in favour of Impossible SDK, which is developed separately and has no public release yet. Impossible SDK programs run on Windows today and not yet on Impossible OS. The host tools that shared the folder moved to [`tools/`](../host-tools/host-tools-build.md).
 
 None of the roadmap's scripts or tools exist: no `make sdk`, `make docs` or `make sdk-upload` target, no `scripts/sdk-package.sh`, `release-sdk.sh` or `bump-version.sh`, and no `tools/gendoc.c`.
 
@@ -48,7 +48,7 @@ There is nothing to install yet. To build a program for the OS today, follow the
 - The [Compiler and SDK](../services/compiler-sdk.md) roadmap (`10-platform-services/TODO-09`) owns the headers, import libraries, the on-OS compiler, the SDK installer (its section 9) and the SDK documents (section 10). This file's sections 1 and 2 extend those; the two roadmaps both describe an SDK installer and ZIP.
 - The [long-term features](../services/long-term-features.md) roadmap (`10-platform-services/TODO-12`) owns the user-mode debugger (its section 2) that section 6 extends.
 - Impossible SDK (a separate repository) owns the headers, libraries, documents and samples under `ImpossibleSDK/`.
-- The host tools build roadmap (`14-host-tools/TODO-01`) owns `tools/build-host.sh`, documented in [Host Tools Build](../host-tools/sdk-build-system.md).
+- The host tools build roadmap (`14-host-tools/TODO-01`) owns `tools/build-host.sh`, documented in [Host Tools Build](../host-tools/host-tools-build.md).
 - The documentation site roadmap's section 30 publishes the generated reference per SDK tag.
 
 ## What is not implemented yet?

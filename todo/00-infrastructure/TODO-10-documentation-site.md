@@ -1215,7 +1215,7 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 Write docs pages that meet the §3 contract for the 8 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Split out of §4 because 17 pages is more than one worker context; the host-tools files share one folder and no dependency on the infrastructure pages.
 
 - [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- Host Tools Build): `sdk-build-system.md`
+  - `todo/14-host-tools/TODO-01-host-tools-build.md` (TODO-01 -- Host Tools Build): `host-tools-build.md`
   - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux)): `ixfs-mount.md`
   - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)): `addr2line.md`
 - [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive

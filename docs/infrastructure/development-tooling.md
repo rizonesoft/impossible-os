@@ -93,7 +93,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | Capability                                    | Owner                                                                                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Application cross-compiler (`impossible-cc`)   | [Win32 API Surface TODO](../../todo/10-platform-services/TODO-08-win32-api-surface.md) -- "Developer SDK" section |
-| Host tools build                              | [Host Tools Build TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
+| Host tools build                              | [Host Tools Build TODO](../../todo/14-host-tools/TODO-01-host-tools-build.md)                                                   |
 | Host profile matrix + reproducible container  | [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) (below)         |
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
 | VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by the [Machine Launcher and Debug Profile Matrix section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |

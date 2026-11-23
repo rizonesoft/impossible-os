@@ -33,7 +33,7 @@ Host tools are built separately from the kernel. Each has its own Makefile. They
 
 ## Active TODOs
 
-- [TODO-01 -- Host Tools Build](TODO-01-sdk-build-system.md) -- Build scripts for host tools with progress bars, dependency detection, auto-discovery
+- [TODO-01 -- Host Tools Build](TODO-01-host-tools-build.md) -- Build scripts for host tools with progress bars, dependency detection, auto-discovery
 - [TODO-02 -- IXFS Mount](TODO-02-ixfs-mount.md) -- Mount IXFS partitions on Linux (libfuse3) with a USB auto-mount script; §6 resyncs it with the IXFS v2 on-disk format
 - [TODO-03 -- ixfs-addr2line](TODO-03-addr2line.md) -- Enhanced address resolver with source context, error decode, and memory region mapping
 - [TODO-04 -- crash-decode](TODO-04-crash-decode.md) -- Post-mortem crash analyzer: paste BSOD dump, get full analysis with root cause hypothesis

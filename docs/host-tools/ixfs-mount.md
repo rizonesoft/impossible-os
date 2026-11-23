@@ -3,7 +3,7 @@
 
 ## What is it?
 
-`ixfs-mount` mounts an IXFS partition from a disk image or a USB drive as an ordinary Linux directory through libfuse3, so a developer can browse and copy Impossible OS files without booting the OS. It is a host tool built by [`tools/build-host.sh`](sdk-build-system.md), with its own copy of the IXFS parser that uses host types instead of kernel headers. The first five roadmap sections are marked shipped, but **the tool no longer reads images made by the current kernel correctly**, and its write path does not maintain the metadata the kernel now checks. Read [What is not implemented yet?](#what-is-not-implemented-yet) before mounting anything you care about.
+`ixfs-mount` mounts an IXFS partition from a disk image or a USB drive as an ordinary Linux directory through libfuse3, so a developer can browse and copy Impossible OS files without booting the OS. It is a host tool built by [`tools/build-host.sh`](host-tools-build.md), with its own copy of the IXFS parser that uses host types instead of kernel headers. The first five roadmap sections are marked shipped, but **the tool no longer reads images made by the current kernel correctly**, and its write path does not maintain the metadata the kernel now checks. Read [What is not implemented yet?](#what-is-not-implemented-yet) before mounting anything you care about.
 
 ## How does it work?
 
@@ -73,7 +73,7 @@ All of the following are filed in section 6 of the roadmap, [Resync the Host Par
 - **Rename stays in one directory.** `ixfs_fuse_rename` resolves only the source's parent, so moving a file into another directory renames it inside its old one.
 - **Truncate is partial.** Truncating to zero reports success without freeing blocks; any other size returns `ENOSYS`.
 - **No Windows version.** The domain index once described a WinFsp driver; none exists.
-- **Nothing tests it.** No suite or workflow builds the tool or runs `test_ixfs_core` against a fresh image; see [Host Tools Build](sdk-build-system.md#what-is-not-implemented-yet).
+- **Nothing tests it.** No suite or workflow builds the tool or runs `test_ixfs_core` against a fresh image; see [Host Tools Build](host-tools-build.md#what-is-not-implemented-yet).
 
 ## How does it compare with Windows 11 and Linux?
 

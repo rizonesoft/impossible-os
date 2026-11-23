@@ -651,9 +651,9 @@ flowchart TD
   todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3["event-viewer<br/>TODO-02"]
   class todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3 active
   click todo_13_tools_accessories_TODO_02_event_viewer_md_09acc3 "https://github.com/rizonesoft/impossible-os/blob/main/todo/13-tools-accessories/TODO-02-event-viewer.md"
-  todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d["sdk-build-system<br/>TODO-01"]
-  class todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d active
-  click todo_14_host_tools_TODO_01_sdk_build_system_md_79fb8d "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-01-sdk-build-system.md"
+  todo_14_host_tools_TODO_01_host_tools_build_md_72f495["host-tools-build<br/>TODO-01"]
+  class todo_14_host_tools_TODO_01_host_tools_build_md_72f495 active
+  click todo_14_host_tools_TODO_01_host_tools_build_md_72f495 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-01-host-tools-build.md"
   todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041["ixfs-mount<br/>TODO-02"]
   class todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041 active
   click todo_14_host_tools_TODO_02_ixfs_mount_md_e8f041 "https://github.com/rizonesoft/impossible-os/blob/main/todo/14-host-tools/TODO-02-ixfs-mount.md"

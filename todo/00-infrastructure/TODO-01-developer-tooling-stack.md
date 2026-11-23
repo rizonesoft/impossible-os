@@ -107,7 +107,7 @@ Make setup reproducible and explicit so a new machine converges on the same tool
 > - The full run executes: deps install -> sentinel verify -> `bash scripts/build.sh clean`. Idempotence is inherited from `setup-deps.sh`'s `command -v` pre-check.
 > - `setup-deps.sh` now installs `build-essential` (Debian) / `gcc` (Fedora/Arch) so `HOST_CC := gcc` is guaranteed on every supported distro.
 > - Canonical doc: [`docs/infrastructure/development-tooling.md#host-bootstrap-contract`](../../docs/infrastructure/development-tooling.md#host-bootstrap-contract). `README.md`, `CONTRIBUTING.md`, and `CLAUDE.md` link here instead of restating distro/package lists.
-> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; host tools build remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`). Supported-host profile matrix (Ubuntu/Debian vs. Fedora/Arch LLVM-19 shim work) is owned by §2 below.
+> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; host tools build remains owned by `todo/14-host-tools/TODO-01-host-tools-build.md` sections 1-3 (`D14 T01 §1-§3`). Supported-host profile matrix (Ubuntu/Debian vs. Fedora/Arch LLVM-19 shim work) is owned by §2 below.
 
 > **Verified:** 2026-04-17 | commit `ad4d3fa4` | 5/5 items | build OK | 14/14 sentinels
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 2H+4M+1L fixed, 0 open | scope: N/A (docs + bash)

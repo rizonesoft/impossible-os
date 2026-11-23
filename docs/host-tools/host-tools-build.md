@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/14-host-tools/TODO-01-sdk-build-system.md sources=tools/build-host.sh,tools/ixfs-mount/Makefile,.gitignore reviewed=2026-11-23 order=1 -->
+<!-- docs: covers=todo/14-host-tools/TODO-01-host-tools-build.md sources=tools/build-host.sh,tools/ixfs-mount/Makefile,.gitignore reviewed=2026-11-23 order=1 -->
 # Host Tools Build
 
 ## What is it?
@@ -56,7 +56,7 @@ To add a tool, create `tools/<name>/Makefile` with an `all` target that writes `
 
 ## What is not implemented yet?
 
-- **A skipped tool is reported as built.** The output above says `OK` and `1 tools built` although the Makefile skipped `ixfs-mount` and `build/host-tools/` is still empty, because the script trusts `make`'s exit status. Tracked in [Host Tools in CI and Honest Skip Reporting](../../todo/14-host-tools/TODO-01-sdk-build-system.md#4-host-tools-in-ci-and-honest-skip-reporting).
+- **A skipped tool is reported as built.** The output above says `OK` and `1 tools built` although the Makefile skipped `ixfs-mount` and `build/host-tools/` is still empty, because the script trusts `make`'s exit status. Tracked in [Host Tools in CI and Honest Skip Reporting](../../todo/14-host-tools/TODO-01-host-tools-build.md#4-host-tools-in-ci-and-honest-skip-reporting).
 - **Nothing builds or tests the host tools automatically.** No workflow in `.github/workflows/`, no lint check and no tooling suite runs `tools/build-host.sh`, which is how the IXFS mount tool drifted out of step with the kernel's on-disk format unnoticed (see [IXFS Mount](ixfs-mount.md)). Tracked in the same section.
 - **Linux only.** There is no Windows build path; the BlackBox extractor roadmap plans a MinGW cross-compile for its own tool in [section 8](../../todo/14-host-tools/TODO-08-blackbox-log-extractor.md#8-windows-build).
 - **Only one tool exists.** The other six roadmap tools in this folder are planned, not built.
@@ -67,7 +67,7 @@ Windows SDK tools are built with MSBuild or CMake and Linux tools with make or C
 
 ## See also
 
-- [Host Tools Build roadmap](../../todo/14-host-tools/TODO-01-sdk-build-system.md)
+- [Host Tools Build roadmap](../../todo/14-host-tools/TODO-01-host-tools-build.md)
 - [IXFS Mount](ixfs-mount.md)
 - [Development Tooling](../infrastructure/development-tooling.md)
 - [SDK Distribution](../sdk/sdk-distribution.md), the application SDK for programs that run on Impossible OS

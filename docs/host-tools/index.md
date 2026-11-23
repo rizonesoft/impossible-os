@@ -6,7 +6,7 @@ Programs that run on the developer's Linux machine, not on Impossible OS, and wo
 
 | Document | Topics |
 | --- | --- |
-| [Host Tools Build](sdk-build-system.md) | `tools/build-host.sh`: compiler and dependency detection, tool discovery, adding a tool |
+| [Host Tools Build](host-tools-build.md) | `tools/build-host.sh`: compiler and dependency detection, tool discovery, adding a tool |
 | [IXFS Mount (Linux)](ixfs-mount.md) | FUSE mount of an IXFS partition from an image or USB drive; currently behind the kernel's on-disk format |
 
 ## Planned

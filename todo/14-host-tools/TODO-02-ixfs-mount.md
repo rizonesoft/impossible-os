@@ -22,7 +22,7 @@ title: "TODO-02 -- IXFS Mount (Linux)"
 - [`src/kernel/fs/ixfs/ixfs_alloc.c`](../../src/kernel/fs/ixfs/ixfs_alloc.c) -- block allocator
 - [`include/kernel/fs/ixfs.h`](../../include/kernel/fs/ixfs.h) -- on-disk structures
 - [`tools/mkfs-ixfs.c`](../../tools/mkfs-ixfs.c) -- IXFS formatter (reference for on-disk layout)
-- → XREF: `14-host-tools/TODO-01-sdk-build-system.md` -- host tools build discovers and builds this tool
+- → XREF: `14-host-tools/TODO-01-host-tools-build.md` -- host tools build discovers and builds this tool
 - → XREF: `14-host-tools/TODO-06-disk-inspect.md` -- shares IXFS core parser (`ixfs-core.c`); coordinate struct changes
 - → XREF: `14-host-tools/TODO-07-ixfs-fsck.md` -- shares IXFS core parser; coordinate struct changes
 
@@ -175,7 +175,7 @@ Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26)
 - [ ] Implement truncate to a non-zero size and free blocks on truncate to zero (today size 0 returns success without freeing; any other size returns `ENOSYS`)
 - [ ] Update the usage examples in the tool, its header comment and this file: `:2` is now the BlackBox FAT32 partition; IXFS is `:3` (and `:4` under A/B)
   - `tools/ixfs-mount/extract-logs.sh` is not re-pointed here: `14-host-tools/TODO-08` §3 retires it, since logs now live on the BlackBox volume.
-- [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-sdk-build-system.md` §4 (item: "Build the host tools and run `test_ixfs_core`")
+- [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-host-tools-build.md` §4 (item: "Build the host tools and run `test_ixfs_core`")
 - [ ] Commit: `"sdk: resync ixfs-mount with the IXFS v2 on-disk format"`
 
 **Test checkpoint:** `test_ixfs_core build/system-disk.img 3` lists the root directory including `Impossible/`; a read-write mount either refuses with a clear message or produces an image the kernel's `ixfs_fsck()` reports clean.
