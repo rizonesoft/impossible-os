@@ -2808,15 +2808,20 @@ def _chain(tmp_path, *rows):
     return manifest
 
 
+# A pin whose last tier steps down, so the ladder is tested whatever levels the repository pins.
+_HEAD, _, _TAIL = GOOD.rpartition('later = "medium"')
+LADDER = _HEAD + 'later = "low"' + _TAIL
+
+
 def _effort(tmp_path, kind, paths, *rows, pin=None):
-    return rp.effort_for(pin or _pin(), _chain(tmp_path, *rows), EFFORT_TODO, 99, kind, paths)
+    return rp.effort_for(pin or _pin(LADDER), _chain(tmp_path, *rows), EFFORT_TODO, 99, kind, paths)
 
 
 def test_effort_table_validates():
     pin = _pin()
     assert pin["effort"]["held_rounds"] == 3 and pin["effort"]["passes"] == "medium"
     assert [t[0] for t in pin["effort"]["tiers"]] == ["deep", "risky", "standard"]
-    for bad in (GOOD.replace('later = "low"', 'later = "lowest"', 1),
+    for bad in (GOOD.replace('later = "medium"', 'later = "lowest"', 1),
                 GOOD.replace('name = "standard"\npaths = []', 'name = "standard"\npaths = ["docs/"]', 1),
                 GOOD.replace("held_rounds = 3", "held_rounds = 3\ncolour = 1", 1),
                 GOOD.replace("held_rounds = 3", "held_rounds = 0", 1)):
@@ -3265,7 +3270,7 @@ def test_a_zero_padded_section_reads_the_same_history(tmp_path):
     manifest = _chain(tmp_path, *rows)
     for n in (7, "7", "07", "007"):
         assert rp.section_chain(manifest, EFFORT_TODO, n) == (True, 3, "P3"), n
-        assert rp.effort_for(_pin(), manifest, EFFORT_TODO, n, "round", ["docs/x.md"]) == "low", n
+        assert rp.effort_for(_pin(LADDER), manifest, EFFORT_TODO, n, "round", ["docs/x.md"]) == "low", n
     found, _ok = rp.newest_receipts(manifest, EFFORT_TODO, "07", ("plan",), checked=True)
     assert "plan" in found
 
@@ -3713,3 +3718,11 @@ def test_an_owed_round_with_an_unreadable_effort_history_still_runs_and_says_so(
     assert receipt["base"] == base and not {"effort", "tier"} & set(receipt), receipt
     log = next(reviews.glob("*-round-direct.out")).read_text()
     assert "effort unknown" in log and "the Codex config value applies" in log
+
+
+def test_the_repository_pins_no_effort_below_medium():
+    """Operator, 2026-11-23: no quality is traded for speed (answers.md Q54). A level below medium goes in only with
+    a replay showing it misses nothing medium finds, and this test changes with it."""
+    effort = _pin()["effort"]
+    used = {effort["passes"]} | {v for t in effort["tiers"] for v in t[2:]}
+    assert used <= {"medium", "high", "xhigh"}, used

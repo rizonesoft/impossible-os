@@ -19,13 +19,15 @@ Today every pass runs at one effort, the `model_reasoning_effort = "medium"` in 
 
 ## The schedule
 
+Changed the day it landed (answers.md Q54): `standard` stays at medium after round 3 instead of dropping to low, so the saving on quiet chains in the goal above is given up. No receipt before this section records an effort, so the late-round figures do not show what low would miss.
+
 Every tier runs `plan`, `performance` and `completion` at **medium**, per the operator's sketch.
 
 | Tier | Paths (a section takes the highest tier any changed file falls in) | Rounds 1-3 | Round 4 onward | After a round with a P1 |
 |---|---|---|---|---|
 | `deep` | `src/kernel/` (drivers and the gfx engine live here), `include/kernel/`, `src/boot/` | high | medium | next round high |
 | `risky` | `src/desktop/`, `include/` (outside `include/kernel/`), `src/libc/`, `src/libs/`, `src/installer/`, `user/`, `src/apps/`, `Makefile`, `scripts/build.sh` | medium | medium | medium |
-| `standard` | everything else (`scripts/`, `.claude/`, `todo/`, `docs/`, `gh-pages/`, `src/shell/`) | medium | low | next round medium |
+| `standard` | everything else (`scripts/`, `.claude/`, `todo/`, `docs/`, `gh-pages/`, `src/shell/`) | medium | medium | next round medium |
 
 - A P1 lifts only the next round. A round with no P1 returns the chain to its round-4 level.
 - A `reconciliation` pass takes the same level a round would take at that point in the chain.
@@ -52,7 +54,7 @@ Checked 2026-11-23 against every open review section in the automation-hardening
 
 ## Measuring it
 
-Two weeks after the first section starts on the new schedule (review date 2026-12-07), one ledger query compares rounds per section and late-round P1 rate against the 2026-11-23 baseline above, split by tier and effort. If `standard` at low shows longer chains or P1s found only after a lift, its round-4 level goes back to medium. This is one filed item, not a dashboard.
+Two weeks after the first section starts on the new schedule (review date 2026-12-07), one ledger query compares rounds per section and late-round P1 rate against the 2026-11-23 baseline above, split by tier and effort. Its receipts are the first that record an effort, so they are the baseline for any later proposal to lower one. This is one filed item, not a dashboard.
 
 ## Related fix, delivered by review depth per path
 

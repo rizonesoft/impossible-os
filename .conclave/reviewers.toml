@@ -104,6 +104,7 @@ paths = ["src/desktop/", "src/shell/", "src/apps/", "user/", "gh-pages/"]
 # paths and takes everything else. Rounds 1 to held_rounds run at `rounds`; after that at `after_p1` when the
 # previous round or reconciliation found a P1, else at `later`. Every other kind runs at `passes`. The tiers
 # above standard are also the deep set of "Review depth per path" in the automation-hardening TODO.
+# No level below medium until a replay on known defects shows it misses none that medium finds (answers.md Q54).
 [schedule.effort]
 passes = "medium"
 held_rounds = 3
@@ -126,5 +127,5 @@ after_p1 = "medium"
 name = "standard"
 paths = []
 rounds = "medium"
-later = "low"
+later = "medium"
 after_p1 = "medium"

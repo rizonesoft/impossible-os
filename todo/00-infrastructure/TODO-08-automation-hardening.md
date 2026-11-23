@@ -1958,6 +1958,7 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 - [x] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
 - [/] The effort patch is retired once upstream ships `openai/codex-plugin-cc` #677 or #746 (the other `PATCHES.md` patches stay until their tests pass against the stock companion; no third request, operator 2026-11-23)
 - [/] The first receipt of a section planned after the landing shows its section, effort and tier (waits for the run to plan a section on the new schedule; the two weeks start there)
+- [/] A level below medium enters the pin only after a replay on known defects shows it misses none that medium finds (`todo/answers.md` Q54; waits on someone wanting the saving, nothing depends on it)
 - [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts from that first one)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.

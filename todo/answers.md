@@ -600,3 +600,13 @@ The operator ended two review chains by hand in two days (section 48 after 202 p
 - **C:** A, with a 12-round cap for sections that change no product code.
 
 A: (operator direction, 2026-11-23, "wire it in"; the session chose the form) A. B adds machinery to a repository whose measured problem is too much of it. The session first chose C; the operator refused it the same hour: the cap of 55 is sound and no quality is given up. Reversal cost: delete the bullets in CLAUDE.md and one item in section 66; no code depends on them yet.
+
+## Q54 (00-infrastructure/TODO-08 §70): does standard code drop to low effort after round 3?
+
+The drop was in the operator's first sketch, to save tokens. None of the 7,042 receipts in the run's manifest records an effort; the Codex config is at medium, and the 11 review sessions still on disk (2026-11-11 to 2026-11-21) all ran at medium. Nothing shows what low would miss.
+
+- **A:** standard stays at medium; a lower level needs a replay first, as an agent model change does.
+- **B:** keep the drop and judge it from the ledger after two weeks.
+- **C:** A, and kernel and boot stay at high after round 3 too.
+
+A: (operator asked what the session would do, 2026-11-23, after "not even 1% of the quality") A. B finds a loss only after two weeks of defects shipped at low. C has no evidence either, and the boot, kernel and driver domains hold hundreds of open rows, so its cost would be large; the pin already returns them to high after a P1. Reversal cost: one word in `.conclave/reviewers.toml` and one test.
