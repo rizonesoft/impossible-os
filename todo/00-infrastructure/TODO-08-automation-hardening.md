@@ -135,6 +135,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
+| ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -177,6 +178,8 @@ Verified locally: `codex mcp list` shows both servers `enabled`; `bash scripts/c
 ---
 
 ## 2. Codex Invocation Policy: No `--model` / `--effort` From Claude
+
+> **2026-11-23:** per-pass reviewer effort moved from `~/.codex/config.toml` to the reviewer pin, applied by the dispatcher; Claude still never passes `--effort`. -> XREF: [§70](#70-reviewer-effort-follows-the-area-and-the-chain) (item: "The pin's `[schedule.effort]` table sets each pass's effort")
 
 Document the user's policy and add a hook that blocks accidental violations. The user's stated rule: when Claude invokes ANY Codex command (`/codex:adversarial-review`, `/codex:review`, `/codex:rescue`, raw `codex-companion.mjs task`, `codex exec`), Claude does NOT pass `--model` or `--effort`; Codex CLI uses the configured default from `~/.codex/config.toml` (today: `model = "gpt-5.5"`, `model_reasoning_effort = "medium"`). The intent is that the user controls model + reasoning effort centrally without Claude second-guessing per dispatch.
 
@@ -1934,13 +1937,31 @@ Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the rec
 **Test checkpoint:** each item has a regression that fails on the 2026-11-21 code.
 
 
+## 70. Reviewer effort follows the area and the chain
+
+> **Spawned-by:** root (operator direction 2026-11-23)
+> **User impact:** every Astra pass ran at one effort; kernel and boot got no deeper look than a docs edit, and long quiet chains paid full effort to the end.
+
+Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/2026-11-23-adaptive-review-effort-design.md); plan: [docs/plans/2026-11-23-adaptive-review-effort.md](../../docs/plans/2026-11-23-adaptive-review-effort.md). Effort moves from the Codex config (§2) to the reviewer pin. -> XREF: [§2](#2-codex-invocation-policy-no---model----effort-from-claude)
+
+- [ ] The pin's `[schedule.effort]` table sets each pass's effort by area tier and the chain's last finding (`review_pin.py --effort`)
+- [ ] `codex-dispatch.sh` passes the pinned effort to the companion and writes `effort` on every receipt
+- [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
+- [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
+- [ ] A pass on a heuristic gate states the gate's threat model in its prompt
+- [ ] Upstream pull request on `openai/codex-plugin-cc` adds `--effort` to `adversarial-review`
+- [ ] 2026-12-07: one ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline
+
+**Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
+
+
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | Claude Code MCP servers      | [`.mcp.json`](../../.mcp.json)                                                                    | §1 (this TODO) -- mirrors to Codex              |
 | Codex CLI MCP servers        | `~/.codex/config.toml` `[mcp_servers.*]`                                                          | §1 -- mirrors from Claude side                  |
-| Codex model + effort default | `~/.codex/config.toml` top-level                                                                  | User -- centralized control; §2 non-override    |
+| Codex model + effort default | `~/.codex/config.toml` top-level; per-pass effort in `.conclave/reviewers.toml` (§70)             | User -- centralized control; §2 non-override    |
 | Hooks                        | [`.claude/settings.json`](../../.claude/settings.json) + [`.claude/hooks/`](../../.claude/hooks/) | §7 manifest; per-section adds                   |
 | State files                  | `.claude/state/*.json` + `*.jsonl` (gitignored)                                                   | §3 / §5 / §10 / §11; shape in `state/README.md` |
 | Skill step evidence map      | [`.claude/hooks/skill_step_map.py`](../../.claude/hooks/skill_step_map.py)                        | §10 -- per-skill required-steps signatures      |
