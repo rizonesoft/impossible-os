@@ -42,9 +42,14 @@ def main() -> int:
     if "todo/" not in p:
         return 0
 
+    # The tree that holds the edited file, never the hook's cwd: the harness runs hooks in the session's primary
+    # tree, so an edit in another worktree was repaired in the primary tree (2026-11-23, 22 files under a live run).
+    here = os.path.dirname(os.path.abspath(path))
+    while not os.path.isdir(here) and os.path.dirname(here) != here:
+        here = os.path.dirname(here)                   # a Write may have named a directory not yet on disk
     try:
         root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "-C", here, "rev-parse", "--show-toplevel"],
             stderr=subprocess.DEVNULL,
         ).decode().strip()
     except Exception:

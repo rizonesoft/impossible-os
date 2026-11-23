@@ -69,8 +69,28 @@ def run_class(rc, output):
     return proc.returncode, msg
 
 
+def root_comes_from_the_edited_file():
+    """The hook runs with the session's primary tree as its cwd. An edit to a TODO in another worktree must be
+    repaired in THAT tree: on 2026-11-23 an edit in ../impossible-os-gh rewrote 22 primary-tree TODO files under
+    a live run."""
+    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+        for tree in (a, b):
+            subprocess.run(["git", "init", "-q", tree], check=True, timeout=30)
+            fake = pathlib.Path(tree, "scripts", "todo-graph", "validate.py")
+            fake.parent.mkdir(parents=True)
+            fake.write_text("import pathlib, os\npathlib.Path(os.getcwd(), 'ran-here').write_text('x')\n")
+            pathlib.Path(tree, "todo").mkdir()
+        event = {"tool_input": {"file_path": os.path.join(b, "todo", "TODO-01.md")}}
+        subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
+                       capture_output=True, text=True, cwd=a, timeout=60)
+        return pathlib.Path(b, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
+
+
 def main():
     bad = 0
+    ok = root_comes_from_the_edited_file()
+    bad += not ok
+    print(f"{'PASS' if ok else 'FAIL'} the repair runs in the tree that holds the edited file")
     for label, rc, output, want in CLASSES:
         code, msg = run_class(rc, output)
         ok = code == 0 and ((want is None and msg is None) or (want and msg and want in msg))
@@ -91,7 +111,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 1
+    total = len(CLASSES) + 2
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 
