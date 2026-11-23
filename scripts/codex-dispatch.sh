@@ -125,7 +125,9 @@ export GIT_NO_REPLACE_OBJECTS=1
 # round as `all_clean: true`. So this path now tees to the same reviews
 # directory the broker uses and appends the same manifest shape, and the two
 # dispatch routes can no longer disagree about what happened.
-COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
+# The vendored companion (tools/vendor/codex-companion/PATCHES.md): the upstream plugin with --effort on
+# adversarial-review, so the pin's effort reaches the reviewer.
+COMPANION="${CODEX_COMPANION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/vendor/codex-companion/scripts/codex-companion.mjs}"
 REVIEWS_DIR="${CODEX_REVIEWS_DIR:-.claude/overnight/reviews}"
 # Prompt parsing shared by the three dispatchers, in memory (no pipeline).
 # shellcheck source=scripts/lib/review-prompt.sh
@@ -155,6 +157,7 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
+EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""; REPAIR_FROM=""; CAND_HEAD=""; CAND_WORK=""
 EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # The candidate's fingerprint and the files a pass covers come from one reader (scripts/review_candidate.py),
@@ -186,7 +189,7 @@ if [ "$PIN_KIND" = "1" ]; then
     # Inside the reviews directory, which no candidate read covers: under a TMPDIR inside the checkout, the
     # file would be part of the tree it describes.
     PATHS_FILE="$(mktemp "$REVIEWS_DIR/.paths.XXXXXX")" || exit 2
-    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest"' EXIT
+    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest" "$PATHS_FILE.effort-err"' EXIT
     # The candidate is pinned once, before anything is derived from it: the changed paths (and so the
     # lenses), the ancestry check, the prompt and the receipt all name this commit and this working tree,
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
@@ -284,6 +287,20 @@ if [ "$PIN_KIND" = "1" ]; then
         echo "[$SELF_NAME] BLOCK -- the working tree or the changed files of this pass could not be read (reason above)" >&2; exit 2; }
     PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file0 "$PATHS_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
+    # The pin's effort for this pass, read only now that the base and range are settled. An answer that cannot
+    # be read never stops the review: it runs at the Codex config's effort and the transcript says why.
+    if EFFORT_ANSWER="$(python3 "$PIN_TOOL" --effort "$KIND" --todo "$TODO_PATH" --section-n "$SECTION" \
+            --manifest "$REVIEWS_DIR/manifest.jsonl" --paths-file0 "$PATHS_FILE" 2>"$PATHS_FILE.effort-err")"; then
+        read -r EFFORT TIER <<< "$EFFORT_ANSWER"
+    else
+        EFFORT_NOTE="[$SELF_NAME] effort unknown ($(tr '\n' ' ' < "$PATHS_FILE.effort-err" 2>/dev/null)); the Codex config value applies"
+        EFFORT=""; TIER=""
+    fi
+    # A plan pass under the effort table marks its receipt: a section whose first plan receipt has no mark
+    # started before the table and keeps the Codex config's effort to the end.
+    if [ "$KIND" = "plan" ] && python3 "$PIN_TOOL" --has-effort; then
+        SCHEDULE="effort"
+    fi
     if [ -n "$OWED_BASE" ]; then
         PROMPT="$PROMPT
 
@@ -380,7 +397,8 @@ if [ -n "$LOG_FILE" ]; then
     # Where the transcript goes (for the reader). The recorder's proof that a
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
-    node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
+    [ -z "$EFFORT_NOTE" ] || echo "$EFFORT_NOTE" | tee -a "$LOG_RW" >&2
+    node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_ID="$(candidate_id)" || NOW_ID="unreadable"
@@ -428,6 +446,7 @@ if [ -n "$LOG_FILE" ]; then
         "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
         "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
+        "opt:effort=$EFFORT" "opt:tier=$TIER" "opt:schedule=$SCHEDULE" \
         "opt:parent=${CODEX_BROKER_JOB:-}" "opt:parent_log=${CODEX_BROKER_LOG:-}" \
         || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
              # A review with no receipt cannot be credited or found: report it

@@ -31,6 +31,40 @@ BROKER = "bash scripts/overnight/review-broker-codex-dispatch.sh"
 TODO = "todo/00-x/TODO-01-x.md"
 
 
+
+def _run_group(argv, *, timeout, cwd=None, env=None, capture_output=True, text=True):
+    """subprocess.run in its own process group, and the whole group stopped when it returns or times out: a
+    dispatcher's child must never outlive the test (on 2026-11-22 a `review_pin.py --verdicts` started by a
+    dispatcher here was still blocked on a FIFO ten hours later, because run(timeout=) kills only bash)."""
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, start_new_session=True,
+                            stdout=subprocess.PIPE if capture_output else None,
+                            stderr=subprocess.PIPE if capture_output else None, text=text)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def test_a_dispatcher_child_never_outlives_its_test(tmp_path):
+    pid_file = tmp_path / "child.pid"
+    _run_group(["bash", "-c", f"sleep 300 >/dev/null 2>&1 & echo $! > {pid_file}"], timeout=30)
+    pid = int(pid_file.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"pid {pid} outlived the run")
+
 def _repo(tmp):
     root = pathlib.Path(tmp)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -337,7 +371,7 @@ def test_the_direct_receipt_hashes_the_callers_prompt(tmp_path):
     prompt = _prompt("round")                      # a pinned pass: the dispatcher appends its lenses
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
            "REVIEW_BASE": "HEAD"}                  # a later pass names its section start
-    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), prompt], capture_output=True, text=True,
+    _run_group(["bash", str(REPO / "scripts/codex-dispatch.sh"), prompt], capture_output=True, text=True,
                    timeout=60, cwd=repo, env=env)
     rows = [json.loads(x) for x in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
     want = hashlib.sha256(prompt.encode()).hexdigest()
@@ -1697,7 +1731,7 @@ def test_the_direct_dispatcher_refuses_to_publish_into_a_directory(tmp_path):
                     "for (const f of fs.readdirSync(d)) if (f.endsWith('-direct.out')) fs.mkdirSync(d + '/' + f + '.done');\n"
                     "process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
-    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+    r = _run_group(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
                        text=True, timeout=60, cwd=repo, env=env)
     dirs = [p for p in (repo / ".claude/overnight/reviews").iterdir() if p.name.endswith(".done")]
     assert r.returncode == 75 and dirs and all(p.is_dir() and not list(p.iterdir()) for p in dirs), (r, dirs)
@@ -1831,7 +1865,7 @@ def test_the_direct_dispatcher_never_reopens_its_transcript(tmp_path):
                     "    for (const f of fs.readdirSync(d)) if (f.endsWith('-direct.out')) {\n"
                     "      fs.unlinkSync(d + '/' + f); cp.execFileSync('mkfifo', [d + '/' + f]); } }, 200); });\n")
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD"}
-    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+    r = _run_group(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
                        text=True, timeout=60, cwd=repo, env=env)
     dones = [p for p in (repo / ".claude/overnight/reviews").iterdir() if p.name.endswith("-direct.out.done")]
     assert dones and dones[0].read_text().strip().isdigit(), (r, dones)
@@ -1875,7 +1909,7 @@ def test_the_direct_dispatcher_holds_its_transcript_from_its_creation(tmp_path):
     fake.write_text("process.stdout.write('Verdict: approve\\nHIGHEST: none\\n');\n")
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1", "REVIEW_BASE": "HEAD",
            "PATH": f"{bindir}:{os.environ['PATH']}"}
-    r = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
+    r = _run_group(["bash", str(REPO / "scripts/codex-dispatch.sh"), _prompt("round")], capture_output=True,
                        text=True, timeout=60, cwd=repo, env=env)
     reviews = repo / ".claude/overnight/reviews"
     fifos = [p for p in reviews.iterdir() if p.name.endswith("-direct.out") and p.is_fifo()]

@@ -177,7 +177,7 @@ TODO_PATH="$(review_prompt_todo_path "$FIRST_LINE")"
 # codex_review_completed.py recogniser (space, dash, underscore, colon).
 SECTION="$(_broker_section_of "$FIRST_LINE")"
 
-COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs}"
+COMPANION="${CODEX_COMPANION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/tools/vendor/codex-companion/scripts/codex-companion.mjs}"
 [[ -f "$COMPANION" ]] || { echo "[review-broker] BLOCK -- codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
 export CODEX_REVIEWER_DISPATCH=1
 

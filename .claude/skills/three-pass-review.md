@@ -30,6 +30,7 @@ REVIEW_BASE=<sha the section started from> bash scripts/codex-dispatch.sh '[revi
 - The first line names the TODO and the section (`todo/<path>.md section <N>`). The commit gate finds a pass by them.
 - The commit gate judges a pass from the receipt the wrapper appends to `.claude/overnight/reviews/manifest.jsonl` once the pass has been checked: the candidate it identified before the reviewer ran, whether every lens gave a verdict, and the review's `HIGHEST:` level. A direct companion call writes no receipt and counts for nothing.
 - Each pass is a fresh Codex session. Never resume the previous pass.
+- The reasoning effort is the pin's (`[schedule.effort]`, by area tier and the chain's last finding): the wrapper applies it and writes `effort` and `tier` on the receipt. Never pass an effort yourself.
 
 ## Reading the result
 

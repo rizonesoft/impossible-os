@@ -2781,3 +2781,206 @@ def test_a_status_that_cannot_be_read_never_steps_back_to_an_older_receipt(tmp_p
                "logFile": str(tmp_path / "r.out"), "done_file": True}
     with pytest.raises(rp.Refused):
         rp.receipt_complete(receipt)
+
+
+# --- Reviewer effort by area tier and the chain's last finding (automation hardening: "Reviewer effort follows the area and the chain") ---
+
+EFFORT_TODO = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+NO_EFFORT = GOOD.split("\n[schedule.effort]\n")[0] + "\n"
+
+
+def _er(kind, highest=None, schedule=None, checked=True, section=99):
+    import json
+    e = json.loads(_receipt(kind, "a" * 40, section=section, checked=checked, todo=EFFORT_TODO))
+    if highest is not None:
+        e["highest"] = highest
+    if schedule is not None:
+        e["schedule"] = schedule
+    return json.dumps(e)
+
+
+def _chain(tmp_path, *rows):
+    """A manifest of `rows`, oldest first, after a marked plan unless the first row is a plan."""
+    manifest = tmp_path / "manifest.jsonl"
+    if not rows or not rows[0].startswith('{"ts": 1795170000, "kind": "plan"'):
+        rows = (_er("plan", schedule="effort"),) + rows
+    manifest.write_text("".join(r + "\n" for r in rows))
+    return manifest
+
+
+def _effort(tmp_path, kind, paths, *rows, pin=None):
+    return rp.effort_for(pin or _pin(), _chain(tmp_path, *rows), EFFORT_TODO, 99, kind, paths)
+
+
+def test_effort_table_validates():
+    pin = _pin()
+    assert pin["effort"]["held_rounds"] == 3 and pin["effort"]["passes"] == "medium"
+    assert [t[0] for t in pin["effort"]["tiers"]] == ["deep", "risky", "standard"]
+    for bad in (GOOD.replace('later = "low"', 'later = "lowest"', 1),
+                GOOD.replace('name = "standard"\npaths = []', 'name = "standard"\npaths = ["docs/"]', 1),
+                GOOD.replace("held_rounds = 3", "held_rounds = 3\ncolour = 1", 1),
+                GOOD.replace("held_rounds = 3", "held_rounds = 0", 1)):
+        assert bad != GOOD
+        with pytest.raises(rp.Refused):
+            _pin(bad)
+
+
+def test_effort_absent_is_none(tmp_path):
+    pin = _pin(NO_EFFORT)
+    assert pin["effort"] is None
+    assert _effort(tmp_path, "round", ["src/kernel/a.c"], pin=pin) is None
+
+
+def test_tier_precedence():
+    pin = _pin()
+    assert rp.tier_for(pin, ["docs/x.md", "include/kernel/a.h"]) == "deep"
+    assert rp.tier_for(pin, ["include/gfx.h", "docs/x.md"]) == "risky"
+    assert rp.tier_for(pin, ["user/x.c"]) == "risky"
+    assert rp.tier_for(pin, ["Makefile"]) == "risky"
+    assert rp.tier_for(pin, ["Makefile.bak"]) == "standard"
+    assert rp.tier_for(pin, ["docs/x.md"]) == "standard"
+    assert rp.tier_for(pin, []) == "standard"
+
+
+def test_round_ladder_deep(tmp_path):
+    k = ["src/kernel/a.c"]
+    assert _effort(tmp_path, "round", k) == "high"
+    assert _effort(tmp_path, "round", k, _er("round", "P2")) == "high"
+    assert _effort(tmp_path, "round", k, _er("round", "P2"), _er("round", "P2")) == "high"
+    three = (_er("round", "P2"),) * 3
+    assert _effort(tmp_path, "round", k, *three) == "medium"
+    assert _effort(tmp_path, "round", k, *three, _er("round", "P1")) == "high"
+    assert _effort(tmp_path, "round", k, *three, _er("round", "P1"), _er("round", "P2")) == "medium"
+
+
+def test_round_ladder_standard(tmp_path):
+    d = ["docs/x.md"]
+    assert _effort(tmp_path, "round", d) == "medium"
+    assert _effort(tmp_path, "round", d, *(_er("round", "P2"),) * 2) == "medium"
+    assert _effort(tmp_path, "round", d, *(_er("round", "P2"),) * 2, _er("round", "P3")) == "low"
+    assert _effort(tmp_path, "round", d, *(_er("round", "P2"),) * 3, _er("round", "P1")) == "medium"
+
+
+def test_reconciliation_counts_as_round(tmp_path):
+    rows = (_er("round", "P2"), _er("round", "P2"), _er("reconciliation", "P2"))
+    assert _effort(tmp_path, "reconciliation", ["src/kernel/a.c"], *rows) == "medium"
+    assert _effort(tmp_path, "reconciliation", ["docs/x.md"], *rows) == "low"
+
+
+def test_other_kinds_take_passes_level(tmp_path):
+    rows = (_er("round", "P1"), _er("performance", "P1"), _er("redesign", "P1"))
+    for kind in ("plan", "performance", "completion", "redesign"):
+        for paths in (["src/kernel/a.c"], ["include/gfx.h"], ["docs/x.md"]):
+            assert _effort(tmp_path, kind, paths, *rows) == "medium", (kind, paths)
+    # performance and redesign rows never moved the chain: one round so far, so the next deep round is high.
+    assert rp.section_chain(_chain(tmp_path, *rows), EFFORT_TODO, 99)[1:] == (1, "P1")
+
+
+def test_unchecked_rounds_do_not_count(tmp_path):
+    rows = (_er("round", "P2"), _er("round", "P2"), _er("round", "P2", checked=False))
+    assert _effort(tmp_path, "round", ["src/kernel/a.c"], *rows) == "high"
+
+
+def test_grandfathered_section_gets_nothing_for_every_kind(tmp_path):
+    rows = (_er("plan"), _er("round", "P2"), _er("plan", schedule="effort"))
+    for kind in rp.SECTION_KINDS:
+        assert _effort(tmp_path, kind, ["src/kernel/a.c"], *rows) is None, kind
+
+
+def test_marked_section_is_on_schedule(tmp_path):
+    assert _effort(tmp_path, "round", ["src/kernel/a.c"], _er("plan", schedule="effort")) == "high"
+
+
+def test_owed_section_without_plan(tmp_path):
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(_er("round", "P2", section=7) + "\n")         # another section's row only
+    assert rp.effort_for(_pin(), manifest, EFFORT_TODO, 99, "round", ["src/kernel/a.c"]) == "high"
+    assert rp.section_chain(manifest, EFFORT_TODO, 99) == (None, 0, None)
+
+
+def test_unreadable_newer_line_refuses(tmp_path):
+    manifest = _chain(tmp_path, _er("round", "P2"))
+    with manifest.open("a") as fh:
+        fh.write('{"ts": 1795170001, "kind": "round", "todo": "todo/00-infr\n')
+    with pytest.raises(rp.Refused):
+        rp.effort_for(_pin(), manifest, EFFORT_TODO, 99, "round", ["src/kernel/a.c"])
+
+
+def test_cli_effort(tmp_path, capsys):
+    manifest = _chain(tmp_path)
+    paths = tmp_path / "paths"
+    paths.write_bytes(b"src/kernel/a.c\0")
+    args = ["--effort", "round", "--todo", EFFORT_TODO, "--section-n", "99", "--manifest", str(manifest),
+            "--paths-file0", str(paths)]
+    assert rp.main(args) == 0 and capsys.readouterr().out == "high deep\n"
+    pin = tmp_path / "pin.toml"
+    pin.write_text(NO_EFFORT)
+    assert rp.main(args + ["--pin", str(pin)]) == 0 and capsys.readouterr().out == ""
+    assert rp.main(["--has-effort"]) == 0
+    assert rp.main(["--has-effort", "--pin", str(pin)]) == 1
+
+
+def _argv(tmp_path):
+    import json
+    return json.loads((tmp_path / "prompt.txt.argv").read_text())
+
+
+def _last_receipt(tmp_path):
+    import json
+    return json.loads((tmp_path / "reviews/manifest.jsonl").read_text().splitlines()[-1])
+
+
+def test_dispatch_passes_pinned_effort(tmp_path):
+    done, _prompt = _dispatch(tmp_path, "round", "HIGHEST: none\n", base=_rev(tmp_path, "HEAD~4"))
+    argv = _argv(tmp_path)
+    assert argv[:3] == ["--effort", "high", "--"], (argv[:3], done.stderr)
+    e = _last_receipt(tmp_path)
+    assert (e["effort"], e["tier"]) == ("high", "deep")
+
+
+def test_plan_receipt_marks_the_schedule(tmp_path):
+    done, _prompt = _dispatch(tmp_path, "plan", "HIGHEST: none\n")
+    assert _last_receipt(tmp_path)["schedule"] == "effort", done.stderr
+    assert _argv(tmp_path)[:2] == ["--effort", "medium"]
+
+
+def test_section_planned_before_landing_is_grandfathered(tmp_path):
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text(_receipt("plan", _rev(tmp_path, "HEAD~4")) + "\n")   # no marker
+    done, _prompt = _dispatch(tmp_path, "round", "HIGHEST: none\n", base=_rev(tmp_path, "HEAD~4"))
+    assert "--effort" not in _argv(tmp_path), done.stderr
+    assert "effort" not in _last_receipt(tmp_path)
+
+
+def test_dispatch_effort_refusal_falls_back(tmp_path):
+    """The base is settled (a plan pass reads none from the manifest), the chain is not: the pass runs at the
+    Codex config's effort and its transcript says why."""
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text('{"ts": 1795170001, "kind": "round", "todo": "todo/00-infr\n')
+    done, _prompt = _dispatch(tmp_path, "plan", "HIGHEST: none\n")
+    assert "--effort" not in _argv(tmp_path), done.stderr
+    log = next(reviews.glob("*-plan-direct.out")).read_text()
+    assert "effort unknown" in log and "the Codex config value applies" in log
+
+
+def test_dispatch_unknown_base_still_refuses(tmp_path):
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text(_receipt("plan", _rev(tmp_path, "HEAD~4")) + "\n"
+                                            + '{"ts": 1795170001, "kind": "round", "todo": "todo/00-infr\n')
+    done, _prompt = _dispatch(tmp_path, "round", "HIGHEST: none\n", base="")
+    assert done.returncode == 2 and not (tmp_path / "prompt.txt.argv").exists(), done.stderr
+
+
+def test_default_companion_is_vendored():
+    text = (REPO / "scripts/codex-dispatch.sh").read_text()
+    assert 'tools/vendor/codex-companion/scripts/codex-companion.mjs' in text
+    broker = (REPO / "scripts/overnight/review-broker-codex-dispatch.sh").read_text()
+    assert 'tools/vendor/codex-companion/scripts/codex-companion.mjs' in broker
+
+
+def test_the_effort_answer_leaves_no_file_behind(tmp_path):
+    _dispatch(tmp_path, "plan", "HIGHEST: none\n")
+    assert not list((tmp_path / "reviews").glob(".paths.*")), list((tmp_path / "reviews").iterdir())

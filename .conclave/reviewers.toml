@@ -30,7 +30,10 @@
 # continue on GPT-6.2 Astra.
 #
 # `model` is a declaration, never a flag: the dispatcher refuses when ~/.codex/config.toml names a different model.
-# There is no `effort` key here. Reasoning effort is the operator's dial in the Codex config.
+# Operator decision 2026-11-23: reasoning effort is set per pass by [schedule.effort] below, by the area a section
+# touches and the chain's last finding (docs/specs/2026-11-23-adaptive-review-effort-design.md). The dispatcher
+# applies it; Claude never passes it. The Codex config value applies when this table is absent and to every
+# section whose first plan receipt predates it.
 
 schema_version = 1
 
@@ -94,3 +97,33 @@ paths = ["src/kernel/", "include/kernel/", "src/boot/"]
 lenses = ["design"]
 passes = ["plan", "round"]
 paths = ["src/desktop/", "src/shell/", "src/apps/", "user/", "gh-pages/"]
+
+# Reviewer effort (operator decision 2026-11-23). A section takes the first tier, in this order, that any changed
+# path falls under (an entry ending in "/" is a prefix, any other entry names one file); the last tier names no
+# paths and takes everything else. Rounds 1 to held_rounds run at `rounds`; after that at `after_p1` when the
+# previous round or reconciliation found a P1, else at `later`. Every other kind runs at `passes`. The tiers
+# above standard are also the deep set of "Review depth per path" in the automation-hardening TODO.
+[schedule.effort]
+passes = "medium"
+held_rounds = 3
+
+[[schedule.effort.tiers]]
+name = "deep"
+paths = ["src/kernel/", "include/kernel/", "src/boot/"]
+rounds = "high"
+later = "medium"
+after_p1 = "high"
+
+[[schedule.effort.tiers]]
+name = "risky"
+paths = ["src/desktop/", "include/", "src/libc/", "src/libs/", "src/installer/", "user/", "src/apps/", "Makefile", "scripts/build.sh"]
+rounds = "medium"
+later = "medium"
+after_p1 = "medium"
+
+[[schedule.effort.tiers]]
+name = "standard"
+paths = []
+rounds = "medium"
+later = "low"
+after_p1 = "medium"

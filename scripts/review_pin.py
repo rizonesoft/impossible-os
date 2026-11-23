@@ -61,6 +61,13 @@ LENSES = {
     "bare-metal": "What works under an emulator and fails on real hardware or real firmware?",
 }
 SEVERITIES = ("P1", "P2", "P3")
+# The reasoning efforts the Codex companion accepts (normalizeReasoningEffort in codex-companion.mjs).
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+# The kinds that move a section's review chain: every other kind runs at the effort table's `passes` level.
+CHAIN_KINDS = ("round", "reconciliation")
+# Written on a plan receipt by a dispatcher that applies the effort table: a section whose first plan receipt
+# lacks it started before the table and keeps the Codex config's effort to the end.
+EFFORT_SCHEDULE = "effort"
 # What each level means, sent with every pass (operator, 2026-11-21). Without it the reviewer graded on its own
 # scale: the File Explorer and Common Dialogs inventory ran 12 passes in 20 hours, and of the last wave's six P2
 # findings one could reach a user; the rest needed two captures started in one second, a registry change the
@@ -149,6 +156,7 @@ def load_pin(path=PIN, data=None):
     conditional = schedule.pop("conditional", []) if isinstance(schedule, dict) else []
     deep = schedule.pop("deep_paths", None) if isinstance(schedule, dict) else None
     custom = schedule.pop("lenses", {}) if isinstance(schedule, dict) else {}
+    effort = _effort_table(schedule.pop("effort", None)) if isinstance(schedule, dict) else None
     has_stall = isinstance(schedule, dict) and "no_progress_cap" in schedule
     _need(isinstance(schedule, dict) and set(schedule) - {"no_progress_cap"} == keys and schedule["policy"] == POLICY,
           f"[schedule] needs policy = \"{POLICY}\" and exactly {', '.join(sorted(keys))} (no_progress_cap optional)")
@@ -210,7 +218,70 @@ def load_pin(path=PIN, data=None):
             "pass_cap": pass_cap, "no_progress_cap": no_progress, "blocking": tuple(blocking),
             "lenses": lenses, "texts": texts, "conditional": tuple(extra),
             # None when the pin names no deep_paths: unknown, so every section keeps the longer rule.
-            "deep_paths": None if deep is None else tuple(deep)}
+            "deep_paths": None if deep is None else tuple(deep),
+            "effort": effort}
+
+
+def _effort_table(table):
+    """The validated [schedule.effort] table, or None when the pin has none (every pass then runs at the Codex
+    config's effort, as before 2026-11-23)."""
+    if table is None:
+        return None
+    level = {"rounds", "later", "after_p1"}
+    _need(isinstance(table, dict) and set(table) == {"passes", "held_rounds", "tiers"}
+          and table["passes"] in EFFORTS and type(table["held_rounds"]) is int and 1 <= table["held_rounds"] <= 99,
+          f"[schedule.effort] needs exactly passes (one of {', '.join(EFFORTS)}), held_rounds (1 to 99) and tiers")
+    tiers = table["tiers"]
+    _need(isinstance(tiers, list) and len(tiers) >= 1, "[schedule.effort] needs at least one [[schedule.effort.tiers]]")
+    out, names = [], set()
+    for i, tier in enumerate(tiers):
+        last = i == len(tiers) - 1
+        _need(isinstance(tier, dict) and set(tier) == {"name", "paths"} | level
+              and isinstance(tier["name"], str) and LENS_NAME.fullmatch(tier["name"]) and tier["name"] not in names
+              and all(tier[k] in EFFORTS for k in level),
+              f"[[schedule.effort.tiers]] needs exactly a new name, paths, and rounds, later and after_p1 from "
+              f"{', '.join(EFFORTS)}")
+        paths = tier["paths"]
+        _need(isinstance(paths, list) and all(
+              isinstance(p, str) and p and not p.startswith(("/", ".")) and ".." not in p.split("/") for p in paths)
+              and len(set(paths)) == len(paths) and (paths == [] if last else paths != []),
+              "[[schedule.effort.tiers]] needs distinct repository-relative paths, and the last tier none: it takes "
+              "every path the others do not")
+        names.add(tier["name"])
+        out.append((tier["name"], tuple(paths), tier["rounds"], tier["later"], tier["after_p1"]))
+    return {"passes": table["passes"], "held_rounds": table["held_rounds"], "tiers": tuple(out)}
+
+
+def tier_for(pin, changed_paths):
+    """The first tier, in pin order, that any changed path falls under (an entry ending in "/" is a prefix, any
+    other entry names one file), or the last tier; None when the pin has no effort table."""
+    effort = pin.get("effort")
+    if effort is None:
+        return None
+    for name, paths, *_levels in effort["tiers"][:-1]:
+        for path in changed_paths:
+            if any(path == p or (p.endswith("/") and path.startswith(p)) for p in paths):
+                return name
+    return effort["tiers"][-1][0]
+
+
+def effort_for(pin, manifest, todo, section, kind, changed_paths):
+    """The effort a `kind` pass of the section runs at, or None when the Codex config's effort applies: the pin
+    has no effort table, or the section's first plan receipt predates it. Refused when the manifest holds a line
+    that cannot be read and may be this TODO's, since the chain position is then unknown."""
+    effort = pin.get("effort")
+    if effort is None:
+        return None
+    on_schedule, count, newest = section_chain(manifest, todo, section)
+    if on_schedule is False:
+        return None
+    if kind not in CHAIN_KINDS:
+        return effort["passes"]
+    name = tier_for(pin, changed_paths)
+    _name, _paths, rounds, later, after_p1 = next(t for t in effort["tiers"] if t[0] == name)
+    if count < effort["held_rounds"]:
+        return rounds
+    return after_p1 if newest == "P1" else later
 
 
 def lenses_for(pin, kind, changed_paths=()):
@@ -636,6 +707,38 @@ def newest_receipts(manifest, todo, section, kinds, checked=False, first=False):
     return found, True
 
 
+def section_chain(manifest, todo, section):
+    """(on_schedule, chain count, newest chain highest) for one section, from its checked receipts in `manifest`.
+    on_schedule is whether the section's FIRST checked plan receipt carries the effort-schedule marker, or None
+    when it has no checked plan receipt (an owed section, decided by its late plan pass). The count is the
+    checked round and reconciliation receipts; the highest is the newest one's. Read with the same newest-first
+    loop and unreadable-line rule as newest_receipts; refused when an unreadable line may be this TODO's."""
+    import json
+    first_plan, count, newest = None, 0, None
+    for line in _newest_first(manifest):               # Refused when the manifest cannot be read at all
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            if unreadable_line_may_be(line, todo):
+                raise Refused(f"{manifest} has an unreadable line that may be a pass of {todo} section {section}, "
+                              "so its review chain is unknown")
+            continue
+        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != str(section):
+            continue
+        if not receipt_complete(e):
+            continue
+        if e.get("kind") == "plan":
+            first_plan = e                             # read newest first: the last one seen is the first
+        elif e.get("kind") in CHAIN_KINDS:
+            if count == 0:
+                newest = e.get("highest") or None
+            count += 1
+    on_schedule = None if first_plan is None else first_plan.get("schedule") == EFFORT_SCHEDULE
+    return on_schedule, count, newest
+
+
 def _newest(manifest, todo, section, kinds, what):
     """The newest checked receipt of `kinds` for the section (newest_receipts, a base's question), or None.
     Refused when a line newer than any found cannot be read and may be this TODO's: it may be a newer pass,
@@ -704,6 +807,10 @@ def main(argv=None):
     group.add_argument("--repair-base", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--repair-range", nargs=2, metavar=("TODO", "N"))
     group.add_argument("--section-start", nargs=2, metavar=("TODO", "N"))
+    group.add_argument("--effort", metavar="KIND", choices=SECTION_KINDS)
+    group.add_argument("--has-effort", action="store_true")
+    parser.add_argument("--todo")
+    parser.add_argument("--section-n")
     parser.add_argument("--manifest")
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--root", default=str(REPO))
@@ -735,6 +842,14 @@ def main(argv=None):
         if args.repair_base:
             _need(args.manifest, "--repair-base needs --manifest FILE")
             print(repair_base(args.manifest, args.repair_base[0], args.repair_base[1]))
+            return 0
+        if args.has_effort:
+            return 0 if pin["effort"] is not None else 1
+        if args.effort:
+            _need(args.manifest and args.todo and args.section_n, "--effort needs --todo, --section-n and --manifest")
+            level = effort_for(pin, args.manifest, args.todo, args.section_n, args.effort, paths)
+            if level:
+                print(f"{level} {tier_for(pin, paths)}")
             return 0
         if args.section_start:
             _need(args.manifest, "--section-start needs --manifest FILE")

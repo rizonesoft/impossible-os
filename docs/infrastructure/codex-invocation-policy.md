@@ -1,7 +1,9 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=scripts/test-tooling.sh reviewed=2026-09-29T19:00 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=scripts/test-tooling.sh reviewed=2026-11-23 -->
 # Codex Invocation Policy
 
 > When Claude invokes Codex from any path, Claude does NOT pass any flag that overrides the centrally-configured Codex model or reasoning effort. The user controls those values centrally via `~/.codex/config.toml`. The `model` value is pinned by `docs/infrastructure/codex-config-policy.toml` and audited (currently `model = "gpt-5.6-sol"`); the `model_reasoning_effort` value is a user dial (low / medium / high all legitimate) and is NOT pinned or audited. CLAUDE.md "Model Roles" carries the rule; the enforcement mechanics live here.
+>
+> **Per-pass review effort (2026-11-23).** The review dispatcher, not Claude, sets a review pass's effort from the operator's `[schedule.effort]` table in `.conclave/reviewers.toml`: by area tier (deep, risky, standard) and the chain's last finding. `scripts/codex-dispatch.sh` reads it with `scripts/review_pin.py --effort` after the base checks and passes `--effort` to the vendored companion in `tools/vendor/codex-companion/` (upstream v1.0.4 with `--effort` on `adversarial-review`, see its `PATCHES.md`). The command Claude types carries no effort flag, so the block below still applies to every Claude invocation unchanged. The config value is the fallback.
 
 ## Rule
 
