@@ -3171,27 +3171,99 @@ def test_a_prompt_at_the_argument_limit_reaches_the_companion_whole(tmp_path):
 
 
 def test_a_caller_that_stops_reading_still_gets_a_published_status(tmp_path):
-    """The transcript writer is bounded just past the pass's limit: a caller holding a full stdout pipe open no
-    longer holds the receipt and the .done publication (performance review, 2026-11-23)."""
+    """The dispatcher never waits on its caller: with stdout AND stderr pipes already full and never read, a
+    companion that finishes at once is published within seconds, not at the end of the 1800 s default limit
+    (performance and round reviews, 2026-11-23: the startup lines, then the transcript writer, blocked)."""
+    import fcntl
     import os
     import subprocess
     import time
     fake = tmp_path / "companion.js"
     fake.write_text("process.stdout.write('y'.repeat(1 << 20) + '\\nHIGHEST: none\\n');\n")
     reviews = tmp_path / "reviews"
-    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews),
-           "CODEX_REVIEW_MAX_SECS": "2", "REVIEW_BASE": "HEAD"}
+    env = {k: v for k, v in os.environ.items() if k != "CODEX_REVIEW_MAX_SECS"}
+    env.update({"CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews), "REVIEW_BASE": "HEAD"})
+    pipes = []
+    for _ in range(2):
+        r, w = os.pipe()
+        fcntl.fcntl(w, fcntl.F_SETFL, os.O_NONBLOCK)
+        try:
+            while True:
+                os.write(w, b"z" * 4096)              # full before the dispatcher starts
+        except BlockingIOError:
+            pass
+        fcntl.fcntl(w, fcntl.F_SETFL, 0)
+        pipes.append((r, w))
     proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"),
                              "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=str(_fixture_repo(tmp_path)),
-                            env=env, start_new_session=True)
+                            stdout=pipes[0][1], stderr=pipes[1][1], cwd=str(_fixture_repo(tmp_path)), env=env,
+                            start_new_session=True)
     try:
         started = time.monotonic()
-        while time.monotonic() - started < 90 and not list(reviews.glob("*.out.done")):
+        while time.monotonic() - started < 30 and not list(reviews.glob("*.out.done")):
             time.sleep(0.2)
         dones = list(reviews.glob("*.out.done"))
-        assert dones, "no status was published while the caller held its pipe unread"
-        assert dones[0].read_text().strip() not in ("", "0"), "an unread transcript was credited as complete"
+        assert dones, "no status within 30 s while the caller held both pipes full and unread"
+        # The transcript does not depend on the caller: it holds the whole review, so the pass stands.
+        assert dones[0].read_text().strip() == "0"
+        transcript = pathlib.Path(str(dones[0])[:-len(".done")]).read_text()
+        assert "HIGHEST: none" in transcript and transcript.count("y") >= 1 << 20
     finally:
-        os.killpg(proc.pid, 9)
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
         proc.wait(timeout=10)
+        for r, w in pipes:
+            os.close(r)
+            os.close(w)
+
+
+def _broker_run(kind_line_marker):
+    """The broker's RUN assignment for one branch, as text, to evaluate under a test's own values."""
+    broker = (REPO / "scripts/overnight/review-broker-codex-dispatch.sh").read_text().splitlines()
+    return next(line.strip() for line in broker if line.strip().startswith('RUN="') and kind_line_marker in line)
+
+
+def test_an_older_broker_kind_runs_the_companion_in_its_own_data(tmp_path):
+    """Older kinds through the broker ran node with the shared companion state and broker (round review,
+    2026-11-23). Their command now gives the companion its own data directory, drops an inherited broker endpoint
+    and removes the directory after."""
+    import json
+    import os
+    import subprocess
+    line = _broker_run("node $(q \"$COMPANION\")")
+    fake = tmp_path / "companion.js"
+    probe = tmp_path / "probe.json"
+    fake.write_text(f"require('fs').writeFileSync({json.dumps(str(probe))}, JSON.stringify({{"
+                    "data: process.env.CLAUDE_PLUGIN_DATA || '', tmp: process.env.TMPDIR || '',"
+                    "endpoint: process.env.CODEX_COMPANION_APP_SERVER_ENDPOINT || '', argv: process.argv.slice(2)}));\n")
+    (tmp_path / "reviews").mkdir()
+    (tmp_path / "prompt").write_text("[review-kind: adversarial] x\nbody\n")
+    script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
+              + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 bash -c "$RUN"')
+    done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "CODEX_COMPANION_APP_SERVER_ENDPOINT": "unix:/shared/broker.sock"})
+    assert done.returncode == 0, done.stderr
+    seen = json.loads(probe.read_text())
+    assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp.")) and seen["tmp"] == seen["data"], seen
+    assert seen["endpoint"] == "", seen
+    assert seen["argv"][-1] == "[review-kind: adversarial] x\nbody\n"
+    assert not list((tmp_path / "reviews").glob(".cp.*"))
+
+
+def test_the_broker_forwards_the_pass_limit():
+    run = _broker_run("bash $(q \"$PASS_WRAPPER\")")
+    assert 'CODEX_REVIEW_MAX_SECS=$(q "${CODEX_REVIEW_MAX_SECS:-}")' in run
+
+
+def test_a_zero_padded_section_reads_the_same_history(tmp_path):
+    """The prompt parser accepts "section 07" while receipts store the integer 7: every lookup must treat them as
+    one section (round review, 2026-11-23: 07 lost its history, so its effort and grandfathering were wrong)."""
+    rows = (_er("plan", schedule="effort", section=7),) + (_er("round", "P3", section=7),) * 3
+    manifest = _chain(tmp_path, *rows)
+    for n in (7, "7", "07", "007"):
+        assert rp.section_chain(manifest, EFFORT_TODO, n) == (True, 3, "P3"), n
+        assert rp.effort_for(_pin(), manifest, EFFORT_TODO, n, "round", ["docs/x.md"]) == "low", n
+    found, _ok = rp.newest_receipts(manifest, EFFORT_TODO, "07", ("plan",), checked=True)
+    assert "plan" in found

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
@@ -140,9 +141,15 @@ test("a turn whose app-server exits after accepting it fails instead of waiting 
   const text = fs.readFileSync(fake, "utf8");
   assert.ok(text.includes(ack));
   fs.writeFileSync(fake, text.replace(ack, `${ack} setTimeout(() => process.exit(1), 20); return;`));
+  // helpers.run passes no timeout to spawnSync, so this call owns its own: a regression fails here, never hangs.
+  // The broker it starts is detached; the t.after teardown above stops it by its plugin data.
   const started = Date.now();
-  const result = run("node", [SCRIPT, "adversarial-review", "check the guard"], { cwd: repo, env, timeout: 60000 });
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "check the guard"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.error?.code, undefined, `the companion did not end by itself: ${result.error?.code}`);
   assert.notEqual(result.status, 0, result.stdout);
   assert.ok(Date.now() - started < 30000, `took ${Date.now() - started} ms`);
+  assert.equal(JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt.length > 0, true);
+  assert.match(`${result.stdout}${result.stderr}`, /closed|exited/i, "the failure was not the lost connection");
 });
 

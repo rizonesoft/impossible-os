@@ -415,7 +415,7 @@ def section_base(root, todo, section, plan_head=""):
     if not isinstance(records, list):
         raise Refused(f"{OWED} is not a list of owed sections")
     for e in records:
-        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == str(section) \
+        if isinstance(e, dict) and e.get("todo") == todo and section_key(e.get("section", "")) == section_key(section) \
                 and isinstance(e.get("base"), str) and e["base"]:
             return e["base"]
     return plan_head
@@ -435,7 +435,7 @@ def section_status(root, todo, section):
     """
     import json
     root = pathlib.Path(root)
-    section = str(section)
+    section = section_key(section)
     seen, older, unsure = False, False, False
     # One read from the manifest's end: the newest checked plan answers at once (the same selection the
     # dispatcher uses, so a resume and a dispatch name one base, and a torn line newer than the plan refuses
@@ -446,7 +446,7 @@ def section_status(root, todo, section):
         except ValueError:
             unsure = unsure or unreadable_line_may_be(line, todo)
             continue
-        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != section:
+        if not isinstance(e, dict) or e.get("todo") != todo or section_key(e.get("section", "")) != section:
             continue
         if e.get("kind") in OLDER_KINDS:
             older = True
@@ -471,13 +471,20 @@ def section_status(root, todo, section):
         entry = json.loads((root / STAMPS).read_text()).get(todo)
     except (OSError, ValueError, AttributeError):
         entry = None
-    if isinstance(entry, dict) and any(str(entry.get(f"{k}_section", "")) == section for k in OLDER_KINDS):
+    if isinstance(entry, dict) and any(section_key(entry.get(f"{k}_section", "")) == section for k in OLDER_KINDS):
         return ("older", "")
     return ("new", "")
 
 
 # The head of one receipt as scripts/overnight/manifest-line.py writes it: ts, then kind, then todo.
 _RECEIPT_HEAD = re.compile(r'\{"ts": \d+, "kind": "[a-z-]+", "todo": "((?:[^"\\]|\\.)*)"')
+
+
+def section_key(value):
+    """One spelling for a section number: the prompt parser accepts "section 07" while a receipt stores the
+    integer 7, so every lookup compares this form (a non-numeric value is kept as written)."""
+    text = str(value).strip()
+    return str(int(text)) if text.isdigit() else text
 
 
 def unreadable_line_may_be(line, todo):
@@ -697,7 +704,7 @@ def newest_receipts(manifest, todo, section, kinds, checked=False, first=False):
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") not in kinds:
             continue
-        if section is not None and str(e.get("section", "")) != str(section):
+        if section is not None and section_key(e.get("section", "")) != section_key(section):
             continue
         if checked and not receipt_complete(e):
             continue
@@ -725,7 +732,7 @@ def section_chain(manifest, todo, section):
                 raise Refused(f"{manifest} has an unreadable line that may be a pass of {todo} section {section}, "
                               "so its review chain is unknown")
             continue
-        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != str(section):
+        if not isinstance(e, dict) or e.get("todo") != todo or section_key(e.get("section", "")) != section_key(section):
             continue
         if not receipt_complete(e):
             continue

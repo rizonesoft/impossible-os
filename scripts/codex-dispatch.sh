@@ -45,6 +45,11 @@
 #   *  -- whatever node exits with (when exec succeeded).
 
 set -u
+# This script never waits on its caller. Its stderr goes through a relay it does not wait for: every line it
+# writes there is short (far under a pipe's 64 KiB), so a caller that keeps stderr open without reading can stall
+# only the relay, never the review, its receipt or its .done (performance review, 2026-11-23). The relay ends at
+# its own bound. The review's own output reaches stdout the same way (run_companion).
+exec 2> >(exec timeout -k 1 600 cat >&2)
 
 if [ "$#" -ne 1 ]; then
     cat >&2 <<EOF
@@ -158,7 +163,8 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
-EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""; PASS_LIMIT_SECS=1800
+EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""; PASS_LIMIT_SECS=1800; DRAIN_SECS=5
+PASS_SUPERVISOR=""; PASS_TAIL=""
 # Each pass runs the companion with its own plugin data, so no two passes share its job state (an unlocked
 # read-modify-write: concurrent passes deleted each other's job records) or its broker, and under
 # review_runtime_limit.py, the child subreaper the broker path uses: every process the pass starts (the detached
@@ -166,9 +172,20 @@ EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""; PASS_LIMIT_SECS=1
 # pass's limit. The directory is removed after.
 LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/review_runtime_limit.py"
 end_companion_pass() {
+    # A dispatcher ended early (a signal its EXIT trap runs for) takes its pass down with it.
+    [ -z "${PASS_SUPERVISOR:-}" ] || kill -TERM "$PASS_SUPERVISOR" 2>/dev/null
+    [ -z "${PASS_TAIL:-}" ] || kill -KILL "$PASS_TAIL" 2>/dev/null
     [ -n "$PASS_DATA" ] || return 0
     rm -rf -- "$PASS_DATA"
     PASS_DATA=""
+}
+# Whether a child of this shell is still running: an exited one stays a zombie until it is waited for, and
+# kill -0 succeeds on a zombie.
+running() {
+    local stat
+    stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+    stat="${stat##*) }"
+    [ "${stat:0:1}" != "Z" ]
 }
 # A line for the caller once the review has run: to the transcript (when there is one), then to stderr within a
 # bound, so a caller that stopped reading cannot hold the receipt and the .done publication behind a full pipe.
@@ -183,7 +200,7 @@ say() {
 # companion that never finishes nor a caller that stopped reading holds the pass. Its output is appended to $2
 # (a descriptor path) and passed to stdout. Sets rc.
 run_companion() {
-    local secs="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}" st
+    local secs="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}"
     if ! [[ "$secs" =~ ^[1-9][0-9]{0,8}$ ]]; then
         say "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds"; rc=2; return
     fi
@@ -191,19 +208,36 @@ run_companion() {
         say "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass under $1"
         rc=2; return
     fi
+    # The transcript never waits on the caller: the companion writes straight to it, and the caller's copy is a
+    # tail of it in the background, so a caller that stopped reading stdout stalls only that tail (a tee had
+    # blocked the companion's own output, and with it the pass, for the whole limit). The tail ends a moment after
+    # the supervisor does, or DRAIN_SECS later is stopped, leaving only the caller's copy short.
+    local log="${2:-$PASS_DATA/out}" start waited=0
+    : >> "$log"
+    start="$(stat -L -c %s -- "$log" 2>/dev/null || echo 0)"
     PASS_COMPANION="$COMPANION" PASS_EFFORT="$EFFORT" PASS_DIR="$PASS_DATA" \
         python3 "$LIMITER" "$secs" 'p="$(cat -- "$PASS_DIR/prompt" && printf x)" || exit 2
             exec env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
                 -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DIR" TMPDIR="$PASS_DIR" \
-                node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "${p%x}"' 2>&1 \
-        | timeout -k 5 $(( secs + 30 )) tee -a "${2:-/dev/null}"
-    st=("${PIPESTATUS[@]}")
-    rc="${st[0]}"
+                node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "${p%x}"' \
+        >> "$log" 2>&1 &
+    PASS_SUPERVISOR=$!
+    tail -c +$(( start + 1 )) -s 0.2 -f --pid="$PASS_SUPERVISOR" -- "$log" &
+    PASS_TAIL=$!
+    wait "$PASS_SUPERVISOR"
+    rc=$?
+    PASS_SUPERVISOR=""
+    while running "$PASS_TAIL" && [ "$waited" -lt $(( DRAIN_SECS * 10 )) ]; do
+        sleep 0.1; waited=$(( waited + 1 ))
+    done
+    if running "$PASS_TAIL"; then
+        kill -KILL "$PASS_TAIL" 2>/dev/null
+        say "[$SELF_NAME] the caller's copy of the review was cut short (it stopped reading); the transcript $log holds all of it"
+    fi
+    wait "$PASS_TAIL" 2>/dev/null
+    PASS_TAIL=""
     if [ "$rc" = "124" ]; then
         say "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${secs}s limit and was ended"
-    elif [ "${st[1]}" != "0" ]; then
-        rc=3
-        say "[$SELF_NAME] INCOMPLETE -- the transcript writer did not finish (exit ${st[1]}: the caller stopped reading); dispatch it again"
     fi
     end_companion_pass
 }
@@ -459,7 +493,7 @@ if [ -n "$LOG_FILE" ]; then
     # Where the transcript goes (for the reader). The recorder's proof that a
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
-    [ -z "$EFFORT_NOTE" ] || echo "$EFFORT_NOTE" | tee -a "$LOG_RW" >&2
+    [ -z "$EFFORT_NOTE" ] || say "$EFFORT_NOTE"
     # The pass's own data goes in the reviews directory, which no candidate read covers (as the paths file
     # above): under a TMPDIR inside the checkout, another pass's companion files would change this pass's
     # candidate. The name is short: the broker's socket path must stay under the 108-byte Unix limit, and a longer

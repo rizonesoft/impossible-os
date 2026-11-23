@@ -229,9 +229,12 @@ if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
   # CODEX_EXPECT_CANDIDATE: the candidate the launch row below names; the wrapper refuses another.
-  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") CODEX_COMPANION_ACCEPTS_EFFORT=$(q "${CODEX_COMPANION_ACCEPTS_EFFORT:-}") bash $(q "$PASS_WRAPPER") \"\${_review_prompt%x}\""
+  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && CODEX_BROKER_JOB=$(q "detached:$UNIT") CODEX_BROKER_LOG=$(q "$LOG_FILE") CODEX_EXPECT_CANDIDATE=$(q "$TREE_HEAD $TREE_INDEX $TREE_WORK") REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") CODEX_COMPANION_ACCEPTS_EFFORT=$(q "${CODEX_COMPANION_ACCEPTS_EFFORT:-}") CODEX_REVIEW_MAX_SECS=$(q "${CODEX_REVIEW_MAX_SECS:-}") bash $(q "$PASS_WRAPPER") \"\${_review_prompt%x}\""
 else
-  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && node $(q "$COMPANION") adversarial-review -- \"\${_review_prompt%x}\""
+  # An older kind runs the companion here, but in its own data directory with no inherited broker endpoint, as
+  # every pinned pass does (codex-dispatch.sh run_companion): passes in one checkout never share the companion's
+  # unlocked job state or its broker. The job's supervisor reaps whatever it starts; the directory goes after.
+  RUN="_review_prompt=\"\$(cat /dev/fd/\$REVIEW_PROMPT_FD && printf x)\" && _d=\"\$(mktemp -d $(q "$PWD/$MANIFEST_DIR")/.cp.XXXXXX)\" && { env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA=\"\$_d\" TMPDIR=\"\$_d\" node $(q "$COMPANION") adversarial-review -- \"\${_review_prompt%x}\"; _rc=\$?; rm -rf -- \"\$_d\"; exit \$_rc; }"
 fi
 Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
