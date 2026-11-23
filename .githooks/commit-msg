@@ -25,8 +25,8 @@ if [ "$rc" -ne 0 ]; then
     echo -e "\033[31mcommit-msg: whether this is a merge could not be read (storage stalled or failed); commit again\033[0m"
     exit 1
 fi
-# A merge's lanes are judged again too: a lane that started while the message was written holds
-# the paths this merge authors (lanes.py measures them against every parent).
+# A merge's lanes are judged again too: it is refused once a lane started while the message was
+# written.
 python3 "$REPO_ROOT/scripts/lanes.py" check-staged || exit 1
 # The parents the bounded probe read are handed over: the checker reads no file of its own for them.
 mapfile -t PARENTS <<< "$MERGE_PARENTS"

@@ -22,7 +22,6 @@ import errno
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
 import time
@@ -264,10 +263,9 @@ def committer(lane_map: dict, toplevel: Path) -> str | None:
     return lane_trees(lane_map, toplevel).get(Path(toplevel).resolve())
 
 
-def staged_paths(toplevel: Path, base: str | None = None) -> list[str]:
-    """The paths the index changes against HEAD, or against commit `base`."""
-    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff",
-               *([base] if base else []))
+def staged_paths(toplevel: Path) -> list[str]:
+    """The paths the index changes against HEAD."""
+    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff")
     return [p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p]
 
 
@@ -319,96 +317,34 @@ def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
     return parse_map(text)
 
 
-STATE_FILE_MAX = 64 * 1024
-
-
 def _git_path(toplevel: Path, name: str) -> Path:
     return Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", name).decode().strip())
 
 
-def _state_lines(path: Path) -> list[str]:
-    """The lines of a small git state file (MERGE_HEAD, REBASE_HEAD), [] when it is absent. Anything but a
-    small regular file refuses: a FIFO in its place would otherwise hold the commit forever."""
-    try:
-        st = os.stat(path)
-    except FileNotFoundError:
-        return []
-    except OSError as exc:
-        raise LaneError(f"{path.name} cannot be read ({type(exc).__name__})") from exc
-    if not stat.S_ISREG(st.st_mode) or st.st_size > STATE_FILE_MAX:
-        raise LaneError(f"{path.name} is not a small regular file")
-    try:
-        return [line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()]
-    except (OSError, UnicodeDecodeError) as exc:
-        raise LaneError(f"{path.name} cannot be read ({type(exc).__name__})") from exc
+def merging(toplevel: Path) -> bool:
+    """Whether this commit concludes a merge (MERGE_HEAD is there, whatever it holds: it is never read)."""
+    return os.path.lexists(_git_path(toplevel, "MERGE_HEAD"))
 
 
-def _verify(toplevel: Path, ref: str) -> str | None:
-    """The object `ref` names, or None when it does not exist."""
-    try:
-        return _git(toplevel, "rev-parse", "-q", "--verify", ref).decode().strip() or None
-    except GitStalled:
-        raise
-    except LaneError:
-        return None
-
-
-def _merge_result(toplevel: Path, ours: str, theirs: str, base: str | None = None) -> str:
-    """The tree git's own merge of `theirs` into `ours` gives (conflicts left as markers), as AUTO_MERGE records
-    it for a stop: `git merge-tree` exits 1 for a conflict and still writes the tree. A merge git has already
-    admitted may join unrelated histories (`--allow-unrelated-histories`), so the reconstruction allows them."""
-    how = [f"--merge-base={base}"] if base else ["--allow-unrelated-histories"]
-    out = _git(toplevel, "merge-tree", "--write-tree", *how, ours, theirs, ok=(0, 1))
-    tree = out.split(b"\n", 1)[0].decode().strip()
-    if not tree:
-        raise LaneError("git merge-tree gave no tree")
-    return tree
-
-
-def authored_paths(toplevel: Path, replay: bool = False) -> list[str]:
-    """The paths this commit authors, which the lane check judges: where the index differs from what git's own
-    merge gives, since what git merged by itself carries commits already judged.
-
-    - A merge, or a rebase pick, stopped for the operator: git recorded its result in AUTO_MERGE.
-    - Otherwise (a merge git commits itself, a strategy that writes no AUTO_MERGE, git older than 2.42) the
-      result is computed the same way: `git merge-tree` of the other parent into HEAD, or of a rebase pick
-      (REBASE_HEAD) against its own parent. A restored, rolled-back or resolved path is then authored.
-    - An octopus merge, or a root pick, has no such two-way result: every path it changes is authored.
-    - A rebase's clean pick (`replay`, no REBASE_HEAD) replays a commit already judged: nothing is authored.
-    - `git am` (rebase-apply/applying) applies a patch this commit authors, whatever stopped it, as do an
-      ordinary commit, a revert and a cherry-pick: every path it changes."""
-    merging = _state_lines(_git_path(toplevel, "MERGE_HEAD"))
-    apply_dir = _git_path(toplevel, "rebase-apply")
-    mailing = (apply_dir / "applying").exists()
-    rebasing = _git_path(toplevel, "rebase-merge").is_dir() or (apply_dir.is_dir() and not mailing)
-    if not merging and not rebasing:
-        return staged_paths(toplevel)
-    if merging:
-        if len(merging) != 1:
-            return staged_paths(toplevel)
-        auto = _verify(toplevel, "AUTO_MERGE")
-        return staged_paths(toplevel, auto or _merge_result(toplevel, "HEAD", merging[0]))
-    pick = _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
-    if not pick:
-        return [] if replay else staged_paths(toplevel)
-    base = _verify(toplevel, f"{pick[0]}^")
-    if not base:                                   # a root pick: whatever git applied, the pick authors all of it
-        return staged_paths(toplevel)
-    auto = _verify(toplevel, "AUTO_MERGE")
-    return staged_paths(toplevel, auto or _merge_result(toplevel, "HEAD", pick[0], base))
+def replaying(toplevel: Path) -> bool:
+    """Whether a rebase is making a clean pick's commit: it replays a commit already judged. A pick the rebase
+    stopped on (REBASE_HEAD) was finished by hand, so it is not one."""
+    return (_git_path(toplevel, "rebase-merge").is_dir()
+            and not _git(toplevel, "rev-parse", "-q", "--verify", "REBASE_HEAD", ok=(0, 1)).strip())
 
 
 def check_staged(cwd: Path, replay: bool = False) -> int:
-    """Judge the staged commit on the paths it authors (`authored_paths`). `replay` is a rebase's own commit
-    of a pick: a clean pick replays a commit already judged, so only who may commit at all is judged; a pick the
-    rebase stopped on (REBASE_HEAD) is judged on what was added to it."""
+    """Judge the staged commit on every path the index changes against HEAD. Two things are not told apart from
+    that: a rebase's own commit of a clean pick (`replay`) is judged only on who may commit at all, and a merge is
+    refused while any lane holds paths, because the index cannot show a lane's incoming change it lost."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
         # The map the commit leaves behind is validated on every path, a merge or rebase included, and as
         # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
         # later commit is judged by it.
         proposed = None
-        if MAP in staged_paths(toplevel):
+        changed = staged_paths(toplevel)
+        if MAP in changed:
             staged = _blob(toplevel, f":{MAP}")
             if staged is None:
                 raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
@@ -425,11 +361,10 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
             lane_map = proposed                    # HEAD's map is broken: a commit repairing it is judged by its own
         me = committer(lane_map, toplevel)
         lane_states = states(lane_map)
-        if me in (None, MAIN) and not any_reserving(lane_map, lane_states):
-            paths = []                             # no lane holds a path: nothing main authors can be refused
-        else:
-            paths = authored_paths(toplevel, replay)
+        paths = [] if replay and replaying(toplevel) else changed
         reasons = judge(lane_map, me, paths, lane_states)
+        if not reasons and any_reserving(lane_map, lane_states) and merging(toplevel):
+            reasons = ["no merge commits while a lane is live; rebase instead"]
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
         return 2

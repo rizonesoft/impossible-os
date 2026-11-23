@@ -197,19 +197,6 @@ def test_a_reports_lane_never_creates_a_merge_commit(repo):
     assert head(nb) == "side"
 
 
-def test_a_main_merge_carrying_a_live_lanes_commits_is_not_refused(repo):
-    # The merge carries userland's own commit; it was judged when userland made it.
-    git(repo["userland"], "checkout", "-q", "-b", "ul")
-    stage(repo["userland"], "user/a.c", "ul\n")
-    git(repo["userland"], "commit", "-qm", "ul")
-    stage(repo["primary"], "src/kernel/k.c")
-    git(repo["primary"], "commit", "-qm", "main")
-    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
-    live("userland")
-    r = git(repo["primary"], "merge", "--no-edit", "ul", check=False, env=os.environ.copy())
-    assert r.returncode == 0 and git(repo["primary"], "rev-list", "--count", "HEAD").stdout.strip() == "4", r
-
-
 def test_a_revert_read_through_ps_is_judged_too(repo, monkeypatch):
     stage(repo["primary"], "user/a.c", "two\n")
     git(repo["primary"], "commit", "-qm", "edit")
@@ -333,19 +320,6 @@ def test_an_unstaged_map_edit_never_releases_a_live_reservation(repo):
     stage(repo["primary"], "src/shell/cmds.c")
     r = hooked_commit(repo, repo["primary"], "--", "src/shell/cmds.c")
     assert r.returncode != 0 and "src/shell/cmds.c belongs to lane userland" in r.stderr, r
-
-
-def test_finishing_a_paused_merge_judges_who_commits_not_the_inherited_paths(repo):
-    git(repo["userland"], "checkout", "-q", "-b", "ul")
-    stage(repo["userland"], "user/a.c", "ul\n")
-    git(repo["userland"], "commit", "-qm", "ul")
-    stage(repo["primary"], "src/kernel/k.c")
-    git(repo["primary"], "commit", "-qm", "main")
-    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
-    live("userland")
-    git(repo["primary"], "merge", "--no-ff", "--no-commit", "ul", env=os.environ.copy())
-    r = git(repo["primary"], "commit", "--no-edit", check=False, env=os.environ.copy())
-    assert r.returncode == 0 and git(repo["primary"], "rev-list", "--count", "HEAD").stdout.strip() == "4", r
 
 
 def test_a_replacement_ref_never_hides_a_staged_reserved_path(repo):
@@ -473,14 +447,6 @@ def _paused_merge(repo):
     git(repo["primary"], "merge", "--no-ff", "--no-commit", "ul", env=os.environ.copy())
 
 
-def test_a_merge_resolution_authored_in_a_live_lanes_file_is_refused(repo):
-    _paused_merge(repo)
-    stage(repo["primary"], "user/a.c", "neither parent\n")
-    r = git(repo["primary"], "commit", "--no-edit", check=False, env=os.environ.copy())
-    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
-    assert head(repo["primary"]) == "main"
-
-
 @pytest.mark.parametrize("damage,why", [("bad", "cannot be read"), ("delete", "deletes .conclave/lanes.toml")])
 def test_a_merge_never_lands_a_broken_lane_map(repo, damage, why):
     _paused_merge(repo)
@@ -583,17 +549,6 @@ def test_a_worktree_must_be_relative_and_one_tree_is_one_lane(repo):
     assert r.returncode == 2 and "name the same worktree" in r.stderr, r
 
 
-def test_a_fifo_in_place_of_merge_head_refuses_promptly_through_pre_commit(repo):
-    live("userland")                                                  # a lane holds paths: MERGE_HEAD is read
-    stage(repo["primary"], "src/kernel/k.c")
-    os.mkfifo(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
-              if os.path.isabs(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
-              else repo["primary"] / git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
-    r = subprocess.run(["bash", str(repo["hooks"] / "pre-commit")], cwd=repo["primary"], capture_output=True,
-                       text=True, timeout=30, env=os.environ.copy())
-    assert r.returncode != 0 and "MERGE_HEAD is not a small regular file" in r.stderr, r
-
-
 def test_triage_spends_no_git_call_when_no_lane_has_a_record(tmp_path, monkeypatch):
     t = _load("triage_no_git", TRIAGE_PY)
     (tmp_path / "scripts").mkdir()
@@ -641,12 +596,82 @@ def test_a_stopped_pick_that_rolls_back_a_live_lanes_file_is_refused(repo):
     assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
 
 
-def test_a_stopped_pick_keeps_what_git_merged_by_itself_and_later_clean_picks_replay(repo):
+def test_a_stopped_pick_is_judged_on_every_path_and_later_clean_picks_replay(repo):
     p = _stopped_pick(repo, {"user/a.c": "one\n2\n3\n4\n5\n6\n7\n"}, {"user/a.c": "1\n2\n3\n4\n5\n6\nseven\n"},
                       later={"user/b.c": "later\n"})
-    r = git(p, "rebase", "--continue", check=False, env={**os.environ, "GIT_EDITOR": "true"})
-    assert r.returncode == 0 and head(p) == "later0", r
-    assert (p / "user" / "a.c").read_text() == "one\n2\n3\n4\n5\n6\nseven\n"
+    cont = {**os.environ, "GIT_EDITOR": "true"}
+    r = git(p, "rebase", "--continue", check=False, env=cont)         # finished by hand: judged on all it changes
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    git(p, "checkout", "HEAD", "--", "user/a.c")                      # left to the lane, the rebase goes on
+    r = git(p, "rebase", "--continue", check=False, env=cont)
+    assert r.returncode == 0 and head(p) == "later0", r               # the later pick of user/b.c is clean
+
+
+@pytest.mark.parametrize("stop", ["break", "edit", "exec false"])
+def test_an_edit_staged_at_any_rebase_stop_is_judged(repo, stop):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "feat")
+    for n in ("one", "two"):
+        stage(p, f"src/{n}.c")
+        git(p, "commit", "-qm", n)
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    seq = "s/^pick/edit/;t;" if stop == "edit" else f"1a {stop}"
+    env = {**os.environ, "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": f"sed -i '{seq}'"}
+    git(p, "rebase", "-i", "--force-rebase", "main", check=False, env=env)
+    assert (p / ".git" / "rebase-merge").is_dir()
+    stage(p, "user/a.c", "extra\n")
+    r = git(p, "rebase", "--continue", check=False, env=env)
+    assert r.returncode != 0, r
+    assert "user/a.c" not in git(p, "diff", "--name-only", "main", "HEAD").stdout, r
+
+
+def _merge_into_main(repo, kind):
+    """main merging `ul` (userland's user/a.c beside a docs file) in the shape `kind`, with userland live and the
+    hooks on. Returns the paused state's tree, or the finished `git merge` for a merge git commits itself."""
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "ul")
+    stage(p, "user/a.c", "ul\n")
+    stage(p, "src/kernel/k.c", "ul\n")
+    git(p, "commit", "-qm", "ul")
+    git(p, "checkout", "-q", "-b", "third", "main")
+    stage(p, "docs/third.md", "third\n")
+    git(p, "commit", "-qm", "third")
+    git(p, "checkout", "-q", "main")
+    stage(p, "docs/main.md", "main\n")
+    git(p, "commit", "-qm", "main")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    args = {"own": ["--no-edit", "ul"], "docs": ["--no-edit", "third"], "octopus": ["--no-edit", "ul", "third"],
+            "ours": ["--no-edit", "-s", "ours", "ul"], "resolve": ["--no-edit", "-s", "resolve", "ul"],
+            "paused": ["--no-commit", "ul"], "paused-fifo": ["--no-commit", "ul"]}[kind]
+    live("userland")
+    r = git(p, "merge", "--no-ff", *args, check=False, env=os.environ.copy())
+    if not kind.startswith("paused"):
+        return r
+    if kind == "paused-fifo":
+        (p / ".git" / "MERGE_HEAD").unlink()
+        os.mkfifo(p / ".git" / "MERGE_HEAD")
+    git(p, "checkout", "HEAD", "--", "user/a.c", "src/kernel/k.c")    # every incoming change lost by mistake
+    r = subprocess.run(["bash", str(repo["hooks"] / "pre-commit")], cwd=p, capture_output=True, text=True,
+                       timeout=30, env=os.environ.copy())
+    return r
+
+
+@pytest.mark.parametrize("kind", ["own", "docs", "octopus", "ours", "resolve", "paused", "paused-fifo"])
+def test_no_merge_lands_while_a_lane_is_live_however_it_was_made(repo, kind):
+    r = _merge_into_main(repo, kind)
+    assert r.returncode != 0 and "[lane-check] BLOCK" in r.stderr, r
+    assert "belongs to lane userland" in r.stderr or "no merge commits while a lane is live" in r.stderr, r
+    assert head(repo["primary"]) == "main"
+
+
+def test_a_merge_lands_when_no_lane_is_live(repo):
+    r = _merge_into_main(repo, "paused")                              # refused with userland live
+    assert "no merge commits while a lane is live" in r.stderr, r
+    lanes.clear("userland")
+    git(repo["primary"], "checkout", "ul", "--", "user/a.c")
+    r = hooked_commit(repo, repo["primary"])
+    assert r.returncode == 0 and head(repo["primary"]) == "x", r
 
 
 def test_a_staged_worktree_alias_never_lands_and_a_broken_map_can_be_repaired(repo):
@@ -700,37 +725,6 @@ def test_a_three_way_mail_patch_into_a_live_lane_is_refused_after_a_conflict(rep
     assert head(p) == "main"
 
 
-def _resolve_merge(repo):
-    """main merges `ul` (a newer user/a.c) with -s resolve, paused on a kernel conflict; userland is live."""
-    p = repo["primary"]
-    git(p, "checkout", "-q", "-b", "ul")
-    stage(p, "user/a.c", "ul\n")
-    stage(p, "src/kernel/k.c", "ul\n")
-    git(p, "commit", "-qm", "ul")
-    git(p, "checkout", "-q", "main")
-    stage(p, "src/kernel/k.c", "main\n")
-    git(p, "commit", "-qm", "main")
-    git(p, "config", "core.hooksPath", str(repo["hooks"]))
-    live("userland")
-    git(p, "merge", "--no-ff", "--no-commit", "-s", "resolve", "ul", check=False, env=os.environ.copy())
-    assert not git(p, "rev-parse", "-q", "--verify", "AUTO_MERGE", check=False).stdout.strip()
-    stage(p, "src/kernel/k.c", "resolved\n")
-    return p
-
-
-def test_a_resolve_merge_that_drops_a_live_lanes_change_is_refused(repo):
-    p = _resolve_merge(repo)
-    git(p, "checkout", "HEAD", "--", "user/a.c")                       # the incoming change lost by mistake
-    r = hooked_commit(repo, p)
-    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
-
-
-def test_a_resolve_merge_that_keeps_the_lanes_change_lands(repo):
-    p = _resolve_merge(repo)
-    r = hooked_commit(repo, p)
-    assert r.returncode == 0, r
-
-
 def test_triage_holds_every_open_section_while_a_lane_has_a_record_and_the_map_is_unread(repo, tmp_path):
     t = _load("triage_unknown", TRIAGE_PY)
     root = tmp_path / "nogit"                                         # not a repository: every git read fails
@@ -779,31 +773,3 @@ def test_a_conflicted_root_pick_with_a_live_lanes_file_is_refused(repo):
     assert r.returncode != 0 and "user/new.c belongs to lane userland" in r.stderr, r
 
 
-def test_a_paused_merge_of_unrelated_histories_lands(repo):
-    p = repo["primary"]
-    git(p, "checkout", "-q", "--orphan", "other")
-    git(p, "rm", "-rq", "--cached", ".")
-    for f in list(p.iterdir()):
-        if f.name not in (".git", ".githooks", ".conclave"):
-            shutil.rmtree(f) if f.is_dir() else f.unlink()
-    git(p, "add", "--", ".conclave/lanes.toml")
-    stage(p, "docs/other.md", "other\n")
-    git(p, "commit", "-qm", "other root")
-    git(p, "checkout", "-q", "-f", "main")
-    git(p, "config", "core.hooksPath", str(repo["hooks"]))
-    git(p, "merge", "--no-ff", "--no-commit", "--allow-unrelated-histories", "other", env=os.environ.copy())
-    git(p, "update-ref", "-d", "AUTO_MERGE")                          # as git older than 2.42 leaves it
-    live("userland")                                                  # holds nothing this merge brings in
-    r = hooked_commit(repo, p)
-    assert r.returncode == 0, r
-
-
-def test_no_merge_is_reconstructed_when_no_lane_holds_anything(repo, monkeypatch):
-    p = _resolve_merge(repo)
-    lanes.clear("userland")
-
-    def refuse(*a, **k):
-        raise AssertionError("merge-tree ran with nothing reserved")
-    monkeypatch.setattr(lanes, "_merge_result", refuse)
-    monkeypatch.chdir(p)
-    assert lanes.check_staged(p) == 0

@@ -657,3 +657,12 @@ A: (operator, 2026-11-23) A, with the program and its tests copied and no agent 
 - **C:** controls and engines stay here and are planned twice.
 
 A: (operator, 2026-11-23) A. A moved section is not parked: it stays open behind its import section, so that what depends on it waits properly. The Windows 11 inventory (`08-graphics-ui/TODO-17`) stays here and goes on; Impossible SDK copies its control records at a pinned commit. The session chose the form: rows under `needs`, the line `**Need:**`, a section for every need (`10-platform-services/TODO-13`, written by `imports.py --file-needs`) and an error of Check 42 while one is missing. Reversal cost: each moved section's items are kept in its program's repository under `docs/os-roadmap`, and in this history.
+
+## Q59 (00-infrastructure/TODO-08 §49): what does a merge or a stopped rebase pick count as changing, for the lane check?
+
+Review waves 3 to 7 each reopened the same question: which paths a history operation "authors", as opposed to inherits from commits already judged. Each fix (every-parent rule, AUTO_MERGE, `git merge-tree`, root and octopus cases) added code the next wave found a hole in.
+
+- **A:** keep reconstructing git's own merge result and judge the difference.
+- **B:** judge every commit on what the index changes against HEAD, refuse a merge while any lane is live, and exempt only a rebase's clean pick (`rebase-merge` present, no REBASE_HEAD).
+
+A: (run decided, 2026-11-24) B. `main` has had no merge commit since 2026-09-01 and every push rebases, so refusing one costs nothing here; the index cannot show an incoming change a merge lost, which is why a merge is refused instead of measured. It reverses wave 1's decision that main may merge a live lane's own commits, and a stopped pick that carries a lane's path is now refused (leave that path to the lane, or state a reason with SKIP_LANE_CHECK). Reversal cost: revert one commit; nothing else reads `lanes.merging` or `lanes.replaying`.

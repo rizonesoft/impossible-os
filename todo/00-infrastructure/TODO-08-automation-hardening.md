@@ -1675,6 +1675,7 @@ A lane reserves its directories only while it is live; when it is off, main take
 - [x] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
   - An extra lane commits only inside its own paths and only while its own record is fresh; a damaged record reserves its paths against main and grants the lane nothing
   - A reports-only lane is refused before the empty-index exit, generated files included; a revert or cherry-pick is checked in `prepare-commit-msg`, which runs where pre-commit does not
+  - Every commit is judged on what the index changes against HEAD; no merge commits while a lane is live, and a rebase's clean pick is judged only on who commits
 - [x] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
   - A section is reserved when its TODO file is the lane's or its text names a path in the lane; when only reserved work remains, `--next` reports BLOCKED naming the lane, never DONE
 - [x] Commit: `"lanes: the lane map and the commit check"`
