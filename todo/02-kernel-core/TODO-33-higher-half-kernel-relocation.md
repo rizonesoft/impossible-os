@@ -54,7 +54,6 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | 🔥  |  14   | Fourth tactical reclamation pass: reclaim test-only statics | --                     |  [x]   |
 | 🔥  |  15   | Fifth tactical reclamation pass: convert the `pipes` pool   | --                     |  [x]   |
 | 🔥  |  16   | Test-side residue of the fourth pass: scratch fixtures      | §14                    |  [x]   |
-| 🔥  |  17   | Direct-map check passes on machines with 1 GiB or less      | --                     |  [ ]   |
 | 💎  |   1   | Memory-map design + canonical layout decision               | --                     |  [x]   |
 | 💎  |   2   | Direct map construction (install HHDM; kernel still low)    | §1                     |  [ ]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper        | §2                     |  [/]   |
@@ -129,7 +128,7 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
   - Left open 2026-11-07: no blocker. The stamp's XREF names this item itself, so nothing would ever clear it.
 - [x] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
 
-→ XREF: §17 (item: "`jump_to_kernel()` compares a word the HHDM walk does not modify") -- this section's readback check halts a machine with 1 GiB of RAM or less.
+→ XREF: `00-infrastructure/TODO-08-automation-hardening.md` §72 (item: "`jump_to_kernel()` compares a word the HHDM walk does not modify") -- this section's readback check halts a machine with 1 GiB of RAM or less.
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in unused PML4 slots, so behavior is unchanged and the section is independently bootable. The readback proof runs in the BOOTLOADER (`jump_to_kernel`, after CR3 loads the HHDM): a frame read through its HHDM alias must equal the identity read (aliasing) and the walk of an NX leaf proves EFER.NXE landed -- an in-kernel test is BSS-blocked until §7 (same ceiling as `test_highhalf.c`). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
 
@@ -947,26 +946,6 @@ The three items §14 deferred into §15, split back out on `section-manifest.py`
 > **Accepted:** [M] `src/kernel/env.c:309` still casts a `pmm_alloc_contiguous` result straight to a pointer, the production twin of the cast this section retired test-side (reason: production code and one of ~20 such sites, which the identity-map teardown owns as a single inventory) -> XREF: this file §5 (item: "Convert the remaining raw phys-as-pointer consumers before the map is retired")
 > **Quality reviewed:** 2026-09-05 | Codex 18x (design, adversarial x6, re-adversarial x2, test-coverage, consistency x4, perf x4; 2 adversarial legs crashed in the reviewer sandbox and were re-dispatched) + kernel-quality-auditor + concurrency-evidence-mapper | 6M+8L fixed, 2 accepted, 0 open | scope: kernel-code-quality
 
-
----
-
-## 17. The Direct-Map Check Passes on Machines With 1 GiB or Less
-
-> **Spawned-by:** root (found 2026-11-23 while reproducing GitHub issue 6)
-> **User impact:** `main` does not boot on a machine or VM with 1 GiB of RAM or less, and the QEMU guide tells people to use 512 MB.
-
-The direct map is correct; the loader's check of it is not. `jump_to_kernel()` (`src/boot/uefi/bootx64.c:13893`) reads the arena's first word through the identity map, then through its HHDM alias, and halts when they differ. That word is the live PDPT's entry 0. When the arena lies in the first GiB, the HHDM read walks through that same entry, and the CPU sets its Accessed bit between the two reads. -> XREF: §2 (item: "`bl_hhdm_install_leaves()`")
-
-Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with `HHDM: identity vs direct-map readback mismatch` (512 MB and 1 GiB on KVM and TCG); 1100 MB and above boot. In gdb at 1 GiB on TCG, the identity read was `0x3d02a003` and the HHDM read `0x3d02a023`, a difference of `0x20`, bit 5 (Accessed). Stepping past the compare, the same boot completed. The smoke scripts boot with `-m 2G`, which is why nothing caught it.
-
-- [ ] `jump_to_kernel()` compares a word the HHDM walk does not modify
-  - A frame that is mapped by the HHDM and is not a page table on the walked path. Masking the Accessed bit out of the compare is not the fix.
-- [ ] A wrong map still halts: a control that points the HHDM alias at another frame fails the check
-- [ ] The smoke matrix boots a 512 MB leg on KVM and on TCG; both fail on the 2026-11-23 loader
-- [ ] `docs/getting-started/qemu.md` and `virtualbox.md` state the smallest memory size a boot was measured at (both say 256 MB today, unmeasured)
-- [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
-
-**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
 
 ---
 

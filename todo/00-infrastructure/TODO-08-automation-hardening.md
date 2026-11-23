@@ -136,6 +136,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
 | ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [ ]   |
+| 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1956,6 +1957,23 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
 
+## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
+
+> **Spawned-by:** root (found 2026-11-23 while reproducing GitHub issue 6; filed here by operator direction)
+> **User impact:** `main` does not boot on a machine or VM with 1 GiB of RAM or less, and the QEMU guide tells people to use 512 MB.
+
+The direct map is correct; the loader's check of it is not. `jump_to_kernel()` (`src/boot/uefi/bootx64.c:13893`) reads the arena's first word through the identity map, then through its HHDM alias, and halts when they differ. That word is the live PDPT's entry 0. When the arena lies in the first GiB, the HHDM read walks through that same entry, and the CPU sets its Accessed bit between the two reads. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "`bl_hhdm_install_leaves()`")
+
+Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with `HHDM: identity vs direct-map readback mismatch` (512 MB and 1 GiB on KVM and TCG); 1100 MB and above boot. In gdb at 1 GiB on TCG, the identity read was `0x3d02a003` and the HHDM read `0x3d02a023`, a difference of `0x20`, bit 5 (Accessed). Stepping past the compare, the same boot completed. The smoke scripts boot with `-m 2G`, which is why nothing caught it.
+
+- [ ] `jump_to_kernel()` compares a word the HHDM walk does not modify
+  - A frame that is mapped by the HHDM and is not a page table on the walked path. Masking the Accessed bit out of the compare is not the fix.
+- [ ] A wrong map still halts: a control that points the HHDM alias at another frame fails the check
+- [ ] The smoke matrix boots a 512 MB leg on KVM and on TCG; both fail on the 2026-11-23 loader
+- [ ] `docs/getting-started/qemu.md` and `virtualbox.md` state the smallest memory size a boot was measured at (both say 256 MB today, unmeasured)
+- [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
+
+**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
 
 ## Format Quick Reference
 
