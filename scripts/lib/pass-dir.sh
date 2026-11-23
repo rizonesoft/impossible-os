@@ -8,15 +8,20 @@
 # /tmp, could delete an operator's own directory). The names are short: a pass's broker socket,
 # <pass>/cxc-XXXXXX/broker.sock, must stay under the 108-byte Unix limit.
 
-# Print BASE/.cp once it is proven ours: made here (mode 700) with the marker file .codex-dispatch-passes, or found
-# with that marker, owned by this user and not a link. A .cp without the marker is someone else's: never used.
+# Print BASE/.cp once it is proven ours: owned by this user, not a link, and carrying the marker file
+# .codex-dispatch-passes (written when this helper made it, or when it adopts an empty one).
 PASS_DIR_MARKER=".codex-dispatch-passes"
 pass_dir_parent() {
     local parent="$1/.cp"
-    if mkdir -m 700 -- "$parent" 2>/dev/null; then
+    mkdir -m 700 -- "$parent" 2>/dev/null
+    [ -d "$parent" ] && [ ! -L "$parent" ] && [ -O "$parent" ] || return 1
+    if [ ! -f "$parent/$PASS_DIR_MARKER" ]; then
+        # An EMPTY unmarked .cp is adopted: a first caller interrupted between its mkdir and its marker, or one
+        # racing another first caller, leaves exactly that, and an empty directory holds nothing a sweep could
+        # remove. One with any entry is someone else's and is never used.
+        [ -z "$(ls -A -- "$parent" 2>/dev/null)" ] || return 1
         : > "$parent/$PASS_DIR_MARKER" || return 1
     fi
-    [ -d "$parent" ] && [ ! -L "$parent" ] && [ -O "$parent" ] && [ -f "$parent/$PASS_DIR_MARKER" ] || return 1
     printf '%s\n' "$parent"
 }
 

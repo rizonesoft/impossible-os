@@ -148,14 +148,22 @@ export function getWorkingTreeState(cwd) {
   const stagedRaw = rawNames(["diff", "--cached", "--name-only"]);
   const unstagedRaw = rawNames(["diff", "--name-only"]);
   const untrackedRaw = rawNames(["ls-files", "--others", "--exclude-standard"]);
-  // A name that is not UTF-8 is displayed with its bytes escaped, so distinct files never show as one name.
+  // One reversible display for every name, so distinct files never share a heading: a name is shown as is unless
+  // it is not UTF-8, starts with a quote or a byte-order mark, or holds a backslash or a control character; then it
+  // is quoted, each byte outside printable ASCII (and the quote and backslash) written \xNN. A plain name never
+  // starts with a quote, so a plain name and a quoted one cannot read alike.
   const display = (raw) => {
+    let text = null;
     try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
     } catch {
-      return Array.from(raw, (byte) => (byte >= 0x20 && byte < 0x7f && byte !== 0x5c
-        ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`)).join("");
+      text = null;
     }
+    if (text !== null && !/^["\uFEFF]|[\\\u0000-\u001f\u007f]/.test(text)) {
+      return text;
+    }
+    return `"${Array.from(raw, (byte) => (byte >= 0x20 && byte < 0x7f && byte !== 0x22 && byte !== 0x5c
+      ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`)).join("")}"`;
   };
   const staged = stagedRaw.map(display);
   const unstaged = unstagedRaw.map(display);

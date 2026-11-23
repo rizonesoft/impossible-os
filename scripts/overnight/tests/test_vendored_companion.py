@@ -33,7 +33,12 @@ def _run(argv, **kw):
 
 
 def test_the_companion_effort_tests_pass():
-    done = _run(["node", "--test", str(VENDOR / "tests/effort.test.mjs")], cwd=str(REPO))
+    # Under the descendant-reaping supervisor: a stalled test's detached broker and app-server are outside its
+    # process group, and a timeout here must end them too (round review, 2026-11-23).
+    import shlex
+    limiter = REPO / "scripts/overnight/review_runtime_limit.py"
+    command = "exec node --test " + shlex.quote(str(VENDOR / "tests/effort.test.mjs"))
+    done = _run([sys.executable, str(limiter), "200", command], cwd=str(REPO))
     assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
 
 

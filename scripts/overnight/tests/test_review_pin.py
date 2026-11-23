@@ -3538,8 +3538,61 @@ def test_a_broker_jobs_deadline_is_the_brokers_not_a_tighter_inner_one(tmp_path)
     reviews = tmp_path / "reviews"
     env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews), "REVIEW_BASE": "HEAD",
            "CODEX_REVIEW_MAX_SECS": "2", "CODEX_BROKER_JOB": "detached:test", "CODEX_BROKER_LOG": str(tmp_path / "b.log")}
-    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
-                    "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
-                   capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
-    done = next(reviews.glob("*.out.done")).read_text().strip()
-    assert done != "124", "the inner limit cut a pass its broker job's limit allows"
+    run = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                          "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                         capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
+    done = next(reviews.glob("*.out.done"))
+    # The permitted review finished: exit 0, status 0, and the companion's own verdict in the transcript.
+    assert run.returncode == 0 and done.read_text().strip() == "0", (run.returncode, run.stderr[-800:])
+    assert "HIGHEST: none" in pathlib.Path(str(done)[:-len(".done")]).read_text()
+
+
+def test_a_stalled_tmpdir_holds_the_fallback_only_until_its_limit(tmp_path):
+    """The fallback made its pass directory under TMPDIR before its supervisor started, so a TMPDIR on a stalled
+    mount hung the caller with no limit (performance review, 2026-11-23, P1). The directory work happens in the
+    supervised worker now: a blocked mkdir there ends at the limit."""
+    import os
+    import subprocess
+    import time
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    real = subprocess.run(["bash", "-c", "command -v mkdir"], capture_output=True, text=True).stdout.strip()
+    (bindir / "mkdir").write_text(f'#!/bin/bash\ncase "$*" in *"/.cp"*) exec sleep 300;; esac\nexec {real} "$@"\n')
+    (bindir / "mkdir").chmod(0o755)
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('done\\n');\n")
+    blocked = tmp_path / "file-not-dir"
+    blocked.write_text("")
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_REVIEWS_DIR": str(blocked / "reviews"), "TMPDIR": str(tmp_path), "CODEX_REVIEW_MAX_SECS": "3"}
+    started = time.monotonic()
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"), "plain review, no marker"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(_fixture_repo(tmp_path)),
+                            env=env, start_new_session=True)
+    try:
+        rc = proc.wait(timeout=40)
+        assert rc == 124 and time.monotonic() - started < 30, (rc, time.monotonic() - started)
+    finally:
+        try:
+            os.killpg(proc.pid, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_an_empty_unmarked_pass_parent_is_adopted_and_any_other_is_refused(tmp_path):
+    """A first caller killed between mkdir .cp and its marker left every later review refused (round review,
+    2026-11-23). An empty unmarked .cp holds nothing to delete and is adopted; one with any entry is never used."""
+    import subprocess
+    lib = REPO / "scripts/lib/pass-dir.sh"
+
+    def parent(base):
+        return subprocess.run(["bash", "-c", f'. "{lib}"; pass_dir_parent "$1"', "_", str(base)],
+                              capture_output=True, text=True, timeout=30)
+    empty = tmp_path / "empty"
+    (empty / ".cp").mkdir(parents=True, mode=0o700)
+    assert parent(empty).returncode == 0
+    assert (empty / ".cp" / ".codex-dispatch-passes").exists()
+    used = tmp_path / "used"
+    (used / ".cp" / "someone").mkdir(parents=True)
+    assert parent(used).returncode != 0
+    assert not (used / ".cp" / ".codex-dispatch-passes").exists()

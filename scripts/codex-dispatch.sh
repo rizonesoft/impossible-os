@@ -204,8 +204,9 @@ say() {
     timeout -k 1 5 bash -c 'printf "%s\n" "$1" >&3' _ "$1" 3>&2 2>/dev/null || true
 }
 # Pass directories (allocation and the sweep of dead owners') come from one helper the broker shares.
+PASS_DIR_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pass-dir.sh"
 # shellcheck source=scripts/lib/pass-dir.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pass-dir.sh"
+. "$PASS_DIR_LIB"
 # One cleanup for every route, installed before any pass starts: the paths files of a pinned pass and the pass
 # itself (its supervisor and tail, its directory). A signal runs it too (bash skips the EXIT trap on an untrapped
 # TERM), so a dispatcher stopped mid-pass never leaves its reviewer running.
@@ -605,6 +606,22 @@ if [ "$KIND" != "direct" ]; then
 fi
 # An unmarked review with nowhere to keep a transcript: still one bounded pass with its own data, as above.
 LOG_RW=""
-# Its pass directory goes in the helper's private .cp under TMPDIR, never TMPDIR itself.
-run_companion "${TMPDIR:-/tmp}" ""
+# Everything the pass does in TMPDIR (its private .cp, never TMPDIR itself) happens inside the supervised worker,
+# the prompt arriving on stdin: a TMPDIR on a stalled mount can then hold the pass only until its limit, never
+# this dispatcher before the limit starts (performance review, 2026-11-23). Its output goes straight to stdout.
+FALLBACK_SECS="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}"
+[[ "$FALLBACK_SECS" =~ ^[1-9][0-9]{0,8}$ ]] || {
+    say "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds"; exit 2; }
+printf '%s' "$PROMPT" | PASS_COMPANION="$COMPANION" PASS_DIR_LIB="$PASS_DIR_LIB" \
+    python3 "$LIMITER" "$FALLBACK_SECS" '. "$PASS_DIR_LIB" && d="$(new_pass_dir "${TMPDIR:-/tmp}")" || exit 2
+        trap "rm -rf -- \"\$d\"" EXIT
+        p="$(cat && printf x)"
+        env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
+            -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$d" TMPDIR="$d" \
+            node "$PASS_COMPANION" adversarial-review -- "${p%x}"' 2>&1 &
+PASS_SUPERVISOR=$!
+wait "$PASS_SUPERVISOR"
+rc=$?
+PASS_SUPERVISOR=""
+[ "$rc" != "124" ] || say "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${FALLBACK_SECS}s limit and was ended"
 exit "$rc"

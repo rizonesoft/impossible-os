@@ -146,7 +146,23 @@ function parseCommandInput(argv, config = {}) {
 }
 
 function resolveCommandCwd(options = {}) {
-  return options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd();
+  const cwd = options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd();
+  // Impossible OS patch (../PATCHES.md): process.cwd() decodes the directory's name, replacing bytes that are not
+  // UTF-8, and the decoded path can name a different directory (a sibling spelled with U+FFFD). Every later step
+  // (git, the reviewer) runs in that path, so it must be the directory this process is in.
+  if (!options.cwd) {
+    const here = fs.statSync(".");
+    let there = null;
+    try {
+      there = fs.statSync(cwd);
+    } catch {
+      there = null;
+    }
+    if (!there || there.dev !== here.dev || there.ino !== here.ino) {
+      throw new Error("The working directory's path cannot be named exactly (it is not valid UTF-8); run from a path that is.");
+    }
+  }
+  return cwd;
 }
 
 function resolveCommandWorkspace(options = {}) {

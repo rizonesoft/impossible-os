@@ -247,3 +247,42 @@ test("a worktree whose name ends in a space is reviewed, not its trimmed sibling
   assert.match(prompt, /SPACED-WORKTREE-BODY/);
 });
 
+
+test("distinct names never share a heading: an escape-looking name, an invalid byte, a byte-order mark", (t) => {
+  const { env, statePath } = repoWithChange(t);
+  const repo = makeTempDir();
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "n\\xff"), "LITERAL-ESCAPE-BODY\n");
+  fs.writeFileSync(Buffer.concat([Buffer.from(repo + "/n"), Buffer.from([0xff])]), "INVALID-BYTE-BODY\n");
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "--scope", "working-tree", "check"],
+                           { cwd: repo, env: { ...env }, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  const heading = (name) => prompt.split("\n").indexOf(`### ${name}`);
+  assert.notEqual(heading('"n\\x5cxff"'), -1, prompt);
+  assert.notEqual(heading('"n\\xff"'), -1, prompt);
+  const literal = prompt.slice(prompt.indexOf('### "n\\x5cxff"'));
+  assert.match(literal.split("### ")[1], /LITERAL-ESCAPE-BODY/);
+  const invalid = prompt.slice(prompt.indexOf('### "n\\xff"'));
+  assert.match(invalid.split("### ")[1], /INVALID-BYTE-BODY/);
+  const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("a")]);
+  const display = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bom);
+  assert.equal(display.charCodeAt(0), 0xfeff, "the decoder kept the byte-order mark for the quoting rule");
+});
+
+test("a working directory whose path cannot be named exactly is refused, never replaced by a sibling", (t) => {
+  const { env, statePath } = repoWithChange(t);
+  const base = makeTempDir();
+  const sibling = path.join(base, "w�");
+  fs.mkdirSync(sibling);
+  fs.mkdirSync(Buffer.concat([Buffer.from(base + "/w"), Buffer.from([0xff])]));
+  const result = spawnSync("bash", ["-c", `cd "$1"/w$'\\xff' && exec node "$2" adversarial-review check`, "_", base, SCRIPT],
+                           { env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot be named exactly/);
+  const turn = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart : undefined;
+  assert.equal(turn, undefined, "a turn started in a directory that could not be named");
+});

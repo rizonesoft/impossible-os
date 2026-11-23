@@ -21,6 +21,11 @@ This tree is OpenAI's Codex plugin for Claude Code (`openai/codex-plugin-cc`, `p
 - `scripts/lib/git.mjs` (`getRepoRoot`, `ensureGitRepository`): the root loses only git's newline. `trim()` also removed trailing spaces, so a worktree named `repair ` was reviewed as its sibling `repair`. Test: "a worktree whose name ends in a space is reviewed, not its trimmed sibling".
 - `scripts/lib/git.mjs` (`collectWorkingTreeContext`, self-collection mode): untracked files are counted once, with the command that lists them, and left out of the status and changed-file sections, instead of being read into the prompt (128 files of 24 KiB were 3 MiB of model input) or named in three sections (an untracked import of 3,527 files was about 548 KB). Test: "in self-collection mode untracked files are listed, not read into the prompt".
 
+## Patch: the working directory is the one this process is in
+
+- `scripts/codex-companion.mjs` (`resolveCommandCwd`): with no `--cwd`, the decoded `process.cwd()` must name the directory the process is in (same device and inode as `.`), or the command refuses. A directory name that is not UTF-8 decodes with U+FFFD, and that path can name a sibling, which git and the reviewer would then use. Test: "a working directory whose path cannot be named exactly is refused, never replaced by a sibling".
+- `scripts/lib/git.mjs`: one reversible display for file names (shown as is unless not UTF-8, starting with a quote or byte-order mark, or holding a backslash or control character; then quoted with `\xNN` escapes), so distinct files never share a heading. Test: "distinct names never share a heading".
+
 ## Not patched: the shared job state
 
 Upstream reads, changes and rewrites `state.json` with no lock, so two companion processes sharing one plugin-data directory can delete each other's job records. That is left as upstream wrote it: `scripts/codex-dispatch.sh` gives every review pass its own `CLAUDE_PLUGIN_DATA`, so no two of our passes share that state or a broker, and it runs each pass under `scripts/overnight/review_runtime_limit.py`, the child subreaper the review broker uses, which ends and reaps every process of the pass (the detached broker and its app-server included) within the pass's limit.
