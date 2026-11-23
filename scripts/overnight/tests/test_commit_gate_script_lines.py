@@ -60,6 +60,10 @@ REFUSED = (
 )
 
 
+# The best of several runs: a timing ratio of single runs reads a busy host (the pack runs suites side by
+# side) as superlinear growth; the minimum is what the code costs.
+REPEATS = 9
+
 def test_other_commands_lend_no_flag():
     for cmd in CLEAN:
         assert gate._bash_is_git_commit(cmd) == (True, False), cmd
@@ -399,7 +403,7 @@ def test_many_substitutions_stay_linear():
     def best(k):
         cmd = "git commit -m \"" + "$(:) " * k + "\" -n"
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (True, True)
             times.append(time.perf_counter() - t)
@@ -440,7 +444,7 @@ def test_unclosed_arithmetic_openers_stay_linear():
     def best(k):
         cmd = "(( " * k + "true # git status"
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (False, False)
             times.append(time.perf_counter() - t)
@@ -452,7 +456,7 @@ def test_unclosed_arithmetic_openers_stay_linear():
     def balanced(k):  # closed, but by `) )`, so each `((` falls back to subshells
         cmd = "(( " * k + "git commit -m x; " + ") " * (2 * k)
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (True, False)
             times.append(time.perf_counter() - t)
@@ -470,7 +474,7 @@ def test_long_reserved_leader_prefixes_stay_linear():
     def best(k):
         cmd = "! " * k + "git status"
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (False, False)
             times.append(time.perf_counter() - t)
@@ -482,7 +486,7 @@ def test_long_reserved_leader_prefixes_stay_linear():
     def wrapped(k, head):  # each assignment or wrapper flag was dropped with pop(0)
         cmd = head + "X=1 " * k + "git status"
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (False, False)
             times.append(time.perf_counter() - t)
@@ -556,7 +560,7 @@ def test_continued_heredoc_lines_stay_linear():
     def best(k):
         cmd = "cat <<EOF\n" + "abcdefghijklmnopqrstuvwxyz012\\\n" * k + "\nEOF\ngit commit -n -m x"
         times = []
-        for _ in range(3):
+        for _ in range(REPEATS):
             t = time.perf_counter()
             assert gate._bash_is_git_commit(cmd) == (True, True)
             times.append(time.perf_counter() - t)

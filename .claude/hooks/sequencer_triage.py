@@ -642,13 +642,14 @@ def _lane_context(root):
         recs = mod.state_dir()
         if not recs.is_dir() or not any(recs.glob("*.json")):
             return None, ""
-        # The map the commit check judges by, read within a budget the Stop hook can afford. When git cannot
-        # answer in time, the working tree's copy (a plain file read, nearly always HEAD's) still says who holds
-        # what: ownership unread must never read as nothing held.
+        # The map the commit check judges by, read within a budget the Stop hook can afford. A lane has a
+        # record, so ownership that cannot be read must never read as nothing held: every open section is held
+        # until it can (lane_reservations), and the packet says why.
         try:
             lane_map = mod.committed_map(Path(root), deadline=time.monotonic() + LANE_MAP_SECS)
-        except mod.LaneError:
-            lane_map = mod.load_map(Path(root))
+        except mod.LaneError as exc:
+            why = f"the committed lane map cannot be read: {exc}"
+            return (mod, None, why), why
         lane_states = mod.states(lane_map)
         if not mod.any_reserving(lane_map, lane_states):
             return None, ""                            # no lane holds anything: no file needs a second read
@@ -665,13 +666,17 @@ def lane_reservations(entry, per, root, ctx):
         return per, []
     mod, lane_map, lane_states = ctx
     file_path = entry["file_path"]
+    if lane_map is None:                               # ownership unknown while a lane has a record
+        held = [{"file": file_path, "section": n, "lane": "unknown"} for n, c in per if c == NEEDS_WORK]
+        return [(n, BLOCKED if c == NEEDS_WORK else c) for n, c in per], held
     whole = mod.reserved_by(lane_map, lane_states, file_path)
     texts = {}
     if not whole:
         open_work = {n for n, c in per if c == NEEDS_WORK}
         try:
             _text, scan, sections = _read_scan(os.path.join(root, file_path))
-            texts = {num: "\n".join(scan.lines[start:end]) for num, _ln, start, end in sections
+            # The heading counts too: a path named only in the title is still the section's work.
+            texts = {num: "\n".join(scan.lines[ln:end]) for num, ln, _start, end in sections
                      if num in open_work}
         except OSError:
             texts = {}

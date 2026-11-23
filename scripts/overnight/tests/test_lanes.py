@@ -584,6 +584,7 @@ def test_a_worktree_must_be_relative_and_one_tree_is_one_lane(repo):
 
 
 def test_a_fifo_in_place_of_merge_head_refuses_promptly_through_pre_commit(repo):
+    live("userland")                                                  # a lane holds paths: MERGE_HEAD is read
     stage(repo["primary"], "src/kernel/k.c")
     os.mkfifo(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
               if os.path.isabs(git(repo["primary"], "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
@@ -602,7 +603,7 @@ def test_triage_spends_no_git_call_when_no_lane_has_a_record(tmp_path, monkeypat
     (tmp_path / "state" / "impossible-os" / "lanes").mkdir(parents=True)
     (tmp_path / "state" / "impossible-os" / "lanes" / "userland.json").write_text("{}")
     ctx, err = t._lane_context(str(tmp_path))
-    assert ctx is None and "lanes.toml" in err, err
+    assert ctx[1] is None and "cannot be read" in err, err
     with pytest.raises(lanes.LaneError, match="no time left"):
         lanes._git(tmp_path, "status", deadline=time.monotonic() - 1)
 
@@ -730,14 +731,79 @@ def test_a_resolve_merge_that_keeps_the_lanes_change_lands(repo):
     assert r.returncode == 0, r
 
 
-def test_triage_falls_back_to_the_working_tree_map_when_git_cannot_answer(repo, tmp_path):
-    t = _load("triage_fallback", TRIAGE_PY)
+def test_triage_holds_every_open_section_while_a_lane_has_a_record_and_the_map_is_unread(repo, tmp_path):
+    t = _load("triage_unknown", TRIAGE_PY)
     root = tmp_path / "nogit"                                         # not a repository: every git read fails
     (root / "scripts").mkdir(parents=True)
     (root / ".conclave").mkdir()
     shutil.copy(LANES_PY, root / "scripts" / "lanes.py")
-    shutil.copy(repo["primary"] / ".conclave" / "lanes.toml", root / ".conclave" / "lanes.toml")
+    (root / ".conclave" / "lanes.toml").write_text("")                # a working copy that holds nothing
     live("userland")
     ctx, err = t._lane_context(str(root))
-    assert ctx is not None and err == "", (ctx, err)
-    assert ctx[2]["userland"] == lanes.LIVE
+    assert ctx[1] is None and "cannot be read" in err, (ctx, err)
+    per, held = t.lane_reservations({"file_path": "todo/x.md"}, [(1, t.NEEDS_WORK), (2, t.DONE)], str(root), ctx)
+    assert per == [(1, t.BLOCKED), (2, t.DONE)] and held == [{"file": "todo/x.md", "section": 1, "lane": "unknown"}]
+
+
+def test_a_path_named_only_in_a_section_heading_is_held(repo):
+    t = _load("triage_heading", TRIAGE_PY)
+    todo = repo["primary"] / "todo" / "00-x" / "TODO-01-h.md"
+    todo.parent.mkdir(parents=True)
+    todo.write_text("# T\n\n## 1. Repair src/shell/input.c\n\n- [ ] Make the edit.\n")
+    live("userland")
+    ctx, err = t._lane_context(str(repo["primary"]))
+    per, held = t.lane_reservations({"file_path": "todo/00-x/TODO-01-h.md"}, [(1, t.NEEDS_WORK)],
+                                    str(repo["primary"]), ctx)
+    assert per == [(1, t.BLOCKED)] and held[0]["lane"] == "userland", (per, held, err)
+
+
+def test_a_conflicted_root_pick_with_a_live_lanes_file_is_refused(repo):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "--orphan", "root")
+    git(p, "rm", "-rq", "--cached", ".")
+    for f in list(p.iterdir()):
+        if f.name not in (".git", ".githooks", ".conclave"):
+            shutil.rmtree(f) if f.is_dir() else f.unlink()
+    git(p, "add", "--", ".conclave/lanes.toml")
+    stage(p, "user/new.c", "root\n")
+    stage(p, "src/kernel/k.c", "root\n")
+    git(p, "commit", "-qm", "root pick")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    r = git(p, "rebase", "--root", "--onto", "main", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode != 0, r                                       # k.c (and the map) conflict
+    stage(p, "src/kernel/k.c", "resolved\n")
+    git(p, "checkout", "--ours", "--", ".conclave/lanes.toml", check=False)
+    git(p, "add", "--", ".conclave/lanes.toml", check=False)
+    r = git(p, "rebase", "--continue", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode != 0 and "user/new.c belongs to lane userland" in r.stderr, r
+
+
+def test_a_paused_merge_of_unrelated_histories_lands(repo):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "--orphan", "other")
+    git(p, "rm", "-rq", "--cached", ".")
+    for f in list(p.iterdir()):
+        if f.name not in (".git", ".githooks", ".conclave"):
+            shutil.rmtree(f) if f.is_dir() else f.unlink()
+    git(p, "add", "--", ".conclave/lanes.toml")
+    stage(p, "docs/other.md", "other\n")
+    git(p, "commit", "-qm", "other root")
+    git(p, "checkout", "-q", "-f", "main")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    git(p, "merge", "--no-ff", "--no-commit", "--allow-unrelated-histories", "other", env=os.environ.copy())
+    git(p, "update-ref", "-d", "AUTO_MERGE")                          # as git older than 2.42 leaves it
+    live("userland")                                                  # holds nothing this merge brings in
+    r = hooked_commit(repo, p)
+    assert r.returncode == 0, r
+
+
+def test_no_merge_is_reconstructed_when_no_lane_holds_anything(repo, monkeypatch):
+    p = _resolve_merge(repo)
+    lanes.clear("userland")
+
+    def refuse(*a, **k):
+        raise AssertionError("merge-tree ran with nothing reserved")
+    monkeypatch.setattr(lanes, "_merge_result", refuse)
+    monkeypatch.chdir(p)
+    assert lanes.check_staged(p) == 0

@@ -355,9 +355,10 @@ def _verify(toplevel: Path, ref: str) -> str | None:
 
 def _merge_result(toplevel: Path, ours: str, theirs: str, base: str | None = None) -> str:
     """The tree git's own merge of `theirs` into `ours` gives (conflicts left as markers), as AUTO_MERGE records
-    it for a stop: `git merge-tree` exits 1 for a conflict and still writes the tree."""
-    out = _git(toplevel, "merge-tree", "--write-tree", *([f"--merge-base={base}"] if base else []), ours, theirs,
-               ok=(0, 1))
+    it for a stop: `git merge-tree` exits 1 for a conflict and still writes the tree. A merge git has already
+    admitted may join unrelated histories (`--allow-unrelated-histories`), so the reconstruction allows them."""
+    how = [f"--merge-base={base}"] if base else ["--allow-unrelated-histories"]
+    out = _git(toplevel, "merge-tree", "--write-tree", *how, ours, theirs, ok=(0, 1))
     tree = out.split(b"\n", 1)[0].decode().strip()
     if not tree:
         raise LaneError("git merge-tree gave no tree")
@@ -382,20 +383,19 @@ def authored_paths(toplevel: Path, replay: bool = False) -> list[str]:
     rebasing = _git_path(toplevel, "rebase-merge").is_dir() or (apply_dir.is_dir() and not mailing)
     if not merging and not rebasing:
         return staged_paths(toplevel)
-    auto = _verify(toplevel, "AUTO_MERGE")
-    if auto:
-        return staged_paths(toplevel, auto)
     if merging:
         if len(merging) != 1:
             return staged_paths(toplevel)
-        return staged_paths(toplevel, _merge_result(toplevel, "HEAD", merging[0]))
+        auto = _verify(toplevel, "AUTO_MERGE")
+        return staged_paths(toplevel, auto or _merge_result(toplevel, "HEAD", merging[0]))
     pick = _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
     if not pick:
         return [] if replay else staged_paths(toplevel)
     base = _verify(toplevel, f"{pick[0]}^")
-    if not base:
+    if not base:                                   # a root pick: whatever git applied, the pick authors all of it
         return staged_paths(toplevel)
-    return staged_paths(toplevel, _merge_result(toplevel, "HEAD", pick[0], base))
+    auto = _verify(toplevel, "AUTO_MERGE")
+    return staged_paths(toplevel, auto or _merge_result(toplevel, "HEAD", pick[0], base))
 
 
 def check_staged(cwd: Path, replay: bool = False) -> int:
@@ -424,8 +424,12 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
                 raise
             lane_map = proposed                    # HEAD's map is broken: a commit repairing it is judged by its own
         me = committer(lane_map, toplevel)
-        paths = authored_paths(toplevel, replay)
-        reasons = judge(lane_map, me, paths, states(lane_map))
+        lane_states = states(lane_map)
+        if me in (None, MAIN) and not any_reserving(lane_map, lane_states):
+            paths = []                             # no lane holds a path: nothing main authors can be refused
+        else:
+            paths = authored_paths(toplevel, replay)
+        reasons = judge(lane_map, me, paths, lane_states)
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
         return 2
