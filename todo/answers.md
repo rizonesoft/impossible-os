@@ -630,3 +630,13 @@ The operator decided on 2026-11-23 that the interface library and the apps are d
 - **C:** remove the sections and rely on the other repositories' lists.
 
 A: (operator, 2026-11-23) A. What is not ready leaves its import section open, sections that use it come later, and the rest of the plan goes on. The session chose the form of the ledger. It is empty until the first section moves. Reversal cost: delete the ledger, the script and Check 42; nothing in the build reads them.
+
+## Q57 (operator, 08-graphics-ui, 11-apps): what happens when a session here changes an imported program?
+
+Q56 let a copy be nothing but its pinned commit, so the first change made here would have been refused. The operator wants the runs here to work on imported code.
+
+- **A:** the change lands here at once and goes to the program's own repository as a pull request; the ledger records it until it is merged and pulled.
+- **B:** change the program's own repository first and import again.
+- **C:** this repository becomes the program's home.
+
+A: (operator, 2026-11-23) A, with the program and its tests copied and no agent kit, list or document of its repository. Gemini runs write the programs in their repositories with Codex reviewing; the Claude run imports and works on them here under the normal reviews. `scripts/imports.py` has `--pull` and `--propose`, and `from` is now a list of what is copied. The session chose that a proposal is recorded by its pull request and the copy's tree id, and that a pull is refused while one is not merged. Reversal cost: the check goes back to the pinned copy alone; no source was imported yet.

@@ -288,11 +288,14 @@ The interface library and the apps are developed in their own repositories, prov
 
 | Entry | Meaning |
 | --- | --- |
-| `sources` | One part or program: its repository and folder there (`from`), the folder it is imported to, the section that imports it, its pinned commit and git's tree id of the copy (`null` until imported) |
+| `sources` | One part or program: its repository and the files and folders copied from its top (`from`), the folder it is imported to, the section that imports it, its pinned commit, git's tree id of the copy (`null` until imported), and the change that is open upstream (`open`: its tree id, its pull request and the commit proposed, or `null`) |
 | `moved` | One roadmap section that is built elsewhere: its address, its source and where the work is |
 | `removed` | The reason why an entry was taken out; a reason is kept |
 
-A moved section keeps its address and carries `**Moved:** <source>`; the import section carries `**Import:** <source>`. Lint Check 42 (`scripts/imports.py --check`, over the git index) refuses one without the other, a copy that is not the pinned one, an import marked done with nothing imported, and an entry that ever left the ledger without its own reason. With `IMPOSSIBLE_REPOS` set to the folder of those repositories it also asks the pinned commit for its tree. It cannot see work that is called moved in prose and never declared.
+A moved section keeps its address and carries `**Moved:** <source>`; the import section carries `**Import:** <source>`. Lint Check 42 (`scripts/imports.py --check`, over the git index) refuses one without the other, a copy that is neither the pinned one nor the proposed one, an import marked done with nothing imported, and an entry that ever left the ledger without its own reason. With `IMPOSSIBLE_REPOS` set to the folder of those repositories it also asks the pinned commit for its tree. It cannot see work that is called moved in prose and never declared.
+
+- **Bring in what is new:** `python3 scripts/imports.py --pull <source>` copies the repository's main (or `--to <commit>`), pins it and stages it. It refuses while a change is not staged, not proposed or not merged.
+- **Change it here:** edit and stage the copy, then `python3 scripts/imports.py --propose <source> --title <text>` opens the pull request, records it and stages the ledger. A conflict with the repository's main proposes nothing: pull first.
 
 A section that uses a part depends on that part's import section and is taken once it is there; everything else in the plan goes on.
 
