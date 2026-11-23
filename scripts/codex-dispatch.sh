@@ -423,10 +423,14 @@ if [ -n "$LOG_FILE" ]; then
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     [ -z "$EFFORT_NOTE" ] || echo "$EFFORT_NOTE" | tee -a "$LOG_RW" >&2
-    PASS_DATA="$(mktemp -d "${TMPDIR:-/tmp}/codex-pass.XXXXXX")" || {
+    # In the reviews directory, which no candidate read covers (as the paths file above): under a TMPDIR inside
+    # the checkout, another pass's companion files would change this pass's candidate. The companion's own
+    # os.tmpdir() (its broker's cxc-* socket directory) is pointed inside it too. The name is short: the broker's
+    # socket path must stay under the 108-byte Unix limit, and a longer one only costs the broker, not the pass.
+    PASS_DATA="$(mktemp -d "$(cd "$REVIEWS_DIR" && pwd)/.cp.XXXXXX")" || {
         echo "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass" >&2; exit 2; }
     env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
-        -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DATA" \
+        -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DATA" TMPDIR="$PASS_DATA" \
         node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
     rc=$?
     end_companion_pass

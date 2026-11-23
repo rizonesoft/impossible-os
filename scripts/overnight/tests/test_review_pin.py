@@ -3040,7 +3040,7 @@ fs.writeFileSync({json.dumps(str(probe))}, JSON.stringify({{
                    capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
     seen = json.loads(probe.read_text())
     try:
-        assert seen["data"].startswith(str(tmp_path / "codex-pass.")), seen
+        assert seen["data"].startswith(str(tmp_path / "reviews" / ".cp.")), seen
         assert seen["endpoint"] == "", "the pass inherited a shared broker endpoint"
         assert not pathlib.Path(seen["data"]).exists(), "the pass's companion data outlived it"
         for _ in range(40):
@@ -3060,3 +3060,34 @@ def test_the_broker_forwards_the_effort_declaration():
     broker = (REPO / "scripts/overnight/review-broker-codex-dispatch.sh").read_text()
     run = next(line for line in broker.splitlines() if 'CODEX_COMPANION_PATH=$(q "$COMPANION")' in line)
     assert 'CODEX_COMPANION_ACCEPTS_EFFORT=$(q "${CODEX_COMPANION_ACCEPTS_EFFORT:-}")' in run
+
+
+def test_a_pass_with_tmpdir_in_the_checkout_leaves_its_candidate_alone(tmp_path):
+    """The companion writes under its plugin data and os.tmpdir() (the broker's cxc-* directory). With TMPDIR inside
+    the checkout, unignored, those files were part of the candidate, so a pass that ended while another was running
+    saw the other's files and was discarded as stale (performance review, 2026-11-23). Both now live inside the
+    pass's private directory in the reviews directory, which no candidate read covers."""
+    import os
+    import subprocess
+    repo = _fixture_repo(tmp_path)
+    inside = repo / "scratch"
+    inside.mkdir(exist_ok=True)
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION + """
+const os = require('os'); const path = require('path');
+fs.mkdtempSync(path.join(os.tmpdir(), 'cxc-'));
+fs.writeFileSync(path.join(process.env.CLAUDE_PLUGIN_DATA, 'state.json'), '{}');
+fs.writeFileSync(process.env.FAKE_PROMPT_OUT + '.tmpdir', os.tmpdir());
+""")
+    (tmp_path / "review.txt").write_text("LENS plan: clean\nHIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_COMPANION_ACCEPTS_EFFORT": "1",
+           "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"), "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"),
+           "FAKE_REVIEW": str(tmp_path / "review.txt"), "REVIEW_BASE": "HEAD", "TMPDIR": str(inside)}
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                           "[review-kind: plan] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                          capture_output=True, text=True, timeout=120, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    assert _last_receipt(tmp_path)["pass_checked"] is True
+    seen_tmp = pathlib.Path((tmp_path / "prompt.txt.tmpdir").read_text())
+    assert (tmp_path / "reviews") in seen_tmp.parents, seen_tmp
+    assert not any(inside.iterdir()), list(inside.iterdir())

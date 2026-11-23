@@ -6,8 +6,9 @@
 The review dispatcher gives each pass its own CLAUDE_PLUGIN_DATA, so every process the Codex companion starts for
 that pass (its broker, which detaches into its own session, and the app-server under it) inherits the entry, and
 nothing else does. A process tree or a recorded pid would miss the broker: it is detached, and it is recorded only
-once it is ready. Each match gets SIGTERM, then SIGKILL after a short grace. This process and its ancestors are
-never matched (the dispatcher that calls this carries the entry too, until it unsets it).
+once it is ready. The scan repeats until none is running, so a child started during the reap is found too. Each
+match gets SIGTERM, then SIGKILL once the grace has passed, through a pidfd so a reused pid is never hit. This
+process and its ancestors are never matched.
 
 Exit 0 once every match has stopped or was already gone, 1 when one survived SIGKILL, 2 on a bad argument.
 """
@@ -17,6 +18,7 @@ import sys
 import time
 
 GRACE_S = 2.0
+DEADLINE_S = 6.0
 
 
 def _ancestors():
@@ -56,21 +58,39 @@ def _running(pid):
         return False
 
 
+def _signal(pid, sig):
+    """Signal `pid` through a pidfd, so a pid reused between the scan and the signal is never hit."""
+    try:
+        fd = os.pidfd_open(pid)
+    except OSError:  # fail-direction: the process already exited, which is the goal
+        return
+    try:
+        signal.pidfd_send_signal(fd, sig)
+    except OSError:  # fail-direction: it exited between the open and the signal
+        pass
+    finally:
+        os.close(fd)
+
+
 def reap(entry):
-    pids = matches(entry)
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        for pid in pids:
-            try:
-                os.kill(pid, sig)
-            except ProcessLookupError:  # fail-direction: already gone is the goal
-                pass
-        until = time.monotonic() + GRACE_S
-        while any(_running(p) for p in pids) and time.monotonic() < until:
-            time.sleep(0.05)
-        pids = [p for p in pids if _running(p)]
-        if not pids:
+    """Signal every marked process, then scan again, until a scan finds none running: a marked process can start
+    a child while it handles SIGTERM, and one snapshot would miss it. SIGTERM first; a process still running after
+    GRACE_S, or any found after that, gets SIGKILL. Gives up after DEADLINE_S."""
+    started = time.monotonic()
+    termed = set()
+    while time.monotonic() - started < DEADLINE_S:
+        live = [p for p in matches(entry) if _running(p)]
+        if not live:
             return 0
-    return 1
+        late = time.monotonic() - started > GRACE_S
+        for pid in live:
+            if late:
+                _signal(pid, signal.SIGKILL)
+            elif pid not in termed:
+                _signal(pid, signal.SIGTERM)
+                termed.add(pid)
+        time.sleep(0.05)
+    return 0 if not [p for p in matches(entry) if _running(p)] else 1
 
 
 def main(argv):

@@ -59,3 +59,33 @@ def test_refuses_a_marker_that_is_not_key_equals_value():
     done = subprocess.run([sys.executable, str(REAP), "CLAUDE_PLUGIN_DATA"], capture_output=True, text=True,
                           timeout=30)
     assert done.returncode == 2
+
+
+def test_a_child_started_during_the_reap_is_reaped_too(tmp_path):
+    """A marked parent that starts a detached child as it handles SIGTERM, then exits: one /proc snapshot missed
+    the child and the reap reported success while it ran on (round review, 2026-11-23)."""
+    pid_file = tmp_path / "late.pid"
+    marker_value = f"{tmp_path}/late"
+    script = (f"trap 'setsid sleep 300 >/dev/null 2>&1 & echo $! > {pid_file}; exit 0' TERM; "
+              "while :; do sleep 0.05; done")
+    parent = subprocess.Popen(["bash", "-c", script], start_new_session=True,
+                              env={**os.environ, "CLAUDE_PLUGIN_DATA": marker_value},
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.3)
+    try:
+        done = subprocess.run([sys.executable, str(REAP), f"CLAUDE_PLUGIN_DATA={marker_value}"],
+                              capture_output=True, text=True, timeout=30)
+        parent.wait(timeout=10)
+        assert pid_file.exists(), "the parent never started its late child"
+        late = int(pid_file.read_text())
+        for _ in range(60):
+            if not _alive(late):
+                break
+            time.sleep(0.05)
+        assert done.returncode == 0 and not _alive(late), "a child started during the reap outlived it"
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), 9)
+            except ProcessLookupError:
+                pass
