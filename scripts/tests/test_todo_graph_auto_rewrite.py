@@ -63,34 +63,62 @@ def run_class(rc, output):
         else:
             fake.write_text(f"import sys\nsys.stdout.write({output!r})\nsys.exit({rc})\n")
         event = {"tool_input": {"file_path": os.path.join(tmp, "todo", "x", "TODO-01.md")}}
-        proc = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
+        proc = subprocess.run([sys.executable, install_hook(tmp)], input=json.dumps(event),
                               capture_output=True, text=True, cwd=tmp, timeout=60)
     msg = json.loads(proc.stdout)["systemMessage"] if proc.stdout.strip() else None
     return proc.returncode, msg
 
 
-def root_comes_from_the_edited_file():
-    """The hook runs with the session's primary tree as its cwd. An edit to a TODO in another worktree must be
-    repaired in THAT tree: on 2026-11-23 an edit in ../impossible-os-gh rewrote 22 primary-tree TODO files under
-    a live run."""
-    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-        for tree in (a, b):
-            subprocess.run(["git", "init", "-q", tree], check=True, timeout=30)
-            fake = pathlib.Path(tree, "scripts", "todo-graph", "validate.py")
-            fake.parent.mkdir(parents=True)
-            fake.write_text("import pathlib, os\npathlib.Path(os.getcwd(), 'ran-here').write_text('x')\n")
-            pathlib.Path(tree, "todo").mkdir()
-        event = {"tool_input": {"file_path": os.path.join(b, "todo", "TODO-01.md")}}
-        subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
-                       capture_output=True, text=True, cwd=a, timeout=60)
-        return pathlib.Path(b, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
+def install_hook(tree):
+    """A copy of the hook inside `tree`: the hook acts only on worktrees of the repository it is installed in."""
+    dest = pathlib.Path(tree, ".claude", "hooks", HOOK.name)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(HOOK.read_text())
+    return str(dest)
+
+
+def fake_validator(tree):
+    fake = pathlib.Path(tree, "scripts", "todo-graph", "validate.py")
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text("import pathlib, os\npathlib.Path(os.getcwd(), 'ran-here').write_text('x')\n")
+    pathlib.Path(tree, "todo").mkdir(exist_ok=True)
+
+
+def git(*args):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, timeout=30,
+                   capture_output=True)
+
+
+def repair_tree_choice():
+    """(linked worktree repaired there, unrelated repository left alone). The hook runs with the session's
+    primary tree as its cwd. An edit in a linked worktree must be repaired in THAT worktree (on 2026-11-23 an edit
+    in ../impossible-os-gh rewrote 22 primary-tree TODO files under a live run), and an edit in an unrelated
+    checkout must run no code from it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a, b, c = (os.path.join(tmp, n) for n in "abc")
+        git("init", "-q", a)
+        hook = install_hook(a)
+        fake_validator(a)
+        git("-C", a, "add", "-A")
+        git("-C", a, "commit", "-qm", "base")
+        git("-C", a, "worktree", "add", "-q", "--detach", b)
+        git("init", "-q", c)
+        fake_validator(c)
+        results = []
+        for tree in (b, c):
+            event = {"tool_input": {"file_path": os.path.join(tree, "todo", "TODO-01.md")}}
+            subprocess.run([sys.executable, hook], input=json.dumps(event),
+                           capture_output=True, text=True, cwd=a, timeout=60)
+            results.append(pathlib.Path(tree, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists())
+        return results[0], not pathlib.Path(c, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
 
 
 def main():
     bad = 0
-    ok = root_comes_from_the_edited_file()
-    bad += not ok
-    print(f"{'PASS' if ok else 'FAIL'} the repair runs in the tree that holds the edited file")
+    linked, unrelated = repair_tree_choice()
+    bad += (not linked) + (not unrelated)
+    print(f"{'PASS' if linked else 'FAIL'} the repair runs in the linked worktree that holds the edited file")
+    print(f"{'PASS' if unrelated else 'FAIL'} an edit in an unrelated repository runs none of its code")
     for label, rc, output, want in CLASSES:
         code, msg = run_class(rc, output)
         ok = code == 0 and ((want is None and msg is None) or (want and msg and want in msg))
@@ -111,7 +139,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 2
+    total = len(CLASSES) + 3
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 
