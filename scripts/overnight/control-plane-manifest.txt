@@ -54,9 +54,11 @@ scripts/lib/review-prompt.sh
 .claude/hooks/edit_preflight.py
 
 # Commit-time gate the runner's own section commits must pass
-# The lane check (TODO-08 section 49): pre-commit and prepare-commit-msg refuse on it
+# The lane check (TODO-08 section 49) and the hooks that run it beside pre-commit and commit-msg
 scripts/lanes.py
 .conclave/lanes.toml
+.githooks/prepare-commit-msg
+.githooks/pre-applypatch
 .claude/hooks/section_commit_gate.py
 
 # The machinery that runs this suite at commit (2026-11-17): the staged-tree

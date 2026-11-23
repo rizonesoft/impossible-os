@@ -54,6 +54,7 @@ def _repo(root: pathlib.Path, post_commit: bool = False) -> pathlib.Path:
                  ["config", "user.name", "t"], ["config", "user.email", "t@example.invalid"],
                  ["config", "alias.ci", "commit"]):
         _git(repo, *args)
+    _git(repo, "add", "--", ".conclave/lanes.toml")    # the lane check judges with the map the commit stands on
     return repo
 
 

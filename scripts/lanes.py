@@ -49,13 +49,25 @@ def _strings(value) -> bool:
     return isinstance(value, list) and all(isinstance(v, str) and v and not v.startswith("/") for v in value)
 
 
+MAP = ".conclave/lanes.toml"
+
+
 def load_map(root: Path) -> dict:
-    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}}. Anything unexpected refuses."""
-    path = Path(root) / ".conclave" / "lanes.toml"
+    """The validated map in the working tree (scheduling and the lane CLI; the commit check reads the
+    committed one, `committed_map`)."""
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        raise LaneError(f".conclave/lanes.toml cannot be read ({type(exc).__name__}: {exc})") from exc
+        text = (Path(root) / MAP).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise LaneError(f"{MAP} cannot be read ({type(exc).__name__}: {exc})") from exc
+    return parse_map(text)
+
+
+def parse_map(text: str) -> dict:
+    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}}. Anything unexpected refuses."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise LaneError(f"{MAP} cannot be read ({type(exc).__name__}: {exc})") from exc
     _need(set(data) <= TOP_KEYS, f"unknown keys {sorted(set(data) - TOP_KEYS)}")
     stale = data.get("stale_secs", 180)
     _need(isinstance(stale, int) and not isinstance(stale, bool) and stale > 0, "stale_secs must be a positive integer")
@@ -177,6 +189,8 @@ def beat(name: str, pid: int, task: str) -> Path:
 
 
 def clear(name: str) -> None:
+    if re.fullmatch(r"[a-z][a-z0-9-]*", name) is None:       # a record name, never a path
+        raise LaneError(f"{name!r} is not a lane name")
     try:
         (state_dir() / f"{name}.json").unlink()
     except FileNotFoundError:
@@ -185,7 +199,9 @@ def clear(name: str) -> None:
 
 def _git(root: Path, *args: str) -> bytes:
     try:
-        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=GIT_SECS)
+        # A local replacement ref must not change what the check sees: it judges the objects git stores.
+        r = subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args], capture_output=True,
+                           timeout=GIT_SECS)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise LaneError(f"git {args[0]} could not run ({type(exc).__name__})") from exc
     if r.returncode != 0:
@@ -235,14 +251,43 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
     return reasons
 
 
+def _blob(toplevel: Path, spec: str) -> str | None:
+    try:
+        return _git(toplevel, "show", spec).decode("utf-8")
+    except (LaneError, UnicodeDecodeError):
+        return None
+
+
+def committed_map(toplevel: Path) -> dict:
+    """The map in force before this commit: HEAD's, so an edit in progress (staged or not) never releases a
+    reservation. Only the commit that first adds the map is judged by the copy it stages."""
+    text = _blob(toplevel, f"HEAD:{MAP}")
+    if text is None:
+        text = _blob(toplevel, f":{MAP}")
+    if text is None:
+        raise LaneError(f"{MAP} is in neither HEAD nor the index")
+    return parse_map(text)
+
+
+def merge_pending(toplevel: Path) -> bool:
+    path = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", "MERGE_HEAD").decode().strip())
+    return path.exists()
+
+
 def check_staged(cwd: Path, committer_only: bool = False) -> int:
-    """Judge the staged commit. `committer_only` judges only who may commit at all: a merge or rebase carries
-    changes other lanes already committed and were judged for, so its index is not this lane's to judge."""
+    """Judge the staged commit. A merge (or rebase) is judged only on who may commit at all: it carries changes
+    other lanes already committed and were judged for, so its index is not this lane's to judge."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
-        lane_map = load_map(toplevel)
+        lane_map = committed_map(toplevel)
         me = committer(lane_map, toplevel)
+        committer_only = committer_only or merge_pending(toplevel)
         paths = [] if committer_only else staged_paths(toplevel)
+        if MAP in paths:
+            staged = _blob(toplevel, f":{MAP}")
+            if staged is None:
+                raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
+            parse_map(staged)                                   # a map that does not validate never lands
         reasons = judge(lane_map, me, paths, states(lane_map))
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
@@ -283,6 +328,8 @@ def main(argv: list[str]) -> int:
             print(beat(name, int(rest[2]), rest[4]))
             return 0
         if cmd == "clear" and len(rest) == 1:
+            if rest[0] == MAIN or rest[0] not in lane_map["lanes"]:
+                raise LaneError(f"{rest[0]!r} is not an extra lane in the map")
             clear(rest[0])
             return 0
         if cmd == "live" and not rest:

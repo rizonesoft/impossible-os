@@ -310,15 +310,65 @@ def test_the_skip_needs_a_stated_reason(repo, monkeypatch):
     (lambda t: t.replace("stale_secs = 180", "stale_secs = 180\nbogus = 1"), "unknown keys"),
     (lambda t: t.replace('output = "reports"', 'output = "logs"'), "output must be one of"),
 ])
-def test_a_map_that_does_not_validate_refuses_every_commit(repo, edit, why):
+def test_a_map_that_does_not_validate_never_lands(repo, edit, why):
     toml = repo["primary"] / ".conclave" / "lanes.toml"
     toml.write_text(edit(toml.read_text()))
     stage(repo["primary"], "src/kernel/k.c")
+    assert check(repo["primary"]).returncode == 0             # unstaged: the committed map still judges
+    git(repo["primary"], "add", "--", ".conclave/lanes.toml")
     r = check(repo["primary"])
     assert r.returncode == 2 and why in r.stderr, r
-    toml.unlink()
+    git(repo["primary"], "rm", "-qf", "--", ".conclave/lanes.toml")
     r = check(repo["primary"])
-    assert r.returncode == 2 and "cannot be read" in r.stderr, r
+    assert r.returncode == 2 and "deletes .conclave/lanes.toml" in r.stderr, r
+
+
+def test_an_unstaged_map_edit_never_releases_a_live_reservation(repo):
+    toml = repo["primary"] / ".conclave" / "lanes.toml"
+    toml.write_text(toml.read_text().replace('"src/shell/", ', ""))
+    live("userland")
+    stage(repo["primary"], "src/shell/cmds.c")
+    r = hooked_commit(repo, repo["primary"], "--", "src/shell/cmds.c")
+    assert r.returncode != 0 and "src/shell/cmds.c belongs to lane userland" in r.stderr, r
+
+
+def test_finishing_a_paused_merge_judges_who_commits_not_the_inherited_paths(repo):
+    git(repo["userland"], "checkout", "-q", "-b", "ul")
+    stage(repo["userland"], "user/a.c", "ul\n")
+    git(repo["userland"], "commit", "-qm", "ul")
+    stage(repo["primary"], "src/kernel/k.c")
+    git(repo["primary"], "commit", "-qm", "main")
+    git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    git(repo["primary"], "merge", "--no-ff", "--no-commit", "ul", env=os.environ.copy())
+    r = git(repo["primary"], "commit", "--no-edit", check=False, env=os.environ.copy())
+    assert r.returncode == 0 and git(repo["primary"], "rev-list", "--count", "HEAD").stdout.strip() == "4", r
+
+
+def test_a_replacement_ref_never_hides_a_staged_reserved_path(repo):
+    p = repo["primary"]
+    stage(p, "user/a.c", "new\n")
+    tree = git(p, "write-tree").stdout.strip()
+    fake = git(p, "commit-tree", tree, "-m", "fake").stdout.strip()
+    git(p, "replace", "HEAD", fake)                            # HEAD now looks as if it already held the edit
+    stage(p, "src/kernel/k.c")
+    live("userland")
+    r = check(p)
+    assert r.returncode == 1 and "user/a.c belongs to lane userland" in r.stderr, r
+
+
+def test_clear_takes_a_lane_name_never_a_path(repo):
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    keep = repo["tmp"] / "keep.json"
+    keep.write_text("{}")
+    rel = os.path.relpath(keep.with_suffix(""), d)
+    r = subprocess.run([sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "clear", rel],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and keep.exists(), r
+    with pytest.raises(lanes.LaneError):
+        lanes.clear(rel)
+    assert keep.exists()
 
 
 # Triage: a section a live lane holds is never offered to main, and held work is BLOCKED, never DONE.
@@ -391,3 +441,18 @@ def test_classify_offers_no_section_a_live_lane_holds(triage, capsys, monkeypatc
     assert t.cmd_classify(cache, root, "todo/00-x/TODO-01-x.md") == 0
     out = json.loads(capsys.readouterr().out)
     assert {s["n"]: s["class"] for s in out["sections"]} == {1: t.NEEDS_WORK, 2: t.NEEDS_WORK}, out
+
+
+def test_the_reservation_pass_scans_no_todo_classification_already_scanned(triage, monkeypatch):
+    t, root, _ = triage
+    calls = []
+    real = t._scan_sections
+    monkeypatch.setattr(t, "_scan_sections", lambda text: calls.append(1) or real(text))
+    path = os.path.join(root, "todo/00-x/TODO-01-x.md")
+    t.section_stamps(path)
+    live("userland")
+    per, held = t.lane_reservations({"file_path": "todo/00-x/TODO-01-x.md"},
+                                    [(1, t.NEEDS_WORK), (2, t.NEEDS_WORK)], root, t._lane_context(root)[0])
+    assert held and len(calls) == 1, calls
+    lanes.clear("userland")
+    assert t._lane_context(root) == (None, "")                 # nothing held: no context, no second read

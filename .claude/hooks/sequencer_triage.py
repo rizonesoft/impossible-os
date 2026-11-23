@@ -239,6 +239,22 @@ def load_cache(cache_path, root):
         return data
 
 
+_SCAN_MEMO = {}
+
+
+def _read_scan(md_path):
+    """(text, scan, sections) of one TODO, read and scanned once per process for each version of the file
+    (path, mtime, size): classification and the lane reservations read the same files on every pick."""
+    st = os.stat(md_path)
+    key = (os.path.abspath(md_path), st.st_mtime_ns, st.st_size)
+    hit = _SCAN_MEMO.get(key)
+    if hit is None:
+        with open(md_path, encoding="utf-8") as fh:
+            text = fh.read()
+        hit = _SCAN_MEMO[key] = (text, *_scan_sections(text))
+    return hit
+
+
 def _scan_sections(text):
     """(scan, [(n_or_None, heading_line, body_start, body_end)]) -- shared walk.
 
@@ -284,9 +300,7 @@ def section_stamps(md_path):
     out = {}
     if not os.path.exists(md_path):
         return out
-    with open(md_path, encoding="utf-8") as fh:
-        text = fh.read()
-    scan, sections = _scan_sections(text)
+    text, scan, sections = _read_scan(md_path)
     mask, lines = scan.mask, scan.lines
     for num, _ln, start, end in sections:
         if num is None:
@@ -330,9 +344,7 @@ def file_lifecycle(md_path, root=None, rel_path=None):
     out = {"validated": False, "gap_audited": False}
     if not os.path.exists(md_path):
         return out
-    with open(md_path, encoding="utf-8") as fh:
-        text = fh.read()
-    scan, sections = _scan_sections(text)
+    text, scan, sections = _read_scan(md_path)
     # lifecycle stamps live in the preamble only -- before the first section
     # heading of any kind (numbered or over-long), per the shared projection.
     bound = sections[0][1] if sections else len(scan.lines)
@@ -641,10 +653,11 @@ def lane_reservations(entry, per, root, ctx):
     whole = mod.reserved_by(lane_map, lane_states, file_path)
     texts = {}
     if not whole:
+        open_work = {n for n, c in per if c == NEEDS_WORK}
         try:
-            with open(os.path.join(root, file_path), encoding="utf-8") as fh:
-                scan, sections = _scan_sections(fh.read())
-            texts = {num: "\n".join(scan.lines[start:end]) for num, _ln, start, end in sections if num is not None}
+            _text, scan, sections = _read_scan(os.path.join(root, file_path))
+            texts = {num: "\n".join(scan.lines[start:end]) for num, _ln, start, end in sections
+                     if num in open_work}
         except OSError:
             texts = {}
     out, held = [], []
