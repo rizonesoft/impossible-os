@@ -1852,8 +1852,6 @@ Operator decision 2026-11-21: every level blocks on every path, so this section 
 - [ ] The deep set is every tier above `standard` in the pin's `[schedule.effort]`, never a second path list -> XREF: [§70](#70-reviewer-effort-follows-the-area-and-the-chain)
   - That covers `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
 - [ ] A section touching a deep path gets every lens in every pass, and [section 66](#66-lens-yield-is-measured) never removes a lens there
-- [ ] The pin carries a pass cap per tier, and the round guard and stamp gate read it: a section changing no deep or risky code stops at 12 rounds, the rest at `pass_cap`
-  - The rule and its limits are in CLAUDE.md, Operating Mandate (`todo/answers.md` Q53); until this lands the gate still reads 55, so a stamp at 12 takes the logged opt-out
 - [ ] Host-tooling paths carry a pinned threat model and recorded-limit list in the pin, quoted by every pass, so a pass never re-derives an open-ended failing-host scope (section 48 took 202 passes on it)
 - [ ] Commit: `"review: review depth per path"`
 

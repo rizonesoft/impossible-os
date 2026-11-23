@@ -595,8 +595,8 @@ A: (operator direction, 2026-11-23, after more than 24 hours on the section) A. 
 
 The operator ended two review chains by hand in two days (section 48 after 202 passes, section 70 at 12 rounds) and said on 2026-11-23 that shaping the mechanics takes too much of their time. Over the 14 days before, 923 of 1,331 review passes went to `00-infrastructure` and 30 to kernel and boot, and `scripts/overnight` took 710 file changes against 245 in `src/kernel`.
 
-- **A:** delegate the mechanics in full, and bind them: product first while infrastructure takes over a third of the passes, and a 12-round stop for sections that change no product code.
+- **A:** delegate the mechanics in full and bind them: product first while infrastructure takes over a third of the passes, and a mechanism whose own fixes keep producing findings is replaced, not patched.
 - **B:** delegate and add a self-improvement subsystem that proposes and reviews changes to the machinery.
-- **C:** leave the cap at 55 everywhere and keep asking.
+- **C:** A, with a 12-round cap for sections that change no product code.
 
-A: (operator direction, 2026-11-23, "wire it in"; the session chose the form) A. B adds machinery to a repository whose measured problem is too much of it. The cap is the one part that lowers verification, so it never covers deep or risky code and never files a finding that loses data, exposes something or reports a false success. Reversal cost: delete three bullets in CLAUDE.md and two items in sections 62 and 66; no code depends on them yet.
+A: (operator direction, 2026-11-23, "wire it in"; the session chose the form) A. B adds machinery to a repository whose measured problem is too much of it. The session first chose C; the operator refused it the same hour: the cap of 55 is sound and no quality is given up. Reversal cost: delete the bullets in CLAUDE.md and one item in section 66; no code depends on them yet.
