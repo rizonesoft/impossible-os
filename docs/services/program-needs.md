@@ -3,7 +3,7 @@
 
 ## What is it?
 
-Programs for Impossible OS are built beside it, on Windows first. This roadmap holds what they need of the OS: the Windows functions of Impossible SDK's tiers, and any engine or service a program declares.
+Programs for Impossible OS are built beside it, on Windows first. This roadmap holds what they need of the OS: the Windows functions of [Impossible SDK](https://github.com/rizonesoft/ImpossibleSDK)'s tiers, and any engine or service a program declares.
 
 ## How does it work?
 

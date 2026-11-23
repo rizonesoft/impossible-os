@@ -3,7 +3,7 @@
 
 ## What is it?
 
-Impossible OS gets many of its programs from their own repositories: games, tools, media programs, and the interface and libraries of Impossible SDK. They are written and proved on Windows first and imported here as source, each at a pinned commit. None has been imported yet.
+Impossible OS gets many of its programs from their own repositories: games, tools, media programs, and the interface and libraries of [Impossible SDK](https://github.com/rizonesoft/ImpossibleSDK). They are written and proved on Windows first and imported here as source, each at a pinned commit. None has been imported yet.
 
 ## How does it work?
 

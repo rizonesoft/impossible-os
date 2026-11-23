@@ -3,7 +3,7 @@
 
 ## What is it?
 
-This roadmap plans how developers get and use the Impossible OS SDK: a `make sdk` ZIP with a SHA-256 checksum, API documentation generated from the headers, seven code samples, a sampling profiler, a small unit test framework (`itest.h`), debugger improvements, an `ixui-new` project template and a release pipeline that tags and publishes SDK versions. None of the nine sections has shipped. The SDK itself is a separate project, Impossible SDK; paths here that start with `ImpossibleSDK/` are in that repository.
+This roadmap plans how developers get and use the Impossible OS SDK: a `make sdk` ZIP with a SHA-256 checksum, API documentation generated from the headers, seven code samples, a sampling profiler, a small unit test framework (`itest.h`), debugger improvements, an `ixui-new` project template and a release pipeline that tags and publishes SDK versions. None of the nine sections has shipped. The SDK itself is a separate project, [Impossible SDK](https://github.com/rizonesoft/ImpossibleSDK); paths here that start with `ImpossibleSDK/` are in that repository.
 
 ## How does it work?
 
