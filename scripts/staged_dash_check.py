@@ -28,7 +28,9 @@ serial and CMD garble), read from UTF-8 text and BOM-marked UTF-16 text; a
 binary blob (a NUL in its first 8000 bytes, git's own test) holds none.
 
 Generated files are exempt: their text is copied from sources this check has
-already judged (todo/implementation-plan.md copies TODO titles).
+already judged (todo/implementation-plan.md copies TODO titles). So is vendored
+upstream text (VENDORED), which stays byte-exact for a re-drop; the files we
+add inside a vendored tree are judged.
 
 Usage: staged_dash_check.py                 the staged change (pre-commit)
        staged_dash_check.py --range OLD NEW [URL]
@@ -55,6 +57,15 @@ import bounded_run                                         # the shared bounded 
 
 DASHES = (chr(0x2013).encode(), chr(0x2014).encode())
 GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
+# Vendored upstream trees are copied byte-exact so they can be re-dropped (src/libs/PROVENANCE.md): their dashes are
+# the upstream's text. The files we add inside such a tree are ours and are judged.
+VENDORED = ("tools/vendor/",)
+OURS_IN_VENDORED = {"tools/vendor/codex-companion/PATCHES.md", "tools/vendor/codex-companion/tests/effort.test.mjs"}
+
+
+def exempt(path):
+    """A file whose text this check does not judge: generated from judged sources, or vendored upstream text."""
+    return path in GENERATED or (path.startswith(VENDORED) and path not in OURS_IN_VENDORED)
 NULL_OID = "0" * 40
 TIMEOUT = 60
 BLOB_MODES = {"100644", "100755", "120000"}
@@ -95,9 +106,9 @@ def changes_by_header(raw: bytes) -> list:
         path = parts[i + 2].decode("utf-8", "surrogateescape") if two else src
         i += 3 if two else 2
         old_mode, new_mode, old, new = fields[0], fields[1], fields[2], fields[3]
-        if new_mode not in BLOB_MODES or status == "D" or path in GENERATED:
+        if new_mode not in BLOB_MODES or status == "D" or exempt(path):
             continue
-        if old_mode not in BLOB_MODES or src in GENERATED:
+        if old_mode not in BLOB_MODES or exempt(src):
             old = NULL_OID
         if old != new:
             blocks[-1][1].append((old, new, path))

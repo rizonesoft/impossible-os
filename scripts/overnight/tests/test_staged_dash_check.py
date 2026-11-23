@@ -141,6 +141,25 @@ def test_an_old_dash_on_an_untouched_line_and_a_generated_file_pass(tmp_path):
     assert r.returncode == 0, r
 
 
+def test_vendored_upstream_text_stays_byte_exact_but_our_files_beside_it_do_not(tmp_path):
+    """A vendored upstream is copied byte-exact so it can be re-dropped (CLAUDE.md, Vendor-First Evaluation): its
+    dashes are the upstream's text, not ours. Our own files in the same tree are still judged, and an upstream
+    line moved OUT of the tree counts as written where it lands."""
+    root = _repo(tmp_path)
+    _stage(root, {"tools/vendor/codex-companion/scripts/lib/app-server.mjs": "// cleanup " + DASH + " swallow\n"})
+    assert _run(root).returncode == 0
+    _commit(root, "vendor")
+    for ours in ("tools/vendor/codex-companion/PATCHES.md", "tools/vendor/codex-companion/tests/effort.test.mjs"):
+        _stage(root, {ours: "ours " + DASH + "\n"})
+        r = _run(root)
+        assert r.returncode == 1 and ours in r.stderr, r
+        _git(root, "rm", "-q", "--cached", ours)
+    (root / "scripts").mkdir()
+    _git(root, "mv", "tools/vendor/codex-companion/scripts/lib/app-server.mjs", "scripts/app-server.mjs")
+    r = _run(root)
+    assert r.returncode == 1 and "scripts/app-server.mjs" in r.stderr, r
+
+
 def test_no_display_setting_name_or_content_hides_an_added_dash(tmp_path):
     """Whatever once fooled the patch parser (no b/ prefix, a quoted non-ASCII
     name, added text that looks like a header, a form feed inside a line, a
