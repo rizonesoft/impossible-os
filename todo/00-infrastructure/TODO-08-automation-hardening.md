@@ -125,13 +125,13 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  57   |   §57   | Desktop shortcuts for the lanes                                                                  | §53                        |  [ ]   |
 | ⭐  |  58   |   §58   | Ready UI surfaces go to Neon                                                                     | §55                        |  [ ]   |
 | ⭐  |  59   |   §59   | Lanes pilot                                                                                      | §54, §56, §57              |  [ ]   |
-| ⭐  |  60   |   §60   | Review receipts are written atomically                                                           | --                         |  [ ]   |
-| ⭐  |  61   |   §61   | A P2 comes with a failing test                                                                   | --                         |  [ ]   |
-| ⭐  |  62   |   §62   | Review depth per path                                                                            | --                         |  [ ]   |
-| ⭐  |  63   |   §63   | A repeated finding dispatches a redesign pass                                                    | --                         |  [ ]   |
-| ⭐  |  64   |   §64   | Re-dispatched passes name the repair                                                             | --                         |  [ ]   |
-| ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | --                         |  [ ]   |
-| ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60                        |  [ ]   |
+| ⭐  |  60   |   §60   | Review receipts are written atomically                                                           | §70                        |  [ ]   |
+| ⭐  |  61   |   §61   | A P2 comes with a failing test                                                                   | §70                        |  [ ]   |
+| ⭐  |  62   |   §62   | Review depth per path                                                                            | §70                        |  [ ]   |
+| ⭐  |  63   |   §63   | A repeated finding dispatches a redesign pass                                                    | §70                        |  [ ]   |
+| ⭐  |  64   |   §64   | Re-dispatched passes name the repair                                                             | §70                        |  [ ]   |
+| ⭐  |  65   |   §65   | Tools run in front of the review lenses                                                          | §70                        |  [ ]   |
+| ⭐  |  66   |   §66   | Lens yield is measured                                                                           | §60, §70                   |  [ ]   |
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |

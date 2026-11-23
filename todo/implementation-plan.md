@@ -39,6 +39,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | Done | Section       | Deliverable                                                                                                           | Needs       | Items |
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ----------- | ----: |
 | [x]  | `D00 T08 §48` | Two engines, one gate set: the lane policy                                                                            | none        |     5 |
+| [ ]  | `D00 T08 §70` | Reviewer effort follows the area and the chain                                                                        | third-party |     6 |
 | [ ]  | `D00 T08 §60` | Review receipts are written atomically                                                                                | none        |     3 |
 | [ ]  | `D00 T08 §61` | A P2 comes with a failing test                                                                                        | none        |     3 |
 | [ ]  | `D00 T08 §62` | Review depth per path                                                                                                 | none        |     4 |
@@ -337,7 +338,6 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [ ]  | `D00 T08 §47` | The Bash safety guards read commands with a shell grammar                                                             | none        |     8 |
 | [/]  | `D00 T08 §68` | Coverage lint passes inside a worktree commit                                                                         | none        |     2 |
 | [ ]  | `D00 T08 §69` | Review attempts are bound end to end                                                                                  | none        |     6 |
-| [ ]  | `D00 T08 §70` | Reviewer effort follows the area and the chain                                                                        | third-party |     6 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none        |    10 |
 | [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator    |    11 |
 | [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none        |    11 |
