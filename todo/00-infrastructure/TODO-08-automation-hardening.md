@@ -1845,7 +1845,8 @@ Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant re
 
 Operator decision 2026-11-21: every level blocks on every path, so this section sets review DEPTH by path, never a lower blocking level (it was "Blocking level per path", which would have let run-only machinery block on P1 alone).
 
-- [ ] `deep_paths` in `.conclave/reviewers.toml` names `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
+- [ ] The deep set is every tier above `standard` in the pin's `[schedule.effort]`, never a second path list -> XREF: [§70](#70-reviewer-effort-follows-the-area-and-the-chain)
+  - That covers `src/boot/`, `src/kernel/`, `include/`, `user/`, `src/apps/`, the linker scripts and the build
 - [ ] A section touching a deep path gets every lens in every pass, and [section 66](#66-lens-yield-is-measured) never removes a lens there
 - [ ] Host-tooling paths carry a pinned threat model and recorded-limit list in the pin, quoted by every pass, so a pass never re-derives an open-ended failing-host scope (section 48 took 202 passes on it)
 - [ ] Commit: `"review: review depth per path"`
@@ -1942,15 +1943,14 @@ Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the rec
 > **Spawned-by:** root (operator direction 2026-11-23)
 > **User impact:** every Astra pass ran at one effort; kernel and boot got no deeper look than a docs edit, and long quiet chains paid full effort to the end.
 
-Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/2026-11-23-adaptive-review-effort-design.md); plan: [docs/plans/2026-11-23-adaptive-review-effort.md](../../docs/plans/2026-11-23-adaptive-review-effort.md). Effort moves from the Codex config (§2) to the reviewer pin. -> XREF: [§2](#2-codex-invocation-policy-no---model----effort-from-claude)
+Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/2026-11-23-adaptive-review-effort-design.md); plan: [docs/plans/2026-11-23-adaptive-review-effort.md](../../docs/plans/2026-11-23-adaptive-review-effort.md). Effort moves from the Codex config (§2) to the reviewer pin. -> XREF: [§2](#2-codex-invocation-policy-no---model----effort-from-claude). The path tiers are the pin's one path classification, which [§62](#62-review-depth-per-path) uses as its deep set; the pinned host-tooling threat model is §62's item, not this section's. -> XREF: [§62](#62-review-depth-per-path) (item: "Host-tooling paths carry a pinned threat model")
 
 - [ ] The pin's `[schedule.effort]` table sets each pass's effort by area tier and the chain's last finding (`review_pin.py --effort`)
-- [ ] `codex-dispatch.sh` passes the pinned effort to the companion and writes `effort` on every receipt
+- [ ] `codex-dispatch.sh` passes the pinned effort once the review range is settled and writes `effort` and `tier` on every receipt
 - [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
 - [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
-- [ ] A pass on a heuristic gate states the gate's threat model in its prompt
 - [ ] Upstream pull request on `openai/codex-plugin-cc` adds `--effort` to `adversarial-review`
-- [ ] 2026-12-07: one ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline
+- [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts, 2026-12-07)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
 
