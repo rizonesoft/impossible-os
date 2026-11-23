@@ -3091,3 +3091,49 @@ fs.writeFileSync(process.env.FAKE_PROMPT_OUT + '.tmpdir', os.tmpdir());
     seen_tmp = pathlib.Path((tmp_path / "prompt.txt.tmpdir").read_text())
     assert (tmp_path / "reviews") in seen_tmp.parents, seen_tmp
     assert not any(inside.iterdir()), list(inside.iterdir())
+
+
+def test_a_pass_that_never_finishes_is_ended_by_its_limit_with_everything_it_started(tmp_path):
+    """A companion whose app-server exits mid-turn waits forever for a completion (performance review,
+    2026-11-23). The pass's limit ends it, and what it starts, a detached child spawned from its TERM handler
+    included (round review: a /proc-scan reaper missed exactly that), is ended with it."""
+    import json
+    import os
+    import subprocess
+    import time
+    late = tmp_path / "late.pid"
+    fake = tmp_path / "companion.js"
+    fake.write_text(f"""
+const fs = require('fs'); const cp = require('child_process');
+process.on('SIGTERM', () => {{
+  const c = cp.spawn('setsid', ['sleep', '300'], {{ detached: true, stdio: 'ignore' }});
+  fs.writeFileSync({json.dumps(str(late))}, String(c.pid));
+  process.exit(0);
+}});
+setInterval(() => {{}}, 1000);
+""")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_COMPANION_ACCEPTS_EFFORT": "1",
+           "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"), "REVIEW_BASE": "HEAD", "CODEX_REVIEW_MAX_SECS": "4"}
+    started = time.monotonic()
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                           "[review-kind: plan] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
+    took = time.monotonic() - started
+    pid = int(late.read_text()) if late.exists() else None
+    try:
+        assert done.returncode != 0 and took < 30, (done.returncode, took)
+        assert "ran past its 4s limit" in done.stderr, done.stderr[-1500:]
+        assert pid is not None, "the TERM handler never ran"
+        state = pathlib.Path(f"/proc/{pid}/stat")
+        for _ in range(40):
+            if not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z":
+                break
+            time.sleep(0.05)
+        assert not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z", "a late child outlived the pass"
+        assert not list((tmp_path / "reviews").glob(".cp.*"))
+    finally:
+        if pid:
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass

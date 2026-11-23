@@ -158,15 +158,15 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
-EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""
+EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""; PASS_LIMIT_SECS=1800
 # Each pass runs the companion with its own plugin data, so no two passes share its job state (an unlocked
-# read-modify-write: concurrent passes deleted each other's job records) or its broker. When the pass ends every
-# process carrying that directory in its environment (the detached broker and its app-server included) is stopped
-# and the directory removed.
+# read-modify-write: concurrent passes deleted each other's job records) or its broker, and under
+# review_runtime_limit.py, the child subreaper the broker path uses: every process the pass starts (the detached
+# broker and its app-server included) is ended and reaped by it, through pidfds of proven members, within the
+# pass's limit. The directory is removed after.
+LIMITER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/review_runtime_limit.py"
 end_companion_pass() {
     [ -n "$PASS_DATA" ] || return 0
-    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/reap_env.py" "CLAUDE_PLUGIN_DATA=$PASS_DATA" \
-        || echo "[$SELF_NAME] a companion process of this pass outlived SIGKILL (CLAUDE_PLUGIN_DATA=$PASS_DATA)" >&2
     rm -rf -- "$PASS_DATA"
     PASS_DATA=""
 }
@@ -429,10 +429,23 @@ if [ -n "$LOG_FILE" ]; then
     # socket path must stay under the 108-byte Unix limit, and a longer one only costs the broker, not the pass.
     PASS_DATA="$(mktemp -d "$(cd "$REVIEWS_DIR" && pwd)/.cp.XXXXXX")" || {
         echo "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass" >&2; exit 2; }
-    env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
-        -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DATA" TMPDIR="$PASS_DATA" \
-        node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
+    # One limit per pass: CODEX_REVIEW_MAX_SECS when set (as the broker reads it), else PASS_LIMIT_SECS, six times
+    # the longest of 247 checked passes on record (280 s on 2026-11-23). An app-server that exits mid-turn leaves
+    # the companion waiting for a completion that never comes; the limit ends it (exit 124) instead of the pass
+    # hanging for good.
+    PASS_SECS="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}"
+    [[ "$PASS_SECS" =~ ^[1-9][0-9]{0,8}$ ]] || {
+        echo "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
+    PASS_COMPANION="$COMPANION" PASS_EFFORT="$EFFORT" PASS_PROMPT="$PROMPT" PASS_DIR="$PASS_DATA" \
+        python3 "$LIMITER" "$PASS_SECS" 'exec env -u CODEX_COMPANION_APP_SERVER_ENDPOINT \
+            -u CODEX_COMPANION_APP_SERVER_PID_FILE -u CODEX_COMPANION_APP_SERVER_LOG_FILE \
+            CLAUDE_PLUGIN_DATA="$PASS_DIR" TMPDIR="$PASS_DIR" \
+            node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "$PASS_PROMPT"' \
+        2>&1 | tee -a "$LOG_RW"
     rc=$?
+    if [ "$rc" = "124" ]; then
+        echo "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${PASS_SECS}s limit and was ended" | tee -a "$LOG_RW" >&2
+    fi
     end_companion_pass
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_ID="$(candidate_id)" || NOW_ID="unreadable"

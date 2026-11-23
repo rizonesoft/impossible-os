@@ -9,7 +9,7 @@ This tree is OpenAI's Codex plugin for Claude Code (`openai/codex-plugin-cc`, `p
 
 ## Not patched: the shared job state
 
-Upstream reads, changes and rewrites `state.json` with no lock, so two companion processes sharing one plugin-data directory can delete each other's job records. That is left as upstream wrote it: `scripts/codex-dispatch.sh` gives every review pass its own `CLAUDE_PLUGIN_DATA`, so no two of our passes share that state or a broker, and it stops every process of the pass (found by that directory in their environment, `scripts/overnight/reap_env.py`) when the pass ends.
+Upstream reads, changes and rewrites `state.json` with no lock, so two companion processes sharing one plugin-data directory can delete each other's job records. That is left as upstream wrote it: `scripts/codex-dispatch.sh` gives every review pass its own `CLAUDE_PLUGIN_DATA`, so no two of our passes share that state or a broker, and it runs each pass under `scripts/overnight/review_runtime_limit.py`, the child subreaper the review broker uses, which ends and reaps every process of the pass (the detached broker and its app-server included) within the pass's limit.
 
 Run the tests here: `node --test tools/vendor/codex-companion/tests/effort.test.mjs`.
 

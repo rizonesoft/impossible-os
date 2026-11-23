@@ -73,6 +73,13 @@ def test_a_real_pass_applies_its_effort_and_leaves_nothing_behind(tmp_path):
                       f"import({json.dumps(str(VENDOR / 'tests/fake-codex-fixture.mjs'))})"
                       f".then(m => m.installFakeCodex({json.dumps(str(bindir))}))"])
     assert installed.returncode == 0, installed.stderr
+    # The generated fake (a temp file of this test, not the vendored fixture) answers with the verdict lines a
+    # plan pass owes, so the pass can earn credit and this test sees a regression that stops it doing so.
+    fake = bindir / "codex"
+    text = fake.read_text()
+    assert 'next_steps: ["Add an empty-state test."]' in text
+    fake.write_text(text.replace('next_steps: ["Add an empty-state test."]',
+                                 'next_steps: ["LENS plan: clean", "HIGHEST: none"]'))
     inside = repo / "scratch"
     inside.mkdir()
     reviews = tmp_path / "reviews"
@@ -83,11 +90,13 @@ def test_a_real_pass_applies_its_effort_and_leaves_nothing_behind(tmp_path):
                 "TMPDIR": str(inside), "REVIEW_BASE": "HEAD", "CODEX_OUTAGE_OVERRIDE": "1"})
     done = _run(["bash", str(REPO / "scripts/codex-dispatch.sh"), f"[review-kind: plan] {TODO} section 99\nReview it."],
                 cwd=str(repo), env=env)
-    assert "candidate changed" not in done.stderr, done.stderr[-2000:]
+    assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
     turn = json.loads((bindir / "fake-codex-state.json").read_text()).get("lastTurnStart") or {}
     assert turn.get("effort") == "medium", (turn, done.stderr[-2000:])
     receipt = json.loads((reviews / "manifest.jsonl").read_text().splitlines()[-1])
     assert receipt.get("effort") == "medium" and receipt.get("schedule") == "effort", receipt
+    assert receipt.get("pass_checked") is True and receipt.get("rc") == 0, receipt
+    assert pathlib.Path(receipt["logFile"] + ".done").read_text().strip() == "0"
     assert not any(inside.iterdir()), list(inside.iterdir())
     assert not list(reviews.glob(".cp.*")), list(reviews.iterdir())
     for _ in range(40):

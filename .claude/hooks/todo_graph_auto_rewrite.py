@@ -91,7 +91,8 @@ def main() -> int:
 
     # The tree that holds the edited file, never the hook's cwd: the harness runs hooks in the session's primary
     # tree, so an edit in another worktree was repaired in the primary tree (2026-11-23, 22 files under a live run).
-    here = os.path.dirname(os.path.abspath(path))
+    # The file itself, resolved: an edit through a TODO symlink changes the target, so its tree is the one repaired.
+    here = os.path.dirname(os.path.realpath(path))
     while not os.path.isdir(here) and os.path.dirname(here) != here:
         here = os.path.dirname(here)                   # a Write may have named a directory not yet on disk
     try:

@@ -239,9 +239,30 @@ def a_validator_overrun_stops_its_whole_group():
     return gone and took < 10 and "did not finish" in out
 
 
+def a_symlinked_todo_is_repaired_where_it_lives():
+    """An edit through a TODO symlink in worktree A that points into worktree B changes B's file, so B is repaired
+    (round review, 2026-11-23: the parent of the unresolved path chose A)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
+        git("init", "-q", a)
+        hook = install_hook(a)
+        fake_validator(a)
+        git("-C", a, "add", "-A")
+        git("-C", a, "commit", "-qm", "base")
+        git("-C", a, "worktree", "add", "-q", "--detach", b)
+        fake_validator(b)
+        pathlib.Path(b, "todo", "TODO-01.md").write_text("x\n")
+        os.symlink(os.path.join(b, "todo", "TODO-01.md"), os.path.join(a, "todo", "link.md"))
+        event = {"tool_input": {"file_path": os.path.join(a, "todo", "link.md")}}
+        subprocess.run([sys.executable, hook], input=json.dumps(event), capture_output=True, text=True, cwd=a,
+                       timeout=60)
+        return pathlib.Path(b, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
+
+
 def main():
     bad = 0
-    for label, check in (("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
+    for label, check in (("a symlinked TODO is repaired in the worktree it lives in", a_symlinked_todo_is_repaired_where_it_lives),
+                         ("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
                          ("a validator overrun stops its whole process group", a_validator_overrun_stops_its_whole_group)):
         ok = check()
         bad += not ok
@@ -273,7 +294,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 6
+    total = len(CLASSES) + 7
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 
