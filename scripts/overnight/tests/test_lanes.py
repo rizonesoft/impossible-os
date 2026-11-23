@@ -676,3 +676,68 @@ def test_a_stalled_head_read_never_falls_back_to_the_index(repo, monkeypatch):
     with pytest.raises(lanes.GitStalled):
         lanes.committed_map(repo["primary"])
     assert calls == [("show", "HEAD:.conclave/lanes.toml")], calls
+
+
+def test_a_three_way_mail_patch_into_a_live_lane_is_refused_after_a_conflict(repo):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "mail")
+    stage(p, "user/a.c", "mailed\n")
+    stage(p, "src/kernel/k.c", "mail\n")
+    git(p, "commit", "-qm", "mail")
+    patch = git(p, "format-patch", "-1", "--stdout").stdout
+    git(p, "checkout", "-q", "main")
+    stage(p, "src/kernel/k.c", "main\n")
+    git(p, "commit", "-qm", "main")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    (repo["tmp"] / "m.patch").write_text(patch)
+    r = git(p, "am", "-3", str(repo["tmp"] / "m.patch"), check=False, env=os.environ.copy())
+    assert r.returncode != 0                                          # the kernel file conflicts
+    stage(p, "src/kernel/k.c", "resolved\n")
+    r = git(p, "am", "--continue", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+    assert head(p) == "main"
+
+
+def _resolve_merge(repo):
+    """main merges `ul` (a newer user/a.c) with -s resolve, paused on a kernel conflict; userland is live."""
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "ul")
+    stage(p, "user/a.c", "ul\n")
+    stage(p, "src/kernel/k.c", "ul\n")
+    git(p, "commit", "-qm", "ul")
+    git(p, "checkout", "-q", "main")
+    stage(p, "src/kernel/k.c", "main\n")
+    git(p, "commit", "-qm", "main")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    git(p, "merge", "--no-ff", "--no-commit", "-s", "resolve", "ul", check=False, env=os.environ.copy())
+    assert not git(p, "rev-parse", "-q", "--verify", "AUTO_MERGE", check=False).stdout.strip()
+    stage(p, "src/kernel/k.c", "resolved\n")
+    return p
+
+
+def test_a_resolve_merge_that_drops_a_live_lanes_change_is_refused(repo):
+    p = _resolve_merge(repo)
+    git(p, "checkout", "HEAD", "--", "user/a.c")                       # the incoming change lost by mistake
+    r = hooked_commit(repo, p)
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+
+
+def test_a_resolve_merge_that_keeps_the_lanes_change_lands(repo):
+    p = _resolve_merge(repo)
+    r = hooked_commit(repo, p)
+    assert r.returncode == 0, r
+
+
+def test_triage_falls_back_to_the_working_tree_map_when_git_cannot_answer(repo, tmp_path):
+    t = _load("triage_fallback", TRIAGE_PY)
+    root = tmp_path / "nogit"                                         # not a repository: every git read fails
+    (root / "scripts").mkdir(parents=True)
+    (root / ".conclave").mkdir()
+    shutil.copy(LANES_PY, root / "scripts" / "lanes.py")
+    shutil.copy(repo["primary"] / ".conclave" / "lanes.toml", root / ".conclave" / "lanes.toml")
+    live("userland")
+    ctx, err = t._lane_context(str(root))
+    assert ctx is not None and err == "", (ctx, err)
+    assert ctx[2]["userland"] == lanes.LIVE

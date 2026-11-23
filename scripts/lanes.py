@@ -228,8 +228,9 @@ def clear(name: str) -> None:
         pass
 
 
-def _git(root: Path, *args: str, deadline: float | None = None) -> bytes:
-    """git's stdout, bounded by GIT_SECS, and by `deadline` (time.monotonic()) when a caller shares a budget."""
+def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, ...] = (0,)) -> bytes:
+    """git's stdout, bounded by GIT_SECS, and by `deadline` (time.monotonic()) when a caller shares a budget.
+    An exit status outside `ok` refuses."""
     secs = GIT_SECS if deadline is None else min(GIT_SECS, deadline - time.monotonic())
     if secs <= 0:
         raise GitStalled(f"git {args[0]} has no time left in its caller's budget")
@@ -239,7 +240,7 @@ def _git(root: Path, *args: str, deadline: float | None = None) -> bytes:
                            timeout=secs)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitStalled(f"git {args[0]} could not run ({type(exc).__name__})") from exc
-    if r.returncode != 0:
+    if r.returncode not in ok:
         raise LaneError(f"git {' '.join(args[:2])} failed: {r.stderr.decode(errors='replace').strip()[:200]}")
     return r.stdout
 
@@ -352,31 +353,49 @@ def _verify(toplevel: Path, ref: str) -> str | None:
         return None
 
 
-def authored_paths(toplevel: Path, replay: bool = False) -> list[str]:
-    """The paths this commit authors, which the lane check judges.
+def _merge_result(toplevel: Path, ours: str, theirs: str, base: str | None = None) -> str:
+    """The tree git's own merge of `theirs` into `ours` gives (conflicts left as markers), as AUTO_MERGE records
+    it for a stop: `git merge-tree` exits 1 for a conflict and still writes the tree."""
+    out = _git(toplevel, "merge-tree", "--write-tree", *([f"--merge-base={base}"] if base else []), ours, theirs,
+               ok=(0, 1))
+    tree = out.split(b"\n", 1)[0].decode().strip()
+    if not tree:
+        raise LaneError("git merge-tree gave no tree")
+    return tree
 
-    - A merge or rebase stopped for the operator: git records its own result in AUTO_MERGE, so the paths
-      where the index differs from it are exactly the hand edits (a resolution, an extra or reverted file);
-      what git merged by itself carries commits already judged.
-    - Without AUTO_MERGE (git older than 2.42), the result is measured against the merge's other parents or
-      the stopped pick (REBASE_HEAD): only a path differing from every one of them is authored.
-    - A rebase's clean pick (`replay`) replays a commit already judged: nothing is authored.
-    - Anything else (an ordinary commit, a revert, a cherry-pick) authors every path it changes."""
+
+def authored_paths(toplevel: Path, replay: bool = False) -> list[str]:
+    """The paths this commit authors, which the lane check judges: where the index differs from what git's own
+    merge gives, since what git merged by itself carries commits already judged.
+
+    - A merge, or a rebase pick, stopped for the operator: git recorded its result in AUTO_MERGE.
+    - Otherwise (a merge git commits itself, a strategy that writes no AUTO_MERGE, git older than 2.42) the
+      result is computed the same way: `git merge-tree` of the other parent into HEAD, or of a rebase pick
+      (REBASE_HEAD) against its own parent. A restored, rolled-back or resolved path is then authored.
+    - An octopus merge, or a root pick, has no such two-way result: every path it changes is authored.
+    - A rebase's clean pick (`replay`, no REBASE_HEAD) replays a commit already judged: nothing is authored.
+    - `git am` (rebase-apply/applying) applies a patch this commit authors, whatever stopped it, as do an
+      ordinary commit, a revert and a cherry-pick: every path it changes."""
     merging = _state_lines(_git_path(toplevel, "MERGE_HEAD"))
-    rebasing = _git_path(toplevel, "rebase-merge").is_dir() or _git_path(toplevel, "rebase-apply").is_dir()
+    apply_dir = _git_path(toplevel, "rebase-apply")
+    mailing = (apply_dir / "applying").exists()
+    rebasing = _git_path(toplevel, "rebase-merge").is_dir() or (apply_dir.is_dir() and not mailing)
     if not merging and not rebasing:
         return staged_paths(toplevel)
     auto = _verify(toplevel, "AUTO_MERGE")
     if auto:
         return staged_paths(toplevel, auto)
-    parents = merging or _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
-    if not parents:
+    if merging:
+        if len(merging) != 1:
+            return staged_paths(toplevel)
+        return staged_paths(toplevel, _merge_result(toplevel, "HEAD", merging[0]))
+    pick = _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
+    if not pick:
         return [] if replay else staged_paths(toplevel)
-    paths = staged_paths(toplevel)
-    for parent in parents:
-        theirs = set(staged_paths(toplevel, parent))
-        paths = [p for p in paths if p in theirs]
-    return paths
+    base = _verify(toplevel, f"{pick[0]}^")
+    if not base:
+        return staged_paths(toplevel)
+    return staged_paths(toplevel, _merge_result(toplevel, "HEAD", pick[0], base))
 
 
 def check_staged(cwd: Path, replay: bool = False) -> int:

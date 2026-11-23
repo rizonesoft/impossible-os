@@ -642,8 +642,13 @@ def _lane_context(root):
         recs = mod.state_dir()
         if not recs.is_dir() or not any(recs.glob("*.json")):
             return None, ""
-        # The map the commit check judges by, read within a budget the Stop hook can afford.
-        lane_map = mod.committed_map(Path(root), deadline=time.monotonic() + LANE_MAP_SECS)
+        # The map the commit check judges by, read within a budget the Stop hook can afford. When git cannot
+        # answer in time, the working tree's copy (a plain file read, nearly always HEAD's) still says who holds
+        # what: ownership unread must never read as nothing held.
+        try:
+            lane_map = mod.committed_map(Path(root), deadline=time.monotonic() + LANE_MAP_SECS)
+        except mod.LaneError:
+            lane_map = mod.load_map(Path(root))
         lane_states = mod.states(lane_map)
         if not mod.any_reserving(lane_map, lane_states):
             return None, ""                            # no lane holds anything: no file needs a second read
