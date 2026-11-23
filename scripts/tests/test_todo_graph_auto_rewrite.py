@@ -229,9 +229,11 @@ def a_validator_overrun_stops_its_whole_group():
         pid = int(pid_file.read_text()) if pid_file.exists() else None
         gone = False
         for _ in range(40):
-            stat = pathlib.Path(f"/proc/{pid}/stat") if pid else None
-            if stat is None or not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z":
+            try:
+                gone = not pid or pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0] == "Z"
+            except (FileNotFoundError, ProcessLookupError):        # gone before the open, or during the read (ESRCH)
                 gone = True
+            if gone:
                 break
             time.sleep(0.05)
         if not gone and pid:

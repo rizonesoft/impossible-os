@@ -2473,8 +2473,15 @@ class StandIn(unittest.TestCase):
     def _gone(pid):
         try:
             return pathlib.Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):        # gone before the open, or during the read (ESRCH)
             return True
+
+    def test_a_process_that_vanishes_during_the_read_is_gone(self):
+        # The kernel answers ESRCH, not ENOENT, when it ends between the open and the read (CI, 2026-11-23).
+        for gone in (FileNotFoundError(), ProcessLookupError()):
+            with mock.patch.object(pathlib.Path, "read_text", side_effect=gone):
+                self.assertTrue(self._gone(os.getpid()))
+        self.assertFalse(self._gone(os.getpid()))
 
     def test_qemu_dies_with_a_killed_runner(self):
         # The runner starts a child with _die_with_parent, prints its pid, then is

@@ -3049,11 +3049,10 @@ fs.writeFileSync({json.dumps(str(probe))}, JSON.stringify({{
         assert seen["endpoint"] == "", "the pass inherited a shared broker endpoint"
         assert not pathlib.Path(seen["data"]).exists(), "the pass's companion data outlived it"
         for _ in range(40):
-            if not pathlib.Path(f"/proc/{seen['child']}").exists():
+            if not _proc_alive(seen["child"]):
                 break
             time.sleep(0.05)
-        state = pathlib.Path(f"/proc/{seen['child']}/stat")
-        assert not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z", "a detached child outlived the pass"
+        assert not _proc_alive(seen["child"]), "a detached child outlived the pass"
     finally:
         try:
             os.kill(seen["child"], 9)
@@ -3129,12 +3128,11 @@ setInterval(() => {{}}, 1000);
         assert done.returncode != 0 and took < 30, (done.returncode, took)
         assert "ran past its 4s limit" in done.stderr, done.stderr[-1500:]
         assert pid is not None, "the TERM handler never ran"
-        state = pathlib.Path(f"/proc/{pid}/stat")
         for _ in range(40):
-            if not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z":
+            if not _proc_alive(pid):
                 break
             time.sleep(0.05)
-        assert not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z", "a late child outlived the pass"
+        assert not _proc_alive(pid), "a late child outlived the pass"
         assert not list((tmp_path / "reviews").glob(".cp/[0-9]*"))
     finally:
         if pid:
@@ -3301,12 +3299,11 @@ def test_term_to_a_logged_dispatch_ends_its_review_and_removes_its_data(tmp_path
         companion = json.loads(probe.read_text())["pid"]
         os.kill(proc.pid, signal.SIGTERM)                     # the dispatcher alone, not its group
         proc.wait(timeout=20)
-        stat = pathlib.Path(f"/proc/{companion}/stat")
         for _ in range(50):
-            if not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z":
+            if not _proc_alive(companion):
                 break
             time.sleep(0.1)
-        assert not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z", "the reviewer outlived its dispatcher"
+        assert not _proc_alive(companion), "the reviewer outlived its dispatcher"
         assert not list(reviews.glob(".cp/[0-9]*")), list(reviews.iterdir())
     finally:
         try:
