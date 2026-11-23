@@ -97,11 +97,11 @@ The list of what Impossible OS must provide, measured from Inkeys itself rather 
 
 Small programs, each one rung of what Inkeys does, run first on Windows 11 for the expected result and then on Impossible OS. The ladder follows the inventory of §2.
 
-- [ ] `sdk/compat/inkeys/draw_gdi.c`: a window that draws mouse strokes with GDI (`WM_MOUSEMOVE`, `Polyline`)
-- [ ] `sdk/compat/inkeys/layered.c`: a topmost per-pixel-alpha layered window over the desktop through `UpdateLayeredWindowIndirect`, click-through on and off (`WS_EX_TRANSPARENT`)
-- [ ] `sdk/compat/inkeys/d2d_toolbar.c`: a Direct2D 1.1 device context drawing a rounded, anti-aliased toolbar into a layered window
-- [ ] `sdk/compat/inkeys/d3d11_canvas.c`: a Direct3D 11 device and swap chain drawing strokes with a compiled HLSL shader, presented through DirectComposition
-- [ ] `sdk/compat/inkeys/pointer.c`: `WM_POINTER*` pen pressure and touch contacts logged in order
+- [ ] `tests/compat/inkeys/draw_gdi.c`: a window that draws mouse strokes with GDI (`WM_MOUSEMOVE`, `Polyline`)
+- [ ] `tests/compat/inkeys/layered.c`: a topmost per-pixel-alpha layered window over the desktop through `UpdateLayeredWindowIndirect`, click-through on and off (`WS_EX_TRANSPARENT`)
+- [ ] `tests/compat/inkeys/d2d_toolbar.c`: a Direct2D 1.1 device context drawing a rounded, anti-aliased toolbar into a layered window
+- [ ] `tests/compat/inkeys/d3d11_canvas.c`: a Direct3D 11 device and swap chain drawing strokes with a compiled HLSL shader, presented through DirectComposition
+- [ ] `tests/compat/inkeys/pointer.c`: `WM_POINTER*` pen pressure and touch contacts logged in order
 - [ ] Each probe prints `inkeys-probe <name>: passed` and exits 0 on Windows 11 and on Impossible OS, and is added to the D12 T07 §12 compat gate as soon as it passes here
 - [ ] Commit: `"compat: Inkeys probe ladder"`
 

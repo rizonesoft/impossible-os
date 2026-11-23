@@ -28,6 +28,7 @@ VENDORED=(
     "$ROOT/include/stb_image.h"
     "$ROOT/include/stb_truetype.h"
     "$ROOT/src/boot/uefi/efi.h"
+    "$ROOT/tools/stb_image.h"
     # Microsoft's Fluent System Icons, imported wholesale: 73,416 lines of
     # generated glyph-class CSS. COUNT.md already states that vendored code is
     # excluded, but the list only covered three C headers, so this rode along
@@ -132,14 +133,14 @@ read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include")"
 read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include")"
 read -r asm_files asm_lines <<< "$(count_lines asm "$ROOT/src")"
 
-# SDK tools
-read -r sdk_c_files sdk_c_lines <<< "$(count_lines c "$ROOT/sdk/src")"
-read -r sdk_h_files sdk_h_lines <<< "$(count_lines h "$ROOT/sdk/src")"
-sdk_files=$((sdk_c_files + sdk_h_files))
-sdk_lines=$((sdk_c_lines + sdk_h_lines))
+# Host tools
+read -r tool_c_files tool_c_lines <<< "$(count_lines c "$ROOT/tools")"
+read -r tool_h_files tool_h_lines <<< "$(count_lines h "$ROOT/tools")"
+tool_files=$((tool_c_files + tool_h_files))
+tool_lines=$((tool_c_lines + tool_h_lines))
 
 # Build system & scripts
-read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/sdk/scripts")"
+read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/tools")"
 read -r bat_files bat_lines <<< "$(count_lines bat "$ROOT/scripts")"
 read -r ps1_files ps1_lines <<< "$(count_lines ps1 "$ROOT/scripts")"
 read -r py_files py_lines <<< "$(count_tracked_lines '*.py')"
@@ -171,8 +172,8 @@ infra_lines=$((sh_lines + bat_lines + ps1_lines + py_lines + js_lines + inc_line
 support_files=$((md_files + json_files + yaml_files + html_files + css_files + cfg_files))
 support_lines=$((md_lines + json_lines + yaml_lines + html_lines + css_lines + cfg_lines))
 
-core_total_files=$((code_files + sdk_files + infra_files))
-core_total_lines=$((code_lines + sdk_lines + infra_lines))
+core_total_files=$((code_files + tool_files + infra_files))
+core_total_lines=$((code_lines + tool_lines + infra_lines))
 counted_total_files=$((core_total_files + support_files))
 counted_total_lines=$((core_total_lines + support_lines))
 
@@ -329,10 +330,10 @@ kernel_table="$(make_table3 "" "Files" "Lines" \
     $'**Assembly** (`.asm`)\t'"${asm_files}"$'\t'"${asm_lines}" \
     $'**Subtotal**\t**'"${code_files}"$'**\t**'"${code_lines}"$'**')"
 
-sdk_table="$(make_table3 "" "Files" "Lines" \
-    $'**C sources** (`.c`)\t'"${sdk_c_files}"$'\t'"${sdk_c_lines}" \
-    $'**Headers** (`.h`)\t'"${sdk_h_files}"$'\t'"${sdk_h_lines}" \
-    $'**Subtotal**\t**'"${sdk_files}"$'**\t**'"${sdk_lines}"$'**')"
+tool_table="$(make_table3 "" "Files" "Lines" \
+    $'**C sources** (`.c`)\t'"${tool_c_files}"$'\t'"${tool_c_lines}" \
+    $'**Headers** (`.h`)\t'"${tool_h_files}"$'\t'"${tool_h_lines}" \
+    $'**Subtotal**\t**'"${tool_files}"$'**\t**'"${tool_lines}"$'**')"
 
 infra_table="$(make_table3 "" "Files" "Lines" \
     $'**Shell scripts** (`.sh`)\t'"${sh_files}"$'\t'"${sh_lines}" \
@@ -384,9 +385,9 @@ cat > "$COUNT_FILE" << EOF
 
 ${kernel_table}
 
-## SDK Tools
+## Host Tools
 
-${sdk_table}
+${tool_table}
 
 ## Build System & Scripts
 

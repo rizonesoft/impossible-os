@@ -53,7 +53,7 @@ $ ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15
 ## 1. Symbol Map Parser
 Parse `build/kernel.map` (nm format: `address T symbol_name`); section boundaries come from the ELF section headers of `build/kernel.exe` (`kernel.map` is nm output, not a linker map).
 
-**Files:** `sdk/src/addr2line/addr2line.c`
+**Files:** `tools/addr2line/addr2line.c`
 
 - [ ] Parse kernel.map: build sorted array of (address, name) pairs
 - [ ] Binary search: find closest symbol ≤ input address
@@ -65,7 +65,7 @@ Parse `build/kernel.map` (nm format: `address T symbol_name`); section boundarie
 ## 2. Source Context Display
 Find the source file and line number, show surrounding code with the crash line highlighted.
 
-**Files:** `sdk/src/addr2line/addr2line.c`
+**Files:** `tools/addr2line/addr2line.c`
 
 - [ ] Parse DWARF debug info from `build/kernel.exe` (ELF .debug_line section) OR use the simpler approach: run `llvm-addr2line` as a subprocess and parse its output
 - [ ] Display 5 lines of context around the crash line with `>` marker
@@ -76,7 +76,7 @@ Find the source file and line number, show surrounding code with the crash line 
 ## 3. Error Code Decoder
 Decode x86-64 exception error codes into human-readable descriptions.
 
-**Files:** `sdk/src/addr2line/decode.c`
+**Files:** `tools/addr2line/decode.c`
 
 - [ ] Page Fault (err code): Present, Write, User, Reserved, Instruction Fetch bits
 - [ ] General Protection: segment selector, IDT/GDT/LDT source
@@ -87,7 +87,7 @@ Decode x86-64 exception error codes into human-readable descriptions.
 ## 4. Memory Region Mapper
 Map a CR2 or address to known memory regions (kernel text, heap, user ELF, framebuffer, MMIO).
 
-**Files:** `sdk/src/addr2line/regions.c`
+**Files:** `tools/addr2line/regions.c`
 
 - [ ] Known regions from `include/kernel/mm/memmap.h` (the address-space source of truth), not hard-coded: kernel image, heap, user range, framebuffer, LAPIC, IOAPIC
 - [ ] Use the ELF section headers of `build/kernel.exe` for exact image boundaries
@@ -97,7 +97,7 @@ Map a CR2 or address to known memory regions (kernel text, heap, user ELF, frame
 ## 5. Full Crash Decode Mode
 Single command that decodes an entire BSOD register dump.
 
-**Files:** `sdk/src/addr2line/addr2line.c`
+**Files:** `tools/addr2line/addr2line.c`
 
 - [ ] `--crash RIP=0x... CR2=0x... ERR=0x... CR3=0x... CS=0x...`
 - [ ] Auto-decode: RIP → function, CR2 → region, ERR → description, CS → ring level

@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# sdk/build.sh -- Build all SDK tools with progress bar, timing, and error extraction.
+# tools/build-host.sh -- Build all host tools with progress bar, timing, and error extraction.
 #
 # Usage:
-#   bash sdk/build.sh          Build all SDK tools (incremental)
-#   bash sdk/build.sh clean    Clean all SDK tool build artifacts
+#   bash tools/build-host.sh          Build all host tools (incremental)
+#   bash tools/build-host.sh clean    Clean all host tool build artifacts
+#
+# A host tool is any directory under tools/ with a Makefile. Binaries go to build/host-tools/.
 #
 # Output is printed to stdout. The last line is always one of:
-#   === SDK BUILD OK ===
-#   === SDK BUILD FAILED ===
+#   === HOST TOOLS BUILD OK ===
+#   === HOST TOOLS BUILD FAILED ===
 
 set -uo pipefail
 
 # ── Resolve paths ──────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK_ROOT="$SCRIPT_DIR"
-SRC_DIR="$SDK_ROOT/src"
-TOOLS_DIR="$SDK_ROOT/tools"
+SRC_DIR="$SCRIPT_DIR"
+OUT_DIR="$(dirname "$SCRIPT_DIR")/build/host-tools"
 
-mkdir -p "$TOOLS_DIR"
+mkdir -p "$OUT_DIR"
 
 # ── Parse arguments ────────────────────────────────────────────────────────
 DO_CLEAN=false
@@ -25,7 +26,7 @@ DO_CLEAN=false
 for arg in "$@"; do
     case "$arg" in
         clean) DO_CLEAN=true ;;
-        *)     echo "Unknown argument: $arg"; echo "Usage: sdk/build.sh [clean]"; exit 1 ;;
+        *)     echo "Unknown argument: $arg"; echo "Usage: tools/build-host.sh [clean]"; exit 1 ;;
     esac
 done
 
@@ -56,7 +57,7 @@ elif command -v clang &>/dev/null; then
     CC="clang"
 else
     printf '%b  FAIL %b No C compiler found (need gcc or clang)\n' "$RED" "$RESET"
-    echo "=== SDK BUILD FAILED ==="
+    echo "=== HOST TOOLS BUILD FAILED ==="
     exit 1
 fi
 
@@ -73,7 +74,7 @@ check_dependencies() {
     fi
 }
 
-# ── Discover SDK tool directories ─────────────────────────────────────────
+# ── Discover host tool directories ─────────────────────────────────────────
 discover_tools() {
     local tools=()
     for dir in "$SRC_DIR"/*/; do
@@ -88,22 +89,22 @@ discover_tools() {
 # ── Clean ──────────────────────────────────────────────────────────────────
 if [ "$DO_CLEAN" = true ]; then
     header
-    printf '%b  SDK CLEAN%b\n' "$BOLD" "$RESET"
+    printf '%b  HOST TOOLS CLEAN%b\n' "$BOLD" "$RESET"
     header
 
     TOOL_DIRS=$(discover_tools)
     if [ -z "$TOOL_DIRS" ]; then
-        printf '%b  INFO %b No SDK tools with Makefiles found\n' "$DIM" "$RESET"
+        printf '%b  INFO %b No host tools with Makefiles found\n' "$DIM" "$RESET"
     else
         for dir in $TOOL_DIRS; do
             name=$(basename "$dir")
             printf '  Cleaning %s...\n' "$name"
-            make -C "$dir" clean OUTDIR="$TOOLS_DIR" --no-print-directory 2>/dev/null || true
+            make -C "$dir" clean OUTDIR="$OUT_DIR" --no-print-directory 2>/dev/null || true
         done
     fi
 
     printf '%b  OK   %b Clean complete\n' "$GREEN" "$RESET"
-    echo "=== SDK BUILD OK ==="
+    echo "=== HOST TOOLS BUILD OK ==="
     exit 0
 fi
 
@@ -111,7 +112,7 @@ fi
 BUILD_START=$(date +%s.%N)
 
 header
-printf '%b  SDK BUILD%b\n' "$BOLD" "$RESET"
+printf '%b  HOST TOOLS BUILD%b\n' "$BOLD" "$RESET"
 header
 
 printf '  Compiler: %b%s%b\n' "$CYAN" "$CC" "$RESET"
@@ -126,11 +127,11 @@ read -ra TOOL_DIRS <<< "$(discover_tools)"
 TOOL_COUNT=${#TOOL_DIRS[@]}
 
 if [ "$TOOL_COUNT" -eq 0 ]; then
-    printf '%b  WARN %b No SDK tools found in %s\n' "$YELLOW" "$RESET" "$SRC_DIR"
+    printf '%b  WARN %b No host tools found in %s\n' "$YELLOW" "$RESET" "$SRC_DIR"
     printf '       Each tool needs a Makefile in its directory\n'
     divider
     printf '%b  OK   %b Nothing to build\n' "$GREEN" "$RESET"
-    echo "=== SDK BUILD OK ==="
+    echo "=== HOST TOOLS BUILD OK ==="
     exit 0
 fi
 
@@ -147,7 +148,7 @@ for dir in "${TOOL_DIRS[@]}"; do
         TOOL_NAMES="$name"
     fi
 done
-printf '  Found %b%d%b SDK tools: %s\n' "$CYAN" "$TOOL_COUNT" "$RESET" "$TOOL_NAMES"
+printf '  Found %b%d%b host tools: %s\n' "$CYAN" "$TOOL_COUNT" "$RESET" "$TOOL_NAMES"
 divider
 
 # Build each tool
@@ -162,7 +163,7 @@ for dir in "${TOOL_DIRS[@]}"; do
     printf '  %b[%d/%d]%b Building %b%s%b...' "$BOLD" "$IDX" "$TOOL_COUNT" "$RESET" "$CYAN" "$name" "$RESET"
 
     # Capture make output for error extraction
-    BUILD_OUTPUT=$(make -C "$dir" CC="$CC" OUTDIR="$TOOLS_DIR" --no-print-directory 2>&1)
+    BUILD_OUTPUT=$(make -C "$dir" CC="$CC" OUTDIR="$OUT_DIR" --no-print-directory 2>&1)
     BUILD_RC=$?
 
     TOOL_ELAPSED=$(elapsed "$TOOL_START")
@@ -185,14 +186,14 @@ divider
 TOTAL_ELAPSED=$(elapsed "$BUILD_START")
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    printf '  %b SDK BUILD OK %b -- %d tools built in %ss\n' "$GREEN" "$RESET" "$TOOL_COUNT" "$TOTAL_ELAPSED"
+    printf '  %b HOST TOOLS BUILD OK %b -- %d tools built in %ss\n' "$GREEN" "$RESET" "$TOOL_COUNT" "$TOTAL_ELAPSED"
     header
-    echo "=== SDK BUILD OK ==="
+    echo "=== HOST TOOLS BUILD OK ==="
     exit 0
 else
     PASS_COUNT=$((TOOL_COUNT - FAIL_COUNT))
-    printf '  %b SDK BUILD FAILED %b -- %d/%d tools failed (%ss)\n' "$RED" "$RESET" "$FAIL_COUNT" "$TOOL_COUNT" "$TOTAL_ELAPSED"
+    printf '  %b HOST TOOLS BUILD FAILED %b -- %d/%d tools failed (%ss)\n' "$RED" "$RESET" "$FAIL_COUNT" "$TOOL_COUNT" "$TOTAL_ELAPSED"
     header
-    echo "=== SDK BUILD FAILED ==="
+    echo "=== HOST TOOLS BUILD FAILED ==="
     exit 1
 fi

@@ -13,5 +13,5 @@ One page per SDK roadmap file, each following the [page contract](../contributin
 | [ELF Relocations and Kernel Modules](elf-relocations-modules.md) | The static ELF loader and reserved module type; planned relocation engine, `.kmod` loader, `dlopen()` |
 | [NTDLL and the User-Mode Runtime](ntdll-user-runtime.md) | Shipped TEB/PEB layouts, TLS slots and PEB hand-off; planned heap, DLL loader, VEH, fibers |
 | [Win32 Subsystem Server](win32-subsystem.md) | Native windows and controls it will wrap; planned message queues, classes, `DefWindowProc()`, painting |
-| [SDK Distribution and Developer Experience](sdk-distribution.md) | The `sdk/` folder and host tools build; planned `make sdk`, `gendoc`, samples, profiler, release pipeline |
+| [SDK Distribution and Developer Experience](sdk-distribution.md) | Impossible SDK, now a separate project; planned `make sdk`, `gendoc`, samples, profiler, release pipeline |
 | [Win32 Compatibility Matrix and Bring-Up Ladder](win32-compat-matrix.md) | The PE export tables; planned coverage tracker, nine test tiers, stub counters, CI gate |

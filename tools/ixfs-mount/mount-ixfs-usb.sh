@@ -14,11 +14,11 @@ IXFS_MAGIC="49584653"  # "IXFS" in hex (little-endian at offset 0 of partition)
 
 # Find ixfs-mount binary
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IXFS_MOUNT="$SCRIPT_DIR/../tools/ixfs-mount"
+IXFS_MOUNT="$SCRIPT_DIR/../../build/host-tools/ixfs-mount"
 
 if [ ! -x "$IXFS_MOUNT" ]; then
     echo "ERROR: ixfs-mount not found at $IXFS_MOUNT"
-    echo "       Run: bash sdk/build.sh"
+    echo "       Run: bash tools/build-host.sh"
     exit 1
 fi
 

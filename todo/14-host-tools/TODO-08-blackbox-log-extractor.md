@@ -91,7 +91,7 @@ Extract the entire BlackBox partition content to a local directory.
 - [ ] Overwrite existing output dir with `--force` flag
 - [ ] Refuse a non-empty output directory unless `--force` clears it first: `read-blackbox.sh` copies into an existing folder and removes nothing, so a reused folder mixes two images' artifacts
 - [ ] Wrap or replace `scripts/tools/read-blackbox.sh` (keep its `.info` offset lookup and `BLACKBOX` label check) rather than ship a second extractor beside it
-- [ ] Retire or redirect `sdk/scripts/extract-logs.sh`: it mounts partition 2 through `ixfs-mount` and reads `Impossible/System/Logs`, but partition 2 is now the FAT32 BlackBox volume and logs live in `X:\Logs\`
+- [ ] Retire or redirect `tools/ixfs-mount/extract-logs.sh`: it mounts partition 2 through `ixfs-mount` and reads `Impossible/System/Logs`, but partition 2 is now the FAT32 BlackBox volume and logs live in `X:\Logs\`
 - [ ] Commit: `"tools: blackbox extract -- dump BlackBox partition to local directory"`
 
 **Test checkpoint:** `blackbox extract build/system-disk.img /tmp/bb` creates `/tmp/bb/Logs/kernel.log`, `/tmp/bb/Boot/*.LOG`, etc. Files match what the OS wrote.
@@ -159,7 +159,7 @@ Cross-compile or native build for Windows.
 
 - [ ] MinGW cross-compile from WSL: `x86_64-w64-mingw32-gcc` target
 - [ ] Or native MSVC build via `cl.exe` with a `build-blackbox.bat`
-- [ ] Output: `sdk/tools/blackbox.exe`
+- [ ] Output: `build/host-tools/blackbox.exe`
 - [ ] Test on Windows: `blackbox.exe extract \\wsl.localhost\...\build\system-disk.img`
 - [ ] Commit: `"tools: blackbox Windows build (MinGW cross-compile)"`
 

@@ -60,12 +60,8 @@ compile_commands.events.json
 # clangd background index cache
 .cache/
 
-# SDK tool binaries (compiled on host, not tracked)
-sdk/tools/*
-!sdk/tools/.gitkeep
-
-# SDK downloaded build tools
-sdk/build/
+# Host tool test binary, built in place
+/tools/ixfs-mount/test_ixfs_core
 
 # Extracted debug logs
 /debug/

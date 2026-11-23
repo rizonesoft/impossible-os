@@ -45,7 +45,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 - -> XREF: `T04 §3, §4, §11` -- user-mode test launcher, CI-friendly output, and final test wiring extend the same tooling contract
 - -> XREF: `T05 §7` -- visual-regression CI consumes the same runner and artifact policy
 - -> XREF: `T03 §4` -- repo-wide deferred-test sweep depends on stable local test orchestration
-- -> XREF: `D14 T01 §1-§3` -- host SDK/build-system work is complementary, but this TODO owns repo-local developer wrappers
+- -> XREF: `D14 T01 §1-§3` -- the host tools build is complementary, but this TODO owns repo-local developer wrappers
 - -> XREF: `D15 T01 §2, §5` -- release packaging and signing consume the tooling contract but remain release-domain owned
 - -> XREF: `D15 T05 §3, §5` -- contributor and README/community docs consume the canonical setup/build/test/hook contract and must not restate stale commands
 - -> XREF: [`00-infrastructure/TODO-07 §9`](TODO-07-lsp-mcp-bridge.md#9-setup-deps-manifest-makefile-target-docs-boundary-compliance) -- LSP-MCP bridge extends §1's OPTIONAL dep tier with `asm-lsp` / `bash-language-server` / `pyright` / `pwsh`-for-PSES; the dep contract owned here must reflect the additions when §9 lands.
@@ -107,7 +107,7 @@ Make setup reproducible and explicit so a new machine converges on the same tool
 > - The full run executes: deps install -> sentinel verify -> `bash scripts/build.sh clean`. Idempotence is inherited from `setup-deps.sh`'s `command -v` pre-check.
 > - `setup-deps.sh` now installs `build-essential` (Debian) / `gcc` (Fedora/Arch) so `HOST_CC := gcc` is guaranteed on every supported distro.
 > - Canonical doc: [`docs/infrastructure/development-tooling.md#host-bootstrap-contract`](../../docs/infrastructure/development-tooling.md#host-bootstrap-contract). `README.md`, `CONTRIBUTING.md`, and `CLAUDE.md` link here instead of restating distro/package lists.
-> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; SDK cross-tool build system remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`). Supported-host profile matrix (Ubuntu/Debian vs. Fedora/Arch LLVM-19 shim work) is owned by §2 below.
+> - Scope boundary recorded in the doc: repo-local dev bootstrap stays here; host tools build remains owned by `todo/14-host-tools/TODO-01-sdk-build-system.md` sections 1-3 (`D14 T01 §1-§3`). Supported-host profile matrix (Ubuntu/Debian vs. Fedora/Arch LLVM-19 shim work) is owned by §2 below.
 
 > **Verified:** 2026-04-17 | commit `ad4d3fa4` | 5/5 items | build OK | 14/14 sentinels
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 2H+4M+1L fixed, 0 open | scope: N/A (docs + bash)
@@ -430,7 +430,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 > - **How it runs:** fails closed (missing / unparseable / below-floor required tool -> non-zero); optional tools (`OPTIONAL_VERSION_TOOLS`) advisory; the default `setup.sh` flow gates floors before the build; `--versions` stays exit-0 advisory.
 > - **Downstream effects:** `tooling-doctor.sh` + CI (`build.yml`/`release.yml`) enforce floors via their existing `--verify` calls; closes the onboarding fail-open where a stale toolchain passed then failed opaquely.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments`](../../docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments).
-> - **Scope boundary:** owns host-tool floor enforcement only; SDK cross-compile toolchain is `D14 T01`, release signing/SBOM/reproducible builds are `D15 T01 §5/§6/§8`.
+> - **Scope boundary:** owns host-tool floor enforcement only; the application cross-compiler is `D10 T08 §15`, release signing/SBOM/reproducible builds are `D15 T01 §5/§6/§8`.
 > **Verified:** 2026-06-16 | commit `7942170c` | 7/7 items | build OK | lint 0, test-tooling 393/393, --verify exit 0
 > **Quality reviewed:** 2026-06-16 | Codex 6x (design, adversarial, consistency, perf) | 2H+5M fixed, 0 open | scope: N/A (host bash + CI + docs; re-adversarial skipped -- doc/config fixes, no code logic)
 

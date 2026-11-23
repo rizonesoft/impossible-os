@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/10-platform-services/TODO-08-win32-api-surface.md sources=src/kernel/pe.c,include/kernel/nt/service_numbers.h,include/registry.h,user/include/win32.h,user/lib/win32.c,user/test/test_win32.c,sdk/include/impossible/windows.h,include/kernel/ob/teb.h reviewed=2026-09-29 order=8 -->
+<!-- docs: covers=todo/10-platform-services/TODO-08-win32-api-surface.md sources=src/kernel/pe.c,include/kernel/nt/service_numbers.h,include/registry.h,user/include/win32.h,user/lib/win32.c,user/test/test_win32.c,include/kernel/ob/teb.h reviewed=2026-11-23 order=8 -->
 # Win32 API Surface
 
 ## What is it?
@@ -13,7 +13,6 @@ The Win32 API surface is the set of Windows DLLs and functions (`kernel32`, `msv
 - **Native services.** The main SSDT defines 477 services ([`service_numbers.h`](../../include/kernel/nt/service_numbers.h)); see [Native API and the SSDT](../kernel/native-api-ssdt.md). The kernel Registry already uses Win32 names (`RegOpenKeyEx`, `RegQueryValueEx`, `RegSetValueEx` and others, [`registry.h`](../../include/registry.h)), so the planned `advapi32`-style calls are pass-throughs.
 - **Per-thread error code.** The TEB holds `LastErrorValue` at offset `0x68`, where `GetLastError()` will read it ([`teb.h`](../../include/kernel/ob/teb.h)).
 - **User-mode test shim.** [`win32.h`](../../user/include/win32.h) and [`win32.c`](../../user/lib/win32.c) implement `GetCurrentProcessId`, `GetTickCount`, `CreateFileA`, `ReadFile` and `CloseHandle` for ELF test programs. `GetCurrentProcessId` reads the process ID from the TEB at `gs:0x40`, `GetTickCount` reads the tick count from `KUSER_SHARED_DATA` at `0x7FFE0000` (falling back to `sys_uptime()`), and the three file calls go through `INT 0x80` to `sys_openfile`, `sys_readhandle` and `sys_closehandle`. It is deliberately not a `kernel32` and is exercised by [`test_win32.c`](../../user/test/test_win32.c).
-- **SDK header.** [`windows.h`](../../sdk/include/impossible/windows.h) declares the file API (`CreateFile`, `ReadFile`, `WriteFile`, `FindFirstFile` and more) for the SDK, but `sdk/lib/` has no library behind it yet.
 
 **Planned design.** Win32 types first (`HANDLE`, `DWORD`, `HWND`, `WINAPI` as the Microsoft x64 calling convention), then `kernel32` tier 1 (console, process, file, environment and Registry calls), `msvcrt`, `ntdll` stubs, the memory API (`VirtualAlloc`, `HeapAlloc`), the synchronisation API over the kernel's mutexes, semaphores and events, `LoadLibrary` and `GetProcAddress`, the error API, and a logger that records every call to an unimplemented export. On top of that: `user32` and `gdi32` routed to the window manager and graphics library, `shell32`, the IxUI toolkit, `ShellExecute` and the SDK. The export-by-export inventories for `user32`, `comctl32` and `shell32` live in their master tables.
 
@@ -24,9 +23,8 @@ The Win32 API surface is the set of Windows DLLs and functions (`kernel32`, `msv
 | `kernel32.dll` (14 names) and `ntdll.dll` (96 names) import tables | Shipped; resolve to service numbers |
 | `RegOpenKeyEx`, `RegQueryValueEx`, `RegSetValueEx` and related kernel calls | Shipped in the kernel |
 | Five-function user-mode shim in `user/lib/win32.c` | Shipped, for tests |
-| `sdk/include/impossible/windows.h` file API | Declared, no library |
 | `kernel32`, `msvcrt`, `ntdll`, `user32`, `gdi32`, `shell32` DLLs | Planned |
-| IxUI (`sdk/include/ixui.h`, `libixui.a`), `impossible-cc`, import libraries | Planned |
+| IxUI (`ImpossibleSDK/include/ixui.h` in the separate Impossible SDK repository, `libixui.a`), `impossible-cc`, import libraries | Planned |
 
 ## How do I use it?
 

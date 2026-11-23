@@ -2747,20 +2747,20 @@ The object namespace browser and the event viewer: small diagnostic programs tha
 
 ### Phase 14 -- Host tools
 
-Tools that run on the developer's machine: the SDK build system, filesystem mount and repair, crash decoding and log analysis. They are placed here because they inspect and package what the earlier phases produce.
+Tools that run on the developer's machine: the host tools build, filesystem mount and repair, crash decoding and log analysis. They are placed here because they inspect and package what the earlier phases produce.
 
 | Done | Section      | Deliverable                                            | Needs | Items |
 | :--: | ------------ | ------------------------------------------------------ | ----- | ----: |
 | [/]  | `D14 T01 §1` | Linux Build Script                                     | none  |    10 |
 | [/]  | `D14 T01 §2` | Dependency Detection and Reporting                     | none  |     4 |
-| [/]  | `D14 T01 §3` | Auto-Discovery of SDK Tool Directories                 | none  |     5 |
+| [/]  | `D14 T01 §3` | Auto-Discovery of Host Tool Directories                | none  |     5 |
 | [/]  | `D14 T02 §1` | Shared IXFS Core Parser                                | none  |     8 |
 | [/]  | `D14 T02 §2` | Disk I/O Layer with GPT                                | none  |     7 |
 | [/]  | `D14 T02 §3` | Linux FUSE Mount (Read-Only)                           | none  |     8 |
 | [/]  | `D14 T02 §4` | Write Support                                          | none  |     8 |
 | [/]  | `D14 T02 §5` | USB Auto-Mount Script                                  | none  |     6 |
-| [ ]  | `D14 T02 §6` | Resync the SDK Parser with the IXFS v2 On-Disk Format  | none  |     7 |
-| [ ]  | `D14 T01 §4` | SDK Tools in CI and Honest Skip Reporting              | none  |     3 |
+| [ ]  | `D14 T02 §6` | Resync the Host Parser with the IXFS v2 On-Disk Format | none  |     7 |
+| [ ]  | `D14 T01 §4` | Host Tools in CI and Honest Skip Reporting             | none  |     3 |
 | [ ]  | `D14 T03 §1` | Symbol Map Parser                                      | none  |     6 |
 | [ ]  | `D14 T03 §2` | Source Context Display                                 | none  |     5 |
 | [ ]  | `D14 T03 §3` | Error Code Decoder                                     | none  |     5 |

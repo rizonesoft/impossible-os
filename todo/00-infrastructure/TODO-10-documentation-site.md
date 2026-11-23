@@ -1215,7 +1215,7 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 Write docs pages that meet the §3 contract for the 8 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Split out of §4 because 17 pages is more than one worker context; the host-tools files share one folder and no dependency on the infrastructure pages.
 
 - [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System): `sdk-build-system.md`
+  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- Host Tools Build): `sdk-build-system.md`
   - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux)): `ixfs-mount.md`
   - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)): `addr2line.md`
 - [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
@@ -1232,10 +1232,10 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
   - `TODO-08`'s "no host-side tool can read logs" was false: `scripts/tools/read-blackbox.sh` already extracts the volume.
 - [x] Defects found while writing, filed with evidence rather than fixed (docs-only section)
   - `14-host-tools/TODO-02` §6 (new): the SDK `struct ixfs_inode` is 92 bytes against the kernel's 128, so `ixfs-mount` lists an empty root on current images; its write path skips checksums, journal, refcounts and snapshots; rename ignores the destination directory.
-  - `14-host-tools/TODO-01` §4 (new): `sdk/build.sh` reports a skipped tool as built, and nothing in CI runs it.
+  - `14-host-tools/TODO-01` §4 (new): `tools/build-host.sh` reports a skipped tool as built, and nothing in CI runs it.
   - `05-storage-filesystems/TODO-04` §18: `fsck.fat -n` on the BlackBox volume after one boot finds an overwritten `.` entry, orphaned long names and a lost `boot-timeline.json`.
   - `01-boot-platform/TODO-22` §8 (new, from this section's reviews): kernel fsck repairs are not gated on read failures (bitmap reconcile, dangling-dirent clear, snapshot scan); `docs/boot/recovery-partition.md` now says so.
-  - Reconcile items: `TODO-06` §1 reuses `bootimg.py inspect`, `TODO-07` §1 builds on the kernel's `ixfs_fsck()`, `TODO-08` §3 wraps `read-blackbox.sh` and retires `sdk/scripts/extract-logs.sh`, `TODO-05` §4 shares one comparison engine with `TODO-08` §6.
+  - Reconcile items: `TODO-06` §1 reuses `bootimg.py inspect`, `TODO-07` §1 builds on the kernel's `ixfs_fsck()`, `TODO-08` §3 wraps `read-blackbox.sh` and retires `tools/ixfs-mount/extract-logs.sh`, `TODO-05` §4 shares one comparison engine with `TODO-08` §6.
 - [x] Commit: `"docs: host tools documentation pages"`
 - [x] Post-ship review fixes (adversarial, consistency and perf legs)
   - Pages: `crash-decode.md` states that `last-panic.txt` needs a warm reset of the same VM and the `Previous crash evidence found` line; `ixfs-fsck.md` names all three read-failure repair gaps; page claims now match the roadmap corrections made in the same commit.
@@ -1247,8 +1247,8 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
 
 > **Notes:**
 > - **What shipped:** eight contract-shaped pages and an index in a new `docs/host-tools/` folder, linked from the docs home page; the baseline drops from 17 to 9 undocumented files.
-> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `sdk/`, the panic path, the symbol map, the fsck code or the BlackBox reader changes.
-> - **Status honesty:** only `sdk/build.sh` and `ixfs-mount` exist, and the pages say `ixfs-mount` is behind the kernel's format; the six planned tools each name the shipped stand-in (`llvm-addr2line-19`, `bootimg.py inspect`, `boot_timeline.py`, `read-blackbox.sh`, the kernel `ixfs_fsck()`).
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `tools/ixfs-mount/`, the panic path, the symbol map, the fsck code or the BlackBox reader changes.
+> - **Status honesty:** only `tools/build-host.sh` and `ixfs-mount` exist, and the pages say `ixfs-mount` is behind the kernel's format; the six planned tools each name the shipped stand-in (`llvm-addr2line-19`, `bootimg.py inspect`, `boot_timeline.py`, `read-blackbox.sh`, the kernel `ixfs_fsck()`).
 > - **Scope boundary:** no SDK or kernel code changed; the IXFS parser drift, SDK CI and the BlackBox FAT32 corruption are filed in their owning roadmaps.
 
 > **Verified:** 2026-09-30 | commit `b74939c76` | 8/8 items | build OK | site: OK, 223/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS; `fsck.fat -n` finding reproduced on a fresh image
@@ -1395,14 +1395,14 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 
 - [/] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path; blocked: no `sdk/v*` producer yet -> XREF: `D12 T06 §8`
   - §29's store takes one-segment `v*` versions only (`releases.VERSION_RE`, `valid_version`); `sdk/v*` widens that rule and the tag listing in `tag_commits()`, keeping `collisions()`'s ancestor check.
-- [/] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag; blocked: `gendoc` absent -> XREF: `D12 T06 §2`
+- [/] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `ImpossibleSDK/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag; blocked: `gendoc` absent -> XREF: `D12 T06 §2`
 - [/] Tests: an `sdk/v*` fixture tag publishes reference pages matching its headers, under the SDK path and not the OS path; blocked on the two items above (D12 T06 §2, §8)
 - [/] Commit: `"site: SDK release docs and API reference"`; blocked with the items above
 
 **Test checkpoint:** `docs/sdk/api/` renders on the local build; an `sdk/v*` fixture tag lands under its own path. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 
 > **Verified:** 2026-09-30 | 0/4 items (deferred) | build N/A | both producers absent: no `tools/gendoc.c`, no `scripts/release-sdk.sh`, and D12 T06 is unvalidated
-> **Deferred:** [M] publishing needs the generated reference and the `sdk/v*` tag line, neither of which exists; widening §29's `VERSION_RE` with no producer would add an untested namespace to the retained-release store with nothing to exercise it -> XREF: 12-user-platform-sdk/TODO-06 §2 (item: "Keep `sdk/docs/api-reference/` renderable by the docs site") + 12-user-platform-sdk/TODO-06 §8 (item: "The pushed `sdk/v${VERSION}` tag triggers the versioned docs snapshot")
+> **Deferred:** [M] publishing needs the generated reference and the `sdk/v*` tag line, neither of which exists; widening §29's `VERSION_RE` with no producer would add an untested namespace to the retained-release store with nothing to exercise it -> XREF: 12-user-platform-sdk/TODO-06 §2 (item: "Keep `ImpossibleSDK/docs/api-reference/` renderable by the docs site") + 12-user-platform-sdk/TODO-06 §8 (item: "The pushed `sdk/v${VERSION}` tag triggers the versioned docs snapshot")
 
 ---
 

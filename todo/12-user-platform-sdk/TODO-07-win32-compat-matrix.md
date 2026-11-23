@@ -42,7 +42,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 - `user/` -- `hello.c`, `cmd.c` as reference user-mode program patterns
 - `scripts/build.sh` -- QEMU headless run pattern (`-serial stdio`); `build/serial.log`
 - `18-future-research/TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 sections 5 and 8 launcher UX and lifecycle for Android guest beside Win32 tiers (future epic)
-- `sdk/docs/` -- `win32-compat.md` lives here (§1)
+- `tests/compat/` -- `win32-compat.md` lives here (§1)
 - `../10-platform-services/TODO-A-user32-export-master-table.md` (XREF) authoritative user32.dll export rows + Done bits (this TODO keeps tier gates + sample apps)
 - `../10-platform-services/TODO-B-comctl32-export-master-table.md` (XREF) authoritative comctl32.dll export rows
 - `../10-platform-services/TODO-C-shell32-export-master-table.md` (XREF) authoritative shell32.dll export rows
@@ -51,7 +51,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## Outcome
 
-`sdk/docs/win32-compat.md` tracks aggregate Win32 function status by DLL and tier. Per-DLL export rows and owners live in D10 TODO-A, TODO-B, and TODO-C (see Inputs). Each tier 1 through 8 has passing native test programs and green real-binary milestones. `make compat-check` runs all tier 1 through 7 programs under QEMU headless and reports a compat score. When PuTTY runs, Win32 compatibility is excellent.
+`tests/compat/win32-compat.md` tracks aggregate Win32 function status by DLL and tier. Per-DLL export rows and owners live in D10 TODO-A, TODO-B, and TODO-C (see Inputs). Each tier 1 through 8 has passing native test programs and green real-binary milestones. `make compat-check` runs all tier 1 through 7 programs under QEMU headless and reports a compat score. When PuTTY runs, Win32 compatibility is excellent.
 
 ---
 
@@ -60,7 +60,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 | Step | Section                                        | 💎/⭐ | Gate / Dependency                                                                                                     |
 | ---- | ---------------------------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------- |
 | 1    | API coverage tracker + `compat_stub` extension | ⭐    | `D10T08 §9` base stub; `SYS_SHMEM_CREATE/MAP`                                                                         |
-| 2    | Bring-up ladder framework                      | ⭐    | §1; `sdk/compat/` test program structure                                                                              |
+| 2    | Bring-up ladder framework                      | ⭐    | §1; `tests/compat/` test program structure                                                                            |
 | 3    | Tier 1 -- Process exit                         | 💎    | Gate: `TODO-07 §1`                                                                                                    |
 | 4    | Tier 2 -- Console I/O                          | 💎    | Gate: `D10T08 §5 §4`                                                                                                  |
 | 5    | Tier 3 -- File I/O                             | 💎    | Gate: `TODO-07 §7`, `D10T08 §1` partial                                                                               |
@@ -77,9 +77,9 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 1. API Coverage Tracker
 
-**Output:** `sdk/docs/win32-compat.md` (hand-maintained + `tools/compat-scan.sh` regeneration)
+**Output:** `tests/compat/win32-compat.md` (hand-maintained + `tools/compat-scan.sh` regeneration)
 
-- [ ] **`sdk/docs/win32-compat.md`** structure:
+- [ ] **`tests/compat/win32-compat.md`** structure:
   - Header: date regenerated, total tracked, summary counts per status
   - One summary table per DLL in `win32-compat.md` (kernel32.dll, user32.dll, gdi32.dll, ntdll.dll, advapi32.dll, shell32.dll, msvcrt.dll, comdlg32.dll); detailed export rows for user32, comctl32, and shell32 stay in D10 TODO-A / TODO-B / TODO-C
   - Columns: `Function | Status | Tier | Notes`
@@ -87,7 +87,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   - Tier: 1–8 from bring-up ladder (§2)
 - [ ] **`compat_stub(dll, name)` macro extension** (extends `D10T08 §9` base):
   ```c
-  /* In sdk/compat/compat_stub.h -- shared between kernel and compat tools */
+  /* In tests/compat/compat_stub.h -- shared between kernel and compat tools */
   #define COMPAT_STUB_COUNT 512
 
   typedef struct {
@@ -107,18 +107,18 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   - `win32compat reset`: zero all counters in shmem
 - [ ] **`tools/compat-scan.sh`** (host-side script):
   - Scan `src/win32/*.c` for `EXPORT_STUB` / `COMPAT_STUB` / real implementations
-  - Update `sdk/docs/win32-compat.md` status rows from code scan results
+  - Update `tests/compat/win32-compat.md` status rows from code scan results
   - Print diff from previous run (new implementations since last scan)
 
 ---
 
 ## 2. Bring-Up Ladder Framework
 
-**Directory:** `sdk/compat/` -- one subdirectory per tier
+**Directory:** `tests/compat/` -- one subdirectory per tier
 
 - [ ] **Directory structure**:
   ```
-  sdk/compat/
+  tests/compat/
   ├── Makefile          ← builds all tiers with TCC; run: make TIER=1..8
   ├── tier1/            ← § 3
   ├── tier2/            ← § 4
@@ -130,13 +130,13 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   ├── tier8/            ← § 10
   └── run_tier.sh       ← QEMU headless runner; checks expected serial output
   ```
-- [ ] **`sdk/compat/run_tier.sh <tier> <program.exe>`**:
+- [ ] **`tests/compat/run_tier.sh <tier> <program.exe>`**:
   - Launch QEMU with `bash scripts/build.sh run` headless (`-display none -serial stdio`)
   - Inject `program.exe` into disk image (via loop mount or `mcopy`)
   - Wait for serial output to match expected string (timeout 30 s)
   - Print `[PASS] tier{N}/{program}` or `[FAIL] tier{N}/{program}: expected "{X}" got "{Y}"`
 - [ ] **Per-tier `README.md`**: gate condition, function list (~count), native programs, real Windows binary targets, pass criteria
-- [ ] **Milestone badges** in `sdk/docs/win32-compat.md`: add a `## Milestones` section; each real Windows binary that runs earns a badge row: `| {binary} | ✅ Runs | {tier} | {date} | {notes} |`
+- [ ] **Milestone badges** in `tests/compat/win32-compat.md`: add a `## Milestones` section; each real Windows binary that runs earns a badge row: `| {binary} | ✅ Runs | {tier} | {date} | {notes} |`
 
 ---
 
@@ -282,7 +282,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   - **Notepad.exe from Windows XP** (extracted, ~120 Win32 functions): opens; text input; save/load; Find dialog; Help→About
   - **Far Manager** (open-source Windows console file manager, ~80 Win32 functions): panel view renders; directory navigation works
   - **`curl.exe` for Windows** (static build, ~50 Win32 functions): `curl --version` prints; `curl http://10.0.2.2/` succeeds (QEMU NAT host)
-  - Pass criteria: each binary assigned a milestone badge row in `sdk/docs/win32-compat.md`
+  - Pass criteria: each binary assigned a milestone badge row in `tests/compat/win32-compat.md`
 
 ---
 
@@ -319,7 +319,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 - [ ] **`scripts/compat-check.sh`**:
   1. Build OS: `bash scripts/build.sh` → verify `=== BUILD OK ===`
-  2. For each tier 1–7 native test program: run `sdk/compat/run_tier.sh <tier> <program.exe>` under QEMU headless; collect pass/fail
+  2. For each tier 1–7 native test program: run `tests/compat/run_tier.sh <tier> <program.exe>` under QEMU headless; collect pass/fail
   3. Compute compat score: query `win32compat report` after running all programs; score = `(✅ count + 🔄 count × 0.5) / total_tracked × 100`
   4. Write score to `HKLM\SYSTEM\Win32Compat\Score` (integer 0–100) via Registry init on next OS boot
   5. Print report:
@@ -366,7 +366,7 @@ Modern Windows 11 apps (WinUI 3, Windows App SDK, and the .NET / C++ apps built 
   - Expected: a rendered window and `D2D test passed`
 - [ ] **Real binary targets**: WinUI 3 Gallery (self-contained build) main window renders and navigates; a `Microsoft.WindowsAppSDK` "Hello World" self-contained app opens
   - -> XREF: `11-apps/TODO-14-inkeys.md §3,§5` -- Inkeys (D3D11, Direct2D 1.1, DirectComposition, layered windows) is a bundled real-application target; its §2 inventory lists the APIs this tier owes it
-  - Pass criteria as Tier 8: badge rows in `sdk/docs/win32-compat.md`
+  - Pass criteria as Tier 8: badge rows in `tests/compat/win32-compat.md`
 - [ ] Extend the §2 ladder, §11 stub log and §12 `compat-check.sh` with Tier 9; the score denominator grows only once Tier 9 programs exist
 
 ---
@@ -376,7 +376,7 @@ Modern Windows 11 apps (WinUI 3, Windows App SDK, and the .NET / C++ apps built 
 
 | ⭐  | Feature                                        | 🪟 Win11                                            | 🐧 Linux                                     | 🚀 Impossible OS                                                                |
 | --- | ---------------------------------------------- | --------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------- |
-| ⭐  | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 -- `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh`  |
+| ⭐  | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 -- per-function status in `win32-compat.md`; `compat-scan.sh`             |
 | ⭐  | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 -- shmem counter map; `win32compat report`                                |
 | ⭐  | 8-tier progressive bring-up ladder             | ❌ No public bring-up ladder                        | ✅ ReactOS internal bring-up milestones      | ⬜ §2 -- –10; explicit gate conditions +                                        |
 | 💎  | Runs XP `cmd.exe`                              | ✅ Native                                           | ✅ Wine runs XP cmd.exe                      | ⬜ §4                                                                           |

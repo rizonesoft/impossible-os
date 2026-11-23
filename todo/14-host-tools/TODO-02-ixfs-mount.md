@@ -11,7 +11,7 @@ title: "TODO-02 -- IXFS Mount (Linux)"
 > **Goal:** Mount IXFS partitions from Linux so developers can browse Impossible OS filesystems from the host -- read logs, inspect files, copy assets, without booting the OS. Also provides a mount script for USB boot drives.
 
 > [!IMPORTANT]
-> This is an **SDK tool**, not part of the Impossible OS kernel. Uses libfuse3 on Linux to mount IXFS partitions as regular directories. Shared IXFS parsing code (`ixfs-core.c`) with platform-independent disk I/O.
+> This is an **host tool**, not part of the Impossible OS kernel. Uses libfuse3 on Linux to mount IXFS partitions as regular directories. Shared IXFS parsing code (`ixfs-core.c`) with platform-independent disk I/O.
 
 ## Inputs
 
@@ -22,7 +22,7 @@ title: "TODO-02 -- IXFS Mount (Linux)"
 - [`src/kernel/fs/ixfs/ixfs_alloc.c`](../../src/kernel/fs/ixfs/ixfs_alloc.c) -- block allocator
 - [`include/kernel/fs/ixfs.h`](../../include/kernel/fs/ixfs.h) -- on-disk structures
 - [`tools/mkfs-ixfs.c`](../../tools/mkfs-ixfs.c) -- IXFS formatter (reference for on-disk layout)
-- → XREF: `14-host-tools/TODO-01-sdk-build-system.md` -- SDK build system discovers and builds this tool
+- → XREF: `14-host-tools/TODO-01-sdk-build-system.md` -- host tools build discovers and builds this tool
 - → XREF: `14-host-tools/TODO-06-disk-inspect.md` -- shares IXFS core parser (`ixfs-core.c`); coordinate struct changes
 - → XREF: `14-host-tools/TODO-07-ixfs-fsck.md` -- shares IXFS core parser; coordinate struct changes
 
@@ -37,7 +37,7 @@ title: "TODO-02 -- IXFS Mount (Linux)"
 ## Source Layout
 
 ```
-sdk/src/ixfs-mount/
+tools/ixfs-mount/
   ├── ixfs-core.c           # Shared: superblock, inode, extent, readdir, write ops
   ├── ixfs-core.h           # Shared: IXFS API
   ├── ixfs-structs.h        # On-disk structures (from include/kernel/fs/ixfs.h, host types)
@@ -45,12 +45,10 @@ sdk/src/ixfs-mount/
   ├── ixfs-disk.h           # Disk I/O API
   ├── ixfs-fuse-linux.c     # Linux: libfuse3 callbacks + main
   ├── test_ixfs_core.c      # Dev test (not shipped)
+  ├── mount-ixfs-usb.sh     # Auto-detect USB, mount IXFS partition
   └── Makefile              # Linux build (gcc + libfuse3)
 
-sdk/scripts/
-  └── mount-ixfs-usb.sh     # Auto-detect USB, mount IXFS partition
-
-sdk/tools/                  # Compiled output (gitignored)
+build/host-tools/           # Compiled output (gitignored)
   └── ixfs-mount            # Linux binary
 ```
 
@@ -66,14 +64,14 @@ sdk/tools/                  # Compiled output (gitignored)
 | 💎  |   3   | 🐧 Linux FUSE mount (read-only) | §2         |  [x]   |
 | 💎  |   4   | Write support                   | §3         |  [x]   |
 | 💎  |   5   | USB auto-mount script           | §3         |  [x]   |
-| 💎  |   6   | Resync SDK parser with IXFS v2  | §1, §4     |  [ ]   |
+| 💎  |   6   | Resync host parser with IXFS v2 | §1, §4     |  [ ]   |
 
 ---
 
 ## 1. Shared IXFS Core Parser
 Port the IXFS on-disk structure parsing from kernel code to a standalone library. No kernel dependencies -- uses `<stdint.h>`, `<string.h>`, `<stdio.h>`.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-core.c`, `ixfs-core.h`, `ixfs-structs.h`
+**Files:** `tools/ixfs-mount/ixfs-core.c`, `ixfs-core.h`, `ixfs-structs.h`
 
 - [x] Copy on-disk structures from `include/kernel/fs/ixfs.h` to `ixfs-structs.h`
 - [x] `ixfs_open(disk_ctx)` -- read and validate superblock
@@ -90,7 +88,7 @@ Port the IXFS on-disk structure parsing from kernel code to a standalone library
 ## 2. Disk I/O Layer with GPT
 Abstracted raw sector read/write with GPT partition parsing.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-disk.c`, `ixfs-disk.h`
+**Files:** `tools/ixfs-mount/ixfs-disk.c`, `ixfs-disk.h`
 
 - [x] `disk_open(path, partition_index)` -- open image, locate partition via GPT
 - [x] `disk_read_sectors(lba, count, buf)` -- read sectors within partition
@@ -106,7 +104,7 @@ Abstracted raw sector read/write with GPT partition parsing.
 ## 3. Linux FUSE Mount (Read-Only)
 Implement libfuse3 callbacks for read-only mounting.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-fuse-linux.c`, `Makefile`
+**Files:** `tools/ixfs-mount/ixfs-fuse-linux.c`, `Makefile`
 
 - [x] `fuse_getattr` -- stat from inode
 - [x] `fuse_readdir` -- enumerate directory
@@ -125,7 +123,7 @@ Implement libfuse3 callbacks for read-only mounting.
 ## 4. Write Support
 Add create, write, delete, rename operations.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-core.c`, `ixfs-fuse-linux.c`
+**Files:** `tools/ixfs-mount/ixfs-core.c`, `ixfs-fuse-linux.c`
 
 - [x] `ixfs_write_data(inode, offset, buf, len)` -- write file data, allocate blocks
 - [x] `ixfs_create(parent_ino, name, type)` -- create file or directory
@@ -144,7 +142,7 @@ Add create, write, delete, rename operations.
 ## 5. USB Auto-Mount Script
 Script to detect USB drives with IXFS partitions and mount them automatically.
 
-**Files:** `sdk/scripts/mount-ixfs-usb.sh`
+**Files:** `tools/ixfs-mount/mount-ixfs-usb.sh`
 
 - [x] Scan `/sys/block/sd*` and `/sys/block/nvme*` for USB/removable drives
 - [x] For each partition: read IXFS magic (0x49584653) at offset 0
@@ -160,24 +158,24 @@ Script to detect USB drives with IXFS partitions and mount them automatically.
 
 ---
 
-## 6. Resync the SDK Parser with the IXFS v2 On-Disk Format
+## 6. Resync the Host Parser with the IXFS v2 On-Disk Format
 
 > **Spawned-by:** root
 
 Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26). Sections 1-5 are marked shipped, but the parser no longer reads images the current kernel makes, and its write path ignores metadata the kernel now verifies. Until this lands, `docs/host-tools/ixfs-mount.md` tells users not to mount real images read-write.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-structs.h`, `ixfs-core.c`, `ixfs-fuse-linux.c`, `test_ixfs_core.c`
+**Files:** `tools/ixfs-mount/ixfs-structs.h`, `ixfs-core.c`, `ixfs-fuse-linux.c`, `test_ixfs_core.c`
 
-- [ ] Pad the SDK `struct ixfs_inode` to 128 bytes to match `include/kernel/fs/ixfs.h`, and pin both it and `struct ixfs_dir_entry` (256) with `_Static_assert`
-  - The SDK copy has no `i_reserved[36]` and is 92 bytes; the kernel was padded in `161d194bd`. Measured 2026-09-30: `test_ixfs_core build/system-disk.img 3` finds the superblock and lists an empty root.
+- [ ] Pad the host `struct ixfs_inode` to 128 bytes to match `include/kernel/fs/ixfs.h`, and pin both it and `struct ixfs_dir_entry` (256) with `_Static_assert`
+  - The host copy has no `i_reserved[36]` and is 92 bytes; the kernel was padded in `161d194bd`. Measured 2026-09-30: `test_ixfs_core build/system-disk.img 3` finds the superblock and lists an empty root.
   - Waiting on it: the bad-strings crash smoke leg reads `C:\Impossible\System\crashdump.log` back through this parser -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §19 (item: "read `crashdump.log` back off the fixture disk")
 - [ ] Refuse a read-write mount unless every metadata structure the kernel checks is maintained, or maintain them
   - The kernel keeps a CRC32C data-block checksum table, a journal, block refcounts and snapshots; `ixfs-core.c` updates none of them, so a host write leaves blocks the kernel reports as corrupt.
 - [ ] Implement cross-directory rename (or return `EXDEV`): `ixfs_fuse_rename` resolves only the source's parent, so `mv a/x b/y` renames `x` to `y` inside `a/`
 - [ ] Implement truncate to a non-zero size and free blocks on truncate to zero (today size 0 returns success without freeing; any other size returns `ENOSYS`)
 - [ ] Update the usage examples in the tool, its header comment and this file: `:2` is now the BlackBox FAT32 partition; IXFS is `:3` (and `:4` under A/B)
-  - `sdk/scripts/extract-logs.sh` is not re-pointed here: `14-host-tools/TODO-08` §3 retires it, since logs now live on the BlackBox volume.
-- [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-sdk-build-system.md` §4 (item: "Build the SDK and run `test_ixfs_core`")
+  - `tools/ixfs-mount/extract-logs.sh` is not re-pointed here: `14-host-tools/TODO-08` §3 retires it, since logs now live on the BlackBox volume.
+- [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-sdk-build-system.md` §4 (item: "Build the host tools and run `test_ixfs_core`")
 - [ ] Commit: `"sdk: resync ixfs-mount with the IXFS v2 on-disk format"`
 
 **Test checkpoint:** `test_ixfs_core build/system-disk.img 3` lists the root directory including `Impossible/`; a read-write mount either refuses with a clear message or produces an image the kernel's `ixfs_fsck()` reports clean.

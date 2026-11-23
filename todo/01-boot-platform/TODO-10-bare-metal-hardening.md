@@ -774,7 +774,7 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 - [x] A panic raised while the boot splash was up hung before the stop screen painted, on every boot path: `panic_screen_impl` called `boot_splash_finish()`, whose fade waits in `sleep_ms()` (`hlt`) with interrupts masked
   - It now calls `boot_splash_abort()`, which never waits; `boot_splash.h` says which teardown a terminal path uses. Found by the first boot of the leg above, with readable strings too.
 - [/] PARKED: read `crashdump.log` back off the fixture disk and assert both placeholders, so the dump is checked as an artifact and not only by its own "saved" line
-  - Blocked on the host IXFS parser reading current images -> XREF: `14-host-tools/TODO-02-ixfs-mount.md` §6 (item: "Pad the SDK `struct ixfs_inode` to 128 bytes")
+  - Blocked on the host IXFS parser reading current images -> XREF: `14-host-tools/TODO-02-ixfs-mount.md` §6 (item: "Pad the host `struct ixfs_inode` to 128 bytes")
 - [x] Live double-panic checkpoint: `crash_test=4/5/6` (`boot_desktop.c`) NMIs an online AP (`lapic_send_nmi`, `lapic.c`) into `KeBugCheckExFrame(0xE2)` while the BSP panics, in a forced ordering
   - 4 races; 5 waits for the AP to claim the owner; 6 holds the AP after its record and before its claim (`panic_fixture_hold_claim`/`panic_fixture_state`, `panic.h`), so the record's owner loses terminal.
   - Each report prints `on CPU apic=`, the loser prints `secondary panic on CPU apic=N parked; logical CPU M owns the crash`, and one report lock (`panic_report_begin`) keeps two CPUs' reports whole.

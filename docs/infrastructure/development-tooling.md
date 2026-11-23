@@ -92,7 +92,8 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 
 | Capability                                    | Owner                                                                                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-compiler toolchain, SDK build system    | [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
+| Application cross-compiler (`impossible-cc`)   | [Win32 API Surface TODO](../../todo/10-platform-services/TODO-08-win32-api-surface.md) -- "Developer SDK" section |
+| Host tools build                              | [Host Tools Build TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md)                                                   |
 | Host profile matrix + reproducible container  | [Supported Host Profiles and Reproducible Environments](#supported-host-profiles-and-reproducible-environments) (below)         |
 | Build/test/lint/run wrapper contract          | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "wrapper contract" section   |
 | VM/bare-metal launcher matrix                 | [`machine-matrix.md`](machine-matrix.md) -- canonical table (owned by the [Machine Launcher and Debug Profile Matrix section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#4-machine-launcher-and-debug-profile-matrix)) |
@@ -100,7 +101,7 @@ Owned elsewhere. Each row links to the owning TODO *file*; section anchors insid
 | CI workflow alignment                         | [GitHub Actions Workflows](#github-actions-workflows) -- canonical section (owned by the [GitHub Actions roadmap section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#6-github-actions-and-artifact-policy-alignment)) |
 | One-command `scripts/tooling-doctor.sh`       | [Developer Tooling Stack TODO](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md) -- "tooling doctor" section     |
 
-The SDK Build System TODO ships the SDK cross-tool build experience (user-mode programs, host utilities in `sdk/src/`). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
+The Host Tools Build TODO ships the host tools build (host utilities in `tools/` that have a Makefile). It explicitly does *not* own the kernel-side `scripts/build.sh` entry point or the host package install flow.
 
 ---
 
@@ -119,7 +120,7 @@ The [Host Bootstrap Contract](#host-bootstrap-contract) above defines *what must
 | Native Fedora (40+)             | ⚠️ Best-effort              | `setup-deps.sh` installs unversioned LLVM and OVMF under a different path. Needs manual shims (see below) until tracked owner lands. |
 | Native Arch / Manjaro           | ⚠️ Best-effort              | Same as Fedora: unversioned `clang`/`lld`/`llvm-objcopy` and OVMF path drift require shims.           |
 | Native Windows (PowerShell/cmd) | ❌ Unsupported              | No `bash scripts/setup.sh` path. Use WSL2 instead.                                                    |
-| macOS                           | ❌ Unsupported              | No tracked owner for toolchain port. Would need cross-compiler changes in the [SDK Build System TODO](../../todo/14-host-tools/TODO-01-sdk-build-system.md). |
+| macOS                           | ❌ Unsupported              | No tracked owner for toolchain port. Would need a clang-19 cross toolchain on macOS in the host bootstrap. |
 
 **Out-of-the-box** means `bash scripts/setup.sh` followed by `bash scripts/build.sh` succeeds with no manual steps. Best-effort profiles detect correctly but need the documented shim before `--verify` passes.
 

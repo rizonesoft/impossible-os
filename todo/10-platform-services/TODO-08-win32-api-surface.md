@@ -22,6 +22,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 
 ## Important Notes
 
+- `ImpossibleSDK/` paths are in the separate Impossible SDK repository, which replaced this repository's `sdk/` folder on 2026-11-23 (`todo/answers.md` Q55).
 - Registry API (`RegOpenKeyExA/W`, `RegQueryValueExA/W`, `RegSetValueExA/W`, `RegCloseKey`, `RegCreateKeyExA/W`, `RegEnumKeyExA/W`) is **already implemented** via the native Registry API -- expose as pass-throughs only.
 - Kernel already has `mutex_t` (`include/kernel/sched/mutex.h`), `semaphore_t` (`include/kernel/sched/semaphore.h`), `event_t` (`include/kernel/sched/event.h`) -- Win32 sync primitives wrap these directly.
 - `wm_create_window()` and `wm_destroy_window()` exist in `include/desktop/wm.h`; `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` exist in `include/desktop/controls.h`. Win32 window/control classes map to these.
@@ -29,7 +30,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 - File I/O exports (`CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, etc.) are **native** Impossible OS API -- `kernel32.dll` simply re-exports the same function pointers.
 - `GetLastError`/`SetLastError` store the error code in `TEB.LastErrorValue` (per-thread, set up in `TODO-07 §7`).
 - `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `CTRL_CHECKBOX`, `CTRL_RADIO` widgets are defined in `TODO-04` (08-graphics-ui domain); this TODO may reference but not implement them.
-- The IxUI toolkit (`sdk/include/ixui.h`) is the **native** Impossible OS GUI framework -- it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
+- The IxUI toolkit (`ImpossibleSDK/include/ixui.h`) is the **native** Impossible OS GUI framework -- it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
 
 ---
 
@@ -80,7 +81,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 | 10  | Window Management (`user32.dll`)                            | `[Sonnet]` | §1, TODO-07 §7 | 💎   |
 | 11  | GDI Rendering (`gdi32.dll`)                                 | `[Sonnet]` | §10            | 💎   |
 | 12  | Shell & Icon API (`shell32.dll`)                            | `[Sonnet]` | §10            | 💎   |
-| 13  | IxUI Native Toolkit (`sdk/include/ixui.h`)                  | `[Opus]`   | §10–11         | ⭐   |
+| 13  | IxUI Native Toolkit (`ImpossibleSDK/include/ixui.h`)        | `[Opus]`   | §10–11         | ⭐   |
 | 14  | Win32 Shell Integration (`ShellExecute`, `SHGetFolderPath`) | `[Sonnet]` | §12            | 💎   |
 | 15  | Developer SDK (`windows.h`, `impossible-cc`)                | `[Sonnet]` | §1–14          | ⭐   |
 
@@ -278,9 +279,9 @@ Create `src/win32/shell32.c`.
 
 ## 13. IxUI Native Toolkit
 
-IxUI is Impossible OS's **native** Win32-compatible GUI framework. Unlike Wine's user32 emulation, IxUI is a first-class, kernel-backed GUI toolkit for native app development. Apps link `sdk/lib/libixui.a` or use Win32 `#include <windows.h>`.
+IxUI is Impossible OS's **native** Win32-compatible GUI framework. Unlike Wine's user32 emulation, IxUI is a first-class, kernel-backed GUI toolkit for native app development. Apps link `ImpossibleSDK/lib/libixui.a` or use Win32 `#include <windows.h>`.
 
-- [ ] Create `sdk/include/ixui.h`:
+- [ ] Create `ImpossibleSDK/include/ixui.h`:
   - `IxCreateWindow(className, title, style, x, y, w, h, parent)` → `SYS_CREATEWINDOW` → `wm_create()`
   - `IxRegisterWindowClass(className, wndProc)` → register WndProc callback in per-process class table
   - `IxGetMessage(lpMsg)` → `SYS_GETMESSAGE` → block on WM event queue
@@ -295,7 +296,7 @@ IxUI is Impossible OS's **native** Win32-compatible GUI framework. Unlike Wine's
   - `"COMBOBOX"` → `ctrl_create_listview()` + dropdown overlay
   - `"SCROLLBAR"` → `ctrl_create_scrollbar()`
 - [ ] Add `SYS_CREATEWINDOW`, `SYS_DESTROYWINDOW`, `SYS_GETMESSAGE`, `SYS_POSTMESSAGE`, `SYS_SHOWWINDOW` syscall numbers (extend `include/kernel/sched/abi.h`)
-- [ ] Build `sdk/lib/libixui.a` (static library for userland programs)
+- [ ] Build `ImpossibleSDK/lib/libixui.a` (static library for userland programs)
 - [ ] Test: native PE app with window + BUTTON + EDIT + message loop → renders on desktop, button click fires WM_COMMAND
 - [ ] Commit: `"sdk: IxUI native GUI toolkit"`
 
@@ -324,14 +325,14 @@ Add to `src/win32/shell32.c`. Enables `ShellExecute` and file-association-aware 
 
 Provides the cross-compilation toolchain for targeting Impossible OS from a host Linux system.
 
-- [ ] Create `sdk/include/windows.h` -- aggregates all Win32 headers:
+- [ ] Create `ImpossibleSDK/include/windows.h` -- aggregates all Win32 headers:
   - File I/O, process, memory, sync, console, registry declarations
   - GUI: `CreateWindowEx`, `RegisterClassEx`, `GetMessage`, `DispatchMessage`, `MessageBox`
   - Wraps IxUI: `#include "ixui.h"` for native `IxCreate*` extensions
-- [ ] Create `sdk/include/impossible.h` -- Impossible OS extensions: `GetImpossibleVersion()`, `IxUI types`, `IRES icon handles`, OS feature flags
-- [ ] Create `sdk/lib/kernel32.lib` -- import library (`__imp__*` symbols) for PE linker
-- [ ] Create `sdk/lib/user32.lib`, `sdk/lib/gdi32.lib`, `sdk/lib/shell32.lib`, `sdk/lib/msvcrt.lib` -- import libraries
-- [ ] Create `sdk/lib/libixui.a` -- static IxUI library (from §13)
+- [ ] Create `ImpossibleSDK/include/impossible.h` -- Impossible OS extensions: `GetImpossibleVersion()`, `IxUI types`, `IRES icon handles`, OS feature flags
+- [ ] Create `ImpossibleSDK/lib/kernel32.lib` -- import library (`__imp__*` symbols) for PE linker
+- [ ] Create `ImpossibleSDK/lib/user32.lib`, `ImpossibleSDK/lib/gdi32.lib`, `ImpossibleSDK/lib/shell32.lib`, `ImpossibleSDK/lib/msvcrt.lib` -- import libraries
+- [ ] Create `ImpossibleSDK/lib/libixui.a` -- static IxUI library (from §13)
 - [ ] Create `tools/impossible-cc` wrapper script:
   - `x86_64-w64-mingw32-gcc -I$SDK/include -L$SDK/lib -lkernel32 -luser32 "$@"`
   - Auto-selects CRT (`-lmsvcrt`) and sets correct subsystem (`-Wl,--subsystem,console` or `windows`)

@@ -30,7 +30,7 @@ This tree is the live planning scaffold for active work.
 | 12    | [11 Apps](./11-apps/INDEX.md)                               | Built-in applications, CLI tools, and user-facing product features.                                                                         |
 | 13    | [12 User Platform SDK](./12-user-platform-sdk/INDEX.md)     | User-mode ABI, compatibility surface, SDK assets, and developer-facing contracts.                                                           |
 | 14    | [13 Tools & Accessories](./13-tools-accessories/INDEX.md)   | System diagnostic tools, namespace browsers, and administrative utilities.                                                                  |
-| 15    | [14 Host Tools & SDK](./14-host-tools/INDEX.md)             | SDK tools running on the host OS (Linux) for development and third-party use.                                                               |
+| 15    | [14 Host Tools](./14-host-tools/INDEX.md)                   | Tools running on the host OS (Linux) for development and third-party use.                                                                   |
 | 16    | [15 Installer & Release](./15-installer-release/INDEX.md)   | Installer flow, deployable media, packaging, and release readiness.                                                                         |
 | 17    | [16 Architecture Ports](./16-architecture-ports/INDEX.md)   | ARM64 port, arch abstraction layer (HAL), multi-arch build system.                                                                          |
 | 18    | [17 Polish & Hardening](./17-polish-hardening/INDEX.md)     | Discovered bugs, regression fixes, performance tuning, UX polish.                                                                           |

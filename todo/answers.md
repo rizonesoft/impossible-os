@@ -610,3 +610,13 @@ The drop was in the operator's first sketch, to save tokens. None of the 7,042 r
 - **C:** A, and kernel and boot stay at high after round 3 too.
 
 A: (operator asked what the session would do, 2026-11-23, after "not even 1% of the quality") A. B finds a loss only after two weeks of defects shipped at low. C has no evidence either, and the boot, kernel and driver domains hold hundreds of open rows, so its cost would be large; the pin already returns them to high after a P1. Reversal cost: one word in `.conclave/reviewers.toml` and one test.
+
+## Q55 (operator, 14-host-tools/TODO-01, 12-user-platform-sdk/TODO-06, 10-platform-services/TODO-09): what happens to `sdk/` now that Impossible SDK is its own project?
+
+`sdk/` held host tools (`ixfs-mount`, two scripts, a build script) and an application kit (one header of declarations, one example, a reference page, an empty library folder). Impossible SDK, a separate repository, replaces the kit, so two things were called SDK.
+
+- **A:** host tools move to `tools/` (`tools/ixfs-mount/`, `tools/build-host.sh`, binaries in `build/host-tools/`), the kit is removed, and its planned paths point at `ImpossibleSDK/`.
+- **B:** only the host tools move; the kit stays until the planned apps move.
+- **C:** the kit becomes `devkit/`.
+
+A: (operator, 2026-11-23) A, with only the host tools renamed: `12-user-platform-sdk` and `docs/sdk/` keep their names. The session chose the rest: OS conformance programs planned under `sdk/compat/` go to `tests/compat/`, on-OS developer programs to `build/devtools/`, and the `sdk/v*` tag namespace is unchanged. Reversal cost: one revert; no build, CI or kernel code reads these paths.

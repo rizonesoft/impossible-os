@@ -31,7 +31,7 @@ flowchart TD
   class todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 draft
   click todo_00_infrastructure_TODO_07_lsp_mcp_bridge_md_38ff90 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md"
   todo_00_infrastructure_TODO_08_automation_hardening_md_187877["automation-hardening<br/>TODO-08"]
-  class todo_00_infrastructure_TODO_08_automation_hardening_md_187877 draft
+  class todo_00_infrastructure_TODO_08_automation_hardening_md_187877 active
   click todo_00_infrastructure_TODO_08_automation_hardening_md_187877 "https://github.com/rizonesoft/impossible-os/blob/main/todo/00-infrastructure/TODO-08-automation-hardening.md"
   todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5["repository-transfer-rizonetech<br/>TODO-09"]
   class todo_00_infrastructure_TODO_09_repository_transfer_rizonetech_md_246db5 draft
@@ -483,6 +483,15 @@ flowchart TD
   todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c["win32k-shadow-native-api<br/>TODO-16"]
   class todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c active
   click todo_08_graphics_ui_TODO_16_win32k_shadow_native_api_md_2f1f4c "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md"
+  todo_08_graphics_ui_TODO_17_win11_parity_inventory_md_c0a634["win11-parity-inventory<br/>TODO-17"]
+  class todo_08_graphics_ui_TODO_17_win11_parity_inventory_md_c0a634 active
+  click todo_08_graphics_ui_TODO_17_win11_parity_inventory_md_c0a634 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-17-win11-parity-inventory.md"
+  todo_08_graphics_ui_TODO_18_ui_framework_engines_md_ae8e1d["ui-framework-engines<br/>TODO-18"]
+  class todo_08_graphics_ui_TODO_18_ui_framework_engines_md_ae8e1d active
+  click todo_08_graphics_ui_TODO_18_ui_framework_engines_md_ae8e1d "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-18-ui-framework-engines.md"
+  todo_08_graphics_ui_TODO_19_fluent_component_library_md_0b460e["fluent-component-library<br/>TODO-19"]
+  class todo_08_graphics_ui_TODO_19_fluent_component_library_md_0b460e active
+  click todo_08_graphics_ui_TODO_19_fluent_component_library_md_0b460e "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-19-fluent-component-library.md"
   todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33["win32k-shadow-ssdt-master-table<br/>TODO-A"]
   class todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33 active
   click todo_08_graphics_ui_TODO_A_Win32k_Shadow_SSDT_Master_Table_md_e3fa33 "https://github.com/rizonesoft/impossible-os/blob/main/todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md"
@@ -612,6 +621,9 @@ flowchart TD
   todo_11_apps_TODO_13_calendar_utilities_md_90f622["calendar-utilities<br/>TODO-13"]
   class todo_11_apps_TODO_13_calendar_utilities_md_90f622 active
   click todo_11_apps_TODO_13_calendar_utilities_md_90f622 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-13-calendar-utilities.md"
+  todo_11_apps_TODO_14_inkeys_md_1ec3c8["inkeys<br/>TODO-14"]
+  class todo_11_apps_TODO_14_inkeys_md_1ec3c8 active
+  click todo_11_apps_TODO_14_inkeys_md_1ec3c8 "https://github.com/rizonesoft/impossible-os/blob/main/todo/11-apps/TODO-14-inkeys.md"
   todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1["kernel-libraries-sdk<br/>TODO-01"]
   class todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 active
   click todo_12_user_platform_sdk_TODO_01_kernel_libraries_md_c7c1f1 "https://github.com/rizonesoft/impossible-os/blob/main/todo/12-user-platform-sdk/TODO-01-kernel-libraries.md"
@@ -717,6 +729,7 @@ flowchart TD
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_23_exception_dispatch_seh_md_b5e4b8
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_04_system_logging_md_f11c79
+  todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_03_memory_concurrency_TODO_07_smp_phase2_md_27362e
   todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
   todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|accepted| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
   todo_00_infrastructure_TODO_04_usermode_test_framework_md_e9b087 -.->|deferred| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
@@ -767,7 +780,6 @@ flowchart TD
   todo_00_infrastructure_TODO_10_documentation_site_md_8d09e0 -.->|deferred| todo_12_user_platform_sdk_TODO_06_sdk_distribution_md_3c54c6
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
-  todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|deferred| todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|accepted| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
   todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791 -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
@@ -803,7 +815,6 @@ flowchart TD
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|accepted| todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|accepted| todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|accepted| todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f
-  todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|accepted| todo_05_storage_filesystems_TODO_01_block_storage_hardening_md_4a94a1
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|accepted| todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|deferred| todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775
   todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12 -.->|deferred| todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66
@@ -837,6 +848,7 @@ flowchart TD
   todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0 -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_12_early_entropy_random_seed_md_5d8fe0 -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e -.->|accepted| todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10
+  todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e -.->|accepted| todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12
   todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03 -.->|deferred| todo_04_drivers_hardware_TODO_08_core_driver_enhancements_md_ae79d2
   todo_01_boot_platform_TODO_16_nvme_storage_md_75ab03 -.->|accepted| todo_04_drivers_hardware_TODO_03_acpi_power_management_md_2c6d10
@@ -851,7 +863,6 @@ flowchart TD
   todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d -.->|deferred| todo_02_kernel_core_TODO_04_system_logging_md_f11c79
   todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d -.->|deferred| todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84
   todo_01_boot_platform_TODO_19_usb_boot_hardening_md_5fd58d -.->|deferred| todo_04_drivers_hardware_TODO_10_usb_stack_md_c41a84
-  todo_01_boot_platform_TODO_20_usb_zero_delay_handover_md_e2973e -.->|deferred| todo_01_boot_platform_TODO_01_boot_protocol_abi_handoff_md_27e791
   todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 -.->|deferred| todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1
   todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 -.->|deferred| todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c
   todo_01_boot_platform_TODO_21_ab_boot_rollback_md_3d5d62 -.->|deferred| todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09
@@ -866,7 +877,6 @@ flowchart TD
   todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_24_blackbox_service_partition_md_3e06e0 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
-  todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 -.->|deferred| todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c
   todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 -.->|deferred| todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e
   todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 -.->|deferred| todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c
   todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384 -.->|deferred| todo_01_boot_platform_TODO_13_tpm_measured_boot_attestation_md_ab1f6e
@@ -881,9 +891,7 @@ flowchart TD
   todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5 -.->|deferred| todo_02_kernel_core_TODO_26_power_management_md_d51bc9
   todo_01_boot_platform_TODO_26_hibernation_resume_fast_startup_handoff_md_b1e5e5 -.->|deferred| todo_02_kernel_core_TODO_26_power_management_md_d51bc9
   todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5 -.->|deferred| todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7
-  todo_01_boot_platform_TODO_27_uefi_advanced_md_f510b5 -.->|deferred| todo_15_installer_release_TODO_01_release_artifacts_md_0a102f
   todo_01_boot_platform_TODO_28_boot_validation_certification_matrix_md_1c2cca -.->|deferred| todo_01_boot_platform_TODO_25_network_pxe_http_boot_md_6eb384
-  todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f -.->|deferred| todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477
   todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f -.->|accepted| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
   todo_01_boot_platform_TODO_29_boot_perf_health_observability_md_d13a9f -.->|accepted| todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976
@@ -906,7 +914,6 @@ flowchart TD
   todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 -.->|deferred| todo_07_networking_TODO_03_http_tls_md_43627d
   todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 -.->|accepted| todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7
   todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 -.->|accepted| todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594
-  todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 -.->|deferred| todo_07_networking_TODO_03_http_tls_md_43627d
   todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976 -.->|deferred| todo_05_storage_filesystems_TODO_07_ixfs_advanced_enterprise_md_ea935c
   todo_02_kernel_core_TODO_04_system_logging_md_f11c79 -.->|accepted| todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00
   todo_02_kernel_core_TODO_04_system_logging_md_f11c79 -.->|accepted| todo_02_kernel_core_TODO_32_kernel_logging_v2_lockless_md_4bbf00
@@ -950,11 +957,11 @@ flowchart TD
   todo_02_kernel_core_TODO_08_time_filetime_management_md_8bbbfc -.->|deferred| todo_02_kernel_core_TODO_26_power_management_md_d51bc9
   todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 -.->|deferred| todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775
   todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 -.->|deferred| todo_01_boot_platform_TODO_11_interrupt_timer_arch_md_b2e16a
+  todo_02_kernel_core_TODO_09_x86_64_architecture_md_a02d27 -.->|deferred| todo_03_memory_concurrency_TODO_06_scheduler_enhancement_md_6ebc55
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_01_boot_platform_TODO_10_bare_metal_hardening_md_050e12
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
-  todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
   todo_02_kernel_core_TODO_10_kernel_security_hardening_md_eda9f7 -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
@@ -1032,7 +1039,6 @@ flowchart TD
   todo_02_kernel_core_TODO_16_kernel_notification_facility_md_a4627a -.->|deferred| todo_02_kernel_core_TODO_15_security_reference_monitor_md_0a75cb
   todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8 -.->|deferred| todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194
   todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8 -.->|deferred| todo_02_kernel_core_TODO_03_kernel_libraries_md_7fd976
-  todo_02_kernel_core_TODO_18_kernel_image_module_registry_md_a8091a -.->|deferred| todo_02_kernel_core_TODO_27_crash_dump_generation_md_72fb66
   todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 -.->|accepted| todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8
   todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 -.->|accepted| todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8
   todo_02_kernel_core_TODO_20_eif_full_implementation_md_b7c194 -.->|deferred| todo_02_kernel_core_TODO_17_binary_system_md_ae6ab8
@@ -1186,4 +1192,38 @@ flowchart TD
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_03_memory_concurrency_TODO_09_win32_ipc_extensions_md_18ade5
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_03_memory_concurrency_TODO_03_advanced_allocator_md_4669cf
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 -.->|accepted| todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1
+  todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_06_desktop_foundation_TODO_01_wm_completion_md_9465e9 -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_06_desktop_foundation_TODO_02_compositor_optimization_md_af5a1d -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 -.->|deferred| todo_08_graphics_ui_TODO_09_desktop_shell_features_md_c3edbb
+  todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 -.->|deferred| todo_08_graphics_ui_TODO_10_taskbar_md_b10adc
+  todo_06_desktop_foundation_TODO_05_desktop_shell_md_65e6f2 -.->|deferred| todo_08_graphics_ui_TODO_11_startmenu_tray_notifications_md_b9ead2
+  todo_06_desktop_foundation_TODO_06_desktop_icons_md_09e4c3 -.->|deferred| todo_08_graphics_ui_TODO_08_window_manager_md_74b8f1
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_07_networking_TODO_10_pdf_viewer_md_549fa6 -.->|deferred| todo_11_apps_TODO_05_pdf_viewer_md_ceaf66
+  todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591 -.->|deferred| todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948
+  todo_08_graphics_ui_TODO_13_boot_splash_recovery_md_fb6591 -.->|deferred| todo_02_kernel_core_TODO_28_bsod_ux_enhancements_md_454948
+  todo_09_desktop_shell_TODO_02_file_associations_resources_md_9f4cb2 -.->|deferred| todo_11_apps_TODO_13_calendar_utilities_md_90f622
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_10_notepad_md_0f5e6e -.->|deferred| todo_11_apps_TODO_08_notepad_md_8d9f09
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_09_calculator_md_066f07
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_11_photos_image_viewer_md_02245b
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_12_screenshot_archive_md_f931ff
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_12_screenshot_archive_md_f931ff
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_13_calendar_utilities_md_90f622
+  todo_09_desktop_shell_TODO_12_utilities_md_eb60d5 -.->|deferred| todo_11_apps_TODO_13_calendar_utilities_md_90f622
 ```

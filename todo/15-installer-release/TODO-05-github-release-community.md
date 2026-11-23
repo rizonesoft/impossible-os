@@ -91,7 +91,7 @@ Visiting `https://github.com/rizonesoft/impossible-os` shows a polished README w
   8. Post Discord announcement webhook (§7): `curl -X POST $DISCORD_RELEASES_WEBHOOK -d "{\"content\":\"...\"}"` with version, download URL, changelog summary
   9. Print: `"Release v{version} ({channel}) published: https://github.com/rizonesoft/impossible-os/releases/tag/v{version}"`
 - [ ] **`.github/workflows/release.yml`**: triggered on `push` to tags matching `v*`; steps: checkout, `bash scripts/build.sh clean`, `bash scripts/sign-release.sh`, `bash scripts/create-release.sh ${{ github.ref_name }} ${{ inputs.channel }}`; requires secrets `GH_RELEASE_TOKEN`, `CODESIGN_PRIV_KEY`, `CLOUDFLARE_R2_*`, `DISCORD_RELEASES_WEBHOOK`
-- [ ] **SDK version synchronization**: `create-release.sh` reads `HKLM\SYSTEM\SDK\InstalledVersion` equivalent from `sdk/VERSION` file; asserts it matches OS version before proceeding
+- [ ] **SDK version synchronization**: `create-release.sh` reads `HKLM\SYSTEM\SDK\InstalledVersion` equivalent from `ImpossibleSDK/VERSION` file; asserts it matches OS version before proceeding
 
 ---
 

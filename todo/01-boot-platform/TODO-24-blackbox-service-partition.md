@@ -300,7 +300,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 **Test checkpoint:** `bash scripts/tools/read-blackbox.sh build/system-disk.img` extracts logs to a local directory. `mount` on Linux at the correct offset shows FAT32 with the directory structure.
 
 > **Notes:**
-> - `scripts/tools/read-blackbox.sh` extracts the BlackBox FAT32 partition from a raw disk image via mtools into `build/blackbox-extract/` (host SDK tool).
+> - `scripts/tools/read-blackbox.sh` extracts the BlackBox FAT32 partition from a raw disk image via mtools into `build/blackbox-extract/` (host tool).
 > - `BB_OFFSET` is now resolved from the build-emitted `<disk>.info` sidecar (data-only `sed` parse, never sourced) instead of a hardcoded value -- matches the Makefile's offset source of truth and survives layout changes.
 > - Validates the FAT volume label is `BLACKBOX` (via `mlabel`) before extracting, so a stale offset cannot silently extract the ESP/recovery/IXFS volume as diagnostics.
 > - Single recursive `mcopy -s` (under `set -e`, no `|| true`) extracts the whole tree incl. `Logs/Serial` + `Crash/WER` and propagates real mtools errors instead of reporting a clean zero-file extract.

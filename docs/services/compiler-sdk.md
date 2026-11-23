@@ -1,9 +1,9 @@
-<!-- docs: covers=todo/10-platform-services/TODO-09-compiler-sdk.md sources=Makefile,user/user.ld,user/lib/crt0.asm,user/include/stdio.h,sdk/README.md,sdk/include/impossible/windows.h,sdk/examples/hello.c,sdk/docs/api-reference.md,include/kernel/eif.h,scripts/build-eif.py reviewed=2026-09-29 order=9 -->
+<!-- docs: covers=todo/10-platform-services/TODO-09-compiler-sdk.md sources=Makefile,user/user.ld,user/lib/crt0.asm,user/include/stdio.h,include/kernel/eif.h,scripts/build-eif.py reviewed=2026-11-23 order=9 -->
 # Compiler and SDK
 
 ## What is it?
 
-This roadmap gives Impossible OS a developer kit and a compiler that runs on the OS itself: SDK headers installed at `C:\Impossible\Include\`, import libraries, a port of the Tiny C Compiler (TCC) that produces PE programs, `cc`, `run` and `make` in the shell, an SDK installer and documentation, with GCC or Clang as a long-term goal. None of its eleven sections has shipped. Today every user program is cross-compiled on the host with clang-19, and the SDK directory holds one header and an example.
+This roadmap gives Impossible OS a developer kit and a compiler that runs on the OS itself: SDK headers installed at `C:\Impossible\Include\`, import libraries, a port of the Tiny C Compiler (TCC) that produces PE programs, `cc`, `run` and `make` in the shell, an SDK installer and documentation, with GCC or Clang as a long-term goal. None of its eleven sections has shipped. Today every user program is cross-compiled on the host with clang-19, and the application SDK is a separate project, Impossible SDK; paths here that start with `ImpossibleSDK/` are in that repository.
 
 ## How does it work?
 
@@ -14,7 +14,7 @@ This roadmap gives Impossible OS a developer kit and a compiler that runs on the
 - **Output.** Statically linked ELF at base `0x800000` through [`user.ld`](../../user/user.ld). The files are named `.exe` (for example `hello.exe` and `cmd.exe` on the system disk), but they are ELF inside.
 - **EIF.** The OS also has its own native executable format. Today the host script [`build-eif.py`](../../scripts/build-eif.py) only wraps a raw binary (from `nasm -f bin`) into a one-segment EIF for the loader test; see [EIF Executable Format](../kernel/eif-executable-format.md).
 
-**Today: the SDK directory.** `sdk/` holds a [README](../../sdk/README.md), one header ([`impossible/windows.h`](../../sdk/include/impossible/windows.h), which declares the file API), an example ([`hello.c`](../../sdk/examples/hello.c)) and an [API reference](../../sdk/docs/api-reference.md). `sdk/lib/` is empty, so the `-limpossible` the README shows has nothing to link against yet, and the README itself lists the process, memory, threading, Registry and window APIs as planned. `sdk/build.sh` builds only a host tool for mounting IXFS images.
+**Today: no SDK in this repository.** The `sdk/` folder, which held one header of file API declarations, an example and an API reference with no library behind them, was removed on 2026-11-23 in favour of Impossible SDK. Impossible SDK is developed separately, has no public release yet, and its programs run on Windows but not yet on Impossible OS.
 
 **Planned design.**
 
@@ -30,8 +30,7 @@ This roadmap gives Impossible OS a developer kit and a compiler that runs on the
 | Interface | Status |
 | --- | --- |
 | Host build: `USER_CFLAGS`, `crt0.o`, `user/libc.a`, `user.ld` | Shipped (ELF output) |
-| `sdk/include/impossible/windows.h` | Declarations only |
-| `sdk/include/impossible.h` and subsystem headers, `sdk/lib/*.lib` | Planned |
+| `ImpossibleSDK/include/impossible.h`, `windows.h` and subsystem headers, `ImpossibleSDK/lib/*.lib` | Planned |
 | `tcc.exe`, `libtcc1.a`, `cc`, `run`, `make.exe` | Planned |
 | `make install-sdk`, SDK installer | Planned |
 

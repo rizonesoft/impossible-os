@@ -1,9 +1,9 @@
-<!-- docs: covers=todo/14-host-tools/TODO-06-disk-inspect.md sources=tools/bootimg/bootimg.py,tools/make-system-disk.c,sdk/src/ixfs-mount reviewed=2026-09-30 order=6 -->
+<!-- docs: covers=todo/14-host-tools/TODO-06-disk-inspect.md sources=tools/bootimg/bootimg.py,tools/make-system-disk.c,tools/ixfs-mount reviewed=2026-11-23 order=6 -->
 # Disk Image Inspector (disk-inspect)
 
 ## What is it?
 
-`disk-inspect` is a planned interactive browser for Impossible OS disk images and drives: the GPT partition table, the IXFS superblock, inodes and their extents, the directory tree, the block bitmap and raw sectors, in the spirit of `fdisk -l` plus `debugfs`. None of its five sections has been built. The partition-table half already exists in the boot-artifact inspector, and the IXFS half would reuse the SDK's IXFS parser once that parser is back in step with the kernel's format.
+`disk-inspect` is a planned interactive browser for Impossible OS disk images and drives: the GPT partition table, the IXFS superblock, inodes and their extents, the directory tree, the block bitmap and raw sectors, in the spirit of `fdisk -l` plus `debugfs`. None of its five sections has been built. The partition-table half already exists in the boot-artifact inspector, and the IXFS half would reuse the host IXFS parser once that parser is back in step with the kernel's format.
 
 ## How does it work?
 
@@ -11,7 +11,7 @@
 
 - `python3 tools/bootimg/bootimg.py inspect <image>` ([`tools/bootimg/bootimg.py`](../../tools/bootimg/bootimg.py)) reads raw, VHD, VHDX, VDI and ISO images and prints every GPT partition with its name, type GUID, detected filesystem, label, size and LBA range, plus signature and manifest status. `--json` gives the same data for scripts. It covers the roadmap's section 1 already.
 - [`tools/make-system-disk.c`](../../tools/make-system-disk.c) writes the GPT and records the byte offset of each partition in `build/system-disk.img.info`, which scripts read rather than hard-coding offsets.
-- The SDK's IXFS parser in [`sdk/src/ixfs-mount/`](../../sdk/src/ixfs-mount/) reads the superblock, inodes, extents and directories. Its inode layout is out of date (see [IXFS Mount](ixfs-mount.md)), so it cannot yet be the base for inode inspection.
+- The host IXFS parser in [`tools/ixfs-mount/`](../../tools/ixfs-mount/) reads the superblock, inodes, extents and directories. Its inode layout is out of date (see [IXFS Mount](ixfs-mount.md)), so it cannot yet be the base for inode inspection.
 
 **Planned design.**
 
@@ -36,7 +36,7 @@ flowchart LR
 | --- | --- |
 | `bootimg.py inspect <image> [--json]` | Shipped, lists partitions |
 | `build/system-disk.img.info` partition offsets | Shipped |
-| `ixfs_open`, `ixfs_read_inode`, `ixfs_readdir` in the SDK parser | Shipped, but reads the wrong inode size |
+| `ixfs_open`, `ixfs_read_inode`, `ixfs_readdir` in the host parser | Shipped, but reads the wrong inode size |
 | `disk-inspect <image>` and its commands | Planned in sections 1 to 5 |
 
 ## How do I use it?
@@ -64,7 +64,7 @@ Type GUIDs are elided here. The build makes the A/B layout, so IXFS is partition
 - [Hex Dump and Raw Sector Read](../../todo/14-host-tools/TODO-06-disk-inspect.md#4-hex-dump-and-raw-sector-read)
 - [Interactive Shell](../../todo/14-host-tools/TODO-06-disk-inspect.md#5-interactive-shell)
 
-Sections 2 and 3 depend on the shared IXFS parser being resynchronised with the kernel's on-disk format, filed in [the IXFS mount roadmap](../../todo/14-host-tools/TODO-02-ixfs-mount.md#6-resync-the-sdk-parser-with-the-ixfs-v2-on-disk-format). The roadmap's example shows an inline file (`hello.txt ... inline`): the kernel stores up to 48 bytes of a small file in the inode itself (`IXFS_INLINE_MAX` in [`include/kernel/fs/ixfs.h`](../../include/kernel/fs/ixfs.h)), and the inspector's `inode` and `hexdump` views need to show that case rather than an empty extent list.
+Sections 2 and 3 depend on the shared IXFS parser being resynchronised with the kernel's on-disk format, filed in [the IXFS mount roadmap](../../todo/14-host-tools/TODO-02-ixfs-mount.md#6-resync-the-host-parser-with-the-ixfs-v2-on-disk-format). The roadmap's example shows an inline file (`hello.txt ... inline`): the kernel stores up to 48 bytes of a small file in the inode itself (`IXFS_INLINE_MAX` in [`include/kernel/fs/ixfs.h`](../../include/kernel/fs/ixfs.h)), and the inspector's `inode` and `hexdump` views need to show that case rather than an empty extent list.
 
 ## How does it compare with Windows 11 and Linux?
 

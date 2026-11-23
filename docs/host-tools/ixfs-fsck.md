@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/14-host-tools/TODO-07-ixfs-fsck.md sources=src/kernel/fs/ixfs/ixfs_fsck.c,include/kernel/fs/ixfs.h,sdk/src/ixfs-mount reviewed=2026-09-30 order=7 -->
+<!-- docs: covers=todo/14-host-tools/TODO-07-ixfs-fsck.md sources=src/kernel/fs/ixfs/ixfs_fsck.c,include/kernel/fs/ixfs.h,tools/ixfs-mount reviewed=2026-11-23 order=7 -->
 # IXFS Consistency Checker (ixfs-fsck)
 
 ## What is it?

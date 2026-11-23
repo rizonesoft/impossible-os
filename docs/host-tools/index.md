@@ -1,12 +1,12 @@
 # Host Tools
 
-Programs that run on the developer's Linux machine, not on Impossible OS, and work with its formats: disk images, IXFS partitions, serial logs, crash output and the BlackBox log partition. They build with the host's own compiler through `bash sdk/build.sh`, separately from the kernel. Only the build script and the IXFS mount tool exist as SDK tools; most of the planned tools already have a working stand-in elsewhere in the repository, which each page names.
+Programs that run on the developer's Linux machine, not on Impossible OS, and work with its formats: disk images, IXFS partitions, serial logs, crash output and the BlackBox log partition. They build with the host's own compiler through `bash tools/build-host.sh`, separately from the kernel. Only the build script and the IXFS mount tool exist as tools of this kind; most of the planned tools already have a working stand-in elsewhere in the repository, which each page names.
 
 ## Built
 
 | Document | Topics |
 | --- | --- |
-| [SDK Build System](sdk-build-system.md) | `sdk/build.sh`: compiler and dependency detection, tool discovery, adding a tool |
+| [Host Tools Build](sdk-build-system.md) | `tools/build-host.sh`: compiler and dependency detection, tool discovery, adding a tool |
 | [IXFS Mount (Linux)](ixfs-mount.md) | FUSE mount of an IXFS partition from an image or USB drive; currently behind the kernel's on-disk format |
 
 ## Planned

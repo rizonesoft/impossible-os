@@ -17,7 +17,7 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [📦 Applications](apps/index.md)                  | Browser, mail, viewers, Notepad, Calculator, accessories, system tools |
 | [🛠️ SDK and User Platform](sdk/index.md)          | Libraries, environment ABI, modules, ntdll, Win32 subsystem, SDK, compatibility |
 | [🚢 Release and Installation](release/index.md)     | Release artifacts, unattended install, updates, release QA, community launch |
-| [🧰 Host Tools](host-tools/index.md)               | SDK build, IXFS mount, crash and log analysis, disk inspection, fsck, BlackBox logs |
+| [🧰 Host Tools](host-tools/index.md)               | Host tools build, IXFS mount, crash and log analysis, disk inspection, fsck, BlackBox logs |
 | [🧬 Architecture Ports](ports/index.md)            | Architecture abstraction layer, AArch64 port, processor groups beyond 16 CPUs |
 | [🔭 Future Research](research/index.md)            | Multi-architecture, hypervisor, GPU compositor, TPM, on-device AI, Android apps |
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |

@@ -138,8 +138,8 @@ Supported distros:
   and "Supported Host Profiles and Reproducible Environments").
 
 Boundary:
-  Repo-local developer bootstrap only. Cross-compiler toolchain and SDK build-system
-  work belongs to the SDK build-system TODO. See the "Scope Boundary" table in
+  Repo-local developer bootstrap only. The application cross-compiler and the host
+  tools build belong to their own TODOs. See the "Scope Boundary" table in
   the canonical doc for the current owner and deep link.
 
 EOF

@@ -1,21 +1,15 @@
-<!-- docs: covers=todo/12-user-platform-sdk/TODO-06-sdk-distribution.md sources=sdk/README.md,sdk/build.sh,sdk/include/impossible/windows.h,sdk/examples/hello.c,sdk/docs/api-reference.md,include/kernel/version.h reviewed=2026-09-29 order=6 -->
+<!-- docs: covers=todo/12-user-platform-sdk/TODO-06-sdk-distribution.md sources=include/kernel/version.h reviewed=2026-11-23 order=6 -->
 # SDK Distribution and Developer Experience
 
 ## What is it?
 
-This roadmap plans how developers get and use the Impossible OS SDK: a `make sdk` ZIP with a SHA-256 checksum, API documentation generated from the headers, seven code samples, a sampling profiler, a small unit test framework (`itest.h`), debugger improvements, an `ixui-new` project template and a release pipeline that tags and publishes SDK versions. None of the eight sections has shipped. Today the `sdk/` folder holds one header, one example, a hand-written API reference and the host tools build.
+This roadmap plans how developers get and use the Impossible OS SDK: a `make sdk` ZIP with a SHA-256 checksum, API documentation generated from the headers, seven code samples, a sampling profiler, a small unit test framework (`itest.h`), debugger improvements, an `ixui-new` project template and a release pipeline that tags and publishes SDK versions. None of the nine sections has shipped. The SDK itself is a separate project, Impossible SDK; paths here that start with `ImpossibleSDK/` are in that repository.
 
 ## How does it work?
 
-**Today.** The [`sdk/`](../../sdk/README.md) folder contains:
+**Today.** This repository ships no application SDK. Its old `sdk/` folder (one header of file API declarations, one example, a hand-written reference and an empty library folder) was removed on 2026-11-23 in favour of Impossible SDK, which is developed separately and has no public release yet. Impossible SDK programs run on Windows today and not yet on Impossible OS. The host tools that shared the folder moved to [`tools/`](../host-tools/sdk-build-system.md).
 
-- **One header.** [`impossible/windows.h`](../../sdk/include/impossible/windows.h) declares the Win32 file API (`CreateFile()`, `WriteFile()`, `CloseHandle()` and related calls). There is no `impossible.h`, `ixui.h` or `itest.h`.
-- **One example.** [`hello.c`](../../sdk/examples/hello.c), the program the README's quick start shows.
-- **A reference page.** [`api-reference.md`](../../sdk/docs/api-reference.md), written by hand.
-- **An empty library folder.** `sdk/lib/` holds only a placeholder, so the `-limpossible` in the README's build line has nothing to link against.
-- **Host tools.** [`sdk/build.sh`](../../sdk/build.sh) builds every tool under `sdk/src/` that has a Makefile (today the IXFS mount tool) into `sdk/tools/`, and ends with `=== SDK BUILD OK ===`.
-
-None of the roadmap's scripts or tools exist: no `make sdk`, `make docs` or `make sdk-upload` target, no `scripts/sdk-package.sh`, `release-sdk.sh` or `bump-version.sh`, no `tools/gendoc.c`, and no `sdk/samples/`.
+None of the roadmap's scripts or tools exist: no `make sdk`, `make docs` or `make sdk-upload` target, no `scripts/sdk-package.sh`, `release-sdk.sh` or `bump-version.sh`, and no `tools/gendoc.c`.
 
 **Planned design.**
 
@@ -38,43 +32,36 @@ flowchart LR
 
 | Interface | Status |
 | --- | --- |
-| `sdk/include/impossible/windows.h` | Declarations only |
-| `sdk/examples/hello.c`, `sdk/docs/api-reference.md` | Shipped |
-| `bash sdk/build.sh [clean]` (host tools) | Shipped |
 | `make sdk`, `scripts/sdk-package.sh` | Planned in section 1 |
 | `gendoc` | Planned in section 2 |
-| `sdk/samples/` | Planned in section 3 |
+| `ImpossibleSDK/samples/` | Planned in section 3 |
 | Profiler, `itest.h` | Planned in sections 4 and 5 |
 | `ixui-new` | Planned in section 7 |
 | `release-sdk.sh`, `sdk-info` | Planned in section 8 |
 
 ## How do I use it?
 
-Build the host tools shipped in the SDK folder:
-
-```bash
-bash sdk/build.sh
-```
-
-To build a program for the OS today, follow the host build described in [Compiler and SDK](../services/compiler-sdk.md): add it to the kernel `Makefile`'s userland target and run `bash scripts/build.sh`. The README's standalone `clang-19` line does not link yet, because the library it names is missing.
+There is nothing to install yet. To build a program for the OS today, follow the host build described in [Compiler and SDK](../services/compiler-sdk.md): add it to the kernel `Makefile`'s userland target and run `bash scripts/build.sh`.
 
 ## Who owns what?
 
 - The [Compiler and SDK](../services/compiler-sdk.md) roadmap (`10-platform-services/TODO-09`) owns the headers, import libraries, the on-OS compiler, the SDK installer (its section 9) and the SDK documents (section 10). This file's sections 1 and 2 extend those; the two roadmaps both describe an SDK installer and ZIP.
 - The [long-term features](../services/long-term-features.md) roadmap (`10-platform-services/TODO-12`) owns the user-mode debugger (its section 2) that section 6 extends.
-- The SDK build system roadmap (`14-host-tools/TODO-01`) owns `sdk/build.sh`, which is documented in [Development Tooling](../infrastructure/development-tooling.md).
-- The documentation site roadmap's section 24 publishes the generated reference per SDK tag.
+- Impossible SDK (a separate repository) owns the headers, libraries, documents and samples under `ImpossibleSDK/`.
+- The host tools build roadmap (`14-host-tools/TODO-01`) owns `tools/build-host.sh`, documented in [Host Tools Build](../host-tools/sdk-build-system.md).
+- The documentation site roadmap's section 30 publishes the generated reference per SDK tag.
 
 ## What is not implemented yet?
 
 - [SDK Packaging](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#1-sdk-packaging-make-sdk)
 - [SDK Documentation](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#2-sdk-documentation-gendocc)
-- [Code Samples](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#3-code-samples): the roadmap puts them in `sdk/samples/`; the existing example lives in `sdk/examples/`
+- [Code Samples](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#3-code-samples): the roadmap puts them in `ImpossibleSDK/samples/`
 - [Sampling Profiler](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#4-sampling-profiler)
 - [Unit Test Framework](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#5-unit-test-framework-itesth)
 - [Debugger Enhancements](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#6-debugger-enhancements)
 - [IxUI Starter Templates](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#7-ixui-starter-templates-ixui-new)
 - [SDK Release Pipeline](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#8-sdk-release-pipeline)
+- [User-Space Runtime Licensing](../../todo/12-user-platform-sdk/TODO-06-sdk-distribution.md#9-user-space-runtime-licensing)
 
 ## How does it compare with Windows 11 and Linux?
 

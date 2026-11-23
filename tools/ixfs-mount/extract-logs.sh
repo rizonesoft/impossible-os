@@ -10,9 +10,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_DIR="$(dirname "$SDK_DIR")"
-IXFS_MOUNT="$SDK_DIR/tools/ixfs-mount"
+REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+IXFS_MOUNT="$REPO_DIR/build/host-tools/ixfs-mount"
 MOUNT_POINT="/tmp/ixfs-extract-logs-$$"
 DEBUG_DIR="$REPO_DIR/debug/logs"
 LOGS_PATH="Impossible/System/Logs"
@@ -34,7 +33,7 @@ trap cleanup EXIT
 # Check ixfs-mount exists
 if [ ! -x "$IXFS_MOUNT" ]; then
     echo -e "${RED}ERROR${RESET} ixfs-mount not found at $IXFS_MOUNT"
-    echo "       Run: bash sdk/build.sh"
+    echo "       Run: bash tools/build-host.sh"
     exit 1
 fi
 

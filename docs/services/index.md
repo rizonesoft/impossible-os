@@ -16,7 +16,7 @@ One page per platform services roadmap file, each following the [page contract](
 | [Accessibility Features](accessibility.md) | Cursor sprites, keyboard latches and pointer injection; planned high contrast, sticky keys, magnifier, `ease.cpl` |
 | [Win32 PE Loader](win32-pe-loader.md) | Shipped PE32+ validation, mapping and import binding to SSDT slots; planned relocations, callable imports, user CRT |
 | [Win32 API Surface](win32-api-surface.md) | The 14 kernel32 and 96 ntdll export rows and the five-call test shim; planned kernel32, msvcrt, user32, gdi32 |
-| [Compiler and SDK](compiler-sdk.md) | The clang-19 ELF user build, `user/libc.a` and one SDK header; planned SDK headers, import libs, TCC on the OS |
+| [Compiler and SDK](compiler-sdk.md) | The clang-19 ELF user build, `user/libc.a`; planned SDK headers, import libs, TCC on the OS |
 | [Linux ELF Compatibility](linux-compat.md) | Shipped ELF loader and SYSV initial stack; planned Linux syscall table, path translation, fds, signals, busybox |
 | [Installer and ISO Build](installer-iso.md) | Shipped release image and hybrid ISO scripts, GPT and format primitives; planned installer and OOBE hand-off |
 | [Long-Term Features](long-term-features.md) | NT debug hooks and serial output; planned GDB stub, debugger, touch, gamepad, print, TTS, TinyGL, sessions |

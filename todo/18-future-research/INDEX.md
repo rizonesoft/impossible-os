@@ -16,7 +16,6 @@ This domain is for long-range exploration and stretch work that is real enough t
 ## Likely Source Areas
 
 - [docs](../docs/)
-- [sdk](../sdk/)
 - [user](../user/)
 - [src](../src/)
 

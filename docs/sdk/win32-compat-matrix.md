@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md sources=src/kernel/pe.c,include/kernel/sched/syscall.h,user/test/test_win32.c reviewed=2026-09-29 order=7 -->
+<!-- docs: covers=todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md sources=src/kernel/pe.c,include/kernel/sched/syscall.h,user/test/test_win32.c reviewed=2026-11-23 order=7 -->
 # Win32 Compatibility Matrix and Bring-Up Ladder
 
 ## What is it?
@@ -11,9 +11,9 @@ This roadmap is how Impossible OS will measure Windows compatibility instead of 
 
 **Planned design.**
 
-1. **Coverage tracker.** `sdk/docs/win32-compat.md` with one table per DLL (`kernel32`, `user32`, `gdi32`, `ntdll`, `advapi32`, `shell32`, `msvcrt`, `comdlg32`) and a status per function: implemented, stub, partial or missing. A host script, `tools/compat-scan.sh`, refreshes the status from the code.
+1. **Coverage tracker.** `tests/compat/win32-compat.md` with one table per DLL (`kernel32`, `user32`, `gdi32`, `ntdll`, `advapi32`, `shell32`, `msvcrt`, `comdlg32`) and a status per function: implemented, stub, partial or missing. A host script, `tools/compat-scan.sh`, refreshes the status from the code.
 2. **Stub counters.** Each stub call also increments a counter in a shared-memory map named `Win32CompatCounters`, created with `SYS_SHMEM_CREATE` ([`syscall.h`](../../include/kernel/sched/syscall.h)); `win32compat report` prints the 40 most-called missing functions.
-3. **Bring-up ladder.** `sdk/compat/tier1/` to `tier8/`, each with small test programs and an expected serial line, run headless in QEMU by `run_tier.sh`.
+3. **Bring-up ladder.** `tests/compat/tier1/` to `tier8/`, each with small test programs and an expected serial line, run headless in QEMU by `run_tier.sh`.
 4. **CI gate.** `make compat-check` runs the tiers, records a score in the Registry (`HKLM\SYSTEM\Win32Compat\Score`) and fails when any enabled tier fails; tiers whose API gate is not met are skipped.
 
 The tiers, each gated on the API work beneath it:
@@ -45,8 +45,8 @@ flowchart LR
 | --- | --- |
 | PE loader export tables (14 `kernel32`, 96 `ntdll`) | Shipped |
 | `win32_unimpl_stub()` base logger | Planned in the Win32 API surface roadmap, section 9 |
-| `sdk/docs/win32-compat.md`, `compat_stub()`, `win32compat.exe` | Planned in section 1 |
-| `sdk/compat/` and `run_tier.sh` | Planned in section 2 |
+| `tests/compat/win32-compat.md`, `compat_stub()`, `win32compat.exe` | Planned in section 1 |
+| `tests/compat/` and `run_tier.sh` | Planned in section 2 |
 | Tier programs 1 to 9 | Planned in sections 3 to 10 and 13 |
 | `make compat-check`, `scripts/compat-check.sh` | Planned in section 12 |
 

@@ -73,7 +73,7 @@ Every stable release is gated on: automated regression tests all pass in QEMU he
 
 ## 1. Automated Regression Test Suite
 
-**Source:** `scripts/run-tests.sh`; test programs in `sdk/compat/tests/regression/`
+**Source:** `scripts/run-tests.sh`; test programs in `tests/compat/regression/`
 
 - [ ] **`scripts/run-tests.sh [--qemu-args <extra>]`**:
   - Boot OS in QEMU headless: `qemu-system-x86_64 -nographic -serial stdio -drive file=build/system-disk.img,format=raw -m 512 -bios OVMF.fd <extra_args>`
@@ -97,7 +97,7 @@ Every stable release is gated on: automated regression tests all pass in QEMU he
 | `syscall-smoke`  | Call each syscall with valid args; none panic (smoke check, not coverage)        |
 
 - [ ] **CI integration**: `scripts/run-tests.sh` is called by `.github/workflows/test.yml` on every push to `main`; workflow fails build if exit code ≠ 0; test log attached as workflow artifact
-- [ ] **Test programs**: each test is a small self-contained function in `sdk/compat/tests/regression/test_*.c`; linked into OS image for QA builds via a `regression_tests[]` table; triggered on-OS via `test run-all` shell command
+- [ ] **Test programs**: each test is a small self-contained function in `tests/compat/regression/test_*.c`; linked into OS image for QA builds via a `regression_tests[]` table; triggered on-OS via `test run-all` shell command
 
 ---
 
