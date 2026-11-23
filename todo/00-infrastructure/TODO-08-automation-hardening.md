@@ -1949,10 +1949,10 @@ Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the rec
 Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/2026-11-23-adaptive-review-effort-design.md); plan: [docs/plans/2026-11-23-adaptive-review-effort.md](../../docs/plans/2026-11-23-adaptive-review-effort.md). Effort moves from the Codex config (§2) to the reviewer pin. -> XREF: [§2](#2-codex-invocation-policy-no---model----effort-from-claude). The path tiers are the pin's one path classification, which [§62](#62-review-depth-per-path) uses as its deep set; the pinned host-tooling threat model is §62's item, not this section's. -> XREF: [§62](#62-review-depth-per-path) (item: "Host-tooling paths carry a pinned threat model")
 
 - [ ] The pin's `[schedule.effort]` table sets each pass's effort by area tier and the chain's last finding (`review_pin.py --effort`)
-- [ ] `codex-dispatch.sh` passes the pinned effort once the review range is settled and writes `effort` and `tier` on every receipt
+- [ ] `codex-dispatch.sh` applies the pinned effort once the review range is settled and writes `effort` and `tier` on the receipt when it did (a fallback receipt omits both)
 - [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
 - [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
-- [/] The vendored patch is dropped for the stock companion once upstream merges `openai/codex-plugin-cc` #677 or #746 (waits on the upstream maintainers; no third request, operator 2026-11-23)
+- [/] The effort patch is retired once upstream ships `openai/codex-plugin-cc` #677 or #746 (the other `PATCHES.md` patches stay until their tests pass against the stock companion; no third request, operator 2026-11-23)
 - [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts, 2026-12-07)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.

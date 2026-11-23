@@ -16,7 +16,7 @@
 - Tiers, in precedence order: `deep` = `src/kernel/`, `include/kernel/`, `src/boot/`; `risky` = `src/desktop/`, `include/`, `src/libc/`, `src/libs/`, `src/installer/`, `user/`, `src/apps/`, `Makefile`, `scripts/build.sh`; `standard` = everything else. A path matches a tier when it equals an entry or starts with an entry that ends in `/`. A section takes the highest tier any changed path matches.
 - Rounds 1-3: deep `high`, risky `medium`, standard `medium`. Round 4 on: deep `medium`, risky `medium`, standard `low`. Next round after a round whose highest is P1: deep `high`, risky `medium`, standard `medium`. Every kind other than `round` and `reconciliation` (today plan, performance, completion; later any new kind such as `redesign`): `medium`, and it does not move the chain. `reconciliation` counts as a round in the chain.
 - Eligibility is a marker, not a clock: the new dispatcher writes `"schedule": "effort"` on every plan receipt while the pin has an effort table. A section is on the effort schedule only when its EARLIEST checked plan receipt carries the marker; a section with a plan receipt and no marker is grandfathered for ANY kind (the Codex config value applies), and a plan retry never changes that. A section with no plan receipt (owed) is decided by its late plan pass, which the new dispatcher marks. Section 70 is grandfathered; its passes carry no `--effort`.
-- The chain position is read only through `review_pin.py`'s shared manifest reader (the one `newest_receipts` uses), never a new direct call to `unreadable_line_may_be`, so the atomic-receipts section replaces it in one place.
+- The chain position is read only through `review_pin.py`'s shared manifest reader (the one `newest_receipts` uses), `newest_receipts` and `section_chain` both call it, so the atomic-receipts section moves both call sites.
 - Claude never types `--effort`; `codex_model_flag_block.py` is unchanged and still refuses it.
 - Work happens in `../impossible-os-repair` (the run is live in the primary tree). Commit with `git -C ../impossible-os-repair commit -F <msg> -- <paths>`. Landing on `main` is done by the safe-gap monitor (Task 6).
 - No em or en dashes in anything written. No AI attribution in commits.
@@ -34,7 +34,7 @@
 
 ### Task 1: The TODO auto-rewrite hook repairs the edited file's own worktree (DONE)
 
-Commits `6f79a36ff`, `94e9a551f`, `dc18dd760`: root from the edited path, acting only on a registered worktree of the repository the hook is installed in (plan reviews 1 and 2, P1). Regressions: a linked worktree is repaired there; an unrelated repository and an unregistered tree pointing at this repository's metadata run none of their code. `scripts/tests/test_todo_graph_auto_rewrite.py` 12/12; each new case fails on the version before it.
+Commits `7c600b87a`, `9062f6ed6`, `ee23a5ef2` (pre-rebase `6f79a36ff`, `94e9a551f`, `dc18dd760`): root from the edited path, acting only on a registered worktree of the repository the hook is installed in (plan reviews 1 and 2, P1). Regressions: a linked worktree is repaired there; an unrelated repository and an unregistered tree pointing at this repository's metadata run none of their code. `scripts/tests/test_todo_graph_auto_rewrite.py` 12/12; each new case fails on the version before it.
 
 ### Task 2: Vendor the Codex companion with `--effort` on adversarial-review
 
@@ -86,7 +86,7 @@ after_p1 = "medium"
 ```
 
 **Interfaces:**
-- Produces: `load_pin(...)["effort"]` = `None` or `{"passes": str, "held_rounds": int, "tiers": ((name, paths, rounds, later, after_p1), ...)}` in pin order; `tier_for(pin, changed_paths) -> str | None`; `effort_for(pin, manifest, todo, section, kind, changed_paths) -> str | None`; `section_chain(manifest, todo, section) -> (on_schedule: bool | None, count, newest_highest)` (`None` when the section has no checked plan receipt) in the shared reader; CLI `--effort KIND --todo TODO --section-n N --manifest FILE --paths-file0 FILE` prints `<level> <tier>`, or nothing (exit 0) when there is no table or the section is grandfathered; exit 2 (Refused) on an unreadable newer line.
+- Produces: `load_pin(...)["effort"]` = `None` or `{"passes": str, "held_rounds": int, "tiers": ((name, paths, rounds, later, after_p1), ...)}` in pin order; `tier_for(pin, changed_paths) -> str | None`; `effort_for(pin, manifest, todo, section, kind, changed_paths) -> str | None`; `section_chain(manifest, todo, section) -> (on_schedule: bool | None, count, newest_highest)` (`None` when the section has no checked plan receipt) in the shared reader; CLI `--effort KIND --todo TODO --section-n N --manifest FILE --paths-file0 FILE` prints one line, `<level> <tier> <schedule>`, each `-` when absent (no table, a grandfathered section, no pinned level), where `schedule` is `effort` for a plan pass whenever the pin has the table; exit 3 with the same line and the reason on stderr when the chain cannot be read (the schedule still printed), exit 2 when the pin itself is refused.
 
 - [ ] **Step 1: Failing tests:**
   - `test_effort_table_validates`: repo pin loads, `held_rounds == 3`; an unknown level, a last tier with non-empty `paths`, an unknown key, `held_rounds = 0` each raise `rp.Refused`.
@@ -110,7 +110,7 @@ after_p1 = "medium"
 ### Task 4: The dispatcher applies the effort and records it
 
 **Files:**
-- Modify: `scripts/codex-dispatch.sh`: default `COMPANION` (line 128) to `<repo root>/tools/vendor/codex-companion/scripts/codex-companion.mjs`; ask `--effort` after every base and range check has passed (after the `PIN_LENSES` step at line 285 and the reconciliation range); keep the `<level> <tier>` answer in `EFFORT`/`TIER`; a non-zero answer leaves both empty and holds the reason in a variable that is written to the transcript once it opens (line 349); line 383 becomes `node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT"`; the receipt (line 427) gains `"opt:effort=${EFFORT:-}" "opt:tier=${TIER:-}"`, and a plan receipt gains `"opt:schedule=effort"` whenever the pin has an effort table (`review_pin.py --has-effort` exits 0); line 456 unchanged.
+- Modify: `scripts/codex-dispatch.sh`: default `COMPANION` (line 128) to `<repo root>/tools/vendor/codex-companion/scripts/codex-companion.mjs`; ask `--effort` after every base and range check has passed (after the `PIN_LENSES` step at line 285 and the reconciliation range); keep the `<level> <tier> <schedule>` answer in `EFFORT`/`TIER`/`SCHEDULE`; a non-zero answer leaves `EFFORT` and `TIER` empty and holds the reason in a variable that is written to the transcript once it opens; the `--has-effort` query named in an earlier draft was folded into this one call; the dispatcher line becomes `node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT"`; the receipt (line 427) gains `"opt:effort=${EFFORT:-}" "opt:tier=${TIER:-}"`, and a plan receipt gains `"opt:schedule=effort"` whenever the pin has an effort table (`review_pin.py --has-effort` exits 0); line 456 unchanged.
 - Modify: `scripts/overnight/review-broker-codex-dispatch.sh:180` (same default companion)
 - Test: `scripts/overnight/tests/test_review_pin.py` (its dispatcher tests drive `codex-dispatch.sh` with a fake `CODEX_COMPANION_PATH`; the fake appends its argv to a file)
 
@@ -131,10 +131,11 @@ after_p1 = "medium"
 
 ### Task 6: Review, upstream, stamp, land
 
-Order: two plan passes ran (findings folded in, see the ledger). Every pass below carries `REVIEW_BASE=4a3755ff6`, the commit before section 70's code, so its range covers the hook commits; check each receipt's `base`.
+Order: two plan passes ran (findings folded in, see the ledger). The section was rebased onto `ac5581848` before landing, so every later pass carries `REVIEW_BASE=385e23aad`, the filing commit before section 70's code (pre-rebase `4a3755ff6`), and a plan pass was dispatched to re-anchor the section start after the rebase; check each receipt's `base`.
 
-- [x] **Step 1: Upstream (changed 2026-11-23, operator):** two open upstream PRs (#677, #746) already make this change, so no third is opened; both are tracked in `PATCHES.md` and section 70. Originally planned: a PR to `openai/codex-plugin-cc` from a fork, right after Task 2: the companion patch and the four tests in `tests/runtime.test.mjs`, title `adversarial-review: accept --effort like task`. Record the URL in `PATCHES.md` and section 70 before the review wave, and tell the operator. A review change to the patch is pushed to the PR branch.
-- [ ] **Step 2: Astra review** of section 70 through `.claude/skills/three-pass-review.md`: round and performance on the candidate after Task 5, every finding fixed with a test, to a clean wave or the cap. The unmodified vendor commit is named in the prompt as imported code to read whole. Commit nothing while a pass is reading.
-- [ ] **Step 3: Completion pass** on the same candidate; a repair is followed by the reconciliation wave on the repaired candidate; stamp section 70 when clean (the measurement item stays `[/]`).
-- [ ] **Step 4: Land** through a safe-gap monitor: wait until the run has no unpushed commits and no push or suite in flight, rebase onto `origin/main`, push `HEAD:main` in the background, `python3 scripts/overnight/ci-wait.py .` until green, then remove the worktree.
+- [x] **Step 1: Upstream (changed 2026-11-23, operator):** two open upstream PRs (#677, #746) already make this change, so no third is opened; both are tracked in `PATCHES.md` and section 70.
+- [x] **Delivered and landed (2026-11-23):** Tasks 2 to 5 are built, and the section is on `origin/main` at `b5b0558d2` (rebased onto `ac5581848`, the pre-push gates passed). Eleven review waves ran before it; their findings and fixes are in the commit messages and the ledger.
+- [ ] **Step 2: One more round, performance and a completion pass** (operator, 2026-11-23: stop at 12 rounds, land first): round 12 and a performance pass on the landed candidate with `REVIEW_BASE=385e23aad`, then completion; every finding fixed with a test. Anything the operator's cap leaves open is filed as a tracked item and the section is stamped with it. Commit nothing while a pass is reading.
+- [ ] **Step 3: Stamp** section 70 when the passes end (the measurement item stays `[/]`).
+- [ ] **Step 4: CI** for the landed commit green; remove the worktree when the stamp is on `main`.
 - [ ] **Step 5: First live check:** the first receipt written after the land for a section whose earliest plan receipt is marked carries `effort` and `tier`; record it in section 70.

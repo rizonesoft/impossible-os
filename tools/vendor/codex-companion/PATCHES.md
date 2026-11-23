@@ -32,7 +32,7 @@ Upstream reads, changes and rewrites `state.json` with no lock, so two companion
 
 Run the tests here: `node --test tools/vendor/codex-companion/tests/effort.test.mjs`.
 
-Upstream: the same change is proposed in openai/codex-plugin-cc pull requests #677 ("Support --effort on adversarial-review", opened 2026-08-23) and #746 (the same plus unrecognised-option errors, opened 2026-09-06), and requested in issues #476 and #651; none was merged as of 2026-11-23. We open no third request (operator decision 2026-11-23). When a release carries either, drop this patch and re-drop the stock tree.
+Upstream: the same change is proposed in openai/codex-plugin-cc pull requests #677 ("Support --effort on adversarial-review", opened 2026-08-23) and #746 (the same plus unrecognised-option errors, opened 2026-09-06), and requested in issues #476 and #651; none was merged as of 2026-11-23. We open no third request (operator decision 2026-11-23). When a release carries either, the effort patch is retired; the other patches on this page stay until their tests pass against the stock tree.
 
 ## Re-drop
 
