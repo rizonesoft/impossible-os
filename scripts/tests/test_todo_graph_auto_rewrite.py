@@ -165,8 +165,87 @@ def validator_gets_only_the_remaining_budget():
     return lookup_ok and validator is None and "budget" in out.getvalue()
 
 
+def _load_hook(name):
+    spec = importlib.util.spec_from_file_location(name, HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    return hook
+
+
+def _run_main(hook, file_path):
+    import io
+    stdin, stdout = sys.stdin, sys.stdout
+    sys.stdin, out = io.StringIO(json.dumps({"tool_input": {"file_path": file_path}})), io.StringIO()
+    sys.stdout = out
+    try:
+        hook.main()
+    finally:
+        sys.stdin, sys.stdout = stdin, stdout
+    return out.getvalue()
+
+
+def a_lookup_timeout_is_reported():
+    """A git lookup that times out is a repair not run, never a silent pass (round review, 2026-11-23)."""
+    import types
+    results = []
+    for which in ("rev-parse", "worktree"):
+        hook = _load_hook("hook_lookup_" + which.replace("-", "_"))
+        ran = []
+
+        def check_output(cmd, which=which, **kw):
+            if which in cmd:
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            return (f"worktree {os.path.realpath(tmp)}\n" if "worktree" in cmd else f"{tmp}\n").encode()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_validator(tmp)
+            hook.subprocess = types.SimpleNamespace(
+                check_output=check_output, run=lambda *a, **k: ran.append(a), Popen=lambda *a, **k: ran.append(a),
+                DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE, TimeoutExpired=subprocess.TimeoutExpired,
+                CompletedProcess=subprocess.CompletedProcess)
+            out = _run_main(hook, os.path.join(tmp, "todo", "a.md"))
+        results.append(not ran and "not run" in out and "timed out" in out)
+    return all(results)
+
+
+def a_validator_overrun_stops_its_whole_group():
+    """At the deadline the validator AND what it started (a cache rebuild and its git) are stopped, not only
+    validate.py (performance review, 2026-11-23)."""
+    import time
+    hook = _load_hook("hook_group")
+    hook.BUDGET_S = 3
+    with tempfile.TemporaryDirectory() as tmp:
+        git("init", "-q", tmp)
+        fake_validator(tmp)
+        pid_file = pathlib.Path(tmp, "child.pid")
+        pathlib.Path(tmp, "scripts", "todo-graph", "validate.py").write_text(
+            "import subprocess, time, pathlib\n"
+            f"c = subprocess.Popen(['sleep', '60'])\npathlib.Path({str(pid_file)!r}).write_text(str(c.pid))\n"
+            "time.sleep(60)\n")
+        hook._registered_worktrees = lambda where, deadline: {os.path.realpath(tmp)}
+        started = time.monotonic()
+        out = _run_main(hook, os.path.join(tmp, "todo", "a.md"))
+        took = time.monotonic() - started
+        pid = int(pid_file.read_text()) if pid_file.exists() else None
+        gone = False
+        for _ in range(40):
+            stat = pathlib.Path(f"/proc/{pid}/stat") if pid else None
+            if stat is None or not stat.exists() or stat.read_text().rsplit(") ", 1)[1][0] == "Z":
+                gone = True
+                break
+            time.sleep(0.05)
+        if not gone and pid:
+            os.kill(pid, 9)
+    return gone and took < 10 and "did not finish" in out
+
+
 def main():
     bad = 0
+    for label, check in (("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
+                         ("a validator overrun stops its whole process group", a_validator_overrun_stops_its_whole_group)):
+        ok = check()
+        bad += not ok
+        print(f"{'PASS' if ok else 'FAIL'} {label}")
     budget = validator_gets_only_the_remaining_budget()
     bad += not budget
     print(f"{'PASS' if budget else 'FAIL'} the lookups and the validator share one deadline")
@@ -194,7 +273,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 4
+    total = len(CLASSES) + 6
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 

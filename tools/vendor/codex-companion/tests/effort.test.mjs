@@ -12,8 +12,8 @@ import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = path.join(ROOT, "scripts", "codex-companion.mjs");
 
-// Each test owns its plugin data (so its broker record), inherits no broker endpoint, and stops every broker it
-// started, with that broker's whole process group, before it ends.
+// Each test owns its plugin data, inherits no broker endpoint, and stops every process carrying that plugin data
+// (the detached broker and its app-server, published or not) before it ends.
 function isolatedEnv(binDir, dataDir) {
   const env = { ...buildEnv(binDir), CLAUDE_PLUGIN_DATA: dataDir };
   for (const key of ["CODEX_COMPANION_APP_SERVER_ENDPOINT", "CODEX_COMPANION_APP_SERVER_PID_FILE",
@@ -23,31 +23,41 @@ function isolatedEnv(binDir, dataDir) {
   return env;
 }
 
-function alive(pid) {
+function running(pid) {
   try {
-    process.kill(pid, 0);
-    return true;
+    return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ").pop()[0] !== "Z";
   } catch {
     return false;
   }
 }
 
-function stopBrokers(dataDir) {
-  const stateRoot = path.join(dataDir, "state");
+// Every process of this test's plugin data: the companion's detached broker and its app-server inherit
+// CLAUDE_PLUGIN_DATA, so they are found by it whether or not the broker ever published broker.json.
+function marked(dataDir) {
+  const want = `CLAUDE_PLUGIN_DATA=${dataDir}`;
   const pids = [];
-  for (const dir of fs.existsSync(stateRoot) ? fs.readdirSync(stateRoot) : []) {
-    const record = path.join(stateRoot, dir, "broker.json");
-    if (!fs.existsSync(record)) {
+  for (const name of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) {
       continue;
     }
-    const pid = JSON.parse(fs.readFileSync(record, "utf8")).pid;
-    if (Number.isInteger(pid) && pid > 0) {
-      pids.push(pid);
-      try {
-        process.kill(-pid, "SIGKILL");     // the broker is detached: its group holds it and its app-server
-      } catch {
-        // already gone
+    try {
+      if (fs.readFileSync(`/proc/${name}/environ`, "utf8").split("\0").includes(want)) {
+        pids.push(Number(name));
       }
+    } catch {
+      // exited, or not ours to read
+    }
+  }
+  return pids;
+}
+
+function stopMarked(dataDir) {
+  const pids = marked(dataDir);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
     }
   }
   return pids;
@@ -58,13 +68,14 @@ function repoWithChange(t) {
   const binDir = makeTempDir();
   const dataDir = makeTempDir();
   t.after(() => {
-    for (const pid of stopBrokers(dataDir)) {
+    for (const pid of stopMarked(dataDir)) {
       const until = Date.now() + 5000;
-      while (alive(pid) && Date.now() < until) {
+      while (running(pid) && Date.now() < until) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
       }
-      assert.equal(alive(pid), false, `broker ${pid} outlived the test`);
+      assert.equal(running(pid), false, `process ${pid} of this test outlived it`);
     }
+    assert.deepEqual(marked(dataDir).filter(running), [], "a process of this test outlived it");
   });
   installFakeCodex(binDir);
   initGitRepo(repo);

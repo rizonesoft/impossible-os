@@ -158,7 +158,18 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
     exit 2
 fi
-EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""
+EFFORT=""; TIER=""; EFFORT_NOTE=""; SCHEDULE=""; PASS_DATA=""
+# Each pass runs the companion with its own plugin data, so no two passes share its job state (an unlocked
+# read-modify-write: concurrent passes deleted each other's job records) or its broker. When the pass ends every
+# process carrying that directory in its environment (the detached broker and its app-server included) is stopped
+# and the directory removed.
+end_companion_pass() {
+    [ -n "$PASS_DATA" ] || return 0
+    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/reap_env.py" "CLAUDE_PLUGIN_DATA=$PASS_DATA" \
+        || echo "[$SELF_NAME] a companion process of this pass outlived SIGKILL (CLAUDE_PLUGIN_DATA=$PASS_DATA)" >&2
+    rm -rf -- "$PASS_DATA"
+    PASS_DATA=""
+}
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""; REPAIR_FROM=""; CAND_HEAD=""; CAND_WORK=""
 EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # The candidate's fingerprint and the files a pass covers come from one reader (scripts/review_candidate.py),
@@ -190,7 +201,7 @@ if [ "$PIN_KIND" = "1" ]; then
     # Inside the reviews directory, which no candidate read covers: under a TMPDIR inside the checkout, the
     # file would be part of the tree it describes.
     PATHS_FILE="$(mktemp "$REVIEWS_DIR/.paths.XXXXXX")" || exit 2
-    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest" "$PATHS_FILE.effort-err"' EXIT
+    trap 'rm -f "$PATHS_FILE" "$PATHS_FILE.untracked" "$PATHS_FILE.highest" "$PATHS_FILE.effort-err"; end_companion_pass' EXIT
     # The candidate is pinned once, before anything is derived from it: the changed paths (and so the
     # lenses), the ancestry check, the prompt and the receipt all name this commit and this working tree,
     # and a commit or an edit by another caller while the pass is prepared refuses it below.
@@ -412,8 +423,13 @@ if [ -n "$LOG_FILE" ]; then
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     [ -z "$EFFORT_NOTE" ] || echo "$EFFORT_NOTE" | tee -a "$LOG_RW" >&2
-    node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
+    PASS_DATA="$(mktemp -d "${TMPDIR:-/tmp}/codex-pass.XXXXXX")" || {
+        echo "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass" >&2; exit 2; }
+    env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
+        -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DATA" \
+        node "$COMPANION" adversarial-review ${EFFORT:+--effort "$EFFORT"} -- "$PROMPT" 2>&1 | tee -a "$LOG_RW"
     rc=$?
+    end_companion_pass
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_ID="$(candidate_id)" || NOW_ID="unreadable"
         if [ "$NOW_ID" != "$LAUNCH_ID" ]; then

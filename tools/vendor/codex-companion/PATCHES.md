@@ -5,14 +5,13 @@ This tree is OpenAI's Codex plugin for Claude Code (`openai/codex-plugin-cc`, `p
 ## Patch: `--effort` on `adversarial-review`
 
 - `scripts/codex-companion.mjs`: `adversarial-review` accepts `--effort <none|minimal|low|medium|high|xhigh>`, normalised by the upstream `normalizeReasoningEffort`, and forwards it to `runAppServerTurn`, as `task` already does. The native `review` command still refuses the option, because its `review/start` request carries no effort.
-- `tests/effort.test.mjs` (ours): four tests on the upstream fake app-server (`tests/fake-codex-fixture.mjs`, `tests/helpers.mjs`, copied from upstream `tests/`). Each test owns its plugin data, inherits no broker endpoint, and stops the broker it started with its whole process group.
+- `tests/effort.test.mjs` (ours): four tests on the upstream fake app-server (`tests/fake-codex-fixture.mjs`, `tests/helpers.mjs`, copied from upstream `tests/`). Each test owns its plugin data, inherits no broker endpoint, and stops every process carrying that plugin data (the detached broker and its app-server, whether or not the broker published its record) before it ends.
 
-## Patch: one lock around the job-state file
+## Not patched: the shared job state
 
-- `scripts/lib/state.mjs`: `updateState` and `saveState` hold `state.lock` (an exclusive-create file in the workspace's state directory, a 10 s wait, a holder older than 30 s treated as dead) across the read, change and write, and job files are deleted only for jobs that left the list under that lock. Upstream read, changed and rewrote the state with no lock, so two companion processes in one workspace (a round and a performance review dispatched together) deleted each other's job records and logs: a two-writer run kept 7 of 40 jobs.
-- `tests/state-lock.test.mjs` (ours): two writers of 20 jobs each keep all 40 records and logs.
+Upstream reads, changes and rewrites `state.json` with no lock, so two companion processes sharing one plugin-data directory can delete each other's job records. That is left as upstream wrote it: `scripts/codex-dispatch.sh` gives every review pass its own `CLAUDE_PLUGIN_DATA`, so no two of our passes share that state or a broker, and it stops every process of the pass (found by that directory in their environment, `scripts/overnight/reap_env.py`) when the pass ends.
 
-Run every test here: `node --test tools/vendor/codex-companion/tests/effort.test.mjs tools/vendor/codex-companion/tests/state-lock.test.mjs`.
+Run the tests here: `node --test tools/vendor/codex-companion/tests/effort.test.mjs`.
 
 Upstream: the same change is proposed in openai/codex-plugin-cc pull requests #677 ("Support --effort on adversarial-review", opened 2026-08-23) and #746 (the same plus unrecognised-option errors, opened 2026-09-06), and requested in issues #476 and #651; none was merged as of 2026-11-23. We open no third request (operator decision 2026-11-23). When a release carries either, drop this patch and re-drop the stock tree.
 

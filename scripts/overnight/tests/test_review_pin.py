@@ -3010,3 +3010,53 @@ def test_an_override_companion_that_does_not_declare_effort_gets_none(tmp_path):
     assert "effort" not in _last_receipt(tmp_path)
     log = next((tmp_path / "reviews").glob("*-round-direct.out")).read_text()
     assert "effort not applied" in log
+
+
+def test_each_pass_runs_the_companion_in_its_own_data_and_reaps_it(tmp_path, monkeypatch):
+    """Concurrent passes shared the companion's job state (an unlocked read-modify-write that lost job records) and
+    its detached broker. Each pass now gets a private CLAUDE_PLUGIN_DATA, no inherited broker endpoint, and every
+    process carrying that directory, a detached one included, is stopped and the directory removed when it ends."""
+    import json
+    import os
+    import time
+    monkeypatch.setenv("CODEX_COMPANION_APP_SERVER_ENDPOINT", "unix:/nonexistent/broker.sock")
+    probe = tmp_path / "probe.json"
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION + f"""
+const cp = require('child_process');
+const child = cp.spawn('sleep', ['300'], {{ detached: true, stdio: 'ignore' }});
+child.unref();
+fs.writeFileSync({json.dumps(str(probe))}, JSON.stringify({{
+  data: process.env.CLAUDE_PLUGIN_DATA || '', endpoint: process.env.CODEX_COMPANION_APP_SERVER_ENDPOINT || '',
+  child: child.pid }}));
+""")
+    import subprocess
+    (tmp_path / "review.txt").write_text("HIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_COMPANION_ACCEPTS_EFFORT": "1",
+           "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"), "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"),
+           "FAKE_REVIEW": str(tmp_path / "review.txt"), "REVIEW_BASE": "HEAD", "TMPDIR": str(tmp_path)}
+    subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                    "[review-kind: plan] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                   capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
+    seen = json.loads(probe.read_text())
+    try:
+        assert seen["data"].startswith(str(tmp_path / "codex-pass.")), seen
+        assert seen["endpoint"] == "", "the pass inherited a shared broker endpoint"
+        assert not pathlib.Path(seen["data"]).exists(), "the pass's companion data outlived it"
+        for _ in range(40):
+            if not pathlib.Path(f"/proc/{seen['child']}").exists():
+                break
+            time.sleep(0.05)
+        state = pathlib.Path(f"/proc/{seen['child']}/stat")
+        assert not state.exists() or state.read_text().rsplit(") ", 1)[1][0] == "Z", "a detached child outlived the pass"
+    finally:
+        try:
+            os.kill(seen["child"], 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_the_broker_forwards_the_effort_declaration():
+    broker = (REPO / "scripts/overnight/review-broker-codex-dispatch.sh").read_text()
+    run = next(line for line in broker.splitlines() if 'CODEX_COMPANION_PATH=$(q "$COMPANION")' in line)
+    assert 'CODEX_COMPANION_ACCEPTS_EFFORT=$(q "${CODEX_COMPANION_ACCEPTS_EFFORT:-}")' in run

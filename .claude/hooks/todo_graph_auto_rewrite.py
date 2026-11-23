@@ -26,6 +26,7 @@
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -38,13 +39,41 @@ def _left(deadline):
 
 def _registered_worktrees(where, deadline):
     """The canonical roots of every worktree git has registered for the repository holding `where`, or an empty
-    set when that cannot be read. A tree that merely points at the repository's metadata is not among them."""
+    set when that cannot be read. A tree that merely points at the repository's metadata is not among them. A
+    lookup that runs out of time raises subprocess.TimeoutExpired: the caller reports a repair not run."""
     try:
         out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain"],
                                       stderr=subprocess.DEVNULL, timeout=_left(deadline)).decode("utf-8", "surrogateescape")
+    except subprocess.TimeoutExpired:
+        raise
     except Exception:  # fail-direction: no list means no repair, which is silent and safe
         return set()
     return {os.path.realpath(line[len("worktree "):]) for line in out.splitlines() if line.startswith("worktree ")}
+
+
+def _not_run(why):
+    print(json.dumps({"systemMessage": f"{PREFIX} was not run: {why}, so stamp line numbers were not checked. "
+                      "Run it by hand: python3 scripts/todo-graph/validate.py --fix-line-numbers --write"}))
+    return 0
+
+
+def _run_group(cmd, cwd, timeout):
+    """subprocess.run in its own process group, the whole group stopped on timeout: the validator can start a
+    cache rebuild and its git, which must not outlive this hook. Raises subprocess.TimeoutExpired."""
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:  # fail-direction: the group already ended, which is the goal
+            pass
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 def main() -> int:
@@ -70,12 +99,18 @@ def main() -> int:
             ["git", "-C", here, "rev-parse", "--show-toplevel"],
             stderr=subprocess.DEVNULL, timeout=_left(deadline),
         ).decode().strip()
-    except Exception:
+    except subprocess.TimeoutExpired:
+        return _not_run(f"git rev-parse timed out inside the hook's {BUDGET_S}s budget")
+    except Exception:  # fail-direction: a file outside any repository has no stamps to repair
         return 0
     # Only a registered worktree of the repository that installed this hook: the validator is code from the edited
     # tree, so an edit in an unrelated checkout, or in a tree that only points at this repository's metadata, must
     # never run that tree's code.
-    if os.path.realpath(root) not in _registered_worktrees(os.path.dirname(os.path.abspath(__file__)), deadline):
+    try:
+        registered = _registered_worktrees(os.path.dirname(os.path.abspath(__file__)), deadline)
+    except subprocess.TimeoutExpired:
+        return _not_run(f"git worktree list timed out inside the hook's {BUDGET_S}s budget")
+    if os.path.realpath(root) not in registered:
         return 0
 
     validator = root + "/scripts/todo-graph/validate.py"
@@ -83,20 +118,10 @@ def main() -> int:
         return 0
 
     if deadline - time.monotonic() < MIN_REPAIR_S:
-        print(json.dumps({"systemMessage": f"{PREFIX} was not run: the git lookups spent the hook's {BUDGET_S}s "
-                          "budget, so stamp line numbers were not checked. Run it by hand: python3 "
-                          "scripts/todo-graph/validate.py --fix-line-numbers --write"}))
-        return 0
+        return _not_run(f"the git lookups spent the hook's {BUDGET_S}s budget")
     try:
-        result = subprocess.run(
-            [
-                "python3", validator,
-                "--fix-line-numbers",
-                "--write",
-                "--quiet",
-            ],
-            cwd=root, capture_output=True, text=True, timeout=_left(deadline),
-        )
+        result = _run_group(["python3", validator, "--fix-line-numbers", "--write", "--quiet"],
+                            root, _left(deadline))
     except subprocess.TimeoutExpired:
         msg = message_for(None, "", "", timed_out=True)
     except Exception as e:  # fail-direction: a repair that never ran is reported, not hidden

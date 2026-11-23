@@ -60,8 +60,7 @@ GENERATED = {"todo/implementation-plan.md", "COUNT.md"}
 # Vendored upstream trees are copied byte-exact so they can be re-dropped (src/libs/PROVENANCE.md): their dashes are
 # the upstream's text. The files we add inside such a tree are ours and are judged.
 VENDORED = ("tools/vendor/",)
-OURS_IN_VENDORED = {"tools/vendor/codex-companion/PATCHES.md", "tools/vendor/codex-companion/tests/effort.test.mjs",
-                    "tools/vendor/codex-companion/tests/state-lock.test.mjs"}
+OURS_IN_VENDORED = {"tools/vendor/codex-companion/PATCHES.md", "tools/vendor/codex-companion/tests/effort.test.mjs"}
 
 
 def exempt(path):
