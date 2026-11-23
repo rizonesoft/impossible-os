@@ -41,6 +41,11 @@ class LaneError(Exception):
     """The map or the repository cannot be read, so nothing can be judged."""
 
 
+class GitStalled(LaneError):
+    """git did not run to an answer (it timed out or could not start), so nothing about the repository follows
+    from it: never read as "absent"."""
+
+
 def _need(cond, msg):
     if not cond:
         raise LaneError(f".conclave/lanes.toml: {msg}")
@@ -227,30 +232,35 @@ def _git(root: Path, *args: str, deadline: float | None = None) -> bytes:
     """git's stdout, bounded by GIT_SECS, and by `deadline` (time.monotonic()) when a caller shares a budget."""
     secs = GIT_SECS if deadline is None else min(GIT_SECS, deadline - time.monotonic())
     if secs <= 0:
-        raise LaneError(f"git {args[0]} has no time left in its caller's budget")
+        raise GitStalled(f"git {args[0]} has no time left in its caller's budget")
     try:
         # A local replacement ref must not change what the check sees: it judges the objects git stores.
         r = subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args], capture_output=True,
                            timeout=secs)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise LaneError(f"git {args[0]} could not run ({type(exc).__name__})") from exc
+        raise GitStalled(f"git {args[0]} could not run ({type(exc).__name__})") from exc
     if r.returncode != 0:
         raise LaneError(f"git {' '.join(args[:2])} failed: {r.stderr.decode(errors='replace').strip()[:200]}")
     return r.stdout
 
 
-def committer(lane_map: dict, toplevel: Path) -> str | None:
-    """The lane whose worktree is this tree, or None for a tree that is no lane's (an attended worktree)."""
+def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
+    """Each lane's worktree as the directory it resolves to. Two lanes resolving to one directory (a symlink
+    alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
     primary = common.resolve().parent
-    here = Path(toplevel).resolve()
     seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
         tree = (primary / lane["worktree"]).resolve()
-        if tree in seen:                           # a symlink alias of another lane's tree: whose would it be?
+        if tree in seen:
             raise LaneError(f"lanes {seen[tree]} and {name} name the same worktree {tree}")
         seen[tree] = name
-    return seen.get(here)
+    return seen
+
+
+def committer(lane_map: dict, toplevel: Path) -> str | None:
+    """The lane whose worktree is this tree, or None for a tree that is no lane's (an attended worktree)."""
+    return lane_trees(lane_map, toplevel).get(Path(toplevel).resolve())
 
 
 def staged_paths(toplevel: Path, base: str | None = None) -> list[str]:
@@ -287,8 +297,11 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
 
 
 def _blob(toplevel: Path, spec: str, deadline: float | None = None) -> str | None:
+    """The blob's text, or None when git answered that it does not exist. A stalled git raises (GitStalled)."""
     try:
         return _git(toplevel, "show", spec, deadline=deadline).decode("utf-8")
+    except GitStalled:
+        raise
     except (LaneError, UnicodeDecodeError):
         return None
 
@@ -329,21 +342,36 @@ def _state_lines(path: Path) -> list[str]:
         raise LaneError(f"{path.name} cannot be read ({type(exc).__name__})") from exc
 
 
-def other_parents(toplevel: Path) -> list[str]:
-    """The commits this commit's result is also measured against: a pending merge's other parents (MERGE_HEAD,
-    one line each for an octopus), or, in a rebase stopped on a commit, that commit (REBASE_HEAD)."""
+def _verify(toplevel: Path, ref: str) -> str | None:
+    """The object `ref` names, or None when it does not exist."""
+    try:
+        return _git(toplevel, "rev-parse", "-q", "--verify", ref).decode().strip() or None
+    except GitStalled:
+        raise
+    except LaneError:
+        return None
+
+
+def authored_paths(toplevel: Path, replay: bool = False) -> list[str]:
+    """The paths this commit authors, which the lane check judges.
+
+    - A merge or rebase stopped for the operator: git records its own result in AUTO_MERGE, so the paths
+      where the index differs from it are exactly the hand edits (a resolution, an extra or reverted file);
+      what git merged by itself carries commits already judged.
+    - Without AUTO_MERGE (git older than 2.42), the result is measured against the merge's other parents or
+      the stopped pick (REBASE_HEAD): only a path differing from every one of them is authored.
+    - A rebase's clean pick (`replay`) replays a commit already judged: nothing is authored.
+    - Anything else (an ordinary commit, a revert, a cherry-pick) authors every path it changes."""
     merging = _state_lines(_git_path(toplevel, "MERGE_HEAD"))
-    if merging:
-        return merging
-    if _git_path(toplevel, "rebase-merge").is_dir() or _git_path(toplevel, "rebase-apply").is_dir():
-        return _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
-    return []
-
-
-def authored_paths(toplevel: Path, parents: list[str]) -> list[str]:
-    """The paths this commit authors. A path whose result equals some parent's (a merge's other parent, the
-    commit a stopped rebase replays) is inherited from a commit already judged; only a result that differs from
-    every one of them (a resolution, an extra edit) is this commit's."""
+    rebasing = _git_path(toplevel, "rebase-merge").is_dir() or _git_path(toplevel, "rebase-apply").is_dir()
+    if not merging and not rebasing:
+        return staged_paths(toplevel)
+    auto = _verify(toplevel, "AUTO_MERGE")
+    if auto:
+        return staged_paths(toplevel, auto)
+    parents = merging or _state_lines(_git_path(toplevel, "REBASE_HEAD"))[:1]
+    if not parents:
+        return [] if replay else staged_paths(toplevel)
     paths = staged_paths(toplevel)
     for parent in parents:
         theirs = set(staged_paths(toplevel, parent))
@@ -357,17 +385,27 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
     rebase stopped on (REBASE_HEAD) is judged on what was added to it."""
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
-        lane_map = committed_map(toplevel)
-        me = committer(lane_map, toplevel)
-        # The map the commit leaves behind is validated on every path, a merge or rebase included: a map
-        # that does not validate never lands, because every later commit is judged by it.
+        # The map the commit leaves behind is validated on every path, a merge or rebase included, and as
+        # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
+        # later commit is judged by it.
+        proposed = None
         if MAP in staged_paths(toplevel):
             staged = _blob(toplevel, f":{MAP}")
             if staged is None:
                 raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
-            parse_map(staged)
-        parents = other_parents(toplevel)
-        paths = [] if replay and not parents else authored_paths(toplevel, parents)
+            proposed = parse_map(staged)
+            lane_trees(proposed, toplevel)
+        try:
+            lane_map = committed_map(toplevel)
+            committer(lane_map, toplevel)
+        except GitStalled:
+            raise
+        except LaneError:
+            if proposed is None:
+                raise
+            lane_map = proposed                    # HEAD's map is broken: a commit repairing it is judged by its own
+        me = committer(lane_map, toplevel)
+        paths = authored_paths(toplevel, replay)
         reasons = judge(lane_map, me, paths, states(lane_map))
     except LaneError as exc:
         print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)

@@ -605,3 +605,74 @@ def test_triage_spends_no_git_call_when_no_lane_has_a_record(tmp_path, monkeypat
     assert ctx is None and "lanes.toml" in err, err
     with pytest.raises(lanes.LaneError, match="no time left"):
         lanes._git(tmp_path, "status", deadline=time.monotonic() - 1)
+
+
+def _stopped_pick(repo, pick, upstream, later=None):
+    """feat (one pick of `pick`, then optional clean `later` picks) rebased onto main after main committed
+    `upstream`; both change src/kernel/k.c, so the rebase stops on the first pick. Userland is live."""
+    p = repo["primary"]
+    stage(p, "user/a.c", "1\n2\n3\n4\n5\n6\n7\n")
+    git(p, "commit", "-qm", "base")
+    git(p, "checkout", "-q", "-b", "feat")
+    for rel, text in {**pick, "src/kernel/k.c": "feat\n"}.items():
+        stage(p, rel, text)
+    git(p, "commit", "-qm", "pick")
+    for i, (rel, text) in enumerate((later or {}).items()):
+        stage(p, rel, text)
+        git(p, "commit", "-qm", f"later{i}")
+    git(p, "checkout", "-q", "main")
+    for rel, text in {**upstream, "src/kernel/k.c": "main\n"}.items():
+        stage(p, rel, text)
+    git(p, "commit", "-qm", "upstream")
+    git(p, "checkout", "-q", "feat")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    r = git(p, "rebase", "main", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode != 0 and git(p, "rev-parse", "-q", "--verify", "AUTO_MERGE", check=False).stdout, r
+    stage(p, "src/kernel/k.c", "resolved\n")
+    return p
+
+
+def test_a_stopped_pick_that_rolls_back_a_live_lanes_file_is_refused(repo):
+    p = _stopped_pick(repo, {}, {"user/a.c": "upstream\n"})
+    git(p, "checkout", "REBASE_HEAD", "--", "user/a.c")              # the pick's older copy, by mistake
+    r = git(p, "rebase", "--continue", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+
+
+def test_a_stopped_pick_keeps_what_git_merged_by_itself_and_later_clean_picks_replay(repo):
+    p = _stopped_pick(repo, {"user/a.c": "one\n2\n3\n4\n5\n6\n7\n"}, {"user/a.c": "1\n2\n3\n4\n5\n6\nseven\n"},
+                      later={"user/b.c": "later\n"})
+    r = git(p, "rebase", "--continue", check=False, env={**os.environ, "GIT_EDITOR": "true"})
+    assert r.returncode == 0 and head(p) == "later0", r
+    assert (p / "user" / "a.c").read_text() == "one\n2\n3\n4\n5\n6\nseven\n"
+
+
+def test_a_staged_worktree_alias_never_lands_and_a_broken_map_can_be_repaired(repo):
+    p = repo["primary"]
+    toml = p / ".conclave" / "lanes.toml"
+    good = toml.read_text()
+    (repo["tmp"] / "alias").symlink_to(repo["userland"])
+    toml.write_text(good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"'))
+    git(p, "add", "--", ".conclave/lanes.toml")
+    r = hooked_commit(repo, p)
+    assert r.returncode != 0 and "name the same worktree" in r.stderr, r
+    assert head(p) == "seed"
+    git(p, "config", "--unset", "core.hooksPath")
+    git(p, "commit", "-qm", "alias map")                              # landed past the hooks
+    toml.write_text(good)
+    git(p, "add", "--", ".conclave/lanes.toml")
+    r = hooked_commit(repo, p)
+    assert r.returncode == 0 and head(p) == "x", r                    # the repair is judged by its own map
+
+
+def test_a_stalled_head_read_never_falls_back_to_the_index(repo, monkeypatch):
+    calls = []
+
+    def stalled(root, *args, deadline=None):
+        calls.append(args)
+        raise lanes.GitStalled("git show could not run (TimeoutExpired)")
+    monkeypatch.setattr(lanes, "_git", stalled)
+    with pytest.raises(lanes.GitStalled):
+        lanes.committed_map(repo["primary"])
+    assert calls == [("show", "HEAD:.conclave/lanes.toml")], calls
