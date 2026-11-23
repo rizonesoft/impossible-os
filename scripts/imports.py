@@ -362,6 +362,15 @@ def wanted(root):
     return [f"{source} needs {what}" + (": " + ", ".join(f for _, f in new) if new else f" ({name})") for source, name, what, new in unanswered(root)]
 
 
+def ahead(plan, number, home):
+    """The plan with the row of one section of NEEDS put before another's, where it is after it."""
+    lines, (domain, file) = plan.split("\n"), re.search(r"/?(\d\d)-[^/]+/TODO-(\d\d)", NEEDS).groups()
+    at = {n: next((k for k, line in enumerate(lines) if re.match(rf"\|[^|]*\| *`D{domain} T{file} {SIGN}{n}` *\|", line)), None) for n in (number, home)}
+    if None not in at.values() and at[number] > at[home]:
+        lines.insert(at[home], lines.pop(at[number]))
+    return "\n".join(lines)
+
+
 def file_needs(root):
     """One section in NEEDS for each, with its row there, in the ledger and in the plan; staged."""
     found = unanswered(root)
@@ -370,6 +379,7 @@ def file_needs(root):
         raise SystemExit("imports: todo has changes that are not staged, and the plan is made from all of it")
     text = path.read_text(encoding="utf-8")
     ledger = load(git(root, "show", f":{LEDGER}").stdout)[0]
+    before = []
     for source, name, what, new in found:
         number = max(sections(text)) + 1
         tier = re.match(r"impossible-sdk-tier-(\d+)-", name)
@@ -377,6 +387,7 @@ def file_needs(root):
         own = [f"{SIGN}1"] if home != 1 else []
         stands = ", ".join(dict.fromkeys([*own, *(UNDER[dll] for dll, _ in new if dll in UNDER)])) or "--"
         if home:  # the tier is not complete without it
+            before.append((number, home))
             text = re.sub(rf"^(\|[^|]*\| *\d+ *\| {SIGN}{home} [^|]*\| *)([^|]*?)( *\|)", lambda m: f"{m[1]}{SIGN}{number}, {m[2]}{m[3]}", text, count=1, flags=re.M)
         items = ["- [ ] Name what it stands on (a driver, a protocol, an engine, a file system) and the section that builds that; add it to this row's dependencies, and file a section where there is none"]
         items += [f"- [ ] `{f}` of `{dll}` acts as on Windows, whichever section builds it" for dll, f in new] or [f"- [ ] {what[0].upper()}{what[1:]}, as {source} declares it"]
@@ -395,8 +406,13 @@ def file_needs(root):
         (root / LEDGER).write_bytes(written(ledger))
         try:
             if (root / "scripts/todo-plan.py").is_file():
-                for command in (["bash", "scripts/todo-graph/build-and-validate.sh"], ["python3", "scripts/todo-plan.py", "--sync"]):
-                    subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL, timeout=600)
+                sync = ["python3", "scripts/todo-plan.py", "--sync"]
+                subprocess.run(["python3", "scripts/format-md-tables.py", NEEDS], cwd=root, check=True, stdout=subprocess.DEVNULL, timeout=60)
+                subprocess.run(["bash", "scripts/todo-graph/build-and-validate.sh"], cwd=root, check=True, stdout=subprocess.DEVNULL, timeout=600)
+                subprocess.run(sync, cwd=root, capture_output=True, timeout=600)  # places the new rows, last in their phase
+                for number, home in before:
+                    (root / PLAN).write_text(ahead((root / PLAN).read_text(encoding="utf-8"), number, home), encoding="utf-8")
+                subprocess.run(sync, cwd=root, check=True, stdout=subprocess.DEVNULL, timeout=600)
         except BaseException:  # nothing is half filed: the files are as they were staged
             git(root, "checkout-index", "-f", "--", NEEDS, LEDGER, *([PLAN] if (root / PLAN).is_file() else []))
             raise

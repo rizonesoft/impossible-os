@@ -498,6 +498,11 @@ class Imports(unittest.TestCase):
         with mock.patch.dict(os.environ, {"IMPOSSIBLE_REPOS": str(repos / "nowhere")}):
             self.assertEqual(imports.wanted(self.root), [])
 
+    def test_a_new_function_is_planned_before_its_tier(self):
+        row = {n: f"| [ ] | `D{10} T{13} {imports.SIGN}{n}` | x |" for n in (4, 7, 47)}
+        for lines, then in (([row[4], row[47], row[7], "end"], [row[7], row[4], row[47], "end"]), ([row[7], row[4]], [row[7], row[4]]), ([row[4]], [row[4]])):
+            self.assertEqual(imports.ahead("\n".join(lines), 7, 4).split("\n"), then)
+
     def test_a_false_proposal_is_refused(self):
         self.linked()
         self.change("int a1;\n")
