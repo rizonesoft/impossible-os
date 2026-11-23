@@ -620,3 +620,13 @@ A: (operator asked what the session would do, 2026-11-23, after "not even 1% of 
 - **C:** the kit becomes `devkit/`.
 
 A: (operator, 2026-11-23) A, with only the host tools renamed: `12-user-platform-sdk` and `docs/sdk/` keep their names. The session chose the rest: OS conformance programs planned under `sdk/compat/` go to `tests/compat/`, on-OS developer programs to `build/devtools/`, and the `sdk/v*` tag namespace is unchanged. Reversal cost: one revert; no build, CI or kernel code reads these paths.
+
+## Q56 (operator, 08-graphics-ui, 11-apps): how are the interface and the apps that are developed outside this repository brought back?
+
+The operator decided on 2026-11-23 that the interface library and the apps are developed in their own repositories, proven on Windows first, that neither side waits for the other, and that this repository must not forget an import.
+
+- **A:** a ledger (`todo/imports.json`) and lint Check 42 (`scripts/imports.py`): a moved section keeps its address and points to an import section, and a copy in the tree has git's tree id of its pinned commit.
+- **B:** git submodules.
+- **C:** remove the sections and rely on the other repositories' lists.
+
+A: (operator, 2026-11-23) A. What is not ready leaves its import section open, sections that use it come later, and the rest of the plan goes on. The session chose the form of the ledger. It is empty until the first section moves. Reversal cost: delete the ledger, the script and Check 42; nothing in the build reads them.

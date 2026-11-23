@@ -255,6 +255,7 @@ python3 scripts/todo-plan.py --check      # lint Check 37: stale plan, or a row 
 - **Never read the plan file into context.** It is about 2,700 lines; `--next` and `--resolve '<row>'` answer from it.
 - **Sync before the commit** whenever a section's status, stamps or heading changed or a section was filed. The sync is mechanical and spends no model.
 - **The run follows it.** `sequencer_triage.py --next` stays in the current file while it has a runnable section, then opens the owner of the first row `--next` prints; a section whose dependencies are open is skipped until they are done, unless every open section waits, when the packet names the first and the run works what its finished dependencies allow and defers the rest with an XREF. A dependency cycle fails `--check`.
+- **Some work lives in other repositories** (the interface library and the apps, operator decision 2026-11-23, `todo/answers.md` Q56). `todo/imports.json` says what is imported, where and at which commit; a moved section carries `**Moved:** <source>` and is not built here, its import section carries `**Import:** <source>`, and lint Check 42 (`scripts/imports.py`) holds them together. A section that uses a part depends on its import section; everything else goes on.
 - A row pasted from the plan (box, address, title) is a complete instruction for `/implement-todo-section`; `--resolve` turns the address into its file and section.
 
 Details: [docs/infrastructure/todo-metadata.md](docs/infrastructure/todo-metadata.md#the-implementation-plan).

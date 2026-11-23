@@ -1398,6 +1398,7 @@ _tt_nested_py "$REPO_ROOT/tools/uefi-varstore/test_plant.py" uefi_varstore
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_imports.py" imports
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_campaign_icon.py" campaign_icon
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_run_desktop_icons.py" run_desktop_icons
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_abort_path_check.py" abort_path_check
@@ -1653,6 +1654,21 @@ if [ -f "$ALIAS_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_alias_staleness.py not found"
+fi
+
+# The import ledger (scripts/tests/test_imports.py): fixture repositories in a
+# temporary directory.
+IMPORTS_TEST="$REPO_ROOT/scripts/tests/test_imports.py"
+if [ -f "$IMPORTS_TEST" ]; then
+    IMPORTS_TEST_OUT=$(_tt_nested_collect imports python3 "$IMPORTS_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_imports.py PASS ($(printf '%s\n' "$IMPORTS_TEST_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_imports.py FAIL ($(printf '%s\n' "$IMPORTS_TEST_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_imports" "$IMPORTS_TEST_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_imports.py not found"
 fi
 
 # The implementation plan (scripts/tests/test_todo_plan.py): seed, sync, check,

@@ -282,6 +282,20 @@ A row is a box, an address in backticks, a title, the section's Needs and its co
 
 **Do not read the plan into a session.** It is about 2,700 lines. Ask for `--next`.
 
+### Work that lives in other repositories
+
+The interface library and the apps are developed in their own repositories, proven on Windows first, and imported here. [`todo/imports.json`](../../todo/imports.json) is the ledger and `python3 scripts/imports.py --list` prints it.
+
+| Entry | Meaning |
+| --- | --- |
+| `sources` | One part or program: its repository and folder there (`from`), the folder it is imported to, the section that imports it, its pinned commit and git's tree id of the copy (`null` until imported) |
+| `moved` | One roadmap section that is built elsewhere: its address, its source and where the work is |
+| `removed` | The reason why an entry was taken out; a reason is kept |
+
+A moved section keeps its address and carries `**Moved:** <source>`; the import section carries `**Import:** <source>`. Lint Check 42 (`scripts/imports.py --check`, over the git index) refuses one without the other, a copy that is not the pinned one, an import marked done with nothing imported, and an entry that ever left the ledger without its own reason. With `IMPOSSIBLE_REPOS` set to the folder of those repositories it also asks the pinned commit for its tree. It cannot see work that is called moved in prose and never declared.
+
+A section that uses a part depends on that part's import section and is taken once it is there; everything else in the plan goes on.
+
 ## See Also
 
 - [`docs/infrastructure/todo-metadata.schema.json`](todo-metadata.schema.json) -- machine-readable JSON Schema Draft 2020-12 sidecar

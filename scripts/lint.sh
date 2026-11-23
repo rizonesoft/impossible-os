@@ -3200,6 +3200,33 @@ if [ "${SKIP_LINT_COVERAGE:-0}" != "1" ] && [ "${COV_RUN:-0}" = "1" ] && [ "$COV
 fi
 
 # ============================================================================
+# Check 42: what moved to the repositories beside this one is still imported
+# ============================================================================
+# scripts/imports.py over todo/imports.json: a moved section without its import
+# section, an import section without its source, a copy that is not the pinned
+# one, or a row that ever left without a reason. It judges the index.
+# Skip via SKIP_LINT_IMPORTS=1.
+if [ "${SKIP_LINT_IMPORTS:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 42 (imports) skipped via SKIP_LINT_IMPORTS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/imports.py" ]; then
+    # Throwaway fixture repos (scripts/test-tooling.sh) carry no imports.
+    if git -C "$REPO_ROOT" ls-files --error-unmatch todo/imports.json >/dev/null 2>&1 \
+            || git -C "$REPO_ROOT" cat-file -e HEAD:todo/imports.json 2>/dev/null; then
+        echo -e "${RED}error${NC}: Check 42 (imports) -- todo/imports.json is or was tracked and scripts/imports.py is not here, so the check did not run"
+        ERRORS=$((ERRORS + 1))
+    fi
+else
+    IMP_RC=0
+    IMP_OUT=$(python3 "$REPO_ROOT/scripts/imports.py" --check --root "$REPO_ROOT" 2>&1) || IMP_RC=$?
+    if [ "$IMP_RC" -ne 0 ]; then
+        printf '%s\n' "$IMP_OUT" | head -20 | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 42 (imports) -- todo/imports.json, the sections it names and the imported copies must agree (exit $IMP_RC)"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
