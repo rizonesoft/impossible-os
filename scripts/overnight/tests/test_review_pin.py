@@ -3596,3 +3596,23 @@ def test_an_empty_unmarked_pass_parent_is_adopted_and_any_other_is_refused(tmp_p
     (used / ".cp" / "someone").mkdir(parents=True)
     assert parent(used).returncode != 0
     assert not (used / ".cp" / ".codex-dispatch-passes").exists()
+
+
+def test_concurrent_first_callers_both_get_a_pass_directory(tmp_path):
+    """Two passes starting together on a fresh reviews directory: the second saw .cp before the first wrote its
+    marker, then found it non-empty (the marker) and refused (2026-11-23, the push gate's two-passes test)."""
+    import subprocess
+    lib = REPO / "scripts/lib/pass-dir.sh"
+    procs = []
+    for n in range(30):
+        base = tmp_path / f"base{n}"
+        base.mkdir()
+        for _ in range(3):
+            procs.append(subprocess.Popen(["bash", "-c", f'. "{lib}"; new_pass_dir "$1"', "_", str(base)],
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+    failed = []
+    for p in procs:
+        out, err = p.communicate(timeout=60)
+        if p.returncode != 0 or not out.strip():
+            failed.append(err)
+    assert not failed, (len(failed), failed[:2])

@@ -16,10 +16,15 @@ pass_dir_parent() {
     mkdir -m 700 -- "$parent" 2>/dev/null
     [ -d "$parent" ] && [ ! -L "$parent" ] && [ -O "$parent" ] || return 1
     if [ ! -f "$parent/$PASS_DIR_MARKER" ]; then
-        # An EMPTY unmarked .cp is adopted: a first caller interrupted between its mkdir and its marker, or one
-        # racing another first caller, leaves exactly that, and an empty directory holds nothing a sweep could
-        # remove. One with any entry is someone else's and is never used.
-        [ -z "$(ls -A -- "$parent" 2>/dev/null)" ] || return 1
+        # An EMPTY unmarked .cp is adopted: a first caller interrupted between its mkdir and its marker leaves
+        # exactly that, and an empty directory holds nothing a sweep could remove. One with any entry is someone
+        # else's and is never used, unless the marker is there by now: a first caller racing this one wrote it
+        # between the two looks (nothing but a marker is written before it).
+        local entries
+        entries="$(ls -A -- "$parent" 2>/dev/null)"
+        if [ -n "$entries" ] && [ ! -f "$parent/$PASS_DIR_MARKER" ]; then
+            return 1
+        fi
         : > "$parent/$PASS_DIR_MARKER" || return 1
     fi
     printf '%s\n' "$parent"
