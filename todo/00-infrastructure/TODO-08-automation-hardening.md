@@ -1940,6 +1940,8 @@ Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the rec
 
 ## 70. Reviewer effort follows the area and the chain
 
+**Needs:** third-party
+
 > **Spawned-by:** root (operator direction 2026-11-23)
 > **User impact:** every Astra pass ran at one effort; kernel and boot got no deeper look than a docs edit, and long quiet chains paid full effort to the end.
 
@@ -1949,7 +1951,7 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 - [ ] `codex-dispatch.sh` passes the pinned effort once the review range is settled and writes `effort` and `tier` on every receipt
 - [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
 - [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
-- [ ] Upstream pull request on `openai/codex-plugin-cc` adds `--effort` to `adversarial-review`
+- [/] The vendored patch is dropped for the stock companion once upstream merges `openai/codex-plugin-cc` #677 or #746 (waits on the upstream maintainers; no third request, operator 2026-11-23)
 - [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts, 2026-12-07)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
