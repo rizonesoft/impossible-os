@@ -90,12 +90,13 @@ Tools used to build or validate Impossible OS are not redistributed with it and 
 
 ### Vendored host tools
 
-Vendored under `tools/vendor/` and used only on the build host to generate the website and documentation site (`scripts/site/build.py`). They are never linked into or shipped with an Impossible OS image. Each directory keeps its upstream license file verbatim.
+Vendored under `tools/vendor/` and used only on the build host: to generate the website and documentation site (`scripts/site/build.py`), and to dispatch code reviews (`scripts/codex-dispatch.sh`). They are never linked into or shipped with an Impossible OS image. Each directory keeps its upstream license file verbatim.
 
 | Library | Copyright | License | Upstream |
 | --- | --- | --- | --- |
 | markdown-it-py 3.0.0 | Copyright (c) 2020 ExecutableBookProject; port of markdown-it, Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin | MIT | https://github.com/executablebooks/markdown-it-py |
 | mdurl 0.1.2 | Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin; Copyright (c) 2021 Taneli Hukkinen | MIT | https://github.com/executablebooks/mdurl |
+| Codex plugin for Claude Code 1.0.4 (companion, `tools/vendor/codex-companion/`, patched: `PATCHES.md`) | Copyright 2026 OpenAI | Apache-2.0 | https://github.com/openai/codex-plugin-cc |
 
 ### Reference VM capture runtime
 
