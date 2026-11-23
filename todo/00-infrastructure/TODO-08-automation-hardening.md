@@ -135,7 +135,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  67   |   §67   | The push wait overlaps the next plan review                                                      | --                         |  [ ]   |
 | ⭐  |  68   |   §68   | Coverage lint passes inside a worktree commit                                                    | --                         |  [/]   |
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
-| ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [ ]   |
+| ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [x]   |
 | 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
@@ -1951,15 +1951,25 @@ Filed 2026-11-21 from §35's round 22 (Astra), which found these outside the rec
 
 Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/2026-11-23-adaptive-review-effort-design.md); plan: [docs/plans/2026-11-23-adaptive-review-effort.md](../../docs/plans/2026-11-23-adaptive-review-effort.md). Effort moves from the Codex config (§2) to the reviewer pin. -> XREF: [§2](#2-codex-invocation-policy-no---model----effort-from-claude). The path tiers are the pin's one path classification, which [§62](#62-review-depth-per-path) uses as its deep set; the pinned host-tooling threat model is §62's item, not this section's. -> XREF: [§62](#62-review-depth-per-path) (item: "Host-tooling paths carry a pinned threat model")
 
-- [ ] The pin's `[schedule.effort]` table sets each pass's effort by area tier and the chain's last finding (`review_pin.py --effort`)
-- [ ] `codex-dispatch.sh` applies the pinned effort once the review range is settled and writes `effort` and `tier` on the receipt when it did (a fallback receipt omits both)
-- [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
-- [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
+- [x] The pin's `[schedule.effort]` table sets each pass's effort by area tier and the chain's last finding (`review_pin.py --effort`)
+- [x] `codex-dispatch.sh` applies the pinned effort once the review range is settled and writes `effort` and `tier` on the receipt when it did (a fallback receipt omits both)
+- [x] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
+- [x] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
 - [/] The effort patch is retired once upstream ships `openai/codex-plugin-cc` #677 or #746 (the other `PATCHES.md` patches stay until their tests pass against the stock companion; no third request, operator 2026-11-23)
 - [/] The first receipt of a section planned after the landing shows its section, effort and tier (waits for the run to plan a section on the new schedule; the two weeks start there)
 - [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts from that first one)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
+
+> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_review_pin.py scripts/overnight/tests/test_launch_evidence.py scripts/overnight/tests/test_vendored_companion.py`, `python3 scripts/tests/test_todo_graph_auto_rewrite.py`, `node --test tools/vendor/codex-companion/tests/effort.test.mjs`
+
+> **Notes:**
+> - The effort table and its tiers are the pin's one path classification, read by `review_pin.py --effort` after the base checks; a chain position that cannot be read runs the pass at the Codex config's effort and its transcript says why. Receipts carry `effort` and `tier` only for a pass the dispatcher applied a level to; a plan receipt carries the `schedule` mark under the table, and only sections whose first plan receipt has it take pinned effort.
+> - The companion runs per pass in its own plugin data (`scripts/lib/pass-dir.sh`), under `scripts/overnight/review_runtime_limit.py` with a 1800 s default limit, with no inherited broker endpoint; the transcript never waits on its caller. The vendored companion's changes from upstream v1.0.4 are in `PATCHES.md`.
+> - The round count ended at 12 by operator decision (2026-11-23), with the section already on `origin/main` (`b5b0558d2`). Its last performance pass found a P1 that a stalled external reviews directory can hang a logged pass; it needs the whole dispatch under one deadline and is an item of [§60](#60-review-receipts-are-written-atomically). The completion pass's findings were fixed after it and were not re-reviewed by Astra.
+
+> **Verified:** 2026-11-23 | commit `89d29f53b` | 4/7 items, 3 parked with blockers | runner suite, `test_review_pin.py` and companions 431 passed, hook tests 21 passed, companion `effort.test.mjs` 14 passed, `scripts/overnight/tests/run-all.sh` green at commit | lint 0 errors | `site/build.py --check` ok | landed on `origin/main` at `b5b0558d2`, CI green (Build, Pages, TODO graph, Visual Regression) | the stamp commit's content after `cdf680c91` is not yet landed
+> **Quality reviewed:** 2026-11-23 | Codex: plan 3 (2 credited, 1 voided by a moved candidate), round 12 (11 credited, 1 voided), performance 13, completion 1 | every returned finding fixed with a regression that fails on the commit before it, and the operator stopped the rounds at 12 (2026-11-23) | stamped at that cap without a clean round or performance pass on the stamped candidate: the last performance pass's P1 (a `CODEX_REVIEWS_DIR` on a mount that stops responding) is filed in [§60](#60-review-receipts-are-written-atomically), the completion pass's findings are fixed on `89d29f53b` after it and were not re-reviewed | the completion pass found no P1 and no missing work | imported code: the vendored companion tree was read in full by a read-only agent (2026-11-23) and reviewed by the same Astra passes
 
 ## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
 
@@ -1978,6 +1988,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
+
 
 ## Format Quick Reference
 
