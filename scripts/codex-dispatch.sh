@@ -203,17 +203,9 @@ say() {
     [ -z "${LOG_RW:-}" ] || printf '%s\n' "$1" >> "$LOG_RW"
     timeout -k 1 5 bash -c 'printf "%s\n" "$1" >&3' _ "$1" 3>&2 2>/dev/null || true
 }
-# The private directory of a pass whose owner is gone: named .cp.<owner pid>.*, so one a killed pass left (a broker
-# job cancelled with SIGKILL runs no trap) is removed by the next pass. A reused pid only keeps one longer.
-sweep_pass_dirs() {
-    local d owner
-    for d in "$1"/.cp.*; do
-        [ -d "$d" ] && [ -O "$d" ] || continue
-        owner="${d##*/.cp.}"; owner="${owner%%.*}"
-        [[ "$owner" =~ ^[0-9]+$ ]] || continue
-        kill -0 "$owner" 2>/dev/null || rm -rf -- "$d"
-    done
-}
+# Pass directories (allocation and the sweep of dead owners') come from one helper the broker shares.
+# shellcheck source=scripts/lib/pass-dir.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pass-dir.sh"
 # One cleanup for every route, installed before any pass starts: the paths files of a pinned pass and the pass
 # itself (its supervisor and tail, its directory). A signal runs it too (bash skips the EXIT trap on an untrapped
 # TERM), so a dispatcher stopped mid-pass never leaves its reviewer running.
@@ -236,8 +228,7 @@ run_companion() {
     if ! [[ "$secs" =~ ^[1-9][0-9]{0,8}$ ]]; then
         say "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds"; rc=2; return
     fi
-    sweep_pass_dirs "$1"
-    if ! PASS_DATA="$(mktemp -d "$1/.cp.$$.XXXXXX")" || ! printf '%s' "$PROMPT" > "$PASS_DATA/prompt"; then
+    if ! PASS_DATA="$(new_pass_dir "$1")" || ! printf '%s' "$PROMPT" > "$PASS_DATA/prompt"; then
         say "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass under $1"
         rc=2; return
     fi
@@ -607,5 +598,8 @@ if [ "$KIND" != "direct" ]; then
 fi
 # An unmarked review with nowhere to keep a transcript: still one bounded pass with its own data, as above.
 LOG_RW=""
-run_companion "${TMPDIR:-/tmp}" ""
+# Its pass directory goes in a parent of its own under TMPDIR, never TMPDIR itself, which other programs share.
+FALLBACK_PARENT="$(pass_dir_parent)" || {
+    say "[$SELF_NAME] BLOCK -- no private directory under ${TMPDIR:-/tmp} for this review"; exit 2; }
+run_companion "$FALLBACK_PARENT" ""
 exit "$rc"

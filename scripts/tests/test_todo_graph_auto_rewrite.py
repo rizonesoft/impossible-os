@@ -135,7 +135,7 @@ def validator_gets_only_the_remaining_budget():
         clock[0] += hook.BUDGET_S - 1.0              # the lookups use all but one second of the budget
         seen.setdefault("lookup", kw.get("timeout"))
         if "worktree" in cmd:
-            return f"worktree {os.path.realpath(tmp)}\n".encode()
+            return f"worktree {os.path.realpath(tmp)}\0".encode()
         return f"{tmp}\n".encode()
 
     def run(cmd, **kw):
@@ -310,10 +310,32 @@ def a_held_pipe_never_holds_the_hook_past_its_budget():
     return took < hook.BUDGET_S + 3 and "did not finish" in out
 
 
+def an_odd_worktree_path_is_still_repaired():
+    """A registered worktree whose path holds a newline or ends in a space: the line-delimited porcelain and a
+    stripped rev-parse could not name it, so its TODO edits were silently skipped (round review, 2026-11-23)."""
+    results = []
+    for odd in ("b\nline", "b trailing "):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = os.path.join(tmp, "a"), os.path.join(tmp, odd)
+            git("init", "-q", a)
+            hook = install_hook(a)
+            fake_validator(a)
+            git("-C", a, "add", "-A")
+            git("-C", a, "commit", "-qm", "base")
+            git("-C", a, "worktree", "add", "-q", "--detach", b)
+            fake_validator(b)
+            event = {"tool_input": {"file_path": os.path.join(b, "todo", "TODO-01.md")}}
+            subprocess.run([sys.executable, hook], input=json.dumps(event), capture_output=True, text=True,
+                           cwd=a, timeout=60)
+            results.append(pathlib.Path(b, "ran-here").exists())
+    return all(results)
+
+
 def main():
     bad = 0
     for label, check in (("a symlinked TODO is repaired in the worktree it lives in", a_symlinked_todo_is_repaired_where_it_lives),
                          ("a link is judged by its target's place, not its own name", links_are_judged_by_their_target),
+                         ("an odd worktree path (newline, trailing space) is still repaired", an_odd_worktree_path_is_still_repaired),
                          ("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
                          ("a held pipe never holds the hook past its budget", a_held_pipe_never_holds_the_hook_past_its_budget),
                          ("a validator overrun stops its whole process group", a_validator_overrun_stops_its_whole_group)):
@@ -347,7 +369,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 9
+    total = len(CLASSES) + 10
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 

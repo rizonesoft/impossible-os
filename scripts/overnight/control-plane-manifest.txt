@@ -107,6 +107,7 @@ scripts/review_pin.py
 scripts/review_candidate.py
 scripts/bounded_run.py
 scripts/codex-dispatch.sh
+scripts/lib/pass-dir.sh
 # The vendored Codex companion every unattended review runs (scripts/codex-dispatch.sh default).
 tools/vendor/codex-companion/
 scripts/overnight/ship_count.py

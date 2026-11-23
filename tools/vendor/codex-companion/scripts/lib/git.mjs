@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -125,12 +126,29 @@ export function getWorkingTreeState(cwd) {
   const names = (args) => gitChecked(cwd, [...args, "-z"]).stdout.split("\0").filter(Boolean);
   const staged = names(["diff", "--cached", "--name-only"]);
   const unstaged = names(["diff", "--name-only"]);
-  const untracked = names(["ls-files", "--others", "--exclude-standard"]);
+  // The untracked names are kept as the bytes git printed: a name that is not UTF-8 decodes to the same string as
+  // another (U+FFFD), so a decoded name could open the wrong file. Decoded names are for display only.
+  const listed = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "-z"],
+                           { cwd, maxBuffer: 1 << 28 });
+  if (listed.error || listed.status !== 0) {
+    throw listed.error ?? new Error(`git ls-files failed: ${String(listed.stderr ?? "")}`);
+  }
+  const untrackedRaw = [];
+  for (let start = 0; start < listed.stdout.length;) {
+    const end = listed.stdout.indexOf(0, start);
+    const stop = end === -1 ? listed.stdout.length : end;
+    if (stop > start) {
+      untrackedRaw.push(listed.stdout.subarray(start, stop));
+    }
+    start = stop + 1;
+  }
+  const untracked = untrackedRaw.map((raw) => raw.toString("utf8"));
 
   return {
     staged,
     unstaged,
     untracked,
+    untrackedRaw,
     isDirty: staged.length > 0 || unstaged.length > 0 || untracked.length > 0
   };
 }
@@ -197,8 +215,8 @@ function formatSection(title, body) {
   return [`## ${title}`, "", body.trim() ? body.trim() : "(none)", ""].join("\n");
 }
 
-function formatUntrackedFile(cwd, relativePath) {
-  const absolutePath = path.join(cwd, relativePath);
+function formatUntrackedFile(cwd, relativePath, rawPath = null) {
+  const absolutePath = rawPath ? Buffer.concat([Buffer.from(cwd + path.sep), rawPath]) : path.join(cwd, relativePath);
   // Impossible OS patch (../../PATCHES.md): never follow a link and never open what is not a regular file. A
   // symlink to a FIFO with no writer passed the size check (a FIFO reports 0 bytes) and blocked readFileSync
   // before the reviewer started. A link is shown by its link text, as the dispatcher's candidate reader keys it.
@@ -261,7 +279,9 @@ function collectWorkingTreeContext(cwd, state, options = {}) {
   if (includeDiff) {
     const stagedDiff = gitChecked(cwd, ["diff", "--cached", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout;
     const unstagedDiff = gitChecked(cwd, ["diff", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout;
-    const untrackedBody = state.untracked.map((file) => formatUntrackedFile(cwd, file)).join("\n\n");
+    const untrackedBody = state.untracked
+      .map((file, index) => formatUntrackedFile(cwd, file, state.untrackedRaw?.[index] ?? null))
+      .join("\n\n");
     parts = [
       formatSection("Git Status", status),
       formatSection("Staged Diff", stagedDiff),
@@ -272,13 +292,17 @@ function collectWorkingTreeContext(cwd, state, options = {}) {
     const stagedStat = gitChecked(cwd, ["diff", "--shortstat", "--cached"]).stdout.trim();
     const unstagedStat = gitChecked(cwd, ["diff", "--shortstat"]).stdout.trim();
     // Impossible OS patch (../../PATCHES.md): in self-collection mode the reviewer reads the checkout, so the
-    // untracked files are listed, not read into the prompt (128 files of 24 KiB were 3 MiB of input here).
-    const untrackedBody = state.untracked.map((file) => `- ${file} (untracked; inspect it in the checkout)`).join("\n");
+    // untracked files are counted once and listed on demand, not read into the prompt (128 files of 24 KiB were
+    // 3 MiB of input here) nor named in three sections (an import of 3,527 files was about 548 KB).
+    const trackedStatus = gitChecked(cwd, ["status", "--short", "--untracked-files=no"]).stdout.trim();
+    const untrackedBody = state.untracked.length
+      ? `${state.untracked.length} untracked file(s); list them with \`git ls-files --others --exclude-standard -z\` and inspect them in the checkout.`
+      : "";
     parts = [
-      formatSection("Git Status", status),
+      formatSection("Git Status", trackedStatus),
       formatSection("Staged Diff Stat", stagedStat),
       formatSection("Unstaged Diff Stat", unstagedStat),
-      formatSection("Changed Files", changedFiles.join("\n")),
+      formatSection("Changed Files", listUniqueFiles(state.staged, state.unstaged).join("\n")),
       formatSection("Untracked Files", untrackedBody)
     ];
   }

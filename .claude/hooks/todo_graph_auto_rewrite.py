@@ -42,13 +42,15 @@ def _registered_worktrees(where, deadline):
     set when that cannot be read. A tree that merely points at the repository's metadata is not among them. A
     lookup that runs out of time raises subprocess.TimeoutExpired: the caller reports a repair not run."""
     try:
-        out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain"],
-                                      stderr=subprocess.DEVNULL, timeout=_left(deadline)).decode("utf-8", "surrogateescape")
+        out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain", "-z"],
+                                      stderr=subprocess.DEVNULL, timeout=_left(deadline))
     except subprocess.TimeoutExpired:
         raise
     except Exception:  # fail-direction: no list means no repair, which is silent and safe
         return set()
-    return {os.path.realpath(line[len("worktree "):]) for line in out.splitlines() if line.startswith("worktree ")}
+    # NUL-delimited fields, as bytes: a worktree path may hold a newline or end in whitespace.
+    return {os.path.realpath(os.fsdecode(field[len(b"worktree "):]))
+            for field in out.split(b"\0") if field.startswith(b"worktree ")}
 
 
 def _not_run(why):
@@ -106,7 +108,8 @@ def main() -> int:
         root = subprocess.check_output(
             ["git", "-C", here, "rev-parse", "--show-toplevel"],
             stderr=subprocess.DEVNULL, timeout=_left(deadline),
-        ).decode().strip()
+        )
+        root = os.fsdecode(root[:-1] if root.endswith(b"\n") else root)   # only git's own newline: a root may end in a space
     except subprocess.TimeoutExpired:
         return _not_run(f"git rev-parse timed out inside the hook's {BUDGET_S}s budget")
     except Exception:  # fail-direction: a file outside any repository has no stamps to repair

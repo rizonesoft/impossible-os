@@ -3241,6 +3241,7 @@ def test_an_older_broker_kind_runs_the_companion_in_its_own_data(tmp_path):
     (tmp_path / "reviews").mkdir()
     (tmp_path / "prompt").write_text("[review-kind: adversarial] x\nbody\n")
     script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
+              + 'PASS_DIR_LIB=' + str(REPO / "scripts/lib/pass-dir.sh") + '; '
               + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 bash -c "$RUN"')
     done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
                           env={**os.environ, "CODEX_COMPANION_APP_SERVER_ENDPOINT": "unix:/shared/broker.sock"})
@@ -3322,6 +3323,7 @@ def test_term_to_an_older_broker_job_removes_its_data(tmp_path):
     (tmp_path / "reviews").mkdir()
     (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
     script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
+              + 'PASS_DIR_LIB=' + str(REPO / "scripts/lib/pass-dir.sh") + '; '
               + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 exec bash -c "$RUN"')
     proc = subprocess.Popen(["bash", "-c", script], cwd=str(tmp_path), start_new_session=True,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -3435,9 +3437,61 @@ def test_an_older_broker_job_ends_at_its_limit(tmp_path):
     (tmp_path / "reviews").mkdir()
     (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
     script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; CODEX_REVIEW_MAX_SECS=2; '
+              + 'PASS_DIR_LIB=' + str(REPO / "scripts/lib/pass-dir.sh") + '; '
               + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 exec bash -c "$RUN"')
     started = time.monotonic()
     done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
                           start_new_session=True)
     assert done.returncode == 124 and time.monotonic() - started < 30, (done.returncode, done.stderr)
     assert not list((tmp_path / "reviews").glob(".cp.*"))
+
+
+def test_the_fallback_never_sweeps_the_operators_tmpdir(tmp_path):
+    """An unmarked review with no reviews directory swept TMPDIR itself, so an operator's own .cp.<dead pid>.*
+    directory there was deleted (round review, 2026-11-23, P1). Its passes now live in a private parent."""
+    import os
+    import subprocess
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('done\\n');\n")
+    blocked = tmp_path / "file-not-dir"
+    blocked.write_text("")
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    mine = tmp_path / f".cp.{dead.pid}.backup"
+    mine.mkdir()
+    (mine / "keep.txt").write_text("operator data\n")
+    parent = tmp_path / f"codex-dispatch.{os.getuid()}"
+    parent.mkdir(mode=0o700)
+    stale = parent / f".cp.{dead.pid}.zzzzzz"
+    stale.mkdir()
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(blocked / "reviews"),
+           "TMPDIR": str(tmp_path)}
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), "plain review, no marker"],
+                          capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
+    assert done.returncode == 0, done.stderr[-800:]
+    assert (mine / "keep.txt").read_text() == "operator data\n", "the operator's directory was touched"
+    assert not stale.exists(), "a dead pass's directory in the private parent was kept"
+
+
+def test_an_older_broker_job_sweeps_a_dead_passs_directory(tmp_path):
+    """A cancelled older-kind job's directory was swept only by a foreground dispatch (round review, 2026-11-23):
+    the broker's older-kind job allocates through the same helper, which sweeps first."""
+    import os
+    import subprocess
+    line = _broker_run("node $(q \"$COMPANION\")")
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('ok\\n');\n")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    stale = reviews / f".cp.{dead.pid}.qqqqqq"
+    stale.mkdir()
+    (tmp_path / "prompt").write_text("[review-kind: adversarial] x\n")
+    script = ('q() { printf "%q" "$1"; }; COMPANION=' + str(fake) + '; MANIFEST_DIR=reviews; '
+              + 'PASS_DIR_LIB=' + str(REPO / "scripts/lib/pass-dir.sh") + '; '
+              + line + '; exec 3<prompt; REVIEW_PROMPT_FD=3 exec bash -c "$RUN"')
+    done = subprocess.run(["bash", "-c", script], cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
+                          start_new_session=True)
+    assert done.returncode == 0, done.stderr
+    assert not stale.exists()

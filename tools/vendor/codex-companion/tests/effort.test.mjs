@@ -185,6 +185,27 @@ test("in self-collection mode untracked files are listed, not read into the prom
                            { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
   assert.equal(result.status, 0, result.stderr);
   const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
-  assert.match(prompt, /extra-1\.txt/);
+  assert.match(prompt, /3 untracked file\(s\); list them with `git ls-files --others --exclude-standard -z`/);
   assert.doesNotMatch(prompt, /SUMMARY-BODY-/);
+  assert.doesNotMatch(prompt, /extra-1\.txt/);
 });
+
+
+test("two untracked names that decode alike each bring their own contents", (t) => {
+  const { env, statePath } = repoWithChange(t);
+  const repo = makeTempDir();
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  const bad = Buffer.concat([Buffer.from(repo + "/name-"), Buffer.from([0xff]), Buffer.from(".txt")]);
+  fs.writeFileSync(bad, "BYTE-NAME-CONTENT\n");
+  fs.writeFileSync(path.join(repo, "name-\uFFFD.txt"), "REPLACEMENT-NAME-CONTENT\n");
+  const result = spawnSync("node", [SCRIPT, "adversarial-review", "--scope", "working-tree", "check"],
+                           { cwd: repo, env, encoding: "utf8", timeout: 30000, killSignal: "SIGKILL" });
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart.prompt;
+  assert.match(prompt, /BYTE-NAME-CONTENT/);
+  assert.match(prompt, /REPLACEMENT-NAME-CONTENT/);
+});
+
