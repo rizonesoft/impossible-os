@@ -54,76 +54,51 @@ title: "TODO-04 -- Email Client"
 
 ## Implementation Order
 
-| Step | Section                               | 💎/⭐ | Dependency                                              |
-| ---- | ------------------------------------- | ----- | ------------------------------------------------------- |
-| 1    | SMTP Client                           | 💎    | Mbed TLS TODO-03, DNS TODO-02                           |
-| 2    | POP3 Client + Message Storage         | 💎    | §1 complete                                             |
-| 3    | IMAP Client (Stretch)                 | 💎    | §1 complete, TLS                                        |
-| 4    | Three-Panel Email GUI                 | 💎    | §2 complete, controls.h, wm.h                           |
-| 5    | Compose Window                        | 💎    | §4 complete, §8 contacts                                |
-| 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry                             |
-| 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, 09-desktop-shell/TODO-04 §6, TODO-09 §5+§6 |
-| 8    | Contacts Store                        | 💎    | VFS                                                     |
-| 9    | Spam & Junk Filter                    | ⭐    | §4 complete, Registry                                   |
+| Step | Section                               | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | ------------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | SMTP Client                           | 💎    | §10                                                                                    |  [ ]   |
+| 2    | POP3 Client + Message Storage         | 💎    | §10, §1                                                                                |  [ ]   |
+| 3    | IMAP Client (Stretch)                 | 💎    | §10, §1                                                                                |  [ ]   |
+| 4    | Three-Panel Email GUI                 | 💎    | §10, §2                                                                                |  [ ]   |
+| 5    | Compose Window                        | 💎    | §10, §4, §8                                                                            |  [ ]   |
+| 6    | Account Management + Credential Store | ⭐    | §10                                                                                    |  [ ]   |
+| 7    | Auto-Check + Notifications + Tray     | ⭐    | §10, §2                                                                                |  [ ]   |
+| 8    | Contacts Store                        | 💎    | §10                                                                                    |  [ ]   |
+| 9    | Spam & Junk Filter                    | ⭐    | §10, §4                                                                                |  [ ]   |
+| 10   | Import Mail                           | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 |  [ ]   |
 
 ---
 
 ## 1. SMTP Client
 
-> → XREF: `07-networking/TODO-09-email-client.md §2` -- base implementation spec.
-> This section adds the STARTTLS negotiation detail and error-code retry behavior.
+**Moved:** mail
 
-**Source file:** `src/apps/mail/smtp.c`; header `include/apps/mail/smtp.h`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-- [ ] `smtp_connect(host, port)` → `kern_socket` + `kern_connect(fd, ip, port)` (default port 587)
-- [ ] Read server greeting `220`; send `EHLO impossible-os`; parse multi-line `250-` capability list
-- [ ] STARTTLS upgrade: if capability `STARTTLS` advertised → send `STARTTLS\r\n`; recv `220 Go ahead`; call `tls_connect(fd, hostname)`; re-send `EHLO impossible-os` after TLS established
-- [ ] `AUTH LOGIN`: send `AUTH LOGIN\r\n`; Base64-encode username → send; Base64-encode password → send; check `235` OK
-- [ ] `smtp_send(session, from, to, subject, body)`:
-  - [ ] `MAIL FROM:<{from}>\r\n` → expect `250`
-  - [ ] `RCPT TO:<{to}>\r\n` → expect `250` (call once per recipient)
-  - [ ] `DATA\r\n` → expect `354`; send headers: `Date: {RFC 2822 date}\r\nFrom: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n.\r\n`
-  - [ ] Expect `250 OK`; `QUIT\r\n`
-- [ ] Error handling: `421` (temp fail) → retry after 30 s, up to 3 attempts; `550` (reject) → log to serial + notify caller; other `5xx` → log + fail
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings SMTP Client"`
 
 ---
 
 ## 2. POP3 Client + Message Storage
 
-> → XREF: `07-networking/TODO-09-email-client.md §3` -- base implementation spec.
+**Moved:** mail
 
-**Source file:** `src/apps/mail/pop3.c`; header `include/apps/mail/pop3.h`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-- [ ] `pop3_connect(host)` → `kern_socket` + `kern_connect(fd, ip, 995)` → `tls_connect(fd, host)` (implicit TLS on 995)
-- [ ] `USER {username}\r\n` → `+OK`; `PASS {password}\r\n` → `+OK`
-- [ ] `STAT\r\n` → parse `+OK {count} {total_bytes}` -- store message count
-- [ ] `LIST\r\n` → read multi-line: map message number → size in bytes
-- [ ] For each new message (not already stored locally):
-  - [ ] `RETR {n}\r\n` → read until `.\r\n` into `pmm_alloc_contiguous()` buffer
-  - [ ] Parse RFC 822 headers: `Date:`, `From:`, `To:`, `Subject:`, `Message-ID:`, `Content-Type:`
-  - [ ] Store as `C:\Users\{name}\AppData\Mail\{account}\Inbox\{id}.eml` via `vfs_create` + `vfs_write`; `id` = sanitized `Message-ID` or `msg_{n}_{timestamp}`
-  - [ ] `DELE {n}\r\n` → `+OK` (mark for deletion on server)
-- [ ] `QUIT\r\n` → server deletes marked messages
-- [ ] Return new-message count to §7 auto-check
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings POP3 Client + Message Storage"`
 
 ---
 
 ## 3. IMAP Client (Stretch)
 
-> → XREF: `07-networking/TODO-09-email-client.md §4` -- base implementation spec.
-> This section adds IDLE push notification and flag sync detail.
+**Moved:** mail
 
-**Source file:** `src/apps/mail/imap.c`; header `include/apps/mail/imap.h`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-- [ ] `imap_connect(host)` → port 993 + `tls_connect(fd, host)` → read `* OK` greeting
-- [ ] `{tag} LOGIN {user} {pass}\r\n` → `{tag} OK`
-- [ ] `{tag} SELECT INBOX\r\n` → parse `* {n} EXISTS`, `* {n} RECENT`, `[UIDNEXT {n}]`
-- [ ] `{tag} FETCH 1:* (FLAGS ENVELOPE)\r\n` → parse each message: UID, flags (`\Seen`, `\Flagged`, `\Deleted`), envelope (Date, Subject, From, To); store in in-memory message list
-- [ ] `{tag} FETCH {n} BODY[]\r\n` → read literal `{N}` bytes → store to VFS `.eml` file
-- [ ] `{tag} STORE {n} +FLAGS (\Seen)\r\n` → mark read on server
-- [ ] `{tag} EXPUNGE\r\n` → purge deleted messages
-- [ ] IDLE: after sync, send `{tag} IDLE\r\n`; recv `+ idling`; wait for `* {n} EXISTS` (new mail) or `DONE` timeout (29 min per RFC); send `DONE\r\n` to exit IDLE; re-FETCH new messages
-- [ ] `{tag} LOGOUT\r\n` → close TLS connection
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings IMAP Client (Stretch)"`
 
 ---
 
@@ -131,23 +106,12 @@ title: "TODO-04 -- Email Client"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-**Owner of:** the work planned in `07-networking/TODO-09 §7`, which is superseded there so there is one implementation.
+**Moved:** mail
 
-> → XREF: `07-networking/TODO-09-email-client.md §7`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-**Source file:** `src/apps/mail/mail.c`; window title `Mail`
-
-Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | message list 350 px | viewer fills remainder; panes separated by 1 px `stroke_divider`
-
-- [ ] **Sidebar** (`CTRL_LISTVIEW` in tree mode): per-account nodes expandable to Inbox / Sent / Drafts / Trash / Junk; unread count shown in parentheses next to Inbox; click folder → refresh message list
-- [ ] **Message List** (scrollable `CTRL_LISTVIEW`): unread, From, Subject, Date, attachment columns
-  - Unread: bold From and Subject plus a 3 x 16 accent pill at the row start, never colour alone
-  - Attachment: Fluent attach glyph if the `.eml` is `Content-Type: multipart`
-  - Click row → load viewer; double-click → open in a separate window; right-click → context menu (Reply / Forward / Delete / Mark as Spam / Mark as Read)
-- [ ] **Message Viewer**: header bar: From, To, Date, Subject in styled TTF; attachment list if multipart (click attachment → `vfs_open` + launch or save dialog); body: plain text rendered via `ttf_draw_string()` word-wrapped to panel width; HTML body stripped to plain text (remove tags, preserve whitespace, decode `&amp;`/`&lt;`/`&gt;`/`&nbsp;`); external images blocked by default (link "Show images" → re-render)
-- [ ] **Toolbar**: command bar (48 px) of subtle buttons with Fluent glyphs: New mail, Reply, Forward, Delete, Sync; search bar on right (type → filter message list by From + Subject)
-- [ ] **Status bar**: shows `Inbox -- {n} messages, {k} unread` | sync status (`Last synced: {time}` or `Syncing...`)
-- [ ] Load messages from VFS `C:\Users\{name}\AppData\Mail\{account}\{folder}\` on folder select; parse `.eml` file headers for list display; full body loaded only when message is opened
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Three-Panel Email GUI"`
 
 ---
 
@@ -155,38 +119,23 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-**Owner of:** the work planned in `07-networking/TODO-09 §8`, which is superseded there so there is one implementation.
+**Moved:** mail
 
-> → XREF: `07-networking/TODO-09-email-client.md §8`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-**Source file:** `src/apps/mail/compose.c`
-
-- [ ] `compose_open(to, subject, body_prefix)` → `wm_create_window()` modal or top-level
-- [ ] Fields: **To** (`CTRL_TEXTBOX` with autocomplete -- see §8 contacts), **Subject** (`CTRL_TEXTBOX`), **Body** (`CTRL_TEXTBOX` multiline with scrollbar)
-- [ ] Toolbar: `[Send]` `[📎 Attach]` `[✕ Discard]`
-- [ ] `[📎 Attach]` → open file-picker dialog → read file via VFS → add as MIME `multipart/mixed` attachment; show attached filename below toolbar
-- [ ] `[Send]` → validate To field (must contain `@`); call `smtp_send()` → on success: move draft to Sent folder (`C:\Users\{name}\AppData\Mail\{account}\Sent\`); close window; on failure: show error toast `"Send failed: {error}"`
-- [ ] **Reply**: `compose_open(original_from, "Re: {subject}", "> {original_body_lines}")`
-- [ ] **Forward**: `compose_open("", "Fwd: {subject}", "---------- Forwarded message ----------\n{original_body}")`
-- [ ] **Auto-save draft**: every 60 s write body to `C:\Users\{name}\AppData\Mail\{account}\Drafts\{timestamp}.eml`
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Compose Window"`
 
 ---
 
 ## 6. Account Management + Credential Store
 
-> → XREF: `07-networking/TODO-09-email-client.md §5` -- base spec.
-> This section specifies the CNG AES-256-GCM credential encryption and Registry layout.
+**Moved:** mail
 
-**Source file:** `src/apps/mail/mail_account.c`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-- [ ] `acct_add(name, email, smtp_host, smtp_port, pop3_host, pop3_port, user, pass)`:
-  - [ ] Registry key: `HKCU\Software\Impossible\Mail\Accounts\{name}\` with values: `Email`, `SmtpHost`, `SmtpPort`, `Pop3Host`, `Pop3Port`, `User`, `EncPass`, `EncPassNonce`, `EncPassTag`
-  - [ ] Password encryption: `cng_keystore_get_kek(kek)` → `csprng_fill(nonce, 12)` → `cng_aes256gcm_encrypt(kek, nonce, pass, strlen(pass), enc_out, tag)` → store hex-encoded `EncPass`/`EncPassNonce`/`EncPassTag`
-- [ ] `acct_load(name, &acct)`: read Registry → `cng_key_store_get` or direct AES-GCM decrypt with stored nonce/tag → fill `mail_account_t` struct with plaintext password in RAM (zeroed after use)
-- [ ] `acct_list(names[], max)`: enumerate `HKCU\Software\Impossible\Mail\Accounts\` subkeys
-- [ ] `acct_delete(name)`: `reg_delete_key(HKCU\Software\Impossible\Mail\Accounts\{name})`; remove local mail folders
-- [ ] **Default account**: `HKCU\Software\Impossible\Mail\DefaultAccount` = `{name}`
-- [ ] **Account Settings UI**: Settings → Mail → add/edit/remove account dialog (IxUI); test button calls `smtp_connect` + `EHLO` to verify credentials before saving
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Account Management + Credential Store"`
 
 ---
 
@@ -194,58 +143,57 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 **Design:** [`shell.md#taskbar`](../../docs/design/shell.md#taskbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
-**Owner of:** the work planned in `07-networking/TODO-09 §6`, which is superseded there so there is one implementation.
+**Moved:** mail
 
-> → XREF: `07-networking/TODO-09-email-client.md §6` -- base spec.
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-**Source file:** `src/apps/mail/mail_notify.c`; `mail_systray.c`
+What is this OS's own work stays here:
 
-- [ ] **Auto-check**: `sched_task_add("mail_check", mail_check_cb, 300, 1)` (300 s = 5 min) at app startup; `mail_check_cb()` calls `pop3_connect()` → `pop3_fetch_new()` → returns new-message count
 - [ ] **Toast notification**: on `new_count > 0`: `notify_send("New mail", "New email from {From}: {Subject}", ICON_MAIL, 5000)` via `SYS_NOTIFY_SEND=54`; show at most one toast per check cycle even if multiple new messages (bundle: `"3 new messages from {From1}, {From2}…"`)
 - [ ] **Taskbar badge** (unread count): call the taskbar badge API owned by `08-graphics-ui/TODO-10` per `docs/design/shell.md#taskbar` (accent pill, 16 px tall, "99+" above 99)
   - Add the badge there once the spec defines it, and do not add a `SYS_TASKBAR_SET_BADGE` syscall here
 - [ ] **System tray icon**: register `tray_icon_t { .icon_id=ICON_MAIL_ENVELOPE, .tooltip="Mail -- {n} unread", .click_cb=mail_show_window }` via `tray_register()` at startup; `tray_unregister()` on exit
   - Update tooltip on each check; the icon lives in the overflow chevron flyout (`08-graphics-ui/TODO-11 §4`); new mail is announced by the toast, not an animated icon
-- [ ] **Sync on open**: when `mail.exe` window is focused, trigger immediate `mail_check_cb()` outside the 5-min schedule
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Auto-Check + Notifications + Tray"`
 
 ---
 
 ## 8. Contacts Store
 
-> → XREF: `07-networking/TODO-09-email-client.md §9` -- base spec.
+**Moved:** mail
 
-**Source file:** `src/apps/mail/contacts.c`; header `include/apps/mail/contacts.h`
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
 
-- [ ] Settle one contacts store and mail folder with `07-networking/TODO-09-email-client.md` (item: "Settle one contacts store") before coding §8
-  - Contacts: `contacts.csv` under `C:\Users\{name}\AppData\Mail\` here vs `contacts.json` under `C:\Users\Default\AppData\` there (its §9); messages sit under `{name}` here and `Default` there.
-- [ ] **Storage**: `C:\Users\{name}\AppData\Mail\contacts.csv` -- one row per contact, fields: `Name,Email,Phone` (UTF-8, comma-separated, first row = header)
-- [ ] `contact_load_all(contacts[], max)` → `vfs_open` + parse CSV line-by-line → fill `struct contact { name[128], email[256], phone[64] }[256]`
-- [ ] `contact_lookup(partial_email, results[], max)` → scan loaded contacts, return entries where `strstr(c->email, partial_email)` (case-insensitive) or `strstr(c->name, partial_email)`
-- [ ] `contact_add(name, email, phone)` → append line to CSV via `vfs_open(APPEND)`
-- [ ] `contact_delete(email)` → rewrite CSV without matching line (read-modify-write)
-- [ ] **To-field autocomplete**: on each keypress in To `CTRL_TEXTBOX` → `contact_lookup(typed, results, 5)` → show dropdown popup with up to 5 matches; arrow keys + Enter to select → fill textbox with `Name <email>`
-- [ ] **"Add to Contacts"**: message viewer right-click → `Add {From} to contacts` → `contact_add(display_name, from_email, "")`
-- [ ] **Contacts viewer**: Settings → Mail → Contacts → list all contacts; add/edit/delete buttons
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Contacts Store"`
 
 ---
 
 ## 9. Spam & Junk Filter
 
-**Source file:** `src/apps/mail/spam.c`; header `include/apps/mail/spam.h`
+**Moved:** mail
 
-- [ ] **Trigger-word list**: default list in `src/apps/mail/spam_words.h` (`"free money"`, `"click here"`, `"unsubscribe"`, `"guaranteed"`, `"limited offer"`, etc.); configurable via Registry `HKCU\Software\Impossible\Mail\Spam\TriggerWords` (newline-separated)
-- [ ] **Sender whitelist**: `HKCU\Software\Impossible\Mail\Spam\Whitelist` (newline-separated email addresses); whitelisted senders are never filtered
-- [ ] **Sender blacklist**: `HKCU\Software\Impossible\Mail\Spam\Blacklist`; blacklisted senders always go to Junk
-- [ ] `spam_check(msg)` → returns `SPAM_CLEAN`, `SPAM_SUSPECT`, or `SPAM_JUNK`:
-  - [ ] If From is in blacklist → `SPAM_JUNK`
-  - [ ] If From is in whitelist or contacts → `SPAM_CLEAN`
-  - [ ] Count trigger-word hits in Subject + body (case-insensitive); score = hit_count / (subject_len + body_len) × 1000; score > 50 → `SPAM_SUSPECT`; score > 150 → `SPAM_JUNK`
-  - [ ] Unknown sender (not in contacts, not white/blacklisted) + score > 25 → `SPAM_SUSPECT`
-- [ ] On `SPAM_JUNK`: move `.eml` to Junk folder; do not issue toast notification
-- [ ] On `SPAM_SUSPECT`: move to Junk with banner `"This message may be spam"` in viewer
-- [ ] **`[Mark as Spam]`** button / context-menu: `contact_delete(from_email)` if present; add From to blacklist; move to Junk; decrement score threshold by 10 (learning)
-- [ ] **`[Not Spam]`** button: add From to whitelist; move to Inbox; remove from blacklist if present; increment score threshold by 10 (learning)
-- [ ] Adjusted thresholds persisted: `HKCU\Software\Impossible\Mail\Spam\SuspectThreshold` + `JunkThreshold` (int, default 50 / 150)
+Built in Mail, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §10 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §10 brings it
+- [ ] Commit: `"imports: mail brings Spam & Junk Filter"`
+
+## 10. Import Mail
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** mail
+
+Mail is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull mail` into `src/apps/mail/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Mail on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose mail`
+- [ ] Commit: `"apps: Mail imported"`
 
 ---
 

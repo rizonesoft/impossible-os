@@ -39,148 +39,97 @@ title: "TODO-02 -- Paint App & Image Tools"
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                                | Depends On                                                                                            | Status |
-| --- | :---: | :-----: | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   |   §1    | Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars       | `gfx_surface_create()` (exists); `pmm_alloc_contiguous()`; `CTRL_MENUBAR/STATUSBAR`                   |  [ ]   |
-| 💎  |   2   |   §3    | Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | `gfx_fill_rect/put_pixel()` (exist); `dialog_color()` (08-graphics-ui/TODO-06 §8)                     |  [ ]   |
-| 💎  |   3   |   §2    | Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text                | §1 canvas; §3 color; `gfx_draw_line/fill_circle/fill_rect()` (exist)                                  |  [ ]   |
-| ⭐  |   4   |   §4    | Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                   | §2 tools (stroke begin event); `pmm_alloc_contiguous()`                                               |  [ ]   |
-| 💎  |   5   |   §5    | File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker              | `image_load/save_bmp/save_png()` (exist); `dialog_file_open/save/input()` (08-graphics-ui/TODO-06 §8) |  [ ]   |
-| 💎  |   6   |   §6    | Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`             | §1 canvas; `clipboard_set/get(CLIP_IMAGE)` (09-desktop-shell/TODO-01 §5); `dialog_color()` bg fill    |  [ ]   |
-| 💎  |   7   |   §7    | Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop              | §1 viewport; `image_scale()` (exists); `dialog_input()` for dimensions                                |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                                | Depends On                                                        | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | :----: |
+| 💎  |   1   |   §1    | Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars       | §8                                                                |  [ ]   |
+| 💎  |   2   |   §3    | Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | §8                                                                |  [ ]   |
+| 💎  |   3   |   §2    | Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text                | §8, §1, §3                                                        |  [ ]   |
+| ⭐  |   4   |   §4    | Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                   | §8, §2                                                            |  [ ]   |
+| 💎  |   5   |   §5    | File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker              | §8                                                                |  [ ]   |
+| 💎  |   6   |   §6    | Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`             | §8, §1                                                            |  [ ]   |
+| 💎  |   7   |   §7    | Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop              | §8, §1                                                            |  [ ]   |
+| 💎  |   8   |   §8    | Import Paint                                                                               | `10-platform-services/TODO-07` §7 (PE programs run), `TODO-13` §3 |  [ ]   |
 
 ---
 
 ## 1. Canvas & Viewport
 
-`struct paint` (PMM canvas `gfx_surface_t`, undo stack, tool ID, fg/bg color, brush_size, zoom_pct, scroll_x/y). Default canvas 800×600 white, `pmm_alloc_contiguous`. Window chrome, scroll bars and status text follow `docs/design/shell.md#window-chrome` and `docs/design/controls.md#scroll-bar`. Layout per `docs/design/shell.md#app-window-layout`: a 48 px command bar with the tool groups (select, draw tools, shapes, brush size, colours as swatches), the canvas centred on `layer_bg` with 24 px of room, and a 24 px status bar with zoom and canvas size. Scroll bars when canvas > viewport.
+**Moved:** paint
 
-**Files:** `src/apps/paint/paint.c` (new), `include/apps/paint.h` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> Window: initial 1024×640 px. **Canvas alloc**: `canvas_w * canvas_h * 4` bytes; > 4 KB → `pmm_alloc_contiguous(ceil(bytes / 4096))`; init with `gfx_clear(&canvas_surf, 0xFFFFFFFF)` (white). `gfx_surface_init()` with the PMM pixel pointer + canvas dimensions. **Viewport** (per `docs/design/shell.md#app-window-layout`): tools, shapes, brush size and colour swatches live in the `THEME_SIZE_COMMAND_BAR_HEIGHT` (48) command bar, so `view_w = window_w - scrollbar_w`, `view_h = window_h - COMMAND_BAR_H - STATUS_BAR_H - scrollbar_h`; the canvas is centred on `layer_bg` with 24 px of room: `gfx_blit(win_surf, view_x, COMMAND_BAR_H + 24, &canvas_surf, scroll_x, scroll_y, view_w, view_h)`. **Scrollbars**: horizontal at bottom-left (if canvas_w > view_w); vertical at right; drag thumb → update `scroll_x/y`. **Zoom**: blit uses `gfx_surface_scale_blit()` stub (or nearest-neighbour zoom in render): `src_w = view_w * 100 / zoom_pct`; map mouse canvas coords: `canvas_x = scroll_x + mouse_x * 100 / zoom_pct`. **Tool panel**: 64 px wide; 32×32 px tool buttons (8 tools); selection highlighted with accent; icons are monochrome Fluent System Icons glyphs (vendored, MIT) tinted `text_primary`. **Status bar**: zoom%, canvas WxH, cursor canvas X,Y, selected color swatch.
-
-- [ ] `typedef struct { gfx_surface_t canvas; gfx_surface_t *win_surf; int canvas_w, canvas_h; uint32_t fg_color, bg_color; int tool, brush_size, zoom_pct, scroll_x, scroll_y; int modified; } paint_t;`
-- [ ] `void paint_open(const char *initial_path)` -- `wm_create_window()`; PMM canvas alloc; `gfx_clear()` white
-- [ ] `void paint_render(paint_t *p)` -- blit canvas into viewport; tool panel; palette bar; scrollbars; status bar
-- [ ] Viewport-to-canvas coordinate mapping: `canvas_x = scroll_x + mouse_x * 100 / zoom_pct`
-- [ ] Scroll bar hit-test + drag → update `scroll_x/y`; clamp to `[0, canvas_w - view_w]`
-- [ ] Tool button strip (8 buttons, 32×32): click → set `p->tool`; accent highlight active tool
-- [ ] Status bar: `"Zoom: {N}% | {W}×{H} | X:{cx} Y:{cy}"` via `ttf_draw_string(FONT_UI, 12px)`
-- [ ] Commit: `"paint: canvas window -- PMM gfx_surface_t, tool panel, palette bar, viewport scroll"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Canvas & Viewport"`
 
 ## 2. Drawing Tools
 
-Pencil (Bresenham), Brush (circle stamps), Eraser (bg color), Line (rubber-band), Rectangle (filled/outline, Shift=square), Ellipse (Shift=circle), Fill Bucket (BFS 4-connectivity), Text (click place + TTF render).
+**Moved:** paint
 
-**Files:** `src/apps/paint/tools.c` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Mouse event routing**: `WM_MOUSE_DOWN` → `paint_tool_begin(tool, cx, cy)`; `WM_MOUSE_MOVE` with btn → `paint_tool_drag(tool, cx, cy)`; `WM_MOUSE_UP` → `paint_tool_end(tool, cx, cy)`. Before `tool_begin`: if undo-tracked tool: `undo_push_snapshot(p)`. **Pencil**: on `tool_drag`: `gfx_draw_line(&canvas, prev_cx, prev_cy, cx, cy, fg_color)`. **Brush**: on `tool_drag`: `gfx_fill_circle(&canvas, cx, cy, brush_radius, fg_color)`. **Eraser**: same as Brush with `bg_color`. **Line**: on `tool_begin`: save `start_x/y`; on drag: render to temp surface (canvas copy) -- overlay line preview; on `tool_end`: `gfx_draw_line(&canvas, start_x, start_y, cx, cy, fg_color)`. **Rectangle**: `tool_begin` saves `start_x/y`; `tool_end`: if Shift held → `w = h = max(abs(dx), abs(dy))`; filled → `gfx_fill_rect()`; outline → `gfx_draw_rect()`. **Ellipse**: `gfx_fill_circle()` for now; Shift = equal axes. **Fill Bucket (BFS)**: `paint_flood_fill(canvas, cx, cy, fg_color)`: read `target_color = gfx_get_pixel(canvas, cx, cy)`; if `target_color == fg_color` → return; alloc BFS stack via `pmm_alloc_contiguous(1)` (4096 / 8 bytes per coord = 512 entries; if canvas is large may need more: `ceil(canvas_w * canvas_h * 8 / 4096)` pages); BFS 4-connectivity; for each popped pixel: `gfx_put_pixel(fg_color)` + push 4 neighbours if same `target_color`. **Text tool**: `tool_begin` → record `text_x/y`; `WM_KEYDOWN` appends chars to `g_text_buf[256]`; `WM_PAINT`: `ttf_draw_string(FONT_UI, 14px)` preview on overlay; Enter/Escape → commit to canvas.
-
-- [ ] `void paint_tool_begin(paint_t *p, int cx, int cy)` -- dispatch by `p->tool`; save start coords
-- [ ] Pencil: `tool_drag` → `gfx_draw_line()` between prev and current canvas coords
-- [ ] Brush: `tool_drag` → `gfx_fill_circle(cx, cy, p->brush_size, p->fg_color)`
-- [ ] Eraser: same as Brush with `p->bg_color`
-- [ ] Line: rubber-band preview (overlay blit); commit `gfx_draw_line()` on mouse-up
-- [ ] Rectangle: commit `gfx_fill_rect()` or `gfx_draw_rect()` on mouse-up; Shift → square
-- [ ] Ellipse: `gfx_fill_circle()` (radius = max of half-w, half-h); Shift → circle (equal radii)
-- [ ] `void paint_flood_fill(paint_t *p, int cx, int cy)` -- BFS with PMM stack; 4-connectivity
-- [ ] Text: `g_text_buf`, `WM_KEYDOWN` append; Enter → `ttf_draw_string()` commit to canvas; Escape → cancel
-- [ ] Brush size picker in tool panel: 5 radio dots (1/2/4/8/16 px radius)
-- [ ] Commit: `"paint: drawing tools -- pencil, brush, eraser, line, rect, ellipse, BFS fill, text"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Drawing Tools"`
 
 ## 3. Color System
 
-20 preset color swatches in bottom bar (40×24 px each). Overlapping fg/bg squares (top-left). Left-click swatch → fg; right-click → bg. Swap button (↔). Stretch: `dialog_color()` double-click for custom color.
+**Moved:** paint
 
-**Files:** `src/apps/paint/colors.c` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Preset palette** (20 colors): black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, brown, gray (4 shades), + 4 spare accent slots -- define as `uint32_t g_palette[20]` constant array. **Swatch strip**: drawn in bottom palette bar, 40×24 px each, border on hover. **fg/bg indicator**: two overlapping 28×28 px squares in bottom-left of palette area; bg square at (+4,+4) offset; fg on top; click either square → `dialog_color()` (08-graphics-ui/TODO-06 §8) to set custom. **Left-click swatch**: `p->fg_color = g_palette[idx]`; update fg square. **Right-click swatch**: `p->bg_color = g_palette[idx]`; update bg square. **Swap button**: ↔ icon (16×16) between the two squares; click → swap `fg_color` and `bg_color`. Status bar shows selected color as small swatch + hex value.
-
-- [ ] `uint32_t g_paint_palette[20]` -- 20 preset ARGB colors (black, white, primaries, secondaries, grays)
-- [ ] `void paint_render_palette_bar(paint_t *p, gfx_surface_t *s)` -- 20 swatches + fg/bg indicator + swap btn
-- [ ] Left-click swatch → `p->fg_color`; right-click swatch → `p->bg_color`
-- [ ] Swap button click → `uint32_t tmp = p->fg_color; p->fg_color = p->bg_color; p->bg_color = tmp`
-- [ ] Hover swatch → outline highlight (1 px accent border)
-- [ ] Stretch: double-click fg or bg square → `dialog_color(&result)` → update respective color
-- [ ] Status bar color preview: small 12×12 swatch + `"#RRGGBB"` label
-- [ ] Commit: `"paint: color system -- 20 swatches, fg/bg squares, swap, dialog_color stretch"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Color System"`
 
 ## 4. Undo/Redo
 
-Before each stroke begin: `pmm_alloc_contiguous()` snapshot of canvas → push to 32-slot ring undo stack; evict oldest. Ctrl+Z → pop + blit restore. Ctrl+Y → redo stack. Undo cleared on New.
+**Moved:** paint
 
-**Files:** `src/apps/paint/undo.c` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Undo entry**: `typedef struct { uint32_t *pixels; int canvas_w, canvas_h; } undo_entry_t;`. Ring buffer: `g_undo[32]`, `g_undo_head`, `g_undo_count`. **Push**: `bytes = canvas_w * canvas_h * 4`; `pages = ceil(bytes / 4096)`; `entry.pixels = pmm_alloc_contiguous(pages)`; `kmemcpy(entry.pixels, canvas.pixels, bytes)`; push to ring; if `g_undo_count == 32` → free oldest: `pmm_free_contiguous(g_undo[oldest].pixels, pages)`. Also push to redo stack on Undo. **Canvas size constraint**: 800×600 × 4 = 1.92 MB per snapshot × 32 levels = 61.4 MB PMM. This is acceptable for typical usage; for large canvases (> 1920×1080): use region snapshot -- only snapshot the bounding rect of the current stroke (track `dirty_x/y/w/h` during tool_drag). **Ctrl+Z**: if `g_undo_count > 0`: pop entry → `kmemcpy(canvas.pixels, entry.pixels, bytes)` → `pmm_free()` entry; push current canvas to redo stack. **Ctrl+Y**: pop redo → restore → push to undo. **Clear on new/open**: `paint_undo_clear()` frees all PMM entries.
-
-- [ ] `typedef struct { uint32_t *pixels; uint32_t canvas_w, canvas_h; uint32_t pmm_pages; } undo_entry_t;`
-- [ ] `g_undo[32]` ring; `g_undo_head`, `g_undo_count`; `g_redo[32]`, `g_redo_count`
-- [ ] `void paint_undo_push(paint_t *p)` -- PMM alloc + `kmemcpy` canvas pixels; evict oldest if full
-- [ ] Region optimization: track `dirty_rect` during tool_drag; snapshot only dirty region for large canvases (> 1 MP)
-- [ ] `void paint_undo(paint_t *p)` -- pop undo → restore canvas; push current to redo
-- [ ] `void paint_redo(paint_t *p)` -- pop redo → restore canvas; push to undo
-- [ ] `void paint_undo_clear(paint_t *p)` -- free all PMM undo + redo entries
-- [ ] `WM_KEYDOWN` Ctrl+Z → `paint_undo()`; Ctrl+Y → `paint_redo()`
-- [ ] Call `paint_undo_push()` at the start of: `tool_begin` (Pencil/Brush/Eraser/Line/Rect/Ellipse), flood fill, text commit
-- [ ] Commit: `"paint: undo/redo -- 32-level PMM snapshot ring, dirty region opt, Ctrl+Z/Y"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Undo/Redo"`
 
 ## 5. File Operations
 
-File→New (blank + `dialog_input` dimensions). File→Open (`dialog_file_open` → `image_load()` → copy to canvas). File→Save (`image_save_bmp` or `image_save_png`). File→Save As (format dropdown). `modified` flag + save-before-close guard.
+**Moved:** paint
 
-**Files:** `src/apps/paint/file_ops.c` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **New**: `dialog_input("Canvas Width:", "800")` + height → `paint_new_canvas(w, h)`; if `p->modified` → ask "Save changes?" first. **Open**: `dialog_file_open("Image files\0*.png;*.bmp;*.jpg;*.jpeg\0")` → `image_load(&img, path)` → copy pixels to canvas: if `img.width > canvas_w || img.height > canvas_h`: resize canvas (`pmm_free_contiguous(old)` + `pmm_alloc_contiguous(new)`) to match; `gfx_clear(&canvas, 0xFFFFFFFF)`; `gfx_blit(&canvas, 0, 0, &img.surface, ...)`. **Save**: if `g_current_path != NULL`: determine format from extension; `.png` → `image_save_png()`; `.bmp` → `image_save_bmp()`; else → "Save As". **Save As**: `dialog_file_save("*.png;*.bmp\0")` + format picker (dropdown or file-extension detection). `p->modified = 0` on successful save; `"*"` title suffix when `modified = 1`. **WM_CLOSE guard**: if `p->modified` → `dialog_confirm("Unsaved changes. Save before closing?", YES/NO/CANCEL)`.
-
-- [ ] `void paint_file_new(paint_t *p)` -- `dialog_input()` for W×H; `paint_undo_clear()`; new PMM canvas; white fill
-- [ ] `void paint_file_open(paint_t *p)` -- `dialog_file_open()` → `image_load()` → resize canvas if needed; blit
-- [ ] `void paint_file_save(paint_t *p)` -- dispatch by `g_current_format` (BMP or PNG)
-- [ ] `void paint_file_save_as(paint_t *p)` -- `dialog_file_save()` → detect format from ext → save
-- [ ] `modified` flag: set in every `undo_push()` call; clear on save; `"Paint -- {filename}*"` title when set
-- [ ] `WM_CLOSE` handler: `if (p->modified)` → confirm dialog → save / discard / cancel
-- [ ] `CTRL_MENUBAR` File menu: New / Open / Save / Save As / Exit (with separators)
-- [ ] `CTRL_MENUBAR` Image menu (stub entries for §7 Resize/Crop): filled in stretch
-- [ ] Register `.bmp` → Paint as default editor (forward dep: TODO-02 §1 file assoc)
-- [ ] Commit: `"paint: file operations -- New/Open/Save/Save As, image_load/save_bmp/png, modified guard"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings File Operations"`
 
 ## 6. Selection Tool (Stretch)
 
-Rectangle selection: click+drag dotted rect. Ctrl+C → `clipboard_set(CLIP_IMAGE, region)`. Ctrl+V → paste at cursor position. Drag selection → move (replaces with bg). Delete → clear to bg.
+**Moved:** paint
 
-**Files:** `src/apps/paint/selection.c` (new)
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Selection state**: `g_sel_x/y/w/h`, `g_sel_active` flag. Rubber-band during drag: `WM_MOUSE_MOVE` → render canvas + animated dotted outline (alternating 4-px dashes, tick-based offset). On `tool_end`: if `w > 0 && h > 0`: set `g_sel_active = 1`. **Copy** (Ctrl+C): alloc `sel_w * sel_h * 4` via `pmm_alloc_contiguous()`; copy region pixels; `clipboard_set(CLIP_IMAGE, {pixels, sel_w, sel_h})`; do not clear selection. **Paste** (Ctrl+V): `clipboard_get(CLIP_IMAGE, &img)` → blit onto canvas at `paste_x/y`; set `g_sel` rect to pasted region; mark modified. **Move**: `WM_MOUSE_DOWN` inside sel rect → enter MOVE mode; fill vacated region with `bg_color`; on drag: blit floating sel pixels at cursor offset; on release: commit to canvas. **Delete**: `gfx_fill_rect(&canvas, g_sel_x, g_sel_y, g_sel_w, g_sel_h, p->bg_color)`.
-
-- [ ] `g_sel_x/y/w/h`, `g_sel_active`, `g_sel_mode` (SELECT/MOVE/PASTE) -- add to `paint_t`
-- [ ] Rubber-band render: animated dotted outline overlay on canvas blit
-- [ ] Ctrl+C: PMM copy of region pixels → `clipboard_set(CLIP_IMAGE, ...)`
-- [ ] Ctrl+V: `clipboard_get(CLIP_IMAGE)` → paste blit + set sel rect at paste position
-- [ ] Move: detect `WM_MOUSE_DOWN` inside sel → MOVE mode; bg-fill vacated; drag float blit
-- [ ] Delete: `gfx_fill_rect()` with `bg_color` at sel rect
-- [ ] Escape / click outside sel → deactivate selection (`g_sel_active = 0`)
-- [ ] Commit: `"paint: selection tool -- dotted rect, Ctrl+C/V/X/Delete, move, CLIP_IMAGE"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Selection Tool (Stretch)"`
 
 ## 7. Zoom & Resize (Stretch)
 
-Mouse-wheel zoom (25%–800%), zoom buttons in status bar. Image→Resize (new W×H, aspect ratio toggle). Image→Crop to selection. Zoom affects viewport blit scale only (canvas pixels unchanged).
+**Moved:** paint
 
-**Files:** extend `paint.c` / `file_ops.c`
+Built in Paint, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Zoom**: `WM_MOUSE_WHEEL` (or Ctrl+scroll): `p->zoom_pct = clamp(zoom_pct * (delta > 0 ? 110 : 91) / 100, 25, 800)`. Viewport blit scale: `src_rect = {scroll_x, scroll_y, view_w * 100 / zoom_pct, view_h * 100 / zoom_pct}`; nearest-neighbour scale via row/col index multiplication (no `image_scale()` call -- direct pixel loop for performance). **Zoom buttons** in status bar: `[25%]` `[50%]` `[100%]` `[200%]` `[Fit]` labels / click. `Fit`: `zoom_pct = min(view_w * 100 / canvas_w, view_h * 100 / canvas_h)`. **Image→Resize**: `dialog_input("New width:", str(canvas_w))` + height; maintain aspect toggle → adjust other dim; `image_scale(&new_img, &old_img, new_w, new_h, SCALE_BILINEAR)`; free old PMM; `pmm_alloc_contiguous(new)` for canvas. **Image→Crop**: if `g_sel_active`: `paint_new_canvas(sel_w, sel_h)`; copy region pixels; scroll_x/y = 0.
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: paint brings Zoom & Resize (Stretch)"`
 
-- [ ] `WM_MOUSE_WHEEL` → `zoom_pct *= 1.1 or / 1.1`; clamp `[25, 800]`; re-render
-- [ ] Nearest-neighbour zoom blit in `paint_render()`: row/col index scale
-- [ ] Zoom preset buttons in status bar: 25/50/100/200/Fit
-- [ ] `Image→Resize` menu item: `dialog_input()` W + H + aspect checkbox → `image_scale()` + PMM realloc canvas
-- [ ] `Image→Crop to selection`: copy sel region → new PMM canvas → update `canvas_w/h`
-- [ ] Commit: `"paint: zoom (25–800%), Image→Resize, Image→Crop -- stretch features complete"`
+## 8. Import Paint
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** paint
+
+Paint is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull paint` into `src/apps/paint/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Paint on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose paint`
+- [ ] Commit: `"apps: Paint imported"`
 
 ---
 

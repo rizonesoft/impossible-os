@@ -44,15 +44,15 @@ title: "TODO-09 -- Calculator"
 
 ## Implementation Order
 
-| Step | Section                   | 💎/⭐ | Dependency                                                     | Status |
-| ---- | ------------------------- | ----- | -------------------------------------------------------------- | :----: |
-| 1    | §1 Standard Calculator UI | 💎    | `gfx_fill_rounded_rect`, `ttf_draw_string`, `wm_create_window` |  [/]   |
-| 2    | §2 Arithmetic Engine      | 💎    | §1 complete                                                    |  [/]   |
-| 3    | §3 Memory + History       | ⭐    | §2 complete, `clipboard_set`                                   |  [/]   |
-| 4    | §4 Scientific Mode        | 💎    | §2 complete; `kmath_*` trig and log (shipped)                  |  [/]   |
-| 5    | §5 Programmer Mode        | 💎    | §2 complete                                                    |  [/]   |
-| 6    | §6 Calculator             | 💎    | --                                                             |  [/]   |
-| 7    | §7 Import Calculator      | 💎    | `10-platform-services/TODO-07` §7 (PE programs run)            |  [ ]   |
+| Step | Section                   | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | ------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | §1 Standard Calculator UI | 💎    | §7                                                                                     |  [ ]   |
+| 2    | §2 Arithmetic Engine      | 💎    | §7                                                                                     |  [ ]   |
+| 3    | §3 Memory + History       | ⭐    | §7                                                                                     |  [ ]   |
+| 4    | §4 Scientific Mode        | 💎    | §7                                                                                     |  [ ]   |
+| 5    | §5 Programmer Mode        | 💎    | §7                                                                                     |  [ ]   |
+| 6    | §6 Calculator             | 💎    | §7                                                                                     |  [ ]   |
+| 7    | §7 Import Calculator      | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §2 |  [ ]   |
 
 ---
 
@@ -62,41 +62,46 @@ title: "TODO-09 -- Calculator"
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (Keypad layout and key map, Display fitting, Standard window) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 2. Arithmetic Engine
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (the engine, which is written) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 3. Memory + History
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (History and memory pane) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 4. Scientific Mode
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (Scientific, programmer and converter windows) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 5. Programmer Mode
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (Scientific, programmer and converter windows) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 6. Calculator
 
@@ -108,9 +113,10 @@ title: "TODO-09 -- Calculator"
 
 **Moved:** calculator
 
-> **Deferred:** [L] moved 2026-11-23: built in the Calculator repository (the same sections: this one restated them) and imported by §7 -> XREF: 11-apps/TODO-09 §7 (item: "Copy the pinned program")
+Built in Calculator, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [/] Moved: built in the Calculator repository; its items are kept there in `docs/os-roadmap.md`; do not build a second copy here
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: calculator brings this section"`
 
 ## 7. Import Calculator
 

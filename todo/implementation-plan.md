@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **1003 of 2763 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **997 of 2811 sections complete (35%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2023,15 +2023,26 @@ The network stack needs drivers and the kernel's I/O model but nothing from the 
 | [ ]  | `D07 T06 §7`  | `netstat` Command                                           | none  |     7 |
 | [ ]  | `D07 T06 §8`  | `/sys/net` VFS Aggregation File                             | none  |     7 |
 | [ ]  | `D07 T06 §9`  | `ws2_32.dll` Winsock Stubs                                  | none  |    14 |
-| [ ]  | `D07 T07 §1`  | Text-Only Browser                                           | none  |     9 |
-| [ ]  | `D07 T07 §2`  | HTML Parser + DOM Tree                                      | none  |     9 |
-| [ ]  | `D07 T07 §3`  | Tab Management                                              | none  |     8 |
-| [ ]  | `D07 T07 §4`  | Block / Inline Layout Engine                                | none  |     9 |
-| [ ]  | `D07 T07 §6`  | CSS Parser + Style Engine                                   | none  |     9 |
-| [ ]  | `D07 T07 §7`  | JavaScript Stub                                             | none  |     6 |
-| [ ]  | `D07 T07 §8`  | Bookmarks Manager                                           | none  |     9 |
-| [ ]  | `D07 T07 §9`  | Download Manager                                            | none  |     8 |
-| [ ]  | `D07 T07 §10` | Privacy + Security                                          | none  |     9 |
+| [ ]  | `D10 T07 §7`  | PE Execution                                                | none  |     8 |
+| [ ]  | `D10 T07 §1`  | Fix Ring-3 User-Mode Execution                              | none  |     8 |
+| [ ]  | `D10 T07 §2`  | Windows x64 Syscall ABI                                     | none  |     9 |
+| [ ]  | `D10 T08 §1`  | Win32 Type Definitions                                      | none  |     3 |
+| [ ]  | `D10 T08 §2`  | Console & Process API (`kernel32.dll` tier 1)               | none  |    22 |
+| [ ]  | `D10 T08 §5`  | Memory Management API                                       | none  |    13 |
+| [ ]  | `D10 T08 §6`  | Synchronization API                                         | none  |    12 |
+| [ ]  | `D10 T08 §7`  | DLL Loading API                                             | none  |     6 |
+| [ ]  | `D10 T13 §1`  | Tier 0 Functions: Console                                   | none  |     9 |
+| [ ]  | `D10 T13 §5`  | Tier 4 Functions: Network                                   | none  |     9 |
+| [ ]  | `D11 T01 §9`  | Import Browser                                              | none  |     5 |
+| [ ]  | `D07 T07 §1`  | Text-Only Browser                                           | none  |     2 |
+| [ ]  | `D07 T07 §2`  | HTML Parser + DOM Tree                                      | none  |     2 |
+| [ ]  | `D07 T07 §3`  | Tab Management                                              | none  |     2 |
+| [ ]  | `D07 T07 §4`  | Block / Inline Layout Engine                                | none  |     2 |
+| [ ]  | `D07 T07 §6`  | CSS Parser + Style Engine                                   | none  |     2 |
+| [ ]  | `D07 T07 §7`  | JavaScript Stub                                             | none  |     2 |
+| [ ]  | `D07 T07 §8`  | Bookmarks Manager                                           | none  |     2 |
+| [ ]  | `D07 T07 §9`  | Download Manager                                            | none  |     3 |
+| [ ]  | `D07 T07 §10` | Privacy + Security                                          | none  |     3 |
 | [ ]  | `D07 T08 §1`  | FTP Protocol                                                | none  |    12 |
 | [ ]  | `D07 T08 §2`  | FTP Shell + GUI Integration                                 | none  |     6 |
 | [ ]  | `D07 T08 §3`  | FTPS / FTPES                                                | none  |     7 |
@@ -2072,7 +2083,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T01 §3`  | Path, Stroke, Fill, and SVG-Ready Vector Raster Contract                | none     |     8 |
 | [ ]  | `D08 T01 §4`  | Theme-Aware Icon, Cursor, and Scalable Asset Pipeline                   | none     |    13 |
 | [ ]  | `D08 T01 §5`  | Thumbnail, Preview, and Multi-Size Asset Cache                          | none     |     9 |
-| [ ]  | `D07 T07 §5`  | Image Loading in Browser                                                | none     |     8 |
+| [ ]  | `D07 T07 §5`  | Image Loading in Browser                                                | none     |     2 |
 | [x]  | `D07 T10 §6`  | Image Rendering                                                         | none     |     1 |
 | [x]  | `D07 T10 §7`  | Page Renderer                                                           | none     |     1 |
 | [x]  | `D07 T10 §8`  | PDF Viewer App                                                          | none     |     1 |
@@ -2106,25 +2117,32 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T04 §5`  | Window Transition Animations                                            | none     |    13 |
 | [ ]  | `D08 T04 §6`  | Spring Physics                                                          | none     |     8 |
 | [ ]  | `D08 T04 §7`  | Compositor Integration                                                  | none     |     7 |
-| [ ]  | `D08 T05 §1`  | Checkbox                                                                | none     |     9 |
-| [ ]  | `D08 T05 §2`  | Radio Button                                                            | none     |     8 |
-| [ ]  | `D08 T05 §3`  | Slider / TrackBar                                                       | none     |     7 |
-| [ ]  | `D08 T05 §4`  | Progress Bar                                                            | none     |     7 |
-| [ ]  | `D08 T05 §5`  | Dropdown / ComboBox                                                     | none     |    12 |
-| [ ]  | `D08 T05 §6`  | Tab Strip                                                               | none     |    11 |
-| [ ]  | `D08 T05 §7`  | Theming                                                                 | none     |     4 |
-| [ ]  | `D08 T05 §8`  | Accessibility Stubs                                                     | none     |     4 |
-| [ ]  | `D08 T05 §9`  | Overlay Scroll Bar (Collapse and Expand on Hover)                       | none     |     6 |
-| [ ]  | `D08 T06 §3`  | Toolbar                                                                 | none     |     9 |
-| [ ]  | `D08 T06 §4`  | MenuBar                                                                 | none     |    11 |
-| [ ]  | `D08 T06 §6`  | GroupBox + Separator                                                    | none     |     6 |
-| [ ]  | `D08 T06 §5`  | StatusBar                                                               | none     |     8 |
-| [ ]  | `D08 T06 §7`  | Tooltip Integration                                                     | none     |     8 |
-| [ ]  | `D08 T06 §1`  | ListView                                                                | none     |    14 |
-| [ ]  | `D08 T06 §2`  | TreeView                                                                | none     |    12 |
-| [ ]  | `D08 T06 §8`  | Dialog System                                                           | none     |    11 |
-| [ ]  | `D08 T06 §9`  | Info Bar Control                                                        | none     |     6 |
+| [ ]  | `D08 T18 §1`  | Element Tree and Property System                                        | none     |     9 |
+| [ ]  | `D08 T18 §2`  | Layout Engine: Measure and Arrange                                      | none     |     8 |
+| [ ]  | `D08 T18 §5`  | Style, Template and Visual State Engine                                 | none     |     8 |
+| [ ]  | `D08 T18 §7`  | Routed Input, Focus and Keyboard Navigation                             | none     |     9 |
 | [ ]  | `D08 T07 §1`  | Semantic Node Tree, Roles, States, Values, and Action Descriptors       | none     |     8 |
+| [ ]  | `D08 T18 §24` | Automation Peers and Inventory Ids                                      | none     |     8 |
+| [ ]  | `D11 T15 §1`  | Import Impossible SDK                                                   | none     |     5 |
+| [ ]  | `D08 T19 §27` | Impossible UI on the Engines                                            | none     |     6 |
+| [ ]  | `D08 T05 §1`  | Checkbox                                                                | none     |     2 |
+| [ ]  | `D08 T05 §2`  | Radio Button                                                            | none     |     2 |
+| [ ]  | `D08 T05 §3`  | Slider / TrackBar                                                       | none     |     2 |
+| [ ]  | `D08 T05 §4`  | Progress Bar                                                            | none     |     2 |
+| [ ]  | `D08 T05 §5`  | Dropdown / ComboBox                                                     | none     |     2 |
+| [ ]  | `D08 T05 §6`  | Tab Strip                                                               | none     |     2 |
+| [ ]  | `D08 T05 §7`  | Theming                                                                 | none     |     2 |
+| [ ]  | `D08 T05 §8`  | Accessibility Stubs                                                     | none     |     2 |
+| [ ]  | `D08 T05 §9`  | Overlay Scroll Bar (Collapse and Expand on Hover)                       | none     |     2 |
+| [ ]  | `D08 T06 §3`  | Toolbar                                                                 | none     |     2 |
+| [ ]  | `D08 T06 §4`  | MenuBar                                                                 | none     |     2 |
+| [ ]  | `D08 T06 §6`  | GroupBox + Separator                                                    | none     |     2 |
+| [ ]  | `D08 T06 §5`  | StatusBar                                                               | none     |     2 |
+| [ ]  | `D08 T06 §7`  | Tooltip Integration                                                     | none     |     4 |
+| [ ]  | `D08 T06 §1`  | ListView                                                                | none     |     2 |
+| [ ]  | `D08 T06 §2`  | TreeView                                                                | none     |     2 |
+| [ ]  | `D08 T06 §8`  | Dialog System                                                           | none     |     3 |
+| [ ]  | `D08 T06 §9`  | Info Bar Control                                                        | none     |     2 |
 | [ ]  | `D08 T07 §2`  | Provider/Query API, Focus/Hit-Test Lookup, and Accessibility Events     | none     |     7 |
 | [ ]  | `D08 T07 §3`  | Inspect Bridge, Screen-Reader Hooks, and Automation Subscription Model  | none     |     6 |
 | [ ]  | `D08 T07 §4`  | IME and Text-Composition Framework                                      | none     |     6 |
@@ -2230,13 +2248,9 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T16 §3`  | Static asserts, headers, and audits                                     | none     |     2 |
 | [ ]  | `D08 T16 §4`  | User-mode index contract                                                | none     |     1 |
 | [ ]  | `D08 T16 §5`  | KeUserModeCallback integration review                                   | none     |     2 |
-| [ ]  | `D08 T18 §1`  | Element Tree and Property System                                        | none     |     9 |
-| [ ]  | `D08 T18 §2`  | Layout Engine: Measure and Arrange                                      | none     |     8 |
 | [ ]  | `D08 T18 §3`  | Layout Panels                                                           | none     |     8 |
 | [ ]  | `D08 T18 §4`  | Scrolling and Virtualization Engine                                     | none     |     8 |
-| [ ]  | `D08 T18 §5`  | Style, Template and Visual State Engine                                 | none     |     8 |
 | [ ]  | `D08 T18 §6`  | Theme Resource Resolution                                               | none     |     8 |
-| [ ]  | `D08 T18 §7`  | Routed Input, Focus and Keyboard Navigation                             | none     |     9 |
 | [ ]  | `D08 T18 §8`  | Pointer, Touch and Gesture Recognition                                  | none     |     8 |
 | [ ]  | `D08 T18 §9`  | Command Engine                                                          | none     |     8 |
 | [ ]  | `D08 T18 §10` | Data Binding and Observable Collections                                 | none     |     8 |
@@ -2363,33 +2377,32 @@ The taskbar, Start, the file manager and the settings surfaces are built from th
 | [ ]  | `D08 T18 §21` | Resource and Localization Engine              | none  |     8 |
 | [ ]  | `D08 T18 §22` | Shell Process Model and Crash Recovery        | none  |     8 |
 | [ ]  | `D08 T18 §23` | Shell Data Stores                             | none  |     8 |
-| [ ]  | `D08 T18 §24` | Automation Peers and Inventory Ids            | none  |     8 |
-| [ ]  | `D08 T19 §1`  | Control Authoring Contract                    | none  |     6 |
-| [ ]  | `D08 T19 §2`  | Button Family                                 | none  |    10 |
-| [ ]  | `D08 T19 §3`  | Toggle Switch                                 | none  |     7 |
-| [ ]  | `D08 T19 §4`  | Text Box Family                               | none  |     9 |
-| [ ]  | `D08 T19 §5`  | Number Box                                    | none  |     7 |
-| [ ]  | `D08 T19 §6`  | Auto-Suggest Box                              | none  |     8 |
-| [ ]  | `D08 T19 §7`  | Rich Text Display and Hyperlink               | none  |     7 |
-| [ ]  | `D08 T19 §8`  | Date, Time and Calendar Pickers               | none  |     9 |
-| [ ]  | `D08 T19 §9`  | Colour Picker                                 | none  |     8 |
-| [ ]  | `D08 T19 §10` | Progress Ring                                 | none  |     7 |
-| [ ]  | `D08 T19 §11` | Rating, Person Picture and Info Badge         | none  |     7 |
-| [ ]  | `D08 T19 §12` | Flyout and Menu Flyout                        | none  |     9 |
-| [ ]  | `D08 T19 §13` | Command Bar and Command Bar Flyout            | none  |     9 |
-| [ ]  | `D08 T19 §14` | Content Dialog and Teaching Tip               | none  |     9 |
-| [ ]  | `D08 T19 §15` | Navigation View                               | none  |    10 |
-| [ ]  | `D08 T19 §16` | Breadcrumb Bar                                | none  |     8 |
-| [ ]  | `D08 T19 §17` | Tab View                                      | none  |     8 |
-| [ ]  | `D08 T19 §18` | Expander, Settings Card and Settings Expander | none  |     8 |
-| [ ]  | `D08 T19 §19` | Grid View, Items View and Flip View           | none  |     8 |
-| [ ]  | `D08 T19 §20` | Split View and Two-Pane View                  | none  |     8 |
-| [ ]  | `D08 T19 §21` | Selector Bar and Segmented Control            | none  |     7 |
-| [ ]  | `D08 T19 §22` | Title Bar Control                             | none  |     8 |
-| [ ]  | `D08 T19 §23` | Media Transport Controls                      | none  |     8 |
-| [ ]  | `D08 T19 §24` | Classic Control Parity                        | none  |     8 |
-| [ ]  | `D08 T19 §25` | Controls Gallery App                          | none  |     8 |
-| [ ]  | `D08 T19 §26` | State Matrix Conformance Suite                | none  |     7 |
+| [ ]  | `D08 T19 §1`  | Control Authoring Contract                    | none  |     2 |
+| [ ]  | `D08 T19 §2`  | Button Family                                 | none  |     2 |
+| [ ]  | `D08 T19 §3`  | Toggle Switch                                 | none  |     2 |
+| [ ]  | `D08 T19 §4`  | Text Box Family                               | none  |     2 |
+| [ ]  | `D08 T19 §5`  | Number Box                                    | none  |     2 |
+| [ ]  | `D08 T19 §6`  | Auto-Suggest Box                              | none  |     2 |
+| [ ]  | `D08 T19 §7`  | Rich Text Display and Hyperlink               | none  |     2 |
+| [ ]  | `D08 T19 §8`  | Date, Time and Calendar Pickers               | none  |     2 |
+| [ ]  | `D08 T19 §9`  | Colour Picker                                 | none  |     2 |
+| [ ]  | `D08 T19 §10` | Progress Ring                                 | none  |     2 |
+| [ ]  | `D08 T19 §11` | Rating, Person Picture and Info Badge         | none  |     2 |
+| [ ]  | `D08 T19 §12` | Flyout and Menu Flyout                        | none  |     2 |
+| [ ]  | `D08 T19 §13` | Command Bar and Command Bar Flyout            | none  |     2 |
+| [ ]  | `D08 T19 §14` | Content Dialog and Teaching Tip               | none  |     2 |
+| [ ]  | `D08 T19 §15` | Navigation View                               | none  |     2 |
+| [ ]  | `D08 T19 §16` | Breadcrumb Bar                                | none  |     2 |
+| [ ]  | `D08 T19 §17` | Tab View                                      | none  |     2 |
+| [ ]  | `D08 T19 §18` | Expander, Settings Card and Settings Expander | none  |     2 |
+| [ ]  | `D08 T19 §19` | Grid View, Items View and Flip View           | none  |     2 |
+| [ ]  | `D08 T19 §20` | Split View and Two-Pane View                  | none  |     2 |
+| [ ]  | `D08 T19 §21` | Selector Bar and Segmented Control            | none  |     2 |
+| [ ]  | `D08 T19 §22` | Title Bar Control                             | none  |     2 |
+| [ ]  | `D08 T19 §23` | Media Transport Controls                      | none  |     2 |
+| [ ]  | `D08 T19 §24` | Classic Control Parity                        | none  |     2 |
+| [ ]  | `D08 T19 §25` | Controls Gallery App                          | none  |     2 |
+| [ ]  | `D08 T19 §26` | State Matrix Conformance Suite                | none  |     2 |
 
 ### Phase 10 -- Platform services
 
@@ -2399,14 +2412,21 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | :--: | ------------- | ---------------------------------------------------------------------------------------------------------------------- | ----- | ----: |
 | [ ]  | `D10 T01 §1`  | Audio Abstraction Layer                                                                                                | none  |     9 |
 | [ ]  | `D10 T01 §2`  | Audio Mixer                                                                                                            | none  |    11 |
-| [ ]  | `D10 T01 §3`  | WAV Decoder                                                                                                            | none  |     7 |
-| [ ]  | `D10 T01 §4`  | MP3 Decoder                                                                                                            | none  |     8 |
-| [ ]  | `D10 T01 §5`  | OGG Vorbis Decoder                                                                                                     | none  |     7 |
-| [ ]  | `D10 T01 §6`  | FLAC Decoder (Stretch)                                                                                                 | none  |     8 |
+| [ ]  | `D11 T15 §2`  | Impossible SDK's parts here                                                                                            | none  |     4 |
+| [ ]  | `D10 T01 §3`  | WAV Decoder                                                                                                            | none  |     2 |
+| [ ]  | `D10 T01 §4`  | MP3 Decoder                                                                                                            | none  |     2 |
+| [ ]  | `D10 T01 §5`  | OGG Vorbis Decoder                                                                                                     | none  |     2 |
+| [ ]  | `D10 T01 §6`  | FLAC Decoder (Stretch)                                                                                                 | none  |     2 |
 | [ ]  | `D10 T01 §7`  | Unified Audio Loader                                                                                                   | none  |     7 |
 | [ ]  | `D10 T01 §9`  | Volume Control Popup                                                                                                   | none  |     6 |
-| [ ]  | `D10 T02 §1`  | Canvas & Viewport                                                                                                      | none  |     8 |
-| [ ]  | `D10 T02 §7`  | Zoom & Resize (Stretch)                                                                                                | none  |     6 |
+| [ ]  | `D10 T08 §10` | Window Management (`user32.dll`)                                                                                       | none  |     4 |
+| [ ]  | `D10 T08 §11` | GDI Rendering (`gdi32.dll`)                                                                                            | none  |     3 |
+| [ ]  | `D10 T13 §2`  | Tier 1 Functions: Window                                                                                               | none  |     9 |
+| [ ]  | `D10 T08 §12` | Shell & Icon API (`shell32.dll`)                                                                                       | none  |     3 |
+| [ ]  | `D10 T13 §3`  | Tier 2 Functions: Documents                                                                                            | none  |     6 |
+| [ ]  | `D10 T02 §8`  | Import Paint                                                                                                           | none  |     5 |
+| [ ]  | `D10 T02 §1`  | Canvas & Viewport                                                                                                      | none  |     2 |
+| [ ]  | `D10 T02 §7`  | Zoom & Resize (Stretch)                                                                                                | none  |     2 |
 | [ ]  | `D10 T04 §1`  | Event Log                                                                                                              | none  |     8 |
 | [ ]  | `D10 T04 §7`  | F8 Recovery Environment                                                                                                | none  |    10 |
 | [ ]  | `D10 T04 §8`  | Factory Reset                                                                                                          | none  |     8 |
@@ -2419,28 +2439,17 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T06 §6`  | Mouse Keys                                                                                                             | none  |     7 |
 | [ ]  | `D10 T06 §7`  | Reduced Motion & Color Blind Mode                                                                                      | none  |     7 |
 | [ ]  | `D10 T05 §2`  | Screensaver → Lock Screen                                                                                              | none  |     5 |
-| [ ]  | `D10 T07 §1`  | Fix Ring-3 User-Mode Execution                                                                                         | none  |     8 |
-| [ ]  | `D10 T07 §2`  | Windows x64 Syscall ABI                                                                                                | none  |     9 |
 | [ ]  | `D10 T07 §3`  | PE Header Structures                                                                                                   | none  |     7 |
 | [ ]  | `D10 T07 §4`  | PE Loader Core                                                                                                         | none  |     9 |
 | [ ]  | `D10 T07 §5`  | Base Relocations                                                                                                       | none  |     7 |
 | [ ]  | `D10 T07 §6`  | Import Resolution                                                                                                      | none  |     8 |
-| [ ]  | `D10 T07 §7`  | PE Execution                                                                                                           | none  |     8 |
 | [ ]  | `D10 T07 §8`  | EXE Format Precedence                                                                                                  | none  |     6 |
 | [ ]  | `D10 T07 §9`  | Minimal User-Mode Runtime                                                                                              | none  |     7 |
 | [ ]  | `D10 T06 §4`  | Large Cursor                                                                                                           | none  |     6 |
-| [ ]  | `D10 T08 §1`  | Win32 Type Definitions                                                                                                 | none  |     3 |
-| [ ]  | `D10 T08 §2`  | Console & Process API (`kernel32.dll` tier 1)                                                                          | none  |    22 |
 | [ ]  | `D10 T08 §3`  | C Runtime (`msvcrt.dll`)                                                                                               | none  |    13 |
 | [ ]  | `D10 T08 §4`  | NT Runtime Stubs (`ntdll.dll`)                                                                                         | none  |     8 |
-| [ ]  | `D10 T08 §5`  | Memory Management API                                                                                                  | none  |    13 |
-| [ ]  | `D10 T08 §6`  | Synchronization API                                                                                                    | none  |    12 |
-| [ ]  | `D10 T08 §7`  | DLL Loading API                                                                                                        | none  |     6 |
 | [ ]  | `D10 T08 §8`  | Error API                                                                                                              | none  |     5 |
 | [ ]  | `D10 T08 §9`  | Unimplemented Function Logger                                                                                          | none  |     5 |
-| [ ]  | `D10 T08 §10` | Window Management (`user32.dll`)                                                                                       | none  |     4 |
-| [ ]  | `D10 T08 §11` | GDI Rendering (`gdi32.dll`)                                                                                            | none  |     3 |
-| [ ]  | `D10 T08 §12` | Shell & Icon API (`shell32.dll`)                                                                                       | none  |     3 |
 | [ ]  | `D10 T08 §13` | IxUI Native Toolkit                                                                                                    | none  |     6 |
 | [ ]  | `D10 T08 §14` | Win32 Shell Integration                                                                                                | none  |     4 |
 | [ ]  | `D09 T13 §4`  | ShellExecute open-verb wiring                                                                                          | none  |     2 |
@@ -2498,13 +2507,18 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T01 §10` | `mmsys.cpl` -- Sound Settings Applet                                                                                   | none  |     9 |
 | [ ]  | `D10 T12 §1`  | Kernel Debugger (GDB RSP Stub)                                                                                         | none  |     9 |
 | [ ]  | `D10 T05 §4`  | Built-in Widgets                                                                                                       | none  |     8 |
-| [ ]  | `D10 T01 §8`  | Media Player App                                                                                                       | none  |    10 |
-| [ ]  | `D10 T02 §3`  | Color System                                                                                                           | none  |     8 |
-| [ ]  | `D10 T02 §2`  | Drawing Tools                                                                                                          | none  |    11 |
-| [ ]  | `D10 T02 §4`  | Undo/Redo                                                                                                              | none  |    10 |
-| [ ]  | `D10 T02 §5`  | File Operations                                                                                                        | none  |    10 |
-| [ ]  | `D10 T02 §6`  | Selection Tool (Stretch)                                                                                               | none  |     8 |
-| [ ]  | `D10 T06 §5`  | Screen Magnifier                                                                                                       | none  |     8 |
+| [ ]  | `D10 T05 §7`  | Import Screensavers                                                                                                    | none  |     5 |
+| [ ]  | `D10 T13 §4`  | Tier 3 Functions: Media                                                                                                | none  |     5 |
+| [ ]  | `D11 T15 §13` | Import Music                                                                                                           | none  |     5 |
+| [ ]  | `D10 T01 §8`  | Media Player App                                                                                                       | none  |     3 |
+| [ ]  | `D10 T02 §3`  | Color System                                                                                                           | none  |     2 |
+| [ ]  | `D10 T02 §2`  | Drawing Tools                                                                                                          | none  |     2 |
+| [ ]  | `D10 T02 §4`  | Undo/Redo                                                                                                              | none  |     2 |
+| [ ]  | `D10 T02 §5`  | File Operations                                                                                                        | none  |     2 |
+| [ ]  | `D10 T02 §6`  | Selection Tool (Stretch)                                                                                               | none  |     2 |
+| [ ]  | `D10 T13 §6`  | Tier 5 Functions: Desktop                                                                                              | none  |     9 |
+| [ ]  | `D10 T06 §9`  | Import Magnifier                                                                                                       | none  |     5 |
+| [ ]  | `D10 T06 §5`  | Screen Magnifier                                                                                                       | none  |     6 |
 | [ ]  | `D10 T06 §8`  | `ease.cpl` -- Accessibility Settings Applet                                                                            | none  |    11 |
 | [ ]  | `D10 T12 §2`  | User-Mode Debugger (`debugger.exe`)                                                                                    | none  |    21 |
 | [ ]  | `D10 T12 §3`  | Developer Tools                                                                                                        | none  |     8 |
@@ -2537,19 +2551,20 @@ The bundled applications are the proof that the platform beneath them is complet
 
 | Done | Section       | Deliverable                                        | Needs       | Items |
 | :--: | ------------- | -------------------------------------------------- | ----------- | ----: |
-| [ ]  | `D11 T01 §1`  | Text-Only Browser (Phase 1)                        | none        |    12 |
-| [ ]  | `D11 T01 §2`  | HTML Tokenizer + DOM Tree                          | none        |     5 |
-| [ ]  | `D11 T01 §3`  | Layout Engine (Block + Inline Flow)                | none        |    12 |
-| [ ]  | `D11 T01 §4`  | CSS Parser + Cascade (Stretch)                     | none        |     8 |
-| [ ]  | `D11 T01 §5`  | JavaScript Engine (Long-Term Stretch)              | none        |     6 |
-| [ ]  | `D11 T01 §6`  | Alternative: NetSurf / Dillo Port Evaluation       | none        |     5 |
-| [ ]  | `D11 T01 §7`  | Browser Chrome                                     | none        |     8 |
-| [ ]  | `D11 T01 §8`  | Browser Settings + History + Cookie Jar            | none        |     7 |
-| [ ]  | `D11 T02 §1`  | FTP Protocol Core                                  | none        |    11 |
-| [ ]  | `D11 T02 §2`  | FTP Shell Commands + `wget ftp://`                 | none        |     4 |
-| [ ]  | `D11 T02 §3`  | `wget` Command (HTTP/HTTPS + Progress)             | none        |     9 |
-| [ ]  | `D11 T02 §4`  | `curl` Command (Full Flag Set)                     | none        |    15 |
-| [ ]  | `D11 T02 §5`  | FTP GUI Client (Dual-Pane, Stretch)                | none        |     9 |
+| [ ]  | `D11 T01 §1`  | Text-Only Browser (Phase 1)                        | none        |     2 |
+| [ ]  | `D11 T01 §2`  | HTML Tokenizer + DOM Tree                          | none        |     2 |
+| [ ]  | `D11 T01 §3`  | Layout Engine (Block + Inline Flow)                | none        |     2 |
+| [ ]  | `D11 T01 §4`  | CSS Parser + Cascade (Stretch)                     | none        |     2 |
+| [ ]  | `D11 T01 §5`  | JavaScript Engine (Long-Term Stretch)              | none        |     2 |
+| [ ]  | `D11 T01 §6`  | Alternative: NetSurf / Dillo Port Evaluation       | none        |     2 |
+| [ ]  | `D11 T01 §7`  | Browser Chrome                                     | none        |     2 |
+| [ ]  | `D11 T01 §8`  | Browser Settings + History + Cookie Jar            | none        |     2 |
+| [ ]  | `D11 T02 §7`  | Import FTP                                         | none        |     5 |
+| [ ]  | `D11 T02 §1`  | FTP Protocol Core                                  | none        |     2 |
+| [ ]  | `D11 T02 §2`  | FTP Shell Commands + `wget ftp://`                 | none        |     3 |
+| [ ]  | `D11 T02 §3`  | `wget` Command (HTTP/HTTPS + Progress)             | none        |     2 |
+| [ ]  | `D11 T02 §4`  | `curl` Command (Full Flag Set)                     | none        |     2 |
+| [ ]  | `D11 T02 §5`  | FTP GUI Client (Dual-Pane, Stretch)                | none        |     2 |
 | [ ]  | `D11 T02 §6`  | WiFi Framework (Stretch)                           | none        |     8 |
 | [ ]  | `D11 T05 §1`  | PDF Structure Parser                               | none        |     1 |
 | [ ]  | `D11 T05 §2`  | Page Tree Traversal                                | none        |     1 |
@@ -2571,87 +2586,120 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T05 §18` | System Integration                                 | none        |     6 |
 | [ ]  | `D11 T05 §19` | Packaging and Updates                              | none        |     5 |
 | [ ]  | `D11 T05 §20` | Recto Conformance on Impossible OS                 | none        |     4 |
-| [ ]  | `D11 T06 §1`  | pl_mpeg Integration                                | none        |    10 |
-| [ ]  | `D11 T06 §2`  | YCbCr → RGB Conversion                             | none        |     3 |
-| [ ]  | `D11 T06 §3`  | A/V Sync Engine                                    | none        |     7 |
-| [ ]  | `D11 T06 §4`  | Player UI                                          | none        |     5 |
-| [ ]  | `D11 T06 §5`  | File Operations                                    | none        |     6 |
-| [ ]  | `D11 T06 §6`  | Playlist                                           | none        |     7 |
-| [ ]  | `D11 T06 §7`  | Subtitle Support (Stretch)                         | none        |     5 |
-| [ ]  | `D11 T06 §8`  | Format Support Roadmap                             | none        |     4 |
+| [ ]  | `D11 T06 §9`  | Import Media Player                                | none        |     5 |
+| [ ]  | `D11 T06 §1`  | pl_mpeg Integration                                | none        |     2 |
+| [ ]  | `D11 T06 §2`  | YCbCr → RGB Conversion                             | none        |     2 |
+| [ ]  | `D11 T06 §3`  | A/V Sync Engine                                    | none        |     4 |
+| [ ]  | `D11 T06 §4`  | Player UI                                          | none        |     2 |
+| [ ]  | `D11 T06 §5`  | File Operations                                    | none        |     3 |
+| [ ]  | `D11 T06 §6`  | Playlist                                           | none        |     2 |
+| [ ]  | `D11 T06 §7`  | Subtitle Support (Stretch)                         | none        |     2 |
+| [ ]  | `D11 T06 §8`  | Format Support Roadmap                             | none        |     2 |
 | [ ]  | `D11 T07 §4`  | `ping` + `traceroute` Commands                     | none        |     3 |
 | [ ]  | `D11 T07 §5`  | Network Diagnostic Tools: `arp -a` + `route print` | none        |     5 |
-| [ ]  | `D11 T08 §6`  | Gap Buffer                                         | none        |    16 |
-| [ ]  | `D11 T08 §7`  | Text Rendering & Cursor                            | none        |    11 |
-| [ ]  | `D11 T08 §8`  | Undo/Redo                                          | none        |    10 |
-| [ ]  | `D11 T08 §9`  | File Menu                                          | none        |     9 |
-| [ ]  | `D11 T08 §10` | Editing Features                                   | none        |    10 |
-| [ ]  | `D11 T08 §11` | Find & Replace                                     | none        |    10 |
-| [ ]  | `D11 T08 §12` | Stretch Features                                   | none        |    10 |
-| [ ]  | `D11 T08 §1`  | Gap Buffer Text Engine                             | none        |     8 |
-| [ ]  | `D11 T08 §2`  | Text Rendering + Cursor                            | none        |     7 |
-| [ ]  | `D11 T08 §3`  | File Operations                                    | none        |     7 |
-| [ ]  | `D11 T08 §4`  | Editing Features                                   | none        |     9 |
-| [ ]  | `D11 T08 §5`  | File Associations + App Registration               | none        |     5 |
-| [x]  | `D11 T09 §6`  | Calculator                                         | none        |     1 |
-| [x]  | `D11 T09 §1`  | Standard Calculator UI                             | none        |     1 |
-| [x]  | `D11 T09 §2`  | Arithmetic Engine                                  | none        |     1 |
-| [x]  | `D11 T09 §3`  | Memory + History                                   | none        |     1 |
-| [x]  | `D11 T09 §4`  | Scientific Mode                                    | none        |     1 |
-| [x]  | `D11 T09 §5`  | Programmer Mode                                    | none        |     1 |
+| [ ]  | `D11 T08 §13` | Import Notepad                                     | none        |     5 |
+| [ ]  | `D11 T08 §6`  | Gap Buffer                                         | none        |     2 |
+| [ ]  | `D11 T08 §7`  | Text Rendering & Cursor                            | none        |     2 |
+| [ ]  | `D11 T08 §8`  | Undo/Redo                                          | none        |     2 |
+| [ ]  | `D11 T08 §9`  | File Menu                                          | none        |     2 |
+| [ ]  | `D11 T08 §10` | Editing Features                                   | none        |     2 |
+| [ ]  | `D11 T08 §11` | Find & Replace                                     | none        |     2 |
+| [ ]  | `D11 T08 §12` | Stretch Features                                   | none        |     2 |
+| [ ]  | `D11 T08 §1`  | Gap Buffer Text Engine                             | none        |     2 |
+| [ ]  | `D11 T08 §2`  | Text Rendering + Cursor                            | none        |     2 |
+| [ ]  | `D11 T08 §3`  | File Operations                                    | none        |     2 |
+| [ ]  | `D11 T08 §4`  | Editing Features                                   | none        |     2 |
+| [ ]  | `D11 T08 §5`  | File Associations + App Registration               | none        |     4 |
 | [ ]  | `D11 T09 §7`  | Import Calculator                                  | none        |     5 |
-| [ ]  | `D11 T10 §1`  | Rich Text Document Model                           | none        |    11 |
-| [ ]  | `D11 T10 §2`  | RTF File Format                                    | none        |     3 |
-| [ ]  | `D11 T10 §3`  | Rich Text Rendering + Layout Engine                | none        |     8 |
-| [ ]  | `D11 T10 §4`  | Toolbar + Menus                                    | none        |     3 |
-| [ ]  | `D11 T10 §5`  | Formatting Interactions                            | none        |     9 |
-| [ ]  | `D11 T10 §6`  | File Operations + File Associations                | none        |     9 |
-| [ ]  | `D11 T10 §7`  | Print (Stretch)                                    | none        |     5 |
-| [ ]  | `D11 T11 §9`  | Image Viewer                                       | none        |    11 |
-| [ ]  | `D11 T11 §1`  | Image Loading + Display                            | none        |    10 |
-| [ ]  | `D11 T11 §2`  | Zoom + Pan                                         | none        |     8 |
-| [ ]  | `D11 T11 §3`  | Folder Navigation + Thumbnail Strip                | none        |     4 |
-| [ ]  | `D11 T11 §4`  | Toolbar + Menus                                    | none        |     3 |
-| [ ]  | `D11 T11 §5`  | Slideshow                                          | none        |     5 |
-| [ ]  | `D11 T11 §6`  | EXIF Metadata Panel                                | none        |     3 |
-| [ ]  | `D11 T11 §7`  | Basic Editing                                      | none        |     6 |
+| [ ]  | `D11 T09 §6`  | Calculator                                         | none        |     2 |
+| [ ]  | `D11 T09 §1`  | Standard Calculator UI                             | none        |     2 |
+| [ ]  | `D11 T09 §2`  | Arithmetic Engine                                  | none        |     2 |
+| [ ]  | `D11 T09 §3`  | Memory + History                                   | none        |     2 |
+| [ ]  | `D11 T09 §4`  | Scientific Mode                                    | none        |     2 |
+| [ ]  | `D11 T09 §5`  | Programmer Mode                                    | none        |     2 |
+| [ ]  | `D11 T10 §8`  | Import WordPad                                     | none        |     5 |
+| [ ]  | `D11 T10 §1`  | Rich Text Document Model                           | none        |     2 |
+| [ ]  | `D11 T10 §2`  | RTF File Format                                    | none        |     2 |
+| [ ]  | `D11 T10 §3`  | Rich Text Rendering + Layout Engine                | none        |     2 |
+| [ ]  | `D11 T10 §4`  | Toolbar + Menus                                    | none        |     2 |
+| [ ]  | `D11 T10 §5`  | Formatting Interactions                            | none        |     2 |
+| [ ]  | `D11 T10 §6`  | File Operations + File Associations                | none        |     3 |
+| [ ]  | `D11 T10 §7`  | Print (Stretch)                                    | none        |     2 |
+| [ ]  | `D11 T11 §10` | Import Photos                                      | none        |     5 |
+| [ ]  | `D11 T11 §9`  | Image Viewer                                       | none        |     2 |
+| [ ]  | `D11 T11 §1`  | Image Loading + Display                            | none        |     3 |
+| [ ]  | `D11 T11 §2`  | Zoom + Pan                                         | none        |     2 |
+| [ ]  | `D11 T11 §3`  | Folder Navigation + Thumbnail Strip                | none        |     2 |
+| [ ]  | `D11 T11 §4`  | Toolbar + Menus                                    | none        |     2 |
+| [ ]  | `D11 T11 §5`  | Slideshow                                          | none        |     2 |
+| [ ]  | `D11 T11 §6`  | EXIF Metadata Panel                                | none        |     2 |
+| [ ]  | `D11 T11 §7`  | Basic Editing                                      | none        |     2 |
 | [ ]  | `D11 T11 §8`  | File Associations + App Registration               | none        |     4 |
-| [ ]  | `D11 T12 §6`  | Screenshot Enhancements                            | none        |     9 |
-| [ ]  | `D11 T12 §7`  | Archive Manager                                    | none        |     9 |
-| [ ]  | `D11 T12 §1`  | Full + Window Capture + Hotkeys                    | none        |     6 |
-| [ ]  | `D11 T12 §2`  | Region Select Overlay                              | none        |     8 |
-| [ ]  | `D11 T12 §3`  | Snipping Tool UI                                   | none        |     4 |
-| [ ]  | `D11 T13 §8`  | Calendar App                                       | none        |     9 |
+| [ ]  | `D11 T12 §8`  | Import Screenshot                                  | none        |     5 |
+| [ ]  | `D11 T12 §6`  | Screenshot Enhancements                            | none        |     4 |
+| [ ]  | `D11 T12 §9`  | Import Zip                                         | none        |     5 |
+| [ ]  | `D11 T12 §7`  | Archive Manager                                    | none        |     4 |
+| [ ]  | `D11 T12 §1`  | Full + Window Capture + Hotkeys                    | none        |     4 |
+| [ ]  | `D11 T12 §2`  | Region Select Overlay                              | none        |     2 |
+| [ ]  | `D11 T12 §3`  | Snipping Tool UI                                   | none        |     2 |
+| [ ]  | `D11 T13 §11` | Import Calendar                                    | none        |     5 |
+| [ ]  | `D11 T13 §8`  | Calendar App                                       | none        |     3 |
 | [ ]  | `D11 T13 §9`  | System Info                                        | none        |     8 |
-| [ ]  | `D11 T13 §10` | Font Manager App                                   | none        |     8 |
-| [ ]  | `D11 T13 §1`  | Calendar App (Recurring Events + ICS Export)       | none        |     3 |
-| [ ]  | `D11 T13 §2`  | Sticky Notes                                       | none        |     7 |
+| [ ]  | `D11 T13 §15` | Import Fonts                                       | none        |     5 |
+| [ ]  | `D11 T13 §10` | Font Manager App                                   | none        |     3 |
+| [ ]  | `D11 T13 §1`  | Calendar App (Recurring Events + ICS Export)       | none        |     2 |
+| [ ]  | `D11 T13 §12` | Import Sticky Notes                                | none        |     5 |
+| [ ]  | `D11 T13 §2`  | Sticky Notes                                       | none        |     2 |
 | [ ]  | `D11 T13 §3`  | System Information (`sysinfo.exe`)                 | none        |     3 |
-| [ ]  | `D11 T13 §4`  | On-Screen Keyboard                                 | none        |     9 |
-| [ ]  | `D11 T13 §5`  | Color Picker                                       | none        |     6 |
-| [ ]  | `D11 T13 §6`  | Font Manager (OS/2 + Unicode Coverage)             | none        |     4 |
+| [ ]  | `D11 T13 §13` | Import On-Screen Keyboard                          | none        |     5 |
+| [ ]  | `D11 T13 §4`  | On-Screen Keyboard                                 | none        |     3 |
+| [ ]  | `D11 T13 §14` | Import Color Picker                                | none        |     5 |
+| [ ]  | `D11 T13 §5`  | Color Picker                                       | none        |     3 |
+| [ ]  | `D11 T13 §6`  | Font Manager (OS/2 + Unicode Coverage)             | none        |     2 |
 | [ ]  | `D11 T13 §7`  | Shared Help / About Dialog                         | none        |     3 |
-| [ ]  | `D11 T03 §1`  | SSH2 Transport Layer                               | none        |    10 |
-| [ ]  | `D11 T03 §2`  | SSH Authentication                                 | none        |     4 |
-| [ ]  | `D11 T03 §3`  | Interactive Channel + PTY Relay                    | none        |     5 |
-| [ ]  | `D11 T03 §4`  | Shell Integration + TOFU + Known Hosts             | none        |     6 |
-| [ ]  | `D11 T03 §5`  | SCP File Transfer                                  | none        |     8 |
-| [ ]  | `D11 T03 §6`  | SSH Config File                                    | none        |     7 |
-| [ ]  | `D11 T03 §7`  | sftp Command (Stretch)                             | none        |     5 |
-| [ ]  | `D11 T04 §1`  | SMTP Client                                        | none        |     6 |
-| [ ]  | `D11 T04 §2`  | POP3 Client + Message Storage                      | none        |     7 |
-| [ ]  | `D11 T04 §3`  | IMAP Client (Stretch)                              | none        |     9 |
-| [ ]  | `D11 T04 §4`  | Three-Panel Email GUI                              | none        |     6 |
+| [ ]  | `D11 T03 §8`  | Import SSH                                         | none        |     5 |
+| [ ]  | `D11 T03 §1`  | SSH2 Transport Layer                               | none        |     2 |
+| [ ]  | `D11 T03 §2`  | SSH Authentication                                 | none        |     2 |
+| [ ]  | `D11 T03 §3`  | Interactive Channel + PTY Relay                    | none        |     2 |
+| [ ]  | `D11 T03 §4`  | Shell Integration + TOFU + Known Hosts             | none        |     3 |
+| [ ]  | `D11 T03 §5`  | SCP File Transfer                                  | none        |     3 |
+| [ ]  | `D11 T03 §6`  | SSH Config File                                    | none        |     2 |
+| [ ]  | `D11 T03 §7`  | sftp Command (Stretch)                             | none        |     3 |
+| [ ]  | `D11 T04 §10` | Import Mail                                        | none        |     5 |
+| [ ]  | `D11 T04 §1`  | SMTP Client                                        | none        |     2 |
+| [ ]  | `D11 T04 §2`  | POP3 Client + Message Storage                      | none        |     2 |
+| [ ]  | `D11 T04 §3`  | IMAP Client (Stretch)                              | none        |     2 |
+| [ ]  | `D11 T04 §4`  | Three-Panel Email GUI                              | none        |     2 |
 | [ ]  | `D11 T04 §7`  | Auto-Check + Notifications + Tray                  | none        |     5 |
-| [ ]  | `D11 T04 §9`  | Spam & Junk Filter                                 | none        |     9 |
-| [ ]  | `D11 T07 §1`  | VNC Client                                         | none        |    10 |
-| [ ]  | `D11 T07 §2`  | IRC / Chat Client                                  | none        |     9 |
-| [ ]  | `D11 T07 §3`  | RSS / News Reader                                  | none        |    10 |
+| [ ]  | `D11 T04 §9`  | Spam & Junk Filter                                 | none        |     2 |
+| [ ]  | `D11 T07 §7`  | Import Remote Desktop                              | none        |     5 |
+| [ ]  | `D11 T07 §1`  | VNC Client                                         | none        |     3 |
+| [ ]  | `D11 T07 §8`  | Import Chat                                        | none        |     5 |
+| [ ]  | `D11 T07 §2`  | IRC / Chat Client                                  | none        |     2 |
+| [ ]  | `D11 T07 §9`  | Import News Reader                                 | none        |     5 |
+| [ ]  | `D11 T07 §3`  | RSS / News Reader                                  | none        |     3 |
 | [ ]  | `D11 T07 §6`  | VNC Server (Stretch)                               | none        |     9 |
-| [ ]  | `D11 T04 §6`  | Account Management + Credential Store              | none        |     6 |
-| [ ]  | `D11 T04 §8`  | Contacts Store                                     | none        |     9 |
-| [ ]  | `D11 T04 §5`  | Compose Window                                     | none        |     8 |
+| [ ]  | `D11 T04 §6`  | Account Management + Credential Store              | none        |     2 |
+| [ ]  | `D11 T04 §8`  | Contacts Store                                     | none        |     2 |
+| [ ]  | `D11 T04 §5`  | Compose Window                                     | none        |     2 |
 | [ ]  | `D11 T14 §1`  | Inkeys Source Import and Provenance                | none        |     9 |
+| [ ]  | `D11 T15 §3`  | Import Command                                     | none        |     5 |
+| [ ]  | `D11 T15 §4`  | Import Character Map                               | none        |     5 |
+| [ ]  | `D11 T15 §5`  | Import Chess                                       | none        |     5 |
+| [ ]  | `D11 T15 §6`  | Import Clock                                       | none        |     5 |
+| [ ]  | `D11 T15 §7`  | Import Markdown                                    | none        |     5 |
+| [ ]  | `D11 T15 §8`  | Import Compare                                     | none        |     5 |
+| [ ]  | `D11 T15 §9`  | Import Disk Map                                    | none        |     5 |
+| [ ]  | `D11 T15 §10` | Import Icon Editor                                 | none        |     5 |
+| [ ]  | `D11 T15 §11` | Import Image Writer                                | none        |     5 |
+| [ ]  | `D11 T15 §12` | Import Minesweeper                                 | none        |     5 |
+| [ ]  | `D11 T15 §14` | Import Hex Editor                                  | none        |     5 |
+| [ ]  | `D11 T15 §15` | Import Perihelion                                  | none        |     5 |
+| [ ]  | `D11 T15 §16` | Import Rename                                      | none        |     5 |
+| [ ]  | `D11 T15 §17` | Import Solitaire                                   | none        |     5 |
+| [ ]  | `D11 T15 §18` | Import Sound Recorder                              | none        |     5 |
+| [ ]  | `D11 T15 §19` | Import Sudoku                                      | none        |     5 |
+| [ ]  | `D11 T15 §20` | Import Weather                                     | none        |     5 |
 
 ### Phase 12 -- User platform and SDK
 
@@ -2662,7 +2710,7 @@ The kernel libraries, the process ABI, ntdll, the Win32 subsystem in user mode, 
 | [ ]  | `D12 T01 §1`  | String Library Consolidation                                                | none           |     8 |
 | [ ]  | `D12 T01 §2`  | Math Library Extension                                                      | none           |     4 |
 | [ ]  | `D12 T01 §4`  | monocypher + CSPRNG + SYS_GETRANDOM                                         | none           |     5 |
-| [ ]  | `D11 T12 §4`  | Archive Manager                                                             | none           |    10 |
+| [ ]  | `D11 T12 §4`  | Archive Manager                                                             | none           |     2 |
 | [ ]  | `D11 T12 §5`  | ZIP Shell Integration                                                       | none           |     6 |
 | [ ]  | `D12 T01 §3`  | miniz (ZIP Writer + Stream Extension)                                       | none           |     4 |
 | [ ]  | `D12 T01 §5`  | cJSON                                                                       | none           |     4 |

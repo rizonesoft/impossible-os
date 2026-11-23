@@ -51,9 +51,10 @@ title: "TODO-06 -- Accessibility Features"
 | 💎  |   3   | §2 | Large text/DPI -- `accessibility_set_dpi(pct)` scale override; `WM_DPI_CHANGED` broadcast | `WM_DPI_CHANGED` + DPI scale infrastructure (08-graphics-ui/TODO-09 §4)                      |  [ ]   |
 | 💎  |   4   | §3 | Sticky keys -- 5× Shift detection; modifier latch; tray indicator; `HKLM\SYSTEM\Accessibility\StickyKeys` | keyboard modifier hook in `keyboard.h`; tray area (08-graphics-ui/TODO-11 §4)                       |  [ ]   |
 | 💎  |   5   | §4 | Large cursor -- `cursor_set_size(px)` 32/48/64/96; color options; Registry | `cursor_image_t` (exists); cursor size and theme selection (08-graphics-ui/TODO-01-graphics-asset-foundation.md §4)               |  [ ]   |
-| ⭐  |   6   | §5 | Screen magnifier -- `Win+Plus/Minus` zoom 2×–8×; compositor `gfx_blit` zoom overlay; cursor track | `fb_get_backbuffer()` + `gfx_blit()` (exist); `fb_lock_compositor()` (exists)             |  [ ]   |
+| ⭐  |   6   | §5 | Screen magnifier -- `Win+Plus/Minus` zoom 2×–8×; compositor `gfx_blit` zoom overlay; cursor track | §9 | [ ] |
 | 💎  |   7   | §6 | Mouse keys -- Numpad → mouse; Alt+Shift+Numlock toggle; speed config | keyboard driver modifier state; WM mouse event injection                                    |  [ ]   |
 | 💎  |   8   | §8 | `ease.cpl` -- one-page applet; all 8 toggles+sliders; instant apply | §1-7 all APIs; `CTRL_SLIDER/CHECKBOX/DROPDOWN`; `include/cpl.h` (09-desktop-shell/TODO-11 §1)                 |  [ ]   |
+| 💎 | 9 | §9 | Import Magnifier | `10-platform-services/TODO-07` §7 (PE programs run), `TODO-13` §6 | [ ] |
 
 ---
 
@@ -129,21 +130,18 @@ High contrast uses the theme system's high-contrast preset (`THEME_FLUENT_HIGH_C
 
 **Design:** [`shell.md#magnifier`](../../docs/design/shell.md#magnifier)
 
-Win+Plus zoom in (2×/4×/6×/8×), Win+Minus zoom out, Win+Escape close. Magnifier overlay: tracks cursor, copies `gfx_blit` source region from compositor backbuffer at zoom factor to corner/edge panel. `HKLM\SYSTEM\Accessibility\MagnifierZoom`.
+**Moved:** magnifier
 
-**Files:** `src/desktop/magnifier.c` (new), `include/desktop/magnifier.h` (new)
+Built in Magnifier, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §9 has brought it and it is shown to work.
 
-> [!NOTE]
-> **Overlay window**: lens mode per `docs/design/shell.md#magnifier`: a 400 x 300 (`THEME_SIZE_MAGNIFIER_LENS_*`) lens following the pointer, radius 8, 2 px accent border, flyout elevation; a compact flyout-acrylic toolbar at the top centre (zoom out, level, zoom in, view menu Full screen / Lens / Docked, settings) that fades after 3 s; `WM_FLAG_NO_TASKBAR | WM_FLAG_TOPMOST | WM_FLAG_NO_RESIZE`; `g_zoom = 2` (levels: 2/4/6/8). **Source region**: centered on cursor `(mx, my)`: `src_w = overlay_w / g_zoom`; `src_h = overlay_h / g_zoom`; `src_x = mx - src_w/2`; `src_y = my - src_h/2`; clamp to screen bounds. **Nearest-neighbour zoom blit**: for `row = 0..overlay_h`: for `col = 0..overlay_w`: `src_pixel = compositor_backbuf[(src_y + row/g_zoom) * screen_w + (src_x + col/g_zoom)]`; write to overlay surface. This runs every compositor frame when magnifier is active. **Cursor follow**: magnifier updates each compositor tick while `g_magnifier_active`. **Win+Plus**: `g_zoom = min(g_zoom * 2, 8)`. **Win+Minus**: `g_zoom = max(g_zoom / 2, 2)`. **Win+Escape**: `magnifier_close()` → `wm_destroy_window()`. **View modes** (`docs/design/shell.md#magnifier`): Lens (default, follows the pointer), Full screen, Docked (top third of the screen, 2 px accent separator). `HKLM\SYSTEM\Accessibility\MagnifierZoom` (save/restore).
+What is this OS's own work stays here:
 
-- [ ] `void magnifier_open(void)` -- `wm_create_window()` topmost lens `THEME_SIZE_MAGNIFIER_LENS_WIDTH` x `THEME_SIZE_MAGNIFIER_LENS_HEIGHT` (400 x 300) per `docs/design/shell.md#magnifier`; set `g_magnifier_active=1`
 - [ ] `void magnifier_render(void)` -- `fb_get_backbuffer()` source region → nearest-neighbour zoom → blit to overlay surface; called each compositor frame
-- [ ] Source region calc: `src_x = mx - (overlay_w/2)/g_zoom`; `src_y = my - (overlay_h/2)/g_zoom`; clamp
 - [ ] Win+Plus hotkey → `g_zoom = min(g_zoom*2, 8)`; Win+Minus → `g_zoom = max(g_zoom/2, 2)`
 - [ ] Win+Escape → `magnifier_close()` + `g_magnifier_active=0` + Registry save
-- [ ] Magnifier follows cursor (re-computes source rect each frame from `g_mouse_x/y`)
 - [ ] `HKLM\SYSTEM\Accessibility\MagnifierZoom` persist; boot restore if `g_magnifier_active` was set
-- [ ] Commit: `"accessibility: magnifier -- Win+Plus/Minus zoom 2-8x, compositor blit overlay, cursor track"`
+- [ ] Shown to work here on the imported copy, as §9 brings it
+- [ ] Commit: `"imports: magnifier brings Screen Magnifier"`
 
 ## 6. Mouse Keys
 
@@ -205,6 +203,22 @@ One-page Control Panel applet with all 8 toggles: High Contrast, Large Text, Sti
 - [ ] Toggle switch Reduced Motion → `accessibility_set_reduced_motion()`
 - [ ] Combo box Color Blind → `accessibility_set_color_blind_mode()`
 - [ ] Commit: `"ease.cpl: accessibility settings page -- settings rows, toggle switches, instant apply"`
+
+## 9. Import Magnifier
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** magnifier
+
+Magnifier is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull magnifier` into `src/apps/magnifier/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Magnifier on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose magnifier`
+- [ ] Commit: `"apps: Magnifier imported"`
 
 ---
 

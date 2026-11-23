@@ -3,6 +3,8 @@
 
     python3 scripts/imports.py --check    lint Check 42: judges the git index
     python3 scripts/imports.py --list     every source and where it is imported
+    python3 scripts/imports.py --needs    what the programs beside this repository need and no section builds yet
+    python3 scripts/imports.py --file-needs   write a section for each of them, and stage it
     python3 scripts/imports.py --pull <source> [--to <commit>]
                                           bring the copy to that commit (default: its main)
     python3 scripts/imports.py --propose <source> --title <text>
@@ -19,6 +21,8 @@ carries `**Moved:** <source>` and has a row in the ledger. The check refuses:
   so names, bytes, modes and links count. With IMPOSSIBLE_REPOS naming the
   folder of those repositories, the pinned commit is asked too;
 - an import section marked done with nothing imported;
+- a need without its section: what a program needs of this OS is a row under
+  "needs" and the line `**Need:** <id>` in the section that builds it;
 - an entry that ever left the ledger, in its committed history or now, without
   its own reason under "removed". A shallow clone is judged on what it has.
 
@@ -43,9 +47,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import todo_fence
 
 LEDGER = "todo/imports.json"
+NEEDS = "todo/10-platform-services/TODO-13-program-needs.md"
 PLAN = "todo/implementation-plan.md"
 SIGN = "§"
-MARK = re.compile(r"^\*\*(Import|Moved):\*\*[ \t]*(.*?)[ \t]*$")  # any name: a wrong one has no row and is refused
+MARK = re.compile(r"^\*\*(Import|Moved|Need):\*\*[ \t]*(.*?)[ \t]*$")  # any name: a wrong one has no row and is refused
 ADDRESS = re.compile(r"^(todo/(\d\d)-[a-z0-9-]+/TODO-(\d\d)-[a-z0-9-]+\.md) " + SIGN + r"(\d{1,5})$")
 HASH = re.compile(r"[0-9a-f]{40}")
 SOURCE = {"repository": str, "from": list, "kind": str, "path": str, "section": str, "commit": (str, type(None)), "tree": (str, type(None)),
@@ -53,10 +58,17 @@ SOURCE = {"repository": str, "from": list, "kind": str, "path": str, "section": 
 OPEN = {"tree": str, "proposal": str, "head": str}
 FOLDER = re.compile(r"src(/[a-z0-9][a-z0-9-]*)+")
 NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+# Agent kits, lists and documents of a repository: never imported.
+LEFT = {".agents", ".claude", ".codex", ".conclave", ".gitattributes", ".gitignore", ".github", "AGENTS.md", "CLAUDE.md", "CODEX.md", "GEMINI.md",
+        "README.md", "docs", "helio.conf", "scripts", "todo"}
+# What the functions of a DLL stand on, as the dependencies of a new section; a DLL that is not here waits for the tier alone.
+UNDER = {"winmm.dll": f"`TODO-01` {SIGN}1, {SIGN}2", "ws2_32.dll": f"`07-networking/TODO-02` {SIGN}5, {SIGN}8", "user32.dll": f"`08-graphics-ui/TODO-14` {SIGN}5, {SIGN}6", "gdi32.dll": f"`08-graphics-ui/TODO-14` {SIGN}2, {SIGN}3",
+         "dwmapi.dll": f"`08-graphics-ui/TODO-08` {SIGN}8", "kernel32.dll": f"`TODO-08` {SIGN}2, {SIGN}5, {SIGN}6", "shell32.dll": f"`TODO-08` {SIGN}12", "ntdll.dll": f"`TODO-08` {SIGN}4"}
 REMOTE = "https://github.com/rizonesoft"
 ROW = {"section": str, "source": str, "to": str}
 GONE = {"name": str, "reason": str}
-EMPTY = {"schema": 1, "sources": {}, "moved": [], "removed": []}
+NEED = {"id": str, "source": str, "what": str, "section": str}
+EMPTY = {"schema": 1, "sources": {}, "moved": [], "needs": [], "removed": []}
 
 
 def git(root, *arguments, check=True, **more):
@@ -76,10 +88,12 @@ def load(data):
         ledger = json.loads(data)
     except (ValueError, UnicodeDecodeError, RecursionError) as error:
         return None, [f"{LEDGER}: not JSON ({error})"]
-    if not isinstance(ledger, dict) or set(ledger) != {"schema", "sources", "moved", "removed"} or ledger["schema"] != 1:
-        return None, [f"{LEDGER}: needs schema 1, sources, moved and removed"]
-    if not isinstance(ledger["sources"], dict) or not isinstance(ledger["moved"], list) or not isinstance(ledger["removed"], list):
-        return None, [f"{LEDGER}: sources is an object, moved and removed are lists"]
+    if isinstance(ledger, dict):
+        ledger.setdefault("needs", [])  # ledgers of before 2026-11-23 have none
+    if not isinstance(ledger, dict) or set(ledger) != set(EMPTY) or ledger["schema"] != 1:
+        return None, [f"{LEDGER}: needs schema 1, sources, moved, needs and removed"]
+    if not isinstance(ledger["sources"], dict) or not all(isinstance(ledger[key], list) for key in ("moved", "needs", "removed")):
+        return None, [f"{LEDGER}: sources is an object, moved, needs and removed are lists"]
     faults = []
     for name, source in ledger["sources"].items():
         if not re.fullmatch(r"[a-z0-9-]+", name):
@@ -99,14 +113,14 @@ def load(data):
                     shape.append(f"source {name}: the proposal is not a pull request of {source['repository']}")
                 wrong += shape
         faults += wrong
-    for key, shape in (("moved", ROW), ("removed", GONE)):
+    for key, shape in (("moved", ROW), ("needs", NEED), ("removed", GONE)):
         for number, row in enumerate(ledger[key], 1):
             faults += typed(row, shape, f"{key} row {number}")
     return (None, faults) if faults else (ledger, [])
 
 
 def entries(ledger):
-    return {f"source {n}" for n in ledger["sources"]} | {f"moved {r['section']}" for r in ledger["moved"]}
+    return {f"source {n}" for n in ledger["sources"]} | {f"moved {r['section']}" for r in ledger["moved"]} | {f"need {r['id']}" for r in ledger["needs"]}
 
 
 def history(root):
@@ -141,17 +155,29 @@ def lost(past, now):
 
 
 def sections(text):
-    """{number: {"Import": [names], "Moved": [names]}} as the roadmap's own parser sees the file."""
+    """{number: {"Import": [names], "Moved": [names], "Need": [ids]}} as the roadmap's own parser sees the file."""
     found, current = {}, None
     for line in todo_fence.mask_text(text).split("\n"):
         heading = todo_fence.classify_heading(line)
         if heading.kind == "ok":
-            current = found.setdefault(heading.n, {"Import": [], "Moved": []})
+            current = found.setdefault(heading.n, {"Import": [], "Moved": [], "Need": []})
         elif todo_fence.is_h2(line):
             current = None
         elif current is not None and (mark := MARK.match(line)):
             current[mark[1]].append(mark[2])
     return found
+
+
+def order(text):
+    """{section number: what its row in the Implementation Order table depends on}."""
+    start = text.find("## Implementation Order")
+    table = re.search(r"(?:^\|.*\n)+", text[start:], re.M) if start >= 0 else None
+    rows = [re.split(r"(?<!\\)\|", line)[1:-1] for line in (table[0].splitlines() if table else [])]
+    head = [cell.strip() for cell in rows[0]] if rows else []
+    end = next((k for k, name in enumerate(head) if name in ("Depends On", "Dep", "Dependency")), len(head))
+    named = {int(m[1]): row for row in rows for cell in row[:end] if (m := re.match(rf"\s*{SIGN}(\d+)\b", cell))}
+    named = named or {int(row[0]): row for row in rows if row and row[0].strip().isdigit()}
+    return {number: row[end] if end < len(row) else "" for number, row in named.items()}
 
 
 def copy_of(root, tree, path):
@@ -199,7 +225,7 @@ def check(root):
         return faults
     faults += lost(past, ledger)
 
-    parsed, marks = {}, {"Import": {}, "Moved": {}}
+    parsed, marks = {}, {"Import": {}, "Moved": {}, "Need": {}}
     for path, text in docs.items():
         if not re.fullmatch(r"todo/\d\d-[^/]+/TODO-[^/]+\.md", path):
             continue
@@ -259,8 +285,122 @@ def check(root):
             faults.append(f"{at}: a moved section keeps its address, and this one is gone")
         elif marks["Moved"].get(at) != [row["source"]]:
             faults.append(f"{at}: does not carry the one line **Moved:** {row['source']}")
+        else:
+            home = ledger["sources"].get(row["source"], {}).get("section", "")
+            if done(at) and not done(home):
+                faults.append(f"{at}: is done in the plan, and its import {home} is not")
+            mine, theirs = ADDRESS.match(at), ADDRESS.match(home)
+            if mine and theirs:
+                # The way this roadmap names a section: in its own file, its own domain, or any.
+                told, token = order(docs.get(mine[1], "")).get(int(mine[4]), ""), rf"{theirs[1].split('/')[1]}/TODO-{theirs[3]}\b|D{theirs[2]} T{theirs[3]}\b"
+                if mine[2] == theirs[2]:
+                    token += rf"|(?<![/\d])TODO-{theirs[3]}\b|(?<!D\d\d )\bT{theirs[3]}\b"
+                tail = rf"[^A-Z]*?{SIGN}{theirs[4]}(?!\d)"
+                if not re.search(rf"^[^A-Za-z]*?{SIGN}{theirs[4]}(?!\d)" if mine[1] == theirs[1] else rf"(?:{token}){tail}", told):
+                    faults.append(f"{at}: does not depend on its import {home}")
     faults += [f"{at}: **Moved:** {found[0]} has no row in {LEDGER}" for at, found in marks["Moved"].items() if at not in rows]
+    needs = {row["id"]: row for row in ledger["needs"]}
+    if len(needs) != len(ledger["needs"]):
+        faults.append("a need is there twice")
+    for name, row in needs.items():
+        if row["source"] not in ledger["sources"]:
+            faults.append(f"need {name}: there is no source {row['source']}")
+        if name not in marks["Need"].get(row["section"], []):
+            faults.append(f"need {name}: {row['section']} does not carry the line **Need:** {name}")
+    faults += [f"{at}: **Need:** {name} has no row in {LEDGER}" for at, found in marks["Need"].items() for name in found
+               if needs.get(name, {}).get("section") != at]
     return faults
+
+
+def functions_of(line):
+    """(dll, function) pairs of a checklist item: `dll`: `f`, `g` or `f` of `dll`."""
+    names = re.findall(r"`([^`]+)`", line)
+    dlls = [n for n in names if n.endswith(".dll")]
+    return [(dlls[0], n) for n in names if n not in dlls] if len(dlls) == 1 else []
+
+
+def unanswered(root):
+    """[(source, id, what, [(dll, function)])] that the programs beside this repository declare, committed there, and no row answers yet."""
+    ledger, faults = load(git(root, "show", f":{LEDGER}").stdout)  # what would be committed
+    if faults:
+        raise SystemExit("\n".join(f"imports: {f}" for f in faults))
+    beside = Path(os.environ.get("IMPOSSIBLE_REPOS") or Path.home() / "ImpossibleOS")
+    known, missing = {row["id"] for row in ledger["needs"]}, []
+    for name, source in ledger["sources"].items():
+        shown = git(beside / source["repository"], "show", "HEAD:app.json", check=False, env=clean())
+        try:
+            needs = json.loads(shown.stdout)["needs"] if shown.returncode == 0 and source["kind"] == "app" else []
+            for need in needs:
+                if not re.fullmatch(r"[a-z0-9-]+", need["id"]) or not re.fullmatch(r"[^\n|`]{4,120}", need["what"]):
+                    raise ValueError(need)
+                if need["id"] not in known:
+                    missing.append((name, need["id"], need["what"], []))
+        except (ValueError, KeyError, TypeError):
+            raise SystemExit(f"imports: {name}: the needs in its app.json cannot be read") from None
+    tiers = git(beside / "ImpossibleSDK", "show", "HEAD:abi/tiers.json", check=False, env=clean())
+    if tiers.returncode == 0:
+        shown = git(root, "show", f":{NEEDS}", check=False)
+        items, current = {}, None
+        for line in todo_fence.mask_text(shown.stdout.decode()).split("\n"):
+            heading = todo_fence.classify_heading(line)
+            current = heading.n if heading.kind == "ok" else None if todo_fence.is_h2(line) else current
+            if line.startswith("- ["):
+                items.setdefault(current, set()).update(functions_of(line))
+        for tier in json.loads(tiers.stdout)["tiers"]:
+            # A function is answered by its own tier's section or by one that was added for that tier.
+            own = [int(ADDRESS.match(row["section"])[4]) for row in ledger["needs"] if row["section"].startswith(NEEDS)
+                   and re.match(rf"impossible-sdk-tier-{tier['tier']}(-|$)", row["id"])]
+            answered = set().union(*(items.get(number, set()) for number in own))
+            new = [(dll, f) for dll, found in sorted(tier["functions"].items()) for f in sorted(found) if (dll, f) not in answered]
+            if new:
+                first = re.sub(r"[^a-z0-9]", "", new[0][1].lower())
+                missing.append(("impossible-sdk", f"impossible-sdk-tier-{tier['tier']}-{first}", f"{len(new)} more Windows function(s) of tier {tier['tier']}", new))
+    return missing
+
+
+def wanted(root):
+    return [f"{source} needs {what}" + (": " + ", ".join(f for _, f in new) if new else f" ({name})") for source, name, what, new in unanswered(root)]
+
+
+def file_needs(root):
+    """One section in NEEDS for each, with its row there, in the ledger and in the plan; staged."""
+    found = unanswered(root)
+    path = root / NEEDS
+    if git(root, "diff", "--name-only", "--", "todo").stdout or git(root, "ls-files", "-o", "--exclude-standard", "--", "todo").stdout:
+        raise SystemExit("imports: todo has changes that are not staged, and the plan is made from all of it")
+    text = path.read_text(encoding="utf-8")
+    ledger = load(git(root, "show", f":{LEDGER}").stdout)[0]
+    for source, name, what, new in found:
+        number = max(sections(text)) + 1
+        tier = re.match(r"impossible-sdk-tier-(\d+)-", name)
+        home = next((int(ADDRESS.match(n["section"])[4]) for n in ledger["needs"] if tier and n["id"] == f"impossible-sdk-tier-{tier[1]}"), None)
+        own = [f"{SIGN}1"] if home != 1 else []
+        stands = ", ".join(dict.fromkeys([*own, *(UNDER[dll] for dll, _ in new if dll in UNDER)])) or "--"
+        if home:  # the tier is not complete without it
+            text = re.sub(rf"^(\|[^|]*\| *\d+ *\| {SIGN}{home} [^|]*\| *)([^|]*?)( *\|)", lambda m: f"{m[1]}{SIGN}{number}, {m[2]}{m[3]}", text, count=1, flags=re.M)
+        items = ["- [ ] Name what it stands on (a driver, a protocol, an engine, a file system) and the section that builds that; add it to this row's dependencies, and file a section where there is none"]
+        items += [f"- [ ] `{f}` of `{dll}` acts as on Windows, whichever section builds it" for dll, f in new] or [f"- [ ] {what[0].upper()}{what[1:]}, as {source} declares it"]
+        table = list(re.finditer(r"^\|[^\n]*\n", text[text.index("## Implementation Order"):], re.M))
+        rows = text.index("## Implementation Order") + next(m.end() for k, m in enumerate(table) if k + 1 == len(table) or table[k + 1].start() != m.end())
+        row = f"| 💎 | {number} | {SIGN}{number} {what[0].upper()}{what[1:]} | {stands} | [ ] |\n"
+        body = "\n".join([f"## {number}. {what[0].upper()}{what[1:]}", "", "> **Spawned-by:** root", "", "**Design:** n/a -- declared by a program; the session that builds it names its design", "",
+                          f"**Need:** {name}", "", *items, f"- [ ] Show it on this OS and on Windows with {source}'s own test, and compare", f'- [ ] Commit: `"needs: {name}"`', ""])
+        text = text[:rows] + row + text[rows:]
+        end = text.index("\n---\n", text.index(f"## {number - 1}. "))
+        text = text[:end].rstrip("\n") + "\n\n" + body + text[end:]
+        ledger["needs"].append({"id": name, "source": source, "what": what, "section": f"{NEEDS} {SIGN}{number}"})
+        print(f"{NEEDS} {SIGN}{number}: {what}")
+    if found:
+        path.write_text(text, encoding="utf-8")
+        (root / LEDGER).write_bytes(written(ledger))
+        try:
+            if (root / "scripts/todo-plan.py").is_file():
+                for command in (["bash", "scripts/todo-graph/build-and-validate.sh"], ["python3", "scripts/todo-plan.py", "--sync"]):
+                    subprocess.run(command, cwd=root, check=True, stdout=subprocess.DEVNULL, timeout=600)
+        except BaseException:  # nothing is half filed: the files are as they were staged
+            git(root, "checkout-index", "-f", "--", NEEDS, LEDGER, *([PLAN] if (root / PLAN).is_file() else []))
+            raise
+        git(root, "add", "--", NEEDS, LEDGER, *([PLAN] if (root / PLAN).is_file() else []))
 
 
 def clean():
@@ -350,6 +490,9 @@ def pull(root, name, to):
         tree = picked(there, commit, source["from"], env=clean())
         if tree is None:
             raise SystemExit(f"imports: {source['repository']} at {commit[:12]} does not have all of {', '.join(source['from'])}")
+        top = set(git(there, "ls-tree", "--name-only", commit, env=clean()).stdout.decode().split("\n")) - {""}
+        if (extra := top - set(source["from"]) - LEFT):
+            raise SystemExit(f"imports: {', '.join(sorted(extra))} is new in {source['repository']}: list it under from")
         arriving = files(there, commit, source["from"], env=clean())
         fresh = Path(tempfile.mkdtemp(dir=(root / "todo"), prefix=".import-"))  # beside the copy, so that it can be renamed
         try:
@@ -427,6 +570,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--needs", action="store_true")
+    parser.add_argument("--file-needs", action="store_true")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--pull", metavar="SOURCE")
     parser.add_argument("--to", metavar="COMMIT")
@@ -440,6 +585,10 @@ def main():
         pull(args.root, args.pull, args.to)
     elif args.propose:
         propose(args.root, args.propose, args.title)
+    elif args.file_needs:
+        file_needs(args.root)
+    elif args.needs:
+        faults = wanted(args.root)
     elif args.list:
         ledger, faults = load((args.root / LEDGER).read_bytes())
         for name, source in (ledger or {"sources": {}})["sources"].items():

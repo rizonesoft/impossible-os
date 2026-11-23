@@ -290,12 +290,15 @@ The interface library and the apps are developed in their own repositories, prov
 | --- | --- |
 | `sources` | One part or program: its repository and the files and folders copied from its top (`from`), the folder it is imported to, the section that imports it, its pinned commit, git's tree id of the copy (`null` until imported), and the change that is open upstream (`open`: its tree id, its pull request and the commit proposed, or `null`) |
 | `moved` | One roadmap section that is built elsewhere: its address, its source and where the work is |
+| `needs` | One thing a program needs of this OS: its id, the source that needs it, what it is, and the section that builds it |
 | `removed` | The reason why an entry was taken out; a reason is kept |
 
-A moved section keeps its address and carries `**Moved:** <source>`; the import section carries `**Import:** <source>`. Lint Check 42 (`scripts/imports.py --check`, over the git index) refuses one without the other, a copy that is neither the pinned one nor the proposed one, an import marked done with nothing imported, and an entry that ever left the ledger without its own reason. With `IMPOSSIBLE_REPOS` set to the folder of those repositories it also asks the pinned commit for its tree. It cannot see work that is called moved in prose and never declared.
+A moved section keeps its address, stays open until its import has brought it and it was shown to work, depends on the import section, and carries `**Moved:** <source>`; the import section carries `**Import:** <source>`. Lint Check 42 (`scripts/imports.py --check`, over the git index) refuses one without the other, a copy that is neither the pinned one nor the proposed one, an import marked done with nothing imported, and an entry that ever left the ledger without its own reason. With `IMPOSSIBLE_REPOS` set to the folder of those repositories it also asks the pinned commit for its tree. It cannot see work that is called moved in prose and never declared.
 
 - **Bring in what is new:** `python3 scripts/imports.py --pull <source>` copies the repository's main (or `--to <commit>`), pins it and stages it. It refuses while a change is not staged, not proposed or not merged.
 - **Change it here:** edit and stage the copy, then `python3 scripts/imports.py --propose <source> --title <text>` opens the pull request, records it and stages the ledger. A conflict with the repository's main proposes nothing: pull first.
+
+**What a program needs of this OS** is declared in the `needs` of its own `app.json` (an id and one sentence), and a Windows function it may call in `abi/tiers.json` of Impossible SDK. `python3 scripts/imports.py --needs` names what no section answers, `--file-needs` writes a section for each in `10-platform-services/TODO-13` with its rows, and lint Check 42 refuses a commit until that is done. A need may be answered in the file that owns the subject instead: the line `**Need:** <id>` there and the ledger row pointing to it. The program never waits for it, and an engine or a function that programs need is built here.
 
 A section that uses a part depends on that part's import section and is taken once it is there; everything else in the plan goes on.
 

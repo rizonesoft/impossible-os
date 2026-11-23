@@ -66,18 +66,23 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## Implementation Order
 
-| Step | Section                                      | 💎/⭐ | Dependency                                                      |
-| ---- | -------------------------------------------- | ----- | --------------------------------------------------------------- |
-| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | `§8` base calendar complete                                     |
-| 2    | Sticky Notes                                 | 💎    | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist     |
-| 3    | System Information (`sysinfo.exe`)           | 💎    | `cpuid_get`, `smbios_get_info`, `pmm_*`, `blkdev_count`         |
-| 4    | On-Screen Keyboard                           | 💎    | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table`  |
-| 5    | Color Picker                                 | ⭐    | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
-| 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎    | `§10` base fontmgr complete                                     |
-| 7    | Shared Help / About Dialog                   | 💎    | `wm_create_window`, icon rendering                              |
-| 8    | Calendar App                                 | 💎    | --                                                              |
-| 9    | System Info                                  | 💎    | --                                                              |
-| 10   | Font Manager App                             | 💎    | --                                                              |
+| Step | Section                                      | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | -------------------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | §11, §8                                                                                |  [ ]   |
+| 2    | Sticky Notes                                 | 💎    | §12                                                                                    |  [ ]   |
+| 3    | System Information (`sysinfo.exe`)           | 💎    | `cpuid_get`, `smbios_get_info`, `pmm_*`, `blkdev_count`                                |  [ ]   |
+| 4    | On-Screen Keyboard                           | 💎    | §13                                                                                    |  [ ]   |
+| 5    | Color Picker                                 | ⭐    | §14                                                                                    |  [ ]   |
+| 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎    | §15, §10                                                                               |  [ ]   |
+| 7    | Shared Help / About Dialog                   | 💎    | `wm_create_window`, icon rendering                                                     |  [ ]   |
+| 8    | Calendar App                                 | 💎    | §11                                                                                    |  [ ]   |
+| 9    | System Info                                  | 💎    | --                                                                                     |  [ ]   |
+| 10   | Font Manager App                             | 💎    | §15                                                                                    |  [ ]   |
+| 11   | Import Calendar                              | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §3 |  [ ]   |
+| 12   | Import Sticky Notes                          | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §3 |  [ ]   |
+| 13   | Import On-Screen Keyboard                    | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §6 |  [ ]   |
+| 14   | Import Color Picker                          | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §2 |  [ ]   |
+| 15   | Import Fonts                                 | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §3 |  [ ]   |
 
 ---
 
@@ -85,50 +90,23 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-> Base calendar grid, add-event dialog, and taskbar flyout are specified in
-> `§8` -- implement those first.
-> This section adds **recurring events** and **`.ics` export** only.
+**Moved:** calendar
 
-**Source file:** `src/apps/calendar/calendar_recur.c` (extension of `calendar.c`)
+Built in Calendar, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §11 has brought it and it is shown to work.
 
-- [ ] **Recurring event model**:
-  - [ ] Add `recurrence` field to event Registry: `HKCU\Software\Impossible\Calendar\Events\YYYY-MM-DD\{uid}\Recur` = `"none"` | `"daily"` | `"weekly"` | `"monthly"` | `"yearly"`
-  - [ ] Add `recur_end` field: `YYYY-MM-DD` (empty = infinite) and `recur_count` (max occurrences, 0 = unlimited)
-  - [ ] **Add Event dialog** extension: add "Repeat" dropdown (`None / Daily / Weekly / Monthly / Yearly`) and "Ends" row (Never / On date / After N occurrences)
-  - [ ] **Event enumeration for month grid**: for each day in view, scan all `Events\*` subkeys; if `recur != none`, evaluate whether `view_date` is a recurrence of the base date:
-    - daily: `(view_date - base_date).days % recur_interval == 0`
-    - weekly: same weekday, `weeks_elapsed % 1 == 0`
-    - monthly: same day-of-month
-    - yearly: same month + day
-  - [ ] Check `recur_end` and `recur_count` before generating occurrences
-  - [ ] **"Edit series" vs "Edit occurrence"** choice dialog when editing a recurring event; "this event only" → write exception subkey `Events\YYYY-MM-DD-exc\{uid}`; "all events" → update base event
-- [ ] **`.ics` export** (`File→Export → ICS`):
-  - [ ] `vfs_create("C:\\Users\\{name}\\Documents\\calendar_export.ics")`
-  - [ ] Write iCalendar RFC 5545 header: `BEGIN:VCALENDAR`, `VERSION:2.0`, `PRODID:-//ImpossibleOS//Calendar//EN`
-  - [ ] For each event across all dates: write `BEGIN:VEVENT`, `UID:{uid}@impossible-os`, `DTSTART:YYYYMMDDTHHMMSSz`, `SUMMARY:{title}`, `DESCRIPTION:`, `END:VEVENT`
-  - [ ] For recurring events: add `RRULE:FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;UNTIL=YYYYMMDDTHHMMSSz` (or `COUNT=N`)
-  - [ ] Write `END:VCALENDAR`; toast `"Calendar exported to Documents\calendar_export.ics"`
-- [ ] **`.ics` import** (stretch): parse `VCALENDAR` → extract `VEVENT` blocks; read `DTSTART`/`SUMMARY`/`RRULE`; write to Registry event store
+- [ ] Shown to work here on the imported copy, as §11 brings it
+- [ ] Commit: `"imports: calendar brings Calendar App (Recurring Events + ICS Export)"`
 
 ---
 
 ## 2. Sticky Notes
 
-**Source file:** `src/apps/sticky/sticky.c`; binary: `sticky.exe`
+**Moved:** sticky-notes
 
-- [ ] **Note window**: `wm_create_window("Note_{id}", x, y, w, h, WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_RESIZABLE)` with the standard window chrome of `docs/design/shell.md#window-chrome` (radius 8, elevation, resize margin)
-  - [ ] Caption per `docs/design/shell.md#window-chrome`: `THEME_SIZE_CAPTION_HEIGHT` (32) tinted with the note colour
-    - A `[+ New]` subtle button on the left and the standard 46 px caption buttons with the `caption_close_hover` close hover; drag the caption to move
-  - [ ] Below header: full-window multiline `CTRL_TEXTBOX` on same background color
-  - [ ] 6 note colour presets (swatch row): yellow, pink, blue, green, purple, gray
-    - Note colours are the `note_*` tokens (`THEME_*_NOTE_YELLOW`, `_GREEN`, `_PINK`, `_PURPLE`, `_BLUE`, `_GRAY`, `_CHARCOAL`) from `docs/design/tokens.json`; no literals
-  - [ ] Color selection → update header strip + textbox background; save `Color` to Registry immediately
-- [ ] **Auto-save**: on every keystroke with 500 ms debounce (suppress rapid writes): `reg_set_string("HKCU\\Software\\Impossible\\StickyNotes\\{id}\\Text", text)`
-- [ ] **Registry schema** per note: `HKCU\Software\Impossible\StickyNotes\{id}\{Text, Color, X, Y, W, H}` (id = monotonically incrementing counter, stored in `HKCU\..\NextId`)
-- [ ] **On window move/resize**: save `X`, `Y`, `W`, `H` to Registry
-- [ ] **Create new note**: `[+ New]` button → increment `NextId`; create new note window at offset (+30,+30) from last; write defaults to Registry
-- [ ] **Delete note**: `[✕]` on note header → `MessageBox("Delete this note?", MB_YESNO)` → on Yes: `reg_delete_key("HKCU\\Software\\Impossible\\StickyNotes\\{id}")` → destroy window
-- [ ] **Restore on startup**: enumerate `HKCU\Software\Impossible\StickyNotes\*` subkeys; create a window for each with saved `Color/X/Y/W/H/Text`; register in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\StickyNotes` = `"C:\\Impossible\\System32\\sticky.exe"`
+Built in StickyNotes, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §12 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §12 brings it
+- [ ] Commit: `"imports: sticky-notes brings Sticky Notes"`
 
 ---
 
@@ -165,72 +143,40 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Inventory:** `win11.taskbar.tray.touch-keyboard`
 
-**Source file:** `src/apps/osk/osk.c`; binary: `osk.exe`
+**Moved:** on-screen-keyboard
 
-- [ ] **Non-focusable window**: `wm_create_window("On-Screen Keyboard", x, y, 780, 200, WM_FLAG_NO_FOCUS | WM_FLAG_ALWAYS_ON_TOP | WM_FLAG_NO_TASKBAR)` -- clicking any key does not steal focus from target window
-- [ ] **QWERTY button grid** (3 rows + function + number rows):
-  - [ ] Row 0 (Esc + F1–F12): 14 buttons, 42 px wide × 36 px tall
-  - [ ] Row 1 (`` ` ``1234567890-= Backspace): 14 buttons
-  - [ ] Row 2 (Tab QWERTYUIOP[]\\): 14 buttons
-  - [ ] Row 3 (CapsLock ASDFGHJKL;' Enter): 13 buttons
-  - [ ] Row 4 (Shift ZXCVBNM,./ Shift): 11 buttons
-  - [ ] Row 5 (Ctrl Win Alt Space Alt Ctrl ←↑↓→): 9 buttons
-  - [ ] Each key button: `gfx_fill_rounded_rect` background; hover → lighter; press → darker; `ttf_draw_string` label (uppercase in Shift/CapsLock state)
-- [ ] **Key injection**: button click → `keyboard_inject_scancode(scancode)` (press); button release → `keyboard_inject_scancode(scancode | 0x80)` (release with break code)
-- [ ] **Modifier state**:
-  - [ ] Shift: one-shot (auto-release after next character key); or sticky if double-clicked
-  - [ ] CapsLock: toggle sticky; update key label case
-  - [ ] Ctrl, Alt: sticky toggle; modifier scancode injected before character key and released after
-- [ ] **Special keys**: Backspace (scancode `0x0E`), Enter (`0x1C`), Tab (`0x0F`), Esc (`0x01`), Space (`0x39`)
+Built in OnScreenKeyboard, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §13 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
+
 - [ ] **Win+Ctrl+O hotkey**: `hotkey_table[N] = { MOD_WIN|MOD_CTRL, KEY_O, osk_toggle }` -- toggle show/hide
-- [ ] **Auto-show in touch mode** (stretch): `wm_set_touch_mode_osk_callback(osk_show)` -- called when any `CTRL_TEXTBOX` gains focus in touch mode (requires WM touch-mode flag)
-- [ ] **Position persistence**: `HKCU\Software\Impossible\OSK\{X,Y}` saved on window move; restored on launch
-- [ ] Tray button: shown when the touch keyboard setting is on, opens this keyboard (one on-screen keyboard where Windows ships two)
+- [ ] Shown to work here on the imported copy, as §13 brings it
+- [ ] Commit: `"imports: on-screen-keyboard brings On-Screen Keyboard"`
 
 ---
 
 ## 5. Color Picker
 
-**Source file:** `src/apps/colorpick/colorpick.c`; binary: `colorpick.exe`
+**Moved:** color-picker
+
+Built in ColorPicker, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §14 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
 
 - [ ] **Win+Shift+C hotkey**: `hotkey_table[N] = { MOD_WIN|MOD_SHIFT, KEY_C, colorpick_start }` → enter eyedropper mode
-- [ ] **Eyedropper mode**: `wm_set_cursor(CURSOR_CROSSHAIR)`; full-screen transparent input-capture window (`WM_FLAG_NO_DRAW | WM_FLAG_INPUT_CAPTURE`, z_order=32766)
-- [ ] **Pixel magnifier loupe** (9×9 pixel grid, each pixel scaled to 12×12 px = 108×108 px box):
-  - [ ] Each frame: read 9×9 block centered on cursor from `fb_get_backbuffer()`; scale up 12× into `gfx_surface_t`; show floating panel near cursor (offset so not obscured by crosshair)
-  - [ ] Center pixel outlined with 2 px white border
-- [ ] **On click** (mouse button down):
-  - [ ] Read `uint32_t pixel = fb[cursor_y * fb_w + cursor_x]` from back-buffer
-  - [ ] Extract BGRA: `b = pixel & 0xFF`, `g = (pixel>>8) & 0xFF`, `r = (pixel>>16) & 0xFF`
-  - [ ] Convert to HSL: standard RGB→HSL formulae (`H = 0–360`, `S = 0–100`, `L = 0–100`)
-  - [ ] Convert to HEX string: `"#RRGGBB"` snprintf
-  - [ ] `clipboard_set(CLIP_TEXT, hex_string)` -- auto-copy HEX
-  - [ ] Exit eyedropper mode; restore cursor
-- [ ] **Result popup** (`wm_create_window("Color Picker", 240, 220, WM_FIXED)`):
-  - [ ] 60×60 solid color swatch at top center
-  - [ ] Three rows: `RGB: r, g, b` | `HSL: h°, s%, l%` | `HEX: #RRGGBB` with `[📋]` copy button on each row
-  - [ ] History strip (last 10 colors): 10 × 20×20 swatches; click re-shows that color in result popup; stored in `HKCU\Software\Impossible\ColorPicker\History\{0..9}` as `"#RRGGBB"` strings
-- [ ] **"Pick again"** button → re-enter eyedropper mode without closing popup
+- [ ] Shown to work here on the imported copy, as §14 brings it
+- [ ] Commit: `"imports: color-picker brings Color Picker"`
 
 ---
 
 ## 6. Font Manager (OS/2 + Unicode Coverage)
 
-> Base font manager UI (list, 4-size preview, install/remove, `ttf_mgr_reload()`) is specified
-> in `§10` -- implement that first.
-> This section adds **OS/2 table parsing** for Unicode coverage and detailed font metadata.
+**Moved:** fonts
 
-**Source file:** `src/apps/fontmgr/fontmgr_os2.c` (extension of `fontmgr.c`)
+Built in Fonts, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §15 has brought it and it is shown to work.
 
-- [ ] **OS/2 table read** from TTF file:
-  - [ ] TTF files are opened via `vfs_open(path)` → `vfs_read` into buffer; scan `sfntVersion` + table directory for tag `"OS/2"` at `buf + offset`
-  - [ ] OS/2 table fields to extract: `fsType` (embedding license bits), `fsSelection` (bold/italic/regular flags), `ulUnicodeRange1–4` (128 bits of Unicode block coverage), `sTypoAscender`, `sTypoDescender`, `usWeightClass` (100=Thin…900=Black), `usWidthClass`
-  - [ ] `name` table: scan name records for `nameID=1` (Family), `nameID=4` (Full Name), `nameID=0` (Copyright), `nameID=13` (License)
-- [ ] **Font details panel** (right side of `fontmgr.exe` window, shows when a font is selected):
-  - [ ] Rows: Full Name, Family, Weight Class (`{n} ({name})`), Style (Regular/Bold/Italic from `fsSelection`), Copyright, License description
-  - [ ] **Unicode coverage**: iterate `ulUnicodeRange1–4` bits; for each set bit display the corresponding Unicode block name (e.g., bit 0 = "Basic Latin", bit 1 = "Latin-1 Supplement", bit 2 = "Latin Extended-A"…); show as a wrapped tag list (gray rounded pills)
-  - [ ] **Embedding flags** from `fsType`: show `"Installable Embedding"` / `"Preview & Print"` / `"Editable Embedding"` / `"No embedding"` label in orange if restricted
-- [ ] **`.ttf` double-click** integration: `fontmgr.exe {path}` → open app with that font pre-selected + details panel shown + large 48 pt "Aa Bb Cc 0123" preview + `[Install]` button prominent at top
-- [ ] **Set default body font** (from TODO-02 §8): button `[Set as Default Body Font]` → writes to `HKCU\Software\Impossible\Fonts\BodyFont` → calls `ttf_mgr_reload()` → toast `"Restart apps to apply new font"`
+- [ ] Shown to work here on the imported copy, as §15 brings it
+- [ ] Commit: `"imports: fonts brings Font Manager (OS/2 + Unicode Coverage)"`
 
 ---
 
@@ -257,22 +203,15 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-Month grid (7 cols Mon–Sun × 5–6 week rows). Accent today highlight. Prev/Next month. Click day → events pane. "+ Add Event" dialog (time, title, color). Registry events. Taskbar clock flyout integration.
+**Moved:** calendar
 
-**Files:** `src/apps/calendar/calendar.c` (new), `include/apps/calendar.h` (new)
+Built in Calendar, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §11 has brought it and it is shown to work.
 
-> [!NOTE]
-> Window: 700×500 px. Left panel (500 px): month grid; right panel (200 px): events for selected day. **Month grid**: `g_view_year/month`; compute `first_weekday_of_month` (Zeller's formula); draw 7-column headers Mon–Sun; fill grid cells with day number; current day → `gfx_fill_rect(accent_bg)`; selected day → accent outline. Prev/Next buttons: `g_view_month--/++` with year rollover. **Events pane**: "Wednesday, 15 March" header; list events for `g_selected_date`; each event: colored dot (event color) + time + title. **Add Event dialog** (modal, 380×260): `CTRL_TEXTBOX` title; `dialog_input` time picker (HH:MM); color preset swatches (8 colors); OK → write to Registry `HKCU\Software\Impossible\Calendar\Events\YYYY-MM-DD\{uid}\{Title,Time,Color}`. **Load events**: scan `HKCU\...\Events\{date}\*` subkeys. **Taskbar clock**: TODO-10 §3 calendar flyout (`WM_CLOCK_CLICKED`) opens this window. `calendar_open_at_date(year, month, day)` public API for taskbar integration.
+What is this OS's own work stays here:
 
-- [ ] `void calendar_open(void)` -- `wm_create_window(100, 60, 700, 500, "Calendar", ...)`
-- [ ] `void calendar_render_month(s, x, y, w, h)` -- Zeller first-weekday; fill grid; accent today/selected
-- [ ] `void calendar_render_events(s, x, y, w, h, date)` -- scan `HKU\...\Events\YYYY-MM-DD\*`; list events
-- [ ] Click handler: map pixel to grid cell → `g_selected_date`; refresh events pane
-- [ ] Prev/Next month buttons: `g_view_month--/++`; year rollover; re-render
-- [ ] "+ Add Event" dialog: title textbox + time + color picker swatches; OK → `RegSetValueEx()`
 - [ ] `void calendar_open_at_date(int y, int m, int d)` -- public API for taskbar clock
-- [ ] Delete event: right-click event → `context_menu_show()` → Delete → `RegDeleteKey()`
-- [ ] Commit: `"calendar: month grid, events pane, Registry events, Add dialog, taskbar clock integration"`
+- [ ] Shown to work here on the imported copy, as §11 brings it
+- [ ] Commit: `"imports: calendar brings Calendar App"`
 
 ## 9. System Info
 
@@ -304,21 +243,95 @@ Month grid (7 cols Mon–Sun × 5–6 week rows). Accent today highlight. Prev/N
 
 > **Moved here 2026-11-14 from `09-desktop-shell/TODO-02-file-associations-resources.md` §8** (operator decision: `11-apps` owns the apps; the source section is now a pointer).
 
-`src/apps/fontmgr/fontmgr.c`: list `.ttf` from `C:\Impossible\Fonts\` via VFS. Preview at 12/16/24/36 px with "The quick brown fox…". Install button: copy file + `ttf_mgr_reload()`. Remove button (block system fonts Selawik/Cascadia). Set Default: write `HKCU\Software\Impossible\Theme\Font`.
+**Moved:** fonts
 
-**Files:** `src/apps/fontmgr/fontmgr.c` (new), `include/apps/fontmgr.h` (new)
+Built in Fonts, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §15 has brought it and it is shown to work.
 
-> [!NOTE]
-> Launch as a desktop window app (not kernel-mode -- but still runs in kernel mode for now, like `gallery.c`). Window: 640×480 px. Left panel: `CTRL_LISTVIEW` of `.ttf` files in `C:\Impossible\Fonts\`; on selection-change: update right preview panel. Right panel: fixed preview strings at 4 sizes using `ttf_get(FONT_UI, px)` where the font slot is temporarily overridden with the selected TTF. **Install**: `dialog_file_open("*.ttf", "C:\\", src_path, MAX_PATH)` → `vfs_copy(src, "C:\\Impossible\\Fonts\\basename")` → `ttf_mgr_reload()` (re-scans `C:\Impossible\Fonts\` and rebuilds the font slot table) → `notify_send("Font installed", basename, ICON_INFO, 3000)`. **Remove guard**: check if font is Selawik or Cascadia (system fonts); if yes: `notify_send("Cannot remove", "System font", ICON_WARNING, 3000)`. **Set Default**: `RegSetValueEx(HKCU, "Software\\Impossible\\Theme\\Font", font_path)` + `wm_post_message_all(WM_THEME_CHANGED, ...)` (TODO-01 §7).
+What is this OS's own work stays here:
 
-- [ ] `void fontmgr_open(void)` -- create 640×480 px window; scan `C:\Impossible\Fonts\`; populate `CTRL_LISTVIEW`
-- [ ] `void fontmgr_draw_preview(gfx_surface_t *s, const char *ttf_path, int32_t x, int32_t y, int32_t w, int32_t h)` -- render preview string at 4 sizes using `ttf_get()` with the font loaded temporarily
-- [ ] `int ttf_mgr_reload(void)` -- re-scan `C:\Impossible\Fonts\`; rebuild font cache; return 0 or -1 (add to `font_mgr.h`)
-- [ ] Install button callback: `dialog_file_open()` → `vfs_copy()` → `ttf_mgr_reload()` → `notify_send()`; refresh list
-- [ ] Remove button callback: guard system fonts ("Selawik", "Cascadia"); `vfs_delete(font_path)`; `ttf_mgr_reload()`; refresh list
-- [ ] "Set Default" button: `RegSetValueEx(HKCU, "...\\Theme\\Font", REG_SZ, ttf_path)`; `wm_post_message_all(WM_THEME_CHANGED, 0, 0)`
 - [ ] `.ttf` file association (`09-desktop-shell/TODO-02-file-associations-resources.md` §1/`09-desktop-shell/TODO-02-file-associations-resources.md` §2) → launches `fontmgr.exe` with the TTF path as arg → preview the passed font
-- [ ] Commit: `"fontmgr: font manager app -- list/preview/install/remove TTF, set default, ttf_mgr_reload()"`
+- [ ] Shown to work here on the imported copy, as §15 brings it
+- [ ] Commit: `"imports: fonts brings Font Manager App"`
+
+## 11. Import Calendar
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** calendar
+
+Calendar is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull calendar` into `src/apps/calendar/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Calendar on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose calendar`
+- [ ] Commit: `"apps: Calendar imported"`
+
+## 12. Import Sticky Notes
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** sticky-notes
+
+Sticky Notes is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull sticky-notes` into `src/apps/sticky-notes/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Sticky Notes on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose sticky-notes`
+- [ ] Commit: `"apps: Sticky Notes imported"`
+
+## 13. Import On-Screen Keyboard
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** on-screen-keyboard
+
+On-Screen Keyboard is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull on-screen-keyboard` into `src/apps/on-screen-keyboard/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open On-Screen Keyboard on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose on-screen-keyboard`
+- [ ] Commit: `"apps: On-Screen Keyboard imported"`
+
+## 14. Import Color Picker
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** color-picker
+
+Color Picker is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull color-picker` into `src/apps/color-picker/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Color Picker on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose color-picker`
+- [ ] Commit: `"apps: Color Picker imported"`
+
+## 15. Import Fonts
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** fonts
+
+Fonts is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull fonts` into `src/apps/fonts/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Fonts on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose fonts`
+- [ ] Commit: `"apps: Fonts imported"`
 
 ---
 

@@ -50,6 +50,7 @@ title: "TODO-05 -- Screensaver, Widgets & Display"
 | ⭐  |   4   | §4 Built-in widgets -- Analog Clock, CPU Meter, RAM Monitor, Mini Calendar, Quick Notes                  | §3 framework; `system_get_ticks()` clock; `sched_get_task_list()` (09-desktop-shell/TODO-12 §7)             |  [ ]   |
 | 💎  |   5   | §5 Display management -- `display_enum_modes()`, current mode Registry, `desk.cpl` dropdown update      | `boot_info->gop_modes[]` (exists); `desk.cpl` stub (09-desktop-shell/TODO-11 §3)                            |  [ ]   |
 | 💎  |   6   | §6 Multi-monitor stubs -- `struct monitor`, `monitor_enum()`, virtual coordinate space stubs             | §5; no hardware dep (stubs only)                                                             |  [ ]   |
+| 💎 | 7 | §7 Import Screensavers | `10-platform-services/TODO-07` §7 (PE programs run), `TODO-13` §2 | [ ] |
 
 ---
 
@@ -177,6 +178,22 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 - [ ] `HKLM\HARDWARE\Display\MonitorCount` set to `1` at boot (foundation for future multi-monitor)
 - [ ] WM window struct: add `monitor_id` field (currently always 0)
 - [ ] Commit: `"kernel: multi-monitor stubs -- struct monitor, monitor_enum, wm_to_monitor, MonitorCount registry"`
+
+## 7. Import Screensavers
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** screensavers
+
+Screensavers is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS. §1 keeps the idle detection and the screensaver interface; the savers themselves (its Starfield, Matrix, Bouncing Logo and Clock items) come from here, as Silk, Starfield, Aurora, Glyphfall, Drift and Clock.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull screensavers` into `src/apps/screensavers/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Screensavers on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose screensavers`
+- [ ] Commit: `"apps: Screensavers imported"`
 
 ---
 

@@ -45,175 +45,118 @@ title: "TODO-03 -- SSH Client"
 
 ## Implementation Order
 
-| Step | Section                                | 💎/⭐ | Dependency                                                                        |
-| ---- | -------------------------------------- | ----- | --------------------------------------------------------------------------------- |
-| 1    | SSH2 Transport Layer                   | 💎    | 02-kernel-core/TODO-03 §5 (monocypher), 07-networking/TODO-02 §5 (`kern_connect`) |
-| 2    | SSH Authentication                     | 💎    | §1 complete                                                                       |
-| 3    | Interactive Channel + PTY Relay        | 💎    | §2 complete, `terminal.h`                                                         |
-| 4    | Shell Integration + TOFU + Known Hosts | ⭐    | §3 complete, Registry                                                             |
-| 5    | SCP File Transfer                      | 💎    | §2 complete, VFS, progress_bar_print                                              |
-| 6    | SSH Config File                        | ⭐    | §4 complete, Registry                                                             |
-| 7    | sftp Command (Stretch)                 | 💎    | §3 complete                                                                       |
+| Step | Section                                | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | -------------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | SSH2 Transport Layer                   | 💎    | §8                                                                                     |  [ ]   |
+| 2    | SSH Authentication                     | 💎    | §8, §1                                                                                 |  [ ]   |
+| 3    | Interactive Channel + PTY Relay        | 💎    | §8, §2                                                                                 |  [ ]   |
+| 4    | Shell Integration + TOFU + Known Hosts | ⭐    | §8, §3                                                                                 |  [ ]   |
+| 5    | SCP File Transfer                      | 💎    | §8, §2                                                                                 |  [ ]   |
+| 6    | SSH Config File                        | ⭐    | §8, §4                                                                                 |  [ ]   |
+| 7    | sftp Command (Stretch)                 | 💎    | §8, §3                                                                                 |  [ ]   |
+| 8    | Import SSH                             | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 |  [ ]   |
 
 ---
 
 ## 1. SSH2 Transport Layer
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §4` -- base implementation spec.
-> This section specifies the RFC 4253 key derivation, ChaCha20-Poly1305 packet framing, and
-> sequence-number tracking details that §4 of TODO-08 leaves implicit.
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/ssh_transport.c`; header `include/apps/ssh/ssh.h`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] TCP connect: `kern_socket(AF_INET, SOCK_STREAM, 0)` → `kern_connect(fd, ip, port)` (default port 22)
-- [ ] Version exchange: send `"SSH-2.0-ImpossibleOS_1.0\r\n"`; read server banner (terminated by `\r\n`); verify prefix `"SSH-2.0"` or `"SSH-1.99"`; store server banner string
-- [ ] `SSH_MSG_KEXINIT` (byte 20): send 16-byte random cookie, name-list `"curve25519-sha256"` preferred for kex, `"ssh-ed25519"` for host key, `"chacha20-poly1305@openssh.com"` for encryption, `"hmac-sha2-256"` for MAC, `"none"` for compression; recv server KEXINIT; intersect name-lists and select algorithms
-- [ ] `SSH_MSG_KEX_ECDH_INIT` (byte 30): generate ephemeral Curve25519 keypair via `crypto_x25519_public_key(client_pub, client_priv)` using `csprng_fill(client_priv, 32)`; send `client_pub[32]`
-- [ ] Recv `SSH_MSG_KEX_ECDH_REPLY` (byte 31): parse server host key blob (type + key bytes); parse server ephemeral pubkey `server_pub[32]`; parse server signature over exchange hash H
-- [ ] Compute shared secret: `crypto_x25519(shared, client_priv, server_pub)` → `shared[32]`
-- [ ] Derive session keys per RFC 4253 section 7.2 (what OpenSSH expects; not HKDF):
-  - `H = SHA-256(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)` -- the `curve25519-sha256` exchange hash (RFC 8731), via `include/kernel/crypto/sha256.h`
-  - `session_id = H` (first key exchange only)
-  - Each key is `SHA-256(K || H || X || session_id)` with X = "A" to "F", extended by `SHA-256(K || H || K1 || ...)` when more bytes are needed
-  - `chacha20-poly1305@openssh.com` takes a 64-byte key per direction ("C" client to server, "D" server to client) and uses no MAC key and no IV
-- [ ] Verify server host key signature: `crypto_ed25519_check(sig, server_pubkey, H, 32)` → reject on mismatch
-- [ ] Store server host key fingerprint: SHA-256 of the host key blob, shown as `SHA256:<base64>` (the OpenSSH format) for TOFU (§4)
-- [ ] `SSH_MSG_NEWKEYS` (byte 21): send then recv; activate ChaCha20-Poly1305 AEAD for all subsequent packets:
-  - Packet format: the 4-byte length is encrypted with the second 32 key bytes, the payload with the first 32 from block 1, and block 0 of the first key gives the Poly1305 key for the 16-byte tag
-  - Sequence numbers: `uint32_t seq_send = 0`, `seq_recv = 0`; increment after each packet sent/received; used as the ChaCha20 nonce
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings SSH2 Transport Layer"`
 
 ---
 
 ## 2. SSH Authentication
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §5`
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/ssh_auth.c`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] `SSH_MSG_SERVICE_REQUEST "ssh-userauth"` → recv `SSH_MSG_SERVICE_ACCEPT`
-- [ ] `SSH_MSG_USERAUTH_REQUEST` with method `"none"` → recv `SSH_MSG_USERAUTH_FAILURE` with allowed-auth-methods list
-- [ ] Password auth:
-  - [ ] Prompt `"{user}@{host}'s password: "` (no echo: use terminal raw mode)
-  - [ ] Send `SSH_MSG_USERAUTH_REQUEST`: service `"ssh-connection"`, method `"password"`, `FALSE`, password string (all encrypted inside established AEAD channel)
-  - [ ] On `SSH_MSG_USERAUTH_FAILURE`: retry up to 3 times, then print `"Permission denied (password)."` and exit
-  - [ ] On `SSH_MSG_USERAUTH_SUCCESS`: proceed to §3
-- [ ] Stretch -- public key auth (Ed25519):
-  - [ ] Keypair path: `C:\Users\{name}\AppData\ssh\id_ed25519` (private, 64 bytes) + `id_ed25519.pub` (public, 32 bytes)
-  - [ ] Auto-generate on first use: `csprng_fill(seed, 32)` → `crypto_ed25519_key_pair(secret_key, public_key, seed)` → write both files; print `"Generating new Ed25519 key pair... done."`
-  - [ ] `SSH_MSG_USERAUTH_REQUEST` with method `"publickey"`, algorithm `"ssh-ed25519"`, public key blob; query only (no sig) first
-  - [ ] On `SSH_MSG_USERAUTH_PK_OK`: send request again with `TRUE` + signature: `crypto_ed25519_sign(sig, priv, session_id || USERAUTH_REQUEST_blob)`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings SSH Authentication"`
 
 ---
 
 ## 3. Interactive Channel + PTY Relay
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §6`
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/ssh_channel.c`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] Channel open: `SSH_MSG_CHANNEL_OPEN` type=`"session"`, `local_channel=0`, `initial_window=131072`, `max_packet=32768`; recv `SSH_MSG_CHANNEL_OPEN_CONFIRMATION` → store `remote_channel_id`, `remote_window`, `remote_max_packet`
-- [ ] PTY request: `SSH_MSG_CHANNEL_REQUEST` type=`"pty-req"`, `TERM="xterm-256color"`, cols=`TERM_COLS`, rows=`TERM_ROWS`, pixel-width=0, pixel-height=0, empty mode string; `want_reply=1` → recv `SSH_MSG_CHANNEL_SUCCESS`
-- [ ] Shell request: `SSH_MSG_CHANNEL_REQUEST` type=`"shell"`, `want_reply=1` → recv `SSH_MSG_CHANNEL_SUCCESS`
-- [ ] Relay loop (runs until channel closes):
-  - [ ] `ch = terminal_trygetchar()` -- if char available: send `SSH_MSG_CHANNEL_DATA` with that byte; decrement `remote_window` by 1; if `remote_window < 1024`: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` requesting 65536 bytes
-  - [ ] `ssh_recv_packet_nonblock()` -- if `SSH_MSG_CHANNEL_DATA`: call `terminal_puts(data, data_len)`; increment `local_window` consumed; if consumed > 32768: send `SSH_MSG_CHANNEL_WINDOW_ADJUST` +131072
-  - [ ] If `SSH_MSG_CHANNEL_WINDOW_ADJUST`: add `bytes_to_add` to `remote_window`
-  - [ ] If `SSH_MSG_CHANNEL_EOF` or `SSH_MSG_CHANNEL_CLOSE`: send `SSH_MSG_CHANNEL_CLOSE`; break
-  - [ ] `ksleep(1)` to avoid busy-wait
-- [ ] Terminal resize: detect `TERM_COLS`/`TERM_ROWS` change → send `SSH_MSG_CHANNEL_REQUEST` type=`"window-change"`, new cols/rows/0/0
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings Interactive Channel + PTY Relay"`
 
 ---
 
 ## 4. Shell Integration + TOFU + Known Hosts
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §7`
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/ssh_main.c`; shell command registration in `src/shell/cmd_ssh.c`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] Settle the host-trust store with `07-networking/TODO-08-ssh-ftp-clients.md` (item: "Settle the host-trust store") before coding §4: the two files disagree
-  - Known hosts: a `known_hosts` file under `AppData\SSH` there, the Registry key below here; key folder `AppData\SSH` there vs `AppData\ssh` here; banner and TERM strings differ too.
-- [ ] `ssh [user@]host [-p port] [-i keyfile]` -- parse args: extract user (before `@`), host (after `@`), optional `-p port`, optional `-i keyfile`
-- [ ] `dns_resolve(host, &ip)` → fail with `"ssh: could not resolve host: {host}"`
-- [ ] Opens new terminal window for the SSH session (or reuses current if launched from terminal)
-- [ ] Default user: if no `user@`, check `HKCU\Software\Impossible\SSH\DefaultUser`; fallback to current session username
-- [ ] TOFU fingerprint verification (called after §1 key exchange):
-  - [ ] Registry key: `HKCU\Software\Impossible\SSH\KnownHosts\{host}` stores hex fingerprint string
-  - [ ] First connect: print `"The authenticity of host '{host}' can't be established.\nEd25519 key fingerprint: {fingerprint}\nAre you sure you want to continue connecting (yes/no)? "` → on `"yes"`: write fingerprint to Registry; on `"no"`: disconnect
-  - [ ] Subsequent connects: `reg_get_string(..., &stored)` → compare with current fingerprint → if mismatch: print `"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nOffending key for {host} in HKCU\\...\\KnownHosts\nExpected: {stored}\nGot: {current}\nConnection refused."` → disconnect
-  - [ ] `ssh-keyscan` stretch: `ssh-keyscan host` prints host key fingerprint without connecting
+What is this OS's own work stays here:
+
+- [ ] `ssh` starts from the shell and from `cmd.exe`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings Shell Integration + TOFU + Known Hosts"`
 
 ---
 
 ## 5. SCP File Transfer
 
-**Source file:** `src/apps/ssh/scp.c`; shell command `src/shell/cmd_scp.c`
+**Moved:** ssh
 
-- [ ] `scp [user@]host:/remote/path C:\local\path` -- download mode
-- [ ] `scp C:\local\file [user@]host:/remote/path` -- upload mode
-- [ ] `scp [-r] [-P port] [-i keyfile] source dest` -- optional flags
-- [ ] Establish SSH connection and authenticate (reuse §1–§2)
-- [ ] Download: `ssh_channel_open("session")` → `ssh_channel_exec("scp -f /remote/path")`
-  - [ ] Recv: `C{mode} {size} {filename}\n` -- parse mode (e.g. `0644`), size (uint64_t), filename
-  - [ ] Send `\0` ACK byte
-  - [ ] Read `{size}` bytes from channel in 64 KiB chunks → write to VFS file via `vfs_open`/`vfs_write`
-  - [ ] Send `\0` ACK byte → recv `\0` final ACK
-- [ ] Upload: `ssh_channel_exec("scp -t /remote/path")`
-  - [ ] Recv `\0` ACK byte
-  - [ ] Send `C0644 {size} {filename}\n`
-  - [ ] Send file bytes in 64 KiB chunks from VFS → `kern_send()`
-  - [ ] Send `\0` ACK byte → recv `\0` final ACK
-- [ ] Progress: `progress_bar_print(bytes_done, file_size, elapsed_ms)` with `\r` in-place update (KB/s + ETA)
-- [ ] Stretch: `scp -r` recursive directory copy -- `D{mode} 0 {dirname}\n` for dirs, `E\n` for end-of-dir
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
+
+- [ ] `scp` starts from the shell and from `cmd.exe`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings SCP File Transfer"`
 
 ---
 
 ## 6. SSH Config File
 
-> → XREF: `10-platform-services/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/ssh_config.c`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] Config path: `C:\Users\{name}\AppData\ssh\config` (open with VFS `vfs_open`)
-- [ ] Format: INI-style `Host <alias>` stanzas, one key-value per line, e.g.:
-  ```
-  Host dev
-      HostName 192.168.1.100
-      User admin
-      Port 22
-      IdentityFile C:\Users\derick\AppData\ssh\id_ed25519
-
-  Host bastion
-      HostName bastion.example.com
-      User ec2-user
-      Port 2222
-  ```
-- [ ] `ssh_config_load()`: `vfs_open` → parse line-by-line, store up to 16 `struct ssh_config_entry { alias[64], hostname[256], user[64], port, identity_file[256] }`; comments (`#`) and blank lines skipped
-- [ ] `ssh_config_resolve(alias, &entry)`: lookup by alias; copy matched fields into resolved config; unset fields get defaults (port 22, no identity file, DefaultUser)
-- [ ] `ssh alias` → `ssh_config_resolve()` expands to full HostName/User/Port/IdentityFile before connect
-- [ ] Auto-create empty config with header comment `# Impossible OS SSH config\n# Host alias\n#     HostName ...\n` if file missing
-- [ ] Registry fallback: `HKCU\Software\Impossible\SSH\DefaultUser` → used when `Host` stanza has no `User` key
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings SSH Config File"`
 
 ---
 
 ## 7. sftp Command (Stretch)
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §9` -- SFTP subsystem protocol spec
+**Moved:** ssh
 
-**Source file:** `src/apps/ssh/sftp.c`; shell command `src/shell/cmd_sftp.c`
+Built in SSH, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] `sftp [user@]host` -- establish SSH connection + auth (§1–§2)
-- [ ] `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"` → `SSH2_FXP_INIT` (version=3) → recv `SSH2_FXP_VERSION`
-- [ ] Interactive prompt: `sftp> ` -- read line from terminal, parse subcommand
-- [ ] Subcommands:
-  - [ ] `ls [path]` → `SSH2_FXP_OPENDIR` + `SSH2_FXP_READDIR` → format and print entries with permissions, size, date
-  - [ ] `cd <dir>` → `SSH2_FXP_REALPATH` → update remote `cwd`
-  - [ ] `lcd <local-dir>` → update local cwd (VFS `vfs_chdir`)
-  - [ ] `get <remote> [local]` → `SSH2_FXP_OPEN` (read) + `SSH2_FXP_READ` chunks → `vfs_write`; progress bar
-  - [ ] `put <local> [remote]` → `vfs_read` → `SSH2_FXP_OPEN` (write/create) + `SSH2_FXP_WRITE` chunks; progress bar
-  - [ ] `rm <file>` → `SSH2_FXP_REMOVE`
-  - [ ] `mkdir <dir>` → `SSH2_FXP_MKDIR`
-  - [ ] `bye` / `exit` → `SSH2_FXP_CLOSE` all handles → close channel
-- [ ] Stretch: `sftp -b <batchfile>` -- read commands from VFS file, execute non-interactively
+What is this OS's own work stays here:
+
+- [ ] `sftp` starts from the shell and from `cmd.exe`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: ssh brings sftp Command (Stretch)"`
+
+## 8. Import SSH
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** ssh
+
+SSH is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull ssh` into `src/apps/ssh/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open SSH on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose ssh`
+- [ ] Commit: `"apps: SSH imported"`
 
 ---
 

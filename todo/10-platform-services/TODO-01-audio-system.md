@@ -45,12 +45,12 @@ title: "TODO-01 -- Audio System & Media Player"
 | --- | :---: | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Audio abstraction -- `audio_device`, `audio_init/play/stop/volume`, Registry, syscalls | audio driver (`04-drivers-hardware/TODO-18`); `RegSetDword/RegGetDword`; add `SYS_AUDIO_PLAY`, `SYS_AUDIO_VOLUME` |  [ ]   |
 | ⭐  |   2   | §2 Audio mixer -- 8-stream INT32 accumulate + clamp, DMA feed, mute, per-stream handles   | §1 audio abstraction; `pmm_alloc_contiguous()` for mix buffer                                                     |  [ ]   |
-| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`         | §1; `vfs_open/read()`                                                                                             |  [ ]   |
-| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                 | §1; `vfs_open/read()`                                                                                             |  [ ]   |
-| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                             | §1; `vfs_open/read()`                                                                                             |  [ ]   |
-| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                      | §1; `vfs_open/read()`                                                                                             |  [ ]   |
+| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`         | §1; `vfs_open/read()`, `11-apps/TODO-15` §2, `11-apps/TODO-15` §1                                                 |  [ ]   |
+| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                 | §1; `vfs_open/read()`, `11-apps/TODO-15` §2, `11-apps/TODO-15` §1                                                 |  [ ]   |
+| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                             | §1; `vfs_open/read()`, `11-apps/TODO-15` §2, `11-apps/TODO-15` §1                                                 |  [ ]   |
+| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                      | §1; `vfs_open/read()`, `11-apps/TODO-15` §2, `11-apps/TODO-15` §1                                                 |  [ ]   |
 | ⭐  |   7   | §7 Unified loader -- `audio_load(path)` extension dispatch → clip                         | §3 + §4 + §5 + §6                                                                                                 |  [ ]   |
-| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc              | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05)                                                |  [ ]   |
+| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc              | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05), `11-apps/TODO-15` §13                         |  [ ]   |
 | 💎  |   9   | §9 Volume -- quick settings binding, volume-key overlay pill, glyph                       | §1; quick settings (D08 T09 §8); `sched_task_add()` for OSD dismiss                                               |  [ ]   |
 | 💎  |  10   | §10 `mmsys.cpl` -- master vol + mute + device selector + system sounds + test             | §1 + §9; `include/cpl.h` (TODO-11); `CTRL_SLIDER`                                                                 |  [ ]   |
 
@@ -98,73 +98,39 @@ title: "TODO-01 -- Audio System & Media Player"
 
 ## 3. WAV Decoder
 
-Vendor `dr_wav.h` (public domain, ~1500 lines) at `include/libs/dr_wav.h`. Redirect `DRWAV_MALLOC/FREE` → `kmalloc/kfree`. `audio_load_wav(path)` → `audio_clip`. Support 8/16-bit, mono/stereo, 22050/44100/48000 Hz.
+**Moved:** impossible-sdk
 
-**Files:** `include/libs/dr_wav.h` (new vendor), `src/kernel/audio_wav.c` (new)
+Built in Impossible SDK, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until `11-apps/TODO-15` §2 has brought it and it is shown to work.
 
-> [!NOTE]
-> Define `DRWAV_IMPLEMENTATION` in `audio_wav.c` only. `#define DRWAV_MALLOC(sz) kmalloc(sz)` / `DRWAV_FREE(p) kfree(p)` -- place before `#include "libs/dr_wav.h"`. `audio_load_wav(path)`: `vfs_open()` → `vfs_read()` full file → `drwav_init_memory(&wav, data, size, NULL)` → `drwav_read_pcm_frames_s16()` → fill `audio_clip`. PCM buffer alloc: `samples > 2048` → `pmm_alloc_contiguous(ceil(bytes / 4096))` else `kmalloc`. 8-bit unsigned → `dr_wav` converts to s16 internally via `drwav_read_pcm_frames_s16`. Channel count preserved (mono/stereo); `audio_play()` will handle mono duplication if driver requires stereo. `drwav_uninit()` after decode (dr_wav keeps no references after uninit). `audio_clip_free(clip)` frees PMM or kmalloc buffer based on size flag.
-
-- [ ] Download / vendor `dr_wav.h` to `include/libs/dr_wav.h` (public domain -- David Reid)
-- [ ] `src/kernel/audio_wav.c`: `#define DRWAV_IMPLEMENTATION`, `DRWAV_MALLOC/FREE` redirects
-- [ ] `audio_load_wav(const char *path)` → `audio_clip *` (PMM or kmalloc by size)
-- [ ] Support 8-bit unsigned + 16-bit signed input; mono + stereo; 22050/44100/48000 Hz
-- [ ] `audio_clip_free(audio_clip *clip)` -- PMM or kmalloc free based on internal size flag
-- [ ] Test: load `C:\Impossible\Media\startup.wav` → play via `audio_play()` → audible chime
-- [ ] Commit: `"libs: dr_wav -- WAV decoder, freestanding kmalloc/kfree redirect, audio_load_wav"`
+- [ ] Shown to work here on the imported copy, as `11-apps/TODO-15` §2 brings it
+- [ ] Commit: `"imports: impossible-sdk brings WAV Decoder"`
 
 ## 4. MP3 Decoder
 
-Vendor `dr_mp3.h` (public domain, ~3000 lines) at `include/libs/dr_mp3.h`. Same redirect pattern. `audio_load_mp3(path)` → `audio_clip`. Linear interpolation resampler if driver rate differs.
+**Moved:** impossible-sdk
 
-**Files:** `include/libs/dr_mp3.h` (new vendor), `src/kernel/audio_mp3.c` (new)
+Built in Impossible SDK, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until `11-apps/TODO-15` §2 has brought it and it is shown to work.
 
-> [!NOTE]
-> `DRMP3_MALLOC/REALLOC/FREE` → `kmalloc`/`kmalloc_resize` (or `kmalloc` new + `kfree` old)/`kfree`. `audio_load_mp3()`: VFS read full file → `drmp3_init_memory()` → `drmp3_read_pcm_frames_s16()` → `audio_clip`. MP3 is commonly 44100 Hz stereo MPEG-1 Layer 3; driver may expect 48000 Hz. **Linear resampler**: if `clip.sample_rate != g_audio_dev.sample_rate`: output_samples = `clip.sample_count * target_rate / clip.sample_rate`; for each output index `i`: `float src_pos = i * (float)clip.sample_rate / target_rate`; `int s0 = src_pos`, `frac = src_pos - s0`; `out[i] = pcm[s0] + frac * (pcm[s0+1] - pcm[s0])`. PMM alloc for resampled buffer if > 4 KiB.
-
-- [ ] Vendor `dr_mp3.h` to `include/libs/dr_mp3.h`
-- [ ] `src/kernel/audio_mp3.c`: `DRMP3_MALLOC/REALLOC/FREE` redirects + `DRMP3_IMPLEMENTATION`
-- [ ] `audio_load_mp3(const char *path)` → `audio_clip *`
-- [ ] Linear interpolation resampler: `audio_resample(clip, target_rate)` → resampled `audio_clip`
-- [ ] `audio_resample()` called automatically in `audio_load_mp3()` if rate mismatch with `g_audio_dev`
-- [ ] PMM alloc for resampled buffer when `output_bytes > 4096`
-- [ ] Test: load `.mp3` track → play → audible music output
-- [ ] Commit: `"libs: dr_mp3 -- MP3 decoder, freestanding redirects, audio_load_mp3, linear resampler"`
+- [ ] Shown to work here on the imported copy, as `11-apps/TODO-15` §2 brings it
+- [ ] Commit: `"imports: impossible-sdk brings MP3 Decoder"`
 
 ## 5. OGG Vorbis Decoder
 
-Vendor `stb_vorbis.c` as `src/libs/stb_vorbis_impl.c` (same pattern as `stb_truetype`). Redirect `malloc/realloc/free` → `kmalloc/kfree`. `audio_load_ogg(path)` → `audio_clip`.
+**Moved:** impossible-sdk
 
-**Files:** `src/libs/stb_vorbis_impl.c` (new), `include/libs/stb_vorbis.h` (new -- split from single-header)
+Built in Impossible SDK, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until `11-apps/TODO-15` §2 has brought it and it is shown to work.
 
-> [!NOTE]
-> `stb_vorbis` is included in the project as `stb_vorbis.c` -- define `STB_VORBIS_IMPLEMENTATION` in `stb_vorbis_impl.c`, set `#define malloc kmalloc`, `#define free kfree`, `#define realloc(p,s) kmalloc(s)` (with kfree old pointer manually if needed -- or use `stb_vorbis_alloc` struct to pass a fixed PMM arena). Preferred: `stb_vorbis_open_memory()` with arena buffer from `pmm_alloc_contiguous()` → no `realloc` calls. `audio_load_ogg(path)`: VFS read → `stb_vorbis_open_memory(data, size, &err, &alloc)` → `stb_vorbis_get_samples_short_interleaved()` → `audio_clip`. Check `stb_vorbis_get_info()` for `sample_rate` + `channels`; apply `audio_resample()` if needed.
-
-- [ ] `src/libs/stb_vorbis_impl.c`: `STB_VORBIS_IMPLEMENTATION`, PMM arena alloc struct
-- [ ] `include/libs/stb_vorbis.h` split header (or use `#include "stb_vorbis.c"` approach matching existing `stb_truetype`)
-- [ ] `audio_load_ogg(const char *path)` → `audio_clip *`; PMM alloc for decoded PCM
-- [ ] `stb_vorbis_alloc` struct backed by `pmm_alloc_contiguous()` -- eliminate `realloc` dependency
-- [ ] Apply `audio_resample()` if driver rate differs
-- [ ] Test: play `.ogg` audio file
-- [ ] Commit: `"libs: stb_vorbis -- OGG decoder, PMM arena alloc, audio_load_ogg"`
+- [ ] Shown to work here on the imported copy, as `11-apps/TODO-15` §2 brings it
+- [ ] Commit: `"imports: impossible-sdk brings OGG Vorbis Decoder"`
 
 ## 6. FLAC Decoder (Stretch)
 
-Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_load_flac(path)` → `audio_clip`. Lossless decode; may be large buffers -- PMM mandatory for output.
+**Moved:** impossible-sdk
 
-**Files:** `include/libs/dr_flac.h` (new vendor), `src/kernel/audio_flac.c` (new)
+Built in Impossible SDK, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until `11-apps/TODO-15` §2 has brought it and it is shown to work.
 
-> [!NOTE]
-> `DRFLAC_MALLOC/REALLOC/FREE` → `kmalloc`/`kmalloc_resize` (alloc new + copy + free old)/`kfree`. FLAC output is 16/24-bit; use `drflac_read_pcm_frames_s16()` for uniform 16-bit output. FLAC files are lossless and can be large (e.g., 50 MB for album track) -- **always PMM** for output buffer regardless of size: `pmm_alloc_contiguous(ceil(output_bytes / 4096))`. Log a warning via `klog_warn()` if `output_bytes > 64 MB`.
-
-- [ ] Vendor `dr_flac.h` to `include/libs/dr_flac.h`
-- [ ] `src/kernel/audio_flac.c`: `DRFLAC_MALLOC/REALLOC/FREE` redirects + `DRFLAC_IMPLEMENTATION`
-- [ ] `audio_load_flac(const char *path)` → `audio_clip *`; always PMM alloc
-- [ ] `drflac_read_pcm_frames_s16()` for uniform 16-bit output
-- [ ] `klog_warn()` if decoded buffer > 64 MiB
-- [ ] Apply `audio_resample()` if needed
-- [ ] Test: play lossless `.flac` file
-- [ ] Commit: `"libs: dr_flac -- FLAC decoder, freestanding redirects, audio_load_flac"`
+- [ ] Shown to work here on the imported copy, as `11-apps/TODO-15` §2 brings it
+- [ ] Commit: `"imports: impossible-sdk brings FLAC Decoder (Stretch)"`
 
 ## 7. Unified Audio Loader
 
@@ -187,23 +153,15 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-`src/apps/mediaplayer/mediaplayer.c`. Transport: Play/Pause, Stop, Prev/Next. Seek bar + volume slider + mute. Song title/artist from ID3v2 tags. Playlist panel. File associations. Shuffle/repeat.
+**Moved:** music
 
-**Files:** `src/apps/mediaplayer/mediaplayer.c` (new), `include/apps/mediaplayer.h` (new)
+Built in Music, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until `11-apps/TODO-15` §13 has brought it and it is shown to work.
 
-> [!NOTE]
-> Window: 700×440 px. **Layout**: top 80 px = album art stub (gray rect) + title/artist; below that: seek bar `CTRL_SLIDER(0, total_samples, pos)` + time labels; transport row (|◀ ▶/⏸ ■ ▶|); volume slider (0–100) + mute 🔊; bottom 280 px = playlist `CTRL_LISTVIEW` (Track#, Title, Artist, Duration, Size). **Playback**: `audio_mixer_stream_add(clip.pcm, clip.samples, 255)` returns stream handle; timer via `sched_task_add("mp_tick", mediaplayer_tick, 1, 1)` updates seek position (`audio_mixer_stream_get_pos(handle) * 100 / total_samples`). **ID3v2 tags**: read first 512 bytes of file; check for `"ID3"` at offset 0; scan frames for `TIT2` (title) and `TPE1` (artist); parse 4-byte size (BE) + 2-byte flags + text encoding byte + text data. Skip if no ID3 header -- use filename as title. **Playlist**: `CTRL_LISTVIEW`; "Add Files" → `dialog_file_open(multi, "Audio files\0*.mp3;*.wav;*.ogg;*.flac\0")` → append rows; double-click → `mediaplayer_play_index(i)`; delete → remove row. **Prev/Next**: index into playlist. **Shuffle**: `kmath_rand()` next unplayed index. **Repeat**: all / one / off toggle. **File assoc**: `.mp3`/`.wav`/`.ogg`/`.flac` → `mediaplayer.exe` (register in TODO-02 §1).
+What is this OS's own work stays here:
 
-- [ ] `void mediaplayer_open(const char *initial_path)` -- window + layout; load if `initial_path != NULL`
-- [ ] `void mediaplayer_play(int playlist_idx)` -- `audio_load(path)` → `audio_mixer_stream_add()`; store handle
-- [ ] `void mediaplayer_tick(void)` -- update seek `CTRL_SLIDER` position; detect stream done → auto-next
-- [ ] Pause: save stream position; `audio_mixer_stream_stop()`; resume: `audio_mixer_stream_add()` from offset
-- [ ] Seek: `CTRL_SLIDER` drag → `stream_set_position()` stub (or stop + restart from offset)
-- [ ] ID3v2 parser: `mediaplayer_read_id3v2(path, title, artist, buflen)` -- read 512 bytes; scan TIT2/TPE1
-- [ ] Volume slider → `audio_set_volume(v)` in real-time; mute toggle → `audio_set_mute()`
-- [ ] Playlist add/remove/double-click; shuffle: `kmath_rand()` index; repeat modes
 - [ ] Register `.mp3/.wav/.ogg/.flac` file associations (TODO-02 §1)
-- [ ] Commit: `"apps: media player -- transport, seek, ID3v2 tags, playlist, shuffle/repeat, file assoc"`
+- [ ] Shown to work here on the imported copy, as `11-apps/TODO-15` §13 brings it
+- [ ] Commit: `"imports: music brings Media Player App"`
 
 ## 9. Volume Control Popup
 

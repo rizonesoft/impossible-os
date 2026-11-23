@@ -47,14 +47,17 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## Implementation Order
 
-| Step | Section                                            | 💎/⭐ | Dependency                                       |
-| ---- | -------------------------------------------------- | ----- | ------------------------------------------------ |
-| 1    | VNC Client                                         | 💎    | TCP sockets TODO-02, TLS TODO-03                 |
-| 2    | IRC / Chat Client                                  | 💎    | TCP sockets TODO-02, TLS TODO-03                 |
-| 3    | RSS / News Reader                                  | 💎    | `http_get`/`https_get` TODO-03, `sched_task_add` |
-| 4    | `ping` + `traceroute`                              | 💎    | → XREF TODO-06 §5–§6 (already specified)         |
-| 5    | Network Diagnostic Tools (`arp -a`, `route print`) | ⭐    | `arp_cache_dump` TODO-06 §8; routing table       |
-| 6    | VNC Server (Stretch)                               | ⭐    | §1 RFB protocol known, compositor framebuffer    |
+| Step | Section                                            | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | -------------------------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | VNC Client                                         | 💎    | §7                                                                                     |  [ ]   |
+| 2    | IRC / Chat Client                                  | 💎    | §8                                                                                     |  [ ]   |
+| 3    | RSS / News Reader                                  | 💎    | §9                                                                                     |  [ ]   |
+| 4    | `ping` + `traceroute`                              | 💎    | → XREF TODO-06 §5–§6 (already specified)                                               |  [ ]   |
+| 5    | Network Diagnostic Tools (`arp -a`, `route print`) | ⭐    | `arp_cache_dump` TODO-06 §8; routing table                                             |  [ ]   |
+| 6    | VNC Server (Stretch)                               | ⭐    | §1 RFB protocol known, compositor framebuffer                                          |  [ ]   |
+| 7    | Import Remote Desktop                              | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 |  [ ]   |
+| 8    | Import Chat                                        | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 |  [ ]   |
+| 9    | Import News Reader                                 | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 |  [ ]   |
 
 ---
 
@@ -62,25 +65,12 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-> VNC DES challenge-response auth is security-critical (password derived key, 8-byte random
-> challenge, DES-ECB encryption). `[Opus]` covers §1.2 auth; the rest of the section wires
-> standard TCP protocol flows.
+**Moved:** remote-desktop
 
-**Source file:** `src/apps/vnc/vnc.c`; header `include/apps/vnc/vnc.h`
+Built in RemoteDesktop, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
 
-- [ ] **RFB 3.8 handshake**:
-  - [ ] TCP connect to port 5900 (or custom); recv `"RFB 003.008\n"`; send `"RFB 003.008\n"`
-  - [ ] Recv `SecurityTypes` list (uint8 count + list); select `2` (VNC auth) if available; else `1` (None)
-- [ ] **VNC auth (DES challenge-response)** `[Opus]`:
-  - [ ] Recv 16-byte random challenge
-  - [ ] Derive DES key from VNC password: take first 8 chars, pad with `\0`; reverse each byte's bit order (VNC-specific: key bit order is reversed per spec); run 2 × `des_ecb_encrypt(challenge_8bytes, key_8bytes)` to produce 16-byte response
-  - [ ] Send 16-byte response; recv `SecurityResult` (0 = OK, 1 = fail → show error dialog)
-  - [ ] Implement a minimal `des_encrypt_block(key8, data8, out8)` in `vnc_des.c` (~120 lines); no external library needed
-- [ ] **ServerInit**:
-  - [ ] Send `ClientInit` (shared = 1); recv `ServerInit`: framebuffer `W` × `H`, pixel format (bits-per-pixel, depth, big-endian, true-color, RGB max + shift), server name
-  - [ ] Allocate viewer surface `gfx_surface_create(W, H)`
-- [ ] **SetEncodings**: send supported encodings list: `Raw (0)`, `CopyRect (1)`, `RRE (2)`, `Hextile (5)` in preferred order
-- [ ] **FramebufferUpdateRequest**: send continuous update request (incremental=1, x=y=0, w=W, h=H)
+What is this OS's own work stays here:
+
 - [ ] **FramebufferUpdate receive loop** (dedicated kernel thread):
   - [ ] Read message type byte: `FramebufferUpdate (2)` → read `NumRects`; for each rect: x, y, w, h, encoding_type
   - [ ] `Raw`: read `w × h × bytespp` pixels; blit to viewer surface with `gfx_blit()`
@@ -88,13 +78,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
   - [ ] `RRE`: read `num_subrects`, background pixel; fill background; for each sub-rect: pixel + x, y, w, h → `gfx_fill_rect()`
   - [ ] `Hextile`: process 16×16 tiles with raw / background-colour / subrect encoding flags
   - [ ] Call `wm_mark_dirty()` after each update
-- [ ] **Input forwarding**:
-  - [ ] `KeyEvent`: translate kernel scancode → XKeysym (lookup table in `vnc_keysym.h`); send `0x04 down_flag padding padding keysym`
-  - [ ] `PointerEvent`: send `0x05 button_mask x_hi x_lo y_hi y_lo` on every mouse move / click in viewer window
-  - [ ] Ctrl+Alt+Del toolbar button → send `KeyEvent` for Ctrl, Alt, Delete (pressed then released)
-- [ ] **Viewer window**: `wm_create_window("VNC -- {server_name}", W, H)` with scrollbars if desktop larger than window; toolbar: `[Ctrl+Alt+Del]` `[Disconnect]` `[Fit to window]`; status bar: `"{host}:{port} -- {WxH}"`
-- [ ] **Registry**: `HKCU\Software\Impossible\VNC\LastHost`, `LastPort`, `LastPassword` (encrypted via CNG key store); connection dialog pre-fills from Registry
-- [ ] **Stretch -- RDP client**: note in code comments that RDP requires NLA auth (NTLM/Kerberos), SSL, and bitmap compression (RDP4/5 bitstream) -- defer to FreeRDP port when Win32 layer is complete
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: remote-desktop brings VNC Client"`
 
 ---
 
@@ -102,34 +87,12 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-**Source file:** `src/apps/chat/chat.c`; header `include/apps/chat/chat.h`
+**Moved:** chat
 
-- [ ] **Connection**: `kern_socket` + `kern_connect(fd, ip, 6667)` (plain) or `tls_connect(fd, host)` for port 6697 (TLS); `dns_resolve(host, &ip)` first
-- [ ] **IRC registration**: send `NICK {nick}\r\n`; `USER {user} 0 * :{realname}\r\n`; wait for `001` Welcome numeric
-- [ ] **Channel join**: send `JOIN #{channel}\r\n`; receive `366` (end of NAMES) → channel is active
-- [ ] **Receive parser**: read lines until `\r\n`; parse IRC message format `[:{prefix} ] {command} {params}`:
-  - [ ] `PRIVMSG #chan :text` → append to channel scrollback
-  - [ ] `NOTICE * :text` → display as server notice
-  - [ ] `JOIN #chan` → add user to channel user list
-  - [ ] `PART #chan` → remove user from list; show "X has left" message
-  - [ ] `QUIT :reason` → remove user; show "X has quit" message
-  - [ ] `PING :token` → immediately send `PONG :{token}\r\n` (keep-alive)
-  - [ ] `432`/`433` (nick collision) → append `_` to nick, retry `NICK`
-- [ ] **UI layout**:
-  - [ ] Left sidebar (280 px, `docs/design/shell.md#app-window-layout`): `CTRL_LISTVIEW` -- server node + channel nodes; click channel → switch to that scrollback
-  - [ ] Message area (scrollable `CTRL_SCROLLBAR_VERT`): each line prefixed with `[HH:MM] <nick>` or `* nick action`; username color set by `hash(nick) % palette_size` (8 pastel colors)
-  - [ ] Input field (`CTRL_TEXTBOX`, bottom): Enter → send `PRIVMSG {channel} :{text}\r\n`; up-arrow history (last 16 lines)
-  - [ ] Tab completion: press Tab → scan user list for `nick` prefix match → cycle through completions; first Tab: append `: ` after nick
-- [ ] **Slash commands**: parse input starting with `/`:
-  - [ ] `/nick <new>` → `NICK <new>\r\n`
-  - [ ] `/join <#channel>` → `JOIN <#channel>\r\n`
-  - [ ] `/part [reason]` → `PART <current_channel> :{reason}\r\n`
-  - [ ] `/msg <nick> <text>` → `PRIVMSG <nick> :{text}\r\n`; open private chat tab in sidebar
-  - [ ] `/quit [reason]` → `QUIT :{reason}\r\n`; disconnect + close window
-  - [ ] `/me <action>` → `PRIVMSG {channel} :\x01ACTION {action}\x01\r\n` (CTCP ACTION)
-- [ ] **Registry**: `HKCU\Software\Impossible\Chat\{network}\Server`, `Nick`, `AutoJoin`, `UseTLS`; on connect pre-fill from Registry; save on successful connect
-- [ ] **Notifications**: `notify_send("IRC", "{nick} in #{channel}: {text}", ICON_CHAT, 4000)` on PRIVMSG when window is not focused
-- [ ] **Stretch -- Matrix client**: note that Matrix uses HTTP+JSON (can reuse `https_get`/POST) + Olm E2E encryption (monocypher Curve25519 + AES-GCM); defer full implementation to `10-platform-services` domain when Win32/SDK is stable
+Built in Chat, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: chat brings IRC / Chat Client"`
 
 ---
 
@@ -137,23 +100,20 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-**Source file:** `src/apps/news/news.c`; `src/apps/news/rss_parse.c`; header `include/apps/news/news.h`
+**Moved:** news-reader
 
-- [ ] **Feed fetch**: `news_fetch_feed(url, buf, max_len)` → `https_get(url, buf, max_len)` or `http_get()`; accept `application/rss+xml`, `application/atom+xml`, `text/xml`
-- [ ] **Minimal XML parser** (`xml_parse.c`): recursive descent without a full DOM tree; tokenize `<tag attr="val">`, `</tag>`, `text content`, CDATA `<![CDATA[...]]>` (pass through raw); callback-based: `on_start_tag(name, attrs)`, `on_end_tag(name)`, `on_text(content)` -- no allocation needed beyond a small stack
-- [ ] **RSS 2.0 parser**: on `<item>` → collect `<title>`, `<link>`, `<pubDate>`, `<description>`, `<guid>`; emit `struct news_item { title[256], link[512], pub_date_str[64], description[2048], guid[256], read }`
-- [ ] **Atom 1.0 parser**: map `<entry>` → same `news_item`; `<title>` → title; `<id>` → guid; `<updated>` → pub_date; `<summary>` or `<content>` → description; `<link href="...">` → link
-- [ ] **Storage**: items saved to `C:\Users\{name}\AppData\News\{feed_hash}\{guid_hash}.dat` (VFS write); `feed_hash = crc32(url) % 10000`; `guid_hash = crc32(guid) % 1000000`; `read` flag persisted in filename suffix `_r` (read) vs no suffix (unread)
-- [ ] **Feed registry**: `HKCU\Software\Impossible\News\Feeds\{n}\{URL,Title,LastFetch}` -- enumerate to build feed list
+Built in NewsReader, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §9 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
+
 - [ ] **UI layout**:
   - [ ] Left sidebar (280 px, `docs/design/shell.md#app-window-layout`): `CTRL_LISTVIEW` of feeds with unread counts
     - `CTRL_LISTVIEW` showing feed name + unread count badge; `[+ Add Feed]` button at top → dialog prompts URL → `news_fetch_feed` once → extract channel/feed title → save to Registry
   - [ ] Item list (middle, `CTRL_LISTVIEW`): title (bold if unread) + date; click → open in reading pane
   - [ ] Reading pane (right): feed title + item title (large TTF); date; description HTML stripped to plain text (same tag-strip logic as email viewer); `[Open in Browser]` button → `file_assoc_open(link_url)` → browser
   - [ ] `[Mark All Read]` button per feed
-- [ ] **Auto-refresh**: `sched_task_add("news_refresh", news_refresh_all_cb, 1800, 1)` (30 min = 1800 s); `news_refresh_all_cb()` fetches all registered feeds, saves new items, updates unread counts; `notify_send("News", "N new articles in {feed_name}", ICON_NEWS, 4000)` if new items found
-- [ ] **Feed discovery**: if entered URL returns HTML, scan `<link rel="alternate" type="application/rss+xml" href="...">` in `<head>` → offer discovered feed URL as suggestion
-- [ ] **Remove feed**: right-click sidebar → `Remove Feed` → `reg_delete_key` + optionally delete local cache files
+- [ ] Shown to work here on the imported copy, as §9 brings it
+- [ ] Commit: `"imports: news-reader brings RSS / News Reader"`
 
 ---
 
@@ -210,6 +170,54 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 - [ ] **Password**: `HKLM\SYSTEM\VNCServer\Password` (AES-256-GCM encrypted, same key store as §1); length ≤ 8 chars (VNC spec limit); empty = NoAuth
 - [ ] **Shell commands**: `vncsrv start` → spawn vncsrv thread + begin listening; `vncsrv stop` → close listener + disconnect client; `vncsrv status` → print bound port + client IP (if connected)
 - [ ] **Security note**: VNC server binds to `127.0.0.1` by default; `vncsrv --bind 0.0.0.0` for external access; print warning when binding externally
+
+## 7. Import Remote Desktop
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** remote-desktop
+
+Remote Desktop is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull remote-desktop` into `src/apps/remote-desktop/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Remote Desktop on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose remote-desktop`
+- [ ] Commit: `"apps: Remote Desktop imported"`
+
+## 8. Import Chat
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** chat
+
+Chat is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull chat` into `src/apps/chat/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Chat on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose chat`
+- [ ] Commit: `"apps: Chat imported"`
+
+## 9. Import News Reader
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** news-reader
+
+News Reader is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull news-reader` into `src/apps/news-reader/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open News Reader on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose news-reader`
+- [ ] Commit: `"apps: News Reader imported"`
 
 ---
 

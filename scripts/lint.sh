@@ -3224,6 +3224,15 @@ else
         echo -e "${RED}error${NC}: Check 42 (imports) -- todo/imports.json, the sections it names and the imported copies must agree (exit $IMP_RC)"
         ERRORS=$((ERRORS + 1))
     fi
+    # What a program beside this repository needs of this OS and no section
+    # builds yet: `--file-needs` writes its section. CI has no such
+    # repositories, so it says nothing there.
+    NEED_OUT=$(python3 "$REPO_ROOT/scripts/imports.py" --needs --root "$REPO_ROOT" 2>&1) || true
+    if [ -n "$NEED_OUT" ]; then
+        printf '%s\n' "$NEED_OUT" | head -20 | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 42 (needs) -- a program needs what no section builds: python3 scripts/imports.py --file-needs writes and stages it"
+        ERRORS=$((ERRORS + 1))
+    fi
 fi
 
 # ============================================================================

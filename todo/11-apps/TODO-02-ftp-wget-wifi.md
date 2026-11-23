@@ -57,58 +57,36 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 ## Implementation Order
 
-| #   | Section                                                   | Tag        | Dep                         | Mark |
-| --- | --------------------------------------------------------- | ---------- | --------------------------- | ---- |
-| 1   | FTP protocol core (`ftp_connect`, `PASV`, `RETR`, `STOR`) | `[Sonnet]` | 07-networking/TODO-02       | 💎   |
-| 2   | FTP shell commands + `wget ftp://`                        | `[Sonnet]` | §1                          | 💎   |
-| 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | 07-networking/TODO-03       | 💎   |
-| 4   | `curl` command (full flag set)                            | `[Sonnet]` | §3                          | 💎   |
-| 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §1, 08-graphics-ui/TODO-05  | 💎   |
-| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers-hardware/TODO-15 | 💎   |
+| #   | Section                                                   | Tag        | Dep                                                                                    | Mark | Status |
+| --- | --------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------- | ---- | :----: |
+| 1   | FTP protocol core (`ftp_connect`, `PASV`, `RETR`, `STOR`) | `[Sonnet]` | §7                                                                                     | 💎   |  [ ]   |
+| 2   | FTP shell commands + `wget ftp://`                        | `[Sonnet]` | §7, §1                                                                                 | 💎   |  [ ]   |
+| 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | §7                                                                                     | 💎   |  [ ]   |
+| 4   | `curl` command (full flag set)                            | `[Sonnet]` | §7, §3                                                                                 | 💎   |  [ ]   |
+| 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §7, §1                                                                                 | 💎   |  [ ]   |
+| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers-hardware/TODO-15                                                            | 💎   |  [ ]   |
+| 7   | Import FTP                                                | `[Sonnet]` | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §5 | 💎   |  [ ]   |
 
 ---
 
 ## 1. FTP Protocol Core
 
-Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer -- no UI, no shell integration.
+**Moved:** ftp
 
-- [ ] Settle one FTP and one wget/curl spec (item: "Settle one FTP and wget/curl spec") before coding: §1-§4 restate other roadmaps
-  - FTP core and shell: `07-networking/TODO-08-ssh-ftp-clients.md` §1-§2 (header `include/apps/ftp/ftp.h`, `ftp_session_t`, `ftp_mkd`/`ftp_rmd`/`ftp_dele`, 4 KiB chunks); it assigns only the GUI (§5) here.
-  - wget/curl: `07-networking/TODO-03-http-tls.md` §4 (`-o` not `-O`, `wget_progress_bar`, an FTP stub returning -ENOTSUP).
-  - Keep one spec per tool; the flag set, `progress_bar_print()` and the GUI are the unique content here.
-- [ ] `struct ftp_session { int ctrl_sock; char host[256]; char cwd[512]; uint8_t logged_in; }`
-- [ ] `ftp_connect(host, user, pass)`:
-  - `kern_connect(host, 21)` → control socket
-  - Read 220 greeting line (multi-line: lines until one starts without `-`)
-  - Send `USER <user>\r\n` → read 331; send `PASS <pass>\r\n` → expect 230; return -errno on auth failure
-  - Anonymous FTP: `user = "anonymous"`, `pass = "user@impossible-os.local"`
-- [ ] `ftp_cmd(session, cmd, response, max)` → send `cmd\r\n`; read response line(s) until `NNN ` prefix (non-hyphen); return numeric code
-- [ ] `ftp_pasv(session, data_host, data_port)`:
-  - `ftp_cmd(session, "PASV", ...)` → parse `(h1,h2,h3,h4,p1,p2)` from response
-  - `*data_host = h1.h2.h3.h4`; `*data_port = p1*256 + p2`
-- [ ] `ftp_list(session, listing_buf, max)` → `PASV` → data connect → `LIST` → read data stream to `listing_buf` → close data socket; return byte count
-- [ ] `ftp_download(session, remote, local, progress_cb)`:
-  - `ftp_cmd(session, "TYPE I")` → binary mode
-  - `ftp_cmd(session, "SIZE <remote>")` → parse total size for progress
-  - `PASV` → data connect → `RETR <remote>` → stream to `vfs_open(local, VFS_WRITE|VFS_CREATE)` in 64 KiB chunks; call `progress_cb(done, total)` after each chunk; close data + VFS
-- [ ] `ftp_upload(session, local, remote, progress_cb)`:
-  - `vfs_open(local, VFS_READ)` → `vfs_stat()` for size
-  - `PASV` → data connect → `STOR <remote>` → stream VFS chunks to data socket; `progress_cb`
-- [ ] Additional commands:
-  - `ftp_cwd(session, path)` → `CWD <path>` → expect 250
-  - `ftp_pwd(session, buf, max)` → `PWD` → parse quoted path from 257 response
-  - `ftp_mkdir(session, path)` → `MKD <path>` → expect 257
-  - `ftp_rmdir(session, path)` → `RMD <path>` → expect 250
-  - `ftp_delete(session, path)` → `DELE <path>` → expect 250
-  - `ftp_size(session, path)` → `SIZE <path>` → parse bytes from 213 response
-- [ ] `ftp_disconnect(session)` → `QUIT\r\n` → close control socket
-- [ ] Commit: `"apps: FTP client protocol core (PASV, RETR, STOR, LIST)"`
+Built in FTP, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: ftp brings FTP Protocol Core"`
 
 ---
 
 ## 2. FTP Shell Commands + `wget ftp://`
 
-Interactive `ftp` command and anonymous single-file `wget ftp://` integration in `cmd.exe`.
+**Moved:** ftp
+
+Built in FTP, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
 
 - [ ] **`ftp <host>`** built-in shell command:
   - Connect with `ftp_connect(host, "anonymous", "user@impossible-os.local")` initially; `login` subcommand prompts username/password
@@ -122,52 +100,30 @@ Interactive `ftp` command and anonymous single-file `wget ftp://` integration in
     - `rm <file>` → `ftp_delete()`
     - `bye` / `quit` → `ftp_disconnect()` + exit
     - `help` → list subcommands
-- [ ] **`progress_bar_print(done, total, elapsed_ms)` helper** (shared by §2, §3, §4):
-  - Format: `[████████░░░░░░░░] 512 KB / 1.2 MB | 320 KB/s | ETA 3s`
-  - Uses `serial_write()` + `\r` (carriage return, no newline) to update in-place
-  - If `total == 0` (unknown Content-Length): `512 KB | 320 KB/s` (no percentage/ETA)
-- [ ] **`wget ftp://host/path`**: parse `ftp://` scheme → extract host + path; `ftp_connect(host, "anonymous", ...)` → `ftp_download(session, path, filename, progress_cb)` → `ftp_disconnect()`
-  - `filename` derived from last `/`-separated component of path
-- [ ] Commit: `"shell: ftp interactive command + wget ftp:// support"`
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: ftp brings FTP Shell Commands + wget ftp://"`
 
 ---
 
 ## 3. `wget` Command (HTTP/HTTPS + Progress)
 
-Implements the full `wget` command-line tool backed by `http_get()`/`https_get()`.
+**Moved:** ftp
 
-- [ ] `wget <url>` → derive output filename from last URL path segment (strip query string); call `https_get(url, buf, MAX_DOWNLOAD)` or `http_get()`; write to VFS file; show progress via `progress_bar_print`
-- [ ] `wget -O <file> <url>` → explicit output filename (or `-O -` for stdout)
-- [ ] `wget -q <url>` → quiet mode (no progress, no status messages; errors still to stderr)
-- [ ] `wget -c <url>` → resume: if output file exists, read its size → set `Range: bytes=N-` HTTP header in request; append to existing file
-- [ ] `wget -r <url>` → recursive: fetch HTML page; extract `<a href>` links; same domain, max 2 levels deep, max 100 files, saved under `./hostname/path/`
-  - Link extraction: `TODO-01` specifies no extractor yet (its §1 keeps a `link_list[64]`); share one with it rather than writing a second.
-- [ ] `wget --no-check-certificate <url>` → skip TLS cert verification (calls `https_get_insecure()` variant)
-- [ ] Progress: `https_get()` streams response → parse `Content-Length` header → call `progress_bar_print(bytes_received, content_length, elapsed_ms)` per 64 KiB chunk
-- [ ] Error messages: `wget: cannot resolve host`, `wget: HTTP 404 Not Found`, `wget: TLS handshake failed`
-- [ ] Commit: `"shell: wget command (HTTP/HTTPS, -O, -q, -c, -r progress)"`
+Built in FTP, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: ftp brings wget Command (HTTP/HTTPS + Progress)"`
 
 ---
 
 ## 4. `curl` Command (Full Flag Set)
 
-`curl` is the developer-facing HTTP tool. Output defaults to stdout unless `-o` is given.
+**Moved:** ftp
 
-- [ ] `curl <url>` → `https_get(url, buf, MAX)` → `serial_write(buf)` (stdout)
-- [ ] `curl -o <file> <url>` → write response body to file; progress to stderr
-- [ ] `curl -X <METHOD> <url>` → override HTTP method (GET/POST/PUT/DELETE/HEAD/PATCH)
-- [ ] `curl -d "data" <url>` → send as `POST` body with `Content-Type: application/x-www-form-urlencoded`
-- [ ] `curl -d @<file> <url>` → read POST body from file
-- [ ] `curl -H "Header: value" <url>` → inject custom header (repeatable; accumulated into header list)
-- [ ] `curl -s <url>` → silent: suppress progress and informational messages
-- [ ] `curl -I <url>` → send `HEAD` request; print response headers only
-- [ ] `curl -L <url>` → follow `Location:` redirects (up to 10 hops; `http_get` already follows 5 -- extend limit)
-- [ ] `curl -u user:pass <url>` → HTTP Basic Auth: set `Authorization: Basic base64(user:pass)` header
-- [ ] `curl -v <url>` → verbose: print `> request headers` and `< response headers` to stderr, body to stdout
-- [ ] `curl -k <url>` → insecure: skip TLS cert verification
-- [ ] JSON pretty-print: if response `Content-Type: application/json` → format JSON with 2-space indent before printing (simple recursive formatter, no external library)
-- [ ] `curl --version` → print version string with supported protocols: `curl/1.0 (impossible-os) http https ftp`
-- [ ] Commit: `"shell: curl command (-X, -d, -H, -I, -L, -u, -v, -k, JSON pretty-print)"`
+Built in FTP, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: ftp brings curl Command (Full Flag Set)"`
 
 ---
 
@@ -175,19 +131,12 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_LISTVIEW` from `08-graphics-ui/TODO-05`.
+**Moved:** ftp
 
-- [ ] Window layout: toolbar at top (Connect/Disconnect, address bar showing `ftp://host/path`); two equal-width panes side by side
-  - **Left pane** (local): `CTRL_LISTVIEW` showing `C:\` directory (columns: Name, Size, Date); breadcrumb `CTRL_LABEL` showing current path; uses `vfs_readdir()`
-  - **Right pane** (remote): `CTRL_LISTVIEW` showing FTP directory listing (columns: Name, Size, Permissions); breadcrumb showing `ftp://host/cwd`; populated from `ftp_list()`
-- [ ] Connect dialog: `CTRL_TEXTBOX` for host, user, password; `[Connect]` button → `ftp_connect()`; `[Disconnect]` button
-- [ ] Double-click folder → `ftp_cwd()` + refresh remote pane; double-click local folder → `vfs_readdir()` + refresh local pane
-- [ ] `[→ Upload]` button: selected local file → `ftp_upload()` with `CTRL_PROGRESSBAR` in status bar
-- [ ] `[← Download]` button: selected remote file → `ftp_download()` with `CTRL_PROGRESSBAR`
-- [ ] Keyboard: Del on remote item → `ftp_delete()` / `ftp_rmdir()`; F5 → refresh; F2 → rename (via `RNFR`/`RNTO` commands)
-- [ ] Status bar: `CTRL_PROGRESSBAR` (transfer progress) + `CTRL_LABEL` (bytes/rate/ETA, status messages)
-- [ ] `ftp://` URL in File Manager address bar → launch `ftpgui.exe` with that URL as argument
-- [ ] Commit: `"apps: FTP GUI client (dual-pane, upload/download, progress)"`
+Built in FTP, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §7 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §7 brings it
+- [ ] Commit: `"imports: ftp brings FTP GUI Client (Dual-Pane, Stretch)"`
 
 ---
 
@@ -221,6 +170,22 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
   - Connected network shown with ✓ and current IP address
 - [ ] Store passphrase (encrypted with kernel key) in `HKLM\SYSTEM\Network\WiFi\{ssid}\Passphrase` -- auto-reconnect on boot
 - [ ] Commit: `"drivers: WiFi framework (RTL8188, WPA2 4-way handshake, ncpa.cpl WiFi tab)"`
+
+## 7. Import FTP
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** ftp
+
+FTP is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull ftp` into `src/apps/ftp/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open FTP on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose ftp`
+- [ ] Commit: `"apps: FTP imported"`
 
 ---
 

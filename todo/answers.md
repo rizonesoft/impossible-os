@@ -640,3 +640,12 @@ Q56 let a copy be nothing but its pinned commit, so the first change made here w
 - **C:** this repository becomes the program's home.
 
 A: (operator, 2026-11-23) A, with the program and its tests copied and no agent kit, list or document of its repository. Gemini runs write the programs in their repositories with Codex reviewing; the Claude run imports and works on them here under the normal reviews. `scripts/imports.py` has `--pull` and `--propose`, and `from` is now a list of what is copied. The session chose that a proposal is recorded by its pull request and the copy's tree id, and that a pull is refused while one is not merged. Reversal cost: the check goes back to the pinned copy alone; no source was imported yet.
+
+## Q58 (operator, 08-graphics-ui, 10-platform-services, 11-apps): what moves, what stays, and how does a program ask for something?
+
+- **A:** controls are built in Impossible SDK and imported; the engines (`08-graphics-ui/TODO-18`) and every function the programs call are built here; a program declares what it needs and this repository files it.
+- **B:** the engines move too.
+- **C:** controls and engines stay here and are planned twice.
+
+A: (operator, 2026-11-23) A. A moved section is not parked: it stays open behind its import section, so that what depends on it waits properly. The Windows 11 inventory (`08-graphics-ui/TODO-17`) stays here and goes on; Impossible SDK copies its control records at a pinned commit. The session chose the form: rows under `needs`, the line `**Need:**`, a section for every need (`10-platform-services/TODO-13`, written by `imports.py --file-needs`) and an error of Check 42 while one is missing. Reversal cost: each moved section's items are kept in its program's repository under `docs/os-roadmap`, and in this history.
+

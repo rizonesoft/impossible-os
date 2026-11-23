@@ -50,106 +50,49 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ## Implementation Order
 
-| Step | Section                             | 💎/⭐ | Dependency                                                      |
-| ---- | ----------------------------------- | ----- | --------------------------------------------------------------- |
-| 1    | Rich Text Document Model            | 💎    | `pmm_alloc_contiguous`, `kmalloc`                               |
-| 2    | RTF File Format (Reader + Writer)   | 💎    | §1 document model                                               |
-| 3    | Rich Text Rendering + Layout Engine | 💎    | §1 model, `ttf_measure_width`, `gfx_fill_rect`                  |
-| 4    | Toolbar + Menus                     | 💎    | §3 rendering, `CTRL_COMBOBOX`, `dialog_color`                   |
-| 5    | Formatting Interactions             | 💎    | §3 + §4 stable                                                  |
-| 6    | File Operations + File Associations | 💎    | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
-| 7    | Print (Stretch)                     | 💎    | §3 layout, `pdf_begin/draw_text/end` D10T12 §6                  |
+| Step | Section                             | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | ----------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | Rich Text Document Model            | 💎    | §8                                                                                     |  [ ]   |
+| 2    | RTF File Format (Reader + Writer)   | 💎    | §8, §1                                                                                 |  [ ]   |
+| 3    | Rich Text Rendering + Layout Engine | 💎    | §8, §1                                                                                 |  [ ]   |
+| 4    | Toolbar + Menus                     | 💎    | §8, §3                                                                                 |  [ ]   |
+| 5    | Formatting Interactions             | 💎    | §8, §3, §4                                                                             |  [ ]   |
+| 6    | File Operations + File Associations | 💎    | §8, §2                                                                                 |  [ ]   |
+| 7    | Print (Stretch)                     | 💎    | §8, §3                                                                                 |  [ ]   |
+| 8    | Import WordPad                      | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §3 |  [ ]   |
 
 ---
 
 ## 1. Rich Text Document Model
 
-> Novel data structure: no prior Impossible OS precedent for a paragraph-level editor.
-> Doubly-linked paragraph list with per-paragraph run chains; snapshot-based undo must
-> serialize and restore arbitrary regions of the paragraph list.
+**Moved:** wordpad
 
-**Source file:** `src/apps/wordpad/doc_model.c`; header `include/apps/wordpad/doc_model.h`
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] **Character format** (`struct char_fmt`): `font_name[32]`, `font_size_pt` (uint16), `bold`, `italic`, `underline`, `strikethrough` (uint8 flags), `fg_color` (uint32 ARGB), `bg_color` (uint32 ARGB, 0 = transparent)
-- [ ] **Run** (`struct run_t`): `text[256]` (UTF-8 chars), `len`, `char_fmt fmt`; runs are the atoms of formatted text sharing identical character format; next/prev pointers form per-paragraph run chain
-- [ ] **Paragraph format** (`struct para_fmt`): `align` (ALIGN_LEFT/CENTER/RIGHT/JUSTIFY), `left_indent_pt`, `right_indent_pt`, `first_line_indent_pt`, `space_before_pt`, `space_after_pt`, `tab_stops[8]` (positions in points)
-- [ ] **Paragraph** (`struct para_t`): doubly-linked list node; `runs` (head of run chain), `run_count`, `para_fmt fmt`
-- [ ] **Document** (`struct doc_t`): `head`, `tail` paragraph pointers; `para_count`; `cursor_para`, `cursor_run`, `cursor_offset`; `sel_start`, `sel_end` (absolute char offsets from doc start)
-- [ ] `doc_insert_char(doc, ch)` → insert into current run at `cursor_offset`; if run full (256 chars): split run
-- [ ] `doc_delete_before(doc)` → delete char before cursor; if at run start: merge with prev run or prev para
-- [ ] `doc_split_para(doc)` → at cursor position, split current para into two; new para inherits current para_fmt and run's char_fmt
-- [ ] `doc_apply_char_fmt(doc, sel_start, sel_end, fmt, mask)` → split runs at selection boundaries; apply only masked fields to runs within range
-- [ ] `doc_apply_para_fmt(doc, para, fmt, mask)` → set para_fmt fields on paragraph
-- [ ] **Undo/Redo**: `struct undo_entry { para_snapshot *paras; int count }` ring of 100; `doc_snapshot_range(start_para, end_para)` deep-copies para+run chain (kmalloc each); on undo: restore snapshot; on redo: re-apply; snapshot taken before any formatting or structural edit
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings Rich Text Document Model"`
 
 ---
 
 ## 2. RTF File Format
 
-> RTF 1.5 is a well-specified format with clear Windows reference docs.
+**Moved:** wordpad
 
-**Source file:** `src/apps/wordpad/rtf_io.c`; header `include/apps/wordpad/rtf_io.h`
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] **RTF reader** (`rtf_load(path, doc)`):
-  - [ ] Stack-based parser: maintain a state stack (pushed on `{`, popped on `}`); state = current char_fmt + para_fmt + current color index
-  - [ ] **Font table** `{\fonttbl {\f0\froman\fcharset0 Selawik;}...}` → `g_font_table[32]` maps `\fN` index to font name
-  - [ ] **Color table** `{\colortbl ;\red255\green0\blue0;...}` → `g_color_table[32]` maps index to ARGB
-  - [ ] **Control words** (apply to current state):
-    - `\b` `\b0` -- bold on/off
-    - `\i` `\i0` -- italic on/off
-    - `\ul` `\ulnone` -- underline on/off
-    - `\strike` `\strike0` -- strikethrough on/off
-    - `\fsN` -- font size in half-points (`/2` to get pt)
-    - `\fN` -- font index → look up `g_font_table`
-    - `\cfN` -- foreground color index → look up `g_color_table`
-    - `\highlightN` -- background color index
-    - `\par` -- emit current run; create new paragraph inheriting default para_fmt
-    - `\pard` -- reset para_fmt to defaults
-    - `\qc` `\qr` `\qj` -- alignment (default = left)
-    - `\liN` `\riN` `\fiN` -- left/right/first-line indent in twips (`/ 1440 × 72` for pt)
-    - `\sbN` `\saN` -- space-before / space-after in twips
-    - `\tabN` -- tab stop in twips
-  - [ ] Unrecognized control words: skip word + optional parameter; do not abort
-  - [ ] Plain text bytes (not control) → append to current run buffer
-- [ ] **RTF writer** (`rtf_save(path, doc)`): emit minimal valid RTF:
-  - [ ] Header: `{\rtf1\ansi\deff0`
-  - [ ] Font table: one entry per unique font name in doc
-  - [ ] Color table: one entry per unique fg/bg color
-  - [ ] For each paragraph: `\pard` + para_fmt control words; for each run: char_fmt control words + plain text (escape `{`, `}`, `\` as `\{`, `\}`, `\\`); `\par`
-  - [ ] Footer: `}`
-- [ ] **Plain-text fallback**: if file has no `{\rtf1` header → load as plain text into single run per line, default char/para fmt
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings RTF File Format"`
 
 ---
 
 ## 3. Rich Text Rendering + Layout Engine
 
-> Multi-run line-breaking, per-run glyph metrics, and a ruler with draggable tab stop markers
-> are novel layout infrastructure with no prior Impossible OS precedent.
+**Moved:** wordpad
 
-**Source file:** `src/apps/wordpad/wordpad_render.c`
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] Look fonts up through `font_mgr_find_family()` and the bold/italic/weight matching of `08-graphics-ui/TODO-02-text-font-internationalization.md` §1-§2, not a local `ttf_get_by_name()`; `font_mgr.h` has fixed slots only today
-- [ ] **Canvas area**: below toolbar (40 px) and ruler (20 px); left margin 60 px (`g_left_margin_px`); right margin 60 px; `CTRL_SCROLLBAR_VERT` on right
-- [ ] **Line layout** (`layout_line` struct: run pointers + y-pos + height + baseline):
-  - [ ] For each paragraph, iterate runs; measure each run word by word via `ttf_measure_width(font_for_run, word)`
-  - [ ] If adding a word would exceed `canvas_w - left_margin - right_margin` → start new visual line
-  - [ ] Track line height = `max(run_height for runs on line)`; track baseline = `max(font_ascent)`
-  - [ ] Paragraph spacing: add `para_fmt.space_before_pt` before first line, `space_after_pt` after last line
-- [ ] **Rendering**: for each visible line, for each run on that line:
-  - [ ] `ttf_font_t *f = ttf_get_by_name(run->fmt.font_name, run->fmt.font_size_pt)` (read as the family lookup of the item above) (fallback to `FONT_UI` if name not found)
-  - [ ] Apply bold via `ttf_get_bold()` / italic via `ttf_get_italic()` (or TTF style variants if loaded)
-  - [ ] `ttf_draw_string(surface, f, x, baseline_y, run->text, run->fmt.fg_color)`
-  - [ ] Underline: `gfx_draw_line(surface, x, baseline_y+2, x+run_w, baseline_y+2, fg_color, 1)`
-  - [ ] Strikethrough: `gfx_draw_line` at `baseline_y - font_size/4`
-  - [ ] Background: `gfx_fill_rect(surface, x, line_y, run_w, line_h, bg_color)` if bg_color != 0
-- [ ] **Selection highlight**: for runs between `sel_start` and `sel_end`, compute pixel range; `gfx_fill_rect()` with accent color (partial run = use `ttf_measure_width` for prefix offset)
-- [ ] **Cursor**: 1 px vertical line at insertion point; 500 ms blink; hidden when selection active
-- [ ] **Alignment**: JUSTIFY spreads words via extra word-spacing; CENTER/RIGHT compute x offset per line
-- [ ] **Horizontal ruler** (20 px strip above canvas, same width):
-  - [ ] Gray background; tick marks at 0.5-inch intervals; numbers at 1-inch intervals
-  - [ ] Left indent marker (downward triangle at `para_fmt.left_indent_pt`); right indent marker (upward triangle); first-line indent (top-down triangle offset from left)
-  - [ ] Tab stop markers (small `T` icons at each tab stop position)
-  - [ ] Drag: mouse-down on indent marker → drag horizontal → update `para_fmt`; drag tab stop → reposition; drag off ruler → delete tab stop
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings Rich Text Rendering + Layout Engine"`
 
 ---
 
@@ -157,66 +100,66 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 **Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#button`](../../docs/design/controls.md#button), [`controls.md#menu-bar-and-menus`](../../docs/design/controls.md#menu-bar-and-menus)
 
-**Source file:** `src/apps/wordpad/wordpad_ui.c`
+**Moved:** wordpad
 
-- [ ] **Format command bar** (`THEME_SIZE_COMMAND_BAR_HEIGHT` (48) per `docs/design/shell.md#app-window-layout`; Bold/Italic/Underline are toggle buttons per `docs/design/controls.md#button`):
-  - [ ] Font family `CTRL_COMBOBOX` (120 px wide): lists all loaded TTF fonts from `font_mgr_list()`; change → `doc_apply_char_fmt(doc, sel, {.font_name=selected}, MASK_FONT)`
-  - [ ] Font size `CTRL_COMBOBOX` (60 px): common sizes 8/9/10/11/12/14/16/18/20/24/28/36/48/72 + typed; change → apply `font_size_pt`
-  - [ ] `[B]` (Ctrl+B), `[I]` (Ctrl+I), `[U]` (Ctrl+U), `[S]` (Ctrl+S for strikethrough) toggle buttons -- show pressed state when cursor is in formatted run; click → toggle on selection
-  - [ ] `[A▾]` text color button: click → `dialog_color()` → apply `fg_color`; color swatch shows current selection color
-  - [ ] `[🖊▾]` highlight color: click → `dialog_color()` → apply `bg_color`
-  - [ ] Alignment buttons: `[≡]` `[≡]` `[≡]` `[≡]` (left/center/right/justify) -- only one active at a time; click → `doc_apply_para_fmt`
-  - [ ] `[→]` indent / `[←]` outdent: increment/decrement `left_indent_pt` by 720 (½ inch in twips)
-- [ ] **Menu bar**: `File  Edit  View  Insert  Format  Help`
-  - [ ] `File`: New, Open, Save, Save As, Recent Files, Print (§7), Exit
-  - [ ] `Edit`: Undo, Redo, Cut, Copy, Paste, Select All, Find (Ctrl+F)
-  - [ ] `View`: Word Wrap (toggle), Ruler (toggle), Status Bar (toggle), Zoom submenu
-  - [ ] `Insert`: Date/Time (wall-clock time from `include/kernel/time/wall_clock.h`; no `time_now()` exists → formatted string `YYYY-MM-DD HH:MM` inserted at cursor), horizontal rule (insert `─────` string)
-  - [ ] `Format`: Font dialog (extended version of toolbar controls in a dialog), Paragraph dialog (indent + spacing + alignment fields), Bullets (toggle simple bullet list: prepend `• ` to each selected para)
-- [ ] **Status bar** (`THEME_SIZE_STATUS_BAR_HEIGHT` (24), caption style): `Page {n} of {total}` left; `{cursor_line}, {cursor_col}` center; `{encoding}` right
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings Toolbar + Menus"`
 
 ---
 
 ## 5. Formatting Interactions
 
-- [ ] **Ctrl+B / I / U / Strikethrough**: check if all chars in selection already have format → if yes, remove; else apply; update toolbar toggle state
-- [ ] **Tab key**: insert tab character `\t` into run; advance cursor to next tab stop (scan `para_fmt.tab_stops[]`; default tab stops every 720 twips)
-- [ ] **Enter (paragraph split)**: `doc_split_para()` → new paragraph inherits current `para_fmt` and cursor run's `char_fmt`; cursor moves to first position of new para
-- [ ] **Backspace at para start**: merge current para with previous (append current para's runs to previous para's run chain; delete current para node)
-- [ ] **Delete at para end**: merge next para into current (symmetric to backspace merge)
-- [ ] **Mouse click → cursor**: hit-test line then run then char offset (binary search via `ttf_measure_width` prefix sums)
-- [ ] **Click+drag selection**: set `sel_start` on mouse-down; extend `sel_end` on mouse-move; render highlight (§3); copy selection text to clipboard on Ctrl+C (flatten runs to plain text)
-- [ ] **Shift+Arrow**: extend selection by character or line; Ctrl+Shift+Arrow → extend by word
-- [ ] **Ctrl+A**: `sel_start=0`, `sel_end=doc_total_len(doc)`
+**Moved:** wordpad
+
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings Formatting Interactions"`
 
 ---
 
 ## 6. File Operations + File Associations
 
-- [ ] **File→Open**: `dialog_file_open("Rich Text|*.rtf|Text Files|*.txt|All Files|*.*")` → `rtf_load(path, doc)` or plain-text load; update window title; `modified=0`
-- [ ] **File→Save**: if `filepath==""` → Save As; else `rtf_save(filepath, doc)` (always saves as RTF); `modified=0`
-- [ ] **File→Save As**: `dialog_file_save("RTF Document|*.rtf|Plain Text|*.txt")` → if `.txt` selected: strip formatting, `vfs_write` plain text; if `.rtf`: `rtf_save`; update `filepath` + title
-- [ ] **Modified flag + title**: `"*{filename} -- WordPad"` when unsaved; save-changes dialog on New/Open/Close
-- [ ] **Drag-and-drop**: `WM_DROPFILES` → open dropped file (save-changes check first)
-- [ ] **CLI arg**: `wordpad.exe C:\path\doc.rtf` → open immediately
-- [ ] **Recent files**: `HKCU\Software\Impossible\WordPad\RecentFiles\{0..9}` (10 MRU entries)
+**Moved:** wordpad
+
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
+
 - [ ] **File associations**:
   - [ ] `file_assoc_set(".rtf", "ImpossibleOS.WordPad", "C:\\Impossible\\System32\\wordpad.exe")`
   - [ ] `file_assoc_set(".doc", "ImpossibleOS.WordPad", "C:\\Impossible\\System32\\wordpad.exe")` -- opens as RTF (best-effort; `.doc` binary format fallback to RTF header detection)
-- [ ] **"Open with WordPad" context verb** registered for any file type
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings File Operations + File Associations"`
 
 ---
 
 ## 7. Print (Stretch)
 
-> → XREF: `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
+**Moved:** wordpad
 
-- [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
-- [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
-- [ ] **File→Print**: export the document through the PDF writer from TODO-12 §6: one `pdf_begin()`, one PDF page per layout page, one `pdf_end()`
-  - Once: `pdf_begin(out_path, page_width_pt, page_height_pt)`. Per page: `pdf_begin_page()`, `pdf_draw_text(x, y, text, font_name, size_pt, color)` per layout line, `pdf_draw_rect` for background fills and underlines, `pdf_end_page()`. After the last page: `pdf_end()` once
-- [ ] **Print dialog**: `dialog_confirm("Print to PDF?\nOutput: C:\\Users\\{name}\\Documents\\{filename}.pdf", MB_OKCANCEL)` → on OK: run pagination + PDF export; toast `"Document exported to {path}"`
-- [ ] **Page Setup**: paper size dropdown (A4/Letter/A5), margin inputs (top/bottom/left/right in mm); stored in `HKCU\Software\Impossible\WordPad\PageSetup\*`
+Built in WordPad, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: wordpad brings Print (Stretch)"`
+
+## 8. Import WordPad
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** wordpad
+
+WordPad is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull wordpad` into `src/apps/wordpad/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open WordPad on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose wordpad`
+- [ ] Commit: `"apps: WordPad imported"`
 
 ---
 

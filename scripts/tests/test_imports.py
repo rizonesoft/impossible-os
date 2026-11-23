@@ -14,7 +14,7 @@ import imports
 
 FILE = "todo/11-apps/TODO-09-calculator.md"
 MOVED, IMPORT = (f"{FILE} {imports.SIGN}{n}" for n in (1, 3))
-TEXT = "# T\n\n## 1. Engine\n\n**Moved:** calculator\n\n## 2. Other\n\ntext\n\n## 3. Import\n\n**Import:** calculator\n\n- [ ] x\n"
+TEXT = f"# T\n\n## Implementation Order\n\n| Step | Section | Dep | Status |\n| --- | --- | --- | --- |\n| 1 | Engine | {imports.SIGN}3 | [ ] |\n| 2 | Other | -- | [ ] |\n| 3 | Import | -- | [ ] |\n\n## 1. Engine\n\n**Moved:** calculator\n\n## 2. Other\n\ntext\n\n## 3. Import\n\n**Import:** calculator\n\n- [ ] x\n"
 PLAN = f"| Done | Section |\n| :-: | --- |\n| [ ]  | `D{11} T{9:02} {imports.SIGN}3`  | Import | none | 1 |\n"
 
 
@@ -30,8 +30,8 @@ class Imports(unittest.TestCase):
         self.root = Path(self.temp.name, "os")
         self.root.mkdir()
         self.start(self.root)
-        self.ledger = {"schema": 1, "removed": [], "sources": {"calculator": {
-            "repository": "Calculator", "from": ["engine", "run.sh"], "kind": "app", "path": "src/apps/calculator", "section": IMPORT, "commit": None, "tree": None, "open": None}},
+        self.ledger = {"schema": 1, "removed": [], "needs": [], "sources": {"calculator": {
+            "repository": "Calculator", "from": ["engine", "engine.txt", "run.sh"], "kind": "app", "path": "src/apps/calculator", "section": IMPORT, "commit": None, "tree": None, "open": None}},
             "moved": [{"section": MOVED, "source": "calculator", "to": "Calculator: engine/"}]}
         self.write(FILE, TEXT)
         self.write("todo/implementation-plan.md", PLAN)
@@ -83,7 +83,7 @@ class Imports(unittest.TestCase):
             self.assertIn("does not carry the one line **Import:**", self.faults(), hidden)
 
     def test_a_section_number_of_three_digits_works(self):
-        self.write(FILE, TEXT.replace("## 3. Import", "## 103. Import"))
+        self.write(FILE, TEXT.replace("## 3. Import", "## 103. Import").replace(f"| Engine | {imports.SIGN}3 |", f"| Engine | {imports.SIGN}103 |"))
         self.ledger["sources"]["calculator"]["section"] = IMPORT[:-1] + "103"
         self.save()
         self.assertEqual(self.faults(), "")
@@ -164,9 +164,9 @@ class Imports(unittest.TestCase):
         for root, path in ((theirs, "."), (self.root, "src/apps/calculator")):
             self.write(f"{path}/engine/a.c", "int a;\n", root=root)
             self.write(f"{path}/run.sh", "#!/bin/sh\n", root=root)
+            self.write(f"{path}/engine.txt", "git sorts it before engine/\n", root=root)
             (root / path / "run.sh").chmod(0o755)
             (root / path / "engine/alias.h").symlink_to("a.c")
-        self.write("engine.txt", "sorts between engine and engine/\n", root=theirs)
         self.write("AGENTS.md", "not imported\n", root=theirs)
         self.commit(root=theirs)
         self.git("add", "-A")
@@ -210,8 +210,8 @@ class Imports(unittest.TestCase):
 
     def test_a_bad_ledger_is_refused(self):
         good = json.dumps(self.ledger)
-        for bad in ("{", "[]", good.replace('"schema": 1', '"schema": 2'), good.replace('"kind": "app", ', ""), good.replace('["engine", "run.sh"]', "[]"),
-                    good.replace('["engine", "run.sh"]', '["engine", "engine"]'), good.replace('["engine", "run.sh"]', '["../x"]'),
+        for bad in ("{", "[]", good.replace('"schema": 1', '"schema": 2'), good.replace('"kind": "app", ', ""), good.replace('["engine", "engine.txt", "run.sh"]', "[]"),
+                    good.replace('["engine", "engine.txt", "run.sh"]', '["engine", "engine"]'), good.replace('["engine", "engine.txt", "run.sh"]', '["../x"]'),
                     good.replace('"open": null', '"open": {}'), good.replace('"Calculator"', '" "', 1),
                     good.replace('"Calculator"', "3", 1), good.replace('"calculator": {', '"Cal c": {'), good.replace("src/apps/calculator", "../x"), good.replace("src/apps/calculator", ".git"),
                     good.replace('"Calculator"', '"../Calculator"', 1),
@@ -417,6 +417,86 @@ class Imports(unittest.TestCase):
         self.ledger["sources"]["calculator"]["tree"] = None
         self.save()
         self.assertIn("are not full hashes", self.faults())
+
+    def test_a_moved_section_waits_for_its_import(self):
+        self.write(FILE, TEXT.replace(f"| Engine | {imports.SIGN}3 |", "| Engine | -- |"))
+        self.assertIn("does not depend on its import", self.faults())
+        self.write(FILE, TEXT)
+        row = PLAN.splitlines()[2].replace(f"{imports.SIGN}3", f"{imports.SIGN}1").replace("[ ]", "[x]")
+        self.write("todo/implementation-plan.md", PLAN + row + "\n")
+        self.assertIn("is done in the plan, and its import", self.faults())
+
+    def test_what_is_new_at_the_top_of_a_repository_is_not_left_out_unseen(self):
+        theirs, remote = self.linked()
+        for name, said in (("todo", None), ("levels", "levels is new in Calculator")):
+            self.write(f"{name}/x", "x", root=theirs)
+            self.commit(root=theirs)
+            self.git("push", "-q", "origin", "main", root=theirs)
+            if said:
+                with self.assertRaisesRegex(SystemExit, said):
+                    imports.pull(self.root, "calculator", None)
+            else:
+                imports.pull(self.root, "calculator", None)
+
+    def test_a_need_and_its_section_are_never_without_each_other(self):
+        self.ledger["needs"] = [{"id": "calculator-sound", "source": "calculator", "what": "a sound", "section": f"{FILE} {imports.SIGN}2"}]
+        self.save()
+        self.assertIn("does not carry the line **Need:** calculator-sound", self.faults())
+        self.write(FILE, TEXT.replace("text", "**Need:** calculator-sound"))
+        self.assertEqual(self.faults(), "")
+        self.commit()
+        self.ledger["needs"] = []
+        self.save()
+        self.assertIn("**Need:** calculator-sound has no row", self.faults())
+        self.write(FILE, TEXT)
+        self.assertIn("need calculator-sound left todo/imports.json", self.faults())
+
+    def test_what_a_program_declares_and_nobody_builds_is_named(self):
+        repos, source = self.arrive()
+        for name in ("Calculator", "ImpossibleSDK"):
+            (repos / name).mkdir(exist_ok=True)
+        self.start(repos / "ImpossibleSDK")
+        self.write("abi/tiers.json", json.dumps({"tiers": [{"tier": 1, "functions": {"kernel32.dll": ["FunctionNamedHere", "FunctionOfNobody"]}}]}), root=repos / "ImpossibleSDK")
+        self.commit(root=repos / "ImpossibleSDK")
+        self.write("app.json", json.dumps({"needs": [{"id": "calculator-sound", "what": "a sound"}]}), root=repos / "Calculator")
+        self.ledger["sources"]["impossible-sdk"] = {**self.ledger["sources"]["calculator"], "repository": "ImpossibleSDK", "kind": "part", "path": "src/libs/sdk", "commit": None, "tree": None, "section": f"{FILE} {imports.SIGN}2"}
+        tier = {"id": "impossible-sdk-tier-1", "source": "impossible-sdk", "what": "tier 1", "section": f"{imports.NEEDS} {imports.SIGN}1"}
+        self.ledger["needs"] = [tier]
+        self.save()
+        self.write(FILE, TEXT.replace("text", "FunctionOfNobody in prose answers nothing"))
+        self.write(imports.NEEDS, "# T\n\n## 1. One\n\n**Need:** impossible-sdk-tier-1\n\n- [ ] `kernel32.dll`: `FunctionNamedHere`\n- [ ] `user32.dll`: `FunctionOfNobody`\n```\n- [ ] `kernel32.dll`: `FunctionOfNobody`\n```\n\n## 2. Another tier\n\n- [ ] `kernel32.dll`: `FunctionOfNobody`\n")
+        self.git("add", "-A")
+        with mock.patch.dict(os.environ, {"IMPOSSIBLE_REPOS": str(repos)}):
+            # The program's need is not committed there yet.
+            self.assertEqual(imports.wanted(self.root), ["impossible-sdk needs 1 more Windows function(s) of tier 1: FunctionOfNobody"])
+            self.commit(root=repos / "Calculator")
+            self.assertIn("calculator needs a sound (calculator-sound)", imports.wanted(self.root))
+            self.write(imports.NEEDS, "# T\n\n## Implementation Order\n\n| a | Order | Deliverable | Depends On | Status |\n| --- | --- | --- | --- | --- |\n| x | 1 | " + imports.SIGN + "1 one | -- | [ ] |\n\n---\n\n## 1. One\n\n**Need:** impossible-sdk-tier-1\n\n- [ ] `kernel32.dll`: `FunctionNamedHere`\n\n---\n\n## Verification\n")
+            self.write(FILE, TEXT.replace("text", "**Import:** impossible-sdk"))
+            self.save()
+            with self.assertRaisesRegex(SystemExit, "not staged"):
+                imports.file_needs(self.root)
+            self.git("add", "-A")
+            imports.file_needs(self.root)
+            self.assertEqual(imports.wanted(self.root), [])
+            self.assertEqual(self.faults(), "")
+            text = (self.root / imports.NEEDS).read_text()
+            rows = [line for line in text.split("\n") if line.startswith("| ")][2:]
+            self.assertEqual([r.split("|")[2].strip() for r in rows], ["1", "2", "3"])
+            self.assertIn(f"| {imports.SIGN}3, -- |", rows[0])  # the tier waits for what was added to it
+            self.assertIn("`TODO-08`", rows[2])
+            self.assertIn("- [ ] `FunctionOfNobody` of `kernel32.dll` acts as on Windows", text)
+            self.assertEqual(text.count("Name what it stands on"), 2)
+            self.assertLess(text.index("## 3. 1 more"), text.index("## Verification"))
+            imports.file_needs(self.root)  # nothing new: nothing written
+            self.assertEqual((self.root / imports.NEEDS).read_text(), text)
+            for bad in ('{"needs": 7}', '{"needs": [{"id": "A b", "what": "a sound"}]}', '{"needs": [{"id": "a", "what": "two\\nlines"}]}'):
+                self.write("app.json", bad, root=repos / "Calculator")
+                self.commit(root=repos / "Calculator")
+                with self.assertRaisesRegex(SystemExit, "cannot be read"):
+                    imports.wanted(self.root)
+        with mock.patch.dict(os.environ, {"IMPOSSIBLE_REPOS": str(repos / "nowhere")}):
+            self.assertEqual(imports.wanted(self.root), [])
 
     def test_a_false_proposal_is_refused(self):
         self.linked()

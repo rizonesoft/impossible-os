@@ -18,6 +18,7 @@ One page per apps or tools roadmap file, each following the [page contract](../c
 | [Collaboration and Network Client Apps](collaboration-apps.md) | Shipped ARP and ICMP; planned VNC client, IRC, feed reader, `arp` and `route` commands |
 | [Notepad App](notepad.md) | Text and file calls; planned line-ending aware editor, associations, recent files |
 | [Calculator](calculator.md) | Shipped `kmath` functions; planned Standard, Scientific and Programmer modes with history |
+| [Imported Programs and Parts](imported-programs.md) | Programs from their own repositories, how they arrive and how a change goes back |
 | [WordPad](wordpad.md) | Text calls; planned rich text model, RTF reader and writer, ruler, toolbar, print to PDF |
 | [Photos](photos.md) | Shipped image load, scale and save, wallpaper keys; planned viewer, slideshow, EXIF, editing |
 | [Screenshot Tool and Archive Manager](screenshot-archive.md) | Frame buffer and PNG writer; planned capture hotkeys, snipping tool, ZIP manager |

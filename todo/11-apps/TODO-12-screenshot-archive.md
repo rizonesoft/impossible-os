@@ -59,41 +59,36 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 ## Implementation Order
 
-| Step | Section                         | 💎/⭐ | Dependency                                                           |
-| ---- | ------------------------------- | ----- | -------------------------------------------------------------------- |
-| 1    | Full + Window Capture + Hotkeys | 💎    | `fb_get_backbuffer`, `image_save_png`, `notify_send`, `hotkey_table` |
-| 2    | Region Select Overlay           | ⭐    | §1 capture pipeline, `wm_create_window` z_order overlay              |
-| 3    | Snipping Tool UI                | 💎    | §1 + §2 capture complete, `CTRL_*` widgets                           |
-| 4    | Archive Manager                 | 💎    | `zip_open/create/add_file/extract/list` APIs (D12T01 §4)             |
-| 5    | ZIP Shell Integration           | 💎    | §4 stable, `file_assoc_set`, context menu verbs                      |
-| 6    | Screenshot Enhancements         | 💎    | --                                                                   |
-| 7    | Archive Manager                 | 💎    | --                                                                   |
+| Step | Section                         | 💎/⭐ | Dependency                                                                             | Status |
+| ---- | ------------------------------- | ----- | -------------------------------------------------------------------------------------- | :----: |
+| 1    | Full + Window Capture + Hotkeys | 💎    | §8                                                                                     |  [ ]   |
+| 2    | Region Select Overlay           | ⭐    | §8, §1                                                                                 |  [ ]   |
+| 3    | Snipping Tool UI                | 💎    | §8, §1, §2                                                                             |  [ ]   |
+| 4    | Archive Manager                 | 💎    | §9                                                                                     |  [ ]   |
+| 5    | ZIP Shell Integration           | 💎    | §4 stable, `file_assoc_set`, context menu verbs                                        |  [ ]   |
+| 6    | Screenshot Enhancements         | 💎    | §8                                                                                     |  [ ]   |
+| 7    | Archive Manager                 | 💎    | §9                                                                                     |  [ ]   |
+| 8    | Import Screenshot               | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §6 |  [ ]   |
+| 9    | Import Zip                      | 💎    | `10-platform-services/TODO-07` §7 (PE programs run), `10-platform-services/TODO-13` §3 |  [ ]   |
 
 ---
 
 ## 1. Full + Window Capture + Hotkeys
 
-**Source file:** `src/apps/snip/screenshot.c`; header `include/apps/snip/screenshot.h`
+**Moved:** stillframe
+
+Built in Stillframe, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+What is this OS's own work stays here:
 
 - [ ] Settle screenshot ownership (item: "Settle screenshot ownership") before coding: `08-graphics-ui/TODO-09` §5 owns PrtSc and Alt+PrtSc (`src/desktop/screenshot.c`)
   - §6 of this file owns Win+Shift+S; §1 and §2 restate both under `src/apps/snip/`. Keep capture in one place and only the snipping window and annotation here.
-- [ ] **`screenshot_full()`**:
-  - [ ] `uint32_t *fb = fb_get_backbuffer()` → copy `fb_w * fb_h * 4` bytes into `image_t g_capture` (allocated via `pmm_alloc_contiguous`)
-  - [ ] Build path: `"C:\\Users\\{name}\\Pictures\\Screenshots\\Screenshot_{YYYY-MM-DD_HH-MM-SS}.png"` using `time_now()` fields
-  - [ ] `vfs_mkdir("C:\\Users\\{name}\\Pictures\\Screenshots")` (no-op if exists)
-  - [ ] `image_save_png(&g_capture, path)` → save
-  - [ ] `clipboard_set(CLIP_IMAGE, &g_capture)` → copy to clipboard simultaneously
-  - [ ] `notify_send("Screenshot saved", path, ICON_SCREENSHOT, 3000)` → toast
-- [ ] **`screenshot_window(wm_handle_t hwnd)`**:
-  - [ ] Query window bounds from `wm_get_window_rect(hwnd, &x, &y, &w, &h)`
-  - [ ] Allocate `image_t` `w × h`; copy rect from backbuffer: `memcpy` row by row starting at `fb + y * fb_w + x`
-  - [ ] Same save + clipboard + toast flow as `screenshot_full()`
-- [ ] **`screenshot_region(int x, int y, int w, int h)`**: same as window but with caller-supplied rect
 - [ ] **Global hotkey registration** (called from `snip_init()` at desktop startup):
   - [ ] `hotkey_table[N] = { .modifiers=0, .scancode=KEY_PRINTSCREEN, .handler=screenshot_full }`
   - [ ] `hotkey_table[N+1] = { .modifiers=MOD_ALT, .scancode=KEY_PRINTSCREEN, .handler=screenshot_active_window }` -- `screenshot_active_window()` = `screenshot_window(wm_get_focused_window())`
   - [ ] `hotkey_table[N+2] = { .modifiers=MOD_WIN|MOD_SHIFT, .scancode=KEY_S, .handler=snip_region_start }` -- launches region select (§2)
-- [ ] **`screenshot_active_window()`**: wrapper that calls `screenshot_window(wm_get_focused_window())`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: stillframe brings Full + Window Capture + Hotkeys"`
 
 ---
 
@@ -101,28 +96,12 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
-> Novel full-screen WM layer with per-pixel clear-region compositing inside a semi-transparent
-> dim overlay -- no prior Impossible OS precedent for an interactive screen-capture overlay.
+**Moved:** stillframe
 
-**Source file:** `src/apps/snip/region_select.c`
+Built in Stillframe, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-- [ ] **Snipping toolbar first** (`docs/design/shell.md#snipping-toolbar`): 48 px flyout-acrylic bar centred 12 px from the top over the `smoke` scrim
-  - Rectangle, Window, Full screen and Freeform toggle buttons, then close (`THEME_SIZE_SNIP_TOOLBAR_HEIGHT`)
-  - The chosen mode drives the selection below
-- [ ] **Freeform mode**: record the pointer path while dragging; capture its bounding box and clear pixels outside the path to transparent
-- [ ] **Overlay window**: `wm_create_window("snip_overlay", 0, 0, fb_w, fb_h, WM_NO_BORDER | WM_NO_TASKBAR)` with `z_order=32767` (above all windows); cursor set to crosshair
-- [ ] **Dim layer**: `gfx_fill_rect(overlay_surf, 0, 0, fb_w, fb_h, THEME_<THEME>_SMOKE)` (the design's `smoke` scrim) -- composited by WM alpha-blend pass
-- [ ] **Rubber-band selection**:
-  - [ ] `mouse_down` → record `g_sel_x0, g_sel_y0`; set `g_dragging = true`
-  - [ ] `mouse_move` while dragging → compute `sel_x = min(x0, cx)`, `sel_y = min(y0, cy)`, `sel_w`, `sel_h`
-  - [ ] Each frame: re-draw dim layer; **blit the unmodified backbuffer region** onto the overlay surface at `(sel_x, sel_y)` to make selected area appear clear: `gfx_blit(overlay_surf, sel_x, sel_y, fb + sel_y*fb_w + sel_x, sel_w, sel_h)`
-  - [ ] Draw the selection with the design's selection tokens: `selection_fill` inside and a 1 px `selection_stroke` border (`THEME_<THEME>_SELECTION_*`)
-  - [ ] Corner handles: 6×6 px white filled squares at corners + edge midpoints
-- [ ] **Mouse release** → `screenshot_region(sel_x, sel_y, sel_w, sel_h)` (§1 capture); destroy overlay; raise the capture toast (below)
-- [ ] **Escape key** → destroy overlay; cancel with no capture
-- [ ] **After capture**: raise a toast per `docs/design/shell.md#toast-notifications`; no separate floating panel
-  - "Screenshot copied to clipboard" with the image thumbnail and saved path
-  - Actions: Save, Edit in Photos (`photos.exe {path}`), Annotate (`sniptool.exe` with the image pre-loaded, §3)
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: stillframe brings Region Select Overlay"`
 
 ---
 
@@ -130,23 +109,12 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-**Source file:** `src/apps/snip/sniptool.c`; binary: `sniptool.exe`
+**Moved:** stillframe
 
-- [ ] **Main window** `wm_create_window("Snipping Tool", 400, 500, WM_FIXED)`:
-  - [ ] **Mode selector**: Rectangle, Window, Full screen and Freeform as toggle buttons (the same modes as the snipping toolbar of `docs/design/shell.md#snipping-toolbar`); default Rectangle
-  - [ ] **Delay selector** (dropdown / radio): `0 s | 1 s | 3 s | 5 s`; default 0 s
-  - [ ] `[New]` button → if delay > 0: countdown OSD (`"3… 2… 1…"` centred, display style `THEME_TYPE_DISPLAY_*` 68/92, `text_primary` over the `smoke` scrim); then perform capture per selected mode
-  - [ ] Full screen mode → `screenshot_full()` directly; Window mode → `screenshot_window(wm_get_focused_window())` (minimize Snip Tool first); Rectangular → `snip_region_start()` (§2)
-- [ ] **Recent captures grid** (home screen, below mode/delay bar):
-  - [ ] 3-column thumbnail grid; load from `HKCU\Software\Impossible\SnipTool\RecentCaptures\{0..9}` paths; `image_scale(&thumb, &img, 120, 80, IMAGE_FIT_FIT)`; click → open in annotation view
-- [ ] **Annotation view** (when capture is available):
-  - [ ] Canvas showing captured image; toolbar: `[✏ Pen]` `[🖊 Highlighter]` `[✂ Crop]` `[🗑 Eraser]` `[↩ Undo]`
-  - [ ] **Pen**: mouse drag → draw 2 px colored stroke; color picker via `dialog_color()`
-  - [ ] **Highlighter**: semi-transparent (alpha 0x80) 12 px yellow rect stroke
-  - [ ] **Crop**: rubber-band (reuse region-select logic §2 but in-window); on Confirm: `image_crop` (pixel copy as in Photos §7)
-  - [ ] Undo: single-level (keep one `image_t g_undo` copy; `Ctrl+Z` swaps)
-  - [ ] `[Copy]` → `clipboard_set(CLIP_IMAGE, &annotated)`; `[Save]` → `image_save_png` to original path (overwrite) or `dialog_file_save` for new path
-- [ ] **Registry persist**: on each save, prepend path to `HKCU\Software\Impossible\SnipTool\RecentCaptures\{0..9}` (shift existing entries)
+Built in Stillframe, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: stillframe brings Snipping Tool UI"`
 
 ---
 
@@ -154,24 +122,12 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
-**Source file:** `src/apps/archiver/archiver.c`; binary: `archiver.exe`
+**Moved:** zip
 
-- [ ] Settle the archive manager spec with the base section §7 of this file: both plan `src/apps/archiver/archiver.c`; keep one spec
-- [ ] **Main window** `wm_create_window("Archive Manager -- {filename}", 700, 500, WM_RESIZABLE)`:
-  - [ ] Toolbar: `[Extract All]` `[Add Files]` `[New Archive]` `[Delete Selected]` + path bar showing current virtual path inside archive
-  - [ ] `CTRL_LISTVIEW` file list -- columns: Name (250 px), Type (80 px), Size (80 px), Compressed (90 px), Modified (130 px); icon from `icon_get_for_ext(entry_name_ext)`
-  - [ ] `CTRL_STATUSBAR`: `"{n} items  |  {total_compressed} compressed  |  {total_original} original"`
-- [ ] **Open archive**:
-  - [ ] `vfs_read(path)` → buffer; `zip_open(&g_zip, buf, size)` → `zip_entry_count(&g_zip)` → `zip_list(&g_zip, entries, max)` → populate `CTRL_LISTVIEW`
-  - [ ] Show size, compressed size, modified timestamp from `zip_entry_t`
-  - [ ] Folder navigation: double-click folder entry → filter listview to `{prefix}/` entries; back button → up one level; path bar shows `archive.zip\folder\subfolder\`
-- [ ] **`[Extract All]`**: `dialog_file_save`-style folder picker → `zip_extract(&g_zip, dest_dir)` → `CTRL_PROGRESSBAR` modal (entry count / total progress) → `notify_send("Extraction complete", dest_dir, ICON_FOLDER, 3000)` → persist last path to `HKCU\Software\Impossible\Archiver\LastExtractPath`
-- [ ] **`[Add Files]`**: `dialog_file_open(multi-select)` → for each path: `zip_add_file(&g_zip, filepath, entry_name)` → refresh listview → update status bar
-- [ ] **`[New Archive]`**: `dialog_file_save("ZIP Archive|*.zip")` → `zip_create(path)` → clear listview; update title
-- [ ] **`[Delete Selected]`**: confirm dialog `"Delete {n} selected items from archive?"` → rebuild archive without selected entries (re-create in-memory, copy non-selected entries via `zip_read`/`zip_add_file`, then `zip_close` + save)
-- [ ] **Drag-and-drop extract**: `WM_DROPFILES` on the archiver window → add dragged files to archive; drag from listview to file manager → `zip_extract_file(&g_zip, entry_name, temp_path)` then pass to file manager
-- [ ] **Password-protected archives**: detect `ZIP_ERR_ENCRYPTED` on `zip_open`; show `"Password-protected archives are not supported"` `MessageBox`
-- [ ] **CLI arg**: `archiver.exe C:\path\file.zip` → open immediately
+Built in Zip, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §9 has brought it and it is shown to work.
+
+- [ ] Shown to work here on the imported copy, as §9 brings it
+- [ ] Commit: `"imports: zip brings Archive Manager"`
 
 ---
 
@@ -204,22 +160,16 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Design:** [`shell.md#snipping-toolbar`](../../docs/design/shell.md#snipping-toolbar), [`shell.md#toast-notifications`](../../docs/design/shell.md#toast-notifications)
 
-Win+Shift+S region select mode: full-screen dim overlay in the `smoke` token (`THEME_DARK_SMOKE`, the scrim `docs/design/shell.md` uses for Task View and dialogs), click+drag rubber-band selection, release → capture region. 3-second countdown overlay before capture. Escape cancels. Extends the PrintScreen module of `08-graphics-ui/TODO-09` §5.
+**Moved:** stillframe
 
-**Files:** `src/desktop/screenshot.c` (extend), `include/desktop/screenshot.h` (extend)
+Built in Stillframe, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §8 has brought it and it is shown to work.
 
-> [!NOTE]
-> → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- the existing full-screen PrintScreen capture lives there; §6 here adds Win+Shift+S region mode as an extension. **Region select state machine**: `SCREENSHOT_IDLE → SCREENSHOT_DIM → SCREENSHOT_SELECTING → SCREENSHOT_CAPTURED`. Win+Shift+S → `screenshot_region_start()`: create full-screen overlay window (`z_order=30000`, `WM_FLAG_FULLSCREEN`); fill with the `smoke` scrim via `gfx_fill_rect(s, 0, 0, sw, sh, THEME_DARK_SMOKE)`; the snipping toolbar follows `docs/design/shell.md#snipping-toolbar` (48 px flyout-acrylic bar centred 12 px from the top; Rectangle, Window, Full screen, Freeform toggle buttons; close). **Rubber-band**: `WM_MOUSE_DOWN` → `sel_start_x/y`; `WM_MOUSE_MOVE` → `sel_end_x/y`; render clear rect (XOR-clear or outline) within dim. Release → `screenshot_capture_region(x1, y1, w, h)`: copy compositor back-buffer pixels for that rect → `image_save_bmp()` to `C:\Users\Default\Pictures\Screenshot_{timestamp}.bmp` + `clipboard_set(CLIP_BITMAP, ...)` (TODO-01 multi-format). **3-second countdown**: optional pre-delay for full-screen PrintScreen: overlay countdown "3…2…1" in large centered text; each second via PIT. **Escape** → `screenshot_region_cancel()`: close overlay; restore state to IDLE. Show toast notification after capture: "Screenshot saved to Pictures".
+What is this OS's own work stays here:
 
-- [ ] Settle screenshot ownership with the earlier sections of this file: §2 restates this region capture
-- [ ] `screenshot_region_start()` -- create dim overlay window; transition to SELECTING state
-- [ ] `WM_MOUSE_DOWN/MOVE/UP` in overlay → rubber-band rect (outline on dim background)
 - [ ] `screenshot_capture_region(x, y, w, h)` -- copy compositor backbuf rect; `image_save_bmp()`; `clipboard_set()`
-- [ ] Countdown overlay for full-screen: `sched_task_add()` 1 s ticks; draw "3/2/1" centred; then capture
-- [ ] Escape handler → `screenshot_region_cancel()` -- destroy overlay
-- [ ] Toast after capture per `docs/design/shell.md#toast-notifications`: `notify_send("Screenshot", "Saved to Pictures", ICON_SCREENSHOT, ...)` (`08-graphics-ui/TODO-11` §5)
 - [ ] Win+Shift+S global hotkey registration
-- [ ] Commit: `"screenshot: region select -- Win+Shift+S, dim overlay, rubber-band, countdown, clipboard+file save"`
+- [ ] Shown to work here on the imported copy, as §8 brings it
+- [ ] Commit: `"imports: stillframe brings Screenshot Enhancements"`
 
 ## 7. Archive Manager
 
@@ -229,22 +179,48 @@ Win+Shift+S region select mode: full-screen dim overlay in the `smoke` token (`T
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-`src/apps/archiver/archiver.c`; open `.zip` via file association; `CTRL_LISTVIEW` (Name/Size/Compressed/Modified); `icon_for_extension()` per entry; Extract All, Add Files, New archive; status bar.
+**Moved:** zip
 
-**Files:** `src/apps/archiver/archiver.c` (new), `include/apps/archiver.h` (new)
+Built in Zip, where the items of this section are kept in `docs/os-roadmap`. The section keeps its place here and stays open until §9 has brought it and it is shown to work.
 
-> [!NOTE]
-> Window: 700×500 px. Open archive: `zip_open(path)` → `zip_list(archive, entries, 512)` → populate `CTRL_LISTVIEW` with 4 columns (Name 240/Size 70/Compressed 90/Modified 120). Icon per entry: `icon_for_extension(ext)`. Double-click entry: extract single file to temp dir + `file_assoc_open()`. **Command bar** (48 px, subtle buttons): "Extract All" → `dialog_file_open(dir_mode)` → `zip_extract(archive, dst_dir)` → `filemgr_navigate(dst_dir)`; "Add Files" → `dialog_file_open(multi)` → for each: `zip_add_file(archive, path, basename(path))`; "New" → `dialog_file_save("New Archive", "*.zip")` → `zip_create(path)`. Keyboard: Delete on selected entry → `zip_remove_entry()` stub (note: miniz doesn't support single-entry removal -- must re-pack entire archive). **Status bar**: "{N} items -- {total_size} bytes -- {compressed_size} bytes ({ratio}% compression)". **File association**: `.zip` → archiver registered in TODO-02 `file_assoc` defaults.
+What is this OS's own work stays here:
 
-- [ ] Settle archive manager ownership with the earlier sections of this file: §4 plans the same `archiver.c`
-- [ ] `void archiver_open(const char *path)` -- `zip_open()`; `zip_list()`; build `CTRL_LISTVIEW`
-- [ ] `void archiver_refresh(void)` -- re-`zip_list()`; update listview + status bar
-- [ ] Toolbar: Extract All → `dialog_file_open(dir)` → `zip_extract()`; Add Files → multi-select → `zip_add_file()` each; New → `dialog_file_save()` → `zip_create()`
 - [ ] Double-click entry: `zip_extract_file()` to `C:\Temp\` → `file_assoc_open()`
-- [ ] Status bar: entry count + total size + compressed size + ratio
-- [ ] Entry delete: re-pack archive: extract all to temp → remove file → re-create archive from remaining files
 - [ ] Register `.zip` in file associations (TODO-02 §1 default assocs)
-- [ ] Commit: `"archiver: archive manager -- CTRL_LISTVIEW, Extract All/Add Files/New, status bar, zip API"`
+- [ ] Shown to work here on the imported copy, as §9 brings it
+- [ ] Commit: `"imports: zip brings Archive Manager"`
+
+## 8. Import Screenshot
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** stillframe
+
+Screenshot is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull stillframe` into `src/apps/stillframe/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Screenshot on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose stillframe`
+- [ ] Commit: `"apps: Screenshot imported"`
+
+## 9. Import Zip
+
+> **Spawned-by:** root
+
+**Design:** n/a -- imports a program, it designs nothing
+
+**Import:** zip
+
+Zip is developed in its own repository and proved on Windows. This section brings its program and tests here and runs them on the OS.
+
+- [ ] Copy the pinned program with `python3 scripts/imports.py --pull zip` into `src/apps/zip/`
+- [ ] Build it in the OS build and run its engine tests there
+- [ ] Open Zip on the desktop and walk it by pointer and by keyboard
+- [ ] Propose what had to change here with `python3 scripts/imports.py --propose zip`
+- [ ] Commit: `"apps: Zip imported"`
 
 ---
 

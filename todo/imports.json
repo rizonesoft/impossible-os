@@ -18,6 +18,733 @@
       "commit": null,
       "tree": null,
       "open": null
+    },
+    "browser": {
+      "repository": "Browser",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/browser",
+      "section": "todo/11-apps/TODO-01-web-browser.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "ftp": {
+      "repository": "FTP",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/ftp",
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §7",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "ssh": {
+      "repository": "SSH",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/ssh",
+      "section": "todo/11-apps/TODO-03-ssh-client.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "mail": {
+      "repository": "Mail",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/mail",
+      "section": "todo/11-apps/TODO-04-email-client.md §10",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "media-player": {
+      "repository": "MediaPlayer",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/media-player",
+      "section": "todo/11-apps/TODO-06-video-player.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "remote-desktop": {
+      "repository": "RemoteDesktop",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/remote-desktop",
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §7",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "chat": {
+      "repository": "Chat",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/chat",
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "news-reader": {
+      "repository": "NewsReader",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/news-reader",
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "notepad": {
+      "repository": "Notepad",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests",
+        "tools"
+      ],
+      "kind": "app",
+      "path": "src/apps/notepad",
+      "section": "todo/11-apps/TODO-08-notepad.md §13",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "wordpad": {
+      "repository": "WordPad",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/wordpad",
+      "section": "todo/11-apps/TODO-10-wordpad.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "photos": {
+      "repository": "Photos",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/photos",
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §10",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "stillframe": {
+      "repository": "Stillframe",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/stillframe",
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "zip": {
+      "repository": "Zip",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/zip",
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "calendar": {
+      "repository": "Calendar",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/calendar",
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §11",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "sticky-notes": {
+      "repository": "StickyNotes",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/sticky-notes",
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §12",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "on-screen-keyboard": {
+      "repository": "OnScreenKeyboard",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/on-screen-keyboard",
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §13",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "color-picker": {
+      "repository": "ColorPicker",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/color-picker",
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §14",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "fonts": {
+      "repository": "Fonts",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/fonts",
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §15",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "paint": {
+      "repository": "Paint",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/paint",
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "magnifier": {
+      "repository": "Magnifier",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/magnifier",
+      "section": "todo/10-platform-services/TODO-06-accessibility.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "screensavers": {
+      "repository": "Screensavers",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/screensavers",
+      "section": "todo/10-platform-services/TODO-05-screensaver-widgets-display.md §7",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "impossible-sdk": {
+      "repository": "ImpossibleSDK",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "abi",
+        "cmake",
+        "include",
+        "licenses",
+        "reference",
+        "samples",
+        "src",
+        "tests",
+        "toolchain.json",
+        "tools",
+        "ui"
+      ],
+      "kind": "part",
+      "path": "src/libs/impossible-sdk",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §1",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "command": {
+      "repository": "Command",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "common",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/command",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §3",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "character-map": {
+      "repository": "CharacterMap",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/character-map",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §4",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "chess": {
+      "repository": "Chess",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/chess",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §5",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "clock": {
+      "repository": "Clock",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/clock",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §6",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "colophon": {
+      "repository": "Colophon",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/colophon",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §7",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "compare": {
+      "repository": "Compare",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/compare",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §8",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "disk-map": {
+      "repository": "DiskMap",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/disk-map",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §9",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "icon-editor": {
+      "repository": "IconEditor",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/icon-editor",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §10",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "imprint": {
+      "repository": "Imprint",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/imprint",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §11",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "minesweeper": {
+      "repository": "Minesweeper",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/minesweeper",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §12",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "music": {
+      "repository": "Music",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/music",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §13",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "nibble": {
+      "repository": "Nibble",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/nibble",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §14",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "perihelion": {
+      "repository": "Perihelion",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/perihelion",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §15",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "rename": {
+      "repository": "Rename",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/rename",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §16",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "solitaire": {
+      "repository": "Solitaire",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/solitaire",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §17",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "sound-recorder": {
+      "repository": "SoundRecorder",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/sound-recorder",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §18",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "sudoku": {
+      "repository": "Sudoku",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/sudoku",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §19",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "weather": {
+      "repository": "Weather",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/weather",
+      "section": "todo/11-apps/TODO-15-imported-programs.md §20",
+      "commit": null,
+      "tree": null,
+      "open": null
     }
   },
   "moved": [
@@ -50,6 +777,784 @@
       "section": "todo/11-apps/TODO-09-calculator.md §6",
       "source": "calculator",
       "to": "Calculator: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §1",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §2",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §3",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §4",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §5",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §6",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §7",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-01-web-browser.md §8",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §1",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §2",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §3",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §4",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §5",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §6",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §7",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §8",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §9",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/07-networking/TODO-07-web-browser.md §10",
+      "source": "browser",
+      "to": "Browser: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §1",
+      "source": "ftp",
+      "to": "FTP: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §2",
+      "source": "ftp",
+      "to": "FTP: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §3",
+      "source": "ftp",
+      "to": "FTP: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §4",
+      "source": "ftp",
+      "to": "FTP: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-02-ftp-wget-wifi.md §5",
+      "source": "ftp",
+      "to": "FTP: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §1",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §2",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §3",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §4",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §5",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §6",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-03-ssh-client.md §7",
+      "source": "ssh",
+      "to": "SSH: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §1",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §2",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §3",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §4",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §5",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §6",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §7",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §8",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-04-email-client.md §9",
+      "source": "mail",
+      "to": "Mail: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §1",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §2",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §3",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §4",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §5",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §6",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §7",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-06-video-player.md §8",
+      "source": "media-player",
+      "to": "MediaPlayer: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §1",
+      "source": "remote-desktop",
+      "to": "RemoteDesktop: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §2",
+      "source": "chat",
+      "to": "Chat: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-07-collaboration-apps.md §3",
+      "source": "news-reader",
+      "to": "NewsReader: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §1",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §2",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §3",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §4",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §5",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §6",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §7",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §8",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §9",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §10",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §11",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-08-notepad.md §12",
+      "source": "notepad",
+      "to": "Notepad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §1",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §2",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §3",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §4",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §5",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §6",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-10-wordpad.md §7",
+      "source": "wordpad",
+      "to": "WordPad: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §1",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §2",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §3",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §4",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §5",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §6",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §7",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §8",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-11-photos-image-viewer.md §9",
+      "source": "photos",
+      "to": "Photos: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §1",
+      "source": "stillframe",
+      "to": "Stillframe: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §2",
+      "source": "stillframe",
+      "to": "Stillframe: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §3",
+      "source": "stillframe",
+      "to": "Stillframe: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §6",
+      "source": "stillframe",
+      "to": "Stillframe: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §4",
+      "source": "zip",
+      "to": "Zip: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-12-screenshot-archive.md §7",
+      "source": "zip",
+      "to": "Zip: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §1",
+      "source": "calendar",
+      "to": "Calendar: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §8",
+      "source": "calendar",
+      "to": "Calendar: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §2",
+      "source": "sticky-notes",
+      "to": "StickyNotes: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §4",
+      "source": "on-screen-keyboard",
+      "to": "OnScreenKeyboard: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §5",
+      "source": "color-picker",
+      "to": "ColorPicker: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §6",
+      "source": "fonts",
+      "to": "Fonts: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-13-calendar-utilities.md §10",
+      "source": "fonts",
+      "to": "Fonts: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §1",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §2",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §3",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §4",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §5",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §6",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-02-paint-app.md §7",
+      "source": "paint",
+      "to": "Paint: engine/, src/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-06-accessibility.md §5",
+      "source": "magnifier",
+      "to": "Magnifier: engine/, src/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §1",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §2",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §3",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §4",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §5",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §6",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §7",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §8",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §9",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §10",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §11",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §12",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §13",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §14",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §15",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §16",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §17",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §18",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §19",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §20",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §21",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §22",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §23",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §24",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §25",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-19-fluent-component-library.md §26",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §1",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §2",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §3",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §4",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §5",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §6",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §7",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §8",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-05-widget-library-core.md §9",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §1",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §2",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §3",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §4",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §5",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §6",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §7",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §8",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/08-graphics-ui/TODO-06-widget-dialogs.md §9",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: ui/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-01-audio-system.md §3",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: parts/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-01-audio-system.md §4",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: parts/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-01-audio-system.md §5",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: parts/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-01-audio-system.md §6",
+      "source": "impossible-sdk",
+      "to": "ImpossibleSDK: parts/"
+    },
+    {
+      "section": "todo/10-platform-services/TODO-01-audio-system.md §8",
+      "source": "music",
+      "to": "Music: engine/, src/"
+    }
+  ],
+  "needs": [
+    {
+      "id": "impossible-sdk-tier-0",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 0",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §1"
+    },
+    {
+      "id": "impossible-sdk-tier-1",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 1",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §2"
+    },
+    {
+      "id": "impossible-sdk-tier-2",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 2",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §3"
+    },
+    {
+      "id": "impossible-sdk-tier-3",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 3",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §4"
+    },
+    {
+      "id": "impossible-sdk-tier-4",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 4",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §5"
+    },
+    {
+      "id": "impossible-sdk-tier-5",
+      "source": "impossible-sdk",
+      "what": "the Windows functions of tier 5",
+      "section": "todo/10-platform-services/TODO-13-program-needs.md §6"
     }
   ],
   "removed": []
