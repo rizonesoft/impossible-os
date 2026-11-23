@@ -3070,6 +3070,9 @@ else
     mkdir -p "$GATE_REPO/build" "$GATE_REPO/.claude/state" "$GATE_REPO/.claude/hooks" \
              "$GATE_REPO/src/kernel" "$GATE_REPO/todo/00-infrastructure"
     cp "$GATE_HOOK" "$GATE_REPO/.claude/hooks/section_commit_gate.py"
+    # The gate starts every command through scripts/bounded_run.py, as in the real tree.
+    mkdir -p "$GATE_REPO/scripts/overnight" && cp "$REPO_ROOT/scripts/bounded_run.py" "$REPO_ROOT/scripts/review_pin.py" "$GATE_REPO/scripts/" \
+        && cp "$REPO_ROOT/scripts/overnight/review_result.py" "$GATE_REPO/scripts/overnight/"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$GATE_REPO/.claude/hooks/codex_review_completed.py"
     # TODO-08 section-23 shared SKIP-env scanner.
@@ -3741,6 +3744,8 @@ else
              "$FD_REPO/src/kernel" "$FD_REPO/todo/00-infrastructure"
     cp "$REPO_ROOT/.claude/hooks/section_commit_gate.py" \
        "$FD_REPO/.claude/hooks/section_commit_gate.py"
+    mkdir -p "$FD_REPO/scripts/overnight" && cp "$REPO_ROOT/scripts/bounded_run.py" "$REPO_ROOT/scripts/review_pin.py" "$FD_REPO/scripts/" \
+        && cp "$REPO_ROOT/scripts/overnight/review_result.py" "$FD_REPO/scripts/overnight/"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$FD_REPO/.claude/hooks/codex_review_completed.py"
     cp "$REPO_ROOT/.claude/hooks/_skip_env.py" \
@@ -5783,6 +5788,8 @@ else
        "$PCE_REPO/.claude/hooks/skill_step_map.py"
     cp "$REPO_ROOT/.claude/hooks/section_commit_gate.py" \
        "$PCE_REPO/.claude/hooks/section_commit_gate.py"
+    mkdir -p "$PCE_REPO/scripts/overnight" && cp "$REPO_ROOT/scripts/bounded_run.py" "$REPO_ROOT/scripts/review_pin.py" "$PCE_REPO/scripts/" \
+        && cp "$REPO_ROOT/scripts/overnight/review_result.py" "$PCE_REPO/scripts/overnight/"
     cp "$REPO_ROOT/.claude/hooks/codex_review_completed.py" \
        "$PCE_REPO/.claude/hooks/codex_review_completed.py"
     cp "$REPO_ROOT/.claude/hooks/_review_kind.py" \

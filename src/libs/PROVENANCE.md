@@ -57,3 +57,5 @@ unconditionally, colliding with the kernel formatter).
 Re-drop the upstream `lib/` (or equivalent) tree, keep the upstream `LICENSE`
 file, preserve any local additions listed above, and update the version + commit
 row here in the same commit.
+
+A re-drop is reviewed like any import: Claude reads the changed upstream code and the pinned review passes (Astra, `.conclave/reviewers.toml`) review it before it lands, not only the integration seam.

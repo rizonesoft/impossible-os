@@ -4069,6 +4069,8 @@ def _harness_main() -> int:
             "--no-verify; the .githooks/pre-commit layer recognizes it).\n"
         )
         return 2
+    if _refuse_if_broken():
+        return 2                                       # a commit: never judged by a gate that cannot run
     root = _commit_target_root(cmd) or _repo_root()
     if root is None:
         # Outside a repo (shouldn't happen for a git-commit Bash);
@@ -5400,9 +5402,35 @@ def _with_deadline(budget: float, mode: str, run) -> int:
         _hook_deadline[:] = []
 
 
+def _dependency_issue() -> str:
+    """Why this gate cannot run, or "": every command it starts goes through scripts/bounded_run.py, so a
+    tree without it would fail every git read, and a failed read must never be taken for "no repository"
+    (in harness mode that passes the commit unjudged)."""
+    own = str(Path(__file__).resolve().parents[2] / "scripts")
+    if own not in sys.path:
+        sys.path.insert(0, own)
+    try:
+        import bounded_run  # noqa: F401
+    except Exception as exc:
+        return f"scripts/bounded_run.py cannot be loaded ({type(exc).__name__}: {exc})"
+    return ""
+
+
+def _refuse_if_broken() -> int:
+    """2 (refused, with the reason) when the gate cannot run on a commit it was asked to judge, else 0."""
+    broken = _dependency_issue()
+    if broken:
+        print(f"[section-commit-gate] BLOCK -- the gate cannot run: {broken}; restore it and commit again.",
+              file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if "--git-hook-mode" in argv:
         def git_hook() -> int:
+            if _refuse_if_broken():
+                return 2
             root = _repo_root()
             if root is None:
                 # The pre-commit hook runs inside a commit: an unreadable root is a failed read, never "no

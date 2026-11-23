@@ -202,7 +202,10 @@ jobs:
           # it as a base is the range collapse this step exists to prevent.
           base=""
           walked=0
-          for cand in $(git rev-list --first-parent -n 60 HEAD 2>/dev/null); do
+          # The window bounds the lookups (one API call a commit), never the range: one push carries a whole
+          # section, and section 48 of the automation-hardening TODO was 70 commits (2026-11-23), so a 60-commit
+          # window refused a push whose base was green. 400 holds any section with room.
+          for cand in $(git rev-list --first-parent -n 400 HEAD 2>/dev/null); do
               [ "$cand" = "$(git rev-parse HEAD)" ] && continue
               walked=$((walked + 1))
               # A QUERY FAILURE IS NOT AN ABSENCE. Swallowing a transient
@@ -234,7 +237,7 @@ jobs:
               echo "sha=" >>"$GITHUB_OUTPUT"
               echo "no earlier commit; the gate will derive a base"
           else
-              # Every one of the last 60 commits either never ran or did not
+              # Every one of the last 400 commits either never ran or did not
               # pass. Falling back to a near base would let a regression older
               # than that base become the next green baseline, so refuse.
               echo "::error::no successful run of this workflow in the last $walked commit(s) -- the gate cannot establish its range. Fix the oldest failure first."

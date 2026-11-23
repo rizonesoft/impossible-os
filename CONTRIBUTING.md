@@ -198,6 +198,8 @@ Changes land on `main` from the lanes the operator starts and from the attended 
 3. **Commit** on `main` with a `"scope: description"` message; the `.githooks/` gates run on every commit.
 4. **Push** to `main` once the section is reviewed and stamped; pre-push and CI gate it.
 
+**Imported code is reviewed in full.** An external pull request, when one is taken, and any code imported from another repository or a vendored upstream, is read by Claude and reviewed through the pinned review passes (Astra, [`.conclave/reviewers.toml`](.conclave/reviewers.toml)) before it merges. Green CI is not enough, and neither is reviewing only the seam where it meets this code ([CLAUDE.md "Vendor-First Evaluation"](CLAUDE.md#vendor-first-evaluation----prefer-a-mature-upstream-over-a-fresh-implementation)).
+
 ### Commit Checklist
 
 - [ ] Code compiles without warnings (`-Wall -Wextra -Werror`)

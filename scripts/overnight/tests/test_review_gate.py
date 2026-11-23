@@ -1109,3 +1109,23 @@ def test_a_gate_command_is_fed_its_whole_input_whatever_the_wait_slices(monkeypa
     assert r.returncode == 0 and r.stdout.strip() == str(len(data)).encode(), r
     assert time.monotonic() - began < 5
     assert not any(calls), calls
+
+
+def test_a_gate_whose_dependency_will_not_load_refuses_a_commit_and_passes_other_commands(tmp_path):
+    """The gate copied without scripts/bounded_run.py (a broken install, or a fixture that forgot it): every
+    git read would fail and harness mode used to read that as "no repository" and pass the commit unjudged.
+    A commit is refused with the reason; any other command still passes, so the session can repair it."""
+    import shutil
+    hooks = tmp_path / ".claude" / "hooks"
+    hooks.mkdir(parents=True)
+    for name in ("section_commit_gate.py", "codex_review_completed.py", "_skip_env.py", "_codex_dispatch.py"):
+        shutil.copy(REPO / ".claude/hooks" / name, hooks / name)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+
+    def gate(command):
+        payload = '{"tool_name":"Bash","tool_input":{"command":"%s"}}' % command
+        return subprocess.run(["python3", str(hooks / "section_commit_gate.py")], input=payload, text=True,
+                              capture_output=True, cwd=tmp_path, timeout=60)
+    r = gate("git commit -m foo")
+    assert r.returncode == 2 and "bounded_run.py cannot be loaded" in r.stderr, r
+    assert gate("ls").returncode == 0
