@@ -170,6 +170,43 @@ end_companion_pass() {
     rm -rf -- "$PASS_DATA"
     PASS_DATA=""
 }
+# A line for the caller once the review has run: to the transcript (when there is one), then to stderr within a
+# bound, so a caller that stopped reading cannot hold the receipt and the .done publication behind a full pipe.
+say() {
+    [ -z "${LOG_RW:-}" ] || printf '%s\n' "$1" >> "$LOG_RW"
+    timeout -k 1 5 bash -c 'printf "%s\n" "$1" >&3' _ "$1" 3>&2 2>/dev/null || true
+}
+# The one way a pass runs the companion (the logged path and the unlogged fallback alike): its own data
+# directory under $1 (CLAUDE_PLUGIN_DATA and TMPDIR, no inherited broker endpoint), the prompt handed over in a
+# file there (an environment entry has a smaller exec limit than the one argument it becomes), everything under
+# review_runtime_limit.py within the pass's limit, and the transcript writer bounded just past it, so neither a
+# companion that never finishes nor a caller that stopped reading holds the pass. Its output is appended to $2
+# (a descriptor path) and passed to stdout. Sets rc.
+run_companion() {
+    local secs="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}" st
+    if ! [[ "$secs" =~ ^[1-9][0-9]{0,8}$ ]]; then
+        say "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds"; rc=2; return
+    fi
+    if ! PASS_DATA="$(mktemp -d "$1/.cp.XXXXXX")" || ! printf '%s' "$PROMPT" > "$PASS_DATA/prompt"; then
+        say "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass under $1"
+        rc=2; return
+    fi
+    PASS_COMPANION="$COMPANION" PASS_EFFORT="$EFFORT" PASS_DIR="$PASS_DATA" \
+        python3 "$LIMITER" "$secs" 'p="$(cat -- "$PASS_DIR/prompt" && printf x)" || exit 2
+            exec env -u CODEX_COMPANION_APP_SERVER_ENDPOINT -u CODEX_COMPANION_APP_SERVER_PID_FILE \
+                -u CODEX_COMPANION_APP_SERVER_LOG_FILE CLAUDE_PLUGIN_DATA="$PASS_DIR" TMPDIR="$PASS_DIR" \
+                node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "${p%x}"' 2>&1 \
+        | timeout -k 5 $(( secs + 30 )) tee -a "${2:-/dev/null}"
+    st=("${PIPESTATUS[@]}")
+    rc="${st[0]}"
+    if [ "$rc" = "124" ]; then
+        say "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${secs}s limit and was ended"
+    elif [ "${st[1]}" != "0" ]; then
+        rc=3
+        say "[$SELF_NAME] INCOMPLETE -- the transcript writer did not finish (exit ${st[1]}: the caller stopped reading); dispatch it again"
+    fi
+    end_companion_pass
+}
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""; REPAIR_HEAD=""; REPAIR_FROM=""; CAND_HEAD=""; CAND_WORK=""
 EMPTY_TREE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # The candidate's fingerprint and the files a pass covers come from one reader (scripts/review_candidate.py),
@@ -423,37 +460,18 @@ if [ -n "$LOG_FILE" ]; then
     # review started is the receipt row written below, never printed text.
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     [ -z "$EFFORT_NOTE" ] || echo "$EFFORT_NOTE" | tee -a "$LOG_RW" >&2
-    # In the reviews directory, which no candidate read covers (as the paths file above): under a TMPDIR inside
-    # the checkout, another pass's companion files would change this pass's candidate. The companion's own
-    # os.tmpdir() (its broker's cxc-* socket directory) is pointed inside it too. The name is short: the broker's
-    # socket path must stay under the 108-byte Unix limit, and a longer one only costs the broker, not the pass.
-    PASS_DATA="$(mktemp -d "$(cd "$REVIEWS_DIR" && pwd)/.cp.XXXXXX")" || {
-        echo "[$SELF_NAME] BLOCK -- no private companion data directory could be made for this pass" >&2; exit 2; }
-    # One limit per pass: CODEX_REVIEW_MAX_SECS when set (as the broker reads it), else PASS_LIMIT_SECS, six times
-    # the longest of 247 checked passes on record (280 s on 2026-11-23). An app-server that exits mid-turn leaves
-    # the companion waiting for a completion that never comes; the limit ends it (exit 124) instead of the pass
-    # hanging for good.
-    PASS_SECS="${CODEX_REVIEW_MAX_SECS:-$PASS_LIMIT_SECS}"
-    [[ "$PASS_SECS" =~ ^[1-9][0-9]{0,8}$ ]] || {
-        echo "[$SELF_NAME] BLOCK -- CODEX_REVIEW_MAX_SECS must be a whole number of seconds" >&2; exit 2; }
-    PASS_COMPANION="$COMPANION" PASS_EFFORT="$EFFORT" PASS_PROMPT="$PROMPT" PASS_DIR="$PASS_DATA" \
-        python3 "$LIMITER" "$PASS_SECS" 'exec env -u CODEX_COMPANION_APP_SERVER_ENDPOINT \
-            -u CODEX_COMPANION_APP_SERVER_PID_FILE -u CODEX_COMPANION_APP_SERVER_LOG_FILE \
-            CLAUDE_PLUGIN_DATA="$PASS_DIR" TMPDIR="$PASS_DIR" \
-            node "$PASS_COMPANION" adversarial-review ${PASS_EFFORT:+--effort "$PASS_EFFORT"} -- "$PASS_PROMPT"' \
-        2>&1 | tee -a "$LOG_RW"
-    rc=$?
-    if [ "$rc" = "124" ]; then
-        echo "[$SELF_NAME] INCOMPLETE -- the pass ran past its ${PASS_SECS}s limit and was ended" | tee -a "$LOG_RW" >&2
-    fi
-    end_companion_pass
+    # The pass's own data goes in the reviews directory, which no candidate read covers (as the paths file
+    # above): under a TMPDIR inside the checkout, another pass's companion files would change this pass's
+    # candidate. The name is short: the broker's socket path must stay under the 108-byte Unix limit, and a longer
+    # one only costs the broker, not the pass. The limit: CODEX_REVIEW_MAX_SECS when set (as the broker reads it),
+    # else PASS_LIMIT_SECS, six times the longest of 247 checked passes on record (280 s on 2026-11-23).
+    run_companion "$(cd "$REVIEWS_DIR" && pwd)" "$LOG_RW"
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_ID="$(candidate_id)" || NOW_ID="unreadable"
         if [ "$NOW_ID" != "$LAUNCH_ID" ]; then
             rc=3
-            echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_ID:0:10}, or the index or the working tree moved)" \
-                | tee -a "$LOG_RW" >&2
-            echo "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again." | tee -a "$LOG_RW" >&2
+            say "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_ID:0:10}, or the index or the working tree moved)"
+            say "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again."
         fi
     fi
     # The receipt below says whether THIS wrapper checked the pass. The review
@@ -468,11 +486,10 @@ if [ -n "$LOG_FILE" ]; then
         case "$?" in
             0) ;;
             1) rc=3
-               echo "[$SELF_NAME] INCOMPLETE -- the review gave no verdict line for: $(printf '%s' "$PIN_MISSING" | tr '\n' ' ')" \
-                   | tee -a "$LOG_RW" >&2
-               echo "[$SELF_NAME]   This pass does not count as clean. Dispatch it again." | tee -a "$LOG_RW" >&2 ;;
+               say "[$SELF_NAME] INCOMPLETE -- the review gave no verdict line for: $(printf '%s' "$PIN_MISSING" | tr '\n' ' ')"
+               say "[$SELF_NAME]   This pass does not count as clean. Dispatch it again." ;;
             *) rc=3
-               echo "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" | tee -a "$LOG_RW" >&2 ;;
+               say "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" ;;
         esac
     fi
     # The worst level the review declares goes on the receipt: the commit gate
@@ -482,7 +499,7 @@ if [ -n "$LOG_FILE" ]; then
         PASS_HIGHEST="$(cat "$PATHS_FILE.highest" 2>/dev/null)"
         [ -n "$PASS_HIGHEST" ] || {
             rc=3; PASS_HIGHEST=""
-            echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_RW" >&2; }
+            say "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)"; }
     fi
     echo "Turn completed (rc=$rc)" >&"$LOGFD"
     PROMPT_SHA="$CALLER_PROMPT_SHA"
@@ -495,7 +512,7 @@ if [ -n "$LOG_FILE" ]; then
         "highest=$PASS_HIGHEST" "opt:base=${BASE_OID:-}" "bool:done_file=true" \
         "opt:effort=$EFFORT" "opt:tier=$TIER" "opt:schedule=$SCHEDULE" \
         "opt:parent=${CODEX_BROKER_JOB:-}" "opt:parent_log=${CODEX_BROKER_LOG:-}" \
-        || { echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
+        || { say "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited"
              # A review with no receipt cannot be credited or found: report it
              # incomplete (rc 3, dispatched again), never as its own success.
              rc=3; }
@@ -508,7 +525,7 @@ if [ -n "$LOG_FILE" ]; then
     if ! { done_tmp=$(mktemp "$LOG_FILE.done.XXXXXX") && echo "$rc" > "$done_tmp" \
            && mv -fT "$done_tmp" "$LOG_FILE.done"; }; then
         [ -n "${done_tmp:-}" ] && rm -f "$done_tmp"
-        echo "[$SELF_NAME] could not publish $LOG_FILE.done; a waiter on this log will report it stale" >&2
+        say "[$SELF_NAME] could not publish $LOG_FILE.done; a waiter on this log will report it stale"
         exit 75
     fi
     exit "$rc"
@@ -519,4 +536,8 @@ if [ "$KIND" != "direct" ]; then
     echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR) to keep this review's transcript and receipt" >&2
     exit 2
 fi
-exec node "$COMPANION" adversarial-review -- "$PROMPT"
+# An unmarked review with nowhere to keep a transcript: still one bounded pass with its own data, as above.
+LOG_RW=""
+trap 'end_companion_pass' EXIT
+run_companion "${TMPDIR:-/tmp}" ""
+exit "$rc"

@@ -3137,3 +3137,61 @@ setInterval(() => {{}}, 1000);
                 os.kill(pid, 9)
             except ProcessLookupError:
                 pass
+
+
+def test_the_unlogged_fallback_is_bounded_too(tmp_path):
+    """An unmarked review with no writable reviews directory ran node directly, outside the limit (round review,
+    2026-11-23): it now runs as one bounded pass too."""
+    import os
+    import subprocess
+    import time
+    fake = tmp_path / "companion.js"
+    fake.write_text("setInterval(() => {}, 1000);\n")
+    blocked = tmp_path / "file-not-dir"
+    blocked.write_text("")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(blocked / "reviews"),
+           "CODEX_REVIEW_MAX_SECS": "3", "TMPDIR": str(tmp_path)}
+    started = time.monotonic()
+    done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), "plain review, no marker"],
+                          capture_output=True, text=True, timeout=60, cwd=str(_fixture_repo(tmp_path)), env=env)
+    assert done.returncode == 124 and time.monotonic() - started < 30, (done.returncode, done.stderr[-800:])
+    assert not list(tmp_path.glob(".cp.*"))
+
+
+def test_a_prompt_at_the_argument_limit_reaches_the_companion_whole(tmp_path):
+    """The prompt crosses the supervisor in a file: an environment entry (PASS_PROMPT=...) has a smaller exec
+    limit than the single argument it becomes, and a 131,065-byte prompt failed with E2BIG (round review)."""
+    import json
+    first = "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\n"
+    body = "x" * (131065 - len(first))           # the whole argument is 131,065 bytes: fits as one, not as an entry
+    done, _prompt = _dispatch(tmp_path, "adversarial", "no lens lines at all\n", body=body)
+    assert done.returncode == 0, done.stderr[-800:]
+    argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
+    assert argv[-1] == first + body
+
+
+def test_a_caller_that_stops_reading_still_gets_a_published_status(tmp_path):
+    """The transcript writer is bounded just past the pass's limit: a caller holding a full stdout pipe open no
+    longer holds the receipt and the .done publication (performance review, 2026-11-23)."""
+    import os
+    import subprocess
+    import time
+    fake = tmp_path / "companion.js"
+    fake.write_text("process.stdout.write('y'.repeat(1 << 20) + '\\nHIGHEST: none\\n');\n")
+    reviews = tmp_path / "reviews"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(reviews),
+           "CODEX_REVIEW_MAX_SECS": "2", "REVIEW_BASE": "HEAD"}
+    proc = subprocess.Popen(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                             "[review-kind: adversarial] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=str(_fixture_repo(tmp_path)),
+                            env=env, start_new_session=True)
+    try:
+        started = time.monotonic()
+        while time.monotonic() - started < 90 and not list(reviews.glob("*.out.done")):
+            time.sleep(0.2)
+        dones = list(reviews.glob("*.out.done"))
+        assert dones, "no status was published while the caller held its pipe unread"
+        assert dones[0].read_text().strip() not in ("", "0"), "an unread transcript was credited as complete"
+    finally:
+        os.killpg(proc.pid, 9)
+        proc.wait(timeout=10)

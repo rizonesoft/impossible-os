@@ -597,7 +597,14 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       completeTurn(state, response.turn);
     }
 
-    return await state.completion;
+    // Impossible OS patch (../../PATCHES.md): a turn whose app-server connection closes before it completes can
+    // never complete, so it fails then instead of waiting for a notification that cannot come.
+    const CLOSED = Symbol("closed");
+    const outcome = await Promise.race([state.completion, client.exitPromise.then(() => CLOSED)]);
+    if (outcome === CLOSED) {
+      throw client.exitError ?? new Error("codex app-server connection closed before the turn completed.");
+    }
+    return outcome;
   } finally {
     clearCompletionTimer(state);
     client.setNotificationHandler(previousHandler ?? null);

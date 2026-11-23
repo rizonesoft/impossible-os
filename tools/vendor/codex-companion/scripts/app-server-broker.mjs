@@ -70,6 +70,7 @@ async function main() {
   let activeStreamSocket = null;
   let activeStreamThreadIds = null;
   const sockets = new Set();
+  let stopping = false;
 
   function clearSocketOwnership(socket) {
     if (activeRequestSocket === socket) {
@@ -114,6 +115,19 @@ async function main() {
   }
 
   appClient.setNotificationHandler(routeNotification);
+  // Impossible OS patch (../PATCHES.md): when the app-server behind this broker exits, no turn it accepted can
+  // finish. End every client connection, so each client fails its open turn, and stop serving.
+  appClient.exitPromise.then(async () => {
+    if (stopping) {
+      return;
+    }
+    stopping = true;
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    await shutdown(server).catch(() => {});
+    process.exit(1);
+  });
 
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -234,11 +248,13 @@ async function main() {
   });
 
   process.on("SIGTERM", async () => {
+    stopping = true;
     await shutdown(server);
     process.exit(0);
   });
 
   process.on("SIGINT", async () => {
+    stopping = true;
     await shutdown(server);
     process.exit(0);
   });

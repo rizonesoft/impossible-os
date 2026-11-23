@@ -66,7 +66,13 @@ def _run_group(cmd, cwd, timeout):
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
+        # The drain is bounded too: a process still holding the pipes (one in uninterruptible I/O, or one that
+        # left the group) must not keep this hook past the harness's limit and lose its message.
+        try:
+            proc.communicate(timeout=TEARDOWN_S)
+        except subprocess.TimeoutExpired:
+            for pipe in (proc.stdout, proc.stderr):
+                pipe.close()
         raise
     finally:
         try:
@@ -83,16 +89,17 @@ def main() -> int:
     except Exception:
         return 0
     path = (d.get("tool_input", {}) or {}).get("file_path", "") or ""
-    if not path or not path.endswith(".md"):
+    if not path:
         return 0
-    p = path.replace(chr(92), "/")
-    if "todo/" not in p:
-        return 0
+    # The file itself, resolved: an edit through a symlink changes its target, so the target decides whether this
+    # is a TODO and which tree is repaired (a link's own name or directory decides nothing).
+    real = os.path.realpath(path)
+    if not real.endswith(".md") or "todo/" not in real.replace(chr(92), "/"):
+        return 0                                       # cheap: a target with no todo/ in its path is never a TODO
 
     # The tree that holds the edited file, never the hook's cwd: the harness runs hooks in the session's primary
     # tree, so an edit in another worktree was repaired in the primary tree (2026-11-23, 22 files under a live run).
-    # The file itself, resolved: an edit through a TODO symlink changes the target, so its tree is the one repaired.
-    here = os.path.dirname(os.path.realpath(path))
+    here = os.path.dirname(real)
     while not os.path.isdir(here) and os.path.dirname(here) != here:
         here = os.path.dirname(here)                   # a Write may have named a directory not yet on disk
     try:
@@ -113,6 +120,8 @@ def main() -> int:
         return _not_run(f"git worktree list timed out inside the hook's {BUDGET_S}s budget")
     if os.path.realpath(root) not in registered:
         return 0
+    if not os.path.relpath(real, os.path.realpath(root)).replace(chr(92), "/").startswith("todo/"):
+        return 0                                       # a Markdown file of this tree, but not a TODO
 
     validator = root + "/scripts/todo-graph/validate.py"
     if not os.path.exists(validator):
@@ -139,6 +148,7 @@ def main() -> int:
 # to print the result. A repair with less than MIN_REPAIR_S left is reported as not run.
 BUDGET_S = 17
 MIN_REPAIR_S = 2
+TEARDOWN_S = 1          # the drain after a timeout, inside the 3 s the budget leaves before the harness's 20 s
 TIMEOUT_S = BUDGET_S
 PREFIX = "[todo-graph auto-rewrite] validate.py --fix-line-numbers"
 SUMMARY = re.compile(r"\[validate\.py\] fix-line-numbers: \d+ update\(s\), .*")

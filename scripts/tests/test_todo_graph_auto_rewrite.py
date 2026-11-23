@@ -259,10 +259,63 @@ def a_symlinked_todo_is_repaired_where_it_lives():
         return pathlib.Path(b, "ran-here").exists() and not pathlib.Path(a, "ran-here").exists()
 
 
+def links_are_judged_by_their_target():
+    """(a link outside todo/ to a TODO is repaired, a link under todo/ to a non-TODO file is not): the filter
+    reads the resolved file's place in its worktree, not the link's name (round review, 2026-11-23)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a = os.path.join(tmp, "a")
+        git("init", "-q", a)
+        hook = install_hook(a)
+        fake_validator(a)
+        git("-C", a, "add", "-A")
+        git("-C", a, "commit", "-qm", "base")
+        pathlib.Path(a, "todo", "TODO-01.md").write_text("x\n")
+        pathlib.Path(a, "notes").mkdir()
+        pathlib.Path(a, "notes", "plain.md").write_text("x\n")
+        os.symlink(os.path.join(a, "todo", "TODO-01.md"), os.path.join(a, "notes", "current.md"))
+        os.symlink(os.path.join(a, "notes", "plain.md"), os.path.join(a, "todo", "elsewhere.md"))
+        results = []
+        for edited in (os.path.join(a, "notes", "current.md"), os.path.join(a, "todo", "elsewhere.md")):
+            pathlib.Path(a, "ran-here").unlink(missing_ok=True)
+            subprocess.run([sys.executable, hook], input=json.dumps({"tool_input": {"file_path": edited}}),
+                           capture_output=True, text=True, cwd=a, timeout=60)
+            results.append(pathlib.Path(a, "ran-here").exists())
+        return results == [True, False]
+
+
+def a_held_pipe_never_holds_the_hook_past_its_budget():
+    """After the deadline the hook stops the validator's group and drains its pipes; a process holding them open
+    (here one that left the group, standing in for one held in uninterruptible I/O) must not stall the drain past
+    the harness's limit (performance review, 2026-11-23)."""
+    import time
+    hook = _load_hook("hook_drain")
+    hook.BUDGET_S = 3
+    with tempfile.TemporaryDirectory() as tmp:
+        git("init", "-q", tmp)
+        fake_validator(tmp)
+        pid_file = pathlib.Path(tmp, "held.pid")
+        pathlib.Path(tmp, "scripts", "todo-graph", "validate.py").write_text(
+            "import subprocess, time, pathlib\n"
+            "c = subprocess.Popen(['setsid', 'sleep', '60'])\n"
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(c.pid))\ntime.sleep(60)\n")
+        hook._registered_worktrees = lambda where, deadline: {os.path.realpath(tmp)}
+        started = time.monotonic()
+        out = _run_main(hook, os.path.join(tmp, "todo", "a.md"))
+        took = time.monotonic() - started
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), 9)
+            except (ProcessLookupError, ValueError):
+                pass
+    return took < hook.BUDGET_S + 3 and "did not finish" in out
+
+
 def main():
     bad = 0
     for label, check in (("a symlinked TODO is repaired in the worktree it lives in", a_symlinked_todo_is_repaired_where_it_lives),
+                         ("a link is judged by its target's place, not its own name", links_are_judged_by_their_target),
                          ("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
+                         ("a held pipe never holds the hook past its budget", a_held_pipe_never_holds_the_hook_past_its_budget),
                          ("a validator overrun stops its whole process group", a_validator_overrun_stops_its_whole_group)):
         ok = check()
         bad += not ok
@@ -294,7 +347,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 7
+    total = len(CLASSES) + 9
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 

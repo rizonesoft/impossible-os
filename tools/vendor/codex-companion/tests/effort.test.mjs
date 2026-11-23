@@ -129,3 +129,20 @@ test("native review refuses --effort it cannot apply", (t) => {
   assert.match(result.stderr, /--effort/);
   assert.doesNotMatch(result.stdout, /Review|review mode/i);
 });
+
+
+test("a turn whose app-server exits after accepting it fails instead of waiting forever", (t) => {
+  const { repo, env, statePath } = repoWithChange(t);
+  // The generated fake (this test's temp file, not the fixture) acknowledges turn/start and then exits.
+  const binDir = path.dirname(statePath);
+  const fake = path.join(binDir, "codex");
+  const ack = "send({ id: message.id, result: { turn: buildTurn(turnId) } });";
+  const text = fs.readFileSync(fake, "utf8");
+  assert.ok(text.includes(ack));
+  fs.writeFileSync(fake, text.replace(ack, `${ack} setTimeout(() => process.exit(1), 20); return;`));
+  const started = Date.now();
+  const result = run("node", [SCRIPT, "adversarial-review", "check the guard"], { cwd: repo, env, timeout: 60000 });
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.ok(Date.now() - started < 30000, `took ${Date.now() - started} ms`);
+});
+
