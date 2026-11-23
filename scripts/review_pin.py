@@ -734,6 +734,10 @@ def section_chain(manifest, todo, section):
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or section_key(e.get("section", "")) != section_key(section):
             continue
+        # The kind first: only these move or anchor the chain, and receipt_complete reads the pass's published
+        # status, which a receipt of another kind must not be able to refuse.
+        if e.get("kind") not in ("plan",) + CHAIN_KINDS:
+            continue
         if not receipt_complete(e):
             continue
         if e.get("kind") == "plan":

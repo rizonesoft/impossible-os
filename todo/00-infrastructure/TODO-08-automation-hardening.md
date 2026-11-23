@@ -1823,7 +1823,10 @@ The operator starts the lanes; the run never starts agy or another lane.
 Measured 2026-11-20: 0 of 6,422 manifest lines fail to parse, so the tolerant reader guards a failure the writer can remove.
 
 - [ ] `scripts/overnight/manifest-line.py` takes a lock, writes the line whole and fsyncs
-- [ ] A strict reader; `unreadable_line_may_be` and `_RECEIPT_HEAD` are removed from `scripts/review_pin.py`
+- [ ] A strict reader; `unreadable_line_may_be` and `_RECEIPT_HEAD` are removed from `scripts/review_pin.py` (both call sites: `newest_receipts` and `section_chain`)
+- [ ] A review on a `CODEX_REVIEWS_DIR` whose mount stops responding ends at its limit
+  - The transcript, the receipt and the `.done` file all live there, so this needs the whole dispatch (setup, review, cleanup, publication) under one deadline, not only the pass launch
+  - Found by section 70's last performance pass on 2026-11-23 (P1 on that configuration, where a reviews directory on a responsive filesystem is unaffected) -> XREF: [§70](#70-reviewer-effort-follows-the-area-and-the-chain)
 - [ ] Commit: `"review: receipts are written atomically"`
 
 **Test checkpoint:** concurrent writers leave only whole lines; a malformed line fails the reader loudly.
@@ -1953,7 +1956,8 @@ Design: [Review Effort: Tiers by Area, Adapting to Findings](../../docs/specs/20
 - [ ] A vendored Codex companion accepts `--effort` on `adversarial-review` (PROVENANCE and CREDITS rows)
 - [ ] The TODO auto-rewrite hook repairs the tree holding the edited file, not the hook's working directory
 - [/] The effort patch is retired once upstream ships `openai/codex-plugin-cc` #677 or #746 (the other `PATCHES.md` patches stay until their tests pass against the stock companion; no third request, operator 2026-11-23)
-- [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts, 2026-12-07)
+- [/] The first receipt of a section planned after the landing shows its section, effort and tier (waits for the run to plan a section on the new schedule; the two weeks start there)
+- [/] One ledger query compares rounds per section and late-round P1 rate by tier and effort against the 2026-11-23 baseline (waits for two weeks of receipts from that first one)
 
 **Test checkpoint:** each code item has a regression that fails on the 2026-11-23 code.
 

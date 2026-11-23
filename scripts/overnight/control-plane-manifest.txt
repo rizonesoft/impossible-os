@@ -104,6 +104,7 @@ scripts/overnight/heartbeat.sh
 scripts/overnight/run-common.sh
 scripts/run.sh
 scripts/review_pin.py
+.conclave/reviewers.toml
 scripts/review_candidate.py
 scripts/bounded_run.py
 scripts/codex-dispatch.sh

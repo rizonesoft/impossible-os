@@ -3646,3 +3646,70 @@ def test_a_parent_that_cannot_be_listed_is_never_adopted(tmp_path):
     (newline / ".cp" / "\n").write_text("theirs\n")
     assert parent(newline).returncode != 0
     assert not (newline / ".cp" / ".codex-dispatch-passes").exists()
+
+
+def test_an_unreadable_status_of_another_kind_never_refuses_the_effort(tmp_path):
+    """The chain only counts plan, round and reconciliation receipts, but every receipt's published status was read
+    first, so a performance receipt whose status file could not be read refused the effort (completion review,
+    2026-11-23)."""
+    import json
+    rows = [json.loads(_er("plan", schedule="effort")), json.loads(_er("performance", "P2"))]
+    rows[1].update({"done_file": True, "logFile": str(tmp_path / "gone" / "x.out")})        # no .done: not published
+    blocked = tmp_path / "gone"
+    blocked.write_text("a file where the status directory would be\n")
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    import review_pin as mod
+    assert mod.effort_for(_pin(), manifest, EFFORT_TODO, 99, "round", ["src/kernel/a.c"]) == "high"
+
+
+def test_a_dispatch_under_a_pin_with_no_effort_table_passes_none(tmp_path):
+    """The dispatcher, not only the pin tool, honours a pin with no [schedule.effort]: no --effort, no effort or
+    tier on the receipt, and the plan's schedule mark absent (completion review, 2026-11-23)."""
+    import os
+    import shutil
+    import subprocess
+    tree = tmp_path / "tree"
+    shutil.copytree(REPO / "scripts", tree / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    (tree / ".conclave").mkdir()
+    (tree / ".conclave" / "reviewers.toml").write_text(NO_EFFORT)
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION)
+    (tmp_path / "review.txt").write_text("LENS plan: clean\nHIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_COMPANION_ACCEPTS_EFFORT": "1",
+           "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"), "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"),
+           "FAKE_REVIEW": str(tmp_path / "review.txt"), "REVIEW_BASE": "HEAD"}
+    done = subprocess.run(["bash", str(tree / "scripts/codex-dispatch.sh"),
+                           "[review-kind: plan] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                          capture_output=True, text=True, timeout=120, cwd=str(_fixture_repo(tmp_path)), env=env)
+    assert done.returncode == 0, done.stderr
+    assert "--effort" not in _argv(tmp_path)
+    receipt = _last_receipt(tmp_path)
+    assert not {"effort", "tier", "schedule"} & set(receipt), receipt
+
+
+def test_an_owed_round_with_an_unreadable_effort_history_still_runs_and_says_so(tmp_path):
+    """An owed round: its base comes from the recorded debt, never the manifest, so a torn line newer than the
+    section's receipts leaves only its effort unknown. The pass runs at the Codex config's effort, its receipt
+    names the debt's base and carries no effort, and its transcript says why (completion review, 2026-11-23)."""
+    import json
+    import subprocess
+    repo = _fixture_repo(tmp_path)
+    base = _rev(tmp_path, "HEAD~4")
+    (repo / ".claude" / "state").mkdir(parents=True)
+    (repo / ".claude" / "state" / "review-owed.json").write_text(json.dumps(
+        [{"todo": "todo/00-infrastructure/TODO-01-developer-tooling-stack.md", "section": 99, "base": base}]))
+    subprocess.run(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null", "add", "-A", ".claude"], check=True,
+                   capture_output=True, timeout=30)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "owed"], check=True, capture_output=True,
+                   timeout=30)
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    (reviews / "manifest.jsonl").write_text('{"ts": 1795170001, "kind": "round", "todo": "todo/00-infr\n')
+    done, _prompt = _dispatch(tmp_path, "round", "LENS none\nHIGHEST: none\n", base=base)
+    assert "--effort" not in _argv(tmp_path), done.stderr
+    receipt = _last_receipt(tmp_path)
+    assert receipt["base"] == base and not {"effort", "tier"} & set(receipt), receipt
+    log = next(reviews.glob("*-round-direct.out")).read_text()
+    assert "effort unknown" in log and "the Codex config value applies" in log

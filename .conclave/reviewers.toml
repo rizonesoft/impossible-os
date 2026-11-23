@@ -73,7 +73,8 @@ lenses = ["plan-delivery", "record"]
 # candidate and the repaired candidate) and then cover the whole section, whose range the dispatcher names too:
 # every pass reviews the whole section (operator, 2026-11-21; from 2026-11-20 to then a reconciliation read the
 # repair only). Kernel and boot repairs keep full adversarial and integration on top (the conditional entry
-# below). Effort is the operator's Codex setting, as for every pass.
+# below). Its effort follows the round ladder of [schedule.effort] below; the Codex config value applies only when
+# no pinned level does.
 [schedule.reconciliation]
 lenses = ["plan-delivery", "record", "repair-adversarial", "repair-integration"]
 

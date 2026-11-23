@@ -61,6 +61,8 @@ VENDORED_KEEP=(
     "$ROOT/src/libs/PROVENANCE.md"
     "$ROOT/src/libs/lz4/lz4_merge.ld"
     "$ROOT/src/kernel/acpica/include/platform/acimpossible.h"
+    "$ROOT/tools/vendor/codex-companion/PATCHES.md"
+    "$ROOT/tools/vendor/codex-companion/tests/effort.test.mjs"
 )
 
 # Count lines by extension in given directories, excluding vendored files
@@ -102,7 +104,7 @@ is_vendored() {
 # it.
 is_counted_ext() {
     case "$1" in
-        *.c|*.h|*.asm|*.sh|*.bat|*.ps1|*.ld|*.lds|*.py|*.js|*.inc|*Makefile) return 0 ;;
+        *.c|*.h|*.asm|*.sh|*.bat|*.ps1|*.ld|*.lds|*.py|*.js|*.mjs|*.inc|*Makefile) return 0 ;;
         *.md|*.json|*.yml|*.yaml|*.html|*.css|*.cfg|*.conf) return 0 ;;
     esac
     return 1
@@ -141,7 +143,7 @@ read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts" "$ROOT/sdk/scrip
 read -r bat_files bat_lines <<< "$(count_lines bat "$ROOT/scripts")"
 read -r ps1_files ps1_lines <<< "$(count_lines ps1 "$ROOT/scripts")"
 read -r py_files py_lines <<< "$(count_tracked_lines '*.py')"
-read -r js_files js_lines <<< "$(count_tracked_lines '*.js')"
+read -r js_files js_lines <<< "$(count_tracked_lines '*.js' '*.mjs')"
 read -r inc_files inc_lines <<< "$(count_tracked_lines '*.inc')"
 read -r mk_files mk_lines <<< "$(count_tracked_lines '*Makefile')"
 
