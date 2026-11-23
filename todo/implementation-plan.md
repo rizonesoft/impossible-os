@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **997 of 2762 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **1003 of 2763 sections complete (36%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2593,12 +2593,13 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T08 §3`  | File Operations                                    | none        |     7 |
 | [ ]  | `D11 T08 §4`  | Editing Features                                   | none        |     9 |
 | [ ]  | `D11 T08 §5`  | File Associations + App Registration               | none        |     5 |
-| [ ]  | `D11 T09 §6`  | Calculator                                         | none        |    12 |
-| [ ]  | `D11 T09 §1`  | Standard Calculator UI                             | none        |     7 |
-| [ ]  | `D11 T09 §2`  | Arithmetic Engine                                  | none        |     7 |
-| [ ]  | `D11 T09 §3`  | Memory + History                                   | none        |     3 |
-| [ ]  | `D11 T09 §4`  | Scientific Mode                                    | none        |    14 |
-| [ ]  | `D11 T09 §5`  | Programmer Mode                                    | none        |     8 |
+| [x]  | `D11 T09 §6`  | Calculator                                         | none        |     1 |
+| [x]  | `D11 T09 §1`  | Standard Calculator UI                             | none        |     1 |
+| [x]  | `D11 T09 §2`  | Arithmetic Engine                                  | none        |     1 |
+| [x]  | `D11 T09 §3`  | Memory + History                                   | none        |     1 |
+| [x]  | `D11 T09 §4`  | Scientific Mode                                    | none        |     1 |
+| [x]  | `D11 T09 §5`  | Programmer Mode                                    | none        |     1 |
+| [ ]  | `D11 T09 §7`  | Import Calculator                                  | none        |     5 |
 | [ ]  | `D11 T10 §1`  | Rich Text Document Model                           | none        |    11 |
 | [ ]  | `D11 T10 §2`  | RTF File Format                                    | none        |     3 |
 | [ ]  | `D11 T10 §3`  | Rich Text Rendering + Layout Engine                | none        |     8 |

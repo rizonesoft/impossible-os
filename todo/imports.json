@@ -1,6 +1,56 @@
 {
   "schema": 1,
-  "sources": {},
-  "moved": [],
+  "sources": {
+    "calculator": {
+      "repository": "Calculator",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "engine",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/calculator",
+      "section": "todo/11-apps/TODO-09-calculator.md §7",
+      "commit": null,
+      "tree": null,
+      "open": null
+    }
+  },
+  "moved": [
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §1",
+      "source": "calculator",
+      "to": "Calculator: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §2",
+      "source": "calculator",
+      "to": "Calculator: engine/"
+    },
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §3",
+      "source": "calculator",
+      "to": "Calculator: src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §4",
+      "source": "calculator",
+      "to": "Calculator: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §5",
+      "source": "calculator",
+      "to": "Calculator: engine/, src/"
+    },
+    {
+      "section": "todo/11-apps/TODO-09-calculator.md §6",
+      "source": "calculator",
+      "to": "Calculator: engine/, src/"
+    }
+  ],
   "removed": []
 }
