@@ -3616,3 +3616,33 @@ def test_concurrent_first_callers_both_get_a_pass_directory(tmp_path):
         if p.returncode != 0 or not out.strip():
             failed.append(err)
     assert not failed, (len(failed), failed[:2])
+
+
+def test_a_parent_that_cannot_be_listed_is_never_adopted(tmp_path):
+    """An unreadable operator-owned .cp listed as empty, so the marker went in and a later sweep would delete what
+    was in it (round 12, 2026-11-23, P1). Adoption needs a listing that succeeded and found nothing, a file named
+    by a newline alone included."""
+    import os
+    import subprocess
+    lib = REPO / "scripts/lib/pass-dir.sh"
+
+    def parent(base):
+        return subprocess.run(["bash", "-c", f'. "{lib}"; pass_dir_parent "$1"', "_", str(base)],
+                              capture_output=True, text=True, timeout=30)
+    if os.getuid() == 0:
+        pytest.skip("root reads every directory")
+    blind = tmp_path / "blind"
+    (blind / ".cp").mkdir(parents=True)
+    (blind / ".cp" / "1234.theirs").mkdir()
+    os.chmod(blind / ".cp", 0o300)                              # write and search, no read
+    try:
+        assert parent(blind).returncode != 0
+    finally:
+        os.chmod(blind / ".cp", 0o700)
+    assert not (blind / ".cp" / ".codex-dispatch-passes").exists()
+    assert (blind / ".cp" / "1234.theirs").exists()
+    newline = tmp_path / "newline"
+    (newline / ".cp").mkdir(parents=True)
+    (newline / ".cp" / "\n").write_text("theirs\n")
+    assert parent(newline).returncode != 0
+    assert not (newline / ".cp" / ".codex-dispatch-passes").exists()

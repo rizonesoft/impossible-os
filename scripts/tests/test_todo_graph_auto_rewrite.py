@@ -331,11 +331,61 @@ def an_odd_worktree_path_is_still_repaired():
     return all(results)
 
 
+def a_backslash_in_a_name_is_not_a_directory():
+    """On Linux a file literally named todo\\notes.md at the repository root passed the todo/ check (its backslash
+    was read as a separator) and ran the tree-wide repair (round 12, 2026-11-23)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a = os.path.join(tmp, "a")
+        git("init", "-q", a)
+        hook = install_hook(a)
+        fake_validator(a)
+        git("-C", a, "add", "-A")
+        git("-C", a, "commit", "-qm", "base")
+        edited = os.path.join(a, "todo\\notes.md")
+        pathlib.Path(edited).write_text("x\n")
+        subprocess.run([sys.executable, hook], input=json.dumps({"tool_input": {"file_path": edited}}),
+                       capture_output=True, text=True, cwd=a, timeout=60)
+        return os.name == "nt" or not pathlib.Path(a, "ran-here").exists()
+
+
+def an_unrelated_slow_worktree_is_never_resolved():
+    """The registered roots are compared as git prints them; resolving every one let a stale worktree on an
+    unresponsive mount stall a TODO edit past the harness's 20 s (performance 12, 2026-11-23)."""
+    import types
+    hook = _load_hook("hook_registered")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.realpath(tmp)
+        touched = []
+
+        def check_output(cmd, **kw):
+            assert "list" in cmd
+            return (f"worktree /mnt/unresponsive\0worktree {root}\0").encode()
+
+        class Path:
+            def __getattr__(self, name):
+                return getattr(os.path, name)
+
+            @staticmethod
+            def realpath(p, *a, **k):
+                touched.append(os.fspath(p) if not isinstance(p, bytes) else os.fsdecode(p))
+                return os.path.realpath(p)
+
+        fake_os = types.SimpleNamespace(**{k: getattr(os, k) for k in dir(os) if not k.startswith("__")})
+        fake_os.path = Path()
+        hook.os = fake_os
+        hook.subprocess = types.SimpleNamespace(check_output=check_output, DEVNULL=subprocess.DEVNULL,
+                                                TimeoutExpired=subprocess.TimeoutExpired)
+        ok = root in hook._registered_worktrees("/elsewhere", hook.time.monotonic() + 10)
+    return ok and not any("unresponsive" in t for t in touched)
+
+
 def main():
     bad = 0
     for label, check in (("a symlinked TODO is repaired in the worktree it lives in", a_symlinked_todo_is_repaired_where_it_lives),
                          ("a link is judged by its target's place, not its own name", links_are_judged_by_their_target),
                          ("an odd worktree path (newline, trailing space) is still repaired", an_odd_worktree_path_is_still_repaired),
+                         ("a backslash in a name is not a directory", a_backslash_in_a_name_is_not_a_directory),
+                         ("an unrelated slow worktree is never resolved", an_unrelated_slow_worktree_is_never_resolved),
                          ("a git lookup timeout is reported, never silent", a_lookup_timeout_is_reported),
                          ("a held pipe never holds the hook past its budget", a_held_pipe_never_holds_the_hook_past_its_budget),
                          ("a validator overrun stops its whole process group", a_validator_overrun_stops_its_whole_group)):
@@ -369,7 +419,7 @@ def main():
     ok = bool(msg) and "did not finish" in msg
     bad += not ok
     print(f"{'PASS' if ok else 'FAIL'} a timeout is reported as unfinished")
-    total = len(CLASSES) + 10
+    total = len(CLASSES) + 12
     print(f"{total - bad}/{total} passed")
     return 1 if bad else 0
 

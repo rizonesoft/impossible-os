@@ -243,59 +243,100 @@ function formatSection(title, body) {
   return [`## ${title}`, "", body.trim() ? body.trim() : "(none)", ""].join("\n");
 }
 
-function formatUntrackedFile(cwd, relativePath, rawPath = null) {
-  const absolutePath = rawPath ? Buffer.concat([Buffer.from(cwd + path.sep), rawPath]) : path.join(cwd, relativePath);
-  // Impossible OS patch (../../PATCHES.md): never follow a link and never open what is not a regular file. A
-  // symlink to a FIFO with no writer passed the size check (a FIFO reports 0 bytes) and blocked readFileSync
-  // before the reviewer started. A link is shown by its link text, as the dispatcher's candidate reader keys it.
-  let stat;
+// Impossible OS patch (../../PATCHES.md): the directory holding the file named by the bytes `raw` under `cwd`,
+// reached one component at a time through directory descriptors that follow no link, so a parent swapped for a
+// symlink after git listed the file cannot lead the read outside the checkout (the bytes reached the reviewer's
+// prompt before the dispatcher's candidate check could see anything). Returns {fd, leaf}; the caller closes fd.
+function openParentBeneath(cwd, raw) {
+  const parts = [];
+  for (let start = 0; start <= raw.length;) {
+    const slash = raw.indexOf(0x2f, start);
+    const stop = slash === -1 ? raw.length : slash;
+    const part = raw.subarray(start, stop);
+    if (part.length === 0 || part.equals(Buffer.from("..")) || part.equals(Buffer.from("."))) {
+      throw new Error("not a plain relative path");
+    }
+    parts.push(part);
+    start = stop + 1;
+    if (slash === -1) {
+      break;
+    }
+  }
+  const O = fs.constants;
+  let fd = fs.openSync(cwd, O.O_RDONLY | O.O_DIRECTORY);
   try {
-    stat = fs.lstatSync(absolutePath);
+    for (const part of parts.slice(0, -1)) {
+      const next = fs.openSync(Buffer.concat([Buffer.from(`/proc/self/fd/${fd}/`), part]),
+                               O.O_RDONLY | O.O_DIRECTORY | O.O_NOFOLLOW);
+      fs.closeSync(fd);
+      fd = next;
+    }
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+  return { fd, leaf: Buffer.concat([Buffer.from(`/proc/self/fd/${fd}/`), parts[parts.length - 1]]) };
+}
+
+// Exported for its test (a race between listing and reading cannot be driven through the review entry points).
+export function formatUntrackedFile(cwd, relativePath, rawPath = null) {
+  const raw = rawPath ?? Buffer.from(relativePath);
+  let beneath;
+  try {
+    beneath = openParentBeneath(cwd, raw);
   } catch {
     return `### ${relativePath}\n(skipped: unreadable file)`;
   }
-  if (stat.isSymbolicLink()) {
-    try {
-      return `### ${relativePath}\n(symlink to ${fs.readlinkSync(absolutePath)})`;
-    } catch {
-      return `### ${relativePath}\n(skipped: unreadable symlink)`;
-    }
-  }
-  if (stat.isDirectory()) {
-    return `### ${relativePath}\n(skipped: directory)`;
-  }
-  if (!stat.isFile()) {
-    return `### ${relativePath}\n(skipped: not a regular file)`;
-  }
-  if (stat.size > MAX_UNTRACKED_BYTES) {
-    return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
-  }
-
-  let buffer;
   let fd = null;
   try {
-    fd = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-    if (!fs.fstatSync(fd).isFile()) {
+    let stat;
+    try {
+      stat = fs.lstatSync(beneath.leaf);
+    } catch {
+      return `### ${relativePath}\n(skipped: unreadable file)`;
+    }
+    if (stat.isSymbolicLink()) {
+      try {
+        return `### ${relativePath}\n(symlink to ${fs.readlinkSync(beneath.leaf)})`;
+      } catch {
+        return `### ${relativePath}\n(skipped: unreadable symlink)`;
+      }
+    }
+    if (stat.isDirectory()) {
+      return `### ${relativePath}\n(skipped: directory)`;
+    }
+    if (!stat.isFile()) {
       return `### ${relativePath}\n(skipped: not a regular file)`;
     }
-    const limit = Buffer.alloc(MAX_UNTRACKED_BYTES + 1);
-    const read = fs.readSync(fd, limit, 0, limit.length, 0);
-    if (read > MAX_UNTRACKED_BYTES) {
-      return `### ${relativePath}\n(skipped: exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
+    if (stat.size > MAX_UNTRACKED_BYTES) {
+      return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
     }
-    buffer = limit.subarray(0, read);
-  } catch {
-    return `### ${relativePath}\n(skipped: unreadable file)`;
+
+    let buffer;
+    try {
+      fd = fs.openSync(beneath.leaf, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      if (!fs.fstatSync(fd).isFile()) {
+        return `### ${relativePath}\n(skipped: not a regular file)`;
+      }
+      const limit = Buffer.alloc(MAX_UNTRACKED_BYTES + 1);
+      const read = fs.readSync(fd, limit, 0, limit.length, 0);
+      if (read > MAX_UNTRACKED_BYTES) {
+        return `### ${relativePath}\n(skipped: exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
+      }
+      buffer = limit.subarray(0, read);
+    } catch {
+      return `### ${relativePath}\n(skipped: unreadable file)`;
+    }
+    if (!isProbablyText(buffer)) {
+      return `### ${relativePath}\n(skipped: binary file)`;
+    }
+    return [`### ${relativePath}`, "```", buffer.toString("utf8").trimEnd(), "```"].join("\n");
   } finally {
     if (fd !== null) {
       fs.closeSync(fd);
     }
+    fs.closeSync(beneath.fd);
   }
-  if (!isProbablyText(buffer)) {
-    return `### ${relativePath}\n(skipped: binary file)`;
-  }
-
-  return [`### ${relativePath}`, "```", buffer.toString("utf8").trimEnd(), "```"].join("\n");
 }
 
 function collectWorkingTreeContext(cwd, state, options = {}) {

@@ -38,8 +38,9 @@ def _left(deadline):
 
 
 def _registered_worktrees(where, deadline):
-    """The canonical roots of every worktree git has registered for the repository holding `where`, or an empty
-    set when that cannot be read. A tree that merely points at the repository's metadata is not among them. A
+    """The roots of every worktree git has registered for the repository holding `where`, as git prints them
+    (absolute, links resolved when the worktree was added), or an empty set when that cannot be read. Nothing is
+    resolved here: a stale worktree on an unresponsive mount must not stall the check of the edited tree. A tree that merely points at the repository's metadata is not among them. A
     lookup that runs out of time raises subprocess.TimeoutExpired: the caller reports a repair not run."""
     try:
         out = subprocess.check_output(["git", "-C", where, "worktree", "list", "--porcelain", "-z"],
@@ -49,7 +50,7 @@ def _registered_worktrees(where, deadline):
     except Exception:  # fail-direction: no list means no repair, which is silent and safe
         return set()
     # NUL-delimited fields, as bytes: a worktree path may hold a newline or end in whitespace.
-    return {os.path.realpath(os.fsdecode(field[len(b"worktree "):]))
+    return {os.fsdecode(field[len(b"worktree "):])
             for field in out.split(b"\0") if field.startswith(b"worktree ")}
 
 
@@ -96,8 +97,8 @@ def main() -> int:
     # The file itself, resolved: an edit through a symlink changes its target, so the target decides whether this
     # is a TODO and which tree is repaired (a link's own name or directory decides nothing).
     real = os.path.realpath(path)
-    if not real.endswith(".md") or "todo/" not in real.replace(chr(92), "/"):
-        return 0                                       # cheap: a target with no todo/ in its path is never a TODO
+    if not real.endswith(".md") or "todo" not in real.split(os.sep):
+        return 0                                       # cheap: a target with no todo component is never a TODO
 
     # The tree that holds the edited file, never the hook's cwd: the harness runs hooks in the session's primary
     # tree, so an edit in another worktree was repaired in the primary tree (2026-11-23, 22 files under a live run).
@@ -123,7 +124,8 @@ def main() -> int:
         return _not_run(f"git worktree list timed out inside the hook's {BUDGET_S}s budget")
     if os.path.realpath(root) not in registered:
         return 0
-    if not os.path.relpath(real, os.path.realpath(root)).replace(chr(92), "/").startswith("todo/"):
+    # The first component must be todo, by the OS's own separator: on Linux a backslash is part of a file name.
+    if os.path.relpath(real, os.path.realpath(root)).split(os.sep)[0] != "todo":
         return 0                                       # a Markdown file of this tree, but not a TODO
 
     validator = root + "/scripts/todo-graph/validate.py"

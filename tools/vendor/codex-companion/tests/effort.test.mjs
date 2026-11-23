@@ -286,3 +286,18 @@ test("a working directory whose path cannot be named exactly is refused, never r
   const turn = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")).lastTurnStart : undefined;
   assert.equal(turn, undefined, "a turn started in a directory that could not be named");
 });
+
+test("an untracked file whose parent was swapped for a link is never read outside the checkout", async (t) => {
+  const { formatUntrackedFile } = await import(path.join(ROOT, "scripts", "lib", "git.mjs"));
+  const repo = makeTempDir();
+  const outside = makeTempDir();
+  fs.mkdirSync(path.join(repo, "d"));
+  fs.writeFileSync(path.join(repo, "d", "x.txt"), "INSIDE-BODY\n");
+  assert.match(formatUntrackedFile(repo, "d/x.txt"), /INSIDE-BODY/);
+  fs.writeFileSync(path.join(outside, "x.txt"), "OUTSIDE-SECRET\n");
+  fs.renameSync(path.join(repo, "d"), path.join(repo, "d.real"));     // the swap, after git listed d/x.txt
+  fs.symlinkSync(outside, path.join(repo, "d"));
+  const shown = formatUntrackedFile(repo, "d/x.txt");
+  assert.doesNotMatch(shown, /OUTSIDE-SECRET/);
+  assert.match(shown, /skipped/);
+});

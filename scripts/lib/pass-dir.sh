@@ -20,8 +20,15 @@ pass_dir_parent() {
         # exactly that, and an empty directory holds nothing a sweep could remove. One with any entry is someone
         # else's and is never used, unless the marker is there by now: a first caller racing this one wrote it
         # between the two looks (nothing but a marker is written before it).
-        local entries
-        entries="$(ls -A -- "$parent" 2>/dev/null)"
+        # The listing must SUCCEED: an unreadable one prints nothing, like an empty one, and would adopt a
+        # directory full of someone else's entries, which a later sweep would delete. One x per entry (so a name
+        # that is only a newline counts), stopping at the first.
+        local entries rc
+        entries="$(find "$parent" -mindepth 1 -maxdepth 1 -printf x -quit 2>/dev/null)"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            return 1
+        fi
         if [ -n "$entries" ] && [ ! -f "$parent/$PASS_DIR_MARKER" ]; then
             return 1
         fi
