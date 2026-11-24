@@ -16,9 +16,3 @@ pre_commit_mark_path() {
 mark_pre_commit_ran() {
     printf '%s\n' "$PPID" > "$(pre_commit_mark_path)" 2>/dev/null || true
 }
-
-# The one internal --no-verify commit: post-commit's own COUNT.md amend. It records its
-# own pid; prepare-commit-msg accepts a commit whose git process that pid started.
-allow_hook_amend() {
-    printf '%s\n' "$$" > "$(git rev-parse --git-dir)/hook-amend.by" 2>/dev/null || true
-}

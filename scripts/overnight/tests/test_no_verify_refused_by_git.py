@@ -24,15 +24,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/.githooks/lib/pre-commit-mark.sh"
 mark_pre_commit_ran
 """
-STUB_POST_COMMIT_AMEND = """#!/usr/bin/env bash
-# As .githooks/post-commit does for COUNT.md, once.
-[ -n "${SKIP_COUNT:-}" ] && exit 0
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-mark.sh"
-echo counted > COUNT.md && git add COUNT.md
-allow_hook_amend
-SKIP_COUNT=1 git commit -q --amend --only --no-edit --no-verify -- COUNT.md
-"""
-
 
 def _repo(root: pathlib.Path, post_commit: bool = False) -> pathlib.Path:
     hooks = root / "repo" / ".githooks"
@@ -46,7 +37,7 @@ def _repo(root: pathlib.Path, post_commit: bool = False) -> pathlib.Path:
     (root / "repo" / ".conclave").mkdir()
     shutil.copy(REPO / ".conclave/lanes.toml", root / "repo" / ".conclave/lanes.toml")
     if post_commit:
-        (hooks / "post-commit").write_text(STUB_POST_COMMIT_AMEND)
+        shutil.copy(REPO / ".githooks/post-commit", hooks / "post-commit")
     for h in hooks.iterdir():
         h.chmod(0o755)
     repo = root / "repo"
@@ -227,13 +218,17 @@ def test_git_named_git_exe_is_still_git():
         assert done.returncode != 0 and "pre-commit did not run" in done.stderr, done.stderr
 
 
-def test_the_post_commit_amend_is_the_one_internal_no_verify_commit():
+def test_the_post_commit_amend_runs_no_hook_and_leaves_no_way_round():
     with tempfile.TemporaryDirectory() as d:
         repo = _repo(pathlib.Path(d), post_commit=True)
         assert _commit_file(repo, "a").returncode == 0
         shown = _git(repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
         assert "COUNT.md" in shown, "the post-commit amend landed"
-        assert not (repo / ".git/hook-amend.by").exists()
+        (repo / ".git/hook-amend.by").write_text(f"{os.getpid()}\n")      # the record an older hook left to be let through
+        (repo / "b").write_text("b\n")
+        _git(repo, "add", "b")
+        done = _git(repo, "commit", "-q", "-n", "-m", "b", check=False)
+        assert done.returncode != 0 and "pre-commit did not run" in done.stderr, done.stderr
 
 
 if __name__ == "__main__":

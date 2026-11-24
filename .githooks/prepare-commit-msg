@@ -7,7 +7,7 @@
 # as pre-commit, so a missing record of that process (lib/pre-commit-mark.sh) means
 # pre-commit did not run. Only `git commit` runs pre-commit: cherry-pick, revert,
 # merge and rebase commits never do, and are let through. post-commit's own COUNT.md
-# amend is the one internal --no-verify commit, allowed by the pid it records.
+# amend is built with commit-tree and runs no hook.
 #
 # Args: $1 message file, $2 source (message, template, merge, squash, commit).
 # ============================================================================
@@ -22,13 +22,6 @@ MARK="$(pre_commit_mark_path)"
 RAN="$(cat "$MARK" 2>/dev/null || true)"
 rm -f "$MARK"
 [ "$RAN" = "$PPID" ] && exit 0
-
-AMENDER="$(cat "$GIT_DIR_PATH/hook-amend.by" 2>/dev/null || true)"
-if [ -n "$AMENDER" ]; then
-    rm -f "$GIT_DIR_PATH/hook-amend.by"
-    GRANDPARENT="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
-    [ "$GRANDPARENT" = "$AMENDER" ] && exit 0
-fi
 
 # A process's argv into the array ARGV: /proc where it exists, `ps` elsewhere (macOS,
 # Git for Windows), whose space-joined args still give the command and subcommand.

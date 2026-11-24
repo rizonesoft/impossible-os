@@ -200,8 +200,12 @@ def snapshot(source: str, paths: list[str] | None = None) -> Path:
 def _materialise(source: str, paths: list[str] | None, tmp: Path) -> None:
     import fnmatch
     global DOC_FACTS
+    global _FILESET, _DIRSET
     pages = 0
     covered: set[str] = set()
+    if paths is not None:     # only names these can match, and the TODO names load_stats counts
+        raw = git("ls-tree", "-r", "-z", "--name-only", source, "--", "todo", *sorted({p.split("/")[0] for p in paths}))
+        _FILESET, _DIRSET = {p for p in raw.split("\0") if p}, set()
     files, _ = fileset()
     want = sorted(f for f in files if any(
         f == p or f.startswith(p + "/") or ("*" in p and fnmatch.fnmatchcase(f, p))

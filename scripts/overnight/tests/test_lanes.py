@@ -1538,7 +1538,7 @@ def test_a_held_index_lock_leaves_the_commit_and_every_entry_alone(repo):
             timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
     assert (p / ".git" / "index.lock").exists(), r                    # never another process's lock to remove
     (p / ".git" / "index.lock").unlink()
-    assert "were not committed" in r.stderr and "run" not in r.stderr.split("were not committed")[1], r
+    assert "could not be committed" in r.stderr and "run" not in r.stderr.split("could not be committed")[1], r
     assert git(p, "show", "HEAD:README.md").stdout == README_TEXT
     assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
     # as the report says, the next commit brings them
@@ -1550,31 +1550,46 @@ def test_a_held_index_lock_leaves_the_commit_and_every_entry_alone(repo):
     assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
 
 
-def test_a_refused_count_only_amend_is_reported(repo):
+@pytest.mark.parametrize("case", ["lock held", "HEAD moved", "HEAD moved during the count"])
+def test_a_count_only_amend_is_pinned_and_a_refusal_is_reported(repo, case):
     p = repo["primary"]
     (p / "intro.md").write_text(README_TEXT)
-    (p / "README.md").symlink_to("intro.md")                          # no README to sync: the COUNT.md-only amend
+    (p / "README.md").symlink_to("intro.md")                          # no README to sync: COUNT.md alone is amended
     git(p, "add", "--", "README.md", "intro.md")
     git(p, "commit", "-qm", "link")
     hook = (REPO / ".githooks" / "post-commit").read_text()
-    amend = '    SKIP_COUNT=1 git commit --amend --only'
-    assert hook.count(amend) == 1
-    (repo["hooks"] / "post-commit").write_text(hook.replace(amend, '    : > "$ROOT/.git/index.lock"\n' + amend))
+    call = "if plumb_amend; then"
+    assert hook.count(call) == 1
+    move = 'b="$(git commit-tree -p HEAD -m theirs "HEAD^{tree}")"; git update-ref HEAD "$b"; echo "$b" > "$ROOT/.git/b"\n'
+    if case == "lock held":
+        edited = hook.replace(call, ': > "$ROOT/.git/index.lock"\n' + call)
+    elif case == "HEAD moved":
+        edited = hook.replace(call, move + call)
+    else:
+        start = "# Vendored files to exclude"
+        assert hook.count(start) == 1
+        edited = hook.replace(start, move + start)
+    (repo["hooks"] / "post-commit").write_text(edited)
     (repo["hooks"] / "post-commit").chmod(0o755)
-    (repo["hooks"] / "lib").mkdir(exist_ok=True)
-    shutil.copy(REPO / ".githooks" / "lib" / "pre-commit-mark.sh", repo["hooks"] / "lib" / "pre-commit-mark.sh")
-    env = {**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"}
+    env = {**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com",
+           "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com"}
     (p / "src/kernel/k.c").write_text("k2\n")
     r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
             timeout=60, env=env)
-    (p / ".git" / "index.lock").unlink()
-    assert r.returncode == 0 and "the new COUNT.md was not committed" in r.stderr, r
-    assert git(p, "log", "-1", "--format=%s").stdout == "x\n" and git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+    assert r.returncode == 0 and "the new COUNT.md could not be committed" in r.stderr, r
+    assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+    if case == "lock held":
+        (p / ".git" / "index.lock").unlink()
+        assert git(p, "log", "-1", "--format=%s").stdout == "x\n"
+    else:                                                             # the later commit keeps its identity
+        assert git(p, "rev-parse", "HEAD").stdout == (p / ".git" / "b").read_text()
     (repo["hooks"] / "post-commit").write_text(hook)                  # as the report says, the next commit brings it
     (p / "src/kernel/k.c").write_text("k3\n")
     r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "y", "--only", "src/kernel/k.c"], cwd=p,
             timeout=60, env=env)
     assert "post-commit:" not in r.stderr and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
+    assert git(p, "log", "-1", "--format=%s").stdout == "y\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
+    assert (p / "README.md").is_symlink() and git(p, "ls-tree", "HEAD", "--", "README.md").stdout[:6] == "120000"
 
 
 def test_an_unchanged_readme_is_not_rewritten(repo):

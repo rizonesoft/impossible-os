@@ -27,6 +27,8 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
+# The commit this run follows, read before the count, which takes a while: everything below derives from it.
+BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 
 # Vendored files to exclude from "our code" count
 VENDORED=(
@@ -437,8 +439,6 @@ EOF
 # this hook stays staged. A clean working README is brought along afterwards; a dirty
 # one is left alone. Failures are printed, never fatal to a commit.
 README_FILE="$ROOT/README.md"
-# The one commit every README input and the amend below are derived from.
-BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 BASE_README="$([ -z "$BASE" ] || git -C "$ROOT" ls-tree "$BASE" -- README.md | awk '{print $1, $3}')"   # mode, blob
 README_TARGET=""
 case "$BASE_README" in 100644\ * | 100755\ *)   # a regular file: a link's blob is its target's name
@@ -499,105 +499,99 @@ fi
 
 # Amend the commit to include the updated COUNT.md + README badge.
 #
-# `--only <paths>` IS LOAD-BEARING (2026-08-02). A bare `--amend` commits the
-# WHOLE INDEX, so this hook silently converted every path-limited commit in the
-# repo into a full-index commit -- defeating `git commit -- <paths>`, which is
-# the documented protection for working alongside a live unattended run.
+# IT CARRIES THESE FILES AND NOTHING ELSE (2026-08-02). A bare `git commit --amend`
+# commits the WHOLE INDEX, so this hook once converted every path-limited commit in
+# the repo into a full-index one -- defeating `git commit -- <paths>`, which is the
+# documented protection for working alongside a live unattended run.
 #
 # MEASURED TWICE, both times mistaken for something else: on 2026-07-31 an
 # attended commit that staged only its own four files still shipped the run's
 # staged section deferral, and on 2026-08-02 a path-limited 3-file commit
 # shipped 13 files including 527 lines of the run's in-flight
 # test_usermode_launcher.c under an unrelated message. Both were attributed to
-# "the index is shared"; the actual mechanism is this amend, and it is fixable
-# rather than inherent. It is also the real mechanism behind the 2026-07-28
-# live-gotcha about the RUN sweeping an operator's files.
+# "the index is shared"; the actual mechanism was this amend.
 #
-# Use SKIP_COUNT to prevent infinite recursion.
-if [ -n "$README_TARGET" ]; then
-    # Build the amended commit from ONE pinned base commit
-    # (tree, parents, message and author all read from $base), with the generated
-    # COUNT.md and the synced README blob in a throwaway index. update-ref only
-    # moves HEAD if it still equals $base, and the real index is touched only
-    # after that succeeds, so a concurrent commit or a lock failure loses nothing.
-    plumb_amend() {
-        local base="$BASE" tmpidx cb rb tree new msg an ae ad gitdir idx lock cur_r par
-        local -a pargs=()
-        [ -n "$base" ] || return 1
-        cb="$(git -C "$ROOT" hash-object -w "$COUNT_FILE")" || return 1
+# Everything is derived from one pinned base commit (tree, parents, message and
+# author all read from $base), with the generated COUNT.md and, when there is one,
+# the synced README blob in a throwaway index. update-ref only moves HEAD if it
+# still equals $base, and the real index is touched only after that succeeds, so a
+# concurrent commit or a lock failure loses nothing.
+plumb_amend() {
+    local base="$BASE" tmpidx cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
+    local -a pargs=()
+    [ -n "$base" ] || return 1
+    cb="$(git -C "$ROOT" hash-object -w "$COUNT_FILE")" || return 1
+    local -a readme=()
+    if [ -n "$README_TARGET" ]; then
         rb="$(git -C "$ROOT" hash-object -w "$README_TARGET")" || return 1
-        tmpidx="$(mktemp)" || return 1; rm -f "$tmpidx"
-        { GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" read-tree "$base" &&
-          GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" update-index --add \
-              --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "${BASE_README% *},$rb,README.md" &&
-          tree="$(GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" write-tree)"; } || { rm -f "$tmpidx"; return 1; }
-        rm -f "$tmpidx"
-        # Parents come from the commit object itself (a shallow boundary makes
-        # rev-list report none); an empty list is allowed only for a true root.
-        while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
-        if [ "${#pargs[@]}" -eq 0 ] && [ "$(git -C "$ROOT" rev-list --count "$base" 2>/dev/null)" != "1" ]; then
-            return 1
-        fi
-        msg="$(git -C "$ROOT" log -1 --format=%B "$base")" || return 1
-        an="$(git -C "$ROOT" log -1 --format=%an "$base")" || return 1
-        ae="$(git -C "$ROOT" log -1 --format=%ae "$base")" || return 1
-        ad="$(git -C "$ROOT" log -1 --format=%aD "$base")" || return 1
-        new="$(printf '%s\n' "$msg" | GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
-            git -C "$ROOT" commit-tree "$tree" "${pargs[@]}")" || return 1
-        # Hold the real index lock for the whole transaction: validate, prepare the
-        # new index privately in the lock file, move HEAD with a compare-and-swap,
-        # and only then publish the index by renaming the lock into place. Any
-        # failure discards the lock file and leaves the live index untouched.
-        gitdir="$(git -C "$ROOT" rev-parse --absolute-git-dir)" || return 1
-        idx="$gitdir/index"; lock="$idx.lock"
-        ( set -o noclobber; : > "$lock" ) 2>/dev/null || return 1
-        # We own the lock from here. EXIT is the ONLY cleanup (INT/TERM just exit,
-        # which runs it), and LOCK_OWNED makes it remove the path at most once, so
-        # it can never delete a lock another git process acquired afterwards.
-        LOCK_OWNED="$lock"
-        # Both cleanup paths mask INT/TERM and clear ownership BEFORE unlinking,
-        # so no signal can make the path be removed twice.
-        trap 'trap "" INT TERM; _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"' EXIT
-        trap 'exit 130' INT TERM
-        release_lock() { trap '' INT TERM; local _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"; trap - EXIT INT TERM; }
-        if ! cp "$idx" "$lock"; then release_lock; return 1; fi
-        cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
-        local -a entries=(--add --cacheinfo "100644,$cb,COUNT.md")
-        local published="COUNT.md"
-        if [ "$cur_r" = "$BASE_README" ]; then         # else: a staged edit, which stays
-            entries+=(--cacheinfo "${BASE_README% *},$rb,README.md"); published="COUNT.md and README.md"
-        fi
-        if ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index "${entries[@]}"; then
-            release_lock; return 1
-        fi
-        # The HEAD swap and the index publish are one step: interrupts are ignored
-        # between them so HEAD and the index can never disagree.
-        trap '' INT TERM
-        if ! git -C "$ROOT" update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
-            release_lock; return 1
-        fi
-        if mv -f "$lock" "$idx"; then
-            LOCK_OWNED=   # published: the path is no longer ours to remove
-            [ "$published" = "COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
-            trap - EXIT INT TERM
-        else
-            echo "post-commit: HEAD amended but the index could not be published, so it still holds the old $published" >&2
-            release_lock                               # HEAD did move, so this is not the refusal below
-        fi
-    }
-    if plumb_amend; then
-        publish_readme
-    else
-        echo "post-commit: the new COUNT.md and README.md were not committed (HEAD moved, or a git lock was held); the next commit in this checkout brings them" >&2
+        readme=(--cacheinfo "${BASE_README% *},$rb,README.md")
     fi
-    rm -f "$README_TARGET"
+    tmpidx="$(mktemp)" || return 1; rm -f "$tmpidx"
+    { GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" read-tree "$base" &&
+      GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" update-index --add \
+          --cacheinfo "100644,$cb,COUNT.md" "${readme[@]}" &&
+      tree="$(GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" write-tree)"; } || { rm -f "$tmpidx"; return 1; }
+    rm -f "$tmpidx"
+    # Parents come from the commit object itself (a shallow boundary makes
+    # rev-list report none); an empty list is allowed only for a true root.
+    while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
+    if [ "${#pargs[@]}" -eq 0 ] && [ "$(git -C "$ROOT" rev-list --count "$base" 2>/dev/null)" != "1" ]; then
+        return 1
+    fi
+    msg="$(git -C "$ROOT" log -1 --format=%B "$base")" || return 1
+    an="$(git -C "$ROOT" log -1 --format=%an "$base")" || return 1
+    ae="$(git -C "$ROOT" log -1 --format=%ae "$base")" || return 1
+    ad="$(git -C "$ROOT" log -1 --format=%aD "$base")" || return 1
+    new="$(printf '%s\n' "$msg" | GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
+        git -C "$ROOT" commit-tree "$tree" "${pargs[@]}")" || return 1
+    # Hold the real index lock for the whole transaction: validate, prepare the
+    # new index privately in the lock file, move HEAD with a compare-and-swap,
+    # and only then publish the index by renaming the lock into place. Any
+    # failure discards the lock file and leaves the live index untouched.
+    gitdir="$(git -C "$ROOT" rev-parse --absolute-git-dir)" || return 1
+    idx="$gitdir/index"; lock="$idx.lock"
+    ( set -o noclobber; : > "$lock" ) 2>/dev/null || return 1
+    # We own the lock from here. EXIT is the ONLY cleanup (INT/TERM just exit,
+    # which runs it), and LOCK_OWNED makes it remove the path at most once, so
+    # it can never delete a lock another git process acquired afterwards.
+    LOCK_OWNED="$lock"
+    # Both cleanup paths mask INT/TERM and clear ownership BEFORE unlinking,
+    # so no signal can make the path be removed twice.
+    trap 'trap "" INT TERM; _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"' EXIT
+    trap 'exit 130' INT TERM
+    release_lock() { trap '' INT TERM; local _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"; trap - EXIT INT TERM; }
+    if ! cp "$idx" "$lock"; then release_lock; return 1; fi
+    cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
+    local -a entries=(--add --cacheinfo "100644,$cb,COUNT.md")
+    local published="COUNT.md"
+    if [ -n "$rb" ] && [ "$cur_r" = "$BASE_README" ]; then   # else: a staged edit, which stays
+        entries+=("${readme[@]}"); published="COUNT.md and README.md"
+    fi
+    if ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index "${entries[@]}"; then
+        release_lock; return 1
+    fi
+    # The HEAD swap and the index publish are one step: interrupts are ignored
+    # between them so HEAD and the index can never disagree.
+    trap '' INT TERM
+    if ! git -C "$ROOT" update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
+        release_lock; return 1
+    fi
+    if mv -f "$lock" "$idx"; then
+        LOCK_OWNED=   # published: the path is no longer ours to remove
+        [ "$published" = "COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
+        trap - EXIT INT TERM
+    else
+        echo "post-commit: HEAD amended but the index could not be published, so it still holds the old $published" >&2
+        release_lock                               # HEAD did move, so this is not the refusal below
+    fi
+}
+generated="COUNT.md"
+[ -z "$README_TARGET" ] || generated="COUNT.md and README.md"
+if plumb_amend; then
+    publish_readme
 else
-    # shellcheck source=.githooks/lib/pre-commit-mark.sh
-    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-mark.sh"
-    allow_hook_amend  # this --no-verify amend is the one prepare-commit-msg allows
-    SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
-      -- "$COUNT_FILE" 2>/dev/null ||
-        echo "post-commit: the new COUNT.md was not committed (git refused the amend); the next commit in this checkout brings it" >&2
+    echo "post-commit: the new $generated could not be committed (HEAD moved, or a git lock was held); the next commit in this checkout brings the generated files" >&2
 fi
+[ -z "$README_TARGET" ] || rm -f "$README_TARGET"
 
 exit 0
