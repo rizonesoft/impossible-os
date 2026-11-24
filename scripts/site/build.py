@@ -71,7 +71,7 @@ TODO = ROOT / "todo"
 BASELINE = DOCS / ".coverage-baseline.json"
 DEFAULT_OUT = REPO / "build" / "site"
 
-# What the site reads. A snapshot (--staged, --sync-head) materialises only these
+# What the site reads. A snapshot (--staged, --emit-head) materialises only these
 # plus every tracked *.md, so a check judges exactly what a commit contains.
 SNAP_PATHS = ["project.json", "COUNT.md", "docs", "todo", "gh-pages", "resources/icons/src",
               "resources/brand", "resources/backgrounds", "resources/icons/color", "include/desktop/theme_tokens.h", "*.md"]
@@ -2553,11 +2553,9 @@ def main() -> int:
                       help="list every page and card with sources= and whether its code changed since")
     mode.add_argument("--emit-head", metavar="FILE",
                       help="post-commit: print FILE as committed at HEAD with its project regions synced")
-    mode.add_argument("--sync-head", nargs="+", metavar="FILE",
-                      help="post-commit: sync FILEs' regions from the HEAD snapshot, only when the worktree copy is clean")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--ref", default="HEAD", help="commit that --emit-head / --sync-head read (default HEAD)")
+    ap.add_argument("--ref", default="HEAD", help="commit that --emit-head reads (default HEAD)")
     ap.add_argument("--staged", action="store_true",
                     help="read every input from the INDEX (pre-commit), not the working tree")
     ap.add_argument("--skip-stats", action="store_true",
@@ -2566,7 +2564,7 @@ def main() -> int:
                     help="render only the docs tree as it was at commit REF into <out>/docs/<REF>/, "
                          "every repository link pinned to REF's full SHA")
     args = ap.parse_args()
-    if args.release is not None and (args.staged or args.sync is not None or args.sync_head or args.emit_head
+    if args.release is not None and (args.staged or args.sync is not None or args.emit_head
                                      or args.update_baseline or args.freshness or args.skip_stats):
         ap.error("--release combines only with --check, --out and --quiet")
     args.out = args.out.resolve()
@@ -2578,7 +2576,7 @@ def main() -> int:
             except ReleaseError as e:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
-        elif args.sync_head or args.emit_head:
+        elif args.emit_head:
             snap = snapshot(args.ref)
         elif args.staged:
             snap = snapshot("index")
@@ -2669,29 +2667,6 @@ def check_release_paths(files: dict[str, bytes], errors: list[str]) -> None:
             errors.append(f"docs path {hit[0]} collides with retained release {v} (docs/{v}/); rename the page")
 
 
-def sync_head(files: list[str], facts: dict, errors: list[str]) -> int:
-    """Rewrite regions computed from the COMMITTED tree. A file whose working copy
-    differs from HEAD is left alone (warned), so the post-commit amend can never
-    carry uncommitted edits or facts derived from uncommitted inputs."""
-    for rel in files:
-        head_path, wt_path = ROOT / rel, REPO / rel
-        if not head_path.exists():
-            continue
-        head_text = head_path.read_text(encoding="utf-8")
-        new = sync_regions(head_text, facts, rel, errors)
-        if new == head_text:
-            continue
-        if not wt_path.exists() or wt_path.read_text(encoding="utf-8") != head_text:
-            print(f"site: WARNING: {rel} has uncommitted edits; project regions not synced "
-                  f"(run: python3 scripts/site/build.py --sync {rel})", file=sys.stderr)
-            continue
-        wt_path.write_text(new, encoding="utf-8")
-        print(f"synced {rel}")
-    for e in errors:
-        print(f"ERROR: {e}", file=sys.stderr)
-    return 1 if errors else 0
-
-
 def run(args: argparse.Namespace) -> int:
     facts = load_project()
     errors: list[str] = []
@@ -2700,8 +2675,6 @@ def run(args: argparse.Namespace) -> int:
         facts.update(RELEASE_FACTS)
         facts["_historical_owners"] = sorted(set(owners))
 
-    if args.sync_head:
-        return sync_head(args.sync_head, facts, errors)
     if args.emit_head:
         text = (ROOT / args.emit_head).read_text(encoding="utf-8")
         out = sync_regions(text, facts, args.emit_head, errors)

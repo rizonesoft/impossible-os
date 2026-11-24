@@ -63,6 +63,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 
@@ -655,6 +656,22 @@ def _work_order(s):
 LANE_MAP_SECS = 2                                      # inside the Stop hook's 5 s, beside the classification
 
 
+def _has_lane_map(root, deadline):
+    """Whether this checkout has a lane map, in its working tree or at HEAD: a working tree missing it (and the
+    reader) is still the committed map's. A git that does not answer in time counts as yes."""
+    if os.path.exists(os.path.join(root, ".conclave", "lanes.toml")):
+        return True
+    left = (deadline - time.monotonic()) if deadline else LANE_MAP_SECS
+    try:
+        done = subprocess.run(["git", "-C", root, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml"],
+                              capture_output=True, timeout=max(0.1, left))
+    except subprocess.TimeoutExpired:
+        return True
+    except OSError:
+        return False                                   # fail-direction: no git, so no commits and no lanes
+    return done.returncode == 0 and bool(done.stdout.strip())
+
+
 def _lane_context(root, deadline=None):
     """(context, error text): the context is (module, committed map, lane states), None when no lane holds
     anything, and has no map (every open section is then held, and the packet says why) when ownership cannot
@@ -686,7 +703,7 @@ def _lane_context(root, deadline=None):
         return (mod, lane_map, lane_states), ""
     except Exception as exc:                           # fail-direction: a tree with no map has no lanes
         why = f"{type(exc).__name__}: {exc}"
-        mapped = os.path.exists(os.path.join(root, ".conclave", "lanes.toml"))
+        mapped = _has_lane_map(root, deadline)
         return ((None, None, why) if mapped else None), why     # mapped: ownership unknown, so nothing is free
 
 

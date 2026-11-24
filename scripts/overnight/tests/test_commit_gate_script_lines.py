@@ -8,6 +8,8 @@ newline as whitespace.
 import pathlib
 import sys
 
+import pytest
+
 HOOKS = pathlib.Path(__file__).resolve().parents[3] / ".claude/hooks"
 sys.path.insert(0, str(HOOKS))
 import section_commit_gate as gate  # noqa: E402
@@ -695,7 +697,8 @@ def test_two_worktrees_committed_in_one_call_are_both_returned(tmp_path, monkeyp
     assert gate.commit_landed_roots(SESSION, "smoketest") == [str(other), str(here)]
 
 
-def test_refusal_a_count_only_refresh_is_not_a_commit(tmp_path, monkeypatch):
+@pytest.mark.parametrize("count_only", ["1", ""])
+def test_refusal_a_manual_refresh_is_not_a_commit(tmp_path, monkeypatch, count_only):
     """Review round 2: a manual refresh before a refused commit published a receipt."""
     import os
     import subprocess
@@ -703,7 +706,7 @@ def test_refusal_a_count_only_refresh_is_not_a_commit(tmp_path, monkeypatch):
     monkeypatch.chdir(here)
     gate.commit_landed_roots(SESSION, "smoketest")
     hook = HOOKS.parents[1] / ".githooks/post-commit"
-    env = {"PATH": os.environ["PATH"], "HOME": str(here), "CLAUDE_CODE_SESSION_ID": SESSION, "COUNT_ONLY": "1"}
+    env = {"PATH": os.environ["PATH"], "HOME": str(here), "CLAUDE_CODE_SESSION_ID": SESSION, "COUNT_ONLY": count_only}
     before = _receipts(here).read_text()
     subprocess.run(["bash", str(hook)], cwd=str(here), env=env, capture_output=True, timeout=120)
     assert _receipts(here).read_text() == before

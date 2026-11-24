@@ -2,13 +2,18 @@
 # post-commit hook: regenerate COUNT.md with code and supporting text counts.
 # Runs silently after every commit. Amends the commit to include the update.
 # To disable temporarily: SKIP_COUNT=1 git commit ...
-# Manual refresh without amend: COUNT_ONLY=1 bash .githooks/post-commit
+# Manual refresh (never amends): bash .githooks/post-commit
+
+# Only git's own run amends: it follows a commit the other hooks judged, and git names its index to every hook it
+# runs. Run by hand, nothing has judged this tree (a reports-only lane's), so the files are only refreshed
+# (TODO-08 section 49). What the amend carries is always exempt: scripts/lanes.py requires both in `generated`.
+[ -n "${GIT_INDEX_FILE:-}" ] || COUNT_ONLY=1
 
 # Which tree this commit landed in, for the Claude harness post-commit hooks
 # (.claude/hooks/section_commit_gate.py commit_landed_roots). The session id is
 # in the environment of the shell that ran the commit. One receipt is APPENDED
 # per commit, so two worktrees committed in one call are both kept. A manual
-# COUNT_ONLY refresh is not a commit and writes none. Written before anything
+# refresh is not a commit and writes none. Written before anything
 # below can exit.
 if [ "${COUNT_ONLY:-}" != "1" ] && [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9-]{8,64}$ ]]; then
     _landed="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/claude-commit-landed"
@@ -22,11 +27,6 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
-
-# Only git's own run amends: it follows a commit the other hooks judged, and git names its index to every hook it
-# runs. Run by hand, nothing has judged this tree (a reports-only lane's), so the files are only refreshed
-# (TODO-08 section 49). What the amend carries is always exempt: scripts/lanes.py requires both in `generated`.
-[ -n "${GIT_INDEX_FILE:-}" ] || COUNT_ONLY=1
 
 # Vendored files to exclude from "our code" count
 VENDORED=(
@@ -430,42 +430,32 @@ ${impossibility_table}
 EOF
 
 # Re-sync README.md's project regions (release date, repo URL, and the computed
-# stat_* counts such as TODO files and test totals) from the COMMIT JUST MADE
-# (--sync-head reads a HEAD snapshot, never the working tree), and only when the
-# working README equals HEAD's, so the amend below can never carry uncommitted
-# edits or facts derived from uncommitted files. Runs before the badge rewrite,
-# which is the only other writer. Failures are printed, never fatal to a commit.
+# stat_* counts such as TODO files and test totals) from the COMMIT JUST MADE, into
+# a temporary copy: README as committed there, never the working file. The amend
+# below publishes it under the index lock, and only while the index still holds
+# that commit's README, so a README edit staged before or during this hook is never
+# replaced. A clean working README is brought along afterwards; a dirty one is left
+# alone. Failures are printed, never fatal to a commit.
 README_FILE="$ROOT/README.md"
-# README is rewritten and amended ONLY when its working copy AND its index entry
-# equal the commit just made; otherwise uncommitted README edits would be swept
-# into the amend, or a staged-only edit replaced by it.
-README_CLEAN=0
-if [ -f "$README_FILE" ] && git -C "$ROOT" diff --quiet HEAD -- README.md 2>/dev/null &&
-   git -C "$ROOT" diff --cached --quiet HEAD -- README.md 2>/dev/null; then
-    README_CLEAN=1
-fi
-# README_TARGET is the file the badge rewrite edits: the working README when it
-# is clean; otherwise a temp copy of HEAD's README (regions synced), committed
-# below through a TEMPORARY index so the user's working-tree and staged README
-# edits are never touched or swept into the amend (README_PLUMB=1).
-README_TARGET="$README_FILE"
-README_PLUMB=0
 # The one commit every README input and the amend below are derived from.
 BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
-if [ "$README_CLEAN" = "1" ]; then
-    python3 "$ROOT/scripts/site/build.py" --sync-head README.md >/dev/null || \
-        echo "post-commit: README project-region sync reported a problem (see above)" >&2
-elif [ -n "$BASE" ] && [ -f "$README_FILE" ] && git -C "$ROOT" diff --cached --quiet "$BASE" -- README.md 2>/dev/null; then
-    README_TARGET="$(mktemp)"
-    if python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
-        README_PLUMB=1
+README_TARGET=""
+if [ -n "$BASE" ] && [ -f "$README_FILE" ]; then
+    if ! git -C "$ROOT" diff --cached --quiet "$BASE" -- README.md 2>/dev/null; then
+        echo "post-commit: README.md has STAGED uncommitted edits; skipped its region sync and badge (commit or unstage README, then run: python3 scripts/site/build.py --sync README.md)" >&2
     else
-        echo "post-commit: README project-region sync reported a problem (see above)" >&2
-        rm -f "$README_TARGET"; README_TARGET="$README_FILE"
+        README_TARGET="$(mktemp)"
+        if ! python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
+            echo "post-commit: README project-region sync reported a problem (see above)" >&2
+            rm -f "$README_TARGET"; README_TARGET=""
+        fi
     fi
-else
-    echo "post-commit: README.md has STAGED uncommitted edits; skipped its region sync and badge (commit or unstage README, then run: python3 scripts/site/build.py --sync README.md)" >&2
 fi
+# The working README follows when it still equals the commit the copy was made from.
+publish_readme() {
+    [ -n "$README_TARGET" ] || return 0
+    if git -C "$ROOT" diff --quiet "$BASE" -- README.md 2>/dev/null; then cat "$README_TARGET" > "$README_FILE"; fi
+}
 
 # Rewrite the README lines-of-code badge from the live tree count, so the
 # README total is never hand-maintained or stale (it drifted to "84k+" while
@@ -477,7 +467,7 @@ fi
 # repository; publishing a different one here than the document's own headline
 # is a discrepancy with no visible explanation. The written-here/vendored split
 # is one click away in the Grand Total table.
-if { [ "$README_CLEAN" = "1" ] || [ "$README_PLUMB" = "1" ]; } && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
+if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
     # The EXACT total, comma-grouped (1,324,648), commas URL-encoded for shields.io.
     loc_fmt=$(printf '%s' "$whole_tree_lines" | sed -e ':a' -e 's/\([0-9]\)\([0-9]\{3\}\)\($\|,\)/\1,\2\3/' -e 'ta')
     badge_url="https://img.shields.io/badge/lines-${loc_fmt//,/%2C}-blueviolet"
@@ -489,7 +479,11 @@ if { [ "$README_CLEAN" = "1" ] || [ "$README_PLUMB" = "1" ]; } && grep -q 'COUNT
     ' "$README_TARGET" > "$README_TARGET.tmp" && mv "$README_TARGET.tmp" "$README_TARGET"
 fi
 
-[ "${COUNT_ONLY:-}" = "1" ] && exit 0
+if [ "${COUNT_ONLY:-}" = "1" ]; then
+    publish_readme
+    [ -z "$README_TARGET" ] || rm -f "$README_TARGET"
+    exit 0
+fi
 
 # Amend the commit to include the updated COUNT.md + README badge.
 #
@@ -508,8 +502,8 @@ fi
 # live-gotcha about the RUN sweeping an operator's files.
 #
 # Use SKIP_COUNT to prevent infinite recursion.
-if [ "$README_PLUMB" = "1" ]; then
-    # Dirty working README: build the amended commit from ONE pinned base commit
+if [ -n "$README_TARGET" ]; then
+    # Build the amended commit from ONE pinned base commit
     # (tree, parents, message and author all read from $base), with the generated
     # COUNT.md and the synced README blob in a throwaway index. update-ref only
     # moves HEAD if it still equals $base, and the real index is touched only
@@ -575,18 +569,18 @@ if [ "$README_PLUMB" = "1" ]; then
             release_lock; return 1
         fi
     }
-    if ! plumb_amend; then
-        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); nothing changed -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
+    if plumb_amend; then
+        publish_readme
+    else
+        echo "post-commit: could not amend COUNT.md/README.md (HEAD or the staged README moved, or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
     fi
     rm -f "$README_TARGET"
 else
-    AMEND_PATHS=("$COUNT_FILE")
-    [ "$README_CLEAN" = "1" ] && AMEND_PATHS+=("$README_FILE")
     # shellcheck source=.githooks/lib/pre-commit-mark.sh
     . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-mark.sh"
     allow_hook_amend  # this --no-verify amend is the one prepare-commit-msg allows
     SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
-      -- "${AMEND_PATHS[@]}" 2>/dev/null
+      -- "$COUNT_FILE" 2>/dev/null
 fi
 
 exit 0

@@ -1208,12 +1208,12 @@ def test_the_live_command_reads_the_map_the_commit_check_judges_by(repo):
     assert json.loads(r.stdout)["userland"] == lanes.LIVE, r
 
 
-@pytest.mark.parametrize("ref", ["main", "before the lanes"])
+@pytest.mark.parametrize("ref", ["main", "no lane map"])
 def test_post_commit_run_by_hand_amends_nothing(repo, ref):
     tree = repo["neon-b"]
     if ref != "main":
         git(tree, "rm", "-rq", "--", "scripts/lanes.py", ".conclave")
-        git(tree, "commit", "-qm", "no lanes yet")
+        git(tree, "commit", "-qm", "no lane map")
     shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
     before = git(tree, "rev-parse", "HEAD").stdout
     env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
@@ -1234,24 +1234,52 @@ def test_a_lane_commit_is_amended_by_the_hook_git_runs(repo):
     assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
 
 
-def test_post_commit_keeps_a_staged_only_readme_edit(repo):
+README_TEXT = "<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n"
+EMIT = "import subprocess, sys\nsys.stdout.write(subprocess.run(['git', 'show', 'HEAD:README.md'], capture_output=True,\n    text=True, timeout=20).stdout)\n"
+
+
+@pytest.mark.parametrize("case", ["clean", "dirty", "staged before", "staged during"])
+def test_post_commit_never_replaces_another_readme_edit(repo, case):
     p = repo["primary"]
-    (p / "README.md").write_text("<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n")
-    git(p, "add", "--", "README.md")
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    staging = ("import pathlib\np = pathlib.Path('README.md')\nold = p.read_text()\np.write_text('staged edit\\n')\n"
+               "subprocess.run(['git', 'add', 'README.md'], timeout=20)\np.write_text(old)\n")
+    (p / "scripts" / "site" / "build.py").write_text(EMIT + (staging if case == "staged during" else ""))
+    git(p, "add", "--", "README.md", "scripts/site")
     git(p, "commit", "-qm", "readme")
-    original = (p / "README.md").read_text()
-    (p / "README.md").write_text("staged edit\n")
-    git(p, "add", "--", "README.md")
-    (p / "README.md").write_text(original)
+    if case == "staged before":
+        (p / "README.md").write_text("staged edit\n")
+        git(p, "add", "--", "README.md")
+        (p / "README.md").write_text(README_TEXT)
+    if case == "dirty":
+        (p / "README.md").write_text("mine\n")
     shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
     (repo["hooks"] / "post-commit").chmod(0o755)
     (p / "src/kernel/k.c").write_text("k2\n")
     r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
-            timeout=60, env=os.environ.copy())
+            timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
     assert r.returncode == 0, r
-    assert git(p, "show", ":README.md").stdout == "staged edit\n"
-    assert (p / "README.md").read_text() == original
-    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+    head, index, work = git(p, "show", "HEAD:README.md").stdout, git(p, "show", ":README.md").stdout, \
+        (p / "README.md").read_text()
+    if case.startswith("staged"):
+        assert (head, index, work) == (README_TEXT, "staged edit\n", README_TEXT), r
+    else:
+        assert "img.shields.io" in head and index == head and work == (head if case == "clean" else "mine\n"), r
+    assert (git(p, "show", "HEAD:COUNT.md").stdout != "0\n") == (case != "staged during"), r
+
+
+def test_a_manual_refresh_brings_a_clean_readme_along(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+    r = run(["bash", str(REPO / ".githooks" / "post-commit")], cwd=p, timeout=60, env=env)
+    assert "img.shields.io" in (p / "README.md").read_text(), r
+    assert git(p, "show", "HEAD:README.md").stdout == README_TEXT and git(p, "diff", "--cached", "--name-only").stdout == ""
 
 
 def test_the_map_exempts_what_post_commit_amends():
@@ -1272,12 +1300,19 @@ def test_a_clean_replay_asks_git_for_the_map_alone(repo, monkeypatch):
     assert real(p, lanes.MAP) == [] and real(p) == ["src/kernel/k.c"]
 
 
-@pytest.mark.parametrize("mapped", [True, False])
-def test_triage_holds_every_section_when_the_lane_reader_is_gone(tmp_path, mapped):
+@pytest.mark.parametrize("where", ["working tree", "HEAD", None])
+def test_triage_holds_every_section_when_the_lane_reader_is_gone(tmp_path, where):
     t = _load("triage_no_reader", TRIAGE_PY)
+    mapped = where is not None
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "commit", "-q", "--allow-empty", "-m", "x")
     if mapped:
         (tmp_path / ".conclave").mkdir()
         (tmp_path / ".conclave" / "lanes.toml").write_text(MAP)
+    if where == "HEAD":
+        git(tmp_path, "add", "-A")
+        git(tmp_path, "commit", "-qm", "map")
+        (tmp_path / ".conclave" / "lanes.toml").unlink()
     ctx, why = t._lane_context(str(tmp_path))
     assert why and (ctx is not None) == mapped
     per, held = t.lane_reservations({"file_path": "todo/11-apps/TODO-01-x.md"}, [(1, t.NEEDS_WORK)], str(tmp_path), ctx)

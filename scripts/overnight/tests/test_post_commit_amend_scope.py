@@ -55,23 +55,21 @@ def test_amend_does_not_absorb_unrelated_staged_files():
         # Another session stages its in-flight work in the SHARED index.
         (root / "theirs.c").write_text("int a(void){return 2;}\n/* 500 more lines */\n")
         _git("add", "theirs.c", cwd=root)
-        # We commit ONLY our own file, path-limited.
-        (root / "mine.txt").write_text("v2\n")
-        _git("commit", "-m", "mine only", "--", "mine.txt", cwd=root)
-
-        # Now run the repo's post-commit amend logic the same way git would.
+        # We commit ONLY our own file, path-limited, and git runs the repository's hook.
         hooks = root / ".git" / "hooks"
         hooks.mkdir(parents=True, exist_ok=True)
         shutil.copy(HOOK, hooks / "post-commit")
+        shutil.copytree(HOOK.parent / "lib", hooks / "lib")
         os.chmod(hooks / "post-commit", 0o755)
-        subprocess.run(["bash", str(hooks / "post-commit")], cwd=root,
-                       capture_output=True, text=True, timeout=180)
+        (root / "mine.txt").write_text("v2\n")
+        _git("commit", "-m", "mine only", "--", "mine.txt", cwd=root)
 
         files = _git("show", "--name-only", "--format=", "HEAD", cwd=root).split()
         assert "theirs.c" not in files, (
             "the post-commit amend absorbed another session's staged work: "
             f"{files}")
         assert "mine.txt" in files, files
+        assert "COUNT.md" in files, f"the amend did not happen, so nothing was tested: {files}"
         # and their work must still be staged, not silently consumed
         staged = _git("diff", "--cached", "--name-only", cwd=root).split()
         assert "theirs.c" in staged, (

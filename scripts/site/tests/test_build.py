@@ -1609,7 +1609,7 @@ class ReleaseDocs(unittest.TestCase):
     def release(self, ref):
         snap = B.prepare_release(ref)
         self.snaps.append(snap)
-        args = argparse.Namespace(check=False, out=self.out, quiet=True, sync=None, sync_head=None,
+        args = argparse.Namespace(check=False, out=self.out, quiet=True, sync=None, 
                                   emit_head=None, update_baseline=False, freshness=False, skip_stats=False,
                                   staged=False, release=ref, ref="HEAD")
         return B.run(args)
@@ -1721,7 +1721,8 @@ class ReleaseDocs(unittest.TestCase):
         self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
         self.write("gh-pages/docs-template.html",       # the shipped template, script and all
                    (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
-                   .replace("{{license}}", "GPL-3.0-only"))           # a fact this fixture's project.json lacks
+                   .replace("{{license}}", "GPL-3.0-only")            # facts this fixture's project.json lacks
+                   .replace("{{sdk_url}}", "https://sdk.example.invalid"))
         self.write("src/x.c", "int x;\n")
         self.write("img.png", "png")
         self.write("docs/sub/code.md", "# Code\n\nwombat before any heading.\n\n## Intro\n\nwombat in the intro.\n\n"
@@ -2073,7 +2074,7 @@ class RetainedReleases(unittest.TestCase):
     def render(self, tag, out):
         snap = B.prepare_release(tag)
         self.snaps.append(snap)
-        args = argparse.Namespace(check=False, out=out, quiet=True, sync=None, sync_head=None, emit_head=None,
+        args = argparse.Namespace(check=False, out=out, quiet=True, sync=None, emit_head=None,
                                   update_baseline=False, freshness=False, skip_stats=False, staged=False,
                                   release=tag, ref="HEAD")
         try:
@@ -3114,7 +3115,7 @@ class SitePolish(unittest.TestCase):
 
         def run(shallow, check):
             fake_build.shallow = shallow
-            args = argparse.Namespace(sync_head=None, emit_head=None, sync=None, freshness=False,
+            args = argparse.Namespace(emit_head=None, sync=None, freshness=False,
                                       update_baseline=False, check=check, skip_stats=False, out=out, quiet=True)
             err = io.StringIO()
             with mock.patch.object(B, "build", fake_build), redirect_stderr(err):

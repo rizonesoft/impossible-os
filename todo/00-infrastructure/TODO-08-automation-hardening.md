@@ -1729,6 +1729,7 @@ Operator decision 2026-11-20: the extra lanes do nothing resource-intensive. Hea
 
 - [ ] `scripts/lane.sh <lane> start|watch|stop|status`; `status` with no lane prints all four
 - [ ] Start refuses loudly unless main is running, the worktree exists and is clean on main, the engine is installed and signed in, and the lane is not already live
+- [ ] Start refuses a lane whose worktree HEAD has no lane map: a checkout older than section 49 runs its own older hooks (found by [§49](#49-the-lane-map-and-the-commit-check))
 - [ ] Start refuses while a worktree has a `MERGE_HEAD`: a `git merge --no-verify` message being written meets no later check (found by [§49](#49-the-lane-map-and-the-commit-check))
 - [ ] The worktrees `../impossible-os-userland`, `../impossible-os-neon-a` and `../impossible-os-neon-b` (neon-b detached at `origin/main`, refreshed before each task)
 - [ ] The userland lane reuses `scripts/overnight/run-common.sh` with its own session name and worktree, and owns the paths `.conclave/lanes.toml` gives it
