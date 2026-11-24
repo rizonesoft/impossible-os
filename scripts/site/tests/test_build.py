@@ -67,6 +67,21 @@ class Pure(unittest.TestCase):
         self.assertIn("August 8, 2028", out)
         self.assertEqual(len(errs), 1)
 
+    def test_emit_head_syncs_from_the_whole_commit(self):
+        # It reads only the facts' inputs, so its answer is held against the full snapshot's.
+        build = str(HERE.parent / "build.py")
+        emitted = subprocess.run([sys.executable, build, "--emit-head", "README.md"], cwd=B.REPO_REAL, check=True,
+                                 capture_output=True, text=True, timeout=120).stdout
+        full = subprocess.run([sys.executable, "-c",
+                               "import sys; sys.path.insert(0, sys.argv[1]); import build as B, shutil\n"
+                               "snap = B.snapshot('HEAD')\n"
+                               "text = (B.ROOT / 'README.md').read_text(encoding='utf-8')\n"
+                               "sys.stdout.write(B.sync_regions(text, B.load_project(), 'README.md', []))\n"
+                               "shutil.rmtree(snap)", str(HERE.parent)],
+                              cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout
+        self.assertEqual(emitted, full)
+        self.assertRegex(emitted, r"project:stat_todo_files -->[1-9]")
+
     def test_material_cells_come_from_the_tokens(self):
         mat = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))["material"]
         cells = B.load_materials()

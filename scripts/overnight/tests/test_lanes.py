@@ -1238,15 +1238,20 @@ README_TEXT = "<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n"
 EMIT = "import subprocess, sys\nsys.stdout.write(subprocess.run(['git', 'show', 'HEAD:README.md'], capture_output=True,\n    text=True, timeout=20).stdout)\n"
 
 
-@pytest.mark.parametrize("case", ["clean", "dirty", "staged before", "staged during"])
+@pytest.mark.parametrize("case", ["clean", "dirty", "staged before", "staged during", "mode during", "executable"])
 def test_post_commit_never_replaces_another_readme_edit(repo, case):
     p = repo["primary"]
     (p / "README.md").write_text(README_TEXT)
     (p / "scripts" / "site").mkdir()
-    staging = ("import pathlib\np = pathlib.Path('README.md')\nold = p.read_text()\np.write_text('staged edit\\n')\n"
-               "subprocess.run(['git', 'add', 'README.md'], timeout=20)\np.write_text(old)\n")
-    (p / "scripts" / "site" / "build.py").write_text(EMIT + (staging if case == "staged during" else ""))
+    during = {"staged during": "import pathlib\np = pathlib.Path('README.md')\nold = p.read_text()\n"
+                               "p.write_text('staged edit\\n')\n"
+                               "subprocess.run(['git', 'add', 'README.md'], timeout=20)\np.write_text(old)\n",
+              "mode during": "subprocess.run(['git', 'update-index', '--chmod=+x', 'README.md'], timeout=20)\n"}
+    (p / "scripts" / "site" / "build.py").write_text(EMIT + during.get(case, ""))
     git(p, "add", "--", "README.md", "scripts/site")
+    if case == "executable":
+        (p / "README.md").chmod(0o755)
+        git(p, "add", "--", "README.md")
     git(p, "commit", "-qm", "readme")
     if case == "staged before":
         (p / "README.md").write_text("staged edit\n")
@@ -1262,11 +1267,13 @@ def test_post_commit_never_replaces_another_readme_edit(repo, case):
     assert r.returncode == 0, r
     head, index, work = git(p, "show", "HEAD:README.md").stdout, git(p, "show", ":README.md").stdout, \
         (p / "README.md").read_text()
-    if case.startswith("staged"):
-        assert (head, index, work) == (README_TEXT, "staged edit\n", README_TEXT), r
-    else:
-        assert "img.shields.io" in head and index == head and work == (head if case == "clean" else "mine\n"), r
-    assert (git(p, "show", "HEAD:COUNT.md").stdout != "0\n") == (case != "staged during"), r
+    # HEAD always gets the synced README and COUNT.md (the site check reads them there); another edit stays its own.
+    assert "img.shields.io" in head and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
+    assert index == {"staged before": "staged edit\n", "staged during": "staged edit\n",
+                     "mode during": README_TEXT}.get(case, head), r
+    assert work == {"clean": head, "executable": head, "dirty": "mine\n"}.get(case, README_TEXT), r
+    modes = git(p, "ls-tree", "HEAD", "--", "README.md").stdout[:6], git(p, "ls-files", "-s", "README.md").stdout[:6]
+    assert modes == {"mode during": ("100644", "100755"), "executable": ("100755", "100755")}.get(case, ("100644", "100644")), r
 
 
 def test_a_manual_refresh_brings_a_clean_readme_along(repo):
@@ -1300,7 +1307,7 @@ def test_a_clean_replay_asks_git_for_the_map_alone(repo, monkeypatch):
     assert real(p, lanes.MAP) == [] and real(p) == ["src/kernel/k.c"]
 
 
-@pytest.mark.parametrize("where", ["working tree", "HEAD", None])
+@pytest.mark.parametrize("where", ["working tree", "HEAD", "unreadable", None])
 def test_triage_holds_every_section_when_the_lane_reader_is_gone(tmp_path, where):
     t = _load("triage_no_reader", TRIAGE_PY)
     mapped = where is not None
@@ -1313,6 +1320,9 @@ def test_triage_holds_every_section_when_the_lane_reader_is_gone(tmp_path, where
         git(tmp_path, "add", "-A")
         git(tmp_path, "commit", "-qm", "map")
         (tmp_path / ".conclave" / "lanes.toml").unlink()
+    if where == "unreadable":                                         # a lookup that fails proves no absence
+        shutil.rmtree(tmp_path / ".conclave")
+        (tmp_path / ".git" / "HEAD").write_text("broken\n")
     ctx, why = t._lane_context(str(tmp_path))
     assert why and (ctx is not None) == mapped
     per, held = t.lane_reservations({"file_path": "todo/11-apps/TODO-01-x.md"}, [(1, t.NEEDS_WORK)], str(tmp_path), ctx)

@@ -658,9 +658,11 @@ LANE_MAP_SECS = 2                                      # inside the Stop hook's 
 
 def _has_lane_map(root, deadline):
     """Whether this checkout has a lane map, in its working tree or at HEAD: a working tree missing it (and the
-    reader) is still the committed map's. A git that does not answer in time counts as yes."""
+    reader) is still the committed map's. Only a git that answers "absent" counts as no."""
     if os.path.exists(os.path.join(root, ".conclave", "lanes.toml")):
         return True
+    if not os.path.exists(os.path.join(root, ".git")):
+        return False                                   # no checkout, so no commits and no lanes
     left = (deadline - time.monotonic()) if deadline else LANE_MAP_SECS
     try:
         done = subprocess.run(["git", "-C", root, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml"],
@@ -668,8 +670,8 @@ def _has_lane_map(root, deadline):
     except subprocess.TimeoutExpired:
         return True
     except OSError:
-        return False                                   # fail-direction: no git, so no commits and no lanes
-    return done.returncode == 0 and bool(done.stdout.strip())
+        return True
+    return done.returncode != 0 or bool(done.stdout.strip())
 
 
 def _lane_context(root, deadline=None):

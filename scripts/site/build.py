@@ -171,14 +171,15 @@ def set_root(root: Path) -> None:
         sys.modules["freshness"].REPO = REPO
 
 
-def snapshot(source: str) -> Path:
+def snapshot(source: str, paths: list[str] | None = None) -> Path:
     """Materialise the site inputs from the index ("index") or a commit into a temp dir."""
     global SOURCE, _FILESET, _DIRSET
     SOURCE, _FILESET, _DIRSET = source, None, None
     tmp = Path(tempfile.mkdtemp(prefix="site-snap-"))
     files, _ = fileset()
     want = sorted(f for f in files if any(
-        f == p or f.startswith(p + "/") or (p == "*.md" and f.endswith(".md")) for p in SNAP_PATHS))
+        f == p or f.startswith(p + "/") or (p == "*.md" and f.endswith(".md"))
+        for p in (SNAP_PATHS if paths is None else paths)))
     if source == "index":
         subprocess.run(["git", "checkout-index", "-z", "--stdin", f"--prefix={tmp}/"], cwd=REPO, check=True,
                        input="\0".join(want).encode(), capture_output=True, timeout=GIT_TIMEOUT)
@@ -1250,8 +1251,13 @@ class Renderer:
 # --------------------------------------------------------------------------
 
 def todo_files() -> list[str]:
-    """Domain roadmap files only (todo/NN-domain/TODO-*.md); internal trackers are excluded."""
-    return sorted(r for r in (p.relative_to(ROOT).as_posix() for p in TODO.glob("[0-9][0-9]-*/TODO-*.md")))
+    """Domain roadmap files only (todo/NN-domain/TODO-*.md); internal trackers are excluded.
+    A snapshot's come from its file list: --emit-head materialises no TODO bodies."""
+    if SOURCE == "worktree":
+        return sorted(p.relative_to(ROOT).as_posix() for p in TODO.glob("[0-9][0-9]-*/TODO-*.md"))
+    import fnmatch
+    return sorted(f for f in fileset()[0] if f.count("/") == 2
+                  and fnmatch.fnmatchcase(f, "todo/[0-9][0-9]-*/TODO-*.md"))
 
 
 def todo_title(repo_rel: str) -> str:
@@ -2577,7 +2583,7 @@ def main() -> int:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
         elif args.emit_head:
-            snap = snapshot(args.ref)
+            snap = snapshot(args.ref, ["project.json", "COUNT.md", "docs", args.emit_head])   # the facts and the file
         elif args.staged:
             snap = snapshot("index")
         return run(args)

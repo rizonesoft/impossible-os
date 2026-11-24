@@ -432,28 +432,26 @@ EOF
 # Re-sync README.md's project regions (release date, repo URL, and the computed
 # stat_* counts such as TODO files and test totals) from the COMMIT JUST MADE, into
 # a temporary copy: README as committed there, never the working file. The amend
-# below publishes it under the index lock, and only while the index still holds
-# that commit's README, so a README edit staged before or during this hook is never
-# replaced. A clean working README is brought along afterwards; a dirty one is left
-# alone. Failures are printed, never fatal to a commit.
+# below commits it; the index entry follows only while it still equals that commit's
+# README (checked under the index lock), so a README edit staged before or during
+# this hook stays staged. A clean working README is brought along afterwards; a dirty
+# one is left alone. Failures are printed, never fatal to a commit.
 README_FILE="$ROOT/README.md"
 # The one commit every README input and the amend below are derived from.
 BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
+BASE_README="$([ -z "$BASE" ] || git -C "$ROOT" ls-tree "$BASE" -- README.md | awk '{print $1, $3}')"   # mode, blob
 README_TARGET=""
-if [ -n "$BASE" ] && [ -f "$README_FILE" ]; then
-    if ! git -C "$ROOT" diff --cached --quiet "$BASE" -- README.md 2>/dev/null; then
-        echo "post-commit: README.md has STAGED uncommitted edits; skipped its region sync and badge (commit or unstage README, then run: python3 scripts/site/build.py --sync README.md)" >&2
-    else
-        README_TARGET="$(mktemp)"
-        if ! python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
-            echo "post-commit: README project-region sync reported a problem (see above)" >&2
-            rm -f "$README_TARGET"; README_TARGET=""
-        fi
+if [ -n "$BASE" ] && git -C "$ROOT" cat-file -e "$BASE:README.md" 2>/dev/null; then
+    README_TARGET="$(mktemp)"
+    if ! python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
+        echo "post-commit: README project-region sync reported a problem (see above)" >&2
+        rm -f "$README_TARGET"; README_TARGET=""
     fi
 fi
-# The working README follows when it still equals the commit the copy was made from.
+# The working README follows when it and the index entry still are the commit's (or, after the amend, the copy's).
 publish_readme() {
-    [ -n "$README_TARGET" ] || return 0
+    [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] || return 0
+    [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$1" ] || return 0
     if git -C "$ROOT" diff --quiet "$BASE" -- README.md 2>/dev/null; then cat "$README_TARGET" > "$README_FILE"; fi
 }
 
@@ -480,7 +478,7 @@ if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
 fi
 
 if [ "${COUNT_ONLY:-}" = "1" ]; then
-    publish_readme
+    publish_readme "$BASE_README"
     [ -z "$README_TARGET" ] || rm -f "$README_TARGET"
     exit 0
 fi
@@ -509,7 +507,7 @@ if [ -n "$README_TARGET" ]; then
     # moves HEAD if it still equals $base, and the real index is touched only
     # after that succeeds, so a concurrent commit or a lock failure loses nothing.
     plumb_amend() {
-        local base="$BASE" tmpidx cb rb tree new msg an ae ad gitdir idx lock cur_r base_r par
+        local base="$BASE" tmpidx cb rb tree new msg an ae ad gitdir idx lock cur_r par
         local -a pargs=()
         [ -n "$base" ] || return 1
         cb="$(git -C "$ROOT" hash-object -w "$COUNT_FILE")" || return 1
@@ -517,7 +515,7 @@ if [ -n "$README_TARGET" ]; then
         tmpidx="$(mktemp)" || return 1; rm -f "$tmpidx"
         { GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" read-tree "$base" &&
           GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" update-index --add \
-              --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "100644,$rb,README.md" &&
+              --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "${BASE_README% *},$rb,README.md" &&
           tree="$(GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" write-tree)"; } || { rm -f "$tmpidx"; return 1; }
         rm -f "$tmpidx"
         # Parents come from the commit object itself (a shallow boundary makes
@@ -549,10 +547,10 @@ if [ -n "$README_TARGET" ]; then
         trap 'exit 130' INT TERM
         release_lock() { trap '' INT TERM; local _l="${LOCK_OWNED:-}"; LOCK_OWNED=; [ -n "$_l" ] && rm -f "$_l"; trap - EXIT INT TERM; }
         if ! cp "$idx" "$lock"; then release_lock; return 1; fi
-        cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $2}')"
-        base_r="$(git -C "$ROOT" rev-parse --verify -q "$base:README.md")"
-        if [ -z "$cur_r" ] || [ "$cur_r" != "$base_r" ] ||
-           ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index --cacheinfo "100644,$cb,COUNT.md" --cacheinfo "100644,$rb,README.md"; then
+        cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
+        local -a entries=(--add --cacheinfo "100644,$cb,COUNT.md")
+        [ "$cur_r" != "$BASE_README" ] || entries+=(--cacheinfo "${BASE_README% *},$rb,README.md")   # else: a staged edit
+        if ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index "${entries[@]}"; then
             release_lock; return 1
         fi
         # The HEAD swap and the index publish are one step: interrupts are ignored
@@ -570,9 +568,9 @@ if [ -n "$README_TARGET" ]; then
         fi
     }
     if plumb_amend; then
-        publish_readme
+        publish_readme "${BASE_README% *} $(git -C "$ROOT" hash-object "$README_TARGET")"
     else
-        echo "post-commit: could not amend COUNT.md/README.md (HEAD or the staged README moved, or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
+        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
     fi
     rm -f "$README_TARGET"
 else
