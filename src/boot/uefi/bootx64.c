@@ -10160,8 +10160,9 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
             }
             EFI_PHYSICAL_ADDRESS at =
                 boot_span_pick(room, (UINT64)pages * EFI_PAGE_SIZE, keep, nkeep);
-            if (at == 0)
-                continue;
+            if (at == 0 ||
+                (above && at + (UINT64)pages * EFI_PAGE_SIZE <= 0x100000000ULL))
+                continue;               /* none, or the first pass asked for it */
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
             if (try == 0) {             /* the control: every top page is taken first */
                 EFI_PHYSICAL_ADDRESS top = at + (UINT64)(pages - 1) * EFI_PAGE_SIZE;
@@ -10206,27 +10207,48 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
  * that cannot be claimed was taken since. */
 static EFI_STATUS claim_kernel_memory(const UINT8 *map, UINTN map_size, UINTN desc_size)
 {
-    UINT64 lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    UINT64 at = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
     UINT64 hi = kernel_guard_end() - KERNEL_IMAGE_TAIL;
 
     if (g_kernel_img_hi <= g_kernel_img_lo)
         return EFI_SUCCESS;
-    for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
-        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(map + off);
-        if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
-            continue;
-        UINT64 end = boot_span_end(d->PhysicalStart, d->NumberOfPages * BL_PAGE_4K);
-        EFI_PHYSICAL_ADDRESS at = d->PhysicalStart > lo ? d->PhysicalStart : lo;
-        end = end < hi ? end : hi;
-        if (end <= at)
-            continue;
+    for (;;) {
+        struct boot_span next = { 0, 0 };
+        for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
+            const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(map + off);
+            struct boot_span room = { d->PhysicalStart, 0 };
+            if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
+                continue;
+            room.bytes = d->NumberOfPages * BL_PAGE_4K;
+            boot_span_first(&next, room, at);
+        }
+        if (next.bytes == 0 || next.base >= hi)
+            return EFI_SUCCESS;
+        at = boot_span_end(next.base, next.bytes);
+        at = at < hi ? at : hi;
+        EFI_PHYSICAL_ADDRESS page = next.base;
         EFI_STATUS status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
-                                               (UINTN)((end - at) / BL_PAGE_4K), &at);
+                                               (UINTN)((at - next.base) / BL_PAGE_4K), &page);
         if (EFI_ERROR(status))
             return status;
     }
-    return EFI_SUCCESS;
 }
+
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+/* The control: no page from the image's start to `hi` is free for firmware to hand out. */
+static void bl_control_image_held(UINT64 hi, const char *held)
+{
+    UINTN size, desc, taken = 0;
+    EFI_STATUS ms = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+                                          &size, &desc);
+    for (UINTN off = 0; !EFI_ERROR(ms) && off + desc <= size; off += desc) {
+        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
+        taken += d->Type == EfiConventionalMemory && d->PhysicalStart < hi &&
+                 d->PhysicalStart + d->NumberOfPages * BL_PAGE_4K > g_kernel_img_lo;
+    }
+    serial_early_print(EFI_ERROR(ms) || taken ? "[FAIL] Kernel image: pages are free to take\n" : held);
+}
+#endif
 
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
@@ -10925,6 +10947,9 @@ kernel_loaded:
     for (i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type != PT_LOAD)
             continue;
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+        bl_control_image_held(g_kernel_img_hi, "[BOOT] Kernel image: held before a segment is copied\n");
+#endif
 
         /* Log loaded segment */
         serial_early_print("[BOOT] ELF segment ");
@@ -11059,18 +11084,7 @@ kernel_loaded:
         (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at);
     }
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-    {   /* The control: none of the kernel's memory may still be free. */
-        UINTN size, desc, taken = 0;
-        EFI_STATUS ms = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
-                                              &size, &desc);
-        for (UINTN off = 0; !EFI_ERROR(ms) && off + desc <= size; off += desc) {
-            const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
-            taken += d->Type == EfiConventionalMemory && d->PhysicalStart < kernel_guard_end() &&
-                     d->PhysicalStart + d->NumberOfPages * BL_PAGE_4K > g_kernel_img_lo;
-        }
-        serial_early_print(EFI_ERROR(ms) || taken ? "[FAIL] Kernel image: pages are free to take\n"
-                                                  : "[BOOT] Kernel image: every page is held\n");
-    }
+    bl_control_image_held(kernel_guard_end(), "[BOOT] Kernel image: every page is held\n");
 #endif
     return EFI_SUCCESS;
 

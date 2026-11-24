@@ -48,4 +48,22 @@ boot_span_pick(struct boot_span room, unsigned long long bytes,
     return at < room.base ? 0 : at;
 }
 
+/* Keep in *best the part of `room` from `at` on when it begins first, the longer of
+ * two that begin together. Folded over ranges in any order, overlapping or not, with
+ * `at` moved to the end of each answer, every address comes up once. */
+static inline void
+boot_span_first(struct boot_span *best, struct boot_span room, unsigned long long at)
+{
+    unsigned long long end = boot_span_end(room.base, room.bytes);
+    unsigned long long base = room.base > at ? room.base : at;
+
+    if (end <= base)
+        return;
+    if (best->bytes == 0 || base < best->base ||
+        (base == best->base && end - base > best->bytes)) {
+        best->base = base;
+        best->bytes = end - base;
+    }
+}
+
 #endif /* BOOT_FREE_SPAN_H */

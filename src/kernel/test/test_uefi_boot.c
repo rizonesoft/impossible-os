@@ -288,6 +288,36 @@ static void test_kernel_buffer_span(void)
                    "a range that wraps ends at the last address");
 }
 
+/* The kernel's memory is claimed once, however the firmware's ranges are drawn. */
+static void test_kernel_claim_spans(void)
+{
+    const uint64_t mib = 1024ULL * 1024;
+    const struct boot_span rooms[] = {          /* out of order, two overlapping, one inside */
+        { 6 * mib, 4 * mib }, { 1 * mib, 2 * mib }, { 2 * mib, 2 * mib }, { 7 * mib, 1 * mib },
+    };
+    const struct boot_span want[] = {
+        { 1 * mib, 2 * mib }, { 3 * mib, 1 * mib }, { 6 * mib, 4 * mib }, { 0, 0 },
+    };
+    uint64_t at = 1 * mib;
+
+    for (uint32_t step = 0; step < 4; step++) {
+        struct boot_span next = { 0, 0 };
+        for (uint32_t i = 0; i < 4; i++)
+            boot_span_first(&next, rooms[i], at);
+        TEST_ASSERT_EQ(next.base, want[step].base, "each address once, lowest first");
+        TEST_ASSERT_EQ(next.bytes, want[step].bytes, "as far as its range goes");
+        at = boot_span_end(next.base, next.bytes);
+    }
+    {
+        struct boot_span next = { 0, 0 };
+        const struct boot_span shorter = { 1 * mib, 1 * mib };
+        boot_span_first(&next, rooms[1], 1 * mib + 4096);
+        boot_span_first(&next, shorter, 1 * mib + 4096);
+        TEST_ASSERT_EQ(next.base, 1 * mib + 4096, "from the address asked for");
+        TEST_ASSERT_EQ(next.bytes, 2 * mib - 4096, "the longer of two that begin together");
+    }
+}
+
 static void test_uki_cmdline_rejects_initrd_token(void)
 {
     /* Bare initrd= at start of buffer must be detected. */
@@ -1497,6 +1527,8 @@ void test_register_uefi_boot(void)
                             test_boot_flag_uki_implies_no_disk_initrd, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel file buffer placement",
                             test_kernel_buffer_span, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel memory claim spans",
+                            test_kernel_claim_spans, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",
                             test_uki_cmdline_rejects_initrd_token, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source valid",
