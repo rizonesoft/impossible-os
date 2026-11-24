@@ -173,12 +173,13 @@ def set_root(root: Path) -> None:
 
 def snapshot(source: str, paths: list[str] | None = None) -> Path:
     """Materialise the site inputs from the index ("index") or a commit into a temp dir."""
+    import fnmatch
     global SOURCE, _FILESET, _DIRSET
     SOURCE, _FILESET, _DIRSET = source, None, None
     tmp = Path(tempfile.mkdtemp(prefix="site-snap-"))
     files, _ = fileset()
     want = sorted(f for f in files if any(
-        f == p or f.startswith(p + "/") or (p == "*.md" and f.endswith(".md"))
+        f == p or f.startswith(p + "/") or ("*" in p and fnmatch.fnmatchcase(f, p))
         for p in (SNAP_PATHS if paths is None else paths)))
     if source == "index":
         subprocess.run(["git", "checkout-index", "-z", "--stdin", f"--prefix={tmp}/"], cwd=REPO, check=True,
@@ -2583,7 +2584,8 @@ def main() -> int:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
         elif args.emit_head:
-            snap = snapshot(args.ref, ["project.json", "COUNT.md", "docs", args.emit_head])   # the facts and the file
+            snap = snapshot(args.ref, ["project.json", "COUNT.md", "docs/*.md", "docs/design/tokens.json",
+                                       "docs/test-coverage/coverage.json", args.emit_head])   # the facts and the file
         elif args.staged:
             snap = snapshot("index")
         return run(args)

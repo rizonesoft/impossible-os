@@ -1366,3 +1366,49 @@ def test_a_todo_replaced_by_one_of_the_same_size_and_time_is_read_again(tmp_path
     os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns))
     os.replace(other, md)
     assert t.section_stamps(str(md)) == {1: set()}
+
+
+def test_a_linked_readme_is_never_written_through(repo):
+    p = repo["primary"]
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    (p / "intro.md").write_text(README_TEXT)
+    (p / "README.md").symlink_to("intro.md")
+    git(p, "add", "--", "README.md", "intro.md", "scripts/site")
+    git(p, "commit", "-qm", "link")
+    (p / "intro.md").write_text("mine\n")
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env=os.environ.copy())
+    assert r.returncode == 0 and (p / "intro.md").read_text() == "mine\n", r
+    run(["bash", str(REPO / ".githooks" / "post-commit")], cwd=p, timeout=60,
+        env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
+    assert (p / "intro.md").read_text() == "mine\n" and (p / "README.md").is_symlink()
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+
+
+@pytest.mark.parametrize("staged", [True, False])
+def test_a_failed_index_publish_never_advises_dropping_a_staged_readme(repo, staged):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    if staged:
+        (p / "README.md").write_text("staged edit\n")
+        git(p, "add", "--", "README.md")
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    assert hook.count('if mv -f "$lock" "$idx"; then') == 1
+    (repo["hooks"] / "post-commit").write_text(hook.replace('if mv -f "$lock" "$idx"; then', "if false; then"))
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    advice = "git reset -q -- COUNT.md" + ("" if staged else " README.md")
+    assert advice + "\n" in r.stderr and "HEAD is unchanged" not in r.stderr, r
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+    if staged:
+        assert git(p, "show", ":README.md").stdout == "staged edit\n"
