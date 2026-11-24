@@ -1548,3 +1548,48 @@ def test_a_held_index_lock_leaves_the_commit_and_every_entry_alone(repo):
         timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
     assert "img.shields.io" in git(p, "show", "HEAD:README.md").stdout and git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
     assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
+
+
+def test_a_refused_count_only_amend_is_reported(repo):
+    p = repo["primary"]
+    (p / "intro.md").write_text(README_TEXT)
+    (p / "README.md").symlink_to("intro.md")                          # no README to sync: the COUNT.md-only amend
+    git(p, "add", "--", "README.md", "intro.md")
+    git(p, "commit", "-qm", "link")
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    amend = '    SKIP_COUNT=1 git commit --amend --only'
+    assert hook.count(amend) == 1
+    (repo["hooks"] / "post-commit").write_text(hook.replace(amend, '    : > "$ROOT/.git/index.lock"\n' + amend))
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (repo["hooks"] / "lib").mkdir(exist_ok=True)
+    shutil.copy(REPO / ".githooks" / "lib" / "pre-commit-mark.sh", repo["hooks"] / "lib" / "pre-commit-mark.sh")
+    env = {**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"}
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env=env)
+    (p / ".git" / "index.lock").unlink()
+    assert r.returncode == 0 and "the new COUNT.md was not committed" in r.stderr, r
+    assert git(p, "log", "-1", "--format=%s").stdout == "x\n" and git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+    (repo["hooks"] / "post-commit").write_text(hook)                  # as the report says, the next commit brings it
+    (p / "src/kernel/k.c").write_text("k3\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "y", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env=env)
+    assert "post-commit:" not in r.stderr and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
+
+
+def test_an_unchanged_readme_is_not_rewritten(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+    hook = ["bash", str(REPO / ".githooks" / "post-commit")]
+    for _ in range(3):                                                # the badge's own line counts, so it settles
+        run(hook, cwd=p, timeout=60, env=env)
+        git(p, "commit", "-qm", "badge", "--allow-empty", "--only", "README.md", "COUNT.md")
+    before = (p / "README.md").stat()
+    run(hook, cwd=p, timeout=60, env=env)
+    after = (p / "README.md").stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)

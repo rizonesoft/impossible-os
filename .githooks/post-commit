@@ -454,6 +454,7 @@ esac
 README_ENTRY="$BASE_README"
 publish_readme() {
     [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] || return 0
+    ! cmp -s "$README_TARGET" "$README_FILE" || return 0   # already current: no new inode for the same bytes
     local new=""
     readme_unedited() {
         [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] &&
@@ -595,7 +596,8 @@ else
     . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-mark.sh"
     allow_hook_amend  # this --no-verify amend is the one prepare-commit-msg allows
     SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
-      -- "$COUNT_FILE" 2>/dev/null
+      -- "$COUNT_FILE" 2>/dev/null ||
+        echo "post-commit: the new COUNT.md was not committed (git refused the amend); the next commit in this checkout brings it" >&2
 fi
 
 exit 0
