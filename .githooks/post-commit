@@ -27,6 +27,8 @@ fi
 
 # Nothing below asks whether a working file changed, so no git call here may wait for a filesystem monitor.
 git() { command git -c core.fsmonitor=false "$@"; }
+# The commit is built from the objects it stores, never from a local replacement, here and in the README emitter.
+export GIT_NO_REPLACE_OBJECTS=1
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"

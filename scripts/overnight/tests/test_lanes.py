@@ -1793,3 +1793,22 @@ def test_post_commit_never_waits_for_a_filesystem_monitor(repo):
     r = commit_with_hook(repo, f'{shebang}\nrm -f "{asked}"\n{rest}')          # what git asked before the hook ran is not ours
     assert r.returncode == 0 and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
     assert not asked.exists()
+
+
+def test_a_local_replacement_never_becomes_committed_text(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text("old text\n")
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "old")
+    old = git(p, "rev-parse", "HEAD:README.md").stdout.strip()
+    (p / "README.md").write_text("new text\n")
+    git(p, "add", "--", "README.md")
+    git(p, "commit", "-qm", "new")
+    git(p, "replace", git(p, "rev-parse", "HEAD:README.md").stdout.strip(), old)
+    assert git(p, "show", "HEAD:README.md").stdout == "old text\n", "the replacement is live"
+    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    assert r.returncode == 0 and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
+    assert git(p, "--no-replace-objects", "show", "HEAD:README.md").stdout == "new text\n"
+    assert (p / "README.md").read_text() == "new text\n"

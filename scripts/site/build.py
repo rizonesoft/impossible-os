@@ -203,9 +203,11 @@ def _materialise(source: str, paths: list[str] | None, tmp: Path) -> None:
     global _FILESET, _DIRSET
     pages = 0
     covered: set[str] = set()
+    blobs: dict[str, str] = {}                  # the ids already read, so cat-file resolves no path again
     if paths is not None:     # only names these can match, and the TODO names load_stats counts
-        raw = git("ls-tree", "-r", "-z", "--name-only", source, "--", "todo", *sorted({p.split("/")[0] for p in paths}))
-        _FILESET, _DIRSET = {p for p in raw.split("\0") if p}, set()
+        raw = git("ls-tree", "-r", "-z", source, "--", "todo", *sorted({p.split("/")[0] for p in paths}))
+        blobs = {path: entry.split()[2] for entry, path in (e.split("\t", 1) for e in raw.split("\0") if e)}
+        _FILESET, _DIRSET = set(blobs), set()
     files, _ = fileset()
     want = sorted(f for f in files if any(
         f == p or f.startswith(p + "/") or ("*" in p and fnmatch.fnmatchcase(f, p))
@@ -217,7 +219,7 @@ def _materialise(source: str, paths: list[str] | None, tmp: Path) -> None:
         # One `git cat-file --batch` for every blob instead of a `git show` per file
         # (measured: 797 processes / 3.2 s down to one process / ~0.5 s).
         proc = subprocess.run(["git", "cat-file", "--batch"], cwd=REPO, check=True, capture_output=True,
-                              input="".join(f"{source}:{f}\n" for f in want).encode(), timeout=GIT_TIMEOUT)
+                              input="".join(blobs.get(f, f"{source}:{f}") + "\n" for f in want).encode(), timeout=GIT_TIMEOUT)
         out, pos = proc.stdout, 0
         for f in want:
             nl = out.index(b"\n", pos)
