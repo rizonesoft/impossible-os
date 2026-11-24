@@ -1448,3 +1448,52 @@ def test_publishing_readme_reads_the_file_and_writes_a_new_one(repo, case, by_ha
     else:
         assert (p / "README.md").read_text() == "mine\n"
     assert not list(p.glob(".README.md.*"))
+
+
+def test_a_second_manual_refresh_keeps_an_unstaged_reversal(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+    hook = ["bash", str(REPO / ".githooks" / "post-commit")]
+    run(hook, cwd=p, timeout=60, env=env)
+    git(p, "add", "--", "README.md")
+    (p / "README.md").write_text(README_TEXT)                         # reversed in the working tree only
+    run(hook, cwd=p, timeout=60, env=env)
+    assert (p / "README.md").read_text() == README_TEXT and "img.shields.io" in git(p, "show", ":README.md").stdout
+
+
+@pytest.mark.parametrize("index_fails", [False, True])
+@pytest.mark.parametrize("edited", [False, True])
+def test_a_readme_that_cannot_be_written_is_reported(repo, edited, index_fails):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    if index_fails:
+        hook = hook.replace('if mv -f "$lock" "$idx"; then', "if false; then")
+    (repo["hooks"] / "post-commit").write_text(hook)
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    if edited:
+        (p / "README.md").write_text("mine\n")
+    (p / "src/kernel/k.c").write_text("k2\n")
+    p.chmod(0o555)
+    try:
+        r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+                timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    finally:
+        p.chmod(0o755)
+    assert "img.shields.io" in git(p, "show", "HEAD:README.md").stdout, r
+    assert ("README.md could not be written" in r.stderr) == (not edited), r
+    if edited:
+        assert (p / "README.md").read_text() == "mine\n"
+    else:
+        for line in [x for x in r.stderr.splitlines() if "run: " in x]:
+            run(line.split("run: ", 1)[1].split(), cwd=p, timeout=20)
+        assert git(p, "status", "--porcelain", "-uno").stdout == ""

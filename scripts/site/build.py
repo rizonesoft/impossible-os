@@ -174,6 +174,12 @@ def set_root(root: Path) -> None:
 DOC_TEXT: dict[str, str] | None = None   # the docs pages of a snapshot limited to some paths, held in memory
 
 
+def emit_paths(name: str) -> list[str]:
+    """What --emit-head reads: the facts' inputs and the file itself."""
+    return ["project.json", "COUNT.md", "docs/*.md", "docs/design/tokens.json",
+            "docs/test-coverage/coverage.json", name]
+
+
 def snapshot(source: str, paths: list[str] | None = None) -> Path:
     """Materialise the site inputs from the index ("index") or a commit into a temp dir."""
     import fnmatch
@@ -202,9 +208,10 @@ def snapshot(source: str, paths: list[str] | None = None) -> Path:
             size = int(header[2])
             data = out[nl + 1:nl + 1 + size]
             pos = nl + 1 + size + 1
-            if DOC_TEXT is not None and f.startswith("docs/") and f.endswith(".md") and f not in paths:
-                DOC_TEXT[f] = data.decode("utf-8")      # load_stats reads only its directives: no file
-                continue
+            if paths is not None and DOC_TEXT is not None and f.startswith("docs/") and f.endswith(".md"):
+                DOC_TEXT[f] = data.decode("utf-8")      # load_stats reads only its directives
+                if f not in paths:
+                    continue                            # so it needs no file
             dest = tmp / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -316,11 +323,11 @@ def load_stats() -> dict[str, str]:
     skips them (--skip-stats); CI still checks them."""
     todos = todo_files()
     domains = {t.split("/")[1] for t in todos}
-    docs = (list(DOC_TEXT.values()) if DOC_TEXT is not None
-            else [d.read_text(encoding="utf-8") for d in sorted(DOCS.rglob("*.md"))])
+    docs = list(DOCS.rglob("*.md")) if DOC_TEXT is None else list(DOC_TEXT)
+    texts = (d.read_text(encoding="utf-8") for d in docs) if DOC_TEXT is None else DOC_TEXT.values()
     covered: set[str] = set()
-    for d in docs:
-        covers = parse_directives(d).get("covers", "")
+    for text in texts:
+        covers = parse_directives(text).get("covers", "")
         covered.update(c.strip() for c in covers.split(",") if c.strip())
     cov = json.loads((DOCS / "test-coverage" / "coverage.json").read_text(encoding="utf-8"))
     m = COUNT_TOTAL_RE.search((ROOT / "COUNT.md").read_text(encoding="utf-8"))
@@ -2592,8 +2599,8 @@ def main() -> int:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
         elif args.emit_head:
-            snap = snapshot(args.ref, ["project.json", "COUNT.md", "docs/*.md", "docs/design/tokens.json",
-                                       "docs/test-coverage/coverage.json", args.emit_head])   # the facts and the file
+            args.emit_head = os.path.normpath(args.emit_head)
+            snap = snapshot(args.ref, emit_paths(args.emit_head))
         elif args.staged:
             snap = snapshot("index")
         return run(args)
