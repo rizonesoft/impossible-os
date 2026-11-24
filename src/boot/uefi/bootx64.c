@@ -10088,6 +10088,7 @@ static UINT64 kernel_guard_end(void)
 /* The most program headers accepted. */
 #define ELF_MAX_PHDRS 64
 static Elf64_Phdr s_kernel_phdrs[ELF_MAX_PHDRS];
+static struct boot_span s_kernel_segments[ELF_MAX_PHDRS];   /* those that were validated */
 
 /* The memory the kernel file's segments are copied to, at most ELF_MAX_PHDRS
  * spans; the file position is the start again afterwards. A header the ELF
@@ -10128,6 +10129,21 @@ static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 /* How often a memory map that moved before its span was claimed is read again. */
 #define KERNEL_BUFFER_TRIES 4
 
+/* Whether a descriptor that is not free lies over [at, at + bytes), and `room` now ends below it. */
+static int clip_to_free(UINTN map_size, UINTN desc_size, struct boot_span *room,
+                        UINT64 at, UINT64 bytes)
+{
+    for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
+        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
+        struct boot_span taken = { d->PhysicalStart, ~0ULL };
+        if (d->NumberOfPages <= (~0ULL >> 12))
+            taken.bytes = d->NumberOfPages * EFI_PAGE_SIZE;
+        if (d->Type != EfiConventionalMemory && boot_span_clip(room, at, bytes, taken))
+            return 1;
+    }
+    return 0;
+}
+
 /* Claim `pages` clear of `keep` in one snapshot of the memory map. The status is
  * the map's own when it cannot be read; *at is 0 when nothing was claimed, and
  * *lost then says whether a span that the map calls free was refused. */
@@ -10158,8 +10174,11 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
                 if (room.bytes > 0x100000000ULL - room.base)
                     room.bytes = 0x100000000ULL - room.base;
             }
-            EFI_PHYSICAL_ADDRESS at =
-                boot_span_pick(room, (UINT64)pages * EFI_PAGE_SIZE, keep, nkeep);
+            EFI_PHYSICAL_ADDRESS at;
+            do {
+                at = boot_span_pick(room, (UINT64)pages * EFI_PAGE_SIZE, keep, nkeep);
+            } while (at != 0 && clip_to_free(map_size, desc_size, &room, at,
+                                             (UINT64)pages * EFI_PAGE_SIZE));
             if (at == 0 ||
                 (above && at + (UINT64)pages * EFI_PAGE_SIZE <= 0x100000000ULL))
                 continue;               /* none, or the first pass asked for it */
@@ -10202,36 +10221,41 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
     return EFI_SUCCESS;
 }
 
-/* Claim the kernel's image, so that no later allocation lands on a segment that
- * was copied. The policy passed every segment against this same map, so a page
- * that cannot be claimed was taken since. */
-static EFI_STATUS claim_kernel_memory(const UINT8 *map, UINTN map_size, UINTN desc_size)
+static EFI_STATUS claim_pages(UINT64 base, UINT64 end)
 {
-    UINT64 at = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-    UINT64 hi = kernel_guard_end() - KERNEL_IMAGE_TAIL;
+    EFI_PHYSICAL_ADDRESS at = base;
+    return end <= base ? EFI_SUCCESS :
+           gBS->AllocatePages(AllocateAddress, EfiLoaderData, (UINTN)((end - base) / BL_PAGE_4K), &at);
+}
 
-    if (g_kernel_img_hi <= g_kernel_img_lo)
+/* Claim the kernel's image, so that no later allocation lands on a segment that
+ * was copied: all of it in one call, or else each segment. The policy passed every
+ * segment, so one that cannot be claimed was taken since. */
+static EFI_STATUS claim_kernel_memory(const struct boot_span *segments, unsigned n)
+{
+#ifndef BL_TEST_HHDM_WRONG_ALIAS        /* the control takes the second way */
+    if (!EFI_ERROR(claim_pages(g_kernel_img_lo & ~(BL_PAGE_4K - 1),
+                               kernel_guard_end() - KERNEL_IMAGE_TAIL)))
         return EFI_SUCCESS;
-    for (;;) {
-        struct boot_span next = { 0, 0 };
-        for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
-            const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(map + off);
-            struct boot_span room = { d->PhysicalStart, 0 };
-            if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
-                continue;
-            room.bytes = d->NumberOfPages * BL_PAGE_4K;
-            boot_span_first(&next, room, at);
-        }
-        if (next.bytes == 0 || next.base >= hi)
-            return EFI_SUCCESS;
-        at = boot_span_end(next.base, next.bytes);
-        at = at < hi ? at : hi;
-        EFI_PHYSICAL_ADDRESS page = next.base;
-        EFI_STATUS status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
-                                               (UINTN)((at - next.base) / BL_PAGE_4K), &page);
+#endif
+    for (unsigned i = 0; i < n; i++) {
+        struct boot_span own = boot_span_own_pages(segments, i);
+        EFI_STATUS status = claim_pages(own.base, own.base + own.bytes);
         if (EFI_ERROR(status))
             return status;
     }
+    return EFI_SUCCESS;
+}
+
+/* Claim what is free of the room after the image: all of it, or else what there is. */
+static void claim_kernel_tail(void)
+{
+    UINT64 end = kernel_guard_end();
+
+    if (!EFI_ERROR(claim_pages(end - KERNEL_IMAGE_TAIL, end)))
+        return;
+    for (UINT64 p = end - KERNEL_IMAGE_TAIL; p < end; p += BL_PAGE_4K)
+        (void)claim_pages(p, p + BL_PAGE_4K);
 }
 
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
@@ -10784,6 +10808,7 @@ kernel_loaded:
      * defend against. Reset both here so the sweep is deterministic. */
     g_kernel_img_lo = ~0ULL;
     g_kernel_img_hi = 0;
+    unsigned segments = 0;
     for (i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type != PT_LOAD)
             continue;
@@ -10932,12 +10957,14 @@ kernel_loaded:
         if (phdr[i].p_memsz > 0) {
             UINT64 seg_lo = phdr[i].p_paddr;
             UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
+            s_kernel_segments[segments].base = seg_lo;
+            s_kernel_segments[segments++].bytes = phdr[i].p_memsz;
             if (seg_lo < g_kernel_img_lo) g_kernel_img_lo = seg_lo;
             if (seg_hi > g_kernel_img_hi) g_kernel_img_hi = seg_hi;
         }
     }
 
-    status = claim_kernel_memory(s_pt_load_mmap_buf, pt_mmap_size, pt_desc_size);
+    status = claim_kernel_memory(s_kernel_segments, segments);
     if (EFI_ERROR(status)) {
         serial_early_print("[FAIL] Kernel image: its memory was taken while it was loaded\n");
         load_err_status = status;
@@ -11077,12 +11104,8 @@ kernel_loaded:
         }
 #endif
     }
-    /* What is free after the image, before anything that is kept is allocated. */
-    for (UINT64 p = kernel_guard_end() - KERNEL_IMAGE_TAIL;
-         g_kernel_img_hi > g_kernel_img_lo && p < kernel_guard_end(); p += BL_PAGE_4K) {
-        EFI_PHYSICAL_ADDRESS at = p;
-        (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at);
-    }
+    if (g_kernel_img_hi > g_kernel_img_lo)
+        claim_kernel_tail();            /* before anything that is kept is allocated */
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
     bl_control_image_held(kernel_guard_end(), "[BOOT] Kernel image: every page is held\n");
 #endif

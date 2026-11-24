@@ -48,22 +48,49 @@ boot_span_pick(struct boot_span room, unsigned long long bytes,
     return at < room.base ? 0 : at;
 }
 
-/* Keep in *best the part of `room` from `at` on when it begins first, the longer of
- * two that begin together. Folded over ranges in any order, overlapping or not, with
- * `at` moved to the end of each answer, every address comes up once. */
-static inline void
-boot_span_first(struct boot_span *best, struct boot_span room, unsigned long long at)
+/* A range that is not free may lie over a free one (firmware maps do overlap). When
+ * `taken` covers part of [at, at + bytes), end `room` below it and answer 1: the
+ * caller picks again. */
+static inline int
+boot_span_clip(struct boot_span *room, unsigned long long at, unsigned long long bytes,
+               struct boot_span taken)
 {
-    unsigned long long end = boot_span_end(room.base, room.bytes);
-    unsigned long long base = room.base > at ? room.base : at;
+    if (taken.bytes == 0 || taken.base >= at + bytes ||
+        boot_span_end(taken.base, taken.bytes) <= at)
+        return 0;
+    room->bytes = taken.base > room->base ? taken.base - room->base : 0;
+    return 1;
+}
 
-    if (end <= base)
-        return;
-    if (best->bytes == 0 || base < best->base ||
-        (base == best->base && end - base > best->bytes)) {
-        best->base = base;
-        best->bytes = end - base;
+/* The pages of spans[i] that no span before it touches. Two that share a page, as
+ * segments may, hold it once. Empty when there are none. */
+static inline struct boot_span
+boot_span_own_pages(const struct boot_span *spans, unsigned i)
+{
+    unsigned long long lo = spans[i].base & ~(FREE_SPAN_PAGE - 1);
+    unsigned long long hi = (boot_span_end(spans[i].base, spans[i].bytes) +
+                             FREE_SPAN_PAGE - 1) & ~(FREE_SPAN_PAGE - 1);
+    struct boot_span own;
+
+    if (spans[i].bytes == 0)
+        hi = lo;
+    for (unsigned j = 0; j < i && lo < hi; ) {
+        unsigned long long from = spans[j].base & ~(FREE_SPAN_PAGE - 1);
+        unsigned long long to = (boot_span_end(spans[j].base, spans[j].bytes) +
+                                 FREE_SPAN_PAGE - 1) & ~(FREE_SPAN_PAGE - 1);
+        if (spans[j].bytes != 0 && from <= lo && to > lo)
+            lo = to;
+        else if (spans[j].bytes != 0 && from < hi && to >= hi)
+            hi = from;
+        else {
+            j++;
+            continue;
+        }
+        j = 0;                          /* smaller now: judge every span again */
     }
+    own.base = lo;
+    own.bytes = hi > lo ? hi - lo : 0;
+    return own;
 }
 
 #endif /* BOOT_FREE_SPAN_H */

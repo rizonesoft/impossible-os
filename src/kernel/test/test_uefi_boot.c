@@ -288,33 +288,55 @@ static void test_kernel_buffer_span(void)
                    "a range that wraps ends at the last address");
 }
 
-/* The kernel's memory is claimed once, however the firmware's ranges are drawn. */
+/* Firmware's ranges may overlap: the buffer goes where every one of them is free. */
+static void test_kernel_buffer_overlap(void)
+{
+    const uint64_t mib = 1024ULL * 1024, page = 4096;
+    const struct boot_span taken[] = { { 33 * mib - page, page }, { 20 * mib, page } };
+    struct boot_span room = { 1 * mib, 32 * mib };
+    uint64_t at = boot_span_pick(room, 8 * mib, (void *)0, 0);
+
+    TEST_ASSERT_EQ(boot_span_clip(&room, at, 8 * mib, taken[1]), 0, "one below is not in the way");
+    TEST_ASSERT_EQ(boot_span_clip(&room, at, 8 * mib, taken[0]), 1, "one over the top page is");
+    at = boot_span_pick(room, 8 * mib, (void *)0, 0);
+    TEST_ASSERT_EQ(at, 25 * mib - page, "a page lower");
+    TEST_ASSERT_EQ(boot_span_clip(&room, at, 8 * mib, taken[0]), 0, "and clear of it");
+    TEST_ASSERT_EQ(boot_span_clip(&room, 18 * mib, 8 * mib, taken[1]), 1, "one in the middle");
+    TEST_ASSERT_EQ(boot_span_pick(room, 8 * mib, (void *)0, 0), 12 * mib, "below that one");
+    {
+        const struct boot_span all = { 0, ~0ULL };
+        TEST_ASSERT_EQ(boot_span_clip(&room, 12 * mib, 8 * mib, all), 1, "one over the whole range");
+        TEST_ASSERT_EQ(boot_span_pick(room, 8 * mib, (void *)0, 0), 0ULL, "leaves no room");
+    }
+}
+
+/* Each page of the kernel is claimed once, whichever segments share it. */
 static void test_kernel_claim_spans(void)
 {
     const uint64_t mib = 1024ULL * 1024;
-    const struct boot_span rooms[] = {          /* out of order, two overlapping, one inside */
-        { 6 * mib, 4 * mib }, { 1 * mib, 2 * mib }, { 2 * mib, 2 * mib }, { 7 * mib, 1 * mib },
+    const struct boot_span seg[] = {
+        { 4 * mib, 1 * mib + 16 },              /* ends in the page the next begins in */
+        { 5 * mib + 32, 1 * mib },
+        { 3 * mib, 1 * mib + 1 },               /* ends in the first one's first page */
+        { 5 * mib + 64, 64 }, { 9 * mib, 0 },   /* inside one, and empty */
     };
     const struct boot_span want[] = {
-        { 1 * mib, 2 * mib }, { 3 * mib, 1 * mib }, { 6 * mib, 4 * mib }, { 0, 0 },
+        { 4 * mib, 1 * mib + 4096 }, { 5 * mib + 4096, 1 * mib }, { 3 * mib, 1 * mib },
     };
-    uint64_t at = 1 * mib;
 
-    for (uint32_t step = 0; step < 4; step++) {
-        struct boot_span next = { 0, 0 };
-        for (uint32_t i = 0; i < 4; i++)
-            boot_span_first(&next, rooms[i], at);
-        TEST_ASSERT_EQ(next.base, want[step].base, "each address once, lowest first");
-        TEST_ASSERT_EQ(next.bytes, want[step].bytes, "as far as its range goes");
-        at = boot_span_end(next.base, next.bytes);
+    for (uint32_t i = 0; i < 3; i++) {
+        TEST_ASSERT_EQ(boot_span_own_pages(seg, i).base, want[i].base, "its first page");
+        TEST_ASSERT_EQ(boot_span_own_pages(seg, i).bytes, want[i].bytes, "its pages");
     }
+    TEST_ASSERT_EQ(boot_span_own_pages(seg, 3).bytes, 0ULL, "all of it is held");
+    TEST_ASSERT_EQ(boot_span_own_pages(seg, 4).bytes, 0ULL, "an empty segment has none");
     {
-        struct boot_span next = { 0, 0 };
-        const struct boot_span shorter = { 1 * mib, 1 * mib };
-        boot_span_first(&next, rooms[1], 1 * mib + 4096);
-        boot_span_first(&next, shorter, 1 * mib + 4096);
-        TEST_ASSERT_EQ(next.base, 1 * mib + 4096, "from the address asked for");
-        TEST_ASSERT_EQ(next.bytes, 2 * mib - 4096, "the longer of two that begin together");
+        /* The second moves the third's start onto the first. */
+        const struct boot_span back[] = {
+            { 2 * mib, 2 * mib }, { 0, 2 * mib }, { 0, 6 * mib },
+        };
+        TEST_ASSERT_EQ(boot_span_own_pages(back, 2).base, 4 * mib, "past both, in either order");
+        TEST_ASSERT_EQ(boot_span_own_pages(back, 2).bytes, 2 * mib, "and no more");
     }
 }
 
@@ -1527,6 +1549,8 @@ void test_register_uefi_boot(void)
                             test_boot_flag_uki_implies_no_disk_initrd, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel file buffer placement",
                             test_kernel_buffer_span, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel file buffer overlap",
+                            test_kernel_buffer_overlap, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel memory claim spans",
                             test_kernel_claim_spans, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",
