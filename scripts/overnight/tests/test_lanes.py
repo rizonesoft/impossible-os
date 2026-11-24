@@ -711,13 +711,13 @@ def test_a_staged_worktree_alias_never_lands_and_a_broken_map_can_be_repaired(re
 def test_a_stalled_head_read_never_falls_back_to_the_index(repo, monkeypatch):
     calls = []
 
-    def stalled(root, *args, deadline=None):
-        calls.append(args)
-        raise lanes.GitStalled("git show could not run (TimeoutExpired)")
+    def stalled(root, *args, deadline=None, stdin=None):
+        calls.append(stdin)
+        raise lanes.GitStalled("git cat-file could not run (TimeoutExpired)")
     monkeypatch.setattr(lanes, "_git", stalled)
     with pytest.raises(lanes.GitStalled):
         lanes.committed_map(repo["primary"])
-    assert calls == [("show", "HEAD:.conclave/lanes.toml")], calls
+    assert calls == [b"HEAD:.conclave/lanes.toml\n"], calls
 
 
 def test_a_three_way_mail_patch_into_a_live_lane_is_refused_after_a_conflict(repo):
@@ -2030,6 +2030,29 @@ def test_the_map_and_its_entries_are_bounded():
     lanes.parse_map(text.ljust(lanes.MAP_MAX, "\n"))
     with pytest.raises(lanes.LaneError, match="the map is longer than"):
         lanes.parse_map(text.ljust(lanes.MAP_MAX + 1, "\n"))
+    with pytest.raises(lanes.LaneError, match="the map is longer than"):
+        lanes.parse_map(text + "# " + "\u00e9" * (lanes.MAP_MAX // 2))
+
+
+def test_a_staged_map_that_is_no_small_file_is_never_read(repo, monkeypatch):
+    p = repo["primary"]
+    with pytest.raises(lanes.LaneError, match="is not a file"):
+        lanes._blob(p, "HEAD:.conclave")
+    stage(p, ".conclave/lanes.toml", "#" * (lanes.MAP_MAX + 1))
+    asked, real = [], lanes._git
+    monkeypatch.setattr(lanes, "_git", lambda root, *a, **k: (asked.append(a), real(root, *a, **k))[1])
+    with pytest.raises(lanes.LaneError, match="is longer than"):
+        lanes._blob(p, ":.conclave/lanes.toml")
+    assert [a[1] for a in asked] == ["--batch-check=%(objecttype) %(objectsize) %(objectname)"]
+    assert check(p).returncode != 0
+
+
+def test_a_map_read_after_the_budget_is_spent_is_no_answer(repo, monkeypatch):
+    real = lanes.parse_map
+    monkeypatch.setattr(lanes, "parse_map", lambda text: (time.sleep(0.5), real(text))[1])
+    with pytest.raises(lanes.GitStalled):
+        lanes.committed_map(repo["primary"], time.monotonic() + 0.4)
+    assert lanes.committed_map(repo["primary"], time.monotonic() + 5)
 
 
 @pytest.mark.parametrize("state, secs", [("off", 0.1), ("live", 3)])

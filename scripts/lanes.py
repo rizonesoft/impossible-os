@@ -68,7 +68,7 @@ def _strings(value) -> bool:
 
 
 MAP = ".conclave/lanes.toml"
-MAP_MAX, ENTRY_MAX = 128 * 1024, 240                 # characters: what keeps reading and judging by it quick
+MAP_MAX, ENTRY_MAX = 128 * 1024, 240                 # bytes, characters: what keeps reading and judging by it quick
 AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 
@@ -76,7 +76,7 @@ def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
     'entries': every paths entry, sorted, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
-    _need(len(text) <= MAP_MAX, f"the map is longer than {MAP_MAX} characters")
+    _need(len(text.encode(errors="replace")) <= MAP_MAX, f"the map is longer than {MAP_MAX} bytes")
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -336,7 +336,8 @@ def clear(name: str) -> None:
         pass
 
 
-def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, ...] = (0,)) -> bytes:
+def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, ...] = (0,),
+         stdin: bytes | None = None) -> bytes:
     """git's stdout, bounded by GIT_SECS, and by `deadline` (time.monotonic()) when a caller shares a budget.
     An exit status outside `ok` refuses."""
     secs = GIT_SECS if deadline is None else min(GIT_SECS, deadline - time.monotonic())
@@ -345,7 +346,7 @@ def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, .
     try:
         # A local replacement ref must not change what the check sees: it judges the objects git stores.
         r = subprocess.run(["git", "--no-replace-objects", "-c", "core.fsmonitor=false", "-C", str(root), *args], capture_output=True,
-                           timeout=secs)
+                           input=stdin, timeout=secs)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitStalled(f"git {args[0]} could not run ({type(exc).__name__})") from exc
     if r.returncode not in ok:
@@ -426,13 +427,17 @@ def judge(lane_map: dict, me: str | None, paths, lane_states: dict[str, str], re
 
 def _blob(toplevel: Path, spec: str, deadline: float | None = None) -> str | None:
     """The blob's text, or None when git answered that it does not exist. A stalled git raises (GitStalled), and
-    so does a blob that is there and is not text: a broken map never reads as an absent one."""
-    try:
-        data = _git(toplevel, "show", spec, deadline=deadline)
-    except GitStalled:
-        raise
-    except LaneError:
+    so does a blob that is there and is not text, or is longer than a map may be, which is not read: a broken map
+    never reads as an absent one."""
+    said = _git(toplevel, "cat-file", "--batch-check=%(objecttype) %(objectsize) %(objectname)", deadline=deadline,
+                stdin=spec.encode() + b"\n").split()
+    if said[-1:] == [b"missing"]:
         return None
+    if len(said) != 3 or said[0] != b"blob":
+        raise LaneError(f"{spec} is not a file")
+    if int(said[1]) > MAP_MAX:
+        raise LaneError(f"{spec} is longer than {MAP_MAX} bytes")
+    data = _git(toplevel, "cat-file", "blob", said[2].decode(), deadline=deadline)
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -445,7 +450,10 @@ def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
     text = _blob(toplevel, f"HEAD:{MAP}", deadline)
     if text is None:
         raise LaneError(f"{MAP} is not in HEAD")
-    return parse_map(text)
+    lane_map = parse_map(text)
+    if deadline is not None and time.monotonic() > deadline:
+        raise GitStalled(f"{MAP} was read after its caller's budget was spent")
+    return lane_map
 
 
 def _git_path(toplevel: Path, name: str) -> Path:
