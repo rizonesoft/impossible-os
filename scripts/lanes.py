@@ -74,7 +74,7 @@ AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'entries': every paths entry, sorted, 'tops': their first components, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
+    'entries': every paths entry, sorted, 'dirs': each directory they name, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
     _need(len(text.encode(errors="replace")) <= MAP_MAX, f"the map is longer than {MAP_MAX} bytes")
     # A key with thousands of dots takes memory by its square, and is all on one line.
@@ -126,8 +126,7 @@ def parse_map(text: str) -> dict:
         q = None if p.endswith("/") else next(_under(named, p), None)
         _need(q is None, f"path {p!r} is a file where path {q!r} needs a directory")
     return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned), "entries": entries,
-            "tops": {p.partition("/")[0] for p in entries},
-            "longest": max((len(p) for p, _name in owned), default=0),
+            "dirs": {p[:m.end()] for p in entries for m in re.finditer("/", p)},
             "bare": {name for p, name in owned if "/" not in p}}
 
 
@@ -146,17 +145,17 @@ def _covers(entry: str, path: str) -> bool:
 
 
 def owner(lane_map: dict, path: str) -> str:
-    """The lane whose paths hold `path`, else main: one lookup for each directory above it, or none when no entry
-    starts as it does."""
-    if path.partition("/")[0] not in lane_map["tops"]:
-        return MAIN
+    """The lane whose paths hold `path`, else main: one lookup for each directory above it that an entry shares."""
     index = lane_map["index"]
     if path in index:
         return index[path]
     at = path.find("/")
-    while 0 <= at < lane_map["longest"]:
-        if path[:at + 1] in index:
-            return index[path[:at + 1]]
+    while at >= 0:
+        above = path[:at + 1]
+        if above in index:
+            return index[above]
+        if above not in lane_map["dirs"]:
+            return MAIN
         at = path.find("/", at + 1)
     return MAIN
 
@@ -235,13 +234,13 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
 def displaced_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str | None:
     """The extra lane whose reserved paths cannot exist beside a file at `path`, or None: the file is a directory one
     of them needs, or it is under one that is a file."""
-    if path.partition("/")[0] not in lane_map["tops"]:
-        return None
-    index = lane_map["index"]
+    index, dirs = lane_map["index"], lane_map["dirs"]
     names = {index[q] for q in _under(lane_map["entries"], path)}
     at = path.find("/")
-    while 0 <= at <= lane_map["longest"]:
+    while at >= 0:
         names.add(index.get(path[:at], MAIN))
+        if path[:at + 1] not in dirs:
+            break
         at = path.find("/", at + 1)
     return next((n for n in sorted(names) if n != MAIN and lane_states.get(n) in (LIVE, DAMAGED)), None)
 

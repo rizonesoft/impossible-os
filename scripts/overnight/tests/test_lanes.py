@@ -2076,13 +2076,15 @@ def test_the_longest_lane_name_can_keep_a_record(repo):
         lanes.parse_map(text + lane.format(name + "x"))
 
 
-@pytest.mark.parametrize("state, secs, top", [("off", 0.1, "d"), ("live", 3, "d"), ("live", 0.4, "z")])
+@pytest.mark.parametrize("state, secs, top", [("off", 0.1, "d"), ("live", 3, "d"), ("live", 0.4, "z"), ("live", 0.4, "src")])
 def test_many_deep_staged_paths_are_judged_in_time(state, secs, top):
     deep = top + "/d" * 118
+    if top == "src":                                              # shares `src/` with the paths, and nothing below it
+        deep = "src/z" + "/d" * 115
     m = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text()
                         + f'[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{deep}/f"]\n'
                         + 'output = "commits"\nlimits = {}\n')
-    paths = ["/".join(["d"] * 600) + f"/n{i}.c" for i in range(20000)]
+    paths = [("src/k/" if top == "src" else "") + "/".join(["d"] * 600) + f"/n{i}.c" for i in range(20000)]
     start = time.monotonic()
     assert lanes.judge(m, None, paths, {"x": state}) == []
     assert time.monotonic() - start < secs                            # 6.6 s with every lane off, by a 1,200-character entry
