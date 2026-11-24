@@ -433,6 +433,9 @@ hhdm_wrong_check_log() {
     if grep -qF -e '[BOOT] HHDM: direct map verified' -e '[PHASE0]' "$1" || grep -qE '\[cpu:[0-9]+\]' "$1"; then
         HW_FAIL_MSG="the boot went on past the refusal"; return 1
     fi
+    if ! grep -qF -- "KiB allocated, clear of $2 kernel segments" "$1"; then
+        HW_FAIL_MSG="the kernel buffer was not kept clear of its $2 segments"; return 1
+    fi
 }
 
 uki_check_override_log() {
@@ -1102,10 +1105,25 @@ if [ "$HHDM_WRONG" = "1" ]; then
        src/boot/uefi/*.lds src/boot/uefi/*.csv "$HW_DIR/src/boot/uefi/"
     cp "$BUILD/boot_proto_sha.h" "$BUILD/boot_loader_identity.h" "$HW_DIR/build/"
     ln -s "$REPO_ROOT/include" "$HW_DIR/include"
+    # The kernel beside it has its program headers at the end of the file, which is
+    # legal ELF: the loader must still find every segment to place the buffer by.
+    HW_SEGMENTS="$(python3 -I - "$BUILD/kernel.exe" "$HW_DIR/kernel.exe" << 'PYEOF'
+import struct, sys
+d = bytearray(open(sys.argv[1], "rb").read())
+off, n = struct.unpack_from("<Q", d, 32)[0], struct.unpack_from("<H", d, 56)[0]
+table = bytes(d[off:off + 56 * n])
+d += bytes(-len(d) % 8)
+struct.pack_into("<Q", d, 32, len(d))
+d[off:off + 56 * n] = bytes(56 * n)
+open(sys.argv[2], "wb").write(d + table)
+print(sum(struct.unpack_from("<I", table, 56 * i)[0] == 1 for i in range(n)))
+PYEOF
+)"
     hw_ok=1
     make -C "$HW_DIR/src/boot/uefi" OUTDIR="$HW_DIR/out" EXTRA_CFLAGS=-DBL_TEST_HHDM_WRONG_ALIAS \
          > "$BUILD/hhdm-wrong-build.log" 2>&1 \
-        && mcopy -i "$DISK@@$EFI_OFFSET" -o "$HW_DIR/out/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI || hw_ok=0
+        && mcopy -i "$DISK@@$EFI_OFFSET" -o "$HW_DIR/out/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI \
+        && mcopy -i "$DISK@@$EFI_OFFSET" -o "$HW_DIR/kernel.exe" ::boot/kernel.exe || hw_ok=0
     rm -rf "$HW_DIR"
     if [ "$hw_ok" != "1" ]; then
         echo -e "${RED}SMOKE TEST FAILED: the wrong-map loader was not built or staged (build/hhdm-wrong-build.log)${NC}"; exit 1
@@ -1494,7 +1512,7 @@ fi
 # ---- Wrong direct map verdict (SMOKE_HHDM_WRONG=1) -------------------------
 if [ "$HHDM_WRONG" = "1" ]; then
     strip_ansi
-    if [ "$BOOT_PASSED" != true ] || ! hhdm_wrong_check_log "$STRIPPED_LOG"; then
+    if [ "$BOOT_PASSED" != true ] || ! hhdm_wrong_check_log "$STRIPPED_LOG" "$HW_SEGMENTS"; then
         echo -e "${RED}SMOKE TEST FAILED (wrong-map leg): ${HW_FAIL_MSG:-${FAIL_REASON:-the loader never refused the wrong map}}${NC}"
         grep -aE "HHDM|POST 0xB06|\[PHASE0\]" "$STRIPPED_LOG" 2>/dev/null | sed 's/^/    /' | head -12
         exit 1

@@ -455,7 +455,7 @@ typedef struct EFI_FILE_PROTOCOL {
     EFI_FILE_READ       Read;
     EFI_FILE_WRITE      Write;
     VOID               *GetPosition;
-    VOID               *SetPosition;
+    EFI_STATUS (EFIAPI *SetPosition)(struct EFI_FILE_PROTOCOL *This, UINT64 Position);
     EFI_FILE_GET_INFO   GetInfo;
     VOID               *SetInfo;
     EFI_STATUS (EFIAPI *Flush)(struct EFI_FILE_PROTOCOL *This);

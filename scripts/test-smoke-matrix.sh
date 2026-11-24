@@ -39,7 +39,7 @@ cd "$REPO_ROOT"
 # engine:cpus. KVM first: it is the fastest, so a break that both engines see is
 # reported in seconds rather than after the slow leg.
 LEGS="${SMOKE_MATRIX_LEGS:-kvm:1 kvm:2 tcg:1 tcg:2}"
-unset SMOKE_ENGINE SMOKE_FORCE_TCG      # each leg names its own
+unset SMOKE_ENGINE      # a leg names its own; SMOKE_FORCE_TCG is for those that name none
 case "$LEGS" in
     *tcg:*) ;;
     *)  if [ ! -c /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then

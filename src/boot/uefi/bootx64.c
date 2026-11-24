@@ -10074,27 +10074,54 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 /* The largest kernel file accepted; anything above it is corruption. */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
 
-/* The start of the kernel file, read before its buffer is chosen. */
-#define KERNEL_HEAD_BYTES 4096
-static UINT64 s_kernel_head[KERNEL_HEAD_BYTES / sizeof(UINT64)];
+/* The most program headers accepted. */
+#define ELF_MAX_PHDRS 64
+static Elf64_Phdr s_kernel_phdrs[ELF_MAX_PHDRS];
 
-#define KERNEL_HEAD_MAX_PHDRS \
-    ((KERNEL_HEAD_BYTES - sizeof(Elf64_Ehdr)) / sizeof(Elf64_Phdr))
+/* The memory the kernel file's segments are copied to, at most ELF_MAX_PHDRS
+ * spans; the file position is the start again afterwards. A header the ELF
+ * checks will refuse names no segment. Returns how the reads went. */
+static EFI_STATUS kernel_segment_spans(EFI_FILE_PROTOCOL *file, UINT64 file_size,
+                                       struct boot_span *spans, unsigned *n)
+{
+    Elf64_Ehdr eh;
+    UINTN got = sizeof eh;
+    EFI_STATUS status = file->Read(file, &got, &eh);
+
+    *n = 0;
+    if (!EFI_ERROR(status) && got != sizeof eh)
+        status = EFI_LOAD_ERROR;
+    if (!EFI_ERROR(status) && eh.e_phentsize == sizeof(Elf64_Phdr) &&
+        eh.e_phnum <= ELF_MAX_PHDRS && eh.e_phoff <= file_size &&
+        eh.e_phnum <= (file_size - eh.e_phoff) / sizeof(Elf64_Phdr)) {
+        UINTN want = eh.e_phnum * sizeof(Elf64_Phdr);
+        got = want;
+        status = file->SetPosition(file, eh.e_phoff);
+        if (!EFI_ERROR(status))
+            status = file->Read(file, &got, s_kernel_phdrs);
+        if (!EFI_ERROR(status) && got != want)
+            status = EFI_LOAD_ERROR;
+        for (UINT16 i = 0; !EFI_ERROR(status) && i < eh.e_phnum; i++) {
+            if (s_kernel_phdrs[i].p_type != PT_LOAD)
+                continue;
+            spans[*n].base = s_kernel_phdrs[i].p_paddr;
+            spans[(*n)++].bytes = s_kernel_phdrs[i].p_memsz;
+        }
+    }
+    return EFI_ERROR(status) ? status : file->SetPosition(file, 0);
+}
 
 /* The memory map load_kernel() judges placement by. */
 static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 
 /* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
- * the memory the kernel's segments are copied to; 0 when no free range has the
- * room. AllocateAnyPages may answer with a range over the segments, and the
- * destination policy then refuses the kernel. Headers outside the first page
- * of the file are not looked at: the same policy judges such a kernel. */
-static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages)
+ * the `nkeep` spans already in `keep`, which has room for two more; 0 when no
+ * free range has the room. AllocateAnyPages may answer with a range over the
+ * segments, and the destination policy then refuses the kernel. */
+static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *keep,
+                                                unsigned nkeep)
 {
-    struct boot_span keep[2 + KERNEL_HEAD_MAX_PHDRS];
-    unsigned nkeep = 0;
     UINTN map_size, desc_size;
-    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)s_kernel_head;
 
     if (EFI_ERROR(pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
                                         &map_size, &desc_size)))
@@ -10104,18 +10131,6 @@ static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages)
     keep[nkeep].base = g_boot_info_ptr->fb.addr;
     keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
-    if (eh->e_phentsize == sizeof(Elf64_Phdr) && eh->e_phoff <= KERNEL_HEAD_BYTES &&
-        eh->e_phnum <= KERNEL_HEAD_MAX_PHDRS &&
-        eh->e_phnum <= (KERNEL_HEAD_BYTES - eh->e_phoff) / sizeof(Elf64_Phdr)) {
-        for (UINT16 i = 0; i < eh->e_phnum; i++) {
-            Elf64_Phdr ph;
-            efi_memcpy(&ph, (const UINT8 *)s_kernel_head + eh->e_phoff + i * sizeof ph, sizeof ph);
-            if (ph.p_type != PT_LOAD)
-                continue;
-            keep[nkeep].base = ph.p_paddr;
-            keep[nkeep++].bytes = ph.p_memsz;
-        }
-    }
     /* Below 4 GiB first, where every storage controller can write. */
     for (int above = 0; above < 2; above++) {
         for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
@@ -10515,25 +10530,21 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
         file_size = (UINTN)size;
     }
-    UINTN head_size = file_size < KERNEL_HEAD_BYTES ? file_size : KERNEL_HEAD_BYTES;
-    {
-        UINTN got = head_size;
-        efi_memset(s_kernel_head, 0, sizeof s_kernel_head);
-        status = kernel_file->Read(kernel_file, &got, s_kernel_head);
-        if (EFI_ERROR(status) || got != head_size) {
-            serial_early_print("[FAIL] Cannot read the kernel file's header\n");
-            kernel_file->Close(kernel_file);
-            root_dir->Close(root_dir);
-            return EFI_ERROR(status) ? status : EFI_LOAD_ERROR;
-        }
-    }
     {
         UINTN pages = (file_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
-        UINT64 bytes = (UINT64)pages * EFI_PAGE_SIZE;
-        load_buf_addr = alloc_kernel_buffer(pages);
+        struct boot_span keep[ELF_MAX_PHDRS + 2];
+        unsigned nsegments;
+        status = kernel_segment_spans(kernel_file, file_size, keep, &nsegments);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FAIL] Cannot read the kernel file's headers\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            return status;
+        }
+        load_buf_addr = alloc_kernel_buffer(pages, keep, nsegments);
         if (load_buf_addr == 0) {
             serial_early_print("[FAIL] Cannot allocate a kernel buffer of ");
-            serial_early_print_uint((UINT32)(bytes / 1024));
+            serial_early_print_uint((UINT32)(pages * (EFI_PAGE_SIZE / 1024)));
             serial_early_print(" KiB\n");
             kernel_file->Close(kernel_file);
             root_dir->Close(root_dir);
@@ -10541,16 +10552,17 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
         load_buf_pages = pages;
         serial_early_print("[BOOT] Kernel buffer: ");
-        serial_early_print_uint((UINT32)(bytes / 1024));
-        serial_early_print(" KiB allocated\n");
+        serial_early_print_uint((UINT32)(pages * (EFI_PAGE_SIZE / 1024)));
+        serial_early_print(" KiB allocated, clear of ");
+        serial_early_print_uint(nsegments);
+        serial_early_print(" kernel segments\n");
         file_buf = (UINT8 *)(UINTN)load_buf_addr;
     }
 
     {
-        UINTN rest = file_size - head_size, got = rest;
-        efi_memcpy(file_buf, s_kernel_head, head_size);
-        status = kernel_file->Read(kernel_file, &got, file_buf + head_size);
-        if (EFI_ERROR(status) || got != rest) {
+        UINTN want = file_size;
+        status = kernel_file->Read(kernel_file, &file_size, file_buf);
+        if (EFI_ERROR(status) || file_size != want) {
             serial_early_print("[FAIL] Cannot read the whole kernel file\n");
             kernel_file->Close(kernel_file);
             root_dir->Close(root_dir);
@@ -10596,7 +10608,7 @@ kernel_loaded:
     }
 
     /* Cap e_phnum to prevent huge loop on corrupt ELF (matches Linux ELF_MAX_SEGMENTS spirit) */
-    if (ehdr->e_phnum > 64) {
+    if (ehdr->e_phnum > ELF_MAX_PHDRS) {
         serial_early_print("[FAIL] Kernel ELF corrupt: too many program headers\n");
         load_err_status = EFI_LOAD_ERROR;
         goto load_error;
