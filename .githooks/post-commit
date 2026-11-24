@@ -32,6 +32,12 @@ export GIT_NO_REPLACE_OBJECTS=1
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
+# A filter is a program of the person's own choosing: it may never answer, or rewrite the file. No generated file
+# with one is refreshed, so nothing below starts a program other than git, python and the text tools.
+if git -C "$ROOT" check-attr filter -- COUNT.md README.md | grep -qvE ': (unspecified|unset)$'; then
+    echo "post-commit: COUNT.md or README.md has a filter attribute, so the generated files are not refreshed" >&2
+    exit 0
+fi
 # The commit this run follows, read before the count, which takes a while: everything below derives from it.
 BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 # A signed commit is never amended, so nothing is counted or written for it. An unread one is not amended either.
@@ -453,12 +459,10 @@ then
     exit 0
 fi
 
-# A git call that may start one of the checkout's own filters: the commit that is waiting never waits on it for long.
-filtered_git() { timeout -k 2 "${POST_COMMIT_FILTER_SECS:-10}" git -c core.fsmonitor=false -C "$ROOT" "$@"; }
-# The bytes a checkout writes for repository text: the path's line endings, encoding and filters applied.
+# The bytes a checkout writes for repository text: the path's line endings and encoding applied.
 checkout_text() {
     local blob
-    blob="$(git -C "$ROOT" hash-object --no-filters -w "$2")" && filtered_git cat-file --filters --path="$1" "$blob"
+    blob="$(git -C "$ROOT" hash-object --no-filters -w "$2")" && git -C "$ROOT" cat-file --filters --path="$1" "$blob"
 }
 
 # The working COUNT.md is generated whatever it held, but renamed into place: never written through a link.
@@ -492,18 +496,26 @@ esac
 README_ENTRY="$BASE_README"
 publish_readme() {
     [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] || return 0
-    local new=""
-    readme_unedited() {
+    local new="" hash
+    readme_unedited() {                             # 1: somebody's edit, which stays. 2: the file cannot be read
         [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] &&
-            [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] &&
-            [ "$(filtered_git hash-object "$README_FILE")" = "${BASE_README#* }" ]
+            [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] || return 1
+        hash="$(git -C "$ROOT" hash-object "$README_FILE")" || return 2
+        [ "$hash" = "${BASE_README#* }" ]
     }
-    readme_unedited || return 0
-    if new="$(mktemp "$ROOT/.README.md.XXXXXX")" && checkout_text README.md "$README_TARGET" > "$new" && chmod --reference="$README_FILE" "$new"; then
-        # Already current, or edited meanwhile: the file stays the file it is.
-        if cmp -s "$new" "$README_FILE" || ! readme_unedited; then rm -f "$new"; return 0; fi
-        if mv -fT "$new" "$README_FILE"; then return 0; fi
-    fi
+    readme_unedited
+    case $? in
+        1) return 0 ;;
+        0) if new="$(mktemp "$ROOT/.README.md.XXXXXX")" && checkout_text README.md "$README_TARGET" > "$new" &&
+                chmod --reference="$README_FILE" "$new"; then
+               readme_unedited
+               case $? in
+                   1) rm -f "$new"; return 0 ;;
+                   0) if cmp -s "$new" "$README_FILE"; then rm -f "$new"; return 0; fi   # already current
+                      if mv -fT "$new" "$README_FILE"; then return 0; fi ;;
+               esac
+           fi ;;
+    esac
     [ -z "$new" ] || rm -f "$new"
     echo "post-commit: $README_FILE could not be written, so it still holds the text from before this commit" >&2
 }

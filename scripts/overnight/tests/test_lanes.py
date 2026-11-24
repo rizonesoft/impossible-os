@@ -1921,22 +1921,44 @@ def test_a_hangup_while_the_lock_is_taken_leaves_no_lock(repo):
     git(p, "add", "--", "src/kernel/k.c")
 
 
-def test_a_filter_that_never_answers_never_holds_the_commit(repo):
+@pytest.mark.parametrize("by_hand", [True, False])
+@pytest.mark.parametrize("name", ["COUNT.md", "README.md"])
+def test_a_filtered_file_is_never_refreshed_and_its_filter_never_started(repo, name, by_hand):
     p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    git(p, "add", "--", "README.md")
+    git(p, "commit", "-qm", "readme")
     (p / ".git" / "info").mkdir(exist_ok=True)
-    (p / ".git" / "info" / "attributes").write_text("COUNT.md filter=stuck\n")
-    git(p, "config", "filter.stuck.smudge", f"sleep 300; cat; : {repo['tmp']}")
+    (p / ".git" / "info" / "attributes").write_text(f"{name} filter=mine\n")
+    started = repo["tmp"] / "started"
+    for side in ("clean", "smudge"):
+        git(p, "config", f"filter.mine.{side}", f"touch '{started}'; cat")
+    hook = REPO / ".githooks" / "post-commit"
+    if by_hand:
+        r = run(["bash", str(hook)], cwd=p, timeout=60, env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
+    else:
+        shebang, rest = hook.read_text().split("\n", 1)
+        r = commit_with_hook(repo, f'{shebang}\nrm -f "{started}"\n{rest}')           # git's own commit may have run it
+    assert r.returncode == 0 and "has a filter attribute" in r.stderr and not started.exists(), r
+    assert git(p, "show", "HEAD:COUNT.md").stdout == (p / "COUNT.md").read_text() == "0\n"
+
+
+def test_a_readme_that_cannot_be_read_is_reported(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
     hook = (REPO / ".githooks" / "post-commit").read_text()
-    shebang, rest = hook.split("\n", 1)
-    started = time.monotonic()
-    r = commit_with_hook(repo, f"{shebang}\nexport POST_COMMIT_FILTER_SECS=1\n{rest}")
-    assert time.monotonic() - started < 30 and "COUNT.md could not be written" in r.stderr, r
-    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n" and not list(p.glob(".COUNT.md.*"))
-    left = run(["pgrep", "-f", f"sleep 300; cat; : {repo['tmp']}"], cwd=p, timeout=20)
-    assert left.stdout == "", "the filter outlived the hook"
+    read = 'hash="$(git -C "$ROOT" hash-object "$README_FILE")"'
+    assert hook.count(read) == 1
+    r = commit_with_hook(repo, hook.replace(read, 'hash="$(false)"'))
+    assert "README.md could not be written" in r.stderr and (p / "README.md").read_text() == README_TEXT
 
 
-def test_a_link_put_in_readmes_place_is_kept(repo):
+@pytest.mark.parametrize("kind", ["link", "pipe"])
+def test_what_is_put_in_readmes_place_is_kept(repo, kind):
     p = repo["primary"]
     (p / "README.md").write_text(README_TEXT)
     (p / "scripts" / "site").mkdir()
@@ -1946,10 +1968,12 @@ def test_a_link_put_in_readmes_place_is_kept(repo):
     other = repo["tmp"] / "same.md"
     other.write_text(README_TEXT)
     hook = (REPO / ".githooks" / "post-commit").read_text()
-    last = '        if cmp -s "$new" "$README_FILE"'
+    last = '               readme_unedited\n'
     assert hook.count(last) == 1
-    commit_with_hook(repo, hook.replace(last, f'        ln -sf "{other}" "$README_FILE"\n' + last))
-    assert (p / "README.md").is_symlink() and other.read_text() == README_TEXT and not list(p.glob(".README.md.*"))
+    put = f'ln -sf "{other}" "$README_FILE"' if kind == "link" else 'rm -f "$README_FILE"; mkfifo "$README_FILE"'
+    commit_with_hook(repo, hook.replace(last, put + "\n" + last))
+    assert (p / "README.md").is_symlink() if kind == "link" else (p / "README.md").is_fifo()
+    assert other.read_text() == README_TEXT and not list(p.glob(".README.md.*"))
 
 
 def test_triage_sees_the_map_through_a_replacement(repo):
