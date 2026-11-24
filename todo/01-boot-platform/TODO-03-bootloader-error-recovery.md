@@ -315,7 +315,7 @@ Malformed boot.conf should produce warnings, not silent misbehavior.
 
 ## 8. Kernel Load Memory Allocation Fallback
 
-If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes. **Replaced 2026-11-24:** the fixed 32/16/8 MiB tiers cut off a kernel file larger than the tier that fitted, so the buffer now has the file's own size and an overlapping one is held and asked for again. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §72 (item: "The loader reads the kernel into a buffer of the file's own size")
+If 16 MiB contiguous allocation fails (fragmented memory), try smaller sizes. **Replaced 2026-11-24:** the fixed 32/16/8 MiB tiers cut off a kernel file larger than the tier that fitted, so the buffer now has the file's own size and is placed from the memory map, clear of boot_info, the framebuffer and the kernel's segments. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §72 (item: "The loader reads the kernel into a buffer of the file's own size")
 
 > [!NOTE]
 > **Regression risk:** LOW -- tries larger first, same result as current behavior (which allocates 16 MiB).

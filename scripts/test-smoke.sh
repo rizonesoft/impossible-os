@@ -953,18 +953,10 @@ case "$CRASH_TEST" in
     double-split) CT_VAL=6; CT_MODE=split ;;
     *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap or double-split (got: $CRASH_TEST)${NC}"; exit 1 ;;
 esac
-# SMOKE_LOADER_FIXTURE boots a loader built privately with one test switch; the
-# shipped loader holds none of that code. wrong-map: the direct map is wrong at
-# the frame the loader checks, so it must halt on that check and never enter the
-# kernel. low-buffer: the first kernel buffer is judged as one over the kernel, so
-# the loader must refuse it, take another and boot.
-LOADER_FIXTURE="${SMOKE_LOADER_FIXTURE:-}"
-case "$LOADER_FIXTURE" in
-    "") LF_DEFINE="" ;;
-    wrong-map) LF_DEFINE=BL_TEST_HHDM_WRONG_ALIAS ;;
-    low-buffer) LF_DEFINE=BL_TEST_LOW_KERNEL_BUFFER ;;
-    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_LOADER_FIXTURE must be wrong-map or low-buffer (got: $LOADER_FIXTURE)${NC}"; exit 1 ;;
-esac
+# SMOKE_HHDM_WRONG=1 boots a loader built with BL_TEST_HHDM_WRONG_ALIAS, whose
+# direct map is wrong at the frame the loader checks: it must halt on that check
+# and never enter the kernel. The shipped loader holds none of that code.
+HHDM_WRONG="${SMOKE_HHDM_WRONG:-0}"
 if [ -n "$CT_MODE" ] && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
     echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST=$CRASH_TEST needs SMOKE_SMP >= 2 (got: ${SMOKE_SMP})${NC}"; exit 1
 fi
@@ -984,7 +976,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
 [ "$KEEP_DISK" = "1" ] && IMAGE_MODIFIED=1
-if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ] || [ -n "$CRASH_TEST" ] || [ -n "$LOADER_FIXTURE" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ] || [ -n "$CRASH_TEST" ] || [ "$HHDM_WRONG" = "1" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -1099,11 +1091,11 @@ if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ] || [ -
     echo -e "  ${DIM}boot.conf fixture: $(tr '\n' ' ' < "$CONF_FIXTURE" | tail -c 60)${NC}"
 fi
 
-if [ -n "$LOADER_FIXTURE" ]; then
+if [ "$HHDM_WRONG" = "1" ]; then
     # Built from a source-only copy (no object of the real build can be reused)
     # into a private OUTDIR, so the loader every image is made from is never
     # written; its digest is compared to make sure.
-    HW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/smoke-loader-fixture.XXXXXX")"
+    HW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/smoke-hhdm-wrong.XXXXXX")"
     hw_before="$(sha256sum "$BUILD/tools/BOOTX64.EFI")"
     mkdir -p "$HW_DIR/src/boot/uefi" "$HW_DIR/build" "$HW_DIR/out"
     cp src/boot/uefi/Makefile src/boot/uefi/*.[ch] src/boot/uefi/*.inc src/boot/uefi/*.asm \
@@ -1111,18 +1103,17 @@ if [ -n "$LOADER_FIXTURE" ]; then
     cp "$BUILD/boot_proto_sha.h" "$BUILD/boot_loader_identity.h" "$HW_DIR/build/"
     ln -s "$REPO_ROOT/include" "$HW_DIR/include"
     hw_ok=1
-    make -C "$HW_DIR/src/boot/uefi" OUTDIR="$HW_DIR/out" EXTRA_CFLAGS="-D$LF_DEFINE" \
-         > "$BUILD/loader-fixture-build.log" 2>&1 \
-        && mcopy -i "$DISK@@$EFI_OFFSET" -o "$HW_DIR/out/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI \
-        && cp "$HW_DIR/out/BOOTX64.EFI" "$BUILD/loader-fixture.efi" || hw_ok=0
+    make -C "$HW_DIR/src/boot/uefi" OUTDIR="$HW_DIR/out" EXTRA_CFLAGS=-DBL_TEST_HHDM_WRONG_ALIAS \
+         > "$BUILD/hhdm-wrong-build.log" 2>&1 \
+        && mcopy -i "$DISK@@$EFI_OFFSET" -o "$HW_DIR/out/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI || hw_ok=0
     rm -rf "$HW_DIR"
     if [ "$hw_ok" != "1" ]; then
-        echo -e "${RED}SMOKE TEST FAILED: the $LOADER_FIXTURE loader was not built or staged (build/loader-fixture-build.log)${NC}"; exit 1
+        echo -e "${RED}SMOKE TEST FAILED: the wrong-map loader was not built or staged (build/hhdm-wrong-build.log)${NC}"; exit 1
     fi
     if [ "$hw_before" != "$(sha256sum "$BUILD/tools/BOOTX64.EFI")" ]; then
-        echo -e "${RED}SMOKE TEST FAILED: building the $LOADER_FIXTURE loader changed build/tools/BOOTX64.EFI; rebuild before using this tree${NC}"; exit 1
+        echo -e "${RED}SMOKE TEST FAILED: building the wrong-map loader changed build/tools/BOOTX64.EFI; rebuild before using this tree${NC}"; exit 1
     fi
-    echo -e "  ${DIM}$LOADER_FIXTURE loader staged into $(basename "$DISK")${NC}"
+    echo -e "  ${DIM}wrong-map loader staged into $(basename "$DISK")${NC}"
 fi
 
 if [ -n "$UKI_MODE" ]; then
@@ -1239,11 +1230,10 @@ if [ "$UKI_MODE" = "override" ]; then
 fi
 # The wrong-map leg must stop in the loader's check, with the kernel never entered.
 HW_FAIL_LINE='[FAIL] HHDM: identity vs direct-map readback mismatch -- halting'
-if [ "$LOADER_FIXTURE" = "wrong-map" ]; then
+if [ "$HHDM_WRONG" = "1" ]; then
     PASS_PATTERNS_ALL=("$HW_FAIL_LINE")
     FAIL_PATTERNS=("[BOOT] HHDM: direct map verified" "[PHASE0]" "BOOT FATAL" "KERNEL PANIC")
 fi
-[ "$LOADER_FIXTURE" != "low-buffer" ] || PASS_PATTERNS_ALL+=("or the kernel -- trying another")
 # A valid store boots a tracked entry, and the kernel marks it good only once
 # the boot is accepted, a moment after the prompt. Wait for that mark rather
 # than trusting the grace period: the next boot of this machine consumes it.
@@ -1312,7 +1302,7 @@ if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ] || [ 
     QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
 fi
 
-if [ -c /dev/kvm ] && [ -w /dev/kvm ] && [ -z "${SMOKE_FORCE_TCG:-}" ]; then
+if [ "${SMOKE_ENGINE:-}" = "kvm" ] || { [ -c /dev/kvm ] && [ -w /dev/kvm ] && [ -z "${SMOKE_FORCE_TCG:-}" ]; }; then
     QEMU_FLAGS+=(-accel kvm -cpu host)
     echo -e "  ${DIM}KVM acceleration enabled${NC}"
 elif [ -n "${SMOKE_FORCE_TCG:-}" ]; then
@@ -1501,8 +1491,8 @@ if [ -n "$CRASH_TEST" ] && [ "$BOOT_PASSED" = true ]; then
     CT_SCREEN_ERR=$(python3 "$SCRIPT_DIR/smoke-screen.py" capture "$MONITOR_SOCK" "$CT_SCREEN" 2>&1) || true
 fi
 
-# ---- Wrong direct map verdict (SMOKE_LOADER_FIXTURE=wrong-map) -------------------------
-if [ "$LOADER_FIXTURE" = "wrong-map" ]; then
+# ---- Wrong direct map verdict (SMOKE_HHDM_WRONG=1) -------------------------
+if [ "$HHDM_WRONG" = "1" ]; then
     strip_ansi
     if [ "$BOOT_PASSED" != true ] || ! hhdm_wrong_check_log "$STRIPPED_LOG"; then
         echo -e "${RED}SMOKE TEST FAILED (wrong-map leg): ${HW_FAIL_MSG:-${FAIL_REASON:-the loader never refused the wrong map}}${NC}"
@@ -1864,7 +1854,6 @@ else
     if [ -f "$SMOKE_MOK_KEY" ] && [ -f "$BUILD/tools/BOOTX64.signed.efi" ]; then
         LOADER_FILE="$BUILD/tools/BOOTX64.signed.efi"
     fi
-    [ -z "$LOADER_FIXTURE" ] || LOADER_FILE="$BUILD/loader-fixture.efi"
     # A UKI leg launched the fixture UKI, not the staged loader.
     if [ -n "$UKI_MODE" ]; then
         LOADER_FILE="$UKI_FIX_DIR/BOOTX64.UKI.efi"

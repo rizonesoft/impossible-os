@@ -2031,7 +2031,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
 
-> **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | boot-path only: the check runs before the kernel, so it has no in-kernel test surface.
+> **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | `bash scripts/test.sh SUITE=boot` (the buffer's placement, `test_kernel_buffer_span`); the direct-map check itself runs before the kernel and is tested in the booted image.
 
 > **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB).
 

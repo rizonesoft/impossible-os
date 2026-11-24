@@ -18,6 +18,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/loader_vars_readback.h"
 #include "registry.h"
+#include "boot/free_span.h"
 #include "boot/uki_cmdline_check.h"
 #include "boot/uki_cmdline_media_role.h"
 #include "boot/sha256_boot.h"
@@ -246,6 +247,45 @@ static void test_boot_flag_uki_implies_no_disk_initrd(void)
         TEST_ASSERT_EQ(g_boot_info.uki_modules_addr, (uint64_t)0,
                        "uki_modules_addr == 0 when not invoked via UKI");
     }
+}
+
+/* Where the loader puts the kernel file: the highest page of a free range that
+ * stays clear of the kernel's own segments. */
+static void test_kernel_buffer_span(void)
+{
+    const uint64_t mib = 1024ULL * 1024;
+    const struct boot_span kernel = { 1 * mib, 8 * mib };
+    const struct boot_span two[2] = { { 1 * mib, 8 * mib }, { 20 * mib, 2 * mib } };
+    const struct boot_span wraps = { 30 * mib, ~0ULL };
+    const struct boot_span odd = { 20 * mib + 5, 1 };
+    const struct boot_span none = { 10 * mib, 0 };
+    struct boot_span room = { 1 * mib, 25 * mib };
+
+    TEST_ASSERT_EQ(boot_span_pick(room, 17 * mib, &kernel, 1), 9 * mib,
+                   "one range holds the kernel and the buffer side by side");
+    TEST_ASSERT_EQ(boot_span_pick(room, 18 * mib, &kernel, 1), 0ULL,
+                   "no room beside the kernel");
+    TEST_ASSERT_EQ(boot_span_pick(room, 25 * mib, (void *)0, 0), 1 * mib,
+                   "a range of exactly the size");
+    TEST_ASSERT_EQ(boot_span_pick(room, 26 * mib, (void *)0, 0), 0ULL,
+                   "a range too small");
+    TEST_ASSERT_EQ(boot_span_pick(room, 5 * mib, two, 2), 15 * mib,
+                   "below a range that covers the top");
+    TEST_ASSERT_EQ(boot_span_pick(room, 11 * mib, two, 2), 9 * mib,
+                   "exactly between two ranges");
+    TEST_ASSERT_EQ(boot_span_pick(room, 12 * mib, two, 2), 0ULL,
+                   "moved below one range into another");
+    TEST_ASSERT_EQ(boot_span_pick(room, 4 * mib, &wraps, 1), 22 * mib,
+                   "a range that wraps is above this one");
+    TEST_ASSERT_EQ(boot_span_pick(room, 6 * mib, &odd, 1), 14 * mib,
+                   "the start stays on a page below an unaligned range");
+    TEST_ASSERT_EQ(boot_span_pick(room, 4 * mib, &none, 1), 22 * mib,
+                   "an empty range is not in the way");
+    TEST_ASSERT_EQ(boot_span_pick(room, 0, &kernel, 1), 0ULL, "no bytes, no buffer");
+    room.base = ~0ULL - 2 * mib + 1;
+    room.bytes = ~0ULL;
+    TEST_ASSERT_EQ(boot_span_pick(room, 4 * mib, (void *)0, 0), 0ULL,
+                   "a range that wraps ends at the last address");
 }
 
 static void test_uki_cmdline_rejects_initrd_token(void)
@@ -1455,6 +1495,8 @@ void test_register_uefi_boot(void)
                             test_uki_initrd_section_size_consistent, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI flag implies no disk initrd",
                             test_boot_flag_uki_implies_no_disk_initrd, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel file buffer placement",
+                            test_kernel_buffer_span, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",
                             test_uki_cmdline_rejects_initrd_token, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source valid",

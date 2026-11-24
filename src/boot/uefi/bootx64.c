@@ -33,6 +33,7 @@
 #include "../../../include/boot/pe_authenticode.h" /* Authenticode PE image hash, as firmware computes it */
 #include "../../../include/boot/tcg_evlog.h"       /* strict TCG event-log walk + image-load event identity */
 #include "../../../include/boot/pcr_manifest.h"    /* PCR 11 manifest measurement: index, event name, type */
+#include "../../../include/boot/free_span.h" /* boot_span_pick() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
@@ -10077,25 +10078,65 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 #define KERNEL_HEAD_BYTES 4096
 static UINT64 s_kernel_head[KERNEL_HEAD_BYTES / sizeof(UINT64)];
 
-static int ranges_overlap(UINT64 a, UINT64 a_len, UINT64 b, UINT64 b_len)
-{
-    return a_len != 0 && b_len != 0 && a < b + b_len && b < a + a_len;
-}
+#define KERNEL_HEAD_MAX_PHDRS \
+    ((KERNEL_HEAD_BYTES - sizeof(Elf64_Ehdr)) / sizeof(Elf64_Phdr))
 
-/* Whether [at, at + bytes) covers memory the kernel's segments are copied to.
- * Headers outside the first page are not looked at: the destination policy
- * refuses such a kernel later, when the buffer does overlap. */
-static int overlaps_kernel_segments(UINT64 at, UINT64 bytes)
+/* The memory map load_kernel() judges placement by. */
+static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
+
+/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
+ * the memory the kernel's segments are copied to; 0 when no free range has the
+ * room. AllocateAnyPages may answer with a range over the segments, and the
+ * destination policy then refuses the kernel. Headers outside the first page
+ * of the file are not looked at: the same policy judges such a kernel. */
+static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages)
 {
+    struct boot_span keep[2 + KERNEL_HEAD_MAX_PHDRS];
+    unsigned nkeep = 0;
+    UINTN map_size, desc_size;
     const Elf64_Ehdr *eh = (const Elf64_Ehdr *)s_kernel_head;
-    if (eh->e_phentsize != sizeof(Elf64_Phdr) || eh->e_phoff > KERNEL_HEAD_BYTES ||
-        eh->e_phnum > (KERNEL_HEAD_BYTES - eh->e_phoff) / sizeof(Elf64_Phdr))
+
+    if (EFI_ERROR(pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+                                        &map_size, &desc_size)))
         return 0;
-    for (UINT16 i = 0; i < eh->e_phnum; i++) {
-        Elf64_Phdr ph;
-        efi_memcpy(&ph, (const UINT8 *)s_kernel_head + eh->e_phoff + i * sizeof ph, sizeof ph);
-        if (ph.p_type == PT_LOAD && ranges_overlap(at, bytes, ph.p_paddr, ph.p_memsz))
-            return 1;
+    keep[nkeep].base = BOOT_INFO_PHYS_ADDR;
+    keep[nkeep++].bytes = sizeof(struct boot_info);
+    keep[nkeep].base = g_boot_info_ptr->fb.addr;
+    keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
+        (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
+    if (eh->e_phentsize == sizeof(Elf64_Phdr) && eh->e_phoff <= KERNEL_HEAD_BYTES &&
+        eh->e_phnum <= KERNEL_HEAD_MAX_PHDRS &&
+        eh->e_phnum <= (KERNEL_HEAD_BYTES - eh->e_phoff) / sizeof(Elf64_Phdr)) {
+        for (UINT16 i = 0; i < eh->e_phnum; i++) {
+            Elf64_Phdr ph;
+            efi_memcpy(&ph, (const UINT8 *)s_kernel_head + eh->e_phoff + i * sizeof ph, sizeof ph);
+            if (ph.p_type != PT_LOAD)
+                continue;
+            keep[nkeep].base = ph.p_paddr;
+            keep[nkeep++].bytes = ph.p_memsz;
+        }
+    }
+    /* Below 4 GiB first, where every storage controller can write. */
+    for (int above = 0; above < 2; above++) {
+        for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
+            EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
+            struct boot_span room = { d->PhysicalStart, 0 };
+            if (d->Type != EfiConventionalMemory ||
+                d->NumberOfPages > (~0ULL >> 12))
+                continue;
+            room.bytes = d->NumberOfPages * EFI_PAGE_SIZE;
+            if (!above) {
+                if (room.base >= 0x100000000ULL)
+                    continue;
+                if (room.bytes > 0x100000000ULL - room.base)
+                    room.bytes = 0x100000000ULL - room.base;
+            }
+            EFI_PHYSICAL_ADDRESS at =
+                boot_span_pick(room, (UINT64)pages * EFI_PAGE_SIZE, keep, nkeep);
+            if (at != 0 && !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                                         pages, &at)))
+                return at;
+        }
     }
     return 0;
 }
@@ -10489,41 +10530,8 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     {
         UINTN pages = (file_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
         UINT64 bytes = (UINT64)pages * EFI_PAGE_SIZE;
-        /* A buffer on top of boot_info (the whole struct, ~22 KiB), the
-         * framebuffer or the kernel's own segments is refused, and held while the next one is asked for so
-         * that the firmware cannot hand out the same range again. */
-        EFI_PHYSICAL_ADDRESS refused[4];
-        UINTN nrefused = 0;
-        while (load_buf_pages == 0 && nrefused < 4) {
-            EFI_PHYSICAL_ADDRESS at = 0;
-            status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &at);
-            if (EFI_ERROR(status))
-                break;
-            UINT64 where = at;
-#ifdef BL_TEST_LOW_KERNEL_BUFFER
-            /* CONTROL BUILD ONLY (SMOKE_LOADER_FIXTURE=low-buffer): judge the
-             * first buffer as one over the kernel, where a first-fit firmware
-             * puts it. */
-            if (nrefused == 0)
-                where = 0x100000;
-#endif
-            UINT64 fb_bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
-                (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
-            if (ranges_overlap(where, bytes, BOOT_INFO_PHYS_ADDR, sizeof(struct boot_info)) ||
-                ranges_overlap(where, bytes, g_boot_info_ptr->fb.addr, fb_bytes) ||
-                overlaps_kernel_segments(where, bytes)) {
-                serial_early_print("[BOOT] Kernel buffer overlaps boot_info, the "
-                                   "framebuffer or the kernel -- trying another\n");
-                refused[nrefused++] = at;
-                continue;
-            }
-            /* Ownership for the load_error cleanup label. */
-            load_buf_addr  = at;
-            load_buf_pages = pages;
-        }
-        while (nrefused > 0)
-            gBS->FreePages(refused[--nrefused], pages);
-        if (load_buf_pages == 0) {
+        load_buf_addr = alloc_kernel_buffer(pages);
+        if (load_buf_addr == 0) {
             serial_early_print("[FAIL] Cannot allocate a kernel buffer of ");
             serial_early_print_uint((UINT32)(bytes / 1024));
             serial_early_print(" KiB\n");
@@ -10531,6 +10539,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             root_dir->Close(root_dir);
             return EFI_LOAD_ERROR;
         }
+        load_buf_pages = pages;
         serial_early_print("[BOOT] Kernel buffer: ");
         serial_early_print_uint((UINT32)(bytes / 1024));
         serial_early_print(" KiB allocated\n");
@@ -10634,8 +10643,6 @@ kernel_loaded:
      * later (that map_key has atomicity semantics; this snapshot
      * does not). The buffer is static-class so it lives in BSS, not
      * on the load_kernel stack. */
-    static UINT8 s_pt_load_mmap_buf[
-        PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
     UINTN pt_mmap_size = 0;
     UINTN pt_desc_size = 0;
     {
@@ -13720,7 +13727,7 @@ static UINT64 bl_hhdm_probe_phys(void)
 }
 
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-/* CONTROL BUILD ONLY (EXTRA_CFLAGS; SMOKE_LOADER_FIXTURE=wrong-map in scripts/test-smoke.sh):
+/* CONTROL BUILD ONLY (EXTRA_CFLAGS; SMOKE_HHDM_WRONG in scripts/test-smoke.sh):
  * point the probe's direct-map leaf 2 MiB above it. That is the arena frame
  * 512 above the probe, RAM the loader owns and past every table a small
  * machine uses, and it holds the first value the check writes. */

@@ -36,6 +36,18 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# engine:cpus. KVM first: it is the fastest, so a break that both engines see is
+# reported in seconds rather than after the slow leg.
+LEGS="${SMOKE_MATRIX_LEGS:-kvm:1 kvm:2 tcg:1 tcg:2}"
+unset SMOKE_ENGINE SMOKE_FORCE_TCG      # each leg names its own
+case "$LEGS" in
+    *tcg:*) ;;
+    *)  if [ ! -c /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "SMOKE MATRIX FAILED  (only KVM legs were asked for and /dev/kvm is not usable)"
+            exit 1
+        fi ;;
+esac
+
 # ONE MATRIX PER WORKTREE (v19 capture, 2026-09-05). Two concurrent runs share
 # build/smoke-matrix/ and the built image, and both reported "4/4 legs failed"
 # with legs ending in 0-5 s -- indistinguishable from a real boot regression --
@@ -61,9 +73,6 @@ boot_conf_lock_hold "$REPO_ROOT" 7 || exit 1
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; DIM='\033[0;90m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-# engine:cpus. KVM first: it is the fastest, so a break that both engines see is
-# reported in seconds rather than after the slow leg.
-LEGS="${SMOKE_MATRIX_LEGS:-kvm:1 kvm:2 tcg:1 tcg:2}"
 
 LOG_DIR="$REPO_ROOT/build/smoke-matrix"
 mkdir -p "$LOG_DIR"
@@ -355,8 +364,7 @@ done
 # no larger than the file (a 16 MiB one cut the file off).
 # A leg that names an engine runs only when LEGS does.
 for leg in "kvm-512M|SMOKE_ENGINE=kvm SMOKE_MEM=512M" "tcg-512M|SMOKE_ENGINE=tcg SMOKE_MEM=512M" \
-           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M" "wrong|SMOKE_LOADER_FIXTURE=wrong-map" \
-           "low-buf|SMOKE_LOADER_FIXTURE=low-buffer"; do
+           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M" "wrong|SMOKE_HHDM_WRONG=1"; do
     name="${leg%%|*}"
     case "$name" in kvm-*|tcg-*) case "$LEGS" in *"${name%%-*}:"*) ;; *) continue ;; esac ;; esac
     log="$LOG_DIR/map-$name.log"

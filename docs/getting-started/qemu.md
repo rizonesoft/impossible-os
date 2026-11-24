@@ -128,7 +128,7 @@ qemu-system-x86_64 \
 | "Could not open" the firmware file | The path is wrong for your distro; see [Common OVMF Paths](#common-ovmf-paths) |
 | Black screen | Verify both OVMF files exist and that the VARS copy is writable |
 | Boot stops at "Timer test (1s sleep)" | On the March 2026 demo: use 1 CPU (`-smp 1`). On a later build: attach `serial.log` to an issue |
-| "HHDM: identity vs direct-map readback mismatch" | The build is from before 2026-11-24 and the VM has 1 GiB of RAM or less. Use `-m 2G` or a newer build |
+| "HHDM: identity vs direct-map readback mismatch" | On a build from before 2026-11-24, the VM has 1 GiB of RAM or less: use `-m 2G` or a newer build. On a newer build, the loader found its memory map wrong: open an issue with the build and `serial.log` |
 | No disk detected | Must use `-device ahci` + `-device ide-hd`. Legacy `-hda` won't work |
 | Mouse stuck in corner | Add `-device virtio-tablet-pci` for absolute positioning |
 | Kernel panic on boot | Check `serial.log` for the full stack trace |
