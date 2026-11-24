@@ -250,13 +250,15 @@ def displaced_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str 
 # A run of path characters that is not the rest of an absolute path or a URL; the second holds a slash.
 _WORD = re.compile(r"(?<![\w./-])[\w.-][\w./-]*")
 _PATH = re.compile(r"(?<![\w./-])[\w.-]+/[\w./-]*")
+_BACKSLASH = re.compile(r"(?<=[\w.:])\\(?=[\w.-])")           # PowerShell's separator, never a Markdown escape
 
 
 def _paths_named(text: str, folder: str, bare: bool):
     """The repository paths `text` names, words with no slash only when `bare`. `./` is the repository root, and a
     path that then starts `../` is relative to `folder`, the text's own directory. A sentence's full stop is
-    dropped, and a run in Markdown emphasis (`_user/x_`) is read both with and without its underscores."""
-    for m in (_WORD if bare else _PATH).finditer(text):
+    dropped, `\\` between names is read as `/`, and a run in Markdown emphasis (`_user/x_`) is read both
+    with and without its underscores."""
+    for m in (_WORD if bare else _PATH).finditer(_BACKSLASH.sub("/", text)):
         word = m.group()
         dots = len(word) - len(word.rstrip("."))
         if dots and dots != 2:                         # a full stop or an ellipsis; two are the parent directory

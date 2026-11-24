@@ -873,6 +873,7 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
     ("[todo/11-apps/TODO-01-app.md](../11-apps/TODO-01-app.md)", None), ("/user/x.c", None),
     ("https://example.com/user/x.c", None), ("user/*.c", "userland"), ("edit the Makefile.", "neon-a"),
     ("Makefile.old", None), ("Edit _user/include/test.h_.", "userland"), ("__src/apps__", "userland"),
+    ("run `src\\apps\\x.ps1`", "userland"), (".\\user\\x.c", "userland"), ("C:\\user\\x.c", None), ("\\_user", None),
     ("_edit user/x.c._", "userland"), ("_the Makefile_", "neon-a"), ("a_user/x.c", None), ("_user_", None)])
 def test_the_paths_a_section_names(text, held):
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
