@@ -78,11 +78,15 @@ class Pure(unittest.TestCase):
              "                  for f in ('README.md', 'docs/index.md')} | {'facts': facts}))\n"
              "shutil.rmtree(snap)", str(HERE.parent)],
             cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout)
-        for arg, name in (("README.md",) * 2, ("./README.md", "README.md"), ("docs/index.md",) * 2,
-                          ("./docs/index.md", "docs/index.md")):
-            emitted = subprocess.run([sys.executable, build, "--emit-head", arg], cwd=B.REPO_REAL, check=True,
+        for name in ("README.md", "docs/index.md"):
+            emitted = subprocess.run([sys.executable, build, "--emit-head", name], cwd=B.REPO_REAL, check=True,
                                      capture_output=True, text=True, timeout=120).stdout
-            self.assertEqual(emitted, full[name], arg)
+            self.assertEqual(emitted, full[name], name)
+        for name in ("./README.md", str(B.REPO_REAL / "README.md"), "../README.md", "absent.md"):
+            r = subprocess.run([sys.executable, build, "--emit-head", name], cwd=B.REPO_REAL,
+                               capture_output=True, text=True, timeout=120)
+            self.assertEqual((r.returncode, r.stdout), (1, ""), name)     # never the working copy's bytes
+            self.assertIn("as git lists it", r.stderr)
         self.assertRegex(full["README.md"], r"project:stat_todo_files -->[1-9]")
         narrow = json.loads(subprocess.run(
             [sys.executable, "-c",
@@ -91,6 +95,15 @@ class Pure(unittest.TestCase):
              "print(json.dumps(B.load_project())); shutil.rmtree(snap)", str(HERE.parent)],
             cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout)
         self.assertEqual(narrow, full["facts"])     # the emitted page is counted too
+
+    def test_a_snapshot_that_fails_leaves_nothing_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run(
+                [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import build as B\n"
+                 "B.parse_directives = lambda text: 1 / 0\nB.snapshot('HEAD', B.emit_paths('README.md'))", str(HERE.parent)],
+                cwd=B.REPO_REAL, capture_output=True, text=True, timeout=120, env={**os.environ, "TMPDIR": tmp})
+            self.assertIn("ZeroDivisionError", r.stderr)
+            self.assertEqual(os.listdir(tmp), [])
 
     def test_material_cells_come_from_the_tokens(self):
         mat = json.loads((B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))["material"]

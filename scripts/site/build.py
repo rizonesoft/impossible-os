@@ -171,7 +171,11 @@ def set_root(root: Path) -> None:
         sys.modules["freshness"].REPO = REPO
 
 
-DOC_TEXT: dict[str, str] | None = None   # the docs pages of a snapshot limited to some paths, held in memory
+DOC_FACTS: tuple[int, set[str]] | None = None   # page count and covered TODOs of a snapshot limited to some paths
+
+
+def directive_covers(text: str) -> set[str]:
+    return {c.strip() for c in parse_directives(text).get("covers", "").split(",") if c.strip()}
 
 
 def emit_paths(name: str) -> list[str]:
@@ -182,11 +186,23 @@ def emit_paths(name: str) -> list[str]:
 
 def snapshot(source: str, paths: list[str] | None = None) -> Path:
     """Materialise the site inputs from the index ("index") or a commit into a temp dir."""
-    import fnmatch
-    global SOURCE, _FILESET, _DIRSET, DOC_TEXT
-    SOURCE, _FILESET, _DIRSET = source, None, None
-    DOC_TEXT = None if paths is None else {}
+    global SOURCE, _FILESET, _DIRSET, DOC_FACTS
+    SOURCE, _FILESET, _DIRSET, DOC_FACTS = source, None, None, None
     tmp = Path(tempfile.mkdtemp(prefix="site-snap-"))
+    try:
+        _materialise(source, paths, tmp)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    set_root(tmp)
+    return tmp
+
+
+def _materialise(source: str, paths: list[str] | None, tmp: Path) -> None:
+    import fnmatch
+    global DOC_FACTS
+    pages = 0
+    covered: set[str] = set()
     files, _ = fileset()
     want = sorted(f for f in files if any(
         f == p or f.startswith(p + "/") or ("*" in p and fnmatch.fnmatchcase(f, p))
@@ -208,15 +224,18 @@ def snapshot(source: str, paths: list[str] | None = None) -> Path:
             size = int(header[2])
             data = out[nl + 1:nl + 1 + size]
             pos = nl + 1 + size + 1
-            if paths is not None and DOC_TEXT is not None and f.startswith("docs/") and f.endswith(".md"):
-                DOC_TEXT[f] = data.decode("utf-8")      # load_stats reads only its directives
+            if paths is not None and f.startswith("docs/") and f.endswith(".md"):
+                pages += 1
+                covered |= directive_covers(data.decode("utf-8"))
                 if f not in paths:
-                    continue                            # so it needs no file
+                    continue                            # load_stats needs no more of it
             dest = tmp / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
-    set_root(tmp)
-    return tmp
+    if paths is not None:
+        DOC_FACTS = pages, covered
+
+
 TEMPLATE_EXTS = {".html", ".js", ".css", ".json", ".xml", ".txt", ".svg", ""}
 
 # parser-allow: this repo's own project-region markers, rewritten in place by --sync byte for byte
@@ -323,19 +342,18 @@ def load_stats() -> dict[str, str]:
     skips them (--skip-stats); CI still checks them."""
     todos = todo_files()
     domains = {t.split("/")[1] for t in todos}
-    docs = list(DOCS.rglob("*.md")) if DOC_TEXT is None else list(DOC_TEXT)
-    texts = (d.read_text(encoding="utf-8") for d in docs) if DOC_TEXT is None else DOC_TEXT.values()
-    covered: set[str] = set()
-    for text in texts:
-        covers = parse_directives(text).get("covers", "")
-        covered.update(c.strip() for c in covers.split(",") if c.strip())
+    pages, covered = DOC_FACTS or (0, set())
+    if DOC_FACTS is None:
+        for d in DOCS.rglob("*.md"):
+            pages += 1
+            covered |= directive_covers(d.read_text(encoding="utf-8"))
     cov = json.loads((DOCS / "test-coverage" / "coverage.json").read_text(encoding="utf-8"))
     m = COUNT_TOTAL_RE.search((ROOT / "COUNT.md").read_text(encoding="utf-8"))
     lines = int(m.group(1)) if m else 0
     return {
         "stat_todo_files": str(len(todos)),
         "stat_todo_domains": str(len(domains)),
-        "stat_doc_pages": str(len(docs)),
+        "stat_doc_pages": str(pages),
         "stat_docs_covered": str(len(covered & set(todos))),
         "stat_test_suites": f"{cov['total_suites']:,}",
         "stat_test_assertions": f"{cov['total_assertions']:,}",
@@ -2599,7 +2617,6 @@ def main() -> int:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
         elif args.emit_head:
-            args.emit_head = os.path.normpath(args.emit_head)
             snap = snapshot(args.ref, emit_paths(args.emit_head))
         elif args.staged:
             snap = snapshot("index")
@@ -2699,6 +2716,9 @@ def run(args: argparse.Namespace) -> int:
         facts["_historical_owners"] = sorted(set(owners))
 
     if args.emit_head:
+        if args.emit_head not in fileset()[0]:
+            print(f"ERROR: --emit-head: {args.emit_head} is not a path {args.ref} holds, as git lists it", file=sys.stderr)
+            return 1
         text = (ROOT / args.emit_head).read_text(encoding="utf-8")
         out = sync_regions(text, facts, args.emit_head, errors)
         for e in errors:

@@ -1494,6 +1494,8 @@ def test_a_readme_that_cannot_be_written_is_reported(repo, edited, index_fails):
     if edited:
         assert (p / "README.md").read_text() == "mine\n"
     else:
+        (p / "README.md").chmod(0o640)
         for line in [x for x in r.stderr.splitlines() if "run: " in x]:
-            run(line.split("run: ", 1)[1].split(), cwd=p, timeout=20)
+            run(["bash", "-c", line.split("run: ", 1)[1]], cwd=p, timeout=20)
         assert git(p, "status", "--porcelain", "-uno").stdout == ""
+        assert (p / "README.md").stat().st_mode & 0o777 == 0o640      # the advice keeps the file's mode

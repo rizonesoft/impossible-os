@@ -585,7 +585,7 @@ if [ -n "$README_TARGET" ]; then
         fi
     }
     if plumb_amend; then
-        publish_readme "git checkout HEAD -- README.md"
+        publish_readme "git show HEAD:README.md > README.md"   # keeps the file's mode
     else
         echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
     fi
