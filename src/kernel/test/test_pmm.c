@@ -6,6 +6,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
 #include "kernel/nt/kusd.h"      /* KUSD_USER_VA */
 #include "boot/free_span.h"
@@ -66,6 +67,14 @@ static void test_pmm_bitmap_place(void)
     TEST_ASSERT_EQ(pmm_bitmap_place(map, 6, 128 * kib, keep, 2),
                    0x100000000ULL - 128 * kib, "a range across the cap ends at it");
     TEST_ASSERT_EQ(pmm_bitmap_place(map, 0, 128 * kib, keep, 2), 0ULL, "no map");
+
+    const struct boot_reserved_region fb = { 32 * mib, 4 * mib, BOOT_RESERVED_FRAMEBUFFER, 0 };
+    struct boot_span kept[PMM_BITMAP_KEEP_MAX];
+    (void)boot_reserved_load_table(&fb, 1);
+    uint32_t n = pmm_bitmap_keep(kept);
+    (void)boot_reserved_load_table((void *)0, 0);
+    TEST_ASSERT_EQ(pmm_bitmap_place(map, 4, 128 * kib, kept, n), 0ULL,
+                   "never over firmware's, the loader's or the image's memory");
 }
 
 /* A low mapping may stand where the bitmap's, or a handed-out frame's, identity

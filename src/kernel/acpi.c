@@ -20,7 +20,6 @@
 
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
-#include "kernel/boot_timing.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
@@ -31,7 +30,6 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/smp.h"
-#include "kernel/time/mono_clock.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/spinlock.h"
 #include "registry.h"
@@ -65,6 +63,13 @@ static uint16_t acpi_io_port(uint32_t addr)
     if (!addr || addr > 0xFFFFu)
         return 0;
     return (uint16_t)addr;
+}
+
+static inline uint32_t inl_acpi(uint16_t port)
+{
+    uint32_t ret;
+    __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
 }
 
 static inline uint8_t inb_acpi(uint16_t port)
@@ -1467,39 +1472,68 @@ static uint16_t pm1_control_read_merged(void)
     return v;
 }
 
+/* ACPI PM timer frequency, fixed by the spec at 3.579545 MHz. */
+#define ACPI_PMTMR_HZ 3579545u
+
 /* One in-flight mode change at a time (see acpi_pm1_control_owned). */
 static volatile uint32_t s_mode_change_inflight;
 
-/* A TSC is not trusted to be faster than this. */
-#define ACPI_TSC_HZ_MAX 6000000000ull
-
-/* Wait `seconds`, or until done() is true; answers whether it was. Interrupts may be
- * off. Where the TSC's rate is not known the fastest there is stands for it: waiting
- * long costs a slow report of a failure, and waiting short a machine that cannot power
- * off. */
-static int acpi_wait(uint32_t seconds, int (*done)(void))
-{
-    uint64_t hz = smp_delay_hz(mono_tsc_hz(), boot_timing_tsc_freq()), begin = mono_tsc_raw();
-
-    if (hz > ACPI_TSC_HZ_MAX)
-        hz = ACPI_TSC_HZ_MAX;
-    while (mono_tsc_raw() - begin < hz * seconds) {
-        if (done && done())
-            return 1;
-        __builtin_ia32_pause();
-    }
-    return 0;
-}
-
-static int pm1_sci_is_on(void)
-{
-    return (pm1_control_read_merged() & 1u) != 0;
-}
-
-/* AcpiHwSetMode in the vendored reference (hwacpi.c) allows firmware the same 3 s. */
+/* Wait for SCI_EN with a real ~3-second deadline rather than a spin count.
+ *
+ * The budget is the vendored reference's: AcpiHwSetMode
+ * (src/kernel/acpica/components/hardware/hwacpi.c) polls with `Retry = 3000`
+ * and a 1 ms stall each pass, and its own comment says real firmware may
+ * transition slowly. An uncalibrated spin count expires in whatever time the
+ * host happens to take, which on a fast machine can be milliseconds -- and a
+ * premature give-up here means acpi_poweroff_now() skips S5 and halts.
+ *
+ * The ACPI PM timer is the clock because it is a port read: no interrupts, no
+ * calibration, and usable on the interrupts-disabled recovery path. Deltas are
+ * accumulated under the counter's own width so a wrap (every ~4.7 s at 24 bits)
+ * cannot end the wait early. */
 static int pm1_wait_for_sci_en(void)
 {
-    return acpi_wait(3, pm1_sci_is_on);
+    uint16_t tmr_port = acpi_get_pmtimer_port();
+    uint32_t mask;
+    uint32_t prev;
+    uint32_t iters = 0;
+    uint64_t elapsed = 0;
+    const uint64_t limit = (uint64_t)ACPI_PMTMR_HZ * 3u;
+
+    if (!tmr_port) {
+        /* No PM timer to measure with. Spin long rather than short: the cost of
+         * over-waiting on a machine that will never answer is a slow boot, and
+         * the cost of under-waiting is a machine that cannot power off. */
+        uint32_t i;
+        for (i = 0; i < 50000000u; i++) {
+            if (pm1_control_read_merged() & 1u)
+                return 1;
+        }
+        return 0;
+    }
+
+    mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : 0x00FFFFFFu;
+    prev = inl_acpi(tmr_port) & mask;
+
+    /* An INDEPENDENT iteration ceiling, because the deadline is only as good as
+     * the clock behind it: a PM timer that reads a constant (stopped, or a port
+     * that answers 0xFF..) never advances `elapsed`, and the loop would spin
+     * forever waiting for a deadline that cannot arrive. The ceiling is far
+     * above the iteration count 3 s of real polling needs, so it never ends a
+     * legitimate wait -- it only bounds a broken one. */
+    while (elapsed < limit && iters < 100000000u) {
+        uint32_t now;
+
+        if (pm1_control_read_merged() & 1u)
+            return 1;
+
+        now = inl_acpi(tmr_port) & mask;
+        elapsed += (uint64_t)((now - prev) & mask);
+        prev = now;
+        iters++;
+    }
+
+    return 0;
 }
 
 /* Is PM1_CNT ours to write -- and if not, TAKE it.
@@ -2402,9 +2436,6 @@ void acpi_poweroff_now(void)
          * after storage has already been quiesced. */
         if (pm1b_cnt && slp_typb != ACPI_SLP_TYPE_INVALID)
             pm1_write_sleep(pm1b_cnt, slp_typb);
-
-        /* The platform powers off while the CPU goes on. */
-        (void)acpi_wait(1, (void *)0);
     }
 
     /* Fallback: QEMU-specific ACPI power-off port */
@@ -2412,10 +2443,9 @@ void acpi_poweroff_now(void)
 
     /* Fallback: Bochs/older QEMU */
     outw_acpi(0xB004, 0x2000);
-    (void)acpi_wait(1, (void *)0);
 
-    /* If we're still here, halt */
-    printk("[ACPI] Shutdown failed -- halting\n");
+    /* The platform powers off while the CPU goes on: being here is not a failure. */
+    printk("[ACPI] Power-off requested: if the PC stays on, switch it off\n");
     for (;;)
         __asm__ volatile("hlt");
 }
@@ -2611,7 +2641,7 @@ uint16_t acpi_get_pmtimer_port(void)
     /* pm_timer_block is at FADT offset 76 (4 bytes) -- needs length >= 80. */
     if (fadt_ptr->header.length < 80)
         return 0;
-    return acpi_io_port(fadt_ptr->pm_timer_block);
+    return (uint16_t)fadt_ptr->pm_timer_block;
 }
 
 int acpi_pmtimer_is_32bit(void)

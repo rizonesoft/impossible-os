@@ -126,6 +126,19 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     return best;
 }
 
+uint32_t pmm_bitmap_keep(struct boot_span *keep)
+{
+    uint32_t n = 0;
+
+    keep[n++] = (struct boot_span){ 0, (uintptr_t)__kernel_end };   /* the low 1 MiB and the image */
+    keep[n++] = (struct boot_span){ USER_PT_WINDOW_BASE, USER_PT_WINDOW_SIZE };
+    for (uint32_t i = 0; i < boot_reserved_count(); i++) {
+        const struct boot_reserved_region *region = boot_reserved_get(i);
+        keep[n++] = (struct boot_span){ region->phys_start, region->length };
+    }
+    return n;
+}
+
 #ifdef KERNEL_TESTS
 const void *pmm_test_bitmap(void)
 {
@@ -239,24 +252,26 @@ boot_result_t pmm_init(void)
     total_frames = highest_addr / PMM_FRAME_SIZE;
     bitmap_size = (total_frames + 7) / 8;    /* round up to whole bytes */
 
-    /* Memory nobody owns: the loader's own ranges, the boot stack and the payloads
-     * carry other types. What follows the kernel image may be firmware's (OVMF keeps
-     * ACPI NVS at 0x800000), so the bitmap is not simply put there. The highest
-     * range, because pmm_alloc_* hands out low memory first: a warm reset then finds
-     * the previous boot's crash region, which no map names, still intact. */
+    /* Memory nobody owns: conventional, and clear of every range that is kept. What
+     * follows the kernel image may be firmware's (OVMF keeps ACPI NVS at 0x800000), so
+     * the bitmap is not simply put there. The highest range, because pmm_alloc_* hands
+     * out low memory first: a warm reset then finds the previous boot's crash region,
+     * which no map names, still intact. */
     kernel_end_phys = (uintptr_t)__kernel_end;
     {
-        const struct boot_stack_info *ks = boot_stack_get();
-        const struct boot_span keep[] = {
-            { 0, kernel_end_phys },             /* the low 1 MiB and the image */
-            { USER_PT_WINDOW_BASE, USER_PT_WINDOW_SIZE },
-            { ks != (void *)0 && ks->valid ? ks->base : 0,
-              ks != (void *)0 && ks->valid ? ks->size : 0 },
-        };
+        enum boot_reserved_error br_err = BOOT_RESERVED_ERR_OK;
+        if (boot_reserved_populate_from_info((const struct boot_info *)&g_boot_info, &br_err) != BOOT_OK) {
+            klog(LOG_FATAL, "mm",
+                 "PMM: boot_reserved populate failed (err=%u); "
+                 "bootloader/kernel disagree on a retained region",
+                 (uint64_t)br_err);
+            return BOOT_FATAL;
+        }
+        struct boot_span keep[PMM_BITMAP_KEEP_MAX];
         uint64_t at = pmm_bitmap_place((const struct boot_mmap_entry *)g_boot_info.mmap,
                                        g_boot_info.mmap_count,
                                        (bitmap_size + PMM_FRAME_SIZE - 1) & ~((uint64_t)PMM_FRAME_SIZE - 1),
-                                       keep, 3);
+                                       keep, pmm_bitmap_keep(keep));
         if (at == 0) {
             klog(LOG_FATAL, "mm", "PMM: no free RAM below 4 GiB holds the %lu byte bitmap",
                  bitmap_size);
@@ -393,14 +408,6 @@ boot_result_t pmm_init(void)
      * and applies to the PMM bitmap. Replaces the previous inline USB
      * DMA reservation block. */
     {
-        enum boot_reserved_error br_err = BOOT_RESERVED_ERR_OK;
-        if (boot_reserved_populate_from_info((const struct boot_info *)&g_boot_info, &br_err) != BOOT_OK) {
-            klog(LOG_FATAL, "mm",
-                 "PMM: boot_reserved populate failed (err=%u); "
-                 "bootloader/kernel disagree on a retained region",
-                 (uint64_t)br_err);
-            return BOOT_FATAL;
-        }
         /* boot_payload_validate ran before PMM init and cross-checked
          * payloads against boot_info/USB/TPM/FB/rt_mmap. It could not
          * see the PMM-internal reservations that depend on RAM size
