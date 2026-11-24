@@ -697,7 +697,7 @@ def lane_reservations(entry, per, root, ctx):
     return out, held
 
 
-def pick_next(cache, root, ready="unset", want_ready=False, reserved=None):
+def pick_next(cache, root, ready="unset", want_ready=False, reserved=None, blockers=None):
     """The next file to work, else (None, BLOCKED) when only recoverable-deferred
     files remain, else (None, None) at true DONE. Returns (entry, class, waiting).
 
@@ -720,6 +720,8 @@ def pick_next(cache, root, ready="unset", want_ready=False, reserved=None):
         held_all.append({"lanes_error": lane_err})     # the packet says why no lane reservation was applied
     for entry in traversal_order(cache):
         cls, per = classify_file(entry, root)
+        if blockers is not None:                       # while the file's scan is in hand
+            blockers += _blocked_sections(entry, per, root)
         if cls == NEEDS_WORK:
             per, held = lane_reservations(entry, per, root, ctx)
             held_all.extend(held)
@@ -762,36 +764,34 @@ def pick_next(cache, root, ready="unset", want_ready=False, reserved=None):
     return (*res, ready, needs[res[0]["file_path"]][1]) if want_ready else res
 
 
+def _blocked_sections(entry, per, root):
+    """Each recoverable-deferred section of one classified file: (file, section n, awaiting token)."""
+    waiting = {n for n, c in per if c == BLOCKED}
+    if not waiting:
+        return []
+    tokens = {}
+    try:
+        _text, scan, sections = _read_scan(os.path.join(root, entry["file_path"]))
+    except OSError:
+        sections = []
+    for num, _ln, start, end in sections:
+        if num not in waiting or num in tokens:
+            continue
+        tokens[num] = ""
+        for j in range(start, end):
+            if not scan.mask[j] and DEFERRED_RE.match(scan.lines[j]):
+                mm = DEFERRED_RECOVERABLE_RE.search(scan.lines[j])
+                tokens[num] = mm.group(0).lower() if mm else ""
+                break
+    return [{"file": entry["file_path"], "section": n, "awaiting": tokens.get(n, "")}
+            for n, c in per if c == BLOCKED]
+
+
 def collect_blockers(cache, root):
     """All recoverable-deferred sections: (file, section n, awaiting token)."""
     out = []
     for entry in traversal_order(cache):
-        md_path = os.path.join(root, entry["file_path"])
-        stamps = section_stamps(md_path)
-        for s in entry.get("sections") or []:
-            if classify_section(s, stamps) != BLOCKED:
-                continue
-            token = ""
-            try:
-                with open(md_path, encoding="utf-8") as fh:
-                    text = fh.read()
-                scan, sections = _scan_sections(text)
-                for num, _ln, start, end in sections:
-                    if num != s.get("n"):
-                        continue
-                    for j in range(start, end):
-                        if scan.mask[j]:
-                            continue
-                        if DEFERRED_RE.match(scan.lines[j]):
-                            mm = DEFERRED_RECOVERABLE_RE.search(scan.lines[j])
-                            if mm:
-                                token = mm.group(0).lower()
-                            break
-                    break
-            except OSError:
-                pass
-            out.append({"file": entry["file_path"], "section": s.get("n"),
-                        "awaiting": token})
+        out += _blocked_sections(entry, classify_file(entry, root)[1], root)
     return out
 
 
@@ -801,13 +801,13 @@ def cmd_blockers(cache, root):
 
 
 def cmd_next(cache, root):
-    reserved = []
-    entry, cls, waiting, ready, per = pick_next(cache, root, want_ready=True, reserved=reserved)
+    reserved, blockers = [], []
+    entry, cls, waiting, ready, per = pick_next(cache, root, want_ready=True, reserved=reserved, blockers=blockers)
     lanes = {"lane_reserved": reserved} if reserved else {}
     if entry is None:
         if cls == BLOCKED:
             print(json.dumps({"status": BLOCKED, "file": None,
-                              "blockers": collect_blockers(cache, root), **lanes}))
+                              "blockers": blockers, **lanes}))
             return 0
         print(json.dumps({"status": "DONE", "file": None}))
         return 0

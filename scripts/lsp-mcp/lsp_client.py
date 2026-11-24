@@ -1721,7 +1721,7 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
     reaped, and its number is handed to somebody else.
 
     Section 20 accepted that window because the pidfd-less host was
-    believed to be supported -- scripts/setup.sh floors python3 at 3.8 and
+    believed to be supported -- scripts/setup.sh floored python3 at 3.8 and
     os.pidfd_open arrived in 3.9. It is not: this module documents
     "Stdlib-only (Python 3.10+)" and uses 3.10 behaviour, so the
     configuration the fallback existed for cannot import it. Section 23

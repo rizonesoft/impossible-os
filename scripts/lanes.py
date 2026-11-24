@@ -259,7 +259,7 @@ def beat(name: str, pid: int, task: str) -> Path:
 
 
 def clear(name: str) -> None:
-    if re.fullmatch(r"[a-z][a-z0-9-]*", name) is None:       # a record name, never a path
+    if name == MAIN or re.fullmatch(r"[a-z][a-z0-9-]*", name) is None:   # a record name, never a path
         raise LaneError(f"{name!r} is not a lane name")
     try:
         (state_dir() / f"{name}.json").unlink()
@@ -288,9 +288,10 @@ def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
     """Each lane's worktree as the directory it resolves to. Two lanes resolving to one directory (a symlink
     alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
-    if common.name != ".git":                      # a git directory kept elsewhere does not say where the tree is
-        raise LaneError(f"the primary tree cannot be found from its git directory {common}")
     primary = common.resolve().parent
+    # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout.
+    if common.name != ".git" or not (primary / MAP).is_file():
+        raise LaneError(f"the primary tree cannot be found from its git directory {common}")
     seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
         tree = (primary / lane["worktree"]).resolve()
@@ -339,13 +340,18 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
 
 
 def _blob(toplevel: Path, spec: str, deadline: float | None = None) -> str | None:
-    """The blob's text, or None when git answered that it does not exist. A stalled git raises (GitStalled)."""
+    """The blob's text, or None when git answered that it does not exist. A stalled git raises (GitStalled), and
+    so does a blob that is there and is not text: a broken map never reads as an absent one."""
     try:
-        return _git(toplevel, "show", spec, deadline=deadline).decode("utf-8")
+        data = _git(toplevel, "show", spec, deadline=deadline)
     except GitStalled:
         raise
-    except (LaneError, UnicodeDecodeError):
+    except LaneError:
         return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LaneError(f"{spec} cannot be read ({exc.reason})") from exc
 
 
 def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
@@ -393,10 +399,10 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
             if staged is None:
                 raise LaneError(f"this commit deletes {MAP}; every later commit needs it")
             proposed = parse_map(staged)
-            lane_trees(proposed, toplevel)
+            trees = lane_trees(proposed, toplevel)
         try:
             lane_map = committed_map(toplevel)
-            committer(lane_map, toplevel)
+            me = committer(lane_map, toplevel)
         except GitStalled:
             raise
         except LaneError:
@@ -412,7 +418,7 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
                 raise LaneError(f"HEAD's {MAP} is broken and a lane has a record in {state_dir()}; stop the lane "
                                 "and clear its record before repairing the map") from None
             lane_map = proposed
-        me = committer(lane_map, toplevel)
+            me = trees.get(toplevel.resolve())
         lane_states = states(lane_map)
         paths = [] if replay and replaying(toplevel) else changed
         reasons = judge(lane_map, me, paths, lane_states)
@@ -451,17 +457,16 @@ def main(argv: list[str]) -> int:
         return check_staged(Path.cwd(), replay=bool(rest))
     root = Path(__file__).resolve().parent.parent
     try:
+        # Needs no map: a record is cleared after its lane left the map, and while the map is broken.
+        if cmd == "clear" and len(rest) == 1:
+            clear(rest[0])
+            return 0
         lane_map = load_map(root)
         if cmd == "beat" and len(rest) == 5 and rest[1] == "--pid" and rest[3] == "--task":
             name = rest[0]
             if name == MAIN or name not in lane_map["lanes"]:
                 raise LaneError(f"{name!r} is not an extra lane in the map")
             print(beat(name, int(rest[2]), rest[4]))
-            return 0
-        if cmd == "clear" and len(rest) == 1:
-            if rest[0] == MAIN or rest[0] not in lane_map["lanes"]:
-                raise LaneError(f"{rest[0]!r} is not an extra lane in the map")
-            clear(rest[0])
             return 0
         if cmd == "live" and not rest:
             print(json.dumps(states(lane_map)))

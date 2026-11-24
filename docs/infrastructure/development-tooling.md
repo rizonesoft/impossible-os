@@ -137,7 +137,7 @@ Each required-sentinel tool has an expected version floor. `bash scripts/setup.s
 | `llvm-nm-19`          | 19.1.0    | `llvm-nm-19 --version`                              | Paired with clang-19; major must match.                        |
 | `nasm`                | 2.15.05   | `nasm -v`                                           | Modern x86-64 syntax; older versions miss `BND` encodings.     |
 | `gcc`                 | 11.0      | `gcc --version`                                     | `HOST_CC := gcc` needs C17 support for host tools.             |
-| `python3`             | 3.8       | `python3 --version`                                 | f-strings, `pathlib`, asset-pipeline tool scripts.             |
+| `python3`             | 3.11      | `python3 --version`                                 | `tomllib`: every commit runs the lane check, which reads TOML. |
 | `qemu-system-x86_64`  | 7.0       | `qemu-system-x86_64 --version`                      | UEFI + AHCI + VirtIO + NVMe + HPET; WHPX accelerator on 7.0+.  |
 | `qemu-img`            | 7.0       | `qemu-img --version`                                | Release VM-format conversions (VHDX/VDI/qcow2); ships with qemu-utils. |
 | `mcopy`               | 4.0       | `mcopy -V`                                          | Offset syntax `image@@offset` for partition-local FAT writes.  |

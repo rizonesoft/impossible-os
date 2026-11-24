@@ -919,8 +919,9 @@ def test_a_broken_map_is_not_repaired_while_a_lane_has_a_record(repo):
     toml = p / ".conclave" / "lanes.toml"
     good = toml.read_text()
     (repo["tmp"] / "alias").symlink_to(repo["userland"])
-    for broken in (good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"'), "[lane.main\n"):
-        toml.write_text(broken)
+    for broken in (good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"').encode(), b"[lane.main\n",
+                   good.encode() + b"# \xff\n"):
+        toml.write_bytes(broken)
         git(p, "add", "--", ".conclave/lanes.toml")
         git(p, "commit", "-qm", "broken map")                         # landed past the hooks
         toml.write_text(good.replace('"user/", ', ""))                # the repair also releases user/
@@ -934,10 +935,11 @@ def test_a_broken_map_is_not_repaired_while_a_lane_has_a_record(repo):
         git(p, "reset", "-q", "--hard")
 
 
-def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(repo):
+@pytest.mark.parametrize("gitdir", ["clone.git", ".git"])
+def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(repo, gitdir):
     clone = repo["tmp"] / "far" / "clone"
     (repo["tmp"] / "meta").mkdir()
-    git(repo["tmp"], "clone", "-q", f"--separate-git-dir={repo['tmp'] / 'meta' / 'clone.git'}", str(repo["primary"]),
+    git(repo["tmp"], "clone", "-q", f"--separate-git-dir={repo['tmp'] / 'meta' / gitdir}", str(repo["primary"]),
         str(clone))
     git(clone, "worktree", "add", "-q", "--detach", str(repo["tmp"] / "far" / "wt-neon-b"))
     r = check(repo["tmp"] / "far" / "wt-neon-b")
@@ -957,3 +959,37 @@ def test_scheduling_cost_does_not_grow_with_the_paths_a_live_lane_holds():
     start = time.monotonic()
     assert lanes.judge(lane_map, lanes.MAIN, [f"src/p{i}.c" for i in range(20000)], {"a": lanes.OFF}) == []
     assert time.monotonic() - start < 2
+
+
+def test_clear_removes_the_record_of_a_lane_that_left_the_map_and_works_while_the_map_is_broken(repo):
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    (d / "gone.json").write_text("{}")
+    (repo["primary"] / ".conclave" / "lanes.toml").write_text("[lane.main\n")
+    argv = [sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "clear"]
+    assert run([*argv, "gone"]).returncode == 0 and not (d / "gone.json").exists()
+    assert run([*argv, "main"]).returncode == 2
+
+
+def test_a_commit_resolves_the_lane_worktrees_once(repo, monkeypatch):
+    calls = []
+    real = lanes.lane_trees
+    monkeypatch.setattr(lanes, "lane_trees", lambda *a: calls.append(1) or real(*a))
+    stage(repo["primary"], "src/kernel/k.c")
+    assert lanes.check_staged(repo["primary"]) == 0 and len(calls) == 1, calls
+
+
+def test_blockers_are_collected_while_the_corpus_is_classified(triage, capsys, monkeypatch):
+    t, root, entries = triage
+    (Path(root) / "todo" / "00-x" / "TODO-01-x.md").write_text(
+        "# T\n\n## 1. One\n\n> **Deferred:** 2026-11-24 awaiting-hardware a board\n\n- [ ] src/shell/x.c\n")
+    entries["todo/00-x/TODO-01-x.md"] = [(1, t.BLOCKED)]
+    live("userland")                                                  # holds the other file
+    scans = []
+    real = t._scan_sections
+    monkeypatch.setattr(t, "_scan_sections", lambda text: scans.append(1) or real(text))
+    assert t.cmd_next({}, root) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == t.BLOCKED and out["lane_reserved"], out
+    assert out["blockers"] == [{"file": "todo/00-x/TODO-01-x.md", "section": 1, "awaiting": "awaiting-hardware"}]
+    assert len(scans) == 1, scans

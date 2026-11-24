@@ -83,7 +83,7 @@ VERSION_SPECS=(
     "gawk:gawk:5.0:gawk --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1"
     "make:make:4.0:make --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1"
     "gcc:gcc:11.0:gcc --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
-    "python3:python3:3.8:python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "python3:python3:3.11:python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "qemu-system-x86_64:qemu-system-x86_64:7.0:qemu-system-x86_64 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
     "qemu-img:qemu-img:7.0:qemu-img --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
     "mcopy:mtools mcopy:4.0:mcopy -V 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
