@@ -560,14 +560,11 @@ plumb_amend() {
     while read -r name; do
         case "$name" in "" | COUNT.md | README.md) ;; *) return 1 ;; esac
     done <<< "$changed"
-    # The stored commit with its tree replaced: parents, people, encoding and message keep their bytes, and a
-    # signature goes, since it signed the other tree.
+    # The stored commit with its tree replaced: parents, people, encoding and message keep their bytes.
     new="$(git -C "$ROOT" cat-file commit "$base" | python3 -I -c '
-import re, sys
-head, _, message = sys.stdin.buffer.read().partition(b"\n\n")
-head = re.sub(rb"\ngpgsig(-sha256)? .*(\n .*)*", b"", head)
-head = re.sub(rb"\Atree [0-9a-f]+", b"tree " + sys.argv[1].encode(), head)
-sys.stdout.buffer.write(head + b"\n\n" + message)' "$tree" | git -C "$ROOT" hash-object -t commit -w --stdin)" || return 1
+import sys
+_, _, rest = sys.stdin.buffer.read().partition(b"\n")
+sys.stdout.buffer.write(b"tree " + sys.argv[1].encode() + b"\n" + rest)' "$tree" | git -C "$ROOT" hash-object -t commit -w --stdin)" || return 1
     # Hold the real index lock for the whole transaction: validate, prepare the
     # new index privately in the lock file, move HEAD with a compare-and-swap,
     # and only then publish the index by renaming the lock into place. Any
@@ -609,6 +606,11 @@ sys.stdout.buffer.write(head + b"\n\n" + message)' "$tree" | git -C "$ROOT" hash
         release_lock                               # HEAD did move, so this is not the refusal below
     fi
 }
+if git -C "$ROOT" cat-file commit "$BASE" 2>/dev/null | sed '/^$/q' | grep -Eq '^gpgsig(-sha256)? '; then
+    echo "post-commit: the commit is signed, so it stays as it was signed and the generated files wait for an unsigned commit" >&2
+    rm -f "$COUNT_TARGET" ${README_TARGET:+"$README_TARGET"}
+    exit 0
+fi
 generated="COUNT.md"
 [ -z "$README_TARGET" ] || generated="COUNT.md and README.md"
 if plumb_amend; then

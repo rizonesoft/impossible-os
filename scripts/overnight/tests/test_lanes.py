@@ -1818,16 +1818,13 @@ def raw_commit(tree, rev):
     return subprocess.run([*GIT, "cat-file", "commit", rev], cwd=tree, capture_output=True, timeout=20, check=True).stdout
 
 
-@pytest.mark.parametrize("signed", [False, True])
-def test_the_amend_changes_only_the_commits_tree(repo, signed):
+def test_the_amend_changes_only_the_commits_tree(repo):
     p = repo["primary"]
     hook = (REPO / ".githooks" / "post-commit").read_text()
     shebang, rest = hook.split("\n", 1)
     git(p, "config", "i18n.logOutputEncoding", "ASCII//TRANSLIT")
     git(p, "config", "i18n.commitEncoding", "ISO-8859-1")
-    sign = ("b=\"$(git cat-file commit HEAD | sed '/^committer /a gpgsig -----BEGIN PGP SIGNATURE-----\\n \\n "
-            "abc\\n -----END PGP SIGNATURE-----' | git hash-object -t commit -w --stdin)\"; git update-ref HEAD \"$b\"\n")
-    (repo["hooks"] / "post-commit").write_text(f"{shebang}\n{sign if signed else ''}git update-ref refs/before HEAD\n{rest}")
+    (repo["hooks"] / "post-commit").write_text(f"{shebang}\ngit update-ref refs/before HEAD\n{rest}")
     (repo["hooks"] / "post-commit").chmod(0o755)
     (p / "src/kernel/k.c").write_text("k2\n")
     message = "lanes: \u00a757 caf\u00e9\n\n\n gpgsig in the text\ngpgsig kept\n\nno newline at the end".encode("latin-1")
@@ -1837,12 +1834,25 @@ def test_the_amend_changes_only_the_commits_tree(repo, signed):
         env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
     before, after = raw_commit(p, "refs/before"), raw_commit(p, "HEAD")
     assert b"encoding ISO-8859-1" in after and after.endswith(message)
-    if signed:
-        assert b"\ngpgsig -----BEGIN" in before and b"BEGIN PGP" not in after
-        head, _, rest = before.partition(b"\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----")
-        before = head + rest
     assert before.split(b"\n", 1)[0] != after.split(b"\n", 1)[0] and before.split(b"\n", 1)[1] == after.split(b"\n", 1)[1]
     assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+
+
+def test_a_signed_commit_keeps_its_signature(repo):
+    p = repo["primary"]
+    key = repo["tmp"] / "key"
+    if not shutil.which("ssh-keygen"):
+        pytest.skip("no ssh-keygen")
+    run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], cwd=p, timeout=30)
+    signers = repo["tmp"] / "signers"
+    signers.write_text("t@example.com " + key.with_suffix(".pub").read_text())
+    for name, value in (("gpg.format", "ssh"), ("user.signingKey", str(key)), ("gpg.ssh.allowedSignersFile", str(signers)),
+                        ("commit.gpgSign", "true")):
+        git(p, "config", name, value)
+    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    assert r.returncode == 0 and "the commit is signed" in r.stderr, r
+    git(p, "verify-commit", "HEAD")
+    assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
 
 
 def test_triage_sees_the_map_through_a_replacement(repo):

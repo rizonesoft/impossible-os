@@ -2720,10 +2720,10 @@ def run(args: argparse.Namespace) -> int:
         facts["_historical_owners"] = sorted(set(owners))
 
     if args.emit_readme:
-        out = sync_regions((ROOT / "README.md").read_text(encoding="utf-8"), facts, "README.md", errors)
+        out = sync_regions((ROOT / "README.md").read_bytes().decode("utf-8"), facts, "README.md", errors)
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
-        sys.stdout.write(out)
+        sys.stdout.buffer.write(out.encode("utf-8"))      # the hook commits these bytes: no stream encoding, no newline
         return 1 if errors else 0
 
     if args.sync is not None:

@@ -81,9 +81,22 @@ class Pure(unittest.TestCase):
         full = snapshot("None")
         self.assertEqual(snapshot("B.README_PATHS"), full)
         emitted = subprocess.run([sys.executable, str(HERE.parent / "build.py"), "--emit-readme"], cwd=B.REPO_REAL,
-                                 check=True, capture_output=True, text=True, timeout=120).stdout
+                                 check=True, capture_output=True, timeout=120,
+                                 env={**os.environ, "PYTHONIOENCODING": "ascii:replace"}).stdout.decode("utf-8")
         self.assertEqual(emitted, full["readme"])
         self.assertRegex(emitted, r"project:stat_todo_files -->[1-9]")
+
+    def test_emit_readme_changes_no_other_byte(self):
+        text = "caf\u00e9 \u2705\r\n<!-- project:release_date_long -->Jan 1<!-- /project -->\r\nlast\n".encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "README.md").write_bytes(text)
+            out = subprocess.run(
+                [sys.executable, "-c", "import sys, argparse; from pathlib import Path\n"
+                 "sys.path.insert(0, sys.argv[1]); import build as B\n"
+                 "B.load_project = lambda: {'release_date_long': 'August 8, 2028'}\nB.ROOT = Path(sys.argv[2])\n"
+                 "sys.exit(B.run(argparse.Namespace(emit_readme=True, sync=None)))", str(HERE.parent), tmp],
+                check=True, capture_output=True, timeout=60, env={**os.environ, "PYTHONIOENCODING": "ascii:replace"}).stdout
+        self.assertEqual(out, text.replace(b"Jan 1", b"August 8, 2028"))
 
     def test_a_snapshot_that_fails_leaves_nothing_behind(self):
         with tempfile.TemporaryDirectory() as tmp:
