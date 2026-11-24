@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     520 |     410527 |
-| **Headers** (`.h`)    |     367 |      85820 |
+| **C sources** (`.c`)  |     520 |     410513 |
+| **Headers** (`.h`)    |     367 |      85813 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **898** | **497735** |
+| **Subtotal**          | **898** | **497714** |
 
 ## Host Tools
 
@@ -58,11 +58,11 @@
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1599** |  **812514** |
+| **Core code + tooling**                              | **1599** |  **812493** |
 | **Supporting text + metadata**                       |  **826** |  **199299** |
-| **Written here**                                     | **2425** | **1011813** |
+| **Written here**                                     | **2425** | **1011792** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      615 |      490445 |
-| **All lines in tree**                                | **3040** | **1502258** |
+| **All lines in tree**                                | **3040** | **1502237** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,502,258 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,502,237 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 23 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 812,514 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 812,493 lines
 > written here imply **112 developers** working for **8 month(s), 23 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-24 21:19 · commit `fd62002ca`*
+*Last updated: 2026-11-24 21:41 · commit `b258b92d4`*

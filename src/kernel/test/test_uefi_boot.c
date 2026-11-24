@@ -310,34 +310,29 @@ static void test_kernel_buffer_overlap(void)
     }
 }
 
-/* Each page of the kernel is claimed once, whichever segments share it. */
+/* A firmware whose 16 pages are two free ranges, [0, 5) and [5, 16), without page 9. */
+static int claim_span_take(void *ctx, unsigned long long base, unsigned long long pages)
+{
+    uint32_t *held = (uint32_t *)ctx, want = ((1u << pages) - 1) << (base / 4096);
+
+    if ((*held & want) != 0 || (want & (1u << 9)) != 0 || ((want & 0x1Fu) && (want & ~0x1Fu)))
+        return 0;
+    *held |= want;
+    return 1;
+}
+
 static void test_kernel_claim_spans(void)
 {
-    const uint64_t mib = 1024ULL * 1024;
-    const struct boot_span seg[] = {
-        { 4 * mib, 1 * mib + 16 },              /* ends in the page the next begins in */
-        { 5 * mib + 32, 1 * mib },
-        { 3 * mib, 1 * mib + 1 },               /* ends in the first one's first page */
-        { 5 * mib + 64, 64 }, { 9 * mib, 0 },   /* inside one, and empty */
-    };
-    const struct boot_span want[] = {
-        { 4 * mib, 1 * mib + 4096 }, { 5 * mib + 4096, 1 * mib }, { 3 * mib, 1 * mib },
-    };
+    const struct boot_span must[] = { { 3 * 4096, 4 * 4096 + 1 }, { 4 * 4096, 16 }, { 9 * 4096 + 8, 0 } };
+    const struct boot_span gone = { 10 * 4096 - 1, 1 };
+    uint32_t held = 0;
 
-    for (uint32_t i = 0; i < 3; i++) {
-        TEST_ASSERT_EQ(boot_span_own_pages(seg, i).base, want[i].base, "its first page");
-        TEST_ASSERT_EQ(boot_span_own_pages(seg, i).bytes, want[i].bytes, "its pages");
-    }
-    TEST_ASSERT_EQ(boot_span_own_pages(seg, 3).bytes, 0ULL, "all of it is held");
-    TEST_ASSERT_EQ(boot_span_own_pages(seg, 4).bytes, 0ULL, "an empty segment has none");
-    {
-        /* The second moves the third's start onto the first. */
-        const struct boot_span back[] = {
-            { 2 * mib, 2 * mib }, { 0, 2 * mib }, { 0, 6 * mib },
-        };
-        TEST_ASSERT_EQ(boot_span_own_pages(back, 2).base, 4 * mib, "past both, in either order");
-        TEST_ASSERT_EQ(boot_span_own_pages(back, 2).bytes, 2 * mib, "and no more");
-    }
+    TEST_ASSERT_EQ(boot_span_claim(0, 16, claim_span_take, &held, must, 3), 1,
+                   "segments across two free ranges and inside each other");
+    TEST_ASSERT_EQ(held, 0xFFFFu & ~(1u << 9), "every page that can be had");
+    held = 0;
+    TEST_ASSERT_EQ(boot_span_claim(0, 16, claim_span_take, &held, &gone, 1), 0,
+                   "a segment's page that cannot");
 }
 
 static void test_uki_cmdline_rejects_initrd_token(void)

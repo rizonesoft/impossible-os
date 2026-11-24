@@ -62,35 +62,28 @@ boot_span_clip(struct boot_span *room, unsigned long long at, unsigned long long
     return 1;
 }
 
-/* The pages of spans[i] that no span before it touches. Two that share a page, as
- * segments may, hold it once. Empty when there are none. */
-static inline struct boot_span
-boot_span_own_pages(const struct boot_span *spans, unsigned i)
-{
-    unsigned long long lo = spans[i].base & ~(FREE_SPAN_PAGE - 1);
-    unsigned long long hi = (boot_span_end(spans[i].base, spans[i].bytes) +
-                             FREE_SPAN_PAGE - 1) & ~(FREE_SPAN_PAGE - 1);
-    struct boot_span own;
+/* Takes `pages` from `base`, all or none; answers whether it did. */
+typedef int (*boot_span_take)(void *ctx, unsigned long long base, unsigned long long pages);
 
-    if (spans[i].bytes == 0)
-        hi = lo;
-    for (unsigned j = 0; j < i && lo < hi; ) {
-        unsigned long long from = spans[j].base & ~(FREE_SPAN_PAGE - 1);
-        unsigned long long to = (boot_span_end(spans[j].base, spans[j].bytes) +
-                                 FREE_SPAN_PAGE - 1) & ~(FREE_SPAN_PAGE - 1);
-        if (spans[j].bytes != 0 && from <= lo && to > lo)
-            lo = to;
-        else if (spans[j].bytes != 0 && from < hi && to >= hi)
-            hi = from;
-        else {
-            j++;
-            continue;
-        }
-        j = 0;                          /* smaller now: judge every span again */
-    }
-    own.base = lo;
-    own.bytes = hi > lo ? hi - lo : 0;
-    return own;
+/* Take every page of [base, base + pages) that can be had, asking for each once at
+ * most: the whole range, or on a refusal its halves (firmware refuses a range that
+ * crosses two of its free ones). 0 when a page of `must` could not be. */
+static inline int
+boot_span_claim(unsigned long long base, unsigned long long pages, boot_span_take take,
+                void *ctx, const struct boot_span *must, unsigned n)
+{
+    unsigned long long half = pages / 2;
+
+    if (pages == 0 || take(ctx, base, pages))
+        return 1;
+    if (half != 0)
+        return boot_span_claim(base, half, take, ctx, must, n) &&
+               boot_span_claim(base + half * FREE_SPAN_PAGE, pages - half, take, ctx, must, n);
+    for (unsigned i = 0; i < n; i++)
+        if (must[i].bytes != 0 && must[i].base < base + FREE_SPAN_PAGE &&
+            boot_span_end(must[i].base, must[i].bytes) > base)
+            return 0;
+    return 1;
 }
 
 #endif /* BOOT_FREE_SPAN_H */
