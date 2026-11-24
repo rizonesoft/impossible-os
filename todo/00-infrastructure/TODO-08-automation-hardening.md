@@ -1683,7 +1683,18 @@ A lane reserves its directories only while it is live; when it is off, main take
 
 **Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file passes for any lane that may commit.
 
+> **Test runner:** `python3 -m pytest -q scripts/overnight/tests/test_lanes.py scripts/overnight/tests/test_post_commit_amend_scope.py scripts/overnight/tests/test_no_verify_refused_by_git.py` passes with no failure (about 50 s).
+
 The commit gate's judgment of a lane's ship (its Astra receipt instead of Claude's session state) is [§71](#71-a-lanes-ship-is-judged-by-its-astra-receipt), split from this section on 2026-11-23 because it is a separate mechanism in the gate. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §71 (item: "The section-commit gate judges a lane's section ship by its Astra pass receipts")
+
+> **Notes:**
+> - What shipped: `.conclave/lanes.toml` and `scripts/lanes.py` (its one reader), the commit check in pre-commit, commit-msg and prepare-commit-msg, triage's lane reservations, and a post-commit refresh rebuilt on one amend and one README writer.
+> - Decisions: the check judges the index against HEAD (todo/answers.md Q59); post-commit amends only when git runs it, leaves a signed commit alone, and replaces a README checkout only when its bytes are the commit's (Q60).
+> - Bounds on the map: 128 KiB, 500 characters a line, 240 characters and 16 directories an entry, 64 characters a lane name; `generated` lists files; entries that cannot exist together are refused.
+> - Scope boundary: launcher and activation are section 53, the push queue section 51, a lane's ship at the commit gate section 71, the line tally section 73, a round past the cap section 64.
+
+> **Verified:** 2026-11-24 | commit `899733481` | 5/5 items | `test_lanes.py`, `test_post_commit_amend_scope.py` and `test_no_verify_refused_by_git.py` 259 passed, `scripts/overnight/tests/run-all.sh` 102 passed, 0 failed | `test-ai-system.sh` 93 passed | lint 0 errors | a mutation control was run and failed in each of waves 42 to 53
+> **Quality reviewed:** 2026-11-24 | Codex: plan 1, round 20, performance 54, completion 9, reconciliation 44 (128 checked passes, 73 past the cap of 55; one round was sent past it, todo/answers.md Q60) | the performance and reconciliation passes on `899733481` are both clean (HIGHEST none); the last round (`d2248fe21`) ended P1 and, past the cap, none was sent on the stamped candidate | the findings of waves 42 to 53 are fixed with regressions, the earlier waves as their commits record, 0 open on the candidate | the dispatcher refusing a round past the cap is [section 64](#64-re-dispatched-passes-name-the-repair)
 
 ## 50. Section claims on origin
 
