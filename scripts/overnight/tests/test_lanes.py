@@ -1911,6 +1911,47 @@ def test_a_hangup_after_the_ref_moves_still_publishes_the_index(repo):
     assert not (p / ".git" / "index.lock").exists()
 
 
+def test_a_hangup_while_the_lock_is_taken_leaves_no_lock(repo):
+    p = repo["primary"]
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    owned = '    LOCK_OWNED="$lock"\n'
+    assert hook.count(owned) == 1
+    commit_with_hook(repo, hook.replace(owned, "    kill -HUP $$\n" + owned))
+    assert not (p / ".git" / "index.lock").exists()
+    git(p, "add", "--", "src/kernel/k.c")
+
+
+def test_a_filter_that_never_answers_never_holds_the_commit(repo):
+    p = repo["primary"]
+    (p / ".git" / "info").mkdir(exist_ok=True)
+    (p / ".git" / "info" / "attributes").write_text("COUNT.md filter=stuck\n")
+    git(p, "config", "filter.stuck.smudge", f"sleep 300; cat; : {repo['tmp']}")
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    shebang, rest = hook.split("\n", 1)
+    started = time.monotonic()
+    r = commit_with_hook(repo, f"{shebang}\nexport POST_COMMIT_FILTER_SECS=1\n{rest}")
+    assert time.monotonic() - started < 30 and "COUNT.md could not be written" in r.stderr, r
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n" and not list(p.glob(".COUNT.md.*"))
+    left = run(["pgrep", "-f", f"sleep 300; cat; : {repo['tmp']}"], cwd=p, timeout=20)
+    assert left.stdout == "", "the filter outlived the hook"
+
+
+def test_a_link_put_in_readmes_place_is_kept(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    other = repo["tmp"] / "same.md"
+    other.write_text(README_TEXT)
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    last = '        if cmp -s "$new" "$README_FILE"'
+    assert hook.count(last) == 1
+    commit_with_hook(repo, hook.replace(last, f'        ln -sf "{other}" "$README_FILE"\n' + last))
+    assert (p / "README.md").is_symlink() and other.read_text() == README_TEXT and not list(p.glob(".README.md.*"))
+
+
 def test_triage_sees_the_map_through_a_replacement(repo):
     t = _load("triage_replacement", TRIAGE_PY)
     p = repo["primary"]

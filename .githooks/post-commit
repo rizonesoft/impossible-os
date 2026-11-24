@@ -453,10 +453,12 @@ then
     exit 0
 fi
 
+# A git call that may start one of the checkout's own filters: the commit that is waiting never waits on it for long.
+filtered_git() { timeout -k 2 "${POST_COMMIT_FILTER_SECS:-10}" git -c core.fsmonitor=false -C "$ROOT" "$@"; }
 # The bytes a checkout writes for repository text: the path's line endings, encoding and filters applied.
 checkout_text() {
     local blob
-    blob="$(git -C "$ROOT" hash-object --no-filters -w "$2")" && git -C "$ROOT" cat-file --filters --path="$1" "$blob"
+    blob="$(git -C "$ROOT" hash-object --no-filters -w "$2")" && filtered_git cat-file --filters --path="$1" "$blob"
 }
 
 # The working COUNT.md is generated whatever it held, but renamed into place: never written through a link.
@@ -490,15 +492,16 @@ esac
 README_ENTRY="$BASE_README"
 publish_readme() {
     [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] || return 0
-    ! checkout_text README.md "$README_TARGET" | cmp -s - "$README_FILE" || return 0   # already current: no new inode for the same bytes
     local new=""
     readme_unedited() {
-        [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] &&
-            [ "$(git -C "$ROOT" hash-object "$README_FILE")" = "${BASE_README#* }" ]
+        [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] &&
+            [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] &&
+            [ "$(filtered_git hash-object "$README_FILE")" = "${BASE_README#* }" ]
     }
     readme_unedited || return 0
     if new="$(mktemp "$ROOT/.README.md.XXXXXX")" && checkout_text README.md "$README_TARGET" > "$new" && chmod --reference="$README_FILE" "$new"; then
-        if ! readme_unedited; then rm -f "$new"; return 0; fi
+        # Already current, or edited meanwhile: the file stays the file it is.
+        if cmp -s "$new" "$README_FILE" || ! readme_unedited; then rm -f "$new"; return 0; fi
         if mv -fT "$new" "$README_FILE"; then return 0; fi
     fi
     [ -z "$new" ] || rm -f "$new"
@@ -584,7 +587,8 @@ sys.stdout.buffer.write(b"tree " + sys.argv[1].encode() + b"\n" + rest)' "$tree"
     # failure discards the lock file and leaves the live index untouched.
     gitdir="$(git -C "$ROOT" rev-parse --absolute-git-dir)" || return 1
     idx="$gitdir/index"; lock="$idx.lock"
-    ( set -o noclobber; : > "$lock" ) 2>/dev/null || return 1
+    trap '' HUP INT TERM                             # a signal between taking the lock and owning it would leave it
+    if ! ( set -o noclobber; : > "$lock" ) 2>/dev/null; then trap - HUP INT TERM; return 1; fi
     # We own the lock from here. EXIT is the ONLY cleanup (INT/TERM just exit,
     # which runs it), and LOCK_OWNED makes it remove the path at most once, so
     # it can never delete a lock another git process acquired afterwards.
