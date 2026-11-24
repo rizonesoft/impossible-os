@@ -10219,7 +10219,9 @@ static struct boot_span previous_crash_log(void)
 
 /* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer, the
  * previous boot's crash log (the file read would overwrite it) and the `nkeep` spans
- * already in `keep`, which has room for KERNEL_BUFFER_KEEPS more; *at is 0 when no free range has the room. AllocateAnyPages may answer with a range over the
+ * already in `keep`, which has room for KERNEL_BUFFER_KEEPS more; *at is 0 when no free
+ * range has the room. The log is given up when that is what it takes to boot: the
+ * variable may hold any value. AllocateAnyPages may answer with a range over the
  * segments, and the destination policy then refuses the kernel. */
 static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsigned nkeep,
                                       EFI_PHYSICAL_ADDRESS *at)
@@ -10229,16 +10231,22 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
     keep[nkeep].base = g_boot_info_ptr->fb.addr;
     keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
-    keep[nkeep++] = previous_crash_log();
-    for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
-        int lost;
-        EFI_STATUS status = claim_free_span(pages, keep, nkeep, try, at, &lost);
-        if (EFI_ERROR(status) || *at != 0 || !lost)
-            return status;
-        /* The firmware took part of a span after the map was read. */
-        serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
+    keep[nkeep] = previous_crash_log();
+    for (unsigned log = keep[nkeep].bytes != 0 ? 1 : 0;; log--) {
+        for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
+            int lost;
+            EFI_STATUS status = claim_free_span(pages, keep, nkeep + log, try, at, &lost);
+            if (EFI_ERROR(status) || *at != 0)
+                return status;
+            if (!lost)
+                break;
+            /* The firmware took part of a span after the map was read. */
+            serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
+        }
+        if (log == 0)
+            return EFI_SUCCESS;
+        serial_early_print("[WARN] Kernel buffer: no room clear of the previous crash log\n");
     }
-    return EFI_SUCCESS;
 }
 
 static int take_pages(void *ctx, unsigned long long base, unsigned long long pages)

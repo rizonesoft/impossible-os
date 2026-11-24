@@ -786,8 +786,8 @@ echo -e "  ${GREEN}✓${NC} POST16 manifest loaded (${#POST16_REQUIRED[@]} requi
 echo -e "${CYAN}[2/3]${NC} Booting in QEMU (headless, ${TIMEOUT_SEC}s timeout)..."
 
 # Preflight
-if [ ! -f "$DISK" ]; then
-    echo -e "${RED}SMOKE TEST FAILED: $DISK not found${NC}"
+if [ ! -f "$SOURCE_DISK" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: $SOURCE_DISK not found${NC}"
     echo -e "${DIM}  Run 'bash scripts/build.sh' first.${NC}"
     exit 1
 fi
@@ -1756,7 +1756,7 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
-    elif ! crash_nvram_buffer_clear "$CRASH_NVRAM_HEX" < "$STRIPPED_LOG"; then
+    elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_buffer_clear "$CRASH_NVRAM_HEX" < "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel file was read over the planted region"
     else
