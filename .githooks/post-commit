@@ -374,7 +374,8 @@ impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
     $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
     $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
 
-cat > "$COUNT_FILE" << EOF
+COUNT_TARGET="$(mktemp)"
+cat > "$COUNT_TARGET" << EOF
 # 📊 Impossible OS — Line Count
 
 > *Because nothing says "production-ready operating system" quite like obsessively counting
@@ -430,6 +431,14 @@ ${impossibility_table}
 
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
+
+# The working COUNT.md is generated whatever it held, but renamed into place: never written through a link.
+new="$(mktemp "$ROOT/.COUNT.md.XXXXXX")" && cat "$COUNT_TARGET" > "$new" &&
+    { { [ -f "$COUNT_FILE" ] && [ ! -L "$COUNT_FILE" ] && chmod --reference="$COUNT_FILE" "$new"; } || chmod 644 "$new"; } &&
+    mv -f "$new" "$COUNT_FILE" || {
+    [ -z "$new" ] || rm -f "$new"
+    echo "post-commit: $COUNT_FILE could not be written, so it still holds the text from before this commit" >&2
+}
 
 # Re-sync README.md's project regions (release date, repo URL, and the computed
 # stat_* counts such as TODO files and test totals) from the COMMIT JUST MADE, into
@@ -493,7 +502,7 @@ fi
 
 if [ "${COUNT_ONLY:-}" = "1" ]; then
     publish_readme
-    [ -z "$README_TARGET" ] || rm -f "$README_TARGET"
+    rm -f "$COUNT_TARGET" ${README_TARGET:+"$README_TARGET"}
     exit 0
 fi
 
@@ -513,25 +522,25 @@ fi
 #
 # Everything is derived from one pinned base commit (tree, parents, message and
 # author all read from $base), with the generated COUNT.md and, when there is one,
-# the synced README blob in a throwaway index. update-ref only moves HEAD if it
+# the synced README blob in place of the base's. update-ref only moves HEAD if it
 # still equals $base, and the real index is touched only after that succeeds, so a
 # concurrent commit or a lock failure loses nothing.
 plumb_amend() {
-    local base="$BASE" tmpidx cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
+    local base="$BASE" root cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
     local -a pargs=()
     [ -n "$base" ] || return 1
-    cb="$(git -C "$ROOT" hash-object -w "$COUNT_FILE")" || return 1
+    cb="$(git -C "$ROOT" hash-object -w "$COUNT_TARGET")" || return 1
     local -a readme=()
     if [ -n "$README_TARGET" ]; then
         rb="$(git -C "$ROOT" hash-object -w "$README_TARGET")" || return 1
         readme=(--cacheinfo "${BASE_README% *},$rb,README.md")
     fi
-    tmpidx="$(mktemp)" || return 1; rm -f "$tmpidx"
-    { GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" read-tree "$base" &&
-      GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" update-index --add \
-          --cacheinfo "100644,$cb,COUNT.md" "${readme[@]}" &&
-      tree="$(GIT_INDEX_FILE="$tmpidx" git -C "$ROOT" write-tree)"; } || { rm -f "$tmpidx"; return 1; }
-    rm -f "$tmpidx"
+    # Only root entries change, so the new tree is the base's root with them replaced.
+    root="$(git -C "$ROOT" ls-tree "$base")" && [ -n "$root" ] || return 1
+    tree="$({ awk -F '\t' -v r="$rb" '$2 != "COUNT.md" && (r == "" || $2 != "README.md")' <<< "$root"
+              printf '100644 blob %s\tCOUNT.md\n' "$cb"
+              [ -z "$rb" ] || printf '%s blob %s\tREADME.md\n' "${BASE_README% *}" "$rb"; } |
+            git -C "$ROOT" mktree)" || return 1
     # Parents come from the commit object itself (a shallow boundary makes
     # rev-list report none); an empty list is allowed only for a true root.
     while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
@@ -592,6 +601,6 @@ if plumb_amend; then
 else
     echo "post-commit: the new $generated could not be committed (HEAD moved, or a git lock was held); the next commit in this checkout brings the generated files" >&2
 fi
-[ -z "$README_TARGET" ] || rm -f "$README_TARGET"
+rm -f "$COUNT_TARGET" ${README_TARGET:+"$README_TARGET"}
 
 exit 0

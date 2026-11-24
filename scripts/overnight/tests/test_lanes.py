@@ -1608,3 +1608,53 @@ def test_an_unchanged_readme_is_not_rewritten(repo):
     run(hook, cwd=p, timeout=60, env=env)
     after = (p / "README.md").stat()
     assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+
+
+@pytest.mark.parametrize("by_hand", [True, False])
+@pytest.mark.parametrize("link", ["hard", "symbolic"])
+def test_count_is_never_written_through_a_link(repo, link, by_hand):
+    p = repo["primary"]
+    other = repo["tmp"] / "mine.md"
+    other.write_text("mine\n")
+    (p / "COUNT.md").unlink()
+    if link == "hard":
+        (p / "COUNT.md").hardlink_to(other)
+    else:
+        (p / "COUNT.md").symlink_to(other)
+    hook = REPO / ".githooks" / "post-commit"
+    if by_hand:
+        run(["bash", str(hook)], cwd=p, timeout=60, env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
+    else:
+        shutil.copy(hook, repo["hooks"] / "post-commit")
+        (repo["hooks"] / "post-commit").chmod(0o755)
+        (p / "src/kernel/k.c").write_text("k2\n")
+        run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+        assert git(p, "show", "HEAD:COUNT.md").stdout == (p / "COUNT.md").read_text()
+        assert git(p, "ls-tree", "HEAD", "--", "COUNT.md").stdout[:6] == "100644"
+    assert other.read_text() == "mine\n" and "Line Count" in (p / "COUNT.md").read_text()
+    assert not (p / "COUNT.md").is_symlink() and not list(p.glob(".COUNT.md.*"))
+
+
+def test_the_amend_keeps_every_other_entry(repo):
+    p = repo["primary"]
+    for name in ("a b.txt", "caf\u00e9.txt", "t\tab.txt", "x COUNT.md", "README.md.bak", "sub/COUNT.md"):
+        (p / name).parent.mkdir(exist_ok=True)
+        (p / name).write_text(name)
+    (p / "run.sh").write_text("x")
+    (p / "run.sh").chmod(0o755)
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "-A", "--", "a b.txt", "caf\u00e9.txt", "t\tab.txt", "x COUNT.md", "README.md.bak", "sub", "run.sh",
+        "README.md", "scripts/site")
+    git(p, "commit", "-qm", "names")
+    before = git(p, "ls-tree", "-r", "HEAD").stdout.splitlines()
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--allow-empty"], cwd=p,
+        timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    after = git(p, "ls-tree", "-r", "HEAD").stdout.splitlines()
+    changed = {x.split("\t")[1] for x in set(before) ^ set(after)}
+    assert changed == {"COUNT.md", "README.md"} and len(before) == len(after)
+    assert git(p, "status", "--porcelain", "-uno").stdout == ""
