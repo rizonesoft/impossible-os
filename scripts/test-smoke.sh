@@ -807,7 +807,8 @@ fi
 # crash region, as an older build would have left it. Every other leg boots a
 # fresh store, so no gate saw the pointer an update inherits: on 2026-11-13 one
 # named the new heap guard page and the first boot faulted in Phase 0.
-# SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print.
+# SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print;
+# crowded is skipped, and the loader found no room for its buffer clear of the pointer.
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
 # Whether the loader's kernel buffer, named on stdin, misses the 128 KiB run at $1.
@@ -817,8 +818,8 @@ crash_nvram_buffer_clear() {
     [ -n "$at" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 ))
 }
 if [ -n "$CRASH_NVRAM" ]; then
-    case "$CRASH_NVRAM_EXPECT" in claimed|skipped) ;; *)
-        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed or skipped${NC}"; exit 1 ;;
+    case "$CRASH_NVRAM_EXPECT" in claimed|skipped|crowded) ;; *)
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed, skipped or crowded${NC}"; exit 1 ;;
     esac
     if ! CRASH_NVRAM_HEX="$(python3 -c 'import sys; print("0x%016x" % int(sys.argv[1], 0))' "$CRASH_NVRAM" 2>/dev/null)"; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM=$CRASH_NVRAM is not an address${NC}"; exit 1
@@ -1756,6 +1757,9 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
+    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Kernel buffer: no room clear of the previous crash log' "$STRIPPED_LOG"; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer found room clear of the pointer, so this leg tests nothing"
     elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_buffer_clear "$CRASH_NVRAM_HEX" < "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel file was read over the planted region"

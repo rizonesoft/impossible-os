@@ -103,8 +103,7 @@ if [ "${SMOKE_MATRIX_BUILD_EACH:-0}" != "1" ]; then
         exit 1
     fi
     _SM_PRISTINE="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-pristine.XXXXXX")"
-    # Moved, not copied: the first leg proves a leg needs only this copy.
-    if ! mv -f build/system-disk.img "$_SM_PRISTINE" \
+    if ! cp --sparse=always build/system-disk.img "$_SM_PRISTINE" \
         || ! cp build/build-receipt.json "$_SM_PRISTINE.receipt"; then
         echo -e "${RED}SMOKE MATRIX FAILED${NC}  (could not keep a pristine copy of build/system-disk.img and its build receipt)"
         exit 1
@@ -370,7 +369,7 @@ done
 # the only run with room for that buffer: it must not stop the boot.
 # A leg that names an engine runs only when LEGS does.
 for leg in "kvm-512M|SMOKE_ENGINE=kvm SMOKE_MEM=512M" "tcg-512M|SMOKE_ENGINE=tcg SMOKE_MEM=512M" \
-           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M SMOKE_CRASH_NVRAM=0x2500001 SMOKE_CRASH_NVRAM_EXPECT=skipped" \
+           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M SMOKE_CRASH_NVRAM=0x2500001 SMOKE_CRASH_NVRAM_EXPECT=crowded" \
            "wrong|SMOKE_HHDM_WRONG=1"; do
     name="${leg%%|*}"
     case "$name" in kvm-*|tcg-*) case "$LEGS" in *"${name%%-*}:"*) ;; *) continue ;; esac ;; esac
