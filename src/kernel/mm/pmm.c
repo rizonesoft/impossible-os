@@ -22,6 +22,7 @@
 #include "kernel/boot_info.h"
 #include "boot/free_span.h"
 #include "kernel/boot_halt.h"
+#include "kernel/nt/kusd.h"              /* KUSD_USER_VA */
 #include "kernel/klog.h"
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
@@ -31,7 +32,8 @@
 /* Linker symbols */
 extern char __kernel_end[];
 
-/* Bitmap storage */
+/* Bitmap storage, reached through the direct map: a low mapping can hide the
+ * bitmap's identity address (KUSER_SHARED_DATA does, and so can a process). */
 static uint8_t *bitmap;
 static uint64_t bitmap_size;     /* bytes in the bitmap */
 static uint64_t total_frames;    /* total physical frames tracked */
@@ -109,6 +111,13 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     }
     return best;
 }
+
+#ifdef KERNEL_TESTS
+const void *pmm_test_bitmap(void)
+{
+    return bitmap;
+}
+#endif
 
 boot_result_t pmm_init(void)
 {
@@ -237,9 +246,13 @@ boot_result_t pmm_init(void)
                  bitmap_size);
             return BOOT_FATAL;
         }
-        bitmap = (uint8_t *)(uintptr_t)at;
+        bitmap = (uint8_t *)mm_phys_to_hhdm(at);
+        if (bitmap == (uint8_t *)0) {
+            klog(LOG_FATAL, "mm", "PMM: the bitmap's 0x%lx is outside the direct map", at);
+            return BOOT_FATAL;
+        }
+        bitmap_base = (uintptr_t)at;
     }
-    bitmap_base = (uintptr_t)bitmap;
     bitmap_end = bitmap_base + bitmap_size;
 
     /* Page-align bitmap_end for cleanliness */
@@ -339,6 +352,10 @@ boot_result_t pmm_init(void)
      * first user exec). Since the kernel uses identity mapping, reserve the
      * whole physical window so pmm_alloc_* never hands any of it out. */
     pmm_mark_region_used(USER_PT_WINDOW_BASE, USER_PT_WINDOW_SIZE);
+
+    /* kusd_init() maps this address read-only onto another frame, so the frame it
+     * names by identity can no longer be written. */
+    pmm_mark_region_used(KUSD_USER_VA, PMM_FRAME_SIZE);
 
     /* Runtime verify: confirm first and last frames of the window are
      * reserved. If these aren't set, pmm_alloc_contiguous could hand out

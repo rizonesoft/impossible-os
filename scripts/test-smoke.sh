@@ -731,7 +731,8 @@ if [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
         exit 1
     fi
     # A second boot of one machine keeps the disk the first boot wrote.
-    if [ "$KEEP_DISK" != "1" ] && ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
+    if [ "$KEEP_DISK" != "1" ] && [ "${SMOKE_HHDM_WRONG:-0}" != "1" ] \
+       && ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
         echo -e "${RED}SMOKE TEST FAILED: could not restore the pristine image${NC}"
         exit 1
     fi
@@ -1001,7 +1002,10 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" !
     # shellcheck disable=SC1090
     . "$DISK.info"
     FIXTURE_DISK="$BUILD/system-disk.fixture.img"
-    cp "$DISK" "$FIXTURE_DISK"
+    if [ "$HHDM_WRONG" = "1" ] && [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
+        DISK="$SMOKE_PRISTINE_IMAGE"        # not restored above: only the fixture boots
+    fi
+    cp --sparse=always "$DISK" "$FIXTURE_DISK"
     DISK="$FIXTURE_DISK"
     IMAGE_MODIFIED=1
     mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true

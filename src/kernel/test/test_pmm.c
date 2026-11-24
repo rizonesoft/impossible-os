@@ -7,6 +7,7 @@
 #include "kernel/test/test.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/boot_info.h"
+#include "kernel/nt/kusd.h"      /* KUSD_USER_VA */
 #include "boot/free_span.h"
 #include "kernel/mm/memmap.h"    /* MM_HHDM_BASE/_SIZE + extent predicate */
 #include "kernel/sched/irql.h"   /* KeRaiseIrql / KeLowerIrql for IRQL-gate test */
@@ -50,6 +51,18 @@ static void test_pmm_bitmap_place(void)
     TEST_ASSERT_EQ(pmm_bitmap_place(map, 6, 128 * kib, keep, 2),
                    0x100000000ULL - 128 * kib, "a range across the cap ends at it");
     TEST_ASSERT_EQ(pmm_bitmap_place(map, 0, 128 * kib, keep, 2), 0ULL, "no map");
+}
+
+/* A low mapping may stand where the bitmap's, or a handed-out frame's, identity
+ * address was; KUSER_SHARED_DATA's does on every boot. */
+static void test_pmm_low_mappings(void)
+{
+    uint64_t phys = mm_hhdm_to_phys(pmm_test_bitmap());
+
+    TEST_ASSERT(phys != 0, "the bitmap is used through the direct map");
+    TEST_ASSERT_EQ(pmm_frame_is_free(phys), 0, "the bitmap's frame is held");
+    TEST_ASSERT_EQ(pmm_frame_is_free(KUSD_USER_VA), 0,
+                   "the frame KUSER_SHARED_DATA's address names is held");
 }
 
 /* Test: contiguous allocation */
@@ -406,6 +419,7 @@ void test_register_pmm(void)
     test_suite_register_cat("PMM: fault-inject countdown(3)",
                             test_pmm_fault_inject_countdown, TEST_CAT_MM);
     test_suite_register_cat("PMM: bitmap placement", test_pmm_bitmap_place, TEST_CAT_MM);
+    test_suite_register_cat("PMM: low mappings", test_pmm_low_mappings, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject IRQL gate (IRQ context bypass)",
                             test_pmm_fault_inject_irql_gate, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject task-filter",

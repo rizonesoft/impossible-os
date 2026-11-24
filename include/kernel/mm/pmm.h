@@ -32,6 +32,11 @@ struct boot_span;
 uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
                           uint64_t bytes, const struct boot_span *keep, uint32_t nkeep);
 
+#ifdef KERNEL_TESTS
+/* The address the bitmap is read and written at. */
+const void *pmm_test_bitmap(void);
+#endif
+
 /* Allocate a single 4 KiB physical frame. Returns physical address, or 0 on failure */
 uintptr_t pmm_alloc_frame(void);
 

@@ -11050,19 +11050,28 @@ kernel_loaded:
             serial_early_print("[BOOT] Kernel buffer: free again\n");
             (void)gBS->FreePages(load_buf_addr, load_buf_pages);
         }
-        {
-            /* ... and no page of the kernel's image may be. */
-            UINTN taken = 0;
-            for (UINT64 p = g_kernel_img_lo & ~(BL_PAGE_4K - 1); p < g_kernel_img_hi;
-                 p += BL_PAGE_4K) {
-                EFI_PHYSICAL_ADDRESS at = p;
-                taken += !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at));
-            }
-            serial_early_print(taken ? "[FAIL] Kernel image: pages are free to take\n"
-                                     : "[BOOT] Kernel image: every page is held\n");
-        }
 #endif
     }
+    /* What is free after the image, before anything that is kept is allocated. */
+    for (UINT64 p = kernel_guard_end() - KERNEL_IMAGE_TAIL;
+         g_kernel_img_hi > g_kernel_img_lo && p < kernel_guard_end(); p += BL_PAGE_4K) {
+        EFI_PHYSICAL_ADDRESS at = p;
+        (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at);
+    }
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+    {   /* The control: none of the kernel's memory may still be free. */
+        UINTN size, desc, taken = 0;
+        EFI_STATUS ms = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+                                              &size, &desc);
+        for (UINTN off = 0; !EFI_ERROR(ms) && off + desc <= size; off += desc) {
+            const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
+            taken += d->Type == EfiConventionalMemory && d->PhysicalStart < kernel_guard_end() &&
+                     d->PhysicalStart + d->NumberOfPages * BL_PAGE_4K > g_kernel_img_lo;
+        }
+        serial_early_print(EFI_ERROR(ms) || taken ? "[FAIL] Kernel image: pages are free to take\n"
+                                                  : "[BOOT] Kernel image: every page is held\n");
+    }
+#endif
     return EFI_SUCCESS;
 
 load_error:
@@ -13634,32 +13643,11 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
     }
 
     /* Low guard the arena must NOT overlap: the loaded kernel image envelope,
-     * which load_kernel() claimed, and the room after it (kernel_guard_end). */
+     * and the room after it (kernel_guard_end). load_kernel() claimed what was free
+     * of both, so firmware cannot hand it back whatever its placement policy (the
+     * UEFI spec does not require AllocateMaxAddress to be top-down). */
     UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
     UINT64 kguard_hi = kernel_guard_end();
-
-    /* Claim what is free inside the guard, so that firmware cannot hand
-     * it back for the arena REGARDLESS of its AllocatePages placement policy --
-     * the UEFI spec does not require AllocateMaxAddress to be top-down. Claimed
-     * per-conventional-range because AllocateAddress is all-or-nothing and the
-     * guard spans mixed types. pmm re-reserves the image, so the
-     * EfiLoaderData tag is harmless. */
-    if (g_kernel_img_hi > g_kernel_img_lo && kguard_hi > kguard_lo) {
-        UINTN goff;
-        for (goff = 0; raw_dsize && goff + raw_dsize <= raw_size; goff += raw_dsize) {
-            EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)raw + goff);
-            UINT64 db = d->PhysicalStart;
-            UINT64 de = db + d->NumberOfPages * BL_PAGE_4K;
-            UINT64 clo = db > kguard_lo ? db : kguard_lo;
-            UINT64 che = de < kguard_hi ? de : kguard_hi;
-            if (d->Type != EfiConventionalMemory || che <= clo) continue;
-            {
-                EFI_PHYSICAL_ADDRESS g = clo;
-                UINTN gp = (UINTN)((che - clo) / BL_PAGE_4K);
-                (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, gp, &g);
-            }
-        }
-    }
 
     EFI_PHYSICAL_ADDRESS arena = BL_MM_PML4_PHYS_LIMIT - 1;  /* max addr < 4 GiB */
     EFI_STATUS st = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
