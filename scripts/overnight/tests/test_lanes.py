@@ -1881,23 +1881,18 @@ def test_the_committed_readme_keeps_its_bytes(repo):
     assert git(p, "status", "--porcelain", "-uno").stdout == ""
 
 
-def test_the_working_files_are_written_as_a_checkout_writes_them(repo):
+def test_a_crlf_checkout_keeps_its_line_endings(repo):
     p = repo["primary"]
-    (p / ".gitattributes").write_text("/README.md text working-tree-encoding=UTF-16LE-BOM eol=lf\n/COUNT.md text eol=crlf\n")
-    text = "caf\u00e9\n<!-- COUNT-BADGE:START -->\n<!-- COUNT-BADGE:END -->\n"
-    (p / "README.md").write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
+    (p / ".gitattributes").write_text("/README.md text eol=crlf\n")
+    (p / "README.md").write_bytes(b"caf\xc3\xa9\r\n<!-- COUNT-BADGE:START -->\r\n<!-- COUNT-BADGE:END -->\r\n")
     (p / "scripts" / "site").mkdir()
-    (p / "scripts" / "site" / "build.py").write_text(
-        "import subprocess, sys\nsys.stdout.buffer.write(subprocess.run(['git', 'show', 'HEAD:README.md'],\n"
-        "    capture_output=True, timeout=20).stdout)\n")
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
     git(p, "add", "--", ".gitattributes", "README.md", "scripts/site")
     git(p, "commit", "-qm", "readme")
     r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
     shown = subprocess.run([*GIT, "cat-file", "blob", "HEAD:README.md"], cwd=p, capture_output=True, timeout=20).stdout
-    assert "img.shields.io" in shown.decode(), r
-    assert (p / "README.md").read_bytes() == b"\xff\xfe" + shown.decode().encode("utf-16-le")
-    count = (p / "COUNT.md").read_bytes()
-    assert b"\r\n" in count and count.replace(b"\r\n", b"\n").decode() == git(p, "show", "HEAD:COUNT.md").stdout
+    assert b"img.shields.io" in shown and b"\r" not in shown, r
+    assert (p / "README.md").read_bytes() == shown.replace(b"\n", b"\r\n")
     assert git(p, "status", "--porcelain", "-uno").stdout == ""
 
 
@@ -1922,58 +1917,59 @@ def test_a_hangup_while_the_lock_is_taken_leaves_no_lock(repo):
 
 
 @pytest.mark.parametrize("by_hand", [True, False])
-@pytest.mark.parametrize("name", ["COUNT.md", "README.md"])
-def test_a_filtered_file_is_never_refreshed_and_its_filter_never_started(repo, name, by_hand):
+@pytest.mark.parametrize("driver", ["mine", "unset"])
+def test_post_commit_starts_no_filter(repo, driver, by_hand):
     p = repo["primary"]
     (p / "README.md").write_text(README_TEXT)
-    git(p, "add", "--", "README.md")
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
     git(p, "commit", "-qm", "readme")
     (p / ".git" / "info").mkdir(exist_ok=True)
-    (p / ".git" / "info" / "attributes").write_text(f"{name} filter=mine\n")
+    (p / ".git" / "info" / "attributes").write_text(f"COUNT.md filter={driver}\nREADME.md filter={driver}\n")
     started = repo["tmp"] / "started"
     for side in ("clean", "smudge"):
-        git(p, "config", f"filter.mine.{side}", f"touch '{started}'; cat")
+        git(p, "config", f"filter.{driver}.{side}", f"touch '{started}'; cat")
+    git(p, "hash-object", "README.md")
+    assert started.exists(), "the driver answers git"
+    started.unlink()
     hook = REPO / ".githooks" / "post-commit"
     if by_hand:
         r = run(["bash", str(hook)], cwd=p, timeout=60, env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
     else:
         shebang, rest = hook.read_text().split("\n", 1)
         r = commit_with_hook(repo, f'{shebang}\nrm -f "{started}"\n{rest}')           # git's own commit may have run it
-    assert r.returncode == 0 and "has a filter attribute" in r.stderr and not started.exists(), r
-    assert git(p, "show", "HEAD:COUNT.md").stdout == (p / "COUNT.md").read_text() == "0\n"
+    assert r.returncode == 0 and not started.exists() and (p / "COUNT.md").read_text() != "0\n", r
 
 
-def test_a_readme_that_cannot_be_read_is_reported(repo):
+@pytest.mark.parametrize("kind", ["link", "pipe", "gone", "directory", "unreadable", "edit", "mode"])
+@pytest.mark.parametrize("when", ["before", "between"])
+def test_what_is_put_in_readmes_place_is_kept(repo, kind, when):
     p = repo["primary"]
-    (p / "README.md").write_text(README_TEXT)
-    (p / "scripts" / "site").mkdir()
-    (p / "scripts" / "site" / "build.py").write_text(EMIT)
-    git(p, "add", "--", "README.md", "scripts/site")
-    git(p, "commit", "-qm", "readme")
-    hook = (REPO / ".githooks" / "post-commit").read_text()
-    read = 'hash="$(git -C "$ROOT" hash-object "$README_FILE")"'
-    assert hook.count(read) == 1
-    r = commit_with_hook(repo, hook.replace(read, 'hash="$(false)"'))
-    assert "README.md could not be written" in r.stderr and (p / "README.md").read_text() == README_TEXT
-
-
-@pytest.mark.parametrize("kind", ["link", "pipe"])
-def test_what_is_put_in_readmes_place_is_kept(repo, kind):
-    p = repo["primary"]
-    (p / "README.md").write_text(README_TEXT)
+    readme = p / "README.md"
+    readme.write_text(README_TEXT)
     (p / "scripts" / "site").mkdir()
     (p / "scripts" / "site" / "build.py").write_text(EMIT)
     git(p, "add", "--", "README.md", "scripts/site")
     git(p, "commit", "-qm", "readme")
     other = repo["tmp"] / "same.md"
     other.write_text(README_TEXT)
+    put = {"link": f"ln -sf '{other}' README.md", "pipe": "rm -f README.md; mkfifo README.md", "gone": "rm -f README.md",
+           "directory": "rm -f README.md; mkdir README.md", "unreadable": "chmod 0 README.md",
+           "edit": "echo mine >> README.md", "mode": "chmod 755 README.md"}[kind]
     hook = (REPO / ".githooks" / "post-commit").read_text()
-    last = '               readme_unedited\n'
-    assert hook.count(last) == 1
-    put = f'ln -sf "{other}" "$README_FILE"' if kind == "link" else 'rm -f "$README_FILE"; mkfifo "$README_FILE"'
-    commit_with_hook(repo, hook.replace(last, put + "\n" + last))
-    assert (p / "README.md").is_symlink() if kind == "link" else (p / "README.md").is_fifo()
-    assert other.read_text() == README_TEXT and not list(p.glob(".README.md.*"))
+    if when == "before":
+        place, text = "publish_readme() {\n", f'publish_readme() {{\n( cd "$ROOT" && {put} )\n'
+    else:
+        place = "    if not staged() and read() == found:\n"
+        text = f'    subprocess.run("""{put}""", shell=True, cwd=root, timeout=20)\n' + place
+    assert hook.count(place) == 1
+    r = commit_with_hook(repo, hook.replace(place, text))
+    kept = {"link": readme.is_symlink, "pipe": readme.is_fifo, "gone": lambda: not readme.exists(), "directory": readme.is_dir,
+            "unreadable": lambda: readme.stat().st_mode & 0o777 == 0, "mode": lambda: readme.stat().st_mode & 0o777 == 0o755,
+            "edit": lambda: readme.read_text() == README_TEXT + "mine\n"}[kind]
+    assert kept() and other.read_text() == README_TEXT and not list(p.glob(".README.md.*")), r
+    assert ("README.md could not be written" in r.stderr) == (kind == "unreadable"), r
 
 
 def test_triage_sees_the_map_through_a_replacement(repo):

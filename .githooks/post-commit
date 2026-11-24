@@ -32,12 +32,6 @@ export GIT_NO_REPLACE_OBJECTS=1
 
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
-# A filter is a program of the person's own choosing: it may never answer, or rewrite the file. No generated file
-# with one is refreshed, so nothing below starts a program other than git, python and the text tools.
-if git -C "$ROOT" check-attr filter -- COUNT.md README.md | grep -qvE ': (unspecified|unset)$'; then
-    echo "post-commit: COUNT.md or README.md has a filter attribute, so the generated files are not refreshed" >&2
-    exit 0
-fi
 # The commit this run follows, read before the count, which takes a while: everything below derives from it.
 BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 # A signed commit is never amended, so nothing is counted or written for it. An unread one is not amended either.
@@ -459,14 +453,8 @@ then
     exit 0
 fi
 
-# The bytes a checkout writes for repository text: the path's line endings and encoding applied.
-checkout_text() {
-    local blob
-    blob="$(git -C "$ROOT" hash-object --no-filters -w "$2")" && git -C "$ROOT" cat-file --filters --path="$1" "$blob"
-}
-
 # The working COUNT.md is generated whatever it held, but renamed into place: never written through a link.
-new="$(mktemp "$ROOT/.COUNT.md.XXXXXX")" && checkout_text COUNT.md "$COUNT_TARGET" > "$new" &&
+new="$(mktemp "$ROOT/.COUNT.md.XXXXXX")" && cat "$COUNT_TARGET" > "$new" &&
     { { [ -f "$COUNT_FILE" ] && [ ! -L "$COUNT_FILE" ] && chmod --reference="$COUNT_FILE" "$new"; } || chmod 644 "$new"; } &&
     mv -fT "$new" "$COUNT_FILE" || {
     [ -z "$new" ] || rm -f "$new"
@@ -495,28 +483,67 @@ esac
 # place, so a link to the old one keeps its bytes. An edit is left alone; a write that fails is reported.
 README_ENTRY="$BASE_README"
 publish_readme() {
-    [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] || return 0
-    local new="" hash
-    readme_unedited() {                             # 1: somebody's edit, which stays. 2: the file cannot be read
-        [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] &&
-            [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$README_ENTRY" ] || return 1
-        hash="$(git -C "$ROOT" hash-object "$README_FILE")" || return 2
-        [ "$hash" = "${BASE_README#* }" ]
-    }
-    readme_unedited
-    case $? in
-        1) return 0 ;;
-        0) if new="$(mktemp "$ROOT/.README.md.XXXXXX")" && checkout_text README.md "$README_TARGET" > "$new" &&
-                chmod --reference="$README_FILE" "$new"; then
-               readme_unedited
-               case $? in
-                   1) rm -f "$new"; return 0 ;;
-                   0) if cmp -s "$new" "$README_FILE"; then rm -f "$new"; return 0; fi   # already current
-                      if mv -fT "$new" "$README_FILE"; then return 0; fi ;;
-               esac
-           fi ;;
-    esac
-    [ -z "$new" ] || rm -f "$new"
+    [ -n "$README_TARGET" ] || return 0
+    python3 -I - "$ROOT" "$README_TARGET" "${BASE_README#* }" "$README_ENTRY" << 'PUBLISH' && return 0
+import errno, os, stat, subprocess, sys, tempfile
+root, target, base_blob, entry = sys.argv[1:]
+readme = os.path.join(root, "README.md")
+
+
+def git(*args):
+    return subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", root, *args], check=True, capture_output=True,
+                          timeout=20).stdout
+
+
+def read():
+    """README's bytes and mode, from one open; None when it is not a regular file (a link, a pipe, nothing)."""
+    try:
+        fd = os.open(readme, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ELOOP, errno.ENXIO):
+            return None
+        raise
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        with os.fdopen(os.dup(fd), "rb") as f:
+            return f.read(), stat.S_IMODE(info.st_mode)
+    finally:
+        os.close(fd)
+
+
+def crlf(data):
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
+def staged():
+    return b" ".join(git("ls-files", "-s", "--", "README.md").split()[:2]).decode() != entry
+
+
+tmp = None
+try:
+    old, new = git("cat-file", "blob", base_blob), open(target, "rb").read()
+    found = read()
+    # The base's own text, or it with CRLF line endings, is replaced; anything else is somebody's edit and stays.
+    if found is None or staged():
+        sys.exit(0)
+    text = new if found[0] == old else crlf(new) if found[0] == crlf(old) else found[0]
+    if text == found[0]:
+        sys.exit(0)
+    fd, tmp = tempfile.mkstemp(dir=root, prefix=".README.md.")
+    with os.fdopen(fd, "wb") as f:
+        f.write(text)
+        os.fchmod(f.fileno(), found[1])
+    if not staged() and read() == found:
+        os.replace(tmp, readme)
+        tmp = None
+except (OSError, subprocess.SubprocessError):
+    sys.exit(1)
+finally:
+    if tmp:
+        os.unlink(tmp)
+PUBLISH
     echo "post-commit: $README_FILE could not be written, so it still holds the text from before this commit" >&2
 }
 
