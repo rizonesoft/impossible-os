@@ -448,11 +448,20 @@ case "$BASE_README" in 100644\ * | 100755\ *)   # a regular file: a link's blob 
         rm -f "$README_TARGET"; README_TARGET=""
     fi ;;
 esac
-# The working README follows when it and the index entry still are the commit's (or, after the amend, the copy's).
+# The working README follows when its contents are the commit's and its index entry is the commit's or the copy's.
+# Contents are hashed (git diff trusts index flags such as assume-unchanged), and the new file is renamed into
+# place, so a link to the old one keeps its bytes.
 publish_readme() {
     [ -n "$README_TARGET" ] && [ -f "$README_FILE" ] && [ ! -L "$README_FILE" ] || return 0
-    [ "$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')" = "$1" ] || return 0
-    if git -C "$ROOT" diff --quiet "$BASE" -- README.md 2>/dev/null; then cat "$README_TARGET" > "$README_FILE"; fi
+    local entry new
+    entry="$(git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
+    [ "$entry" = "$BASE_README" ] || [ "$entry" = "${BASE_README% *} $(git -C "$ROOT" hash-object "$README_TARGET")" ] || return 0
+    new="$(mktemp "$ROOT/.README.md.XXXXXX")" || return 0
+    if cat "$README_TARGET" > "$new" && chmod --reference="$README_FILE" "$new" &&
+       [ "$(git -C "$ROOT" hash-object "$README_FILE")" = "${BASE_README#* }" ] && mv -f "$new" "$README_FILE"; then
+        return 0
+    fi
+    rm -f "$new"
 }
 
 # Rewrite the README lines-of-code badge from the live tree count, so the
@@ -478,7 +487,7 @@ if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
 fi
 
 if [ "${COUNT_ONLY:-}" = "1" ]; then
-    publish_readme "$BASE_README"
+    publish_readme
     [ -z "$README_TARGET" ] || rm -f "$README_TARGET"
     exit 0
 fi
@@ -571,7 +580,7 @@ if [ -n "$README_TARGET" ]; then
         fi
     }
     if plumb_amend; then
-        publish_readme "${BASE_README% *} $(git -C "$ROOT" hash-object "$README_TARGET")"
+        publish_readme
     else
         echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
     fi

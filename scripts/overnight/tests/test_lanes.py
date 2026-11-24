@@ -1410,5 +1410,41 @@ def test_a_failed_index_publish_never_advises_dropping_a_staged_readme(repo, sta
     advice = "git reset -q -- COUNT.md" + ("" if staged else " README.md")
     assert advice + "\n" in r.stderr and "HEAD is unchanged" not in r.stderr, r
     assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+    run(advice.split(), cwd=p, timeout=20)                            # following it leaves nothing but a staged edit
+    changed = git(p, "diff", "HEAD", "--name-only").stdout.split()
+    assert changed == (["README.md"] if staged else []), r
     if staged:
-        assert git(p, "show", ":README.md").stdout == "staged edit\n"
+        assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
+
+
+@pytest.mark.parametrize("by_hand", [True, False])
+@pytest.mark.parametrize("case", ["assume-unchanged edit", "hard link"])
+def test_publishing_readme_reads_the_file_and_writes_a_new_one(repo, case, by_hand):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "README.md").chmod(0o640)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    if case == "hard link":
+        (repo["tmp"] / "backup.md").hardlink_to(p / "README.md")
+    else:
+        git(p, "update-index", "--assume-unchanged", "README.md")
+        (p / "README.md").write_text("mine\n")
+    hook = REPO / ".githooks" / "post-commit"
+    if by_hand:
+        run(["bash", str(hook)], cwd=p, timeout=60, env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
+    else:
+        shutil.copy(hook, repo["hooks"] / "post-commit")
+        (repo["hooks"] / "post-commit").chmod(0o755)
+        (p / "src/kernel/k.c").write_text("k2\n")
+        run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+        assert "img.shields.io" in git(p, "show", "HEAD:README.md").stdout
+    if case == "hard link":
+        assert (repo["tmp"] / "backup.md").read_text() == README_TEXT
+        assert "img.shields.io" in (p / "README.md").read_text() and (p / "README.md").stat().st_mode & 0o777 == 0o640
+    else:
+        assert (p / "README.md").read_text() == "mine\n"
+    assert not list(p.glob(".README.md.*"))

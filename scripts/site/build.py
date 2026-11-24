@@ -171,11 +171,15 @@ def set_root(root: Path) -> None:
         sys.modules["freshness"].REPO = REPO
 
 
+DOC_TEXT: dict[str, str] | None = None   # the docs pages of a snapshot limited to some paths, held in memory
+
+
 def snapshot(source: str, paths: list[str] | None = None) -> Path:
     """Materialise the site inputs from the index ("index") or a commit into a temp dir."""
     import fnmatch
-    global SOURCE, _FILESET, _DIRSET
+    global SOURCE, _FILESET, _DIRSET, DOC_TEXT
     SOURCE, _FILESET, _DIRSET = source, None, None
+    DOC_TEXT = None if paths is None else {}
     tmp = Path(tempfile.mkdtemp(prefix="site-snap-"))
     files, _ = fileset()
     want = sorted(f for f in files if any(
@@ -198,6 +202,9 @@ def snapshot(source: str, paths: list[str] | None = None) -> Path:
             size = int(header[2])
             data = out[nl + 1:nl + 1 + size]
             pos = nl + 1 + size + 1
+            if DOC_TEXT is not None and f.startswith("docs/") and f.endswith(".md") and f not in paths:
+                DOC_TEXT[f] = data.decode("utf-8")      # load_stats reads only its directives: no file
+                continue
             dest = tmp / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -309,10 +316,11 @@ def load_stats() -> dict[str, str]:
     skips them (--skip-stats); CI still checks them."""
     todos = todo_files()
     domains = {t.split("/")[1] for t in todos}
-    docs = sorted(DOCS.rglob("*.md"))
+    docs = (list(DOC_TEXT.values()) if DOC_TEXT is not None
+            else [d.read_text(encoding="utf-8") for d in sorted(DOCS.rglob("*.md"))])
     covered: set[str] = set()
     for d in docs:
-        covers = parse_directives(d.read_text(encoding="utf-8")).get("covers", "")
+        covers = parse_directives(d).get("covers", "")
         covered.update(c.strip() for c in covers.split(",") if c.strip())
     cov = json.loads((DOCS / "test-coverage" / "coverage.json").read_text(encoding="utf-8"))
     m = COUNT_TOTAL_RE.search((ROOT / "COUNT.md").read_text(encoding="utf-8"))
