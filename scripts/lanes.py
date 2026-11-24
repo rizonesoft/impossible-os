@@ -68,7 +68,7 @@ def _strings(value) -> bool:
 
 
 MAP = ".conclave/lanes.toml"
-MAP_MAX, LINE_MAX, ENTRY_MAX, NAME_MAX = 128 * 1024, 500, 240, 64     # bytes, characters: what keeps reading and judging by it quick
+MAP_MAX, LINE_MAX, ENTRY_MAX, DEPTH_MAX, NAME_MAX = 128 * 1024, 500, 240, 16, 64     # what keeps reading and judging by it quick
 AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 
@@ -115,6 +115,7 @@ def parse_map(text: str) -> dict:
         trees[tree] = name
         for p in lane["paths"]:
             _need(len(p) <= ENTRY_MAX, f"[lane.{name}] path {p[:40]!r}... is longer than {ENTRY_MAX} characters")
+            _need(p.count("/") <= DEPTH_MAX, f"[lane.{name}] path {p!r} is more than {DEPTH_MAX} directories deep")
             owned.append((p, name))
     # Sorted, whatever a directory prefix holds comes straight after it, so neighbours are the only overlaps.
     owned.sort()

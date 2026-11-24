@@ -2076,18 +2076,19 @@ def test_the_longest_lane_name_can_keep_a_record(repo):
         lanes.parse_map(text + lane.format(name + "x"))
 
 
-@pytest.mark.parametrize("state, secs, top", [("off", 0.1, "d"), ("live", 3, "d"), ("live", 0.4, "z"), ("live", 0.4, "src")])
-def test_many_deep_staged_paths_are_judged_in_time(state, secs, top):
-    deep = top + "/d" * 118
-    if top == "src":                                              # shares `src/` with the paths, and nothing below it
-        deep = "src/z" + "/d" * 115
-    m = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text()
-                        + f'[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{deep}/f"]\n'
-                        + 'output = "commits"\nlimits = {}\n')
-    paths = [("src/k/" if top == "src" else "") + "/".join(["d"] * 600) + f"/n{i}.c" for i in range(20000)]
+@pytest.mark.parametrize("userland", [lanes.OFF, lanes.LIVE])
+@pytest.mark.parametrize("state", [lanes.OFF, lanes.LIVE])
+def test_many_staged_paths_beside_the_deepest_entry_are_judged_in_time(state, userland):
+    above = "src/k" + "/d" * (lanes.DEPTH_MAX - 2)
+    lane = '[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{}"]\noutput = "commits"\nlimits = {{}}\n'
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    with pytest.raises(lanes.LaneError, match="directories deep"):
+        lanes.parse_map(text + lane.format(above + "/d/f"))
+    m = lanes.parse_map(text + lane.format(above + "/f"))
+    paths = [f"{above}/n{i}/x.c" for i in range(20000)]
     start = time.monotonic()
-    assert lanes.judge(m, None, paths, {"x": state}) == []
-    assert time.monotonic() - start < secs                            # 6.6 s with every lane off, by a 1,200-character entry
+    assert lanes.judge(m, None, paths, {"x": state, "userland": userland}) == []
+    assert time.monotonic() - start < 0.6                             # 1 s beside an entry 118 directories deep
 
 
 def test_a_symlink_in_a_reserved_directorys_place_is_refused(repo):
