@@ -1658,3 +1658,67 @@ def test_the_amend_keeps_every_other_entry(repo):
     changed = {x.split("\t")[1] for x in set(before) ^ set(after)}
     assert changed == {"COUNT.md", "README.md"} and len(before) == len(after)
     assert git(p, "status", "--porcelain", "-uno").stdout == ""
+
+
+def commit_with_hook(repo, hook_text, path="src/kernel/k.c", text="k2\n"):
+    p = repo["primary"]
+    (repo["hooks"] / "post-commit").write_text(hook_text)
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / path).write_text(text)
+    return run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", path], cwd=p, timeout=60,
+               env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+
+
+@pytest.mark.parametrize("broken", ["filter fails", "filter drops an entry"])
+def test_a_failed_amend_step_never_drops_a_file(repo, broken):
+    p = repo["primary"]
+    names = git(p, "ls-tree", "-r", "--name-only", "HEAD").stdout
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    filt = """awk -F '\\t' -v r="$rb" '$2 != "COUNT.md\""""
+    assert hook.count(filt) == 1
+    hook = hook.replace(filt, filt.replace("awk", "false") if broken == "filter fails"
+                        else filt.replace("'$2", "'$2 != \"src\" && $2"))
+    r = commit_with_hook(repo, hook)
+    assert "could not be committed" in r.stderr and git(p, "ls-tree", "-r", "--name-only", "HEAD").stdout == names, r
+    assert git(p, "show", "HEAD:src/kernel/k.c").stdout == "k2\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
+
+
+def test_a_busy_ref_is_refused_at_once(repo):
+    p = repo["primary"]
+    git(p, "config", "core.filesRefLockTimeout", "-1")
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    call = "if plumb_amend; then"
+    assert hook.count(call) == 1
+    lock = p / ".git" / (git(p, "symbolic-ref", "HEAD").stdout.strip() + ".lock")
+    r = commit_with_hook(repo, hook.replace(call, f': > "{lock}"\n' + call))
+    lock.unlink()
+    assert r.returncode == 0 and "could not be committed" in r.stderr, r
+    assert not (p / ".git" / "index.lock").exists() and git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+
+
+@pytest.mark.parametrize("kind", ["directory", "link to a directory"])
+def test_count_is_never_moved_into_a_directory(repo, kind):
+    p = repo["primary"]
+    (p / "COUNT.md").unlink()
+    target = p / "COUNT.md"
+    if kind != "directory":
+        target = repo["tmp"] / "dir"
+        (p / "COUNT.md").symlink_to(target)
+    target.mkdir()
+    r = run(["bash", str(REPO / ".githooks" / "post-commit")], cwd=p, timeout=60,
+            env={k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"})
+    assert list(target.iterdir()) == [] and not list(p.glob(".COUNT.md.*"))
+    if kind == "directory":
+        assert "COUNT.md could not be written" in r.stderr, r
+    else:
+        assert (p / "COUNT.md").is_file() and not (p / "COUNT.md").is_symlink()
+
+
+def test_a_count_that_cannot_be_generated_changes_nothing(repo):
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    write = 'if ! cat > "$COUNT_TARGET" << EOF'
+    assert hook.count(write) == 1
+    p = repo["primary"]
+    r = commit_with_hook(repo, hook.replace(write, 'if ! { head -c 10 > "$COUNT_TARGET"; false; } << EOF'))   # a short write
+    assert "could not be generated" in r.stderr and git(p, "show", "HEAD:COUNT.md").stdout == "0\n", r
+    assert (p / "COUNT.md").read_text() == "0\n"

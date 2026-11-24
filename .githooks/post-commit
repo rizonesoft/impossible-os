@@ -374,8 +374,8 @@ impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
     $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
     $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
 
-COUNT_TARGET="$(mktemp)"
-cat > "$COUNT_TARGET" << EOF
+COUNT_TARGET="$(mktemp)" || { echo "post-commit: no temporary file, so nothing was refreshed" >&2; exit 0; }
+if ! cat > "$COUNT_TARGET" << EOF
 # 📊 Impossible OS — Line Count
 
 > *Because nothing says "production-ready operating system" quite like obsessively counting
@@ -431,11 +431,16 @@ ${impossibility_table}
 
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
+then
+    echo "post-commit: the new COUNT.md could not be generated, so nothing was refreshed" >&2
+    rm -f "$COUNT_TARGET"
+    exit 0
+fi
 
 # The working COUNT.md is generated whatever it held, but renamed into place: never written through a link.
 new="$(mktemp "$ROOT/.COUNT.md.XXXXXX")" && cat "$COUNT_TARGET" > "$new" &&
     { { [ -f "$COUNT_FILE" ] && [ ! -L "$COUNT_FILE" ] && chmod --reference="$COUNT_FILE" "$new"; } || chmod 644 "$new"; } &&
-    mv -f "$new" "$COUNT_FILE" || {
+    mv -fT "$new" "$COUNT_FILE" || {
     [ -z "$new" ] || rm -f "$new"
     echo "post-commit: $COUNT_FILE could not be written, so it still holds the text from before this commit" >&2
 }
@@ -472,7 +477,7 @@ publish_readme() {
     readme_unedited || return 0
     if new="$(mktemp "$ROOT/.README.md.XXXXXX")" && cat "$README_TARGET" > "$new" && chmod --reference="$README_FILE" "$new"; then
         if ! readme_unedited; then rm -f "$new"; return 0; fi
-        if mv -f "$new" "$README_FILE"; then return 0; fi
+        if mv -fT "$new" "$README_FILE"; then return 0; fi
     fi
     [ -z "$new" ] || rm -f "$new"
     echo "post-commit: $README_FILE could not be written, so it still holds the text from before this commit" >&2
@@ -526,7 +531,7 @@ fi
 # still equals $base, and the real index is touched only after that succeeds, so a
 # concurrent commit or a lock failure loses nothing.
 plumb_amend() {
-    local base="$BASE" root cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
+    local base="$BASE" root changed name cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
     local -a pargs=()
     [ -n "$base" ] || return 1
     cb="$(git -C "$ROOT" hash-object -w "$COUNT_TARGET")" || return 1
@@ -536,11 +541,16 @@ plumb_amend() {
         readme=(--cacheinfo "${BASE_README% *},$rb,README.md")
     fi
     # Only root entries change, so the new tree is the base's root with them replaced.
-    root="$(git -C "$ROOT" ls-tree "$base")" && [ -n "$root" ] || return 1
-    tree="$({ awk -F '\t' -v r="$rb" '$2 != "COUNT.md" && (r == "" || $2 != "README.md")' <<< "$root"
-              printf '100644 blob %s\tCOUNT.md\n' "$cb"
-              [ -z "$rb" ] || printf '%s blob %s\tREADME.md\n' "${BASE_README% *}" "$rb"; } |
-            git -C "$ROOT" mktree)" || return 1
+    root="$(git -C "$ROOT" ls-tree "$base")" || return 1
+    root="$(awk -F '\t' -v r="$rb" '$2 != "COUNT.md" && (r == "" || $2 != "README.md")' <<< "$root")" || return 1
+    root+=$'\n'"100644 blob $cb"$'\tCOUNT.md'
+    [ -z "$rb" ] || root+=$'\n'"${BASE_README% *} blob $rb"$'\tREADME.md'
+    tree="$(git -C "$ROOT" mktree <<< "${root#$'\n'}")" || return 1
+    # Nothing else may differ, whatever went wrong above.
+    changed="$(git -C "$ROOT" diff-tree --name-only "$base^{tree}" "$tree")" || return 1
+    while read -r name; do
+        case "$name" in "" | COUNT.md | README.md) ;; *) return 1 ;; esac
+    done <<< "$changed"
     # Parents come from the commit object itself (a shallow boundary makes
     # rev-list report none); an empty list is allowed only for a true root.
     while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
@@ -582,7 +592,7 @@ plumb_amend() {
     # The HEAD swap and the index publish are one step: interrupts are ignored
     # between them so HEAD and the index can never disagree.
     trap '' INT TERM
-    if ! git -C "$ROOT" update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
+    if ! git -C "$ROOT" -c core.filesRefLockTimeout=0 update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
         release_lock; return 1
     fi
     if mv -f "$lock" "$idx"; then
