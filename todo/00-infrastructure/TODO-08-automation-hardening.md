@@ -1883,6 +1883,7 @@ Operator decision 2026-11-21: every level blocks on every path, so this section 
 Changed 2026-11-21 (operator): this section was "Re-dispatched passes review only the repair", a pass scoped to the repair diff. A scoped pass is one fewer independent full look at the section, and on section 48 nearly every full-scope round found a new defect, so that is a quality cost, and the trial of it on sections 48 to 59 is ended. Every pass reviews the whole section; this section only adds a pointer to what changed.
 
 - [ ] A re-dispatched round, performance or completion pass names the repair range since the last reviewed candidate as where to look first, and still reviews the whole section
+- [ ] The dispatcher refuses a `round` pass once the section's returned passes reach `pass_cap`, counted from the receipts (section 49 was sent a round past the cap: its counter was never bumped)
 - [ ] Commit: `"review: re-dispatched passes name the repair"`
 
 **Test checkpoint:** a re-dispatch prompt names the whole section range and, separately, the repair range; a first dispatch names no repair range.

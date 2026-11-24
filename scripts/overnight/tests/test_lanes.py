@@ -7,7 +7,6 @@ hook's, and an allowed commit lands through the same hooks (the lint, which has 
 import importlib.util
 import json
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -22,8 +21,9 @@ LANES_PY = REPO / "scripts" / "lanes.py"
 TRIAGE_PY = REPO / ".claude" / "hooks" / "sequencer_triage.py"
 GIT = ["git", "-c", "user.email=t@example.com", "-c", "user.name=T"]
 
+GENERATED = 'generated = ["COUNT.md", "README.md"]\n'
 MAP = """stale_secs = 180
-generated = ["COUNT.md"]
+generated = ["COUNT.md", "README.md"]
 
 [lane.main]
 engine = "claude"
@@ -877,7 +877,7 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
 def test_the_paths_a_section_names(text, held):
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
     lane_map = lanes.parse_map(
-        f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+        GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
         f'[lane.userland]\n{table}worktree = "../u"\npaths = ["user/", "src/apps/", "todo/11-apps/"]\n'
         f'[lane.neon-a]\n{table}worktree = "../n"\npaths = ["docs/inv/one.md", "Makefile"]\n')
     states = {"userland": lanes.LIVE, "neon-a": lanes.LIVE}
@@ -899,7 +899,7 @@ def test_triage_holds_everything_when_the_records_cannot_be_listed(triage, monke
 def test_a_large_map_is_validated_within_the_commit_checks_budget():
     files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
-    text = (f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+    text = (GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
             f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
     start = time.monotonic()
     lanes.parse_map(text)
@@ -955,7 +955,7 @@ def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(re
 def test_scheduling_cost_does_not_grow_with_the_paths_a_live_lane_holds():
     files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
-    lane_map = lanes.parse_map(f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+    lane_map = lanes.parse_map(GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
                                f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
     text = "Edit src/kernel/mm/pmm.c and the notes in docs/x.md.\n" * 200
     start = time.monotonic()
@@ -1188,7 +1188,7 @@ def test_the_outage_probe_gets_only_what_the_lane_lookup_left(triage, tmp_path, 
 
 def test_a_lane_that_is_off_does_not_make_every_word_a_path(monkeypatch):
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
-    lane_map = lanes.parse_map(f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+    lane_map = lanes.parse_map(GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
                                f'[lane.a]\n{table}worktree = "../a"\npaths = ["Makefile"]\n'
                                f'[lane.b]\n{table}worktree = "../b"\npaths = ["docs/inv/"]\n')
     asked = []
@@ -1208,53 +1208,80 @@ def test_the_live_command_reads_the_map_the_commit_check_judges_by(repo):
     assert json.loads(r.stdout)["userland"] == lanes.LIVE, r
 
 
-@pytest.mark.parametrize("checker", ["there", "unstaged deletion", "committed deletion"])
-def test_the_post_commit_amend_of_a_reports_lane_is_refused(repo, checker):
+@pytest.mark.parametrize("ref", ["main", "before the lanes"])
+def test_post_commit_run_by_hand_amends_nothing(repo, ref):
     tree = repo["neon-b"]
+    if ref != "main":
+        git(tree, "rm", "-rq", "--", "scripts/lanes.py", ".conclave")
+        git(tree, "commit", "-qm", "no lanes yet")
     shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
-    if checker == "committed deletion":
-        git(tree, "rm", "-q", "--", "scripts/lanes.py")
-        git(tree, "commit", "-qm", "no checker")                      # by plumbing or an override: no hooks here
-    elif checker == "unstaged deletion":
-        (tree / "scripts" / "lanes.py").unlink()
     before = git(tree, "rev-parse", "HEAD").stdout
-    r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=os.environ.copy())
-    assert "HEAD not amended" in r.stderr and ("never commits" in r.stderr) == (checker == "there"), r
+    env = {k: v for k, v in os.environ.items() if k != "GIT_INDEX_FILE"}
+    run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=env)
     assert git(tree, "rev-parse", "HEAD").stdout == before
-    assert (tree / "COUNT.md").read_text() == "0\n"                   # nothing is written either
+    assert (tree / "COUNT.md").read_text() != "0\n"                   # refreshed, as COUNT_ONLY=1 does
 
 
-@pytest.mark.parametrize("dirty", [False, True])
-@pytest.mark.parametrize("generated", [True, False])
-def test_the_post_commit_amend_is_judged_on_the_files_it_carries(repo, generated, dirty):
+def test_a_lane_commit_is_amended_by_the_hook_git_runs(repo):
     p, tree = repo["primary"], repo["userland"]
-    badge = "<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n"
-    (p / "README.md").write_text(badge)
-    toml = p / ".conclave" / "lanes.toml"
-    names = '["COUNT.md", "README.md"]' if generated else '["COUNT.md"]'
-    toml.write_text(re.sub(r"generated = \[[^]]*\]", f"generated = {names}", toml.read_text()))
-    (p / "scripts" / "site").mkdir()
-    (p / "scripts" / "site" / "build.py").write_text(
-        "import subprocess, sys\nif '--emit-head' in sys.argv:\n"
-        "    sys.stdout.write(subprocess.run(['git', 'show', 'HEAD:README.md'], capture_output=True, text=True,"
-        " timeout=20).stdout)\n")
-    git(p, "add", "--", "README.md", ".conclave", "scripts/site")
-    git(p, "commit", "-qm", "map")
-    git(tree, "checkout", "-q", "--detach", "main")
-    shutil.copytree(REPO / ".githooks" / "lib", tree / "lib")
-    shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
-    if dirty:
-        (tree / "README.md").write_text("mine\n")
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
     live("userland")
-    stage(tree, "user/other.c")                                       # other staged work is not the amend's
-    env = {**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "T",
-           "GIT_COMMITTER_EMAIL": "t@example.com"}
-    r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=env)
-    assert git(tree, "show", "HEAD:COUNT.md").stdout != "0\n", r      # COUNT.md is always the lane's to refresh
-    assert (git(tree, "show", "HEAD:README.md").stdout != badge) == generated, r
-    assert ("README.md left alone" in r.stderr) != generated, r
-    if dirty or not generated:
-        assert (tree / "README.md").read_text() == ("mine\n" if dirty else badge), r
+    stage(tree, "user/a.c")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x"], cwd=tree, timeout=60,
+            env=os.environ.copy())
+    assert r.returncode == 0 and git(tree, "show", "HEAD:COUNT.md").stdout != "0\n", r
+    assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+
+
+def test_post_commit_keeps_a_staged_only_readme_edit(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text("<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n")
+    git(p, "add", "--", "README.md")
+    git(p, "commit", "-qm", "readme")
+    original = (p / "README.md").read_text()
+    (p / "README.md").write_text("staged edit\n")
+    git(p, "add", "--", "README.md")
+    (p / "README.md").write_text(original)
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env=os.environ.copy())
+    assert r.returncode == 0, r
+    assert git(p, "show", ":README.md").stdout == "staged edit\n"
+    assert (p / "README.md").read_text() == original
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+
+
+def test_the_map_exempts_what_post_commit_amends():
+    for missing in ("COUNT.md", "README.md"):
+        left = "README.md" if missing == "COUNT.md" else "COUNT.md"
+        with pytest.raises(lanes.LaneError, match="generated must hold COUNT.md and README.md"):
+            lanes.parse_map(MAP.replace('generated = ["COUNT.md", "README.md"]', f'generated = ["{left}"]'))
+
+
+def test_a_clean_replay_asks_git_for_the_map_alone(repo, monkeypatch):
+    p = repo["primary"]
+    stage(p, "src/kernel/k.c")
+    asked = []
+    real = lanes.staged_paths
+    monkeypatch.setattr(lanes, "staged_paths", lambda t, *only: (asked.append(only), real(t, *only))[1])
+    monkeypatch.setattr(lanes, "replaying", lambda t: True)
+    assert lanes.check_staged(p, replay=True) == 0 and asked == [(lanes.MAP,)]
+    assert real(p, lanes.MAP) == [] and real(p) == ["src/kernel/k.c"]
+
+
+@pytest.mark.parametrize("mapped", [True, False])
+def test_triage_holds_every_section_when_the_lane_reader_is_gone(tmp_path, mapped):
+    t = _load("triage_no_reader", TRIAGE_PY)
+    if mapped:
+        (tmp_path / ".conclave").mkdir()
+        (tmp_path / ".conclave" / "lanes.toml").write_text(MAP)
+    ctx, why = t._lane_context(str(tmp_path))
+    assert why and (ctx is not None) == mapped
+    per, held = t.lane_reservations({"file_path": "todo/11-apps/TODO-01-x.md"}, [(1, t.NEEDS_WORK)], str(tmp_path), ctx)
+    assert per == [(1, t.BLOCKED if mapped else t.NEEDS_WORK)] and len(held) == mapped
 
 
 def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):

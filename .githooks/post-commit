@@ -23,22 +23,10 @@ fi
 ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
 
-# The amend runs no other hook, and run by hand nothing has judged this tree yet, so the lane check judges the files
-# it would carry, before anything is written (TODO-08 section 49): a tree that may not commit COUNT.md stops here,
-# and one that may not commit README.md leaves that file alone. A HEAD with no checker and no map (a test fixture)
-# has no lanes.
-lanes_allow() { (cd "$ROOT" && python3 scripts/lanes.py check-staged --paths "$@"); }
-LANE_README=1
-if [ "${COUNT_ONLY:-}" != "1" ] && { git -C "$ROOT" cat-file -e HEAD:scripts/lanes.py 2>/dev/null ||
-                                     git -C "$ROOT" cat-file -e HEAD:.conclave/lanes.toml 2>/dev/null; } &&
-   ! lanes_allow COUNT.md README.md; then
-    if ! lanes_allow COUNT.md 2>/dev/null; then
-        echo "post-commit: HEAD not amended" >&2
-        exit 0
-    fi
-    LANE_README=0
-    echo "post-commit: README.md left alone" >&2
-fi
+# Only git's own run amends: it follows a commit the other hooks judged, and git names its index to every hook it
+# runs. Run by hand, nothing has judged this tree (a reports-only lane's), so the files are only refreshed
+# (TODO-08 section 49). What the amend carries is always exempt: scripts/lanes.py requires both in `generated`.
+[ -n "${GIT_INDEX_FILE:-}" ] || COUNT_ONLY=1
 
 # Vendored files to exclude from "our code" count
 VENDORED=(
@@ -448,10 +436,12 @@ EOF
 # edits or facts derived from uncommitted files. Runs before the badge rewrite,
 # which is the only other writer. Failures are printed, never fatal to a commit.
 README_FILE="$ROOT/README.md"
-# README is rewritten and amended ONLY when its working copy equals the commit
-# just made; otherwise uncommitted README edits would be swept into the amend.
+# README is rewritten and amended ONLY when its working copy AND its index entry
+# equal the commit just made; otherwise uncommitted README edits would be swept
+# into the amend, or a staged-only edit replaced by it.
 README_CLEAN=0
-if [ "$LANE_README" = "1" ] && [ -f "$README_FILE" ] && git -C "$ROOT" diff --quiet HEAD -- README.md 2>/dev/null; then
+if [ -f "$README_FILE" ] && git -C "$ROOT" diff --quiet HEAD -- README.md 2>/dev/null &&
+   git -C "$ROOT" diff --cached --quiet HEAD -- README.md 2>/dev/null; then
     README_CLEAN=1
 fi
 # README_TARGET is the file the badge rewrite edits: the working README when it
@@ -465,8 +455,6 @@ BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
 if [ "$README_CLEAN" = "1" ]; then
     python3 "$ROOT/scripts/site/build.py" --sync-head README.md >/dev/null || \
         echo "post-commit: README project-region sync reported a problem (see above)" >&2
-elif [ "$LANE_README" = "0" ]; then
-    :  # said above
 elif [ -n "$BASE" ] && [ -f "$README_FILE" ] && git -C "$ROOT" diff --cached --quiet "$BASE" -- README.md 2>/dev/null; then
     README_TARGET="$(mktemp)"
     if python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then

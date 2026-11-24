@@ -45,7 +45,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [ ]  | `D00 T08 §61` | A P2 comes with a failing test                                                                                        | none        |     3 |
 | [ ]  | `D00 T08 §62` | Review depth per path                                                                                                 | none        |     4 |
 | [ ]  | `D00 T08 §63` | A repeated finding dispatches a redesign pass                                                                         | none        |     2 |
-| [ ]  | `D00 T08 §64` | Re-dispatched passes name the repair                                                                                  | none        |     2 |
+| [ ]  | `D00 T08 §64` | Re-dispatched passes name the repair                                                                                  | none        |     3 |
 | [ ]  | `D00 T08 §65` | Tools run in front of the review lenses                                                                               | none        |     2 |
 | [ ]  | `D00 T08 §66` | Lens yield is measured                                                                                                | none        |     5 |
 | [ ]  | `D00 T08 §67` | The push wait overlaps the next plan review                                                                           | attended    |     2 |

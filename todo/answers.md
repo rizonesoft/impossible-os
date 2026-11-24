@@ -666,3 +666,12 @@ Review waves 3 to 7 each reopened the same question: which paths a history opera
 - **B:** judge every commit on what the index changes against HEAD, refuse a merge while any lane is live, and exempt only a rebase's clean pick (`rebase-merge` present, no REBASE_HEAD).
 
 A: (run decided, 2026-11-24) B. `main` has had no merge commit since 2026-09-01 and every push rebases, so refusing one costs nothing here; the index cannot show an incoming change a merge lost, which is why a merge is refused instead of measured. It reverses wave 1's decision that main may merge a live lane's own commits, and a stopped pick that carries a lane's path is now refused (leave that path to the lane, or state a reason with SKIP_LANE_CHECK). Amending a merge that landed while no lane was live is allowed: HEAD already holds its result, so what the amend changes is what the index shows. Reversal cost: revert one commit; nothing else reads `lanes.merging` or `lanes.replaying`.
+
+## Q60 (00-infrastructure/TODO-08 §49): should post-commit's amend be judged by the lane check?
+
+Waves 17 to 20 each found a hole in the check an earlier wave had put in front of the amend (who commits, which files, when it is asked, what a tree without a checker means). It existed only because the hook also amended when run by hand.
+
+- **A:** keep judging the amend, and check again after the count is made.
+- **B:** amend only when git runs the hook (it names its index to every hook), and make the lane map list the two files in `generated`, so the amend is part of a commit already judged and always exempt.
+
+A: (run decided, 2026-11-24) B, by the two-waves rule. Reversal cost: one line in `.githooks/post-commit` and one in `scripts/lanes.py`. It costs a hand run that amends, which nothing in the repository used. Recorded with it: §49 reached `pass_cap` (55) in wave 19 and wave 20's round (pass 58) was sent past it, because the counter was never bumped for this section. That round found a P1 (a staged-only README edit lost), so it stands and its findings are fixed; no further round is sent, and performance and reconciliation read the final candidate as Q38 requires.

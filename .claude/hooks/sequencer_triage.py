@@ -656,9 +656,9 @@ LANE_MAP_SECS = 2                                      # inside the Stop hook's 
 
 
 def _lane_context(root, deadline=None):
-    """(lane map, each extra lane's state) from scripts/lanes.py, or (None, error text) when the map cannot be
-    read. Scheduling only: the commit check refuses a commit into a live lane's paths whatever triage picks,
-    so an unreadable map leaves triage choosing as before and the packet says why."""
+    """(context, error text): the context is (module, committed map, lane states), None when no lane holds
+    anything, and has no map (every open section is then held, and the packet says why) when ownership cannot
+    be read: the reader does not load, or the map is unreadable while a lane has a record."""
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location("lanes_for_triage", os.path.join(root, "scripts", "lanes.py"))
@@ -684,8 +684,10 @@ def _lane_context(root, deadline=None):
         if not mod.any_reserving(lane_map, lane_states):
             return None, ""                            # no lane holds anything: no file needs a second read
         return (mod, lane_map, lane_states), ""
-    except Exception as exc:                           # fail-direction: the commit check still refuses a clash
-        return None, f"{type(exc).__name__}: {exc}"
+    except Exception as exc:                           # fail-direction: a tree with no map has no lanes
+        why = f"{type(exc).__name__}: {exc}"
+        mapped = os.path.exists(os.path.join(root, ".conclave", "lanes.toml"))
+        return ((None, None, why) if mapped else None), why     # mapped: ownership unknown, so nothing is free
 
 
 def lane_reservations(entry, per, root, ctx):
