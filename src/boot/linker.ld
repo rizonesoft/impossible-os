@@ -69,7 +69,7 @@ SECTIONS
         __rodata_end = .;
         /* `*(.data .data.*)` -- the `.data.*` glob mirrors the `.bss .bss.*`
          * rule below: without it, a named/retained `.data.*` subsection would
-         * orphan past __kernel_end and overlap PMM bitmap territory (the exact
+         * orphan past __kernel_end, in memory pmm hands out (the exact
          * drift Codex caught for .bss). None exist today under -fno-pie. */
         *(.data .data.*)
     }
@@ -81,7 +81,7 @@ SECTIONS
      * retained-or-named subsections (e.g. `.bss.bsp_boot_stack` emitted
      * by clang when a C object has `__attribute__((retain))`). Without
      * the `.bss.*` glob, retained subsections land AFTER __kernel_end
-     * and overlap PMM bitmap territory -- Codex caught a real boot-time
+     * in memory pmm hands out -- Codex caught a real boot-time
      * stack/bitmap overlap from exactly that drift. */
     .bss ALIGN(4K) :
     {
@@ -89,7 +89,7 @@ SECTIONS
         *(.bss .bss.*)
     }
 
-    /* End of kernel -- PMM bitmap is placed here */
+    /* End of kernel */
     . = ALIGN(4K);
     __kernel_end = .;
 }

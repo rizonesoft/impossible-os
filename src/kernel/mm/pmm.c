@@ -4,11 +4,11 @@
  * Uses a bitmap where each bit represents a 4 KiB physical frame.
  *   0 = free, 1 = used/reserved
  *
- * The bitmap is placed immediately after the kernel image (__kernel_end).
+ * The bitmap is placed in free RAM chosen from the memory map (pmm_bitmap_place).
  *
  * Initialization:
  *   1. Find the highest usable address from the UEFI memory map
- *   2. Allocate bitmap (total_frames / 8 bytes)
+ *   2. Place the bitmap (total_frames / 8 bytes) in conventional memory
  *   3. Mark ALL frames as used (safe default)
  *   4. Walk the UEFI memory map and mark usable regions as free
  *   5. Re-reserve: first 1 MiB, kernel image, bitmap itself
@@ -20,6 +20,7 @@
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/mm/boot_stack.h"        /* boot_stack_get/overlaps: stack vs image + bitmap */
 #include "kernel/boot_info.h"
+#include "boot/free_span.h"
 #include "kernel/boot_halt.h"
 #include "kernel/klog.h"
 #ifdef KERNEL_TESTS
@@ -89,11 +90,32 @@ static void pmm_mark_region_free(uintptr_t base, uint64_t length)
     }
 }
 
+uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
+                          uint64_t bytes, const struct boot_span *keep, uint32_t nkeep)
+{
+    uint64_t best = 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        struct boot_span room = { map[i].base_addr, map[i].length };
+        uint64_t at;
+        if (map[i].uefi_memory_type != UEFI_MMAP_CONVENTIONAL ||
+            room.base >= PMM_PHYS_ADDR_CAP)
+            continue;
+        if (room.bytes > PMM_PHYS_ADDR_CAP - room.base)
+            room.bytes = PMM_PHYS_ADDR_CAP - room.base;
+        at = boot_span_pick(room, bytes, keep, nkeep);
+        if (at > best)
+            best = at;
+    }
+    return best;
+}
+
 boot_result_t pmm_init(void)
 {
     uint64_t highest_addr = 0;
     uint32_t i;
     uintptr_t kernel_end_phys;
+    uintptr_t bitmap_base;
     uintptr_t bitmap_end;
 
     /* Warn if bootloader truncated the memory map (S6) */
@@ -192,18 +214,43 @@ boot_result_t pmm_init(void)
     total_frames = highest_addr / PMM_FRAME_SIZE;
     bitmap_size = (total_frames + 7) / 8;    /* round up to whole bytes */
 
-    /* Place bitmap right after the kernel */
+    /* Memory nobody owns: the loader's own ranges, the boot stack and the payloads
+     * carry other types. What follows the kernel image may be firmware's (OVMF keeps
+     * ACPI NVS at 0x800000), so the bitmap is not simply put there. The highest
+     * range, because pmm_alloc_* hands out low memory first: a warm reset then finds
+     * the previous boot's crash region, which no map names, still intact. */
     kernel_end_phys = (uintptr_t)__kernel_end;
-    bitmap = (uint8_t *)kernel_end_phys;
-    bitmap_end = kernel_end_phys + bitmap_size;
+    {
+        const struct boot_stack_info *ks = boot_stack_get();
+        const struct boot_span keep[] = {
+            { 0, kernel_end_phys },             /* the low 1 MiB and the image */
+            { USER_PT_WINDOW_BASE, USER_PT_WINDOW_SIZE },
+            { ks != (void *)0 && ks->valid ? ks->base : 0,
+              ks != (void *)0 && ks->valid ? ks->size : 0 },
+        };
+        uint64_t at = pmm_bitmap_place((const struct boot_mmap_entry *)g_boot_info.mmap,
+                                       g_boot_info.mmap_count,
+                                       (bitmap_size + PMM_FRAME_SIZE - 1) & ~((uint64_t)PMM_FRAME_SIZE - 1),
+                                       keep, 3);
+        if (at == 0) {
+            klog(LOG_FATAL, "mm", "PMM: no free RAM below 4 GiB holds the %lu byte bitmap",
+                 bitmap_size);
+            return BOOT_FATAL;
+        }
+        bitmap = (uint8_t *)(uintptr_t)at;
+    }
+    bitmap_base = (uintptr_t)bitmap;
+    bitmap_end = bitmap_base + bitmap_size;
 
     /* Page-align bitmap_end for cleanliness */
     bitmap_end = (bitmap_end + PMM_FRAME_SIZE - 1) & ~((uintptr_t)PMM_FRAME_SIZE - 1);
+    klog(LOG_INFO, "mm", "PMM: frame bitmap at 0x%lx..0x%lx",
+         (uint64_t)bitmap_base, (uint64_t)bitmap_end);
 
     /* BEFORE THE FIRST BITMAP WRITE: the loader-owned kernel boot stack
      * (TODO-10 sec32) must be disjoint from the kernel image and from the
      * bitmap extent computed just above. This CPU is standing on that run;
-     * the Step 3 fill below writes 0xFF over [kernel_end_phys, bitmap_end), so
+     * the Step 3 fill below writes 0xFF over [bitmap_base, bitmap_end), so
      * a run placed there would have its saved return state overwritten before
      * any later check could report it (an earlier form of this check sat
      * after the fill, which is exactly that failure). The reserved-table
@@ -222,12 +269,12 @@ boot_result_t pmm_init(void)
                      ks->base, ks->size, (uint64_t)kernel_end_phys);
                 return BOOT_FATAL;
             }
-            if (boot_stack_overlaps(ks, (uint64_t)kernel_end_phys,
-                                    (uint64_t)(bitmap_end - kernel_end_phys))) {
+            if (boot_stack_overlaps(ks, (uint64_t)bitmap_base,
+                                    (uint64_t)(bitmap_end - bitmap_base))) {
                 klog(LOG_FATAL, "mm",
                      "PMM: kernel boot stack 0x%lx+0x%lx intersects the "
                      "PMM bitmap [0x%lx, 0x%lx)",
-                     ks->base, ks->size, (uint64_t)kernel_end_phys,
+                     ks->base, ks->size, (uint64_t)bitmap_base,
                      (uint64_t)bitmap_end);
                 return BOOT_FATAL;
             }
@@ -279,7 +326,7 @@ boot_result_t pmm_init(void)
     pmm_mark_region_used(0x100000, kernel_end_phys - 0x100000);
 
     /* Bitmap itself */
-    pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
+    pmm_mark_region_used(bitmap_base, bitmap_end - bitmap_base);
 
     /* User PT window (USER_PT_WINDOW_BASE .. USER_PT_WINDOW_END): the FULL
      * 2 MiB huge page containing the user ELF range, not just USER_ELF_SIZE.
@@ -337,8 +384,8 @@ boot_result_t pmm_init(void)
             boot_reserved_check_payloads_disjoint((uint64_t)0x100000ull,
                                                   (uint64_t)(kernel_end_phys - 0x100000ull),
                                                   "kernel_image") != 0u ||
-            boot_reserved_check_payloads_disjoint((uint64_t)kernel_end_phys,
-                                                  (uint64_t)(bitmap_end - kernel_end_phys),
+            boot_reserved_check_payloads_disjoint((uint64_t)bitmap_base,
+                                                  (uint64_t)(bitmap_end - bitmap_base),
                                                   "pmm_bitmap") != 0u ||
             boot_reserved_check_payloads_disjoint((uint64_t)USER_PT_WINDOW_BASE,
                                                   (uint64_t)USER_PT_WINDOW_SIZE,

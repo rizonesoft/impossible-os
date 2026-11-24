@@ -25,6 +25,13 @@
 #include "kernel/boot_init.h"
 boot_result_t pmm_init(void);
 
+/* Where the frame bitmap goes: the highest `bytes` of conventional memory below
+ * PMM_PHYS_ADDR_CAP clear of `keep`, or 0. Pure. */
+struct boot_mmap_entry;
+struct boot_span;
+uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
+                          uint64_t bytes, const struct boot_span *keep, uint32_t nkeep);
+
 /* Allocate a single 4 KiB physical frame. Returns physical address, or 0 on failure */
 uintptr_t pmm_alloc_frame(void);
 

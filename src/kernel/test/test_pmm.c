@@ -6,6 +6,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/boot_info.h"
+#include "boot/free_span.h"
 #include "kernel/mm/memmap.h"    /* MM_HHDM_BASE/_SIZE + extent predicate */
 #include "kernel/sched/irql.h"   /* KeRaiseIrql / KeLowerIrql for IRQL-gate test */
 
@@ -24,6 +26,30 @@ static void test_pmm_alloc_free(void)
     uintptr_t frame2 = pmm_alloc_frame();
     TEST_ASSERT(frame2 != 0, "re-alloc after free succeeds");
     pmm_free_frame(frame2);
+}
+
+/* The bitmap goes in memory nobody owns, whatever follows the kernel image. */
+static void test_pmm_bitmap_place(void)
+{
+    const uint64_t kib = 1024, mib = 1024 * kib;
+    const struct boot_span keep[] = { { 0, 0x7fe000 }, { 8 * mib, 2 * mib } };
+    struct boot_mmap_entry map[] = {
+        { 1 * mib, 7 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },        /* under the image */
+        { 8 * mib, 64 * kib, 4, UEFI_MMAP_ACPI_NVS, 0 },           /* after the image */
+        { 12 * mib, 4 * mib, 1, UEFI_MMAP_LOADER_DATA, 0 },
+        { 32 * mib, 4 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+        { 64 * mib, 64 * kib, 1, UEFI_MMAP_CONVENTIONAL, 0 },      /* too small */
+        { 0x100000000ULL, 1024 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 }, /* above the cap */
+    };
+
+    TEST_ASSERT_EQ(pmm_bitmap_place(map, 6, 128 * kib, keep, 2), 36 * mib - 128 * kib,
+                   "the highest conventional range with the room");
+    TEST_ASSERT_EQ(pmm_bitmap_place(map, 3, 128 * kib, keep, 2), 0ULL,
+                   "never over firmware's, the loader's or the image's memory");
+    map[5].base_addr = 0x100000000ULL - 256 * kib;
+    TEST_ASSERT_EQ(pmm_bitmap_place(map, 6, 128 * kib, keep, 2),
+                   0x100000000ULL - 128 * kib, "a range across the cap ends at it");
+    TEST_ASSERT_EQ(pmm_bitmap_place(map, 0, 128 * kib, keep, 2), 0ULL, "no map");
 }
 
 /* Test: contiguous allocation */
@@ -379,6 +405,7 @@ void test_register_pmm(void)
                             test_pmm_fault_inject_next, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject countdown(3)",
                             test_pmm_fault_inject_countdown, TEST_CAT_MM);
+    test_suite_register_cat("PMM: bitmap placement", test_pmm_bitmap_place, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject IRQL gate (IRQ context bypass)",
                             test_pmm_fault_inject_irql_gate, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject task-filter",

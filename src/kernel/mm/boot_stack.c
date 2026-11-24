@@ -236,8 +236,7 @@ static const char *boot_stack_err_text(enum boot_stack_error err)
 }
 
 /* Provided by the linker script (src/boot/linker.ld). The image is loaded at
- * exactly 1 MiB, so [0x100000, __kernel_end) is the image extent and the PMM
- * bitmap is built immediately above it. */
+ * exactly 1 MiB, so [0x100000, __kernel_end) is the image extent. */
 extern char __kernel_end[];
 
 void boot_stack_init(const struct boot_info *info)
