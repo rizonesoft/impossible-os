@@ -2021,6 +2021,16 @@ def test_main_may_remove_what_is_in_a_live_lanes_way(repo):
     assert "user/x.c belongs to lane userland" in check(p).stderr
 
 
+def test_generated_lists_files_never_a_directory():
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    row = '    "docs/test-coverage/coverage.md",\n'
+    assert text.count(row) == 1
+    with pytest.raises(lanes.LaneError, match="never a directory"):
+        lanes.parse_map(text.replace(row, '    "docs/test-coverage/",\n'))
+    live_map = lanes.parse_map(text)
+    assert lanes.judge(live_map, "userland", ["docs/test-coverage/coverage.md"], {"userland": lanes.LIVE}) == []
+
+
 def test_the_map_and_its_entries_are_bounded():
     text = (REPO / ".conclave" / "lanes.toml").read_text()
     lane = '[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{}"]\noutput = "commits"\nlimits = {{}}\n'

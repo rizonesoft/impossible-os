@@ -88,6 +88,7 @@ def parse_map(text: str) -> dict:
     _need(isinstance(stale, int) and not isinstance(stale, bool) and stale > 0, "stale_secs must be a positive integer")
     generated = data.get("generated", [])
     _need(_strings(generated), "generated must be a list of relative paths")
+    _need(not any(p.endswith("/") for p in generated), "generated lists files, one by one, never a directory")
     _need(set(AMENDED) <= set(generated), f"generated must hold {' and '.join(AMENDED)}: post-commit amends them "
           "into every lane's commits")
     lanes = data.get("lane")
