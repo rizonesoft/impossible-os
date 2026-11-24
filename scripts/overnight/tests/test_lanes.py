@@ -1304,7 +1304,7 @@ def test_a_clean_replay_asks_git_for_the_map_alone(repo, monkeypatch):
     monkeypatch.setattr(lanes, "staged_paths", lambda t, *only: (asked.append(only), real(t, *only))[1])
     monkeypatch.setattr(lanes, "replaying", lambda t: True)
     assert lanes.check_staged(p, replay=True) == 0 and asked == [(lanes.MAP,)]
-    assert real(p, lanes.MAP) == [] and real(p) == ["src/kernel/k.c"]
+    assert real(p, lanes.MAP) == {} and real(p) == {"src/kernel/k.c": False}
 
 
 @pytest.mark.parametrize("where", ["working tree", "HEAD", "unreadable", None])
@@ -1773,7 +1773,7 @@ def test_the_staged_check_never_waits_for_a_filesystem_monitor(repo):
     git(p, "diff", "--cached", "--name-only")
     assert asked.exists(), "the monitor answers an ordinary diff, so silence below means something"
     asked.unlink()
-    assert lanes.staged_paths(p) == ["src/kernel/k.c"]
+    assert list(lanes.staged_paths(p)) == ["src/kernel/k.c"]
     assert not asked.exists()
 
 
@@ -1985,6 +1985,41 @@ def test_a_file_where_a_lane_needs_a_directory_is_refused(path):
     assert lanes.judge(real, None, [path], live) and lanes.judge(real, "main", [path], live)
     assert lanes.judge(real, None, [path], off) == []
     assert lanes.judge(real, None, ["src/kernel/x.c", "src/app", "docs/design/shell.md", "todo/08-graphics-ui/x.md"], live) == []
+
+
+@pytest.mark.parametrize("a, b", [('"src/new/"', '"src/new"'), ('"src/new/deep/t.c"', '"src/new"'),
+                                  ('"src/new/", "src/new-a"', '"src/new"'), ('"src/b"', '"COUNT.md/x"')])
+def test_a_map_whose_entries_cannot_exist_together_is_refused(a, b):
+    lane = '[lane.{}]\nengine = "e"\nmodel = "m"\nworktree = "../{}"\npaths = [{}]\noutput = "commits"\nlimits = {{}}\n'
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    with pytest.raises(lanes.LaneError, match="needs a directory"):
+        lanes.parse_map(text + lane.format("x", "x", a) + lane.format("y", "y", b))
+    lanes.parse_map(text + lane.format("x", "x", a) + lane.format("y", "y", '"src/newer"'))
+
+
+def test_main_may_remove_what_is_in_a_live_lanes_way(repo):
+    p = repo["primary"]
+    git(p, "rm", "-rqf", "--", "user")
+    (p / "user").write_text("in the way\n")
+    git(p, "add", "--", "user")
+    git(p, "commit", "-qm", "obstruct")
+    live("userland")
+    git(p, "rm", "-q", "--", "user")
+    assert check(p).returncode == 0
+    (p / "user").mkdir()
+    stage(p, "user/x.c")
+    assert "user/x.c belongs to lane userland" in check(p).stderr
+
+
+def test_a_deep_map_is_read_and_judged_in_time():
+    deep = "/".join(["d"] * 600)
+    files = ", ".join(f'"{deep}/f{i}.c"' for i in range(4000))
+    text = (REPO / ".conclave" / "lanes.toml").read_text() + (
+        f'[lane.deep]\nengine = "e"\nmodel = "m"\nworktree = "../deep"\npaths = [{files}]\noutput = "commits"\nlimits = {{}}\n')
+    start = time.monotonic()
+    m = lanes.parse_map(text)
+    assert lanes.judge(m, None, [deep], {"deep": lanes.LIVE}) and lanes.judge(m, None, ["d/d"], {"deep": lanes.LIVE})
+    assert time.monotonic() - start < 2                               # indexing every directory above took 6 s
 
 
 def test_a_symlink_in_a_reserved_directorys_place_is_refused(repo):

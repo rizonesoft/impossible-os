@@ -17,6 +17,7 @@ SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the
 """
 from __future__ import annotations
 
+import bisect
 import errno
 import json
 import math
@@ -72,7 +73,7 @@ AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'above': {directory an entry needs: lanes}, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
+    'entries': every paths entry, sorted, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
@@ -112,14 +113,23 @@ def parse_map(text: str) -> dict:
     owned.sort()
     for (p, name), (q, other) in zip(owned, owned[1:]):
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
-    above: dict[str, set[str]] = {}                     # each directory a lane's entry needs: a file there displaces it
-    for p, name in owned:
-        parts = p.rstrip("/").split("/")
-        for n in range(1, len(parts) + p.endswith("/")):
-            above.setdefault("/".join(parts[:n]), set()).add(name)
-    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned), "above": above,
+    entries = [p for p, _name in owned]
+    named = sorted([*entries, *generated])
+    for p in named:
+        q = None if p.endswith("/") else next(_under(named, p), None)
+        _need(q is None, f"path {p!r} is a file where path {q!r} needs a directory")
+    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned), "entries": entries,
             "longest": max((len(p) for p, _name in owned), default=0),
             "bare": {name for p, name in owned if "/" not in p}}
+
+
+def _under(entries: list[str], path: str):
+    """The sorted entries that need a directory at `path`: whatever starts with it and a slash is one run of them."""
+    prefix = path + "/"
+    at = bisect.bisect_left(entries, prefix)
+    while at < len(entries) and entries[at].startswith(prefix):
+        yield entries[at]
+        at += 1
 
 
 def _covers(entry: str, path: str) -> bool:
@@ -214,10 +224,11 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
 def displaced_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str | None:
     """The extra lane whose reserved paths cannot exist beside a file at `path`, or None: the file is a directory one
     of them needs, or it is under one that is a file."""
-    names = set(lane_map["above"].get(path, ()))
+    index = lane_map["index"]
+    names = {index[q] for q in _under(lane_map["entries"], path)}
     at = path.find("/")
     while 0 <= at <= lane_map["longest"]:
-        names.add(lane_map["index"].get(path[:at], MAIN))
+        names.add(index.get(path[:at], MAIN))
         at = path.find("/", at + 1)
     return next((n for n in sorted(names) if n != MAIN and lane_states.get(n) in (LIVE, DAMAGED)), None)
 
@@ -362,15 +373,17 @@ def committer(lane_map: dict, toplevel: Path) -> str | None:
     return lane_trees(lane_map, toplevel).get(Path(toplevel).resolve())
 
 
-def staged_paths(toplevel: Path, *only: str) -> list[str]:
-    """The paths the index changes against HEAD, or which of `only` it changes."""
-    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff",
+def staged_paths(toplevel: Path, *only: str) -> dict[str, bool]:
+    """The paths the index changes against HEAD, or which of `only` it changes, and whether it removes each."""
+    out = _git(toplevel, "diff", "--cached", "--name-status", "-z", "--no-renames", "--no-ext-diff",
                "--ignore-submodules=none", "--", *only)         # diff.ignoreSubmodules must not hide a staged path
-    return [p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p]
+    fields = out.decode("utf-8", errors="surrogateescape").split("\0")
+    return {p: status == "D" for status, p in zip(fields[::2], fields[1::2])}
 
 
-def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[str, str]) -> list[str]:
-    """The reasons this commit is refused; empty when it is allowed."""
+def judge(lane_map: dict, me: str | None, paths, lane_states: dict[str, str], removed=frozenset()) -> list[str]:
+    """The reasons this commit is refused; empty when it is allowed. `removed`: the paths it deletes, which leave
+    nothing in a lane's way."""
     lanes = lane_map["lanes"]
     if me is not None and lanes[me]["output"] == "reports":
         return [f"lane {me} only writes reports and never commits"]
@@ -389,7 +402,9 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
             if owner(lane_map, p) != me:
                 reasons.append(f"{p} is outside lane {me}'s paths")
             continue
-        held = reserved_by(lane_map, lane_states, p) or displaced_by(lane_map, lane_states, p)
+        held = reserved_by(lane_map, lane_states, p)
+        if not held and p not in removed:
+            held = displaced_by(lane_map, lane_states, p)
         if held:
             how = "live" if lane_states[held] == LIVE else "reserved (its record cannot be read)"
             reasons.append(f"{p} belongs to lane {held}, which is {how}")
@@ -475,8 +490,8 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
             lane_map = proposed
             me = trees.get(toplevel.resolve())
         lane_states = states(lane_map)
-        paths = [] if clean else changed
-        reasons = judge(lane_map, me, paths, lane_states)
+        paths = {} if clean else changed
+        reasons = judge(lane_map, me, paths, lane_states, {p for p, gone in paths.items() if gone})
         if not reasons and any_live(lane_states):
             if merging(toplevel):
                 reasons = ["no merge commits while a lane is live; rebase instead"]
