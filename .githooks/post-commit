@@ -493,6 +493,11 @@ publish_readme() {
 # repository; publishing a different one here than the document's own headline
 # is a discrepancy with no visible explanation. The written-here/vendored split
 # is one click away in the Grand Total table.
+if [ -n "$README_TARGET" ] && ! awk '/COUNT-BADGE:START/ { s++; ok = !e } /COUNT-BADGE:END/ { e++ }
+        END { exit !((!s && !e) || (s == 1 && e == 1 && ok)) }' "$README_TARGET"; then
+    echo "post-commit: README.md needs exactly one COUNT-BADGE:START line before one COUNT-BADGE:END line; it is left as committed" >&2
+    rm -f "$README_TARGET"; README_TARGET=""
+fi
 if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
     # The EXACT total, comma-grouped (1,324,648), commas URL-encoded for shields.io.
     loc_fmt=$(printf '%s' "$whole_tree_lines" | sed -e ':a' -e 's/\([0-9]\)\([0-9]\{3\}\)\($\|,\)/\1,\2\3/' -e 'ta')
@@ -592,7 +597,7 @@ plumb_amend() {
     # The HEAD swap and the index publish are one step: interrupts are ignored
     # between them so HEAD and the index can never disagree.
     trap '' INT TERM
-    if ! git -C "$ROOT" -c core.filesRefLockTimeout=0 update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
+    if ! git -C "$ROOT" -c core.filesRefLockTimeout=0 -c reftable.lockTimeout=0 update-ref -m "post-commit: sync COUNT.md and README.md" HEAD "$new" "$base"; then
         release_lock; return 1
     fi
     if mv -f "$lock" "$idx"; then

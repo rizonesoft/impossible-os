@@ -1683,17 +1683,48 @@ def test_a_failed_amend_step_never_drops_a_file(repo, broken):
     assert git(p, "show", "HEAD:src/kernel/k.c").stdout == "k2\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
 
 
-def test_a_busy_ref_is_refused_at_once(repo):
+@pytest.mark.parametrize("backend", ["files", "reftable"])
+def test_a_busy_ref_is_refused_at_once(repo, backend):
     p = repo["primary"]
+    if backend == "reftable":
+        p = repo["tmp"] / "reftable"                                  # git cannot migrate one that has worktrees
+        if run([*GIT, "init", "-q", "--ref-format=reftable", str(p)], cwd=repo["tmp"], timeout=60).returncode:
+            pytest.skip("this git has no reftable")
+        (p / "src" / "kernel").mkdir(parents=True)
+        (p / "src/kernel/k.c").write_text("k\n")
+        (p / "COUNT.md").write_text("0\n")
+        git(p, "add", "--", "src", "COUNT.md")
+        git(p, "commit", "-qm", "seed")
+        (repo["tmp"] / "ref-hooks").mkdir()                          # the fixture's other hooks judge lanes
+        repo = {**repo, "primary": p, "hooks": repo["tmp"] / "ref-hooks"}
+        lock = p / ".git" / "reftable" / "tables.list.lock"
+    else:
+        lock = p / ".git" / (git(p, "symbolic-ref", "HEAD").stdout.strip() + ".lock")
     git(p, "config", "core.filesRefLockTimeout", "-1")
+    git(p, "config", "reftable.lockTimeout", "-1")
     hook = (REPO / ".githooks" / "post-commit").read_text()
     call = "if plumb_amend; then"
     assert hook.count(call) == 1
-    lock = p / ".git" / (git(p, "symbolic-ref", "HEAD").stdout.strip() + ".lock")
     r = commit_with_hook(repo, hook.replace(call, f': > "{lock}"\n' + call))
     lock.unlink()
     assert r.returncode == 0 and "could not be committed" in r.stderr, r
     assert not (p / ".git" / "index.lock").exists() and git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
+
+
+@pytest.mark.parametrize("markers", ["no end", "no start", "reversed", "two pairs"])
+def test_broken_badge_markers_never_cost_readme_text(repo, markers):
+    p = repo["primary"]
+    start, end = "<!-- COUNT-BADGE:START -->\n", "<!-- COUNT-BADGE:END -->\n"
+    body = {"no end": start, "no start": end, "reversed": end + start, "two pairs": (start + end) * 2}[markers]
+    text = "# Top\n" + body + "the rest\n"
+    (p / "README.md").write_text(text)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    assert "COUNT-BADGE" in r.stderr and git(p, "show", "HEAD:README.md").stdout == (p / "README.md").read_text() == text, r
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n" and git(p, "status", "--porcelain", "-uno").stdout == ""
 
 
 @pytest.mark.parametrize("kind", ["directory", "link to a directory"])
