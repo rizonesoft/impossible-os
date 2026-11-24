@@ -16,6 +16,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "boot/crash_log.h"
 
 typedef enum {
     LOG_DEBUG = 0,   /* [INFO] serial only */
@@ -526,7 +527,7 @@ void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer *
 /* ---- Crash-persistent log capture (klog.c) ---- */
 
 #define KLOG_CRASH_MAGIC    0x4B4C4F47  /* "KLOG" */
-#define KLOG_CRASH_PAGES    32          /* 128 KiB reserved region */
+#define KLOG_CRASH_PAGES    BOOT_CRASH_LOG_PAGES
 
 /* Header at start of crash persistence region (physical memory) */
 typedef struct {

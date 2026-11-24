@@ -5023,7 +5023,7 @@ if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >
 fi
 # The matrix's orchestration, run against stub build and smoke scripts that only
 # record their settings: the default run is 31 test-smoke.sh boots (the
-# crashptr guard and runtime legs fail without booting, because the stub
+# crashptr guard, runtime and buffer legs fail without booting, because the stub
 # writes no serial log for them to read an address from), and each engine's clean-
 # shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
 # The control removes the second boot and must fail the same assertion.

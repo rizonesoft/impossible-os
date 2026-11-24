@@ -68,6 +68,14 @@ static void test_pmm_bitmap_place(void)
                    0x100000000ULL - 128 * kib, "a range across the cap ends at it");
     TEST_ASSERT_EQ(pmm_bitmap_place(map, 0, 128 * kib, keep, 2), 0ULL, "no map");
 
+    struct boot_mmap_entry pair[] = {
+        { 64 * mib, 64 * kib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+        { 64 * mib + 64 * kib, 64 * kib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+    };
+    TEST_ASSERT_EQ(pmm_bitmap_place(pair, 2, 128 * kib, keep, 2), 64 * mib, "joined");
+    pair[1].base_addr += 4 * kib;
+    TEST_ASSERT_EQ(pmm_bitmap_place(pair, 2, 128 * kib, keep, 2), 0ULL, "a gap");
+
     const struct boot_reserved_region fb = { 32 * mib, 4 * mib, BOOT_RESERVED_FRAMEBUFFER, 0 };
     struct boot_span kept[PMM_BITMAP_KEEP_MAX];
     (void)boot_reserved_load_table(&fb, 1);

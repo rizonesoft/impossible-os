@@ -33,6 +33,7 @@
 #include "../../../include/boot/pe_authenticode.h" /* Authenticode PE image hash, as firmware computes it */
 #include "../../../include/boot/tcg_evlog.h"       /* strict TCG event-log walk + image-load event identity */
 #include "../../../include/boot/pcr_manifest.h"    /* PCR 11 manifest measurement: index, event name, type */
+#include "../../../include/boot/crash_log.h"
 #include "../../../include/boot/free_span.h" /* boot_span_pick() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
@@ -10127,6 +10128,7 @@ static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 
 /* How often a memory map that moved before its span was claimed is read again. */
 #define KERNEL_BUFFER_TRIES 4
+#define KERNEL_BUFFER_KEEPS 3
 
 /* Whether a descriptor that is not free lies over [at, at + bytes), and `room` now ends below it. */
 static int clip_to_free(UINTN map_size, UINTN desc_size, struct boot_span *room,
@@ -10199,9 +10201,25 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
     return EFI_SUCCESS;
 }
 
-/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
- * the `nkeep` spans already in `keep`, which has room for two more; *at is 0
- * when no free range has the room. AllocateAnyPages may answer with a range over the
+/* The previous boot's crash log, which the kernel reads later; empty when none. */
+static struct boot_span previous_crash_log(void)
+{
+    EFI_GUID guid = BOOT_CRASH_LOG_GUID;
+    EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+    struct boot_span log = { 0, BOOT_CRASH_LOG_PAGES * EFI_PAGE_SIZE };
+    UINT32 attrs;
+    UINTN size = sizeof log.base;
+
+    if (!rt || !rt->GetVariable ||
+        EFI_ERROR(rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &log.base)) ||
+        size != sizeof log.base)
+        log.bytes = 0;
+    return log;
+}
+
+/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer, the
+ * previous boot's crash log (the file read would overwrite it) and the `nkeep` spans
+ * already in `keep`, which has room for KERNEL_BUFFER_KEEPS more; *at is 0 when no free range has the room. AllocateAnyPages may answer with a range over the
  * segments, and the destination policy then refuses the kernel. */
 static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsigned nkeep,
                                       EFI_PHYSICAL_ADDRESS *at)
@@ -10211,6 +10229,7 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
     keep[nkeep].base = g_boot_info_ptr->fb.addr;
     keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
+    keep[nkeep++] = previous_crash_log();
     for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
         int lost;
         EFI_STATUS status = claim_free_span(pages, keep, nkeep, try, at, &lost);
@@ -10640,7 +10659,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     }
     {
         UINTN pages = (file_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
-        struct boot_span keep[ELF_MAX_PHDRS + 2];
+        struct boot_span keep[ELF_MAX_PHDRS + KERNEL_BUFFER_KEEPS];
         unsigned nsegments;
         status = kernel_segment_spans(kernel_file, file_size, keep, &nsegments);
         if (EFI_ERROR(status)) {
@@ -10672,7 +10691,9 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         serial_early_print_uint((UINT32)(pages * (EFI_PAGE_SIZE / 1024)));
         serial_early_print(" KiB allocated, clear of ");
         serial_early_print_uint(nsegments);
-        serial_early_print(" kernel segments\n");
+        serial_early_print(" kernel segments, at 0x");
+        serial_early_print_hex64(load_buf_addr);
+        serial_early_print("\n");
         file_buf = (UINT8 *)(UINTN)load_buf_addr;
     }
 

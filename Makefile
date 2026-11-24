@@ -580,6 +580,7 @@ $(UEFI_EFI): $(UEFI_LOADER_INPUTS) \
              include/kernel/boot_version_constants.h \
              include/kernel/firmware_quirks_table.inc \
              include/kernel/firmware_quirks_parse.inc \
+             include/boot/crash_log.h \
              include/boot/free_span.h \
              include/boot/uki_cmdline_check.h \
              $(BUILD_DIR)/boot_proto_sha.h \

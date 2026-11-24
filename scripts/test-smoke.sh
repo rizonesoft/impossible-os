@@ -660,6 +660,7 @@ REUSED_VARS=0
 # it keeps that run's disk and variable store, so state one boot wrote to disk
 # (the boot-trend file under X:\Perf) is what this boot reads back.
 KEEP_DISK="${SMOKE_KEEP_DISK:-0}"
+SOURCE_DISK="$DISK"      # what the booted disk is copied from, when it is a copy
 # SMOKE_SHUTDOWN=1 ends the boot the way a user does: the ACPI power button,
 # which flushes X: and powers off (S5). The leg fails unless the guest logs the
 # shutdown and QEMU exits on its own within SMOKE_SHUTDOWN_SEC.
@@ -733,12 +734,9 @@ if [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_PRISTINE_IMAGE is not the build now in build/ (its saved receipt is missing or differs from build/build-receipt.json)${NC}"
         exit 1
     fi
-    # A second boot of one machine keeps the disk the first boot wrote.
-    if [ "$KEEP_DISK" != "1" ] && [ "${SMOKE_HHDM_WRONG:-0}" != "1" ] \
-       && ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
-        echo -e "${RED}SMOKE TEST FAILED: could not restore the pristine image${NC}"
-        exit 1
-    fi
+    # A second boot of one machine keeps the disk the first boot wrote; any other
+    # leg copies the pristine image to the one disk it boots, below.
+    [ "$KEEP_DISK" = "1" ] || SOURCE_DISK="$SMOKE_PRISTINE_IMAGE"
 elif [ "$KEEP_DISK" = "1" ]; then
     # The kept disk carries the previous run's build; a rebuild would stage a
     # loader that no longer matches the one on it. Boot that build, if current.
@@ -812,6 +810,12 @@ fi
 # SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print.
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
+# Whether the loader's kernel buffer, named on stdin, misses the 128 KiB run at $1.
+crash_nvram_buffer_clear() {
+    local kib at
+    read -r kib at < <(sed -nE 's/.*Kernel buffer: ([0-9]+) KiB allocated.* at (0x[0-9a-fA-F]+).*/\1 \2/p' | head -1)
+    [ -n "$at" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 ))
+}
 if [ -n "$CRASH_NVRAM" ]; then
     case "$CRASH_NVRAM_EXPECT" in claimed|skipped) ;; *)
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed or skipped${NC}"; exit 1 ;;
@@ -1005,10 +1009,10 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" !
     # shellcheck disable=SC1090
     . "$DISK.info"
     FIXTURE_DISK="$BUILD/system-disk.fixture.img"
-    if [ "$HHDM_WRONG" = "1" ] && [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
-        DISK="$SMOKE_PRISTINE_IMAGE"        # not restored above: only the fixture boots
+    if ! cp --sparse=always "$SOURCE_DISK" "$FIXTURE_DISK"; then
+        echo -e "${RED}SMOKE TEST FAILED: could not copy the image to the fixture disk${NC}"
+        exit 1
     fi
-    cp --sparse=always "$DISK" "$FIXTURE_DISK"
     DISK="$FIXTURE_DISK"
     IMAGE_MODIFIED=1
     mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
@@ -1020,6 +1024,9 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" !
         fi
         rm -rf "$PREVIOUS_COUNTERS"
     fi
+elif [ "$SOURCE_DISK" != "$DISK" ] && ! cp --sparse=always "$SOURCE_DISK" "$DISK"; then
+    echo -e "${RED}SMOKE TEST FAILED: could not restore the pristine image${NC}"
+    exit 1
 fi
 if [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ]; then
     VALID_JSON="$BUILD/bootentries.valid.json"
@@ -1749,6 +1756,9 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
+    elif ! crash_nvram_buffer_clear "$CRASH_NVRAM_HEX" < "$STRIPPED_LOG"; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel file was read over the planted region"
     else
         echo -e "  ${GREEN}✓${NC} stale crash-region pointer $CRASH_NVRAM_HEX $CRASH_NVRAM_EXPECT and the boot reached the prompt"
     fi

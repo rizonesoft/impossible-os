@@ -244,17 +244,19 @@ done
 # which the PMM owns; both are in range for the old check and must be
 # skipped. `guard` plants THIS build's heap guard address and must be claimed
 # with the heap placed elsewhere (the claim runs before the heap exists).
-# `mmio` runs first and the other two addresses are read from ITS serial log,
+# `buffer` plants the address the loader gives its kernel buffer, which must move:
+# reading the kernel file there would overwrite the log before the kernel reads it.
+# `mmio` runs first and the other addresses are read from ITS serial log,
 # a boot of the same configuration. Both were the same on every boot measured;
 # the loader's boot stack was not (it moved between identical boots), so it
 # cannot be planted from an earlier boot. Each leg's serial log is published
 # beside its capture.
 serial="$REPO_ROOT/build/smoke-test.stripped.log"
-heap_guard=""; rt_region=""
-for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|skipped"; do
+heap_guard=""; rt_region=""; kernel_buffer=""
+for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|skipped" "buffer|@buffer|claimed"; do
     name="${leg%%|*}"; rest="${leg#*|}"
     addr="${rest%%|*}"; expect="${rest#*|}"
-    case "$addr" in @heap) addr="$heap_guard" ;; @runtime) addr="$rt_region" ;; esac
+    case "$addr" in @heap) addr="$heap_guard" ;; @runtime) addr="$rt_region" ;; @buffer) addr="$kernel_buffer" ;; esac
     log="$LOG_DIR/crashptr-$name.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name.XXXXXX")"
     t0=$(date +%s)
@@ -271,6 +273,7 @@ for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|ski
         CAPTURES="$CAPTURES $scap:$LOG_DIR/crashptr-$name.serial.log"
         if [ "$name" = "mmio" ]; then
             heap_guard="$(grep -aoE 'Kernel heap: .*guard at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
+            kernel_buffer="$(grep -aoE 'Kernel buffer: [0-9]+ KiB allocated.* at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
             rt_region="$(grep -aoE 'kind=rt_mmap src=1 phys=0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
         fi
     fi

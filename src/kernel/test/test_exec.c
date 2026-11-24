@@ -19,6 +19,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/cpuid.h"
 #include "kernel/test/klog_suppress.h"
+#include "kernel/mm/pmm.h"
 #include "libs/lz4.h"
 #include "libc/string.h"
 
@@ -598,12 +599,18 @@ static int walk_write(void *ctx, uint32_t rva, uint64_t val)
 static void test_pe_walk_imports(void)
 {
     TEST_KLOG_EXPECT("pe", "Malformed import descriptor 0 -- aborting import resolution");
-    static uint8_t img[0x3000];
+    enum { IMG_BYTES = 0x3000 };
+    uintptr_t img_phys = 0;
+    uint64_t img_pages = 0;
+    uint8_t *img = (uint8_t *)pmm_alloc_pages_hhdm(IMG_BYTES, &img_phys, &img_pages);
+    TEST_ASSERT_NOT_NULL(img, "img");
+    if (!img)
+        return;
     pe_import_ops_t ops = { walk_find_dll, walk_lookup, walk_write, img };
     uint32_t i, dlls = 0;
     uint8_t *d = img + 0x2000;
 
-    for (i = 0; i < sizeof(img); i++) img[i] = 0;
+    for (i = 0; i < IMG_BYTES; i++) img[i] = 0;
     /* Descriptor: OFT 0x2040, Name 0x2080, FT 0x2060; then an all-zero one. */
     d[0x00] = 0x40; d[0x01] = 0x20;
     d[0x0C] = 0x80; d[0x0D] = 0x20;
@@ -613,38 +620,38 @@ static void test_pe_walk_imports(void)
     memcpy(d + 0xA2, "ExitProcess", 12);
 
     s_walk_writes = 0;
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 1,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), 1,
                    "one import resolved");
     TEST_ASSERT_EQ(dlls, 1, "one DLL walked");
     TEST_ASSERT_EQ(s_walk_writes, 1, "one IAT entry written");
     TEST_ASSERT_EQ(img[0x2060], 0x42, "the IAT holds the SSDT index");
 
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0, 0, &ops, &dlls), 0,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0, 0, &ops, &dlls), 0,
                    "no import directory resolves nothing");
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2FF0, 40, &ops, &dlls), -1,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2FF0, 40, &ops, &dlls), -1,
                    "a directory past the image is refused");
 
     d[0xA2] = 'X';                            /* unknown function: stubbed */
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 0,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), 0,
                    "an unknown function resolves nothing");
     TEST_ASSERT_EQ(s_walk_last, PE_STUB_THUNK_ADDR, "and its IAT entry is the stub");
 
     d[0x47] = 0x80;                           /* INT[0] by ordinal */
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 0,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), 0,
                    "an ordinal import is stubbed");
     d[0x47] = 0x00;
 
     for (i = 0x2080; i < 0x2080 + PE_MAX_NAME_LEN + 1; i++) img[i] = 'k';
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), -1,
                    "a DLL name with no NUL in bounds is refused");
 
     d[0x0C] = 0xFF; d[0x0D] = 0x2F;           /* Name RVA 0x2FFF: one byte left */
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), -1,
                    "a DLL name at the image end is refused");
 
     /* No INT (OriginalFirstThunk 0): the IAT is read and then overwritten,
      * two imports, then a terminator that must stay untouched. */
-    for (i = 0; i < sizeof(img); i++) img[i] = 0;
+    for (i = 0; i < IMG_BYTES; i++) img[i] = 0;
     d[0x0C] = 0x80; d[0x0D] = 0x20;
     d[0x10] = 0x60; d[0x11] = 0x20;
     d[0x60] = 0xA0; d[0x61] = 0x20;           /* IAT[0] -> "ExitProcess" */
@@ -653,7 +660,7 @@ static void test_pe_walk_imports(void)
     memcpy(d + 0xA2, "ExitProcess", 12);
     memcpy(d + 0xC2, "EndTask", 8);
     s_walk_writes = 0;
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 2,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), 2,
                    "both imports resolve through the IAT alone");
     TEST_ASSERT_EQ(s_walk_writes, 2, "two IAT entries written");
     TEST_ASSERT_EQ(img[0x2060], 0x42, "the first IAT entry holds its SSDT index");
@@ -666,9 +673,10 @@ static void test_pe_walk_imports(void)
     d[0x68] = 0xC0; d[0x69] = 0x20;
     s_walk_writes = 0;
     s_walk_fail_at = 1;                       /* the second write fails */
-    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+    TEST_ASSERT_EQ(pe_walk_imports(img, IMG_BYTES, 0x2000, 40, &ops, &dlls), -1,
                    "a failed IAT write fails the walk");
     s_walk_fail_at = 0xFFFFFFFFu;
+    pmm_free_contiguous(img_phys, img_pages);
 }
 
 static void test_pe_import_struct_sizes(void)

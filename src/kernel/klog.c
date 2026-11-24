@@ -999,14 +999,8 @@ void klog_crash_persist(void)
 /* UEFI NVRAM variable for crash region address -- same GUID as ImpossiblePOST */
 #include "kernel/uefi_runtime.h"
 
-static const struct boot_uefi_guid s_crash_guid = {
-    0x494D504F, 0x5354, 0x4F53,
-    { 0x50, 0x4F, 0x53, 0x54, 0x47, 0x55, 0x49, 0x44 }
-};
-static const uint16_t s_crash_varname[] = {
-    'I','m','p','o','s','s','i','b','l','e',
-    'C','r','a','s','h','L','o','g', 0
-};
+static const struct boot_uefi_guid s_crash_guid = BOOT_CRASH_LOG_GUID;
+static const uint16_t s_crash_varname[] = BOOT_CRASH_LOG_VAR;
 
 #define CRASH_NVRAM_ATTRS (EFI_VARIABLE_NON_VOLATILE | \
                            EFI_VARIABLE_BOOTSERVICE_ACCESS | \
