@@ -390,7 +390,7 @@ def triage(repo, monkeypatch):
     order = [{"file_path": f, "domain": f.split("/")[1], "sections": []} for f in entries]
     monkeypatch.setattr(t, "traversal_order", lambda cache: [e for e in order if e["file_path"] in entries])
     monkeypatch.setattr(t, "classify_file", lambda e, root: (t.NEEDS_WORK, list(entries[e["file_path"]])))
-    monkeypatch.setattr(t, "owed_reviews", lambda root: (frozenset(), []))
+    monkeypatch.setattr(t, "owed_reviews", lambda root, deadline=None: (frozenset(), []))
     monkeypatch.setattr(t, "runnable_sections", lambda e, per, ready, blocked=frozenset(), view=None:
                         [n for n, c in per if c == t.NEEDS_WORK])
     return t, str(root), entries
@@ -1152,3 +1152,34 @@ def test_the_summary_and_the_classifier_agree_on_a_file_a_lane_holds(triage, cap
     assert said() == (t.BLOCKED, t.BLOCKED)
     (lanes.state_dir() / "userland.json").unlink()
     assert said() == (t.NEEDS_WORK, t.NEEDS_WORK)
+
+
+def test_a_record_nested_too_deep_is_damaged_and_another_lane_still_holds(triage, monkeypatch):
+    t, root, _entries = triage
+    live("userland")
+    (lanes.state_dir() / "neon-b.json").write_text("[" * 60000)
+    ctx, err = t._lane_context(root)
+    assert err == "" and ctx[2]["neon-b"] == lanes.DAMAGED and ctx[2]["userland"] == lanes.LIVE
+    stage(Path(root), "user/a.c")
+    monkeypatch.setenv("SKIP_LANE_CHECK", "1")
+    monkeypatch.setenv("SKIP_LANE_CHECK_REASON", "r")
+    assert lanes.check_staged(Path(root)) == 0
+
+
+def test_the_outage_probe_gets_only_what_the_lane_lookup_left(triage, tmp_path, monkeypatch):
+    t, root, _entries = triage
+    t2 = _load("triage_budget", TRIAGE_PY)                            # the real owed_reviews
+    owed = Path(root) / t2.OWED_STATE
+    owed.parent.mkdir(parents=True)
+    owed.write_text(json.dumps([{"todo": "todo/00-x/TODO-01-x.md", "section": 1}]))
+    asked = []
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: (asked.append(k.get("timeout")), real(["true"]))[1])
+    assert t2.owed_reviews(root, time.monotonic() + 0.5)[1] and 0 < asked[0] <= 0.5
+    t2._OWED_MEMO.clear()
+    assert t2.owed_reviews(root, time.monotonic() - 1) == (frozenset(), []) and len(asked) == 1
+    seen = []
+    monkeypatch.setattr(t, "_lane_context", lambda r, deadline=None: seen.append(deadline) or (None, ""))
+    monkeypatch.setattr(t, "owed_reviews", lambda r, deadline=None: seen.append(deadline) or (frozenset(), []))
+    t.pick_next({}, root, ready=None)
+    assert seen[0] is not None and seen == [seen[0]] * 2

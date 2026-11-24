@@ -192,7 +192,7 @@ def lane_state(lane_map: dict, name: str, now: float | None = None) -> str:
         pid, beat = rec["pid"], rec["heartbeat"]
         ok = (isinstance(rec, dict) and rec.get("lane") == name and _pid_ok(pid) and isinstance(rec["task"], str)
               and isinstance(beat, (int, float)) and not isinstance(beat, bool) and math.isfinite(beat))
-    except (ValueError, KeyError, TypeError, OverflowError):
+    except (ValueError, KeyError, TypeError, OverflowError, RecursionError):
         ok = False
     if not ok:
         return DAMAGED

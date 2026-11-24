@@ -488,15 +488,16 @@ OUTAGE_PROBE_TIMEOUT = 2.0
 _OWED_MEMO = {}
 
 
-def owed_reviews(root):
-    """One answer an invocation: the reviewer is probed once, however many callers ask."""
+def owed_reviews(root, deadline=None):
+    """One answer an invocation: the reviewer is probed once, however many callers ask. `deadline`
+    (time.monotonic()) bounds the probe when a caller shares a budget."""
     key = os.path.abspath(str(root))
     if key not in _OWED_MEMO:
-        _OWED_MEMO[key] = _owed_reviews(root)
+        _OWED_MEMO[key] = _owed_reviews(root, deadline)
     return _OWED_MEMO[key]
 
 
-def _owed_reviews(root):
+def _owed_reviews(root, deadline=None):
     """(blocked, recovered) for the sections whose review is owed (scripts/overnight/review_owed.py).
 
     `blocked` is the set of (file, n) that must not be picked: the reviewer is still down, so picking one
@@ -514,10 +515,13 @@ def _owed_reviews(root):
     if not owed:
         return frozenset(), []
     import subprocess
+    secs = OUTAGE_PROBE_TIMEOUT if deadline is None else min(OUTAGE_PROBE_TIMEOUT, deadline - time.monotonic())
+    if secs <= 0:  # fail-direction: unknown -> the ordinary order
+        return frozenset(), []
     try:
         done = subprocess.run([sys.executable, os.path.join(root, OUTAGE_TOOL), "--manifest",
                                os.path.join(root, OUTAGE_MANIFEST)],
-                              capture_output=True, text=True, timeout=OUTAGE_PROBE_TIMEOUT)
+                              capture_output=True, text=True, timeout=secs)
     except (OSError, subprocess.SubprocessError):  # fail-direction: unknown -> the ordinary order
         return frozenset(), []
     if done.returncode == 75:
@@ -630,7 +634,7 @@ def _work_order(s):
 LANE_MAP_SECS = 2                                      # inside the Stop hook's 5 s, beside the classification
 
 
-def _lane_context(root):
+def _lane_context(root, deadline=None):
     """(lane map, each extra lane's state) from scripts/lanes.py, or (None, error text) when the map cannot be
     read. Scheduling only: the commit check refuses a commit into a live lane's paths whatever triage picks,
     so an unreadable map leaves triage choosing as before and the packet says why."""
@@ -651,7 +655,7 @@ def _lane_context(root):
         # record, so ownership that cannot be read must never read as nothing held: every open section is held
         # until it can (lane_reservations), and the packet says why.
         try:
-            lane_map = mod.committed_map(Path(root), deadline=time.monotonic() + LANE_MAP_SECS)
+            lane_map = mod.committed_map(Path(root), deadline=deadline or time.monotonic() + LANE_MAP_SECS)
         except mod.LaneError as exc:
             why = f"the committed lane map cannot be read: {exc}"
             return (mod, None, why), why
@@ -713,8 +717,11 @@ def pick_next(cache, root, ready="unset", want_ready=False, reserved=None, block
     saw_blocked = False
     needs = {}
     order = []
-    blocked, recovered = owed_reviews(root)
-    ctx, lane_err = _lane_context(root)
+    # One budget for both lookups. The lane map goes first: its read is a few milliseconds, and an unread map holds
+    # every section, while an outage probe left without time changes nothing.
+    deadline = time.monotonic() + LANE_MAP_SECS
+    ctx, lane_err = _lane_context(root, deadline)
+    blocked, recovered = owed_reviews(root, deadline)
     held_all = [] if reserved is None else reserved
     if lane_err:
         held_all.append({"lanes_error": lane_err})     # the packet says why no lane reservation was applied
