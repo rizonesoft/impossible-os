@@ -1355,6 +1355,22 @@ def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):
     assert t.section_stamps(str(md)) == {1: {"V"}}
 
 
+def test_the_chosen_files_lifecycle_needs_no_second_scan(tmp_path, monkeypatch):
+    t = _load("triage_lifecycle", TRIAGE_PY)
+    t._STAMP_MEMO = {}
+    one, two = tmp_path / "TODO-01-x.md", tmp_path / "TODO-02-x.md"
+    one.write_text("# T\n\n> **Validated:** 2026-11-24\n\n## 1. One\n")
+    two.write_text("# T\n\n## 1. One\n")
+    assert t.section_stamps(str(one)) == t.section_stamps(str(two)) == {1: set()}
+    monkeypatch.setattr(t, "_scan_sections", lambda text: 1 / 0)
+    assert t.file_lifecycle(str(one)) == {"validated": True, "gap_audited": False}
+    assert t.file_lifecycle(str(two)) == {"validated": False, "gap_audited": False}
+    t._STAMP_MEMO = None
+    t._SCAN_MEMO.clear()
+    with pytest.raises(ZeroDivisionError):
+        t.file_lifecycle(str(one))                                    # outside a one-shot run it reads the file
+
+
 def test_a_todo_replaced_by_one_of_the_same_size_and_time_is_read_again(tmp_path):
     t = _load("triage_inode", TRIAGE_PY)
     t._STAMP_MEMO = {}
@@ -1390,7 +1406,7 @@ def test_a_linked_readme_is_never_written_through(repo):
 
 
 @pytest.mark.parametrize("staged", [True, False])
-def test_a_failed_index_publish_never_advises_dropping_a_staged_readme(repo, staged):
+def test_a_failed_index_publish_is_reported_without_a_command(repo, staged):
     p = repo["primary"]
     (p / "README.md").write_text(README_TEXT)
     (p / "scripts" / "site").mkdir()
@@ -1407,14 +1423,14 @@ def test_a_failed_index_publish_never_advises_dropping_a_staged_readme(repo, sta
     (p / "src/kernel/k.c").write_text("k2\n")
     r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
             timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
-    advice = "git reset -q -- :/COUNT.md" + ("" if staged else " :/README.md")
-    assert advice + "\n" in r.stderr and "HEAD is unchanged" not in r.stderr, r
-    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
-    run(advice.split(), cwd=p / "src", timeout=20)                    # following it, from anywhere, leaves nothing but a staged edit
-    changed = git(p, "diff", "HEAD", "--name-only").stdout.split()
-    assert changed == (["README.md"] if staged else []), r
+    # It names the state, not a command: any reset run later can drop what was staged in between.
+    assert f"still holds the old COUNT.md{'' if staged else ' and README.md'}\n" in r.stderr, r
+    assert "HEAD is unchanged" not in r.stderr and "reset" not in r.stderr, r
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n" and "img.shields.io" in git(p, "show", "HEAD:README.md").stdout
     if staged:
         assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
+    else:                                                             # a clean working README still follows HEAD
+        assert (p / "README.md").read_text() == git(p, "show", "HEAD:README.md").stdout
 
 
 @pytest.mark.parametrize("by_hand", [True, False])

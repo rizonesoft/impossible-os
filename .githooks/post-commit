@@ -562,9 +562,9 @@ if [ -n "$README_TARGET" ]; then
         if ! cp "$idx" "$lock"; then release_lock; return 1; fi
         cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
         local -a entries=(--add --cacheinfo "100644,$cb,COUNT.md")
-        local published=":/COUNT.md"
+        local published="COUNT.md"
         if [ "$cur_r" = "$BASE_README" ]; then         # else: a staged edit, which stays
-            entries+=(--cacheinfo "${BASE_README% *},$rb,README.md"); published=":/COUNT.md :/README.md"
+            entries+=(--cacheinfo "${BASE_README% *},$rb,README.md"); published="COUNT.md and README.md"
         fi
         if ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index "${entries[@]}"; then
             release_lock; return 1
@@ -577,10 +577,10 @@ if [ -n "$README_TARGET" ]; then
         fi
         if mv -f "$lock" "$idx"; then
             LOCK_OWNED=   # published: the path is no longer ours to remove
-            [ "$published" = ":/COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
+            [ "$published" = "COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
             trap - EXIT INT TERM
         else
-            echo "post-commit: HEAD amended but the index could not be published; run: git reset -q -- $published" >&2
+            echo "post-commit: HEAD amended but the index could not be published, so it still holds the old $published" >&2
             release_lock                               # HEAD did move, so this is not the refusal below
         fi
     }

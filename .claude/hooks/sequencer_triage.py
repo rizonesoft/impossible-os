@@ -294,7 +294,8 @@ def _scan_sections(text):
     return scan, out
 
 
-# section_stamps' results in a one-shot run of this script: the planner asks for the whole corpus a second time.
+# section_stamps' and file_lifecycle's results in a one-shot run of this script: the planner asks for the whole
+# corpus a second time, and --next asks for the chosen file's lifecycle after it.
 # None in every other process: one that lives longer would keep a park's verdict past an edit of answers.md.
 _STAMP_MEMO = None
 
@@ -315,12 +316,15 @@ def section_stamps(md_path):
     if not os.path.exists(md_path):
         return out
     if _STAMP_MEMO is not None:
-        st = os.stat(md_path)
-        key = _file_key(md_path, st)
-        if key not in _STAMP_MEMO:
-            _STAMP_MEMO[key] = _stamps_of(md_path)
-        return {n: set(kinds) for n, kinds in _STAMP_MEMO[key].items()}
+        return {n: set(kinds) for n, kinds in _memo(md_path)[0].items()}
     return _stamps_of(md_path)
+
+
+def _memo(md_path):
+    key = _file_key(md_path, os.stat(md_path))
+    if key not in _STAMP_MEMO:
+        _STAMP_MEMO[key] = _stamps_of(md_path), _lifecycle_of(md_path)
+    return _STAMP_MEMO[key]
 
 
 def _stamps_of(md_path):
@@ -366,10 +370,14 @@ def file_lifecycle(md_path, root=None, rel_path=None):
     re-auditing a mature file every sweep. Orthogonal to section DONE-ness:
     a file can be validated+gap-audited while sections are still in progress.
     """
-    out = {"validated": False, "gap_audited": False}
     if not os.path.exists(md_path):
-        return out
-    text, scan, sections = _read_scan(md_path)
+        return {"validated": False, "gap_audited": False}
+    return dict(_memo(md_path)[1]) if _STAMP_MEMO is not None else _lifecycle_of(md_path)
+
+
+def _lifecycle_of(md_path):
+    out = {"validated": False, "gap_audited": False}
+    _text, scan, sections = _read_scan(md_path)
     # lifecycle stamps live in the preamble only -- before the first section
     # heading of any kind (numbered or over-long), per the shared projection.
     bound = sections[0][1] if sections else len(scan.lines)
