@@ -9,7 +9,6 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py beat <lane> --pid P --task T   # write the lane's record (temp file plus rename)
     python3 scripts/lanes.py clear <lane>                   # remove it
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
-    python3 scripts/lanes.py owner <path>                   # the extra lane whose paths hold it, else main
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
     python3 scripts/lanes.py check-staged --replay          # a rebase's own commit of a pick
 
@@ -82,7 +81,7 @@ def load_map(root: Path) -> dict:
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'longest': the longest entry's length, 'bare': whether an entry is a name with no slash}.    Anything unexpected refuses."""
+    'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.    Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -121,7 +120,7 @@ def parse_map(text: str) -> dict:
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
     return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned),
             "longest": max((len(p) for p, _name in owned), default=0),
-            "bare": any("/" not in p for p, _name in owned)}
+            "bare": {name for p, name in owned if "/" not in p}}
 
 
 def _covers(entry: str, path: str) -> bool:
@@ -243,7 +242,8 @@ def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, 
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
     a file in a lane cannot be finished outside that lane. A TODO's path is a cross-reference, not an edit, and a
     one-word directory needs its slash (`user` alone is a word). `folder` is the text's own directory."""
-    for path in _paths_named(text, folder, lane_map["bare"]):
+    bare = any(lane_states.get(name) in (LIVE, DAMAGED) for name in lane_map["bare"])
+    for path in _paths_named(text, folder, bare):
         if "/" not in path:                            # most words: one lookup, no directory above it
             name = lane_map["index"].get(path, MAIN)
         elif path.startswith("todo/"):
@@ -514,9 +514,6 @@ def main(argv: list[str]) -> int:
             return 0
         if cmd == "live" and not rest:
             print(json.dumps(states(lane_map)))
-            return 0
-        if cmd == "owner" and len(rest) == 1:
-            print(owner(lane_map, rest[0]))
             return 0
     except (LaneError, ValueError) as exc:
         print(f"[lanes] {exc}", file=sys.stderr)

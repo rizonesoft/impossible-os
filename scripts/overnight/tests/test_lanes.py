@@ -1119,7 +1119,7 @@ def test_a_staged_submodule_is_judged_whatever_git_is_set_to_show(repo):
 
 def test_words_with_no_slash_are_read_only_for_a_map_that_reserves_one(repo):
     lane_map = lanes.load_map(repo["primary"])
-    assert not lane_map["bare"] and list(lanes._paths_named("the user edits user/x.c today", "", False)) == ["user/x.c"]
+    assert lane_map["bare"] == set() and list(lanes._paths_named("the user edits user/x.c today", "", False)) == ["user/x.c"]
     assert list(lanes._paths_named("a b/c", "", True)) == ["a", "b/c"]
     start = time.monotonic()
     assert list(lanes._paths_named("Ab9" * 400000, "", False)) == []
@@ -1183,3 +1183,15 @@ def test_the_outage_probe_gets_only_what_the_lane_lookup_left(triage, tmp_path, 
     monkeypatch.setattr(t, "owed_reviews", lambda r, deadline=None: seen.append(deadline) or (frozenset(), []))
     t.pick_next({}, root, ready=None)
     assert seen[0] is not None and seen == [seen[0]] * 2
+
+
+def test_a_lane_that_is_off_does_not_make_every_word_a_path(monkeypatch):
+    table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
+    lane_map = lanes.parse_map(f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+                               f'[lane.a]\n{table}worktree = "../a"\npaths = ["Makefile"]\n'
+                               f'[lane.b]\n{table}worktree = "../b"\npaths = ["docs/inv/"]\n')
+    asked = []
+    monkeypatch.setattr(lanes, "_paths_named", lambda text, folder, bare: asked.append(bare) or [])
+    for a in (lanes.OFF, lanes.LIVE, lanes.DAMAGED):
+        lanes.names_reserved_path(lane_map, {"a": a, "b": lanes.LIVE}, "the Makefile")
+    assert asked == [False, True, True]

@@ -85,6 +85,35 @@ if __name__ == "__main__":
     print("PASS: advance-work")
 
 
+def _packet(nxt):
+    import contextlib
+    import io
+    aw = _mod()
+    aw._json_out = lambda cmd, cwd, timeout=120: nxt if "--next" in cmd else None
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        aw.main(["--no-pack"])
+    return json.loads(out.getvalue())
+
+
+def test_a_section_a_lane_holds_is_not_counted_as_deferred():
+    secs = [{"n": 1, "class": "NEEDS_WORK"}, {"n": 2, "class": "BLOCKED"}, {"n": 3, "class": "BLOCKED"}]
+    held = [{"file": "todo/x.md", "section": 2, "lane": "userland"}, {"file": "todo/y.md", "section": 3, "lane": "a"},
+            {"lanes_error": "why"}]
+    nxt = {"status": "NEEDS_WORK", "file": "todo/x.md", "sections": secs, "lane_reserved": held}
+    got = _packet(nxt)["sections_summary"]
+    assert got["deferred"] == 1 and got["lane_held"] == {"2": "userland"}, got
+    got = _packet(dict(nxt, lane_reserved=[]))["sections_summary"]
+    assert got["deferred"] == 2 and "lane_held" not in got, got
+
+
+def test_a_queue_a_lane_blocks_says_which_lane():
+    held = [{"file": "todo/x.md", "section": 2, "lane": "userland"}]
+    got = _packet({"status": "BLOCKED", "file": None, "lane_reserved": held})
+    assert got["action"] == "blocked" and "userland" in got["note"] and "deferrals" not in got["note"], got
+    assert "recoverable deferrals" in _packet({"status": "BLOCKED", "file": None})["note"]
+
+
 def test_runnable_sections_go_in_plan_row_order_after_any_owing_only_review():
     m = _mod()
     secs = [{"n": 49, "class": "NEEDS_WORK", "plan_order": 7}, {"n": 52, "class": "NEEDS_WORK", "waiting": True},

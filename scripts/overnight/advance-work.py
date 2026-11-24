@@ -122,7 +122,10 @@ def main(argv) -> int:
         return 0
     if status == "BLOCKED":
         packet["action"] = "blocked"
-        packet["note"] = ("only recoverable deferrals remain; the launcher heal "
+        lanes = sorted({e["lane"] for e in nxt.get("lane_reserved") or [] if "lane" in e})
+        packet["note"] = (f"open sections wait on live lanes ({', '.join(lanes)}); nothing else can start"
+                          if lanes else
+                          "only recoverable deferrals remain; the launcher heal "
                           "probe / watchdog backoff governs -- no fresh section")
         packet["oracle"] = nxt
         print(json.dumps(packet, indent=1))
@@ -146,12 +149,16 @@ def main(argv) -> int:
         cls = _json_out(["python3", triage, "--classify", todo], root, timeout=180) or {}
         sections = cls.get("sections") or []
     nxt_sec = _next_section(sections)
+    # The oracle's class is BLOCKED for a section a live lane holds too; it names those apart.
+    held = {e.get("section"): e["lane"] for e in nxt.get("lane_reserved") or []
+            if "lane" in e and e.get("file") == todo}
     packet["sections_summary"] = {
         "total": len(sections),
         "done": sum(1 for s in sections if s.get("class") == "DONE"),
         # The oracle's class for a recoverable deferral is BLOCKED.
-        "deferred": sum(1 for s in sections if s.get("class") == "BLOCKED"),
+        "deferred": sum(1 for s in sections if s.get("class") == "BLOCKED" and s.get("n") not in held),
         "waiting": sum(1 for s in sections if s.get("class") == "NEEDS_WORK" and s.get("waiting")),
+        **({"lane_held": held} if held else {}),
     }
     if nxt_sec:
         packet["next_section"] = nxt_sec
