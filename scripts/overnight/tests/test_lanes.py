@@ -1208,28 +1208,36 @@ def test_the_live_command_reads_the_map_the_commit_check_judges_by(repo):
     assert json.loads(r.stdout)["userland"] == lanes.LIVE, r
 
 
-@pytest.mark.parametrize("checker", [True, False])
+@pytest.mark.parametrize("checker", ["there", "unstaged deletion", "committed deletion"])
 def test_the_post_commit_amend_of_a_reports_lane_is_refused(repo, checker):
     tree = repo["neon-b"]
     shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
-    if not checker:
-        (tree / "scripts" / "lanes.py").unlink()                      # an unstaged deletion is no permission
+    if checker == "committed deletion":
+        git(tree, "rm", "-q", "--", "scripts/lanes.py")
+        git(tree, "commit", "-qm", "no checker")                      # by plumbing or an override: no hooks here
+    elif checker == "unstaged deletion":
+        (tree / "scripts" / "lanes.py").unlink()
     before = git(tree, "rev-parse", "HEAD").stdout
     r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=os.environ.copy())
-    assert "HEAD not amended" in r.stderr and ("never commits" in r.stderr) == checker, r
+    assert "HEAD not amended" in r.stderr and ("never commits" in r.stderr) == (checker == "there"), r
     assert git(tree, "rev-parse", "HEAD").stdout == before
+    assert (tree / "COUNT.md").read_text() == "0\n"                   # nothing is written either
 
 
-@pytest.mark.parametrize("generated, dirty, amended", [(True, False, True), (True, True, True), (False, False, False),
-                                                       (False, True, False)])
-def test_the_post_commit_amend_is_judged_on_the_files_it_carries(repo, generated, dirty, amended):
+@pytest.mark.parametrize("dirty", [False, True])
+@pytest.mark.parametrize("generated", [True, False])
+def test_the_post_commit_amend_is_judged_on_the_files_it_carries(repo, generated, dirty):
     p, tree = repo["primary"], repo["userland"]
-    (p / "README.md").write_text("r\n")
+    badge = "<!-- COUNT-BADGE:START -->\nold\n<!-- COUNT-BADGE:END -->\n"
+    (p / "README.md").write_text(badge)
     toml = p / ".conclave" / "lanes.toml"
     names = '["COUNT.md", "README.md"]' if generated else '["COUNT.md"]'
     toml.write_text(re.sub(r"generated = \[[^]]*\]", f"generated = {names}", toml.read_text()))
     (p / "scripts" / "site").mkdir()
-    (p / "scripts" / "site" / "build.py").write_text("print('r')\n")  # both README modes: the region sync is a no-op
+    (p / "scripts" / "site" / "build.py").write_text(
+        "import subprocess, sys\nif '--emit-head' in sys.argv:\n"
+        "    sys.stdout.write(subprocess.run(['git', 'show', 'HEAD:README.md'], capture_output=True, text=True,"
+        " timeout=20).stdout)\n")
     git(p, "add", "--", "README.md", ".conclave", "scripts/site")
     git(p, "commit", "-qm", "map")
     git(tree, "checkout", "-q", "--detach", "main")
@@ -1239,12 +1247,14 @@ def test_the_post_commit_amend_is_judged_on_the_files_it_carries(repo, generated
         (tree / "README.md").write_text("mine\n")
     live("userland")
     stage(tree, "user/other.c")                                       # other staged work is not the amend's
-    before = git(tree, "rev-parse", "HEAD").stdout
     env = {**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "T",
            "GIT_COMMITTER_EMAIL": "t@example.com"}
     r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=env)
-    assert (git(tree, "rev-parse", "HEAD").stdout != before) == amended, r
-    assert ("README.md is outside lane userland's paths" in r.stderr) != amended, r
+    assert git(tree, "show", "HEAD:COUNT.md").stdout != "0\n", r      # COUNT.md is always the lane's to refresh
+    assert (git(tree, "show", "HEAD:README.md").stdout != badge) == generated, r
+    assert ("README.md left alone" in r.stderr) != generated, r
+    if dirty or not generated:
+        assert (tree / "README.md").read_text() == ("mine\n" if dirty else badge), r
 
 
 def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):

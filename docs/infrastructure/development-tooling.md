@@ -1104,7 +1104,7 @@ Fires only when a commit stages `.claude/hooks/**` or `.claude/settings.json`, t
 
 ### Post-commit COUNT.md refresh (always on)
 
-Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. The report tracks core code/tooling plus human-readable supporting text formats such as markdown, JSON, YAML, HTML, CSS, and config files, while leaving binary assets out of the line totals. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`. For a manual refresh without amending `HEAD`, run `COUNT_ONLY=1 bash .githooks/post-commit`. The lane check judges the files the amend carries: a tree that may not commit them (a reports-only lane) refreshes `COUNT.md` and amends nothing.
+Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. The report tracks core code/tooling plus human-readable supporting text formats such as markdown, JSON, YAML, HTML, CSS, and config files, while leaving binary assets out of the line totals. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`. For a manual refresh without amending `HEAD`, run `COUNT_ONLY=1 bash .githooks/post-commit`. The lane check judges the two files before anything is written: a tree that may not commit `COUNT.md` (a reports-only lane) amends nothing, and one that may not commit `README.md` leaves it alone.
 
 ### Pre-push build + test gate (opt-in)
 
