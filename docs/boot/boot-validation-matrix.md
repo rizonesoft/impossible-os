@@ -17,7 +17,7 @@ The automated suite is `boot_reliability.py`. It keeps a launcher per platform c
 
 The manual half is the [Bare-Metal Boot Lab](../hardware/boot-lab.md): five hardware classes mapped to the bare-metal platform classes, a per-machine inventory, and a run record in the `result.schema.json` shape.
 
-`scripts/test-smoke-matrix.sh` is related but separate. It is the boot smoke gate run for boot-path changes: four engine legs (KVM and TCG, one and two CPUs) plus fixture legs for the boot-entry store and the UKI-direct path, small-memory legs (512 MB on KVM and TCG, 96 MB on TCG), a control whose loader is built with a wrong direct map and must halt (`SMOKE_HHDM_WRONG=1`), and a two-boot pair on each engine: the 2-CPU leg ends with the ACPI power button and must power off (`SMOKE_SHUTDOWN=1`), then a second boot keeps its disk and variables and must read back its boot-trend record (`SMOKE_KEEP_DISK=1`, `SMOKE_TREND_BOOTS=N`); it does not produce matrix results.
+`scripts/test-smoke-matrix.sh` is related but separate. It is the boot smoke gate run for boot-path changes: four engine legs (KVM and TCG, one and two CPUs) plus fixture legs for the boot-entry store and the UKI-direct path, small-memory legs (512 MB on KVM and TCG, 96 MB on TCG), a control whose loader is built with a wrong direct map and must halt (`SMOKE_LOADER_FIXTURE=wrong-map`), a second that has to refuse a kernel buffer over the kernel, and a two-boot pair on each engine: the 2-CPU leg ends with the ACPI power button and must power off (`SMOKE_SHUTDOWN=1`), then a second boot keeps its disk and variables and must read back its boot-trend record (`SMOKE_KEEP_DISK=1`, `SMOKE_TREND_BOOTS=N`); it does not produce matrix results.
 
 ## What are its interfaces?
 

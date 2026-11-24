@@ -353,9 +353,12 @@ done
 # less its direct-map check halted a correct boot until 2026-11-24. 96 MB is the
 # smallest size the guides state: the loader has to read the kernel into a buffer
 # no larger than the file (a 16 MiB one cut the file off).
+# A leg that names an engine runs only when LEGS does.
 for leg in "kvm-512M|SMOKE_ENGINE=kvm SMOKE_MEM=512M" "tcg-512M|SMOKE_ENGINE=tcg SMOKE_MEM=512M" \
-           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M" "wrong|SMOKE_HHDM_WRONG=1"; do
+           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M" "wrong|SMOKE_LOADER_FIXTURE=wrong-map" \
+           "low-buf|SMOKE_LOADER_FIXTURE=low-buffer"; do
     name="${leg%%|*}"
+    case "$name" in kvm-*|tcg-*) case "$LEGS" in *"${name%%-*}:"*) ;; *) continue ;; esac ;; esac
     log="$LOG_DIR/map-$name.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-map-$name.XXXXXX")"
     t0=$(date +%s)

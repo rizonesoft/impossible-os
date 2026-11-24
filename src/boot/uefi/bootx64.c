@@ -10073,6 +10073,33 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 /* The largest kernel file accepted; anything above it is corruption. */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
 
+/* The start of the kernel file, read before its buffer is chosen. */
+#define KERNEL_HEAD_BYTES 4096
+static UINT64 s_kernel_head[KERNEL_HEAD_BYTES / sizeof(UINT64)];
+
+static int ranges_overlap(UINT64 a, UINT64 a_len, UINT64 b, UINT64 b_len)
+{
+    return a_len != 0 && b_len != 0 && a < b + b_len && b < a + a_len;
+}
+
+/* Whether [at, at + bytes) covers memory the kernel's segments are copied to.
+ * Headers outside the first page are not looked at: the destination policy
+ * refuses such a kernel later, when the buffer does overlap. */
+static int overlaps_kernel_segments(UINT64 at, UINT64 bytes)
+{
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)s_kernel_head;
+    if (eh->e_phentsize != sizeof(Elf64_Phdr) || eh->e_phoff > KERNEL_HEAD_BYTES ||
+        eh->e_phnum > (KERNEL_HEAD_BYTES - eh->e_phoff) / sizeof(Elf64_Phdr))
+        return 0;
+    for (UINT16 i = 0; i < eh->e_phnum; i++) {
+        Elf64_Phdr ph;
+        efi_memcpy(&ph, (const UINT8 *)s_kernel_head + eh->e_phoff + i * sizeof ph, sizeof ph);
+        if (ph.p_type == PT_LOAD && ranges_overlap(at, bytes, ph.p_paddr, ph.p_memsz))
+            return 1;
+    }
+    return 0;
+}
+
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
     boot_set_section(BOOT_SECTION_BL_KERNEL);
@@ -10447,11 +10474,23 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
         file_size = (UINTN)size;
     }
+    UINTN head_size = file_size < KERNEL_HEAD_BYTES ? file_size : KERNEL_HEAD_BYTES;
+    {
+        UINTN got = head_size;
+        efi_memset(s_kernel_head, 0, sizeof s_kernel_head);
+        status = kernel_file->Read(kernel_file, &got, s_kernel_head);
+        if (EFI_ERROR(status) || got != head_size) {
+            serial_early_print("[FAIL] Cannot read the kernel file's header\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            return EFI_ERROR(status) ? status : EFI_LOAD_ERROR;
+        }
+    }
     {
         UINTN pages = (file_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
         UINT64 bytes = (UINT64)pages * EFI_PAGE_SIZE;
-        /* A buffer on top of boot_info (the whole struct, ~22 KiB) or the
-         * framebuffer is refused, and held while the next one is asked for so
+        /* A buffer on top of boot_info (the whole struct, ~22 KiB), the
+         * framebuffer or the kernel's own segments is refused, and held while the next one is asked for so
          * that the firmware cannot hand out the same range again. */
         EFI_PHYSICAL_ADDRESS refused[4];
         UINTN nrefused = 0;
@@ -10460,15 +10499,21 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &at);
             if (EFI_ERROR(status))
                 break;
-            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
-            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
-            UINT64 fb_start = g_boot_info_ptr->fb.addr;
-            UINT64 fb_end   = fb_start + (UINT64)g_boot_info_ptr->fb.pitch *
-                                         g_boot_info_ptr->fb.height;
-            if ((at < bi_end && at + bytes > bi_start) ||
-                (fb_start != 0 && at < fb_end && at + bytes > fb_start)) {
-                serial_early_print("[BOOT] Kernel buffer overlaps boot_info or the "
-                                   "framebuffer -- trying another\n");
+            UINT64 where = at;
+#ifdef BL_TEST_LOW_KERNEL_BUFFER
+            /* CONTROL BUILD ONLY (SMOKE_LOADER_FIXTURE=low-buffer): judge the
+             * first buffer as one over the kernel, where a first-fit firmware
+             * puts it. */
+            if (nrefused == 0)
+                where = 0x100000;
+#endif
+            UINT64 fb_bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
+                (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
+            if (ranges_overlap(where, bytes, BOOT_INFO_PHYS_ADDR, sizeof(struct boot_info)) ||
+                ranges_overlap(where, bytes, g_boot_info_ptr->fb.addr, fb_bytes) ||
+                overlaps_kernel_segments(where, bytes)) {
+                serial_early_print("[BOOT] Kernel buffer overlaps boot_info, the "
+                                   "framebuffer or the kernel -- trying another\n");
                 refused[nrefused++] = at;
                 continue;
             }
@@ -10493,9 +10538,10 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
     }
 
     {
-        UINTN want = file_size;
-        status = kernel_file->Read(kernel_file, &file_size, file_buf);
-        if (EFI_ERROR(status) || file_size != want) {
+        UINTN rest = file_size - head_size, got = rest;
+        efi_memcpy(file_buf, s_kernel_head, head_size);
+        status = kernel_file->Read(kernel_file, &got, file_buf + head_size);
+        if (EFI_ERROR(status) || got != rest) {
             serial_early_print("[FAIL] Cannot read the whole kernel file\n");
             kernel_file->Close(kernel_file);
             root_dir->Close(root_dir);
@@ -13674,7 +13720,7 @@ static UINT64 bl_hhdm_probe_phys(void)
 }
 
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-/* CONTROL BUILD ONLY (EXTRA_CFLAGS; SMOKE_HHDM_WRONG in scripts/test-smoke.sh):
+/* CONTROL BUILD ONLY (EXTRA_CFLAGS; SMOKE_LOADER_FIXTURE=wrong-map in scripts/test-smoke.sh):
  * point the probe's direct-map leaf 2 MiB above it. That is the arena frame
  * 512 above the probe, RAM the loader owns and past every table a small
  * machine uses, and it holds the first value the check writes. */

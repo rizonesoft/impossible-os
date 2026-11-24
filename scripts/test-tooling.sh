@@ -5022,33 +5022,35 @@ if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >
     fi
 fi
 # The matrix's orchestration, run against stub build and smoke scripts that only
-# record their settings: the default run is 31 test-smoke.sh boots (the
+# record their settings: the default run is 32 test-smoke.sh boots (the
 # crashptr guard and runtime legs fail without booting, because the stub
 # writes no serial log for them to read an address from), and each engine's clean-
 # shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
 # The control removes the second boot and must fail the same assertion.
-_sm_orch() {  # $1 = matrix script to run; prints "<invocations> <pairs>"
+_sm_orch() {  # $1 = matrix script to run, $2 = legs (default all); prints "<invocations> <pairs> <KVM boots>"
     local d; d="$(mktemp -d "${TMPDIR:-/tmp}/tt-smoke-orch.XXXXXX")"
     mkdir -p "$d/scripts/lib"
     cp "$1" "$d/scripts/test-smoke-matrix.sh"
     cp "$REPO_ROOT/scripts/lib/boot-conf-lock.sh" "$d/scripts/lib/"
     printf '%s\n' 'mkdir -p build; echo "=== BUILD OK ===" > build/build.log; : > build/system-disk.img; echo "{}" > build/build-receipt.json' > "$d/scripts/build.sh"
-    printf '%s\n' 'echo "smp=${SMOKE_SMP:-} tcg=${SMOKE_FORCE_TCG:-} trend=${SMOKE_TREND_BOOTS:-} sd=${SMOKE_SHUTDOWN:-} keep=${SMOKE_KEEP_DISK:-}" >> "$ORCH_LOG"' > "$d/scripts/test-smoke.sh"
-    ORCH_LOG="$d/calls" TMPDIR="$d" timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
+    printf '%s\n' 'echo "smp=${SMOKE_SMP:-} tcg=${SMOKE_FORCE_TCG:-} trend=${SMOKE_TREND_BOOTS:-} sd=${SMOKE_SHUTDOWN:-} keep=${SMOKE_KEEP_DISK:-} engine=${SMOKE_ENGINE:-}" >> "$ORCH_LOG"' > "$d/scripts/test-smoke.sh"
+    ORCH_LOG="$d/calls" TMPDIR="$d" ${2:+env SMOKE_MATRIX_LEGS="$2"} timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
     local n pairs
     n=$(wc -l < "$d/calls" 2>/dev/null || echo 0)
-    pairs=$(awk '/smp=2 .*trend=1 sd=1 keep=$/ {want=1; next} want && /trend=2 .*keep=1$/ {p++} {want=0} END {print p+0}' "$d/calls" 2>/dev/null)
+    pairs=$(awk '/smp=2 .*trend=1 sd=1 keep= / {want=1; next} want && /trend=2 .*keep=1 / {p++} {want=0} END {print p+0}' "$d/calls" 2>/dev/null)
+    local kvm; kvm=$(grep -c 'engine=kvm$' "$d/calls" 2>/dev/null)
     rm -rf "$d"
-    echo "$n $pairs"
+    echo "$n $pairs ${kvm:-0}"
 }
 _sm_got=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh")
 _sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
 grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
 _sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
-if [ "$_sm_got" = "31 2" ] && [ "$_sm_ctl" != "31 2" ]; then
-    t_pass "smoke_matrix_orchestration  31 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
+_sm_tcg=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" tcg:2)
+if [ "$_sm_got" = "32 2 4" ] && [ "$_sm_ctl" != "32 2 4" ] && [ "${_sm_tcg##* }" = "0" ]; then
+    t_pass "smoke_matrix_orchestration  32 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
 else
-    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '31 2'), control '$_sm_ctl'"
+    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '32 2 4', and no KVM boot with tcg:2), control '$_sm_ctl', tcg:2 '$_sm_tcg'"
 fi
 # Make duplicate recipes (lint Check 38). The real Makefile parses with no
 # override warning, a dry `make all` prints none, and a fixture with one target
