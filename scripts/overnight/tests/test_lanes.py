@@ -1081,3 +1081,36 @@ def test_leading_dot_components_are_read_in_linear_time(repo):
     assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, "./" * 524288 + "../../user/x",
                                      "todo/00-x") == "userland"
     assert time.monotonic() - start < 2                               # 8.7 s when each one copied the rest
+
+
+@pytest.mark.parametrize("text, held", [
+    ("Edit the files in user/.", "userland"), ("Edit the files in user/...", "userland"), ("Edit user.", None),
+    ("Edit user/x.c.", "userland"), ("the parent, user/..", None), ("Edit ../../user/.", "userland")])
+def test_a_sentences_full_stop_keeps_a_directorys_slash(repo, text, held):
+    lane_map = lanes.load_map(repo["primary"])
+    assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, text, "todo/00-x") == held
+
+
+def test_a_relative_state_home_is_ignored_so_every_worktree_reads_the_same_records(repo, monkeypatch):
+    home = repo["tmp"] / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", ".state")
+    monkeypatch.chdir(repo["userland"])
+    assert lanes.state_dir() == home / ".local" / "state" / "impossible-os" / "lanes"
+    live("userland")
+    stage(repo["primary"], "user/a.c")
+    r = check(repo["primary"])
+    assert r.returncode == 1 and "user/a.c" in r.stderr, r
+
+
+def test_a_staged_submodule_is_judged_whatever_git_is_set_to_show(repo):
+    p = repo["primary"]
+    inner = p / "user" / "embedded"
+    inner.mkdir(parents=True)
+    git(inner, "init", "-q")
+    git(inner, "commit", "-q", "--allow-empty", "-m", "x")
+    git(p, "config", "diff.ignoreSubmodules", "all")
+    git(p, "add", "--", "user/embedded")
+    live("userland")
+    r = check(p)
+    assert r.returncode == 1 and "user/embedded" in r.stderr, r

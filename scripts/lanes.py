@@ -142,7 +142,9 @@ def owner(lane_map: dict, path: str) -> str:
 
 
 def state_dir() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    base = os.environ.get("XDG_STATE_HOME", "")
+    if not os.path.isabs(base):                    # the XDG rule: relative is ignored (it would differ per worktree)
+        base = os.path.join(os.path.expanduser("~"), ".local", "state")
     return Path(base) / "impossible-os" / "lanes"
 
 
@@ -217,12 +219,15 @@ def _paths_named(text: str, folder: str):
         word = m.group()
         if m.start() and text[m.start() - 1] == "/":   # the rest of an absolute path or a URL
             continue
+        dots = len(word) - len(word.rstrip("."))
+        if dots and dots != 2:                         # a full stop or an ellipsis; two are the parent directory
+            word = word[:-dots]
         if "/" not in word:
-            yield word.rstrip(".")
+            yield word
             continue
         word = word[re.match(r"(?:\./+)*", word).end():]
         path = posixpath.normpath(posixpath.join(folder, word) if word.startswith("../") else word)
-        yield path.rstrip(".") + ("/" if word.endswith("/") else "")
+        yield path + ("/" if word.endswith("/") else "")
 
 
 def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, folder: str = "") -> str | None:
@@ -230,9 +235,12 @@ def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, 
     a file in a lane cannot be finished outside that lane. A TODO's path is a cross-reference, not an edit, and a
     one-word directory needs its slash (`user` alone is a word). `folder` is the text's own directory."""
     for path in _paths_named(text, folder):
-        if path.startswith("todo/"):
+        if "/" not in path:                            # most words: one lookup, no directory above it
+            name = lane_map["index"].get(path, MAIN)
+        elif path.startswith("todo/"):
             continue
-        name = owner(lane_map, path)
+        else:
+            name = owner(lane_map, path)
         if name == MAIN and "/" in path:
             name = owner(lane_map, path + "/")         # `src/apps` names the directory `src/apps/`
         if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED):
@@ -332,7 +340,8 @@ def committer(lane_map: dict, toplevel: Path) -> str | None:
 
 def staged_paths(toplevel: Path) -> list[str]:
     """The paths the index changes against HEAD."""
-    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff")
+    out = _git(toplevel, "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff",
+               "--ignore-submodules=none")         # diff.ignoreSubmodules must not hide a staged path
     return [p for p in out.decode("utf-8", errors="surrogateescape").split("\0") if p]
 
 
