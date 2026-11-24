@@ -773,3 +773,120 @@ def test_a_conflicted_root_pick_with_a_live_lanes_file_is_refused(repo):
     assert r.returncode != 0 and "user/new.c belongs to lane userland" in r.stderr, r
 
 
+def test_main_never_merges_while_only_a_lane_without_paths_is_live(repo):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "side")
+    stage(p, "docs/side.md", "side\n")
+    git(p, "commit", "-qm", "side")
+    git(p, "checkout", "-q", "main")
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("neon-b")
+    r = git(p, "merge", "--no-ff", "--no-edit", "side", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and "no merge commits while a lane is live" in r.stderr, r
+
+
+def test_a_landed_merge_can_be_amended_and_the_amend_is_judged_on_what_it_changes(repo):
+    p = repo["primary"]
+    git(p, "checkout", "-q", "-b", "side")
+    stage(p, "docs/side.md", "side\n")
+    git(p, "commit", "-qm", "side")
+    git(p, "checkout", "-q", "main")
+    git(p, "merge", "--no-ff", "-m", "landed", "side")                # no lane is live
+    git(p, "config", "core.hooksPath", str(repo["hooks"]))
+    live("userland")
+    r = git(p, "commit", "--amend", "-m", "reworded", check=False, env=os.environ.copy())
+    assert r.returncode == 0 and head(p) == "reworded", r
+    stage(p, "user/a.c", "slipped in\n")
+    r = git(p, "commit", "--amend", "--no-edit", check=False, env=os.environ.copy())
+    assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
+
+
+@pytest.mark.parametrize("edit", [("\"src/shell/\", ", ""), ('worktree = "../wt-userland"', 'worktree = "../elsewhere"'),
+                                  ("stale_secs = 180", "stale_secs = 9")])
+def test_the_map_does_not_change_while_a_lane_is_live(repo, edit):
+    p = repo["primary"]
+    toml = p / ".conclave" / "lanes.toml"
+    good = toml.read_text()
+    assert good.count(edit[0]) == 1, edit
+    toml.write_text(good.replace(*edit))
+    git(p, "add", "--", ".conclave/lanes.toml")
+    live("userland")
+    r = check(p)
+    assert r.returncode == 1 and "does not change while a lane is live" in r.stderr, r
+    toml.write_text(good + "# a comment\n")
+    git(p, "add", "--", ".conclave/lanes.toml")
+    assert check(p).returncode == 0                                   # the map itself is the same
+    toml.write_text(good.replace(*edit))
+    git(p, "add", "--", ".conclave/lanes.toml")
+    lanes.clear("userland")
+    assert check(p).returncode == 0
+
+
+def test_a_stated_reason_overrides_a_commit_that_cannot_be_judged(repo, monkeypatch):
+    git(repo["primary"], "rm", "-q", "--", ".conclave/lanes.toml")
+    assert check(repo["primary"]).returncode == 2
+    monkeypatch.setenv("SKIP_LANE_CHECK", "1")
+    assert check(repo["primary"]).returncode == 2                     # no reason given
+    monkeypatch.setenv("SKIP_LANE_CHECK_REASON", "reverting the lane map")
+    r = check(repo["primary"])
+    assert r.returncode == 0 and "reverting the lane map" in r.stderr and "deletes" in r.stderr, r
+
+
+@pytest.mark.parametrize("rec", [{"heartbeat": float("nan"), "task": "t"}, {"heartbeat": float("inf"), "task": "t"},
+                                 {"heartbeat": "now"}, {"heartbeat": "now", "task": 3}])
+def test_a_record_beat_would_not_write_is_damaged(repo, rec):
+    rec = {"lane": "userland", "pid": os.getpid(), **rec}
+    if rec["heartbeat"] == "now":
+        rec["heartbeat"] = time.time()
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    (d / "userland.json").write_text(json.dumps(rec))
+    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    stage(repo["userland"], "user/a.c")
+    r = check(repo["userland"])
+    assert r.returncode == 1 and "its record cannot be read" in r.stderr, r
+
+
+@pytest.mark.parametrize("text,held", [
+    ("[linker script](../../user/user.ld)", "userland"), ("edit `../../src/apps/x.c`", "userland"),
+    ("everything in src/apps.", "userland"), ("`src/apps`", "userland"), ("user/x.c", "userland"),
+    ("src/apps-old/x", None), ("src/apps.md", None), ("the user starts it", None), ("vendor/user/x", None),
+    ("[other](../user/x)", None), ("[apps](../11-apps/TODO-01-app.md)", None),
+    ("docs/inv/one.md", "neon-a"), ("docs/inv/one.md.bak", None), ("(docs/inv/one.md).", "neon-a")])
+def test_the_paths_a_section_names(text, held):
+    lane_map = {"lanes": {"main": {"paths": []}, "userland": {"paths": ["user/", "src/apps/", "todo/11-apps/"]},
+                          "neon-a": {"paths": ["docs/inv/one.md"]}}}
+    states = {"userland": lanes.LIVE, "neon-a": lanes.LIVE}
+    assert lanes.names_reserved_path(lane_map, states, text, "todo/00-x") == held
+
+
+def test_triage_holds_everything_when_the_records_cannot_be_listed(triage, monkeypatch):
+    t, root, _ = triage
+    live("userland")
+    d = lanes.state_dir()
+    d.chmod(0o311)                                                    # searchable, not listable
+    try:
+        ctx, err = t._lane_context(root)
+    finally:
+        d.chmod(0o755)
+    assert ctx[1] is None and "cannot be listed" in err, (ctx, err)
+
+
+def test_a_large_map_is_validated_within_the_commit_checks_budget():
+    files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
+    table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
+    text = (f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+            f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
+    start = time.monotonic()
+    lanes.parse_map(text)
+    assert time.monotonic() - start < 1                               # 2.1 s when each pair was compared
+    for extra in ('"user/"', '"user/f7.c"'):
+        with pytest.raises(lanes.LaneError, match="overlaps"):
+            lanes.parse_map(text + f'[lane.b]\n{table}worktree = "../b"\npaths = [{extra}]\n')
+
+
+def test_one_scanned_todo_is_kept_at_a_time(triage):
+    t, root, entries = triage
+    for f in entries:
+        t._read_scan(os.path.join(root, f))
+    assert len(t._SCAN_MEMO) == 1

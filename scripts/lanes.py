@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import errno
 import json
+import math
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -89,7 +91,7 @@ def parse_map(text: str) -> dict:
     _need(_strings(generated), "generated must be a list of relative paths")
     lanes = data.get("lane")
     _need(isinstance(lanes, dict) and MAIN in lanes, "needs a [lane.main] table")
-    owned: dict[str, str] = {}
+    owned: list[tuple[str, str]] = []
     trees: dict[str, str] = {}
     for name, lane in lanes.items():
         _need(re.fullmatch(r"[a-z][a-z0-9-]*", name) is not None, f"lane name {name!r} is not lower-case-with-dashes")
@@ -108,10 +110,11 @@ def parse_map(text: str) -> dict:
         tree = os.path.normpath(lane["worktree"])
         _need(tree not in trees, f"[lane.{name}] worktree {lane['worktree']!r} is also lane {trees.get(tree)}'s")
         trees[tree] = name
-        for p in lane["paths"]:
-            for q, other in owned.items():
-                _need(not (_covers(p, q) or _covers(q, p)), f"{name} path {p!r} overlaps {other} path {q!r}")
-            owned[p] = name
+        owned += [(p, name) for p in lane["paths"]]
+    # Sorted, whatever a directory prefix holds comes straight after it, so neighbours are the only overlaps.
+    owned.sort()
+    for (p, name), (q, other) in zip(owned, owned[1:]):
+        _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
     return {"stale_secs": stale, "generated": list(generated), "lanes": lanes}
 
 
@@ -159,9 +162,9 @@ def lane_state(lane_map: dict, name: str, now: float | None = None) -> str:
     try:
         rec = json.loads(raw)
         pid, beat = rec["pid"], rec["heartbeat"]
-        ok = (isinstance(rec, dict) and rec.get("lane") == name and _pid_ok(pid)
-              and isinstance(beat, (int, float)) and not isinstance(beat, bool))
-    except (ValueError, KeyError, TypeError):
+        ok = (isinstance(rec, dict) and rec.get("lane") == name and _pid_ok(pid) and isinstance(rec["task"], str)
+              and isinstance(beat, (int, float)) and not isinstance(beat, bool) and math.isfinite(beat))
+    except (ValueError, KeyError, TypeError, OverflowError):
         ok = False
     if not ok:
         return DAMAGED
@@ -182,25 +185,60 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
     return name if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED) else None
 
 
-def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str) -> str | None:
+def _named(entry: str) -> str:
+    """A pattern for a path in `entry` named in prose: whole components only (`src/apps` names `src/apps/`,
+    `x.md.bak` does not name `x.md`). A one-word directory needs its slash: `user` alone is a word."""
+    if not entry.endswith("/"):
+        return r"(?<![\w./-])" + re.escape(entry) + r"(?![\w/-]|\.\w)"
+    if "/" not in entry[:-1]:
+        return r"(?<![\w./-])" + re.escape(entry)
+    return r"(?<![\w./-])" + re.escape(entry[:-1]) + r"(?![\w-]|\.\w)"
+
+
+def _relative_targets(text: str, folder: str) -> list[str]:
+    """The repository paths `text` names relative to its own folder (`](../../user/x)`, `../../user/x`). A link
+    into todo/ is a cross-reference, not a file the section edits."""
+    out = []
+    for m in re.finditer(r"(?<![\w./-])(?:\.\./)+[\w./-]*", text):
+        path = posixpath.normpath(posixpath.join(folder, m.group()))
+        if not path.startswith(("..", "todo/")):
+            out.append(path + "/" if m.group().endswith("/") else path)
+    return out
+
+
+def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, folder: str = "") -> str | None:
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
-    a file in a lane cannot be finished outside that lane."""
+    a file in a lane cannot be finished outside that lane. `folder` is the text's own directory."""
     # A repository-relative `./user/x` names the same file as `user/x`; a nested `vendor/user/x` does not.
     if "./" in text:
-        text = re.sub(r"(?<![\w./-])\./", " ", text)
+        text = "\n".join([re.sub(r"(?<![\w./-])\./", " ", text), *_relative_targets(text, folder)])
     for name, lane in lane_map["lanes"].items():
         if name == MAIN or lane_states.get(name) not in (LIVE, DAMAGED):
             continue
         for p in lane["paths"]:
-            if p in text and re.search(r"(?<![\w./-])" + re.escape(p), text):
+            if (p.rstrip("/") if "/" in p[:-1] else p) in text and re.search(_named(p), text):
                 return name
     return None
+
+
+def any_live(lane_states: dict[str, str]) -> bool:
+    """Whether any extra lane is live, or has a record that cannot be read."""
+    return any(s in (LIVE, DAMAGED) for s in lane_states.values())
 
 
 def any_reserving(lane_map: dict, lane_states: dict[str, str]) -> bool:
     """Whether any extra lane with paths holds them now: when none does, nothing can be reserved."""
     return any(name != MAIN and lane["paths"] and lane_states.get(name) in (LIVE, DAMAGED)
                for name, lane in lane_map["lanes"].items())
+
+
+def has_records() -> bool:
+    """Whether any lane has a record. A records directory that cannot be listed raises (OSError): it never reads
+    as no record."""
+    try:
+        return any(n.endswith(".json") and not n.startswith(".") for n in os.listdir(state_dir()))
+    except FileNotFoundError:
+        return False
 
 
 def beat(name: str, pid: int, task: str) -> Path:
@@ -337,12 +375,13 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
     """Judge the staged commit on every path the index changes against HEAD. Two things are not told apart from
     that: a rebase's own commit of a clean pick (`replay`) is judged only on who may commit at all, and a merge is
     refused while any lane holds paths, because the index cannot show a lane's incoming change it lost."""
+    me = None
     try:
         toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
         # The map the commit leaves behind is validated on every path, a merge or rebase included, and as
         # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
         # later commit is judged by it.
-        proposed = None
+        proposed, reasons, refused = None, [], 1
         changed = staged_paths(toplevel)
         if MAP in changed:
             staged = _blob(toplevel, f":{MAP}")
@@ -363,11 +402,13 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         lane_states = states(lane_map)
         paths = [] if replay and replaying(toplevel) else changed
         reasons = judge(lane_map, me, paths, lane_states)
-        if not reasons and any_reserving(lane_map, lane_states) and merging(toplevel):
-            reasons = ["no merge commits while a lane is live; rebase instead"]
+        if not reasons and any_live(lane_states):
+            if merging(toplevel):
+                reasons = ["no merge commits while a lane is live; rebase instead"]
+            elif proposed is not None and proposed != lane_map:
+                reasons = [f"{MAP} does not change while a lane is live: its worktree still commits by the old one"]
     except LaneError as exc:
-        print(f"[lane-check] BLOCK -- the lane check cannot judge this commit: {exc}", file=sys.stderr)
-        return 2
+        reasons, refused = [f"the lane check cannot judge this commit: {exc}"], 2
     if not reasons:
         return 0
     if os.environ.get("SKIP_LANE_CHECK") == "1":
@@ -384,7 +425,7 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         print(f"[lane-check]   (+{len(reasons) - 20} more)", file=sys.stderr)
     print("[lane-check]   Leave a live lane's files to it. Override (stated reason required): "
           "SKIP_LANE_CHECK=1 SKIP_LANE_CHECK_REASON=\"...\"", file=sys.stderr)
-    return 1
+    return refused
 
 
 def main(argv: list[str]) -> int:

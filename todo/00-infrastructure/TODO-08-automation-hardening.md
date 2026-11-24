@@ -1675,12 +1675,12 @@ A lane reserves its directories only while it is live; when it is off, main take
 - [x] `.githooks/pre-commit` refuses a commit touching another live lane's directories; generated files are exempt
   - An extra lane commits only inside its own paths and only while its own record is fresh; a damaged record reserves its paths against main and grants the lane nothing
   - A reports-only lane is refused before the empty-index exit, generated files included; a revert or cherry-pick is checked in `prepare-commit-msg`, which runs where pre-commit does not
-  - Every commit is judged on what the index changes against HEAD; no merge commits while a lane is live, and a rebase's clean pick is judged only on who commits
+  - Every commit is judged on what the index changes against HEAD; no merge commits and no map change while a lane is live, and a rebase's clean pick is judged only on who commits
 - [x] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
   - A section is reserved when its TODO file is the lane's or its text names a path in the lane; when only reserved work remains, `--next` reports BLOCKED naming the lane, never DONE
 - [x] Commit: `"lanes: the lane map and the commit check"`
 
-**Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file always passes.
+**Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file passes for any lane that may commit.
 
 The commit gate's judgment of a lane's ship (its Astra receipt instead of Claude's session state) is [§71](#71-a-lanes-ship-is-judged-by-its-astra-receipt), split from this section on 2026-11-23 because it is a separate mechanism in the gate. -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §71 (item: "The section-commit gate judges a lane's section ship by its Astra pass receipts")
 

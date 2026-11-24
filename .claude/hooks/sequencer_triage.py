@@ -240,19 +240,21 @@ def load_cache(cache_path, root):
         return data
 
 
-_SCAN_MEMO = {}
+_SCAN_MEMO = {}                                        # one entry: holding the corpus cost 167 MB a pick
 
 
 def _read_scan(md_path):
-    """(text, scan, sections) of one TODO, read and scanned once per process for each version of the file
-    (path, mtime, size): classification and the lane reservations read the same files on every pick."""
+    """(text, scan, sections) of one TODO. The last file read is kept (path, mtime, size): classification and
+    the lane reservations read a file one straight after the other."""
     st = os.stat(md_path)
     key = (os.path.abspath(md_path), st.st_mtime_ns, st.st_size)
     hit = _SCAN_MEMO.get(key)
     if hit is None:
         with open(md_path, encoding="utf-8") as fh:
             text = fh.read()
-        hit = _SCAN_MEMO[key] = (text, *_scan_sections(text))
+        hit = (text, *_scan_sections(text))
+        _SCAN_MEMO.clear()
+        _SCAN_MEMO[key] = hit
     return hit
 
 
@@ -639,9 +641,12 @@ def _lane_context(root):
         spec.loader.exec_module(mod)
         # No record at all: no lane is live or damaged, and the map need not be read (this runs inside the
         # Stop hook's five-second budget, so the common case spends no git call).
-        recs = mod.state_dir()
-        if not recs.is_dir() or not any(recs.glob("*.json")):
-            return None, ""
+        try:
+            if not mod.has_records():
+                return None, ""
+        except OSError as exc:
+            why = f"the lane records cannot be listed: {type(exc).__name__}"
+            return (mod, None, why), why
         # The map the commit check judges by, read within a budget the Stop hook can afford. A lane has a
         # record, so ownership that cannot be read must never read as nothing held: every open section is held
         # until it can (lane_reservations), and the packet says why.
@@ -682,7 +687,8 @@ def lane_reservations(entry, per, root, ctx):
             texts = {}
     out, held = [], []
     for n, c in per:
-        lane = whole or (mod.names_reserved_path(lane_map, lane_states, texts.get(n, "")) if c == NEEDS_WORK else None)
+        lane = whole or (mod.names_reserved_path(lane_map, lane_states, texts.get(n, ""),
+                                                 os.path.dirname(file_path)) if c == NEEDS_WORK else None)
         if c == NEEDS_WORK and lane:
             out.append((n, BLOCKED))
             held.append({"file": file_path, "section": n, "lane": lane})
