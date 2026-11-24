@@ -10974,6 +10974,20 @@ kernel_loaded:
         *entry_point = km_addr;
     }
 
+    /* Nothing reads the file again, and the page tables need a low run of their
+     * own: on a fragmented machine this one may be the only one left. */
+    if (load_buf_pages != 0) {
+        if (EFI_ERROR(gBS->FreePages(load_buf_addr, load_buf_pages)))
+            serial_early_print("[WARN] Kernel buffer: not freed\n");
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+        /* The control: the span must be free to take again. */
+        if (!EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                          load_buf_pages, &load_buf_addr))) {
+            serial_early_print("[BOOT] Kernel buffer: free again\n");
+            (void)gBS->FreePages(load_buf_addr, load_buf_pages);
+        }
+#endif
+    }
     return EFI_SUCCESS;
 
 load_error:

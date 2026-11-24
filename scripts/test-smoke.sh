@@ -436,6 +436,9 @@ hhdm_wrong_check_log() {
     if ! grep -qF -- "KiB allocated, clear of $2 kernel segments" "$1"; then
         HW_FAIL_MSG="the kernel buffer was not kept clear of its $2 segments"; return 1
     fi
+    if ! grep -qF -- 'Kernel buffer: free again' "$1"; then
+        HW_FAIL_MSG="the kernel buffer was still held after the kernel was loaded"; return 1
+    fi
     # The control loader takes the top page of every span it chose first.
     if ! grep -qF -- 'Kernel buffer: the memory map moved' "$1"; then
         HW_FAIL_MSG="no span was lost, so reading the memory map again is untested"; return 1
@@ -1255,6 +1258,8 @@ HW_FAIL_LINE='[FAIL] HHDM: identity vs direct-map readback mismatch -- halting'
 if [ "$HHDM_WRONG" = "1" ]; then
     PASS_PATTERNS_ALL=("$HW_FAIL_LINE")
     FAIL_PATTERNS=("[BOOT] HHDM: direct map verified" "[PHASE0]" "BOOT FATAL" "KERNEL PANIC")
+else
+    FAIL_PATTERNS+=("$HW_FAIL_LINE")
 fi
 # A valid store boots a tracked entry, and the kernel marks it good only once
 # the boot is accepted, a moment after the prompt. Wait for that mark rather
