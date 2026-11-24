@@ -92,6 +92,20 @@ static void pmm_mark_region_free(uintptr_t base, uint64_t length)
     }
 }
 
+int pmm_map_ordered(const struct boot_mmap_entry *map, uint32_t count)
+{
+    uint64_t end = 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (map[i].length == 0)
+            continue;
+        if (map[i].base_addr < end)
+            return 0;
+        end = map[i].base_addr + map[i].length;
+    }
+    return 1;
+}
+
 uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
                           uint64_t bytes, const struct boot_span *keep, uint32_t nkeep)
 {
@@ -145,8 +159,8 @@ boot_result_t pmm_init(void)
      * memory clobber after Phase 0, or a future producer bug could
      * deliver mmap_count > BOOT_MMAP_MAX_ENTRIES (out-of-bounds
      * read) or a base+length pair that wraps past UINT64_MAX (bogus
-     * highest_addr / free-region selection). Validate count cap
-     * and each entry's base+length non-wrap before consuming. */
+     * highest_addr / free-region selection), or a free range laid over
+     * a reserved one. Validate all three before consuming. */
     if (g_boot_info.mmap_count > BOOT_MMAP_MAX_ENTRIES) {
         klog(LOG_ERROR, "mm",
              "PMM: mmap_count %u exceeds BOOT_MMAP_MAX_ENTRIES %u "
@@ -170,6 +184,8 @@ boot_result_t pmm_init(void)
             boot_halt("pmm_init: mmap entry wraps");
         }
     }
+    if (!pmm_map_ordered((const struct boot_mmap_entry *)g_boot_info.mmap, g_boot_info.mmap_count))
+        boot_halt("pmm_init: mmap entries overlap");
 
     /* Step 1: Find the highest usable physical address.
      *

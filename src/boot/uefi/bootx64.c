@@ -10084,6 +10084,9 @@ static UINT64 kernel_image_end(void)
 /* The most program headers accepted. */
 #define ELF_MAX_PHDRS 64
 static Elf64_Phdr s_kernel_phdrs[ELF_MAX_PHDRS];
+/* setup_page_tables() maps this much by identity; the kernel is entered through it. */
+#define BL_IDENTITY_GIB 4u
+
 static struct boot_span s_kernel_segments[ELF_MAX_PHDRS];   /* those that were validated */
 
 /* The memory the kernel file's segments are copied to, at most ELF_MAX_PHDRS
@@ -10944,6 +10947,13 @@ kernel_loaded:
         if (phdr[i].p_memsz > 0) {
             UINT64 seg_lo = phdr[i].p_paddr;
             UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
+            if (seg_hi > (UINT64)BL_IDENTITY_GIB << 30) {
+                serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+                serial_early_print_uint(i);
+                serial_early_print(" is above the identity map\n");
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
+            }
             s_kernel_segments[segments].base = seg_lo;
             s_kernel_segments[segments].bytes = phdr[i].p_memsz;
             if (segments != 0 && !boot_span_follows(s_kernel_segments[segments - 1],
@@ -14047,11 +14057,11 @@ static void setup_page_tables(void)
     pml4[0] = PT_PDPT | 0x07;  /* Present + Writable + User */
 
     /* PDPT[0..3] → PD[0..3] */
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < BL_IDENTITY_GIB; i++)
         pdpt[i] = (PT_PD0 + i * 4096) | 0x07;
 
     /* Fill PDs with 2 MiB identity-mapped pages */
-    for (pdi = 0; pdi < 4; pdi++) {
+    for (pdi = 0; pdi < BL_IDENTITY_GIB; pdi++) {
         pd = (UINT64 *)(UINTN)(PT_PD0 + pdi * 4096);
         for (i = 0; i < 512; i++) {
             UINT64 addr = ((UINT64)pdi * 512 + i) * 0x200000;

@@ -30,6 +30,21 @@ static void test_pmm_alloc_free(void)
 }
 
 /* The bitmap goes in memory nobody owns, whatever follows the kernel image. */
+static void test_pmm_map_ordered(void)
+{
+    const struct boot_mmap_entry free = { .base_addr = 0x100000, .length = 0x100000 };
+    const struct boot_mmap_entry next = { .base_addr = 0x200000, .length = 0x1000 };
+    const struct boot_mmap_entry over = { .base_addr = 0x1FF000, .length = 0x1000 };
+    const struct boot_mmap_entry none = { .base_addr = 0x1000, .length = 0 };
+    const struct boot_mmap_entry good[] = { free, none, next }, after[] = { free, over },
+                                 before[] = { over, free };
+
+    TEST_ASSERT_EQ(pmm_map_ordered(good, 3), 1, "in order");
+    TEST_ASSERT_EQ(pmm_map_ordered(after, 2), 0, "overlaid");
+    TEST_ASSERT_EQ(pmm_map_ordered(before, 2), 0, "descending");
+    TEST_ASSERT_EQ(pmm_map_ordered(good, 0), 1, "empty");
+}
+
 static void test_pmm_bitmap_place(void)
 {
     const uint64_t kib = 1024, mib = 1024 * kib;
@@ -418,6 +433,7 @@ void test_register_pmm(void)
                             test_pmm_fault_inject_next, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject countdown(3)",
                             test_pmm_fault_inject_countdown, TEST_CAT_MM);
+    test_suite_register_cat("PMM: memory map order", test_pmm_map_ordered, TEST_CAT_MM);
     test_suite_register_cat("PMM: bitmap placement", test_pmm_bitmap_place, TEST_CAT_MM);
     test_suite_register_cat("PMM: low mappings", test_pmm_low_mappings, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject IRQL gate (IRQ context bypass)",
