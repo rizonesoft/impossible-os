@@ -68,6 +68,7 @@ def _strings(value) -> bool:
 
 
 MAP = ".conclave/lanes.toml"
+MAP_MAX, ENTRY_MAX = 128 * 1024, 240                 # characters: what keeps reading and judging by it quick
 AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 
@@ -75,6 +76,7 @@ def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
     'entries': every paths entry, sorted, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
+    _need(len(text) <= MAP_MAX, f"the map is longer than {MAP_MAX} characters")
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -108,7 +110,9 @@ def parse_map(text: str) -> dict:
         tree = os.path.normpath(lane["worktree"])
         _need(tree not in trees, f"[lane.{name}] worktree {lane['worktree']!r} is also lane {trees.get(tree)}'s")
         trees[tree] = name
-        owned += [(p, name) for p in lane["paths"]]
+        for p in lane["paths"]:
+            _need(len(p) <= ENTRY_MAX, f"[lane.{name}] path {p[:40]!r}... is longer than {ENTRY_MAX} characters")
+            owned.append((p, name))
     # Sorted, whatever a directory prefix holds comes straight after it, so neighbours are the only overlaps.
     owned.sort()
     for (p, name), (q, other) in zip(owned, owned[1:]):
@@ -400,6 +404,8 @@ def judge(lane_map: dict, me: str | None, paths, lane_states: dict[str, str], re
             why = "its record cannot be read" if mine == DAMAGED else "it has no fresh record"
             return [f"lane {me} is not live ({why}); start it with its launcher, or clear the record with "
                     f"`python3 scripts/lanes.py clear {me}`"]
+    elif not any_reserving(lane_map, lane_states):
+        return []
     reasons = []
     generated = set(lane_map["generated"])
     for p in paths:

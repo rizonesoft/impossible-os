@@ -2021,15 +2021,27 @@ def test_main_may_remove_what_is_in_a_live_lanes_way(repo):
     assert "user/x.c belongs to lane userland" in check(p).stderr
 
 
-def test_a_deep_map_is_read_and_judged_in_time():
-    deep = "/".join(["d"] * 600)
-    files = ", ".join(f'"{deep}/f{i}.c"' for i in range(4000))
-    text = (REPO / ".conclave" / "lanes.toml").read_text() + (
-        f'[lane.deep]\nengine = "e"\nmodel = "m"\nworktree = "../deep"\npaths = [{files}]\noutput = "commits"\nlimits = {{}}\n')
+def test_the_map_and_its_entries_are_bounded():
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    lane = '[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{}"]\noutput = "commits"\nlimits = {{}}\n'
+    lanes.parse_map(text + lane.format("d" * lanes.ENTRY_MAX))
+    with pytest.raises(lanes.LaneError, match="is longer than"):
+        lanes.parse_map(text + lane.format("d" * (lanes.ENTRY_MAX + 1)))
+    lanes.parse_map(text.ljust(lanes.MAP_MAX, "\n"))
+    with pytest.raises(lanes.LaneError, match="the map is longer than"):
+        lanes.parse_map(text.ljust(lanes.MAP_MAX + 1, "\n"))
+
+
+@pytest.mark.parametrize("state, secs", [("off", 0.1), ("live", 3)])
+def test_many_deep_staged_paths_are_judged_in_time(state, secs):
+    deep = "/".join(["d"] * 119)
+    m = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text()
+                        + f'[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{deep}/f"]\n'
+                        + 'output = "commits"\nlimits = {}\n')
+    paths = ["/".join(["d"] * 600) + f"/n{i}.c" for i in range(20000)]
     start = time.monotonic()
-    m = lanes.parse_map(text)
-    assert lanes.judge(m, None, [deep], {"deep": lanes.LIVE}) and lanes.judge(m, None, ["d/d"], {"deep": lanes.LIVE})
-    assert time.monotonic() - start < 2                               # indexing every directory above took 6 s
+    assert lanes.judge(m, None, paths, {"x": state}) == []
+    assert time.monotonic() - start < secs                            # 6.6 s with every lane off, by a 1,200-character entry
 
 
 def test_a_symlink_in_a_reserved_directorys_place_is_refused(repo):
