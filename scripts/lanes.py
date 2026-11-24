@@ -259,15 +259,22 @@ def _paths_named(text: str, folder: str, bare: bool):
             yield path + ("/" if word.endswith("/") else "")
 
 
+def _is_prose(lane_map: dict, path: str) -> bool:
+    """Whether a run under a one-word directory is two words (`user/kernel`, `user/pass/host`): a path there ends in a
+    slash or a file's name, which has a full stop, an underscore, a digit or a capital."""
+    last = path.rpartition("/")[2]
+    return path[:path.index("/") + 1] in lane_map["index"] and bool(last) and not re.search(r"[._A-Z0-9]", last)
+
+
 def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, folder: str = "") -> str | None:
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
     a file in a lane cannot be finished outside that lane. A TODO's path is a cross-reference, not an edit, and a
-    one-word directory needs its slash (`user` alone is a word). `folder` is the text's own directory."""
+    one-word directory needs its slash (`user` alone is a word) and a file under it (_is_prose). `folder` is the text's own directory."""
     bare = any(lane_states.get(name) in (LIVE, DAMAGED) for name in lane_map["bare"])
     for path in _paths_named(text, folder, bare):
         if "/" not in path:                            # most words: one lookup, no directory above it
             name = lane_map["index"].get(path, MAIN)
-        elif path.startswith("todo/"):
+        elif path.startswith("todo/") or _is_prose(lane_map, path):
             continue
         else:
             name = owner(lane_map, path)

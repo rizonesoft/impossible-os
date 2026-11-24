@@ -866,14 +866,14 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
 @pytest.mark.parametrize("text,held", [
     ("[linker script](../../user/user.ld)", "userland"), ("edit `../../src/apps/x.c`", "userland"),
     ("everything in src/apps.", "userland"), ("`src/apps`", "userland"), ("user/x.c", "userland"),
-    ("src/apps-old/x", None), ("src/apps.md", None), ("the user starts it", None), ("vendor/user/x", None),
-    ("[other](../user/x)", None), ("[apps](../11-apps/TODO-01-app.md)", None),
+    ("src/apps-old/x", None), ("src/apps.md", None), ("the user starts it", None), ("vendor/user/x.c", None),
+    ("[other](../user/x.c)", None), ("[apps](../11-apps/TODO-01-app.md)", None),
     ("docs/inv/one.md", "neon-a"), ("docs/inv/one.md.bak", None), ("(docs/inv/one.md).", "neon-a"), ("docs/inv/one.md/x", None),
     ("[linker](./../../user/user.ld)", "userland"), ("./user/x.c", "userland"), ("docs/../user/x.c", "userland"),
-    ("[todo/11-apps/TODO-01-app.md](../11-apps/TODO-01-app.md)", None), ("/user/x", None),
-    ("https://example.com/user/x", None), ("user/*.c", "userland"), ("edit the Makefile.", "neon-a"),
+    ("[todo/11-apps/TODO-01-app.md](../11-apps/TODO-01-app.md)", None), ("/user/x.c", None),
+    ("https://example.com/user/x.c", None), ("user/*.c", "userland"), ("edit the Makefile.", "neon-a"),
     ("Makefile.old", None), ("Edit _user/include/test.h_.", "userland"), ("__src/apps__", "userland"),
-    ("_edit user/x.c._", "userland"), ("_the Makefile_", "neon-a"), ("a_user/x", None), ("_user_", None)])
+    ("_edit user/x.c._", "userland"), ("_the Makefile_", "neon-a"), ("a_user/x.c", None), ("_user_", None)])
 def test_the_paths_a_section_names(text, held):
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
     lane_map = lanes.parse_map(
@@ -1080,7 +1080,7 @@ def test_a_heartbeat_the_reader_would_refuse_is_not_written(repo, monkeypatch):
 def test_leading_dot_components_are_read_in_linear_time(repo):
     lane_map = lanes.committed_map(repo["primary"])
     start = time.monotonic()
-    assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, "./" * 524288 + "../../user/x",
+    assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, "./" * 524288 + "../../user/x.c",
                                      "todo/00-x") == "userland"
     assert time.monotonic() - start < 2                               # 8.7 s when each one copied the rest
 
@@ -1985,6 +1985,16 @@ def test_a_file_where_a_lane_needs_a_directory_is_refused(path):
     assert lanes.judge(real, None, [path], live) and lanes.judge(real, "main", [path], live)
     assert lanes.judge(real, None, [path], off) == []
     assert lanes.judge(real, None, ["src/kernel/x.c", "src/app", "docs/design/shell.md", "todo/08-graphics-ui/x.md"], live) == []
+
+
+@pytest.mark.parametrize("text, held", [
+    ("fold the child's user/kernel time + IO counters", False), ("CI-specific user/disk settings", False),
+    ("`ftp://user/pass/host/path`", False), ("shared user/host/port/-i parsing", False), ("separate user/kernel.", False),
+    ("edit user/hello.c", True), ("in user/lib/", True), ("`user/lib/Makefile`", True), ("`user/test/test_*.c`", True),
+    ("`user/` programs", True), ("see src/apps", True), ("src/apps/paint", True)])
+def test_words_joined_by_a_slash_are_not_a_path(text, held):
+    real = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text())
+    assert (lanes.names_reserved_path(real, {"userland": lanes.LIVE}, text) == "userland") == held
 
 
 @pytest.mark.parametrize("a, b", [('"src/new/"', '"src/new"'), ('"src/new/deep/t.c"', '"src/new"'),
