@@ -10070,6 +10070,9 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 /* ============================================================================
  * Step 2: Load kernel ELF from FAT32
  * ============================================================================ */
+/* The largest kernel file accepted; anything above it is corruption. */
+#define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
+
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
     boot_set_section(BOOT_SECTION_BL_KERNEL);
@@ -10419,95 +10422,86 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
     }
 
-    /* Read entire file into memory.
-     * Graduated allocation fallback: try 32 -> 16 -> 8 MiB.  When a
-     * tier succeeds AT AN OVERLAPPING ADDRESS (boot_info region or
-     * framebuffer), FreePages it and continue to the next smaller
-     * tier rather than aborting -- a 32 MiB request might land on
-     * top of boot_info, but a 16 MiB or 8 MiB request might be
-     * placed elsewhere.  Only when every tier either fails to
-     * allocate or is overlap-rejected do we return EFI_LOAD_ERROR. */
-    file_size = 0;
+    /* Read the whole file into a buffer of exactly its size. A fixed size is
+     * wrong both ways: too small cuts the file off and reads as a corrupt or
+     * mismatched kernel, too large refuses a machine the kernel fits on. */
     {
-        static const UINTN alloc_sizes[] = {
-            32 * 1024 * 1024,
-            16 * 1024 * 1024,
-             8 * 1024 * 1024,
-        };
-        EFI_PHYSICAL_ADDRESS buf_addr = 0;
-        UINTN alloc_size = 0;
-        int ai;
-        for (ai = 0; ai < 3; ai++) {
-            UINTN pages = alloc_sizes[ai] / EFI_PAGE_SIZE;
-            EFI_PHYSICAL_ADDRESS try_addr = 0;
-            status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
-                                         pages, &try_addr);
-            if (EFI_ERROR(status))
-                continue;
-
-            /* Overlap rejection: boot_info region.  Protected
-             * region is the FULL struct boot_info at
-             * BOOT_INFO_PHYS_ADDR (~22 KiB; capped at 65535 by the
-             * static assert), not just the first 4 KiB. */
-            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
-            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
-            if ((UINT64)try_addr < bi_end &&
-                (UINT64)try_addr + (UINT64)alloc_sizes[ai] > bi_start) {
-                serial_early_print("[BOOT] Kernel buffer ");
-                serial_early_print_uint((UINT32)(alloc_sizes[ai] / (1024 * 1024)));
-                serial_early_print(" MiB overlaps boot_info -- "
-                                   "trying smaller tier\n");
-                gBS->FreePages(try_addr, pages);
-                continue;
-            }
-
-            /* Overlap rejection: framebuffer region. */
-            if (g_boot_info_ptr->fb.addr != 0) {
-                UINT64 fb_end = g_boot_info_ptr->fb.addr +
-                    (UINT64)g_boot_info_ptr->fb.pitch *
-                    g_boot_info_ptr->fb.height;
-                if (try_addr < fb_end &&
-                    try_addr + alloc_sizes[ai] > g_boot_info_ptr->fb.addr) {
-                    serial_early_print("[BOOT] Kernel buffer ");
-                    serial_early_print_uint((UINT32)(alloc_sizes[ai] / (1024 * 1024)));
-                    serial_early_print(" MiB overlaps framebuffer -- "
-                                       "trying smaller tier\n");
-                    gBS->FreePages(try_addr, pages);
-                    continue;
-                }
-            }
-
-            /* This tier succeeded AND is non-overlapping.  Commit. */
-            buf_addr   = try_addr;
-            alloc_size = alloc_sizes[ai];
-            serial_early_print("[BOOT] Kernel buffer: ");
-            serial_early_print_uint((UINT32)(alloc_size / (1024 * 1024)));
-            serial_early_print(" MiB allocated\n");
-            break;
+        EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+        UINT64 info[128];                        /* header plus any FAT long name */
+        UINTN info_size = sizeof info;
+        status = kernel_file->GetInfo(kernel_file, &file_info_guid,
+                                      &info_size, info);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FAIL] Cannot read the kernel file's size\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            return status;
         }
-        if (alloc_size == 0) {
-            serial_early_print("[FAIL] Cannot allocate non-overlapping "
-                               "kernel buffer (tried 32/16/8 MiB)\n");
+        UINT64 size = ((EFI_FILE_INFO *)info)->FileSize;
+        if (size < sizeof(Elf64_Ehdr) || size > ELF_MAX_KERNEL_SIZE) {
+            serial_early_print("[FAIL] Kernel ELF corrupt: file is empty, shorter "
+                               "than its header or larger than 32 MiB\n");
             kernel_file->Close(kernel_file);
             root_dir->Close(root_dir);
             return EFI_LOAD_ERROR;
         }
-        file_buf = (UINT8 *)(UINTN)buf_addr;
-        file_size = alloc_size;
-        /* Record ownership for the load_error cleanup label.  The UKI
-         * fast path leaves these zero so the cleanup is a no-op when
-         * the kernel buffer came from LoadedImage memory. */
-        load_buf_addr  = buf_addr;
-        load_buf_pages = alloc_size / EFI_PAGE_SIZE;
+        file_size = (UINTN)size;
+    }
+    {
+        UINTN pages = (file_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
+        UINT64 bytes = (UINT64)pages * EFI_PAGE_SIZE;
+        /* A buffer on top of boot_info (the whole struct, ~22 KiB) or the
+         * framebuffer is refused, and held while the next one is asked for so
+         * that the firmware cannot hand out the same range again. */
+        EFI_PHYSICAL_ADDRESS refused[4];
+        UINTN nrefused = 0;
+        while (load_buf_pages == 0 && nrefused < 4) {
+            EFI_PHYSICAL_ADDRESS at = 0;
+            status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &at);
+            if (EFI_ERROR(status))
+                break;
+            UINT64 bi_start = (UINT64)BOOT_INFO_PHYS_ADDR;
+            UINT64 bi_end   = bi_start + (UINT64)sizeof(struct boot_info);
+            UINT64 fb_start = g_boot_info_ptr->fb.addr;
+            UINT64 fb_end   = fb_start + (UINT64)g_boot_info_ptr->fb.pitch *
+                                         g_boot_info_ptr->fb.height;
+            if ((at < bi_end && at + bytes > bi_start) ||
+                (fb_start != 0 && at < fb_end && at + bytes > fb_start)) {
+                serial_early_print("[BOOT] Kernel buffer overlaps boot_info or the "
+                                   "framebuffer -- trying another\n");
+                refused[nrefused++] = at;
+                continue;
+            }
+            /* Ownership for the load_error cleanup label. */
+            load_buf_addr  = at;
+            load_buf_pages = pages;
+        }
+        while (nrefused > 0)
+            gBS->FreePages(refused[--nrefused], pages);
+        if (load_buf_pages == 0) {
+            serial_early_print("[FAIL] Cannot allocate a kernel buffer of ");
+            serial_early_print_uint((UINT32)(bytes / 1024));
+            serial_early_print(" KiB\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            return EFI_LOAD_ERROR;
+        }
+        serial_early_print("[BOOT] Kernel buffer: ");
+        serial_early_print_uint((UINT32)(bytes / 1024));
+        serial_early_print(" KiB allocated\n");
+        file_buf = (UINT8 *)(UINTN)load_buf_addr;
     }
 
-    status = kernel_file->Read(kernel_file, &file_size, file_buf);
-    if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] Cannot read kernel file\r\n");
-        kernel_file->Close(kernel_file);
-        root_dir->Close(root_dir);
-        load_err_status = status;
-        goto load_error;
+    {
+        UINTN want = file_size;
+        status = kernel_file->Read(kernel_file, &file_size, file_buf);
+        if (EFI_ERROR(status) || file_size != want) {
+            serial_early_print("[FAIL] Cannot read the whole kernel file\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            load_err_status = EFI_ERROR(status) ? status : EFI_LOAD_ERROR;
+            goto load_error;
+        }
     }
 
     kernel_file->Close(kernel_file);
@@ -10554,7 +10548,6 @@ kernel_loaded:
     }
 
     /* Cap total kernel size at 32 MiB */
-#define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
     if (file_size > ELF_MAX_KERNEL_SIZE) {
         serial_early_print("[FAIL] Kernel ELF corrupt: file exceeds 32 MiB limit\n");
         load_err_status = EFI_LOAD_ERROR;
@@ -13167,6 +13160,9 @@ static void copy_config_tables(void)
 #define BL_MM_PML4_PHYS_LIMIT  MM_PML4_PHYS_LIMIT
 #define BL_HHDM_PML4_SLOT      MM_HHDM_PML4_SLOT
 #define BL_HHDM_PML4_SLOT_LAST MM_HHDM_PML4_SLOT_LAST
+/* What the direct-map check writes to its probe frame, one after the other. */
+#define BL_HHDM_PROBE_A 0x48484D4450524F42ULL
+#define BL_HHDM_PROBE_B (~BL_HHDM_PROBE_A)
 
 /* pmm_init() clamps its bitmap coverage at 4 GiB (src/kernel/mm/pmm.c
  * highest_addr cap). This is a DISTINCT constant from MM_PML4_PHYS_LIMIT (the
@@ -13391,7 +13387,8 @@ static UINT64 bl_hhdm_arena_alloc(void)
  * usable map, not exactly the counted one:
  *   PDPT frames <= occupied 512 GiB slots
  *   PD   frames <= occupied 1 GiB regions
- *   PT   frames <= 2 partial edge buckets per interval + envelope + slack. */
+ *   PT   frames <= 2 partial edge buckets per interval + envelope + slack.
+ * Plus the probe frame (bl_hhdm_probe_phys). */
 static UINT64 bl_hhdm_worstcase_pages(EFI_MEMORY_DESCRIPTOR *raw,
                                       UINTN raw_size, UINTN raw_dsize)
 {
@@ -13428,7 +13425,7 @@ static UINT64 bl_hhdm_worstcase_pages(EFI_MEMORY_DESCRIPTOR *raw,
      * the retained-PT + arena splices); bound PT by that maximum so a refreshed
      * fragmented fill can never exceed the reserved arena. */
     pt = 2ULL * ((UINT64)BOOT_MMAP_MAX_ENTRIES + 2) + env_buckets + 8;
-    return pdpt + pd + pt + 16;                  /* +16 splice/rounding slack */
+    return 1 + pdpt + pd + pt + 16;              /* the probe frame; +16 splice/rounding slack */
 }
 
 /* PRE-EBS (boot services still available): size + AllocatePages the HHDM
@@ -13668,6 +13665,55 @@ static void bl_hhdm_install_leaves(void)
     }
 }
 
+/* The frame the direct-map check reads: the arena's first, taken before any
+ * table so that it never is one. The CPU sets the Accessed bit in every table
+ * entry it walks, so a word of a table can change between two reads of it. */
+static UINT64 bl_hhdm_probe_phys(void)
+{
+    return g_hhdm_arena_base;
+}
+
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+/* CONTROL BUILD ONLY (EXTRA_CFLAGS; SMOKE_HHDM_WRONG in scripts/test-smoke.sh):
+ * point the probe's direct-map leaf 2 MiB above it. That is the arena frame
+ * 512 above the probe, RAM the loader owns and past every table a small
+ * machine uses, and it holds the first value the check writes. */
+static void bl_hhdm_break_probe_alias(void)
+{
+    UINT64 phys = bl_hhdm_probe_phys();
+    UINT64 *t = (UINT64 *)(UINTN)PT_PML4;
+    t = (UINT64 *)(UINTN)(t[BL_HHDM_PML4_SLOT + (phys >> 39)] & BL_PADDR_MASK);
+    t = (UINT64 *)(UINTN)(t[(phys >> 30) & 0x1ffULL] & BL_PADDR_MASK);
+    if (g_hhdm_arena_pages <= 512 || s_hhdm_arena_next > 512) {
+        boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM control has no spare frame",
+                   "the arena frame 512 above the probe is missing or in use.");
+    }
+    if (t[(phys >> 21) & 0x1ffULL] & BL_PTE_PS) {
+        t[(phys >> 21) & 0x1ffULL] += BL_PAGE_2M;
+    } else {
+        t = (UINT64 *)(UINTN)(t[(phys >> 21) & 0x1ffULL] & BL_PADDR_MASK);
+        t[(phys >> 12) & 0x1ffULL] += BL_PAGE_2M;
+    }
+    *(volatile UINT64 *)(UINTN)(phys + BL_PAGE_2M) = BL_HHDM_PROBE_A;
+    serial_early_print("[BOOT] HHDM: CONTROL BUILD, the probe alias is wrong on purpose\n");
+}
+#endif
+
+/* Whether the direct map resolves the probe frame: each of two values written
+ * through the identity map must be what its alias then reads. One value is not
+ * enough, since a wrong frame may already hold it. */
+static int bl_hhdm_probe_follows(void)
+{
+    UINT64 phys = bl_hhdm_probe_phys();
+    volatile UINT64 *id = (volatile UINT64 *)(UINTN)phys;
+    volatile UINT64 *hh = (volatile UINT64 *)(UINTN)(BL_MM_HHDM_BASE + phys);
+    *id = BL_HHDM_PROBE_A;
+    if (*hh != BL_HHDM_PROBE_A)
+        return 0;
+    *id = BL_HHDM_PROBE_B;
+    return *hh == BL_HHDM_PROBE_B;
+}
+
 /* ============================================================================
  * Kernel boot stack (TODO-10 sec32)
  *
@@ -13838,11 +13884,15 @@ static void setup_page_tables(void)
     post_code16(POST16_BL_HHDM_INSTALL);
     if (g_hhdm_arena_pages) {
         s_hhdm_arena_next = 0;
+        (void)bl_hhdm_arena_alloc();             /* the probe frame, ahead of every table */
         if (bl_hhdm_collect_usable(1) != 0) {
             boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM interval overflow (install)",
                        "too many usable-RAM intervals to install the direct map.");
         }
         bl_hhdm_install_leaves();
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+        bl_hhdm_break_probe_alias();
+#endif
     }
     post_code16(POST16_BL_HHDM_OK);
     serial_early_print("[BOOT] HHDM: direct map installed\n");
@@ -13870,19 +13920,16 @@ static void jump_to_kernel(UINT64 entry_point)
     /* Higher-half direct map verify (section 2): now that CR3 carries the HHDM
      * (PML4 slots 273-400), prove it RESOLVES to the same physical bytes as the
      * identity map before handoff -- section 9 will route every kernel
-     * page-table dereference through it. Read-only (mutates nothing): compare
-     * the arena's first word read via the identity map (slot 0) against the
-     * same frame read through its HHDM alias. The arena is < 4 GiB
-     * (identity-mapped) and HHDM-mapped by construction, and its first page
-     * holds a live PDPT (non-zero). The HHDM leaf is NX, so a successful read
-     * also proves EFER.NXE latched. A misinstalled map either mismatches (halt
-     * below) or #PFs with no IDT -> reset -> the smoke test's missing C:\>
-     * prompt catches it. */
+     * page-table dereference through it. The frame it writes and reads is the
+     * arena's probe, which is never a page table: comparing a table's own word
+     * halted every machine whose arena lay in the first GiB, because the alias
+     * walk set the Accessed bit in that word. The arena is < 4 GiB
+     * (identity-mapped) and HHDM-mapped by construction. The HHDM leaf is NX, so
+     * a successful read also proves EFER.NXE latched. A misinstalled map either
+     * fails the check (halt below) or #PFs with no IDT -> reset -> the smoke
+     * test's missing C:\> prompt catches it. */
     if (g_hhdm_arena_pages) {
-        volatile UINT64 *id = (volatile UINT64 *)(UINTN)g_hhdm_arena_base;
-        volatile UINT64 *hh =
-            (volatile UINT64 *)(UINTN)(BL_MM_HHDM_BASE + g_hhdm_arena_base);
-        if (*id != *hh) {
+        if (!bl_hhdm_probe_follows()) {
             /* Deliberately NOT boot_fatal here: this runs under the freshly
              * loaded PT_PML4, which maps only the low 4 GiB identity + the HHDM
              * (RAM). boot_fatal dereferences gST and calls RuntimeServices

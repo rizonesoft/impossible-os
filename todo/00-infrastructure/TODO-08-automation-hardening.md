@@ -2015,20 +2015,25 @@ Split from [§49](#49-the-lane-map-and-the-commit-check) on 2026-11-23. -> XREF:
 ## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
 
 > **Spawned-by:** root (found 2026-11-23 while reproducing GitHub issue 6; filed here by operator direction)
-> **User impact:** `main` does not boot on a machine or VM with 1 GiB of RAM or less, and the QEMU guide tells people to use 512 MB.
+> **User impact:** `main` does not boot on a machine or VM with 1 GiB of RAM or less.
 
 The direct map is correct; the loader's check of it is not. `jump_to_kernel()` (`src/boot/uefi/bootx64.c:13893`) reads the arena's first word through the identity map, then through its HHDM alias, and halts when they differ. That word is the live PDPT's entry 0. When the arena lies in the first GiB, the HHDM read walks through that same entry, and the CPU sets its Accessed bit between the two reads. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "`bl_hhdm_install_leaves()`")
 
 Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with `HHDM: identity vs direct-map readback mismatch` (512 MB and 1 GiB on KVM and TCG); 1100 MB and above boot. In gdb at 1 GiB on TCG, the identity read was `0x3d02a003` and the HHDM read `0x3d02a023`, a difference of `0x20`, bit 5 (Accessed). Stepping past the compare, the same boot completed. The smoke scripts boot with `-m 2G`, which is why nothing caught it.
 
-- [ ] `jump_to_kernel()` compares a word the HHDM walk does not modify
+- [x] `jump_to_kernel()` compares a word the HHDM walk does not modify
   - A frame that is mapped by the HHDM and is not a page table on the walked path. Masking the Accessed bit out of the compare is not the fix.
-- [ ] A wrong map still halts: a control that points the HHDM alias at another frame fails the check
-- [ ] The smoke matrix boots a 512 MB leg on KVM and on TCG; both fail on the 2026-11-23 loader
-- [ ] `docs/getting-started/qemu.md` and `virtualbox.md` state the smallest memory size a boot was measured at (both say 256 MB today, unmeasured)
+- [x] A wrong map still halts: a control that points the HHDM alias at another frame fails the check
+- [x] The smoke matrix boots a 512 MB leg on KVM and on TCG; both fail on the 2026-11-23 loader
+- [x] `docs/getting-started/qemu.md` and `virtualbox.md` state the smallest memory size a boot was measured at
+- [x] The loader reads the kernel into a buffer of the file's own size (at 96 MB a 16 MiB buffer cut the file off, reported as an ABI mismatch)
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
+
+> **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | boot-path only: the check runs before the kernel, so it has no in-kernel test surface.
+
+> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB).
 
 ## 73. The line tally counts the commit
 

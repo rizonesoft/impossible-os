@@ -128,7 +128,7 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
   - Left open 2026-11-07: no blocker. The stamp's XREF names this item itself, so nothing would ever clear it.
 - [x] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
 
-→ XREF: `00-infrastructure/TODO-08-automation-hardening.md` §72 (item: "`jump_to_kernel()` compares a word the HHDM walk does not modify") -- this section's readback check halts a machine with 1 GiB of RAM or less.
+→ XREF: `00-infrastructure/TODO-08-automation-hardening.md` §72 (item: "`jump_to_kernel()` compares a word the HHDM walk does not modify") -- this section's readback check halted a machine with 1 GiB of RAM or less until 2026-11-24.
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in unused PML4 slots, so behavior is unchanged and the section is independently bootable. The readback proof runs in the BOOTLOADER (`jump_to_kernel`, after CR3 loads the HHDM): a frame read through its HHDM alias must equal the identity read (aliasing) and the walk of an NX leaf proves EFER.NXE landed -- an in-kernel test is BSS-blocked until §7 (same ceiling as `test_highhalf.c`). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
 

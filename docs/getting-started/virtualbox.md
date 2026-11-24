@@ -43,7 +43,7 @@ VBoxManage convertfromraw system-disk.img system-disk.vdi --format VDI
 ### Via GUI
 
 1. **New** → Name: `Impossible OS`, Type: `Other`, Version: `Other/Unknown (64-bit)`
-2. **Memory:** 2048 MB (current builds halt at 1 GiB or less)
+2. **Memory:** 2048 MB
 3. **Hard Disk:** "Use an existing virtual hard disk file" → select `system-disk.vdi`
 4. **Settings → System:**
    - ✅ **Enable EFI** (required -- Impossible OS does not boot in legacy BIOS)
@@ -92,7 +92,7 @@ VBoxManage startvm "Impossible OS"
 | Setting | Value | Why |
 |---------|-------|-----|
 | Firmware | **EFI** | UEFI required -- legacy BIOS will NOT boot |
-| RAM | 2048 MB | Current builds halt at 1 GiB or less ([open bug](../../todo/00-infrastructure/TODO-08-automation-hardening.md#72-the-direct-map-check-passes-on-machines-with-1-gib-or-less)) |
+| RAM | 2048 MB | Not measured in VirtualBox below 2048 MB. In QEMU the smallest size a boot was measured at is 96 MB (2026-11-24); builds from before that date halt at 1 GiB or less |
 | Processors | 1 | Required by the March 2026 demo; later builds run with more |
 | VRAM | 64 MB | Recommended for 1280×720 framebuffer |
 | Storage | AHCI/SATA | Impossible OS uses AHCI DMA drivers |

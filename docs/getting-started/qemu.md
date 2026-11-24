@@ -77,7 +77,7 @@ Older guides use `-bios /usr/share/OVMF/OVMF_CODE.fd`. Current Ubuntu releases n
 
 | Setting | Value | Why |
 |---------|-------|-----|
-| RAM | `-m 2G` | Current builds halt at 1 GiB or less ([open bug](../../todo/00-infrastructure/TODO-08-automation-hardening.md#72-the-direct-map-check-passes-on-machines-with-1-gib-or-less)) |
+| RAM | `-m 2G` | The smallest size a boot was measured at is `-m 96M` (KVM and TCG, 2026-11-24). Builds from before that date halt at 1 GiB or less |
 | CPUs | `-smp 2` | Use `-smp 1` for the March 2026 demo |
 | Storage | AHCI (`-device ahci`) | Impossible OS uses AHCI DMA -- no IDE/PIO |
 | Firmware | OVMF CODE + VARS (`-drive if=pflash`) | UEFI required -- legacy BIOS will NOT boot |
@@ -128,7 +128,7 @@ qemu-system-x86_64 \
 | "Could not open" the firmware file | The path is wrong for your distro; see [Common OVMF Paths](#common-ovmf-paths) |
 | Black screen | Verify both OVMF files exist and that the VARS copy is writable |
 | Boot stops at "Timer test (1s sleep)" | On the March 2026 demo: use 1 CPU (`-smp 1`). On a later build: attach `serial.log` to an issue |
-| "HHDM: identity vs direct-map readback mismatch" | The VM has 1 GiB of RAM or less. Use `-m 2G` |
+| "HHDM: identity vs direct-map readback mismatch" | The build is from before 2026-11-24 and the VM has 1 GiB of RAM or less. Use `-m 2G` or a newer build |
 | No disk detected | Must use `-device ahci` + `-device ide-hd`. Legacy `-hda` won't work |
 | Mouse stuck in corner | Add `-device virtio-tablet-pci` for absolute positioning |
 | Kernel panic on boot | Check `serial.log` for the full stack trace |

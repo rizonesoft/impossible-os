@@ -132,9 +132,9 @@ for leg in $LEGS; do
     # it records its boot-trend entry and ends with the power button (S5).
     trend=""; sd=0; [ "$cpus" = "2" ] && { trend=1; sd=1; }
     if [ "$engine" = "tcg" ]; then
-        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
+        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_ENGINE=tcg SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     else
-        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
+        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_ENGINE="$engine" SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     fi
     rc=$?
     # Publish at the END of the run, not here: a LATER leg's build wipes
@@ -168,6 +168,7 @@ for leg in $LEGS; do
         name="$engine-2"; blog="$LOG_DIR/boots-$name.log"
         bcap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-boots-$name.XXXXXX")"
         settings="SMOKE_TREND_BOOTS=2 SMOKE_KEEP_DISK=1 SMOKE_SMP=2"
+        settings="$settings SMOKE_ENGINE=$engine"
         [ "$engine" = "tcg" ] && settings="$settings SMOKE_FORCE_TCG=1"
         t0=$(date +%s)
         # shellcheck disable=SC2086  # word-split on purpose: one assignment per word
@@ -343,6 +344,33 @@ for mode in race ap split; do
         FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS crash:double-$mode"
         printf "  ${RED}FAIL${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "dbl-$mode" "$dur" "$log"
         reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
+        [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+done
+
+# A small machine on each engine, and a wrong direct map. Every other leg boots
+# 2 GiB, where the loader's page tables lie above the first GiB; with 1 GiB or
+# less its direct-map check halted a correct boot until 2026-11-24. 96 MB is the
+# smallest size the guides state: the loader has to read the kernel into a buffer
+# no larger than the file (a 16 MiB one cut the file off).
+for leg in "kvm-512M|SMOKE_ENGINE=kvm SMOKE_MEM=512M" "tcg-512M|SMOKE_ENGINE=tcg SMOKE_MEM=512M" \
+           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M" "wrong|SMOKE_HHDM_WRONG=1"; do
+    name="${leg%%|*}"
+    log="$LOG_DIR/map-$name.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-map-$name.XXXXXX")"
+    t0=$(date +%s)
+    # shellcheck disable=SC2086  # word-split on purpose: one assignment per word
+    env ${leg#*|} bash scripts/test-smoke.sh > "$cap" 2>&1
+    rc=$?
+    CAPTURES="$CAPTURES $cap:$log"
+    dur=$(( $(date +%s) - t0 ))
+    if [ "$rc" = "0" ]; then
+        PASS=$((PASS + 1))
+        printf "  ${GREEN}PASS${NC}  map      %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+    else
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS map:$name"
+        printf "  ${RED}FAIL${NC}  map      %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+        reason=$(grep -a 'SMOKE TEST FAILED\|readback mismatch' "$cap" 2>/dev/null | head -1)
         [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
     fi
 done
