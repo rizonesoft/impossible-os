@@ -861,17 +861,16 @@ static void test_bm_kstack_refuses_each_malformed_shape(void)
     /* Refusal direction control: the LOW_MEM rule's first legal base is
      * exactly 1 MiB. That is a statement about this rule only -- 1 MiB is
      * where the kernel image itself is loaded (src/boot/linker.ld), so a run
-     * based there is refused by boot_stack_init's image-envelope rule below,
+     * based there is refused by boot_stack_init's image rule below,
      * which is a different check with its own error code. Keeping the two
      * assertions apart is deliberate: a single "is 0x100000 legal" question
      * has two different right answers depending on which rule is asking. */
     TEST_ASSERT(boot_stack_validate(0x100000ull, BM_KS_SIZE, BM_KS_GUARD,
                                     &si, &err) == 1,
                 "a run based at exactly 1 MiB is not low memory");
-    /* Consumer-side disjointness against the kernel image and the PMM bitmap
-     * extent, which the PURE validator cannot know because it holds no linker
-     * symbols. boot_stack_init applies it in Phase 0 over the envelope below,
-     * and pmm_init re-asks it over the VALIDATED run (the reserved-table
+    /* Consumer-side disjointness against the kernel image, which the PURE
+     * validator cannot know because it holds no linker symbols. boot_stack_init
+     * applies it in Phase 0, and pmm_init re-asks it over the VALIDATED run (the reserved-table
      * payload predicate skips every kind but PAYLOAD, so nothing else
      * compares the run against them). */
     TEST_ASSERT(boot_stack_validate(BM_KS_BASE, BM_KS_SIZE, BM_KS_GUARD,
@@ -1139,79 +1138,24 @@ static void test_bm_kstack_scan_first_poison_is_the_mirror_scan(void)
                    "a non-qword length reports nothing found");
 }
 
-static void test_bm_kstack_image_envelope_covers_image_and_bitmap(void)
-{
-    /* The envelope boot_stack_init refuses a run inside. It mirrors the
-     * loader's bl_kstack_placement_ok kguard_hi arithmetic exactly, so this
-     * test is what keeps the two halves of one rule from drifting apart:
-     * image end rounded UP to a page, plus the bitmap for the whole capped
-     * physical range (one bit per 4 KiB frame == cap / 32768 bytes), plus one
-     * page of linker padding. */
-    const uint64_t cap = PMM_PHYS_ADDR_CAP;
-    const uint64_t bitmap_bytes = cap / 32768u;
-
-    TEST_ASSERT_EQ(boot_stack_image_envelope_end(0x800000ull, cap),
-                   0x800000ull + bitmap_bytes + 4096ull,
-                   "a page-aligned image end needs no rounding");
-
-    /* Rounding is UP, not down: an image ending mid-page still owns that
-     * page, so truncating would place the bitmap on top of the image tail. */
-    TEST_ASSERT_EQ(boot_stack_image_envelope_end(0x7ffa54ull, cap),
-                   0x800000ull + bitmap_bytes + 4096ull,
-                   "an unaligned image end rounds up to the next page");
-    TEST_ASSERT_EQ(boot_stack_image_envelope_end(0x800001ull, cap),
-                   0x801000ull + bitmap_bytes + 4096ull,
-                   "one byte past a page boundary consumes a whole page");
-
-    /* The 4 GiB cap yields a 128 KiB bitmap. Pinned as a number rather than
-     * recomputed, so a change to either the cap or the frame size has to be
-     * stated here rather than silently tracked. */
-    TEST_ASSERT_EQ(bitmap_bytes, 131072ull,
-                   "the capped physical range needs a 128 KiB bitmap");
-
-    /* Direction control: the envelope must strictly EXCEED the image end,
-     * otherwise the whole rule degrades to a no-op that still reads as a
-     * check. */
-    TEST_ASSERT(boot_stack_image_envelope_end(0x800000ull, cap) > 0x800000ull,
-                "the envelope extends past the image end");
-}
-
-static void test_bm_kstack_image_envelope_rejects_the_load_address(void)
+static void test_bm_kstack_image_rejects_the_load_address(void)
 {
     struct boot_stack_info si;
     enum boot_stack_error err = BOOT_STACK_ERR_OK;
-    uint64_t img_hi;
+    /* A made-up image end, below USER_PT_WINDOW_BASE, so that the run above the
+     * image is judged by this rule and not by the user-window one. */
+    const uint64_t img_lo = 0x100000ull, img_hi = 0x300000ull;
 
-    /* THE case this rule exists for. src/boot/linker.ld loads the kernel at
-     * exactly 1 MiB, and boot_stack_validate accepts that base because its
-     * LOW_MEM rule is satisfied there. Until this envelope existed the only
-     * net was in pmm_init, which runs after Phase 0 has already been pushing
-     * frames into the kernel's own image. */
-    TEST_ASSERT(boot_stack_validate(0x100000ull, BM_KS_SIZE, BM_KS_GUARD,
-                                    &si, &err) == 1,
-                "the pure validator still accepts the load address");
-
-    /* A SYNTHETIC image end, deliberately far below the real one. The
-     * envelope's top must stay clear of USER_PT_WINDOW_BASE (0x800000), or
-     * the control case below would be refused by the user-window rule instead
-     * of validating -- which is how the first draft of this test failed: it
-     * used 0x800000 as the synthetic image end, putting its "just above the
-     * envelope" base squarely inside the window. The arithmetic under test is
-     * parameterised precisely so it can be exercised without depending on
-     * where this kernel happens to end. */
-    img_hi = boot_stack_image_envelope_end(0x300000ull, PMM_PHYS_ADDR_CAP);
-    TEST_ASSERT(img_hi < (uint64_t)USER_PT_WINDOW_BASE,
-                "the synthetic envelope stays clear of the user PT window");
-    TEST_ASSERT(boot_stack_overlaps(&si, 0x100000ull, img_hi - 0x100000ull) == 1,
-                "a run based at the kernel load address is inside the envelope");
-
-    /* Refusal direction control: a run placed above the envelope is NOT
-     * caught, so the check discriminates rather than always firing. */
-    TEST_ASSERT(boot_stack_validate(img_hi, BM_KS_SIZE, BM_KS_GUARD,
-                                    &si, &err) == 1,
-                "a run just above the envelope validates");
-    TEST_ASSERT(boot_stack_overlaps(&si, 0x100000ull, img_hi - 0x100000ull) == 0,
-                "a run above the envelope is outside it");
+    /* src/boot/linker.ld loads the kernel at 1 MiB, and boot_stack_validate
+     * accepts that base because its LOW_MEM rule is satisfied there. */
+    TEST_ASSERT(boot_stack_validate(img_lo, BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 1,
+                "the pure validator accepts the load address");
+    TEST_ASSERT(boot_stack_overlaps(&si, img_lo, img_hi - img_lo) == 1,
+                "a run based at the kernel load address is inside the image");
+    TEST_ASSERT(boot_stack_validate(img_hi, BM_KS_SIZE, BM_KS_GUARD, &si, &err) == 1,
+                "a run just above the image validates");
+    TEST_ASSERT(boot_stack_overlaps(&si, img_lo, img_hi - img_lo) == 0,
+                "a run above the image is outside it");
 }
 
 static void test_bm_kstack_contains_rejects_wrap_and_invalid(void)
@@ -1380,11 +1324,8 @@ void test_register_bare_metal(void)
     test_suite_register_cat("BM: kstack first-poison scan mirrors first-touched",
                             test_bm_kstack_scan_first_poison_is_the_mirror_scan,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("BM: kstack image envelope covers image + bitmap",
-                            test_bm_kstack_image_envelope_covers_image_and_bitmap,
-                            TEST_CAT_BOOT);
-    test_suite_register_cat("BM: kstack image envelope rejects load address",
-                            test_bm_kstack_image_envelope_rejects_the_load_address,
+    test_suite_register_cat("BM: kstack image rejects load address",
+                            test_bm_kstack_image_rejects_the_load_address,
                             TEST_CAT_BOOT);
     test_suite_register_cat("BM: kstack contains rejects wrap and invalid",
                             test_bm_kstack_contains_rejects_wrap_and_invalid,

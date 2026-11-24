@@ -14,10 +14,7 @@
 
 /* Highest physical address pmm_init tracks. The boot identity map covers the
  * first 4 GiB, so a frame above this has no virtual address here and the
- * bitmap deliberately stops at it. Named because two other places need the
- * SAME number to derive the largest bitmap the kernel could ever build:
- * boot_stack_image_envelope_end() consumer-side, and BL_PMM_BITMAP_PHYS_CAP
- * in src/boot/uefi/bootx64.c producer-side. */
+ * bitmap deliberately stops at it. */
 #define PMM_PHYS_ADDR_CAP  0x0000000100000000ULL
 
 /* Initialize the PMM from the boot memory map.

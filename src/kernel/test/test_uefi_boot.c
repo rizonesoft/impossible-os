@@ -323,16 +323,30 @@ static int claim_span_take(void *ctx, unsigned long long base, unsigned long lon
 
 static void test_kernel_claim_spans(void)
 {
-    const struct boot_span must[] = { { 3 * 4096, 4 * 4096 + 1 }, { 4 * 4096, 16 }, { 9 * 4096 + 8, 0 } };
-    const struct boot_span gone = { 10 * 4096 - 1, 1 };
     uint32_t held = 0;
 
-    TEST_ASSERT_EQ(boot_span_claim(0, 16, claim_span_take, &held, must, 3), 1,
-                   "segments across two free ranges and inside each other");
-    TEST_ASSERT_EQ(held, 0xFFFFu & ~(1u << 9), "every page that can be had");
+    TEST_ASSERT_EQ(boot_span_claim(3 * 4096, 5, claim_span_take, &held), 1, "across two free ranges");
+    TEST_ASSERT_EQ(held, 0xF8u, "all five pages, each once");
+    TEST_ASSERT_EQ(boot_span_claim(8 * 4096, 1, claim_span_take, &held), 1, "a page on its own");
+    TEST_ASSERT_EQ(boot_span_claim(10 * 4096, 2, claim_span_take, &held), 1, "in one free range");
+    TEST_ASSERT_EQ(held, 0xDF8u, "those and no more");
+    TEST_ASSERT_EQ(boot_span_claim(8 * 4096, 4, claim_span_take, &held), 0, "one that is held");
     held = 0;
-    TEST_ASSERT_EQ(boot_span_claim(0, 16, claim_span_take, &held, &gone, 1), 0,
-                   "a segment's page that cannot");
+    TEST_ASSERT_EQ(boot_span_claim(8 * 4096, 4, claim_span_take, &held), 0, "one that is never free");
+}
+
+/* A segment follows the one before it when the two share no page. */
+static void test_kernel_segment_order(void)
+{
+    const struct boot_span first = { 0x100000, 0x1000 }, at_end = { 0x101000, 16 };
+    const struct boot_span shares = { 0x101800, 16 }, inside = { 0x100800, 16 }, below = { 0xFF000, 16 };
+    const struct boot_span odd = { 0x100000, 0x1001 }, top = { ~0ULL - 4095, 8192 };
+
+    TEST_ASSERT_EQ(boot_span_follows(first, at_end), 1, "on the next page");
+    TEST_ASSERT_EQ(boot_span_follows(odd, shares), 0, "on the page the first ends on");
+    TEST_ASSERT_EQ(boot_span_follows(first, inside), 0, "inside it");
+    TEST_ASSERT_EQ(boot_span_follows(first, below), 0, "below it");
+    TEST_ASSERT_EQ(boot_span_follows(top, first), 0, "after one that wraps");
 }
 
 static void test_uki_cmdline_rejects_initrd_token(void)
@@ -1546,6 +1560,8 @@ void test_register_uefi_boot(void)
                             test_kernel_buffer_span, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel file buffer overlap",
                             test_kernel_buffer_overlap, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel segment order",
+                            test_kernel_segment_order, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel memory claim spans",
                             test_kernel_claim_spans, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",

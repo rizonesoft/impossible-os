@@ -56,7 +56,7 @@ enum boot_stack_error {
     BOOT_STACK_ERR_GUARD_ABSENT = 9, /* guard_size 0: the run would ship unguarded */
     BOOT_STACK_ERR_USER_WINDOW = 10, /* run intersects the user PT window */
     BOOT_STACK_ERR_LOW_MEM     = 11, /* run starts below 1 MiB (fixed boot tables live there) */
-    BOOT_STACK_ERR_KERNEL_IMAGE = 12 /* run intersects the kernel image + max PMM bitmap envelope */
+    BOOT_STACK_ERR_KERNEL_IMAGE = 12 /* run intersects the kernel image */
 };
 
 /* PURE validator over the three published fields. Takes them explicitly (not
@@ -169,13 +169,6 @@ uint64_t boot_stack_peak(void);
  * high-water mark before deciding whether to report -- would otherwise walk
  * the whole usable span a second time just to print the number it holds. */
 void boot_stack_log_peak(const char *span, uint64_t peak);
-
-/* Exclusive end of the envelope covering the kernel image plus the LARGEST
- * PMM bitmap it could ever need, given the image end and the physical-address
- * cap pmm_init clamps to. Pure and parameterised so it can be tested with
- * synthetic extents; it mirrors bl_kstack_placement_ok's kguard_hi arithmetic
- * in src/boot/uefi/bootx64.c, which is the producer-side half of one rule. */
-uint64_t boot_stack_image_envelope_end(uint64_t kernel_end, uint64_t phys_cap);
 
 /* There is deliberately NO test hook that clears the module state. An earlier
  * boot_stack_reset_for_test() existed with zero callers, and it could not have

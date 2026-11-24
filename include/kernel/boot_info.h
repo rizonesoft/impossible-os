@@ -179,7 +179,10 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-/* v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
+/* v25 changes no field: the pages after the kernel image are no longer the
+ *     kernel's. It puts its frame bitmap in free RAM from the memory map, and the
+ *     loader leaves no room there (TODO-08 sec72). Mirrored in src/boot/uefi/boot_info_mirror.h.
+ * v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
  *     loader-owned kernel boot stack (TODO-10 sec32). The bootloader
  *     AllocatePages a dedicated below-4-GiB run, poisons it, and switches RSP
  *     to its top before calling the kernel entry, so Phase 0 and Phase 1 no
@@ -189,7 +192,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     enumeration (TODO-27 sec4). New fields (not a reserved-region carve), so
  *     the version bumps. Single-GPU + headless boots leave gop_handle_count 0;
  *     boot_info.fb stays the authoritative primary framebuffer. */
-#define BOOT_INFO_VERSION  24
+#define BOOT_INFO_VERSION  25
 #endif
 
 /* Fill pattern the bootloader writes across the whole kernel boot stack run

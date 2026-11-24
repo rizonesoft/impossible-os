@@ -310,13 +310,16 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
+/* v25 changes no field: the pages after the kernel image are no longer the
+ *     kernel's. It puts its frame bitmap in free RAM from the memory map, and the
+ *     loader leaves no room there (TODO-08 sec72). Mirrors include/kernel/boot_info.h.
+ * v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
  *     loader-owned kernel boot stack (TODO-10 sec32). This bootloader
  *     allocates the run, poisons it, and switches RSP to its top in
  *     jump_to_kernel. Mirrors include/kernel/boot_info.h.
  * v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
  *     enumeration (TODO-27 sec4). Mirrors include/kernel/boot_info.h. */
-#define BOOT_INFO_VERSION  24
+#define BOOT_INFO_VERSION  25
 #endif
 
 /* Mirror of include/kernel/boot_info.h -- producer-valid marker for the sec6

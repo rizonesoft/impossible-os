@@ -19,6 +19,7 @@
  * ============================================================================ */
 
 #include "kernel/acpi.h"
+#include "kernel/boot_timing.h"
 #include "kernel/boot_info.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/idt.h"
@@ -2408,6 +2409,18 @@ static void acpi_storage_quiesce(void)
         printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
 }
 
+/* A second, and without interrupts: the platform powers off while the CPU goes on,
+ * so a write that worked is not known to have for a while. Where the TSC was not
+ * calibrated, this many reads of the POST port (1 us or more each on hardware). */
+#define ACPI_POWEROFF_READS 1000000u
+static void acpi_poweroff_wait(void)
+{
+    uint64_t hz = boot_timing_tsc_freq(), begin = __builtin_ia32_rdtsc();
+
+    for (uint32_t i = 0; hz ? __builtin_ia32_rdtsc() - begin < hz : i < ACPI_POWEROFF_READS; i++)
+        (void)inb_acpi(0x80);
+}
+
 /* Power off WITHOUT the (interrupt-requiring) storage quiesce -- IF-off-safe,
  * for callers already running under cli (the degraded-boot recovery screen).
  * Everything below is port writes. Does not return on success. */
@@ -2436,6 +2449,7 @@ void acpi_poweroff_now(void)
          * after storage has already been quiesced. */
         if (pm1b_cnt && slp_typb != ACPI_SLP_TYPE_INVALID)
             pm1_write_sleep(pm1b_cnt, slp_typb);
+        acpi_poweroff_wait();
     }
 
     /* Fallback: QEMU-specific ACPI power-off port */
@@ -2443,6 +2457,7 @@ void acpi_poweroff_now(void)
 
     /* Fallback: Bochs/older QEMU */
     outw_acpi(0xB004, 0x2000);
+    acpi_poweroff_wait();
 
     /* If we're still here, halt */
     printk("[ACPI] Shutdown failed -- halting\n");

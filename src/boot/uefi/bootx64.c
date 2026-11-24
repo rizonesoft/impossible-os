@@ -10074,15 +10074,11 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 /* The largest kernel file accepted; anything above it is corruption. */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
 
-#define BL_PMM_BITMAP_PHYS_CAP 0x0000000100000000ULL  /* pmm.c 4 GiB highest_addr cap */
 #define BL_PAGE_4K    0x1000ULL
-/* What the page tables and the boot stack stay clear of: the image, then room for
- * a frame bitmap (128 KiB at most, since pmm caps its coverage at 4 GiB) and a
- * page of linker padding. A kernel from before 2026-11-24 writes its bitmap there. */
-#define KERNEL_IMAGE_TAIL (BL_PMM_BITMAP_PHYS_CAP / 32768ULL + BL_PAGE_4K)
-static UINT64 kernel_guard_end(void)
+/* Where the loaded image ends: the page tables and the boot stack stay clear of it. */
+static UINT64 kernel_image_end(void)
 {
-    return ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1)) + KERNEL_IMAGE_TAIL;
+    return (g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);
 }
 
 /* The most program headers accepted. */
@@ -10234,17 +10230,17 @@ static int take_pages(void *ctx, unsigned long long base, unsigned long long pag
     return !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, (UINTN)pages, &at));
 }
 
-/* Claim the kernel's image, so that no later allocation lands on a segment that was
- * copied. The policy passed every segment, so a page of one that cannot be claimed
- * was taken since. */
+/* Claim the kernel's segments, so that no later allocation lands on one that was
+ * copied. The policy passed each, so a page that cannot be claimed was taken since. */
 static EFI_STATUS claim_kernel_memory(const struct boot_span *segments, unsigned n)
 {
-    UINT64 lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-
-    if (g_kernel_img_hi <= g_kernel_img_lo)
-        return EFI_SUCCESS;
-    return boot_span_claim(lo, (kernel_guard_end() - KERNEL_IMAGE_TAIL - lo) / BL_PAGE_4K,
-                           take_pages, (void *)0, segments, n) ? EFI_SUCCESS : EFI_NOT_FOUND;
+    for (unsigned i = 0; i < n; i++) {
+        UINT64 lo = segments[i].base & ~(BL_PAGE_4K - 1);
+        UINT64 hi = segments[i].base + segments[i].bytes + BL_PAGE_4K - 1;
+        if (!boot_span_claim(lo, (hi - lo) / BL_PAGE_4K, take_pages, (void *)0))
+            return EFI_NOT_FOUND;
+    }
+    return EFI_SUCCESS;
 }
 
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
@@ -10947,7 +10943,16 @@ kernel_loaded:
             UINT64 seg_lo = phdr[i].p_paddr;
             UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
             s_kernel_segments[segments].base = seg_lo;
-            s_kernel_segments[segments++].bytes = phdr[i].p_memsz;
+            s_kernel_segments[segments].bytes = phdr[i].p_memsz;
+            if (segments != 0 && !boot_span_follows(s_kernel_segments[segments - 1],
+                                                    s_kernel_segments[segments])) {
+                serial_early_print("[FAIL] Kernel ELF corrupt: segment ");
+                serial_early_print_uint(i);
+                serial_early_print(" does not follow the one before it\n");
+                load_err_status = EFI_LOAD_ERROR;
+                goto load_error;
+            }
+            segments++;
             if (seg_lo < g_kernel_img_lo) g_kernel_img_lo = seg_lo;
             if (seg_hi > g_kernel_img_hi) g_kernel_img_hi = seg_hi;
         }
@@ -11093,12 +11098,8 @@ kernel_loaded:
         }
 #endif
     }
-    if (g_kernel_img_hi > g_kernel_img_lo)
-        (void)boot_span_claim(kernel_guard_end() - KERNEL_IMAGE_TAIL,   /* what is free of it, */
-                              KERNEL_IMAGE_TAIL / BL_PAGE_4K, take_pages,   /* before anything kept */
-                              (void *)0, (void *)0, 0);
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-    bl_control_image_held(kernel_guard_end(), "[BOOT] Kernel image: every page is held\n");
+    bl_control_image_held(kernel_image_end(), "[BOOT] Kernel image: every page is held\n");
 #endif
     return EFI_SUCCESS;
 
@@ -13384,11 +13385,6 @@ static void copy_config_tables(void)
 #define BL_HHDM_PROBE_A 0x48484D4450524F42ULL
 #define BL_HHDM_PROBE_B (~BL_HHDM_PROBE_A)
 
-/* pmm_init() clamps its bitmap coverage at 4 GiB (src/kernel/mm/pmm.c
- * highest_addr cap). This is a DISTINCT constant from MM_PML4_PHYS_LIMIT (the
- * AP 32-bit CR3 ceiling) that happens to share the 4 GiB value; keep them
- * separate so a change to one never silently resizes the bitmap guard. */
-
 /* Page-table entry flags + sizes. */
 #define BL_PTE_P      (1ULL << 0)
 #define BL_PTE_RW     (1ULL << 1)
@@ -13670,12 +13666,11 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
         return;   /* g_hhdm_arena_pages stays 0 -> install is a no-op */
     }
 
-    /* Low guard the arena must NOT overlap: the loaded kernel image envelope,
-     * and the room after it (kernel_guard_end). load_kernel() claimed what was free
-     * of both, so firmware cannot hand it back whatever its placement policy (the
+    /* The arena must not overlap the loaded kernel. load_kernel() claimed its
+     * segments, so firmware cannot hand them back whatever its placement policy (the
      * UEFI spec does not require AllocateMaxAddress to be top-down). */
-    UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-    UINT64 kguard_hi = kernel_guard_end();
+    UINT64 kimage_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    UINT64 kimage_hi = kernel_image_end();
 
     EFI_PHYSICAL_ADDRESS arena = BL_MM_PML4_PHYS_LIMIT - 1;  /* max addr < 4 GiB */
     EFI_STATUS st = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
@@ -13686,19 +13681,18 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
     }
 
     /* Disjointness safety net: with the guard claimed above, the arena cannot
-     * overlap the kernel image or the PMM bitmap; this catches the residual
-     * case where the guard claim failed. Also rejects the low 1 MiB (IVT/BDA,
+     * overlap the kernel image; this catches a gap between two segments. Also rejects the low 1 MiB (IVT/BDA,
      * PT_PML4 at 0x70000, boot_info at 0x10000, the AP envelope). */
     {
         UINT64 alo = (UINT64)arena;
         UINT64 ahi = alo + pages * BL_PAGE_4K;
-        int overlap = (kguard_hi > kguard_lo &&
-                       alo < kguard_hi && ahi > kguard_lo) ||
+        int overlap = (kimage_hi > kimage_lo &&
+                       alo < kimage_hi && ahi > kimage_lo) ||
                       (alo < 0x100000ULL);
         if (overlap) {
             boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM arena overlaps reserved memory",
                        "AllocatePages returned an arena overlapping the loaded "
-                       "kernel image, the PMM bitmap region, or the low "
+                       "kernel image or the low "
                        "bring-up region.");
         }
         g_hhdm_arena_base  = alo;
@@ -13936,7 +13930,7 @@ static UINT64 g_kstack_base;   /* 0 until reserved; page-aligned when set */
  * to grow its stack through.
  *   - the low 1 MiB: IVT/BDA, PT_PML4..PT_PD3 at 0x70000, boot_info at
  *     0x10000, the AP trampoline envelope (same exclusion the HHDM arena uses);
- *   - the kernel image plus the room after it (kernel_guard_end);
+ *   - the kernel image;
  *   - the user page-table window, re-pointed per process by the kernel.
  * The kernel mirrors the low-memory refusal in boot_stack_validate() and
  * boot_reserved's overlap boot_fatal covers the rest consumer-side. */
@@ -13944,13 +13938,13 @@ static int bl_kstack_placement_ok(UINT64 addr)
 {
     UINT64 lo = addr;
     UINT64 hi = addr + BL_KSTACK_SIZE;
-    UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-    UINT64 kguard_hi = kernel_guard_end();
+    UINT64 kimage_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    UINT64 kimage_hi = kernel_image_end();
 
     if (lo < 0x100000ULL)
         return 0;
     if (g_kernel_img_hi > g_kernel_img_lo &&
-        lo < kguard_hi && hi > kguard_lo)
+        lo < kimage_hi && hi > kimage_lo)
         return 0;
     if (lo < BL_USER_PT_WINDOW_END && hi > BL_USER_PT_WINDOW_BASE)
         return 0;

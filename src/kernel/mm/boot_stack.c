@@ -162,22 +162,6 @@ uint64_t boot_stack_scan_first_poison(const void *words, uint64_t bytes)
     return (uint64_t)((uintptr_t)p - (uintptr_t)words);
 }
 
-uint64_t boot_stack_image_envelope_end(uint64_t kernel_end, uint64_t phys_cap)
-{
-    /* Deliberately the LARGEST bitmap the kernel could ever build, not the one
-     * this boot will actually build: the real size depends on the memory map,
-     * which pmm_init has not walked yet when this rule is applied. A run that
-     * clears the conservative envelope clears every real one.
-     *
-     * phys_cap / 32768 is the bitmap byte count for that cap: one bit per
-     * PMM_FRAME_SIZE frame, eight bits per byte (4096 * 8 == 32768). The extra
-     * page is linker padding between the image end and the bitmap base. This
-     * is the same arithmetic bl_kstack_placement_ok uses for kguard_hi. */
-    uint64_t end = (kernel_end + (uint64_t)PMM_FRAME_SIZE - 1u) &
-                   ~((uint64_t)PMM_FRAME_SIZE - 1u);
-    return end + (phys_cap / 32768u) + (uint64_t)PMM_FRAME_SIZE;
-}
-
 int boot_stack_overlaps(const struct boot_stack_info *si,
                         uint64_t start, uint64_t len)
 {
@@ -230,7 +214,7 @@ static const char *boot_stack_err_text(enum boot_stack_error err)
     case BOOT_STACK_ERR_GUARD_ABSENT: return "no guard published";
     case BOOT_STACK_ERR_USER_WINDOW: return "run intersects the user page-table window";
     case BOOT_STACK_ERR_LOW_MEM:     return "run starts below 1 MiB (fixed boot tables)";
-    case BOOT_STACK_ERR_KERNEL_IMAGE: return "run intersects the kernel image or the PMM bitmap envelope";
+    case BOOT_STACK_ERR_KERNEL_IMAGE: return "run intersects the kernel image";
     }
     return "unknown";
 }
@@ -274,23 +258,18 @@ void boot_stack_init(const struct boot_info *info)
         boot_halt("boot_stack_init: invalid kernel stack handoff");
     }
 
-    /* THE KERNEL IMAGE AND ITS BITMAP, which boot_stack_validate cannot check
+    /* THE KERNEL IMAGE, which boot_stack_validate cannot check
      * because it is pure and knows no linker symbols. The loader already
-     * refuses this envelope in bl_kstack_placement_ok(), and until now the
+     * refuses this in bl_kstack_placement_ok(), and until now the
      * kernel's only net for it was in pmm_init -- which runs AFTER Phase 0 has
      * been pushing frames onto the run. On a producer that got the placement
      * wrong, those pushes land in the kernel's own .text/.data, so by the time
      * pmm_init could report it the evidence has already been overwritten by
      * the thing it would report. Refusing here is the earliest point at which
      * the kernel both knows the extents and is still standing on a stack it
-     * has barely touched.
-     *
-     * Conservative on purpose: the envelope covers the largest bitmap this
-     * kernel could ever build, matching the loader's arithmetic exactly, so
-     * the two halves of the rule cannot disagree about a given run. */
+     * has barely touched. */
     img_lo = 0x100000ull;
-    img_hi = boot_stack_image_envelope_end((uint64_t)(uintptr_t)__kernel_end,
-                                           PMM_PHYS_ADDR_CAP);
+    img_hi = (uint64_t)(uintptr_t)__kernel_end;
     if (boot_stack_overlaps(&si, img_lo, img_hi - img_lo)) {
         klog(LOG_FATAL, "mm",
              "boot stack: refused handoff (%s) base=0x%lx size=0x%lx "

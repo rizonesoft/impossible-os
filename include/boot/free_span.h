@@ -62,28 +62,28 @@ boot_span_clip(struct boot_span *room, unsigned long long at, unsigned long long
     return 1;
 }
 
+/* Whether `next` begins on a later page than `prev` ends on. */
+static inline int
+boot_span_follows(struct boot_span prev, struct boot_span next)
+{
+    return (next.base & ~(FREE_SPAN_PAGE - 1)) >= boot_span_end(prev.base, prev.bytes);
+}
+
 /* Takes `pages` from `base`, all or none; answers whether it did. */
 typedef int (*boot_span_take)(void *ctx, unsigned long long base, unsigned long long pages);
 
-/* Take every page of [base, base + pages) that can be had, asking for each once at
- * most: the whole range, or on a refusal its halves (firmware refuses a range that
- * crosses two of its free ones). 0 when a page of `must` could not be. */
+/* Take all of [base, base + pages): whole, or on a refusal by halves, since firmware
+ * refuses a range that crosses two of its free ones. 0 at the first page that cannot
+ * be had. */
 static inline int
-boot_span_claim(unsigned long long base, unsigned long long pages, boot_span_take take,
-                void *ctx, const struct boot_span *must, unsigned n)
+boot_span_claim(unsigned long long base, unsigned long long pages, boot_span_take take, void *ctx)
 {
     unsigned long long half = pages / 2;
 
-    if (pages == 0 || take(ctx, base, pages))
+    if (take(ctx, base, pages))
         return 1;
-    if (half != 0)
-        return boot_span_claim(base, half, take, ctx, must, n) &&
-               boot_span_claim(base + half * FREE_SPAN_PAGE, pages - half, take, ctx, must, n);
-    for (unsigned i = 0; i < n; i++)
-        if (must[i].bytes != 0 && must[i].base < base + FREE_SPAN_PAGE &&
-            boot_span_end(must[i].base, must[i].bytes) > base)
-            return 0;
-    return 1;
+    return half != 0 && boot_span_claim(base, half, take, ctx) &&
+           boot_span_claim(base + half * FREE_SPAN_PAGE, pages - half, take, ctx);
 }
 
 #endif /* BOOT_FREE_SPAN_H */

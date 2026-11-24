@@ -34,13 +34,21 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v24 (current) -- Loader-owned kernel boot stack
+### v25 (current) -- The pages after the kernel image are free RAM
+
+- **Commit**: pending ([The loader's direct-map check can halt a good machine](../../todo/00-infrastructure/TODO-08-automation-hardening.md))
+- **Fields added**: none; the struct is unchanged at 28680 bytes.
+- **Why**: a v24 kernel writes its frame bitmap right after `__kernel_end`, over whatever the machine has there (on OVMF, the ACPI NVS range at `0x800000`), and a v24 loader keeps its own allocations clear of those pages. A v25 kernel places the bitmap in conventional memory taken from the memory map, and a v25 loader hands those pages out like any others, so the two versions must not be mixed.
+- **Producers / consumers**: `pmm_bitmap_place()` in the kernel; `claim_kernel_memory()` and `bl_kstack_placement_ok()` in the loader.
+- **Back-compat**: NONE -- the loader refuses a v24 kernel by its `.bootproto` version before the handoff, and a v25 kernel refuses a v24 loader in Phase 0.
+
+### v24 -- Loader-owned kernel boot stack
 
 - **Commit**: `018dc2d1b` ([Guarded Kernel Stack for Phase 0/1 Execution](../../todo/01-boot-platform/TODO-10-bare-metal-hardening.md#32-guarded-kernel-stack-for-phase-01-execution))
 - **Fields added**: `kstack_base` (`uint64_t`), `kstack_size` (`uint32_t`), `kstack_guard_size` (`uint32_t`), appended at the v23 tail immediately after `_gop_handle_pad`. Mirror updated atomically; `dump-fields.inc` + `check-doc-coverage.py` allow-list + `boot-info-fields.md` updated together.
 - **Why**: before v24 the loader called the kernel entry without ever writing RSP, so Phase 0 and Phase 1 executed on the firmware's own `EfiLoaderData` stack -- which `pmm_init` frees into the allocator, and which nothing reserved. `vmm_init` and `heap_init` then allocated from a pool containing the run the kernel was standing on. It booted on placement luck, not on any enforced property, and no emulator disturbs that luck. The loader now allocates, poisons and publishes a 256 KiB below-4-GiB run and switches RSP to it at the handoff.
 - **Producers / consumers**: the bootloader's `bl_kstack_reserve()` allocates pre-EBS and `jump_to_kernel` switches RSP; the kernel's `boot_stack_init()` validates in Phase 0, `boot_reserved_populate_from_info()` retains the run as `BOOT_RESERVED_BOOT_STACK`, `boot_stack_install_guard()` arms the guard page after `vmm_init`, and `pmm_init` refuses to continue unless every frame of the run is marked used.
-- **Placement contract**: publishing well-formed geometry is not sufficient. The run must avoid the low 1 MiB, the kernel-image + max-PMM-bitmap envelope, and the user page-table window, and must be fully poisoned with `BOOT_KSTACK_POISON`. See the placement table in [`boot-info-fields.md`](boot-info-fields.md) for each interval, its reason, and the phase that refuses it.
+- **Placement contract**: publishing well-formed geometry is not sufficient. The run must avoid the low 1 MiB, the kernel image (with the largest PMM bitmap after it, until v25), and the user page-table window, and must be fully poisoned with `BOOT_KSTACK_POISON`. See the placement table in [`boot-info-fields.md`](boot-info-fields.md) for each interval, its reason, and the phase that refuses it.
 - **Back-compat**: NONE -- requires rebuilding and reflashing BOTH `BOOTX64.EFI` and `kernel.exe` together (`boot_info_validate_header()` enforces an exact version + `header.size` match). A v23 loader publishes `kstack_base == 0`, which `boot_stack_init()` halts on by design rather than falling back to the firmware stack: the fallback IS the defect this version removes.
 
 ### v23 -- Multi-GPU GOP handle enumeration
