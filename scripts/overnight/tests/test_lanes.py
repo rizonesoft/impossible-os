@@ -1881,6 +1881,36 @@ def test_the_committed_readme_keeps_its_bytes(repo):
     assert git(p, "status", "--porcelain", "-uno").stdout == ""
 
 
+def test_the_working_files_are_written_as_a_checkout_writes_them(repo):
+    p = repo["primary"]
+    (p / ".gitattributes").write_text("/README.md text working-tree-encoding=UTF-16LE-BOM eol=lf\n/COUNT.md text eol=crlf\n")
+    text = "caf\u00e9\n<!-- COUNT-BADGE:START -->\n<!-- COUNT-BADGE:END -->\n"
+    (p / "README.md").write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(
+        "import subprocess, sys\nsys.stdout.buffer.write(subprocess.run(['git', 'show', 'HEAD:README.md'],\n"
+        "    capture_output=True, timeout=20).stdout)\n")
+    git(p, "add", "--", ".gitattributes", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    shown = subprocess.run([*GIT, "cat-file", "blob", "HEAD:README.md"], cwd=p, capture_output=True, timeout=20).stdout
+    assert "img.shields.io" in shown.decode(), r
+    assert (p / "README.md").read_bytes() == b"\xff\xfe" + shown.decode().encode("utf-16-le")
+    count = (p / "COUNT.md").read_bytes()
+    assert b"\r\n" in count and count.replace(b"\r\n", b"\n").decode() == git(p, "show", "HEAD:COUNT.md").stdout
+    assert git(p, "status", "--porcelain", "-uno").stdout == ""
+
+
+def test_a_hangup_after_the_ref_moves_still_publishes_the_index(repo):
+    p = repo["primary"]
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    publish = '    if mv -f "$lock" "$idx"; then'
+    assert hook.count(publish) == 1
+    commit_with_hook(repo, hook.replace(publish, "    kill -HUP $$\n" + publish))
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
+    assert not (p / ".git" / "index.lock").exists()
+
+
 def test_triage_sees_the_map_through_a_replacement(repo):
     t = _load("triage_replacement", TRIAGE_PY)
     p = repo["primary"]

@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **997 of 2812 sections complete (35%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **997 of 2813 sections complete (35%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -340,6 +340,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [/]  | `D00 T08 §68` | Coverage lint passes inside a worktree commit                                                                         | none        |     2 |
 | [ ]  | `D00 T08 §69` | Review attempts are bound end to end                                                                                  | none        |     6 |
 | [ ]  | `D00 T08 §71` | A lane's ship is judged by its Astra receipt                                                                          | none        |     3 |
+| [ ]  | `D00 T08 §73` | The line tally counts the commit                                                                                      | none        |     3 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none        |    10 |
 | [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator    |    11 |
 | [x]  | `D00 T09 §3`  | GitHub Pages Custom-Domain Continuity Plan                                                                            | none        |    11 |

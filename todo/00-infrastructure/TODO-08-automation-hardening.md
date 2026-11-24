@@ -138,6 +138,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [x]   |
 | ⭐  |  71   |   §71   | A lane's ship is judged by its Astra receipt                                                     | §49                        |  [ ]   |
 | 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [ ]   |
+| ⭐  |  73   |   §73   | The line tally counts the commit                                                                 | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -2017,6 +2018,19 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
+
+## 73. The line tally counts the commit
+
+> **Spawned-by:** section 49 (review)
+> **User impact:** the line count in `COUNT.md` and on the README badge can include code nobody has committed.
+
+`count_lines()` in `.githooks/post-commit` finds working files, untracked ones and unstaged edits included, so a commit beside unfinished work publishes its lines. §49 pinned the amend to one commit but left the count as it was. It also forks one `wc` per file, about 5 seconds a commit.
+
+- [ ] The tally reads the files and bytes of the commit the hook follows, so an untracked or unstaged file changes nothing
+- [ ] The count takes under a second on this repository
+- [ ] Commit: `"hooks: the line tally counts the commit"`
+
+**Test checkpoint:** a commit made beside an untracked source and an unstaged edit publishes the same count as a clean clone of that commit; the old hook fails it.
 
 
 ## Format Quick Reference
