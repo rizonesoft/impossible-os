@@ -484,8 +484,13 @@ fi
 
 [ "${COUNT_ONLY:-}" = "1" ] && exit 0
 
-# Run by hand, nothing has judged this tree yet: a reports-only lane amends nothing (TODO-08 section 49).
-if [ -f "$ROOT/scripts/lanes.py" ] && ! (cd "$ROOT" && python3 scripts/lanes.py check-staged --who); then
+# The amend runs no other hook, and run by hand nothing has judged this tree yet, so the lane check judges the
+# files it carries (TODO-08 section 49). A repository whose HEAD has no checker (a test fixture) has no lanes.
+LANE_PATHS=(COUNT.md)
+if [ "$README_CLEAN" = "1" ] || [ "$README_PLUMB" = "1" ]; then LANE_PATHS+=(README.md); fi
+if git -C "$ROOT" cat-file -e HEAD:scripts/lanes.py 2>/dev/null &&
+   ! (cd "$ROOT" && python3 scripts/lanes.py check-staged --paths "${LANE_PATHS[@]}"); then
+    [ "$README_PLUMB" = "1" ] && rm -f "$README_TARGET"
     echo "post-commit: COUNT.md refreshed but HEAD not amended" >&2
     exit 0
 fi

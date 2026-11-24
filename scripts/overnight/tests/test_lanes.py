@@ -7,6 +7,7 @@ hook's, and an allowed commit lands through the same hooks (the lint, which has 
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -1207,19 +1208,43 @@ def test_the_live_command_reads_the_map_the_commit_check_judges_by(repo):
     assert json.loads(r.stdout)["userland"] == lanes.LIVE, r
 
 
-def test_the_post_commit_amend_of_a_reports_lane_is_refused(repo):
+@pytest.mark.parametrize("checker", [True, False])
+def test_the_post_commit_amend_of_a_reports_lane_is_refused(repo, checker):
     tree = repo["neon-b"]
     shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
+    if not checker:
+        (tree / "scripts" / "lanes.py").unlink()                      # an unstaged deletion is no permission
     before = git(tree, "rev-parse", "HEAD").stdout
     r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=os.environ.copy())
-    assert "HEAD not amended" in r.stderr and "never commits" in r.stderr, r
+    assert "HEAD not amended" in r.stderr and ("never commits" in r.stderr) == checker, r
     assert git(tree, "rev-parse", "HEAD").stdout == before
-    # A tree that may commit passes, whatever else is staged.
+
+
+@pytest.mark.parametrize("generated, dirty, amended", [(True, False, True), (True, True, True), (False, False, False),
+                                                       (False, True, False)])
+def test_the_post_commit_amend_is_judged_on_the_files_it_carries(repo, generated, dirty, amended):
+    p, tree = repo["primary"], repo["userland"]
+    (p / "README.md").write_text("r\n")
+    toml = p / ".conclave" / "lanes.toml"
+    names = '["COUNT.md", "README.md"]' if generated else '["COUNT.md"]'
+    toml.write_text(re.sub(r"generated = \[[^]]*\]", f"generated = {names}", toml.read_text()))
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text("print('r')\n")  # both README modes: the region sync is a no-op
+    git(p, "add", "--", "README.md", ".conclave", "scripts/site")
+    git(p, "commit", "-qm", "map")
+    git(tree, "checkout", "-q", "--detach", "main")
+    shutil.copytree(REPO / ".githooks" / "lib", tree / "lib")
+    shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
+    if dirty:
+        (tree / "README.md").write_text("mine\n")
     live("userland")
-    stage(repo["primary"], "user/a.c")
-    r = run([sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "check-staged", "--who"],
-            cwd=repo["primary"], env=os.environ.copy())
-    assert r.returncode == 0, r
+    stage(tree, "user/other.c")                                       # other staged work is not the amend's
+    before = git(tree, "rev-parse", "HEAD").stdout
+    env = {**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "T",
+           "GIT_COMMITTER_EMAIL": "t@example.com"}
+    r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=env)
+    assert (git(tree, "rev-parse", "HEAD").stdout != before) == amended, r
+    assert ("README.md is outside lane userland's paths" in r.stderr) != amended, r
 
 
 def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):
@@ -1246,3 +1271,16 @@ def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):
     assert t.section_stamps(str(md)) == {1: set()}
     md.write_text("# T\n\n## 1. One\n\n> **Verified:** 2026-11-24\n")
     assert t.section_stamps(str(md)) == {1: {"V"}}
+
+
+def test_a_todo_replaced_by_one_of_the_same_size_and_time_is_read_again(tmp_path):
+    t = _load("triage_inode", TRIAGE_PY)
+    t._STAMP_MEMO = {}
+    md, other = tmp_path / "TODO-01-x.md", tmp_path / "new"
+    md.write_text("# T\n\n## 1. One\n\n> **Verified:** 2026-11-24\n")
+    assert t.section_stamps(str(md)) == {1: {"V"}}
+    other.write_text("# T\n\n## 1. One\n\n> **Verifiex:** 2026-11-24\n")
+    st = md.stat()
+    os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns))
+    os.replace(other, md)
+    assert t.section_stamps(str(md)) == {1: set()}

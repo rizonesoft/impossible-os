@@ -11,7 +11,7 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
     python3 scripts/lanes.py check-staged --replay          # a rebase's own commit of a pick
-    python3 scripts/lanes.py check-staged --who             # only whether this tree may commit (.githooks/post-commit)
+    python3 scripts/lanes.py check-staged --paths P...      # these paths, not the index's (the amend in .githooks/post-commit)
 
 check-staged exits 0 to allow, 1 to refuse, 2 when it cannot judge (a commit is refused for both).
 SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the reason.
@@ -418,11 +418,11 @@ def replaying(toplevel: Path) -> bool:
             and not _git(toplevel, "rev-parse", "-q", "--verify", "REBASE_HEAD", ok=(0, 1)).strip())
 
 
-def check_staged(cwd: Path, replay: bool = False, who: bool = False) -> int:
+def check_staged(cwd: Path, replay: bool = False, amend: list[str] | None = None) -> int:
     """Judge the staged commit on every path the index changes against HEAD. Two things are not told apart from
     that: a rebase's own commit of a clean pick (`replay`) is judged only on who may commit at all, and a merge is
-    refused while any lane holds paths, because the index cannot show a lane's incoming change it lost. `who` judges
-    only who commits: the post-commit amend carries two generated files, whatever else is staged."""
+    refused while any lane holds paths, because the index cannot show a lane's incoming change it lost. `amend`
+    is the paths the post-commit amend carries, judged in place of the index, which may hold other work."""
     me = None
     try:
         toplevel = _rev_path(cwd, "--show-toplevel")
@@ -430,7 +430,7 @@ def check_staged(cwd: Path, replay: bool = False, who: bool = False) -> int:
         # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
         # later commit is judged by it.
         proposed, reasons, refused = None, [], 1
-        changed = [] if who else staged_paths(toplevel)
+        changed = staged_paths(toplevel) if amend is None else amend
         if MAP in changed:
             staged = _blob(toplevel, f":{MAP}")
             if staged is None:
@@ -460,7 +460,7 @@ def check_staged(cwd: Path, replay: bool = False, who: bool = False) -> int:
         paths = [] if replay and replaying(toplevel) else changed
         reasons = judge(lane_map, me, paths, lane_states)
         if not reasons and any_live(lane_states):
-            if merging(toplevel) and not who:
+            if merging(toplevel) and amend is None:
                 reasons = ["no merge commits while a lane is live; rebase instead"]
             elif proposed is not None and proposed != lane_map:
                 reasons = [f"{MAP} does not change while a lane is live: its worktree still commits by the old one"]
@@ -490,8 +490,8 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
-    if cmd == "check-staged" and rest in ([], ["--replay"], ["--who"]):
-        return check_staged(Path.cwd(), replay=rest == ["--replay"], who=rest == ["--who"])
+    if cmd == "check-staged" and (rest in ([], ["--replay"]) or rest[0] == "--paths" and len(rest) > 1):
+        return check_staged(Path.cwd(), replay=rest == ["--replay"], amend=rest[1:] if len(rest) > 1 else None)
     root = Path(__file__).resolve().parent.parent
     try:
         # Needs no map: a record is cleared after its lane left the map, and while the map is broken.

@@ -243,11 +243,16 @@ def load_cache(cache_path, root):
 _SCAN_MEMO = {}                                        # one entry: holding the corpus cost 167 MB a pick
 
 
+def _file_key(md_path, st):
+    """One file's identity for a memo: a replacement (a rename over it) is another inode."""
+    return (os.path.abspath(md_path), st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+
+
 def _read_scan(md_path):
-    """(text, scan, sections) of one TODO. The last file read is kept (path, mtime, size): classification and
+    """(text, scan, sections) of one TODO. The last file read is kept (_file_key): classification and
     the lane reservations read a file one straight after the other."""
     st = os.stat(md_path)
-    key = (os.path.abspath(md_path), st.st_mtime_ns, st.st_size)
+    key = _file_key(md_path, st)
     hit = _SCAN_MEMO.get(key)
     if hit is None:
         with open(md_path, encoding="utf-8") as fh:
@@ -310,7 +315,7 @@ def section_stamps(md_path):
         return out
     if _STAMP_MEMO is not None:
         st = os.stat(md_path)
-        key = (os.path.abspath(md_path), st.st_ino, st.st_mtime_ns, st.st_size)
+        key = _file_key(md_path, st)
         if key not in _STAMP_MEMO:
             _STAMP_MEMO[key] = _stamps_of(md_path)
         return {n: set(kinds) for n, kinds in _STAMP_MEMO[key].items()}
