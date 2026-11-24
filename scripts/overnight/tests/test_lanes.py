@@ -1849,10 +1849,36 @@ def test_a_signed_commit_keeps_its_signature(repo):
     for name, value in (("gpg.format", "ssh"), ("user.signingKey", str(key)), ("gpg.ssh.allowedSignersFile", str(signers)),
                         ("commit.gpgSign", "true")):
         git(p, "config", name, value)
-    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    (repo["tmp"] / "message").write_text("x\n\n" + "a long message\n" * 20000)         # larger than a pipe holds
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qF", str(repo["tmp"] / "message"), "--only",
+             "src/kernel/k.c"], cwd=p, timeout=60, env={**os.environ, "SHELLOPTS": "pipefail", "GIT_COMMITTER_NAME": "T",
+                                                        "GIT_COMMITTER_EMAIL": "t@example.com"})
     assert r.returncode == 0 and "the commit is signed" in r.stderr, r
     git(p, "verify-commit", "HEAD")
-    assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n" and git(p, "diff", "--cached", "--name-only").stdout == ""
+    assert git(p, "show", "HEAD:COUNT.md").stdout == "0\n" and git(p, "status", "--porcelain", "-uno").stdout == ""
+
+
+def test_the_committed_readme_keeps_its_bytes(repo):
+    p = repo["primary"]
+    text = (b"caf\xc3\xa9\r\n<!-- COUNT-BADGE:START -->\r\nold\r\n<!-- COUNT-BADGE:END -->\r\nlast line, no newline")
+    (p / ".gitattributes").write_text("README.md -text\n")
+    (p / "README.md").write_bytes(text)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(
+        "import subprocess, sys\nsys.stdout.buffer.write(subprocess.run(['git', 'show', 'HEAD:README.md'],\n"
+        "    capture_output=True, timeout=20).stdout)\n")
+    git(p, "add", "--", ".gitattributes", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    git(p, "config", "core.autocrlf", "true")
+    r = commit_with_hook(repo, (REPO / ".githooks" / "post-commit").read_text())
+    out = subprocess.run([*GIT, "cat-file", "blob", "HEAD:README.md"], cwd=p, capture_output=True, timeout=20).stdout
+    before, _, after = out.partition(b"<!-- COUNT-BADGE:START -->\r\n")
+    assert before == b"caf\xc3\xa9\r\n" and after.endswith(b"<!-- COUNT-BADGE:END -->\r\nlast line, no newline"), (out, r)
+    assert b"old" not in out and b"img.shields.io" in out and (p / "README.md").read_bytes() == out
+    assert git(p, "status", "--porcelain", "-uno").stdout == ""
 
 
 def test_triage_sees_the_map_through_a_replacement(repo):

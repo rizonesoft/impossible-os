@@ -34,6 +34,14 @@ ROOT="$(git rev-parse --show-toplevel)"
 COUNT_FILE="$ROOT/COUNT.md"
 # The commit this run follows, read before the count, which takes a while: everything below derives from it.
 BASE="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null || true)"
+# A signed commit is never amended, so nothing is counted or written for it. An unread one is not amended either.
+if [ "${COUNT_ONLY:-}" != "1" ]; then
+    raw="$(git -C "$ROOT" cat-file commit "$BASE")" || exit 0
+    if [[ "${raw%%$'\n\n'*}" =~ $'\n'gpgsig(-sha256)?' ' ]]; then
+        echo "post-commit: the commit is signed, so it stays as it was signed and the generated files wait for an unsigned commit" >&2
+        exit 0
+    fi
+fi
 
 # Vendored files to exclude from "our code" count
 VENDORED=(
@@ -507,12 +515,8 @@ if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
     # The EXACT total, comma-grouped (1,324,648), commas URL-encoded for shields.io.
     loc_fmt=$(printf '%s' "$whole_tree_lines" | sed -e ':a' -e 's/\([0-9]\)\([0-9]\{3\}\)\($\|,\)/\1,\2\3/' -e 'ta')
     badge_url="https://img.shields.io/badge/lines-${loc_fmt//,/%2C}-blueviolet"
-    awk -v url="$badge_url" '
-        /COUNT-BADGE:START/ { print; inblk=1; next }
-        /COUNT-BADGE:END/   { print "  <img src=\"" url "\" alt=\"Lines of Code\" />"; print; inblk=0; next }
-        inblk { next }
-        { print }
-    ' "$README_TARGET" > "$README_TARGET.tmp" && mv "$README_TARGET.tmp" "$README_TARGET"
+    sed -i -e '/COUNT-BADGE:START/,/COUNT-BADGE:END/{/COUNT-BADGE:/!d}' \
+        -e "/COUNT-BADGE:START/a\\  <img src=\"$badge_url\" alt=\"Lines of Code\" />" "$README_TARGET"
 fi
 
 if [ "${COUNT_ONLY:-}" = "1" ]; then
@@ -543,10 +547,10 @@ fi
 plumb_amend() {
     local base="$BASE" root changed name cb rb="" tree new gitdir idx lock cur_r
     [ -n "$base" ] || return 1
-    cb="$(git -C "$ROOT" hash-object -w "$COUNT_TARGET")" || return 1
+    cb="$(git -C "$ROOT" hash-object --no-filters -w "$COUNT_TARGET")" || return 1
     local -a readme=()
     if [ -n "$README_TARGET" ]; then
-        rb="$(git -C "$ROOT" hash-object -w "$README_TARGET")" || return 1
+        rb="$(git -C "$ROOT" hash-object --no-filters -w "$README_TARGET")" || return 1
         readme=(--cacheinfo "${BASE_README% *},$rb,README.md")
     fi
     # Only root entries change, so the new tree is the base's root with them replaced.
@@ -606,11 +610,6 @@ sys.stdout.buffer.write(b"tree " + sys.argv[1].encode() + b"\n" + rest)' "$tree"
         release_lock                               # HEAD did move, so this is not the refusal below
     fi
 }
-if git -C "$ROOT" cat-file commit "$BASE" 2>/dev/null | sed '/^$/q' | grep -Eq '^gpgsig(-sha256)? '; then
-    echo "post-commit: the commit is signed, so it stays as it was signed and the generated files wait for an unsigned commit" >&2
-    rm -f "$COUNT_TARGET" ${README_TARGET:+"$README_TARGET"}
-    exit 0
-fi
 generated="COUNT.md"
 [ -z "$README_TARGET" ] || generated="COUNT.md and README.md"
 if plumb_amend; then
