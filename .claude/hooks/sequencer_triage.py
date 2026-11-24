@@ -672,12 +672,12 @@ def _has_lane_map(root, deadline):
     if not os.path.exists(os.path.join(root, ".git")):
         return False                                   # no checkout, so no commits and no lanes
     left = (deadline - time.monotonic()) if deadline else LANE_MAP_SECS
+    if left <= 0:
+        return True
     try:
         done = subprocess.run(["git", "-C", root, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml"],
-                              capture_output=True, timeout=max(0.1, left))
-    except subprocess.TimeoutExpired:
-        return True
-    except OSError:
+                              capture_output=True, timeout=left)
+    except (subprocess.TimeoutExpired, OSError):
         return True
     return done.returncode != 0 or bool(done.stdout.strip())
 

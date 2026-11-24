@@ -1511,3 +1511,40 @@ def test_a_readme_that_cannot_be_written_is_reported(repo, edited, index_fails):
         assert (p / "README.md").read_text() == "mine\n"
     else:
         assert (p / "README.md").read_text() == README_TEXT           # as it was, and the report says so
+
+
+def test_an_expired_lane_map_lookup_asks_git_nothing(tmp_path, monkeypatch):
+    t = _load("triage_expired", TRIAGE_PY)
+    git(tmp_path, "init", "-q")
+    monkeypatch.setattr(t.subprocess, "run", lambda *a, **k: 1 / 0)
+    assert t._has_lane_map(str(tmp_path), time.monotonic() - 1) is True
+    with pytest.raises(ZeroDivisionError):
+        t._has_lane_map(str(tmp_path), time.monotonic() + 60)
+
+
+def test_a_held_index_lock_leaves_the_commit_and_every_entry_alone(repo):
+    p = repo["primary"]
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT + "open('.git/index.lock', 'x').close()\n")
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    (p / "README.md").write_text("staged edit\n")
+    git(p, "add", "--", "README.md")
+    shutil.copy(REPO / ".githooks" / "post-commit", repo["hooks"] / "post-commit")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
+            timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    assert (p / ".git" / "index.lock").exists(), r                    # never another process's lock to remove
+    (p / ".git" / "index.lock").unlink()
+    assert "were not committed" in r.stderr and "run" not in r.stderr.split("were not committed")[1], r
+    assert git(p, "show", "HEAD:README.md").stdout == README_TEXT
+    assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"
+    # as the report says, the next commit brings them
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    (p / "src/kernel/k.c").write_text("k3\n")
+    run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "y", "--only", "src/kernel/k.c"], cwd=p,
+        timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    assert "img.shields.io" in git(p, "show", "HEAD:README.md").stdout and git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+    assert git(p, "show", ":README.md").stdout == (p / "README.md").read_text() == "staged edit\n"

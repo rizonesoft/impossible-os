@@ -587,7 +587,7 @@ if [ -n "$README_TARGET" ]; then
     if plumb_amend; then
         publish_readme
     else
-        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run, from the repository root: COUNT_ONLY=1 bash .githooks/post-commit" >&2
+        echo "post-commit: the new COUNT.md and README.md were not committed (HEAD moved, or a git lock was held); the next commit in this checkout brings them" >&2
     fi
     rm -f "$README_TARGET"
 else
