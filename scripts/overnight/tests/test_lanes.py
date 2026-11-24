@@ -897,7 +897,7 @@ def test_triage_holds_everything_when_the_records_cannot_be_listed(triage, monke
 
 
 def test_a_large_map_is_validated_within_the_commit_checks_budget():
-    files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
+    files = ",\n".join(f'"user/f{i}.c"' for i in range(4000))
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
     text = (GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
             f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
@@ -953,7 +953,7 @@ def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(re
 
 
 def test_scheduling_cost_does_not_grow_with_the_paths_a_live_lane_holds():
-    files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
+    files = ",\n".join(f'"user/f{i}.c"' for i in range(4000))
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
     lane_map = lanes.parse_map(GENERATED + f'[lane.main]\n{table}worktree = "."\npaths = []\n'
                                f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
@@ -2055,9 +2055,30 @@ def test_a_map_read_after_the_budget_is_spent_is_no_answer(repo, monkeypatch):
     assert lanes.committed_map(repo["primary"], time.monotonic() + 5)
 
 
-@pytest.mark.parametrize("state, secs", [("off", 0.1), ("live", 3)])
-def test_many_deep_staged_paths_are_judged_in_time(state, secs):
-    deep = "/".join(["d"] * 119)
+def test_a_map_that_could_exhaust_memory_or_the_stack_is_refused():
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    for bad in ("a" + ".a" * 8000 + " = 1\n", "a = " + "[\n" * 30000,
+                "".join(f"a{i}" + ".a" * 245 + " = 1\n" for i in range(240))):
+        r = run([sys.executable, "-c", "import resource, sys; resource.setrlimit(resource.RLIMIT_AS, (180 << 20,) * 2)\n"
+                 "sys.path.insert(0, sys.argv[1])\nimport lanes\ntry: lanes.parse_map(sys.stdin.read())\n"
+                 "except lanes.LaneError as exc: print(str(exc)[:200])", str(REPO / "scripts")], input=bad + text)
+        assert r.returncode == 0 and any(w in r.stdout for w in ("line longer", "cannot be read", "unknown keys")), r
+
+
+def test_the_longest_lane_name_can_keep_a_record(repo):
+    text = (REPO / ".conclave" / "lanes.toml").read_text()
+    lane = '[lane.{}]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["x/"]\noutput = "commits"\nlimits = {{}}\n'
+    name = "x" * lanes.NAME_MAX
+    lane_map = lanes.parse_map(text + lane.format(name))
+    lanes.beat(name, os.getpid(), "t")
+    assert lanes.states(lane_map)[name] == lanes.LIVE
+    with pytest.raises(lanes.LaneError, match="is longer than"):
+        lanes.parse_map(text + lane.format(name + "x"))
+
+
+@pytest.mark.parametrize("state, secs, top", [("off", 0.1, "d"), ("live", 3, "d"), ("live", 0.4, "z")])
+def test_many_deep_staged_paths_are_judged_in_time(state, secs, top):
+    deep = top + "/d" * 118
     m = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text()
                         + f'[lane.x]\nengine = "e"\nmodel = "m"\nworktree = "../x"\npaths = ["{deep}/f"]\n'
                         + 'output = "commits"\nlimits = {}\n')

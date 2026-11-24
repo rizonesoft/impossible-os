@@ -68,18 +68,20 @@ def _strings(value) -> bool:
 
 
 MAP = ".conclave/lanes.toml"
-MAP_MAX, ENTRY_MAX = 128 * 1024, 240                 # bytes, characters: what keeps reading and judging by it quick
+MAP_MAX, LINE_MAX, ENTRY_MAX, NAME_MAX = 128 * 1024, 500, 240, 64     # bytes, characters: what keeps reading and judging by it quick
 AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'entries': every paths entry, sorted, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
+    'entries': every paths entry, sorted, 'tops': their first components, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
     _need(len(text.encode(errors="replace")) <= MAP_MAX, f"the map is longer than {MAP_MAX} bytes")
+    # A key with thousands of dots takes memory by its square, and is all on one line.
+    _need(all(len(line) <= LINE_MAX for line in text.split("\n")), f"the map has a line longer than {LINE_MAX} characters")
     try:
         data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
+    except (tomllib.TOMLDecodeError, RecursionError) as exc:
         raise LaneError(f"{MAP} cannot be read ({type(exc).__name__}: {exc})") from exc
     _need(set(data) <= TOP_KEYS, f"unknown keys {sorted(set(data) - TOP_KEYS)}")
     stale = data.get("stale_secs", 180)
@@ -94,6 +96,7 @@ def parse_map(text: str) -> dict:
     trees: dict[str, str] = {}
     for name, lane in lanes.items():
         _need(re.fullmatch(r"[a-z][a-z0-9-]*", name) is not None, f"lane name {name!r} is not lower-case-with-dashes")
+        _need(len(name) <= NAME_MAX, f"lane name {name[:20]!r}... is longer than {NAME_MAX} characters")
         _need(isinstance(lane, dict) and set(lane) == LANE_KEYS,
               f"[lane.{name}] needs exactly {sorted(LANE_KEYS)}")
         _need(all(isinstance(lane[k], str) and lane[k] for k in ("engine", "model", "worktree")),
@@ -123,6 +126,7 @@ def parse_map(text: str) -> dict:
         q = None if p.endswith("/") else next(_under(named, p), None)
         _need(q is None, f"path {p!r} is a file where path {q!r} needs a directory")
     return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned), "entries": entries,
+            "tops": {p.partition("/")[0] for p in entries},
             "longest": max((len(p) for p, _name in owned), default=0),
             "bare": {name for p, name in owned if "/" not in p}}
 
@@ -142,7 +146,10 @@ def _covers(entry: str, path: str) -> bool:
 
 
 def owner(lane_map: dict, path: str) -> str:
-    """The lane whose paths hold `path`, else main: one lookup for each directory above it."""
+    """The lane whose paths hold `path`, else main: one lookup for each directory above it, or none when no entry
+    starts as it does."""
+    if path.partition("/")[0] not in lane_map["tops"]:
+        return MAIN
     index = lane_map["index"]
     if path in index:
         return index[path]
@@ -228,6 +235,8 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
 def displaced_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str | None:
     """The extra lane whose reserved paths cannot exist beside a file at `path`, or None: the file is a directory one
     of them needs, or it is under one that is a file."""
+    if path.partition("/")[0] not in lane_map["tops"]:
+        return None
     index = lane_map["index"]
     names = {index[q] for q in _under(lane_map["entries"], path)}
     at = path.find("/")

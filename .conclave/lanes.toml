@@ -6,7 +6,7 @@
 # - An extra lane reserves its paths only while it is live (its record under
 #   $XDG_STATE_HOME/impossible-os/lanes/ is fresh), and it may commit only inside them.
 # - paths: a directory prefix ends in "/", anything else is one file. No two lanes may overlap.
-#   Letters, digits, "_", ".", "-" and "/" only, 240 characters at most; the whole map 128 KiB at most.
+#   Letters, digits, "_", ".", "-" and "/" only, 240 characters at most (a lane name 64, a line 500, the map 128 KiB).
 # - worktree: relative to the primary tree.
 # - output: "commits", or "reports" for a lane that never commits.
 # - limits: the systemd scope a lane runs in (section 52 applies them).
