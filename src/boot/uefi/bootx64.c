@@ -10244,16 +10244,18 @@ static EFI_STATUS claim_kernel_memory(const struct boot_span *segments, unsigned
 }
 
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-/* The control: no page from the image's start to `hi` is free for firmware to hand out. */
-static void bl_control_image_held(UINT64 hi, const char *held)
+/* The control: no page of a segment is free for firmware to hand out. */
+static void bl_control_image_held(unsigned segments, const char *held)
 {
     UINTN size, desc, taken = 0;
     EFI_STATUS ms = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
                                           &size, &desc);
     for (UINTN off = 0; !EFI_ERROR(ms) && off + desc <= size; off += desc) {
         const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
-        taken += d->Type == EfiConventionalMemory && d->PhysicalStart < hi &&
-                 d->PhysicalStart + d->NumberOfPages * BL_PAGE_4K > g_kernel_img_lo;
+        UINT64 end = d->PhysicalStart + d->NumberOfPages * BL_PAGE_4K;
+        for (unsigned i = 0; d->Type == EfiConventionalMemory && i < segments; i++)
+            taken += d->PhysicalStart < s_kernel_segments[i].base + s_kernel_segments[i].bytes &&
+                     end > s_kernel_segments[i].base;
     }
     serial_early_print(EFI_ERROR(ms) || taken ? "[FAIL] Kernel image: pages are free to take\n" : held);
 }
@@ -10969,7 +10971,7 @@ kernel_loaded:
         if (phdr[i].p_type != PT_LOAD)
             continue;
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-        bl_control_image_held(g_kernel_img_hi, "[BOOT] Kernel image: held before a segment is copied\n");
+        bl_control_image_held(segments, "[BOOT] Kernel image: held before a segment is copied\n");
 #endif
 
         /* Log loaded segment */
@@ -11081,6 +11083,19 @@ kernel_loaded:
             goto load_error;
         }
 
+        /* It must be code of this kernel's that was copied above. */
+        struct boot_span code = { 0, 0 };
+        for (i = 0; i < ehdr->e_phnum && code.bytes == 0; i++) {
+            struct boot_span file = { phdr[i].p_paddr, phdr[i].p_filesz };
+            if (phdr[i].p_type == PT_LOAD && (phdr[i].p_flags & PF_X) && boot_span_holds(file, km_addr))
+                code = file;
+        }
+        if (code.bytes == 0) {
+            serial_early_print("[FAIL] Kernel ELF corrupt: kernel_main is not in a code segment\n");
+            load_err_status = EFI_LOAD_ERROR;
+            goto load_error;
+        }
+
         *entry_point = km_addr;
     }
 
@@ -11099,7 +11114,7 @@ kernel_loaded:
 #endif
     }
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-    bl_control_image_held(kernel_image_end(), "[BOOT] Kernel image: every page is held\n");
+    bl_control_image_held(segments, "[BOOT] Kernel image: every page is held\n");
 #endif
     return EFI_SUCCESS;
 

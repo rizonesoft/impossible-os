@@ -69,6 +69,12 @@ boot_span_follows(struct boot_span prev, struct boot_span next)
     return (next.base & ~(FREE_SPAN_PAGE - 1)) >= boot_span_end(prev.base, prev.bytes);
 }
 
+static inline int
+boot_span_holds(struct boot_span span, unsigned long long at)
+{
+    return at >= span.base && at - span.base < span.bytes;
+}
+
 /* Takes `pages` from `base`, all or none; answers whether it did. */
 typedef int (*boot_span_take)(void *ctx, unsigned long long base, unsigned long long pages);
 

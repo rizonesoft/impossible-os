@@ -469,6 +469,10 @@ uint8_t acpi_pcat_compat(void);
  * Returns 0 if no HPET table found. */
 uint64_t acpi_get_hpet_base(void);
 
+/* PURE: the ticks from `prev` to `now` of a PM timer `mask` wide, across a wrap; 0 for
+ * a read that went backwards (some chipsets have them). */
+uint32_t acpi_pmtmr_step(uint32_t prev, uint32_t now, uint32_t mask);
+
 /* PM Timer I/O port from FADT PM_TMR_BLK (offset 76).
  * Returns 0 if FADT not available or PM Timer block not set. */
 uint16_t acpi_get_pmtimer_port(void);

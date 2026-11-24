@@ -335,6 +335,18 @@ static void test_kernel_claim_spans(void)
     TEST_ASSERT_EQ(boot_span_claim(8 * 4096, 4, claim_span_take, &held), 0, "one that is never free");
 }
 
+static void test_kernel_entry_span(void)
+{
+    const struct boot_span code = { 0x100000, 0x1000 }, none = { 0x100000, 0 }, top = { ~0ULL - 15, 64 };
+
+    TEST_ASSERT_EQ(boot_span_holds(code, 0x100000), 1, "its first byte");
+    TEST_ASSERT_EQ(boot_span_holds(code, 0x100FFF), 1, "its last");
+    TEST_ASSERT_EQ(boot_span_holds(code, 0x101000), 0, "the one after");
+    TEST_ASSERT_EQ(boot_span_holds(code, 0xFFFFF), 0, "the one before");
+    TEST_ASSERT_EQ(boot_span_holds(none, 0x100000), 0, "an empty segment holds nothing");
+    TEST_ASSERT_EQ(boot_span_holds(top, ~0ULL), 1, "the last byte of the address space");
+}
+
 /* A segment follows the one before it when the two share no page. */
 static void test_kernel_segment_order(void)
 {
@@ -1562,6 +1574,8 @@ void test_register_uefi_boot(void)
                             test_kernel_buffer_overlap, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel segment order",
                             test_kernel_segment_order, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel entry span",
+                            test_kernel_entry_span, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel memory claim spans",
                             test_kernel_claim_spans, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",

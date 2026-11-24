@@ -956,8 +956,19 @@ static void test_acpi_s0ix_wrapper_matches_pure(void)
 }
 
 
+static void test_acpi_pmtmr_step(void)
+{
+    TEST_ASSERT_EQ(acpi_pmtmr_step(100, 103, 0xFFFFFF), 3, "forward");
+    TEST_ASSERT_EQ(acpi_pmtmr_step(0xFFFFFE, 1, 0xFFFFFF), 3, "across a 24-bit wrap");
+    TEST_ASSERT_EQ(acpi_pmtmr_step(0xFFFFFFFEu, 1, 0xFFFFFFFFu), 3, "across a 32-bit wrap");
+    TEST_ASSERT_EQ(acpi_pmtmr_step(7, 7, 0xFFFFFF), 0, "a timer that stands still");
+    TEST_ASSERT_EQ(acpi_pmtmr_step(100, 99, 0xFFFFFF), 0, "a read that went backwards");
+}
+
 void test_register_acpi_power(void)
 {
+    test_suite_register_cat("ACPI: PM timer step",
+                            test_acpi_pmtmr_step, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: discovery extent guard",
                             test_acpi_discovery_extent_guard, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: button in-range action preserved",
