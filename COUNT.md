@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     520 |     410574 |
+| **C sources** (`.c`)  |     520 |     410572 |
 | **Headers** (`.h`)    |     368 |      85840 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **899** | **497802** |
+| **Subtotal**          | **899** | **497800** |
 
 ## Host Tools
 
@@ -32,7 +32,7 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     147 |     110891 |
+| **Shell scripts** (`.sh`)         |     147 |     110893 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      36 |       7473 |
 | **Python** (`.py`)                |     395 |     180908 |
@@ -40,7 +40,7 @@
 | **Include fragments** (`.inc`)    |       7 |       3250 |
 | **Makefile**                      |       3 |       2389 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **670** | **308228** |
+| **Subtotal**                      | **670** | **308230** |
 
 ## Documentation & Project Metadata
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-11-25 01:36 · commit `8873881ed`*
+*Last updated: 2026-11-25 01:47 · commit `af7d9ad95`*

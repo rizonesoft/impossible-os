@@ -41,7 +41,7 @@
 **Website:** [impossibleos.co](https://impossibleos.co/) · **Documentation:** [impossibleos.co/docs](https://impossibleos.co/docs/), generated from [`docs/`](docs/index.md) · **Design system:** [`docs/design/`](docs/design/index.md) · **Live design mockup:** [impossibleos.co/design](https://impossibleos.co/design/)
 
 > [!NOTE]
-> **Status: pre-alpha, targeting a first public release on <!-- project:release_date_long -->August 8, 2028<!-- /project -->.** It boots on real hardware and runs a desktop, but it is not ready for daily use. The roadmap spans <!-- project:stat_todo_files -->238<!-- /project --> planning files across <!-- project:stat_todo_domains -->18<!-- /project --> domains, and <!-- project:stat_test_suites -->3,767<!-- /project --> kernel test suites (<!-- project:stat_test_assertions -->17,710<!-- /project --> assertion sites) run after every commit.
+> **Status: pre-alpha, targeting a first public release on <!-- project:release_date_long -->August 8, 2028<!-- /project -->.** It boots on real hardware and runs a desktop, but it is not ready for daily use. The roadmap spans <!-- project:stat_todo_files -->238<!-- /project --> planning files across <!-- project:stat_todo_domains -->18<!-- /project --> domains, and <!-- project:stat_test_suites -->3,767<!-- /project --> kernel test suites (<!-- project:stat_test_assertions -->17,711<!-- /project --> assertion sites) run after every commit.
 
 ## Contents
 
