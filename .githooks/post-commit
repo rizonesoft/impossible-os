@@ -484,6 +484,12 @@ fi
 
 [ "${COUNT_ONLY:-}" = "1" ] && exit 0
 
+# Run by hand, nothing has judged this tree yet: a reports-only lane amends nothing (TODO-08 section 49).
+if [ -f "$ROOT/scripts/lanes.py" ] && ! (cd "$ROOT" && python3 scripts/lanes.py check-staged --who); then
+    echo "post-commit: COUNT.md refreshed but HEAD not amended" >&2
+    exit 0
+fi
+
 # Amend the commit to include the updated COUNT.md + README badge.
 #
 # `--only <paths>` IS LOAD-BEARING (2026-08-02). A bare `--amend` commits the

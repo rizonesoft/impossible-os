@@ -111,6 +111,9 @@ def test_a_queue_a_lane_blocks_says_which_lane():
     held = [{"file": "todo/x.md", "section": 2, "lane": "userland"}]
     got = _packet({"status": "BLOCKED", "file": None, "lane_reserved": held})
     assert got["action"] == "blocked" and "userland" in got["note"] and "deferrals" not in got["note"], got
+    held = [{"lanes_error": "the map is broken"}, {"file": "todo/x.md", "section": 2, "lane": "unknown"}]
+    got = _packet({"status": "BLOCKED", "file": None, "lane_reserved": held})["note"]
+    assert "the map is broken" in got and "live lanes" not in got, got
     assert "recoverable deferrals" in _packet({"status": "BLOCKED", "file": None})["note"]
 
 

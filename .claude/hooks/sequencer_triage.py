@@ -288,6 +288,11 @@ def _scan_sections(text):
     return scan, out
 
 
+# section_stamps' results in a one-shot run of this script: the planner asks for the whole corpus a second time.
+# None in every other process: one that lives longer would keep a park's verdict past an edit of answers.md.
+_STAMP_MEMO = None
+
+
 def section_stamps(md_path):
     """Map section number -> set of stamp kinds present: 'V', 'Q', 'D'.
 
@@ -303,7 +308,18 @@ def section_stamps(md_path):
     out = {}
     if not os.path.exists(md_path):
         return out
-    text, scan, sections = _read_scan(md_path)
+    if _STAMP_MEMO is not None:
+        st = os.stat(md_path)
+        key = (os.path.abspath(md_path), st.st_ino, st.st_mtime_ns, st.st_size)
+        if key not in _STAMP_MEMO:
+            _STAMP_MEMO[key] = _stamps_of(md_path)
+        return {n: set(kinds) for n, kinds in _STAMP_MEMO[key].items()}
+    return _stamps_of(md_path)
+
+
+def _stamps_of(md_path):
+    out = {}
+    _text, scan, sections = _read_scan(md_path)
     mask, lines = scan.mask, scan.lines
     for num, _ln, start, end in sections:
         if num is None:
@@ -989,4 +1005,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    _STAMP_MEMO = {}
+    sys.modules.setdefault("sequencer_triage", sys.modules["__main__"])   # the planner imports this oracle by name
     sys.exit(main())

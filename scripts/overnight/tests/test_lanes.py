@@ -225,7 +225,7 @@ def test_a_revert_read_through_ps_is_judged_too(repo, monkeypatch):
 
 
 def test_a_path_spelled_from_the_root_is_a_lane_path_and_a_nested_one_is_not(repo):
-    m = lanes.load_map(repo["primary"])
+    m = lanes.committed_map(repo["primary"])
     on = {"userland": lanes.LIVE}
     assert lanes.names_reserved_path(m, on, "edit `./user/hello/x.c`") == "userland"
     assert lanes.names_reserved_path(m, on, "edit user/hello/x.c") == "userland"
@@ -234,7 +234,7 @@ def test_a_path_spelled_from_the_root_is_a_lane_path_and_a_nested_one_is_not(rep
 
 
 def test_a_stale_heartbeat_or_a_dead_pid_is_a_lane_that_is_off(repo):
-    m = lanes.load_map(repo["primary"])
+    m = lanes.committed_map(repo["primary"])
     live("userland", age=181)
     assert lanes.lane_state(m, "userland") == lanes.OFF
     dead = subprocess.Popen(["true"])
@@ -480,7 +480,7 @@ def test_a_pid_out_of_range_is_never_written_and_a_record_holding_one_reserves_o
     d = lanes.state_dir()
     d.mkdir(parents=True)
     (d / "userland.json").write_text(json.dumps({"lane": "userland", "pid": 2**40, "heartbeat": time.time()}))
-    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    assert lanes.lane_state(lanes.committed_map(repo["primary"]), "userland") == lanes.DAMAGED
     stage(repo["primary"], "src/kernel/k.c")
     assert check(repo["primary"]).returncode == 0
     stage(repo["primary"], "user/a.c")
@@ -554,7 +554,7 @@ def test_a_worktree_must_be_relative_and_one_tree_is_one_lane(repo):
     good = toml.read_text()
     toml.write_text(good.replace('worktree = "../wt-neon-b"', f'worktree = "{repo["primary"]}"'))
     with pytest.raises(lanes.LaneError, match="must be relative"):
-        lanes.load_map(repo["primary"])
+        lanes.parse_map(toml.read_text())
     (repo["tmp"] / "alias").symlink_to(repo["userland"])
     toml.write_text(good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"'))
     git(repo["primary"], "add", "--", ".conclave/lanes.toml")
@@ -856,7 +856,7 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
     d = lanes.state_dir()
     d.mkdir(parents=True)
     (d / "userland.json").write_text(json.dumps(rec))
-    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    assert lanes.lane_state(lanes.committed_map(repo["primary"]), "userland") == lanes.DAMAGED
     stage(repo["userland"], "user/a.c")
     r = check(repo["userland"])
     assert r.returncode == 1 and "its record cannot be read" in r.stderr, r
@@ -1047,7 +1047,7 @@ def test_a_worktree_that_cannot_be_resolved_refuses_and_can_be_repaired(repo, mo
 
 
 def test_a_slash_heavy_text_is_read_in_linear_time(repo):
-    lane_map = lanes.load_map(repo["primary"])
+    lane_map = lanes.committed_map(repo["primary"])
     text = "(data:image/png;base64," + "Ab9/" * 65536 + ")"
     start = time.monotonic()
     assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, text, "todo/00-x") is None
@@ -1058,14 +1058,14 @@ def test_a_dangling_record_link_reserves_its_lane(repo):
     d = lanes.state_dir()
     d.mkdir(parents=True)
     (d / "userland.json").symlink_to(d / "moved.json")
-    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    assert lanes.lane_state(lanes.committed_map(repo["primary"]), "userland") == lanes.DAMAGED
     stage(repo["primary"], "user/a.c")
     r = check(repo["primary"])
     assert r.returncode == 1 and "reserved (its record cannot be read)" in r.stderr, r
 
 
 def test_a_heartbeat_the_reader_would_refuse_is_not_written(repo, monkeypatch):
-    lane_map = lanes.load_map(repo["primary"])
+    lane_map = lanes.committed_map(repo["primary"])
     monkeypatch.setattr(lanes.time, "time", lambda: 1.5e9)            # a fixed width in the record
     empty = lanes.beat("userland", os.getpid(), "").stat().st_size
     path = lanes.beat("userland", os.getpid(), "x" * (lanes.RECORD_MAX - empty))
@@ -1077,7 +1077,7 @@ def test_a_heartbeat_the_reader_would_refuse_is_not_written(repo, monkeypatch):
 
 
 def test_leading_dot_components_are_read_in_linear_time(repo):
-    lane_map = lanes.load_map(repo["primary"])
+    lane_map = lanes.committed_map(repo["primary"])
     start = time.monotonic()
     assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, "./" * 524288 + "../../user/x",
                                      "todo/00-x") == "userland"
@@ -1088,7 +1088,7 @@ def test_leading_dot_components_are_read_in_linear_time(repo):
     ("Edit the files in user/.", "userland"), ("Edit the files in user/...", "userland"), ("Edit user.", None),
     ("Edit user/x.c.", "userland"), ("the parent, user/..", None), ("Edit ../../user/.", "userland")])
 def test_a_sentences_full_stop_keeps_a_directorys_slash(repo, text, held):
-    lane_map = lanes.load_map(repo["primary"])
+    lane_map = lanes.committed_map(repo["primary"])
     assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, text, "todo/00-x") == held
 
 
@@ -1118,7 +1118,7 @@ def test_a_staged_submodule_is_judged_whatever_git_is_set_to_show(repo):
 
 
 def test_words_with_no_slash_are_read_only_for_a_map_that_reserves_one(repo):
-    lane_map = lanes.load_map(repo["primary"])
+    lane_map = lanes.committed_map(repo["primary"])
     assert lane_map["bare"] == set() and list(lanes._paths_named("the user edits user/x.c today", "", False)) == ["user/x.c"]
     assert list(lanes._paths_named("a b/c", "", True)) == ["a", "b/c"]
     start = time.monotonic()
@@ -1195,3 +1195,54 @@ def test_a_lane_that_is_off_does_not_make_every_word_a_path(monkeypatch):
     for a in (lanes.OFF, lanes.LIVE, lanes.DAMAGED):
         lanes.names_reserved_path(lane_map, {"a": a, "b": lanes.LIVE}, "the Makefile")
     assert asked == [False, True, True]
+
+
+def test_the_live_command_reads_the_map_the_commit_check_judges_by(repo):
+    p = repo["primary"]
+    live("userland", age=60)
+    toml = p / ".conclave" / "lanes.toml"
+    toml.write_text("stale_secs = 30\n" + toml.read_text().replace("stale_secs = 180\n", ""))
+    argv = [sys.executable, str(p / "scripts" / "lanes.py"), "live"]
+    r = run(argv, env=os.environ.copy())
+    assert json.loads(r.stdout)["userland"] == lanes.LIVE, r
+
+
+def test_the_post_commit_amend_of_a_reports_lane_is_refused(repo):
+    tree = repo["neon-b"]
+    shutil.copy(REPO / ".githooks" / "post-commit", tree / "post-commit.sh")
+    before = git(tree, "rev-parse", "HEAD").stdout
+    r = run(["bash", "post-commit.sh"], cwd=tree, timeout=60, env=os.environ.copy())
+    assert "HEAD not amended" in r.stderr and "never commits" in r.stderr, r
+    assert git(tree, "rev-parse", "HEAD").stdout == before
+    # A tree that may commit passes, whatever else is staged.
+    live("userland")
+    stage(repo["primary"], "user/a.c")
+    r = run([sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "check-staged", "--who"],
+            cwd=repo["primary"], env=os.environ.copy())
+    assert r.returncode == 0, r
+
+
+def test_a_run_of_triage_scans_each_todo_once_for_its_planner_too(tmp_path):
+    (tmp_path / "todo" / "00-x").mkdir(parents=True)
+    md = tmp_path / "todo" / "00-x" / "TODO-01-x.md"
+    md.write_text("# T\n\n## 1. One\n\n- [ ] x\n")
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps([{"file_path": "todo/00-x/TODO-01-x.md", "domain": "00-x",
+                                  "sections": [{"n": 1, "status": " "}]}]))
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(REPO / "scripts" / "todo_fence.py", tmp_path / "scripts" / "todo_fence.py")
+    (tmp_path / "scripts" / "todo-plan.py").write_text(
+        "import os\ndef ready_rows(root, nodes):\n"
+        "    import sequencer_triage as st\n"
+        "    before = len(st._STAMP_MEMO)\n"
+        "    st.section_stamps(os.path.join(root, 'todo/00-x/TODO-01-x.md'))\n"
+        "    (root / 'seen').write_text(f'{before} {len(st._STAMP_MEMO)}')\n"
+        "    return [('todo/00-x/TODO-01-x.md', 1)]\n")
+    r = run([sys.executable, str(TRIAGE_PY), "--next", "--repo-root", str(tmp_path), "--cache", str(cache)],
+            cwd=tmp_path, timeout=60, env=os.environ.copy())
+    assert r.returncode == 0 and (tmp_path / "seen").read_text() == "1 1", r
+    t = _load("triage_memo", TRIAGE_PY)
+    t._STAMP_MEMO = {}
+    assert t.section_stamps(str(md)) == {1: set()}
+    md.write_text("# T\n\n## 1. One\n\n> **Verified:** 2026-11-24\n")
+    assert t.section_stamps(str(md)) == {1: {"V"}}

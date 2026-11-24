@@ -122,8 +122,12 @@ def main(argv) -> int:
         return 0
     if status == "BLOCKED":
         packet["action"] = "blocked"
-        lanes = sorted({e["lane"] for e in nxt.get("lane_reserved") or [] if "lane" in e})
-        packet["note"] = (f"open sections wait on live lanes ({', '.join(lanes)}); nothing else can start"
+        reserved = nxt.get("lane_reserved") or []
+        lanes = sorted({e["lane"] for e in reserved if "lane" in e})
+        error = next((e["lanes_error"] for e in reserved if "lanes_error" in e), None)
+        packet["note"] = (f"open sections are held because lane ownership is unknown: {error}"
+                          if error and lanes else
+                          f"open sections wait on live lanes ({', '.join(lanes)}); nothing else can start"
                           if lanes else
                           "only recoverable deferrals remain; the launcher heal "
                           "probe / watchdog backoff governs -- no fresh section")

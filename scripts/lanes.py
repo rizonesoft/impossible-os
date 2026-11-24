@@ -11,6 +11,7 @@ reserves the lane's paths against everyone else and gives the lane itself no rig
     python3 scripts/lanes.py live                           # each extra lane's state: live, off or damaged
     python3 scripts/lanes.py check-staged                   # the commit check (.githooks/pre-commit, prepare-commit-msg)
     python3 scripts/lanes.py check-staged --replay          # a rebase's own commit of a pick
+    python3 scripts/lanes.py check-staged --who             # only whether this tree may commit (.githooks/post-commit)
 
 check-staged exits 0 to allow, 1 to refuse, 2 when it cannot judge (a commit is refused for both).
 SKIP_LANE_CHECK=1 with a SKIP_LANE_CHECK_REASON allows the commit and prints the reason.
@@ -69,19 +70,10 @@ def _strings(value) -> bool:
 MAP = ".conclave/lanes.toml"
 
 
-def load_map(root: Path) -> dict:
-    """The validated map in the working tree (scheduling and the lane CLI; the commit check reads the
-    committed one, `committed_map`)."""
-    try:
-        text = (Path(root) / MAP).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise LaneError(f"{MAP} cannot be read ({type(exc).__name__}: {exc})") from exc
-    return parse_map(text)
-
-
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.    Anything unexpected refuses."""
+    'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
+    Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -426,10 +418,11 @@ def replaying(toplevel: Path) -> bool:
             and not _git(toplevel, "rev-parse", "-q", "--verify", "REBASE_HEAD", ok=(0, 1)).strip())
 
 
-def check_staged(cwd: Path, replay: bool = False) -> int:
+def check_staged(cwd: Path, replay: bool = False, who: bool = False) -> int:
     """Judge the staged commit on every path the index changes against HEAD. Two things are not told apart from
     that: a rebase's own commit of a clean pick (`replay`) is judged only on who may commit at all, and a merge is
-    refused while any lane holds paths, because the index cannot show a lane's incoming change it lost."""
+    refused while any lane holds paths, because the index cannot show a lane's incoming change it lost. `who` judges
+    only who commits: the post-commit amend carries two generated files, whatever else is staged."""
     me = None
     try:
         toplevel = _rev_path(cwd, "--show-toplevel")
@@ -437,7 +430,7 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
         # later commit is judged by it.
         proposed, reasons, refused = None, [], 1
-        changed = staged_paths(toplevel)
+        changed = [] if who else staged_paths(toplevel)
         if MAP in changed:
             staged = _blob(toplevel, f":{MAP}")
             if staged is None:
@@ -467,7 +460,7 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         paths = [] if replay and replaying(toplevel) else changed
         reasons = judge(lane_map, me, paths, lane_states)
         if not reasons and any_live(lane_states):
-            if merging(toplevel):
+            if merging(toplevel) and not who:
                 reasons = ["no merge commits while a lane is live; rebase instead"]
             elif proposed is not None and proposed != lane_map:
                 reasons = [f"{MAP} does not change while a lane is live: its worktree still commits by the old one"]
@@ -497,15 +490,15 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cmd, rest = argv[0], argv[1:]
-    if cmd == "check-staged" and rest in ([], ["--replay"]):
-        return check_staged(Path.cwd(), replay=bool(rest))
+    if cmd == "check-staged" and rest in ([], ["--replay"], ["--who"]):
+        return check_staged(Path.cwd(), replay=rest == ["--replay"], who=rest == ["--who"])
     root = Path(__file__).resolve().parent.parent
     try:
         # Needs no map: a record is cleared after its lane left the map, and while the map is broken.
         if cmd == "clear" and len(rest) == 1:
             clear(rest[0])
             return 0
-        lane_map = load_map(root)
+        lane_map = committed_map(root)
         if cmd == "beat" and len(rest) == 5 and rest[1] == "--pid" and rest[3] == "--task":
             name = rest[0]
             if name == MAIN or name not in lane_map["lanes"]:
