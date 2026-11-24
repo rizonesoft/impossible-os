@@ -67,40 +67,29 @@ class Pure(unittest.TestCase):
         self.assertIn("August 8, 2028", out)
         self.assertEqual(len(errs), 1)
 
-    def test_emit_head_syncs_from_the_whole_commit(self):
+    def test_emit_readme_syncs_from_the_whole_commit(self):
         # It reads only the facts' inputs, so its answer is held against the full snapshot's.
-        build = str(HERE.parent / "build.py")
-        full = json.loads(subprocess.run(
-            [sys.executable, "-c",
-             "import sys, json; sys.path.insert(0, sys.argv[1]); import build as B, shutil\n"
-             "snap = B.snapshot('HEAD')\nfacts = B.load_project()\n"
-             "print(json.dumps({f: B.sync_regions((B.ROOT / f).read_text(encoding='utf-8'), facts, f, [])\n"
-             "                  for f in ('README.md', 'docs/index.md')} | {'facts': facts}))\n"
-             "shutil.rmtree(snap)", str(HERE.parent)],
-            cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout)
-        for name in ("README.md", "docs/index.md"):
-            emitted = subprocess.run([sys.executable, build, "--emit-head", name], cwd=B.REPO_REAL, check=True,
-                                     capture_output=True, text=True, timeout=120).stdout
-            self.assertEqual(emitted, full[name], name)
-        for name in ("./README.md", str(B.REPO_REAL / "README.md"), "../README.md", "absent.md"):
-            r = subprocess.run([sys.executable, build, "--emit-head", name], cwd=B.REPO_REAL,
-                               capture_output=True, text=True, timeout=120)
-            self.assertEqual((r.returncode, r.stdout), (1, ""), name)     # never the working copy's bytes
-            self.assertIn("as git lists it", r.stderr)
-        self.assertRegex(full["README.md"], r"project:stat_todo_files -->[1-9]")
-        narrow = json.loads(subprocess.run(
-            [sys.executable, "-c",
-             "import sys, json; sys.path.insert(0, sys.argv[1]); import build as B, shutil\n"
-             "snap = B.snapshot('HEAD', B.emit_paths('docs/index.md'))\n"
-             "print(json.dumps(B.load_project())); shutil.rmtree(snap)", str(HERE.parent)],
-            cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout)
-        self.assertEqual(narrow, full["facts"])     # the emitted page is counted too
+        def snapshot(paths: str) -> dict:
+            return json.loads(subprocess.run(
+                [sys.executable, "-c",
+                 "import sys, json; sys.path.insert(0, sys.argv[1]); import build as B, shutil\n"
+                 f"snap = B.snapshot('HEAD', {paths})\nfacts = B.load_project()\n"
+                 "text = (B.ROOT / 'README.md').read_text(encoding='utf-8')\n"
+                 "print(json.dumps({'readme': B.sync_regions(text, facts, 'README.md', []), 'facts': facts}))\n"
+                 "shutil.rmtree(snap)", str(HERE.parent)],
+                cwd=B.REPO_REAL, check=True, capture_output=True, text=True, timeout=120).stdout)
+        full = snapshot("None")
+        self.assertEqual(snapshot("B.README_PATHS"), full)
+        emitted = subprocess.run([sys.executable, str(HERE.parent / "build.py"), "--emit-readme"], cwd=B.REPO_REAL,
+                                 check=True, capture_output=True, text=True, timeout=120).stdout
+        self.assertEqual(emitted, full["readme"])
+        self.assertRegex(emitted, r"project:stat_todo_files -->[1-9]")
 
     def test_a_snapshot_that_fails_leaves_nothing_behind(self):
         with tempfile.TemporaryDirectory() as tmp:
             r = subprocess.run(
                 [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import build as B\n"
-                 "B.parse_directives = lambda text: 1 / 0\nB.snapshot('HEAD', B.emit_paths('README.md'))", str(HERE.parent)],
+                 "B.parse_directives = lambda text: 1 / 0\nB.snapshot('HEAD', B.README_PATHS)", str(HERE.parent)],
                 cwd=B.REPO_REAL, capture_output=True, text=True, timeout=120, env={**os.environ, "TMPDIR": tmp})
             self.assertIn("ZeroDivisionError", r.stderr)
             self.assertEqual(os.listdir(tmp), [])
@@ -1648,7 +1637,7 @@ class ReleaseDocs(unittest.TestCase):
         snap = B.prepare_release(ref)
         self.snaps.append(snap)
         args = argparse.Namespace(check=False, out=self.out, quiet=True, sync=None, 
-                                  emit_head=None, update_baseline=False, freshness=False, skip_stats=False,
+                                  emit_readme=False, update_baseline=False, freshness=False, skip_stats=False,
                                   staged=False, release=ref, ref="HEAD")
         return B.run(args)
 
@@ -2112,7 +2101,7 @@ class RetainedReleases(unittest.TestCase):
     def render(self, tag, out):
         snap = B.prepare_release(tag)
         self.snaps.append(snap)
-        args = argparse.Namespace(check=False, out=out, quiet=True, sync=None, emit_head=None,
+        args = argparse.Namespace(check=False, out=out, quiet=True, sync=None, emit_readme=False,
                                   update_baseline=False, freshness=False, skip_stats=False, staged=False,
                                   release=tag, ref="HEAD")
         try:
@@ -3153,7 +3142,7 @@ class SitePolish(unittest.TestCase):
 
         def run(shallow, check):
             fake_build.shallow = shallow
-            args = argparse.Namespace(emit_head=None, sync=None, freshness=False,
+            args = argparse.Namespace(emit_readme=False, sync=None, freshness=False,
                                       update_baseline=False, check=check, skip_stats=False, out=out, quiet=True)
             err = io.StringIO()
             with mock.patch.object(B, "build", fake_build), redirect_stderr(err):

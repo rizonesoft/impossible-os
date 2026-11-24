@@ -1407,10 +1407,10 @@ def test_a_failed_index_publish_never_advises_dropping_a_staged_readme(repo, sta
     (p / "src/kernel/k.c").write_text("k2\n")
     r = run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-qm", "x", "--only", "src/kernel/k.c"], cwd=p,
             timeout=60, env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
-    advice = "git reset -q -- COUNT.md" + ("" if staged else " README.md")
+    advice = "git reset -q -- :/COUNT.md" + ("" if staged else " :/README.md")
     assert advice + "\n" in r.stderr and "HEAD is unchanged" not in r.stderr, r
     assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
-    run(advice.split(), cwd=p, timeout=20)                            # following it leaves nothing but a staged edit
+    run(advice.split(), cwd=p / "src", timeout=20)                    # following it, from anywhere, leaves nothing but a staged edit
     changed = git(p, "diff", "HEAD", "--name-only").stdout.split()
     assert changed == (["README.md"] if staged else []), r
     if staged:
@@ -1494,8 +1494,4 @@ def test_a_readme_that_cannot_be_written_is_reported(repo, edited, index_fails):
     if edited:
         assert (p / "README.md").read_text() == "mine\n"
     else:
-        (p / "README.md").chmod(0o640)
-        for line in [x for x in r.stderr.splitlines() if "run: " in x]:
-            run(["bash", "-c", line.split("run: ", 1)[1]], cwd=p, timeout=20)
-        assert git(p, "status", "--porcelain", "-uno").stdout == ""
-        assert (p / "README.md").stat().st_mode & 0o777 == 0o640      # the advice keeps the file's mode
+        assert (p / "README.md").read_text() == README_TEXT           # as it was, and the report says so

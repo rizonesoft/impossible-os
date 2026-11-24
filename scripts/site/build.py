@@ -71,7 +71,7 @@ TODO = ROOT / "todo"
 BASELINE = DOCS / ".coverage-baseline.json"
 DEFAULT_OUT = REPO / "build" / "site"
 
-# What the site reads. A snapshot (--staged, --emit-head) materialises only these
+# What the site reads. A snapshot (--staged, --emit-readme) materialises only these
 # plus every tracked *.md, so a check judges exactly what a commit contains.
 SNAP_PATHS = ["project.json", "COUNT.md", "docs", "todo", "gh-pages", "resources/icons/src",
               "resources/brand", "resources/backgrounds", "resources/icons/color", "include/desktop/theme_tokens.h", "*.md"]
@@ -178,10 +178,9 @@ def directive_covers(text: str) -> set[str]:
     return {c.strip() for c in parse_directives(text).get("covers", "").split(",") if c.strip()}
 
 
-def emit_paths(name: str) -> list[str]:
-    """What --emit-head reads: the facts' inputs and the file itself."""
-    return ["project.json", "COUNT.md", "docs/*.md", "docs/design/tokens.json",
-            "docs/test-coverage/coverage.json", name]
+# What --emit-readme reads: the facts' inputs and README.md.
+README_PATHS = ["project.json", "COUNT.md", "README.md", "docs/*.md", "docs/design/tokens.json",
+                "docs/test-coverage/coverage.json"]
 
 
 def snapshot(source: str, paths: list[str] | None = None) -> Path:
@@ -227,8 +226,7 @@ def _materialise(source: str, paths: list[str] | None, tmp: Path) -> None:
             if paths is not None and f.startswith("docs/") and f.endswith(".md"):
                 pages += 1
                 covered |= directive_covers(data.decode("utf-8"))
-                if f not in paths:
-                    continue                            # load_stats needs no more of it
+                continue                                # load_stats needs no more of it
             dest = tmp / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -1286,7 +1284,7 @@ class Renderer:
 
 def todo_files() -> list[str]:
     """Domain roadmap files only (todo/NN-domain/TODO-*.md); internal trackers are excluded.
-    A snapshot's come from its file list: --emit-head materialises no TODO bodies."""
+    A snapshot's come from its file list: --emit-readme materialises no TODO bodies."""
     if SOURCE == "worktree":
         return sorted(p.relative_to(ROOT).as_posix() for p in TODO.glob("[0-9][0-9]-*/TODO-*.md"))
     import fnmatch
@@ -2591,11 +2589,11 @@ def main() -> int:
     mode.add_argument("--update-baseline", action="store_true")
     mode.add_argument("--freshness", action="store_true",
                       help="list every page and card with sources= and whether its code changed since")
-    mode.add_argument("--emit-head", metavar="FILE",
-                      help="post-commit: print FILE as committed at HEAD with its project regions synced")
+    mode.add_argument("--emit-readme", action="store_true",
+                      help="post-commit: print README.md as committed at --ref with its project regions synced")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--ref", default="HEAD", help="commit that --emit-head reads (default HEAD)")
+    ap.add_argument("--ref", default="HEAD", help="commit that --emit-readme reads (default HEAD)")
     ap.add_argument("--staged", action="store_true",
                     help="read every input from the INDEX (pre-commit), not the working tree")
     ap.add_argument("--skip-stats", action="store_true",
@@ -2604,7 +2602,7 @@ def main() -> int:
                     help="render only the docs tree as it was at commit REF into <out>/docs/<REF>/, "
                          "every repository link pinned to REF's full SHA")
     args = ap.parse_args()
-    if args.release is not None and (args.staged or args.sync is not None or args.emit_head
+    if args.release is not None and (args.staged or args.sync is not None or args.emit_readme
                                      or args.update_baseline or args.freshness or args.skip_stats):
         ap.error("--release combines only with --check, --out and --quiet")
     args.out = args.out.resolve()
@@ -2616,8 +2614,8 @@ def main() -> int:
             except ReleaseError as e:
                 print(f"ERROR: {e}", file=sys.stderr)
                 return 1
-        elif args.emit_head:
-            snap = snapshot(args.ref, emit_paths(args.emit_head))
+        elif args.emit_readme:
+            snap = snapshot(args.ref, README_PATHS)
         elif args.staged:
             snap = snapshot("index")
         return run(args)
@@ -2715,12 +2713,8 @@ def run(args: argparse.Namespace) -> int:
         facts.update(RELEASE_FACTS)
         facts["_historical_owners"] = sorted(set(owners))
 
-    if args.emit_head:
-        if args.emit_head not in fileset()[0]:
-            print(f"ERROR: --emit-head: {args.emit_head} is not a path {args.ref} holds, as git lists it", file=sys.stderr)
-            return 1
-        text = (ROOT / args.emit_head).read_text(encoding="utf-8")
-        out = sync_regions(text, facts, args.emit_head, errors)
+    if args.emit_readme:
+        out = sync_regions((ROOT / "README.md").read_text(encoding="utf-8"), facts, "README.md", errors)
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
         sys.stdout.write(out)

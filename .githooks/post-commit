@@ -443,7 +443,7 @@ BASE_README="$([ -z "$BASE" ] || git -C "$ROOT" ls-tree "$BASE" -- README.md | a
 README_TARGET=""
 case "$BASE_README" in 100644\ * | 100755\ *)   # a regular file: a link's blob is its target's name
     README_TARGET="$(mktemp)"
-    if ! python3 "$ROOT/scripts/site/build.py" --emit-head README.md --ref "$BASE" > "$README_TARGET"; then
+    if ! python3 "$ROOT/scripts/site/build.py" --emit-readme --ref "$BASE" > "$README_TARGET"; then
         echo "post-commit: README project-region sync reported a problem (see above)" >&2
         rm -f "$README_TARGET"; README_TARGET=""
     fi ;;
@@ -465,7 +465,7 @@ publish_readme() {
         if mv -f "$new" "$README_FILE"; then return 0; fi
     fi
     [ -z "$new" ] || rm -f "$new"
-    echo "post-commit: README.md could not be written; once it can be, and if you have not edited it since, run: $1" >&2
+    echo "post-commit: $README_FILE could not be written, so it still holds the text from before this commit" >&2
 }
 
 # Rewrite the README lines-of-code badge from the live tree count, so the
@@ -491,7 +491,7 @@ if [ -n "$README_TARGET" ] && grep -q 'COUNT-BADGE:START' "$README_TARGET"; then
 fi
 
 if [ "${COUNT_ONLY:-}" = "1" ]; then
-    publish_readme "COUNT_ONLY=1 bash .githooks/post-commit"
+    publish_readme
     [ -z "$README_TARGET" ] || rm -f "$README_TARGET"
     exit 0
 fi
@@ -562,9 +562,9 @@ if [ -n "$README_TARGET" ]; then
         if ! cp "$idx" "$lock"; then release_lock; return 1; fi
         cur_r="$(GIT_INDEX_FILE="$lock" git -C "$ROOT" ls-files -s -- README.md | awk '{print $1, $2}')"
         local -a entries=(--add --cacheinfo "100644,$cb,COUNT.md")
-        local published="COUNT.md"
+        local published=":/COUNT.md"
         if [ "$cur_r" = "$BASE_README" ]; then         # else: a staged edit, which stays
-            entries+=(--cacheinfo "${BASE_README% *},$rb,README.md"); published="COUNT.md README.md"
+            entries+=(--cacheinfo "${BASE_README% *},$rb,README.md"); published=":/COUNT.md :/README.md"
         fi
         if ! GIT_INDEX_FILE="$lock" git -C "$ROOT" update-index "${entries[@]}"; then
             release_lock; return 1
@@ -577,7 +577,7 @@ if [ -n "$README_TARGET" ]; then
         fi
         if mv -f "$lock" "$idx"; then
             LOCK_OWNED=   # published: the path is no longer ours to remove
-            [ "$published" = "COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
+            [ "$published" = ":/COUNT.md" ] || README_ENTRY="${BASE_README% *} $rb"
             trap - EXIT INT TERM
         else
             echo "post-commit: HEAD amended but the index could not be published; run: git reset -q -- $published" >&2
@@ -585,9 +585,9 @@ if [ -n "$README_TARGET" ]; then
         fi
     }
     if plumb_amend; then
-        publish_readme "git show HEAD:README.md > README.md"   # keeps the file's mode
+        publish_readme
     else
-        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run: COUNT_ONLY=1 bash .githooks/post-commit" >&2
+        echo "post-commit: could not amend COUNT.md/README.md (HEAD moved or a git lock was held); HEAD is unchanged -- run, from the repository root: COUNT_ONLY=1 bash .githooks/post-commit" >&2
     fi
     rm -f "$README_TARGET"
 else
