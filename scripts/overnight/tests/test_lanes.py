@@ -1942,7 +1942,7 @@ def test_post_commit_starts_no_filter(repo, driver, by_hand):
     assert r.returncode == 0 and not started.exists() and (p / "COUNT.md").read_text() != "0\n", r
 
 
-@pytest.mark.parametrize("kind", ["link", "pipe", "gone", "directory", "unreadable", "edit", "mode"])
+@pytest.mark.parametrize("kind", ["link", "pipe", "gone", "directory", "unreadable", "edit", "big", "mode"])
 @pytest.mark.parametrize("when", ["before", "between"])
 def test_what_is_put_in_readmes_place_is_kept(repo, kind, when):
     p = repo["primary"]
@@ -1956,20 +1956,46 @@ def test_what_is_put_in_readmes_place_is_kept(repo, kind, when):
     other.write_text(README_TEXT)
     put = {"link": f"ln -sf '{other}' README.md", "pipe": "rm -f README.md; mkfifo README.md", "gone": "rm -f README.md",
            "directory": "rm -f README.md; mkdir README.md", "unreadable": "chmod 0 README.md",
-           "edit": "echo mine >> README.md", "mode": "chmod 755 README.md"}[kind]
+           "edit": "echo mine >> README.md", "big": "truncate -s 4G README.md", "mode": "chmod 755 README.md"}[kind]
     hook = (REPO / ".githooks" / "post-commit").read_text()
     if when == "before":
         place, text = "publish_readme() {\n", f'publish_readme() {{\n( cd "$ROOT" && {put} )\n'
     else:
-        place = "    if not staged() and read() == found:\n"
+        place = "    if not staged() and read(most) == found:\n"
         text = f'    subprocess.run("""{put}""", shell=True, cwd=root, timeout=20)\n' + place
     assert hook.count(place) == 1
+    if kind == "big":                                          # a sparse file: reading it whole would not fit in this
+        text = 'ulimit -v 2000000\n' + text if when == "before" else text.replace(
+            "    subprocess", "    import resource; resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))\n    subprocess", 1)
     r = commit_with_hook(repo, hook.replace(place, text))
     kept = {"link": readme.is_symlink, "pipe": readme.is_fifo, "gone": lambda: not readme.exists(), "directory": readme.is_dir,
             "unreadable": lambda: readme.stat().st_mode & 0o777 == 0, "mode": lambda: readme.stat().st_mode & 0o777 == 0o755,
+            "big": lambda: readme.stat().st_size == 4 << 30,
             "edit": lambda: readme.read_text() == README_TEXT + "mine\n"}[kind]
     assert kept() and other.read_text() == README_TEXT and not list(p.glob(".README.md.*")), r
     assert ("README.md could not be written" in r.stderr) == (kind == "unreadable"), r
+
+
+@pytest.mark.parametrize("path", ["src/apps", "src", "todo/11-apps", "docs/design/inventory",
+                                  "todo/08-graphics-ui/TODO-17-win11-parity-inventory.md/x"])
+def test_a_file_where_a_lane_needs_a_directory_is_refused(path):
+    real = lanes.parse_map((REPO / ".conclave" / "lanes.toml").read_text())
+    live = {name: lanes.LIVE for name in real["lanes"] if name != "main"}
+    off = {name: "off" for name in live}
+    assert lanes.judge(real, None, [path], live) and lanes.judge(real, "main", [path], live)
+    assert lanes.judge(real, None, [path], off) == []
+    assert lanes.judge(real, None, ["src/kernel/x.c", "src/app", "docs/design/shell.md", "todo/08-graphics-ui/x.md"], live) == []
+
+
+def test_a_symlink_in_a_reserved_directorys_place_is_refused(repo):
+    p = repo["primary"]
+    live("userland")
+    git(p, "rm", "-rqf", "--cached", "--", "user", check=False)
+    blob = subprocess.run([*GIT, "hash-object", "-w", "--stdin"], cwd=p, input="x", capture_output=True, text=True,
+                          timeout=20, check=True).stdout.strip()
+    git(p, "update-index", "--add", "--cacheinfo", f"120000,{blob},user")
+    r = check(p)
+    assert r.returncode != 0 and "user belongs to lane userland" in r.stderr, r
 
 
 def test_triage_sees_the_map_through_a_replacement(repo):

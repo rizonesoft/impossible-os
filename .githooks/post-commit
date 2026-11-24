@@ -495,8 +495,9 @@ def git(*args):
                           timeout=20).stdout
 
 
-def read():
-    """README's bytes and mode, from one open; None when it is not a regular file (a link, a pipe, nothing)."""
+def read(most):
+    """README's mode and bytes (no more than tell it from a text of `most`), from one open; None when it is not a
+    regular file (a link, a pipe, nothing)."""
     try:
         fd = os.open(readme, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except OSError as exc:
@@ -508,7 +509,7 @@ def read():
         if not stat.S_ISREG(info.st_mode):
             return None
         with os.fdopen(os.dup(fd), "rb") as f:
-            return f.read(), stat.S_IMODE(info.st_mode)
+            return f.read(most + 1), stat.S_IMODE(info.st_mode)
     finally:
         os.close(fd)
 
@@ -524,9 +525,10 @@ def staged():
 tmp = None
 try:
     old, new = git("cat-file", "blob", base_blob), open(target, "rb").read()
-    found = read()
+    most = len(crlf(old))                            # the larger of the two texts that may be replaced
+    found = None if staged() else read(most)
     # The base's own text, or it with CRLF line endings, is replaced; anything else is somebody's edit and stays.
-    if found is None or staged():
+    if found is None:
         sys.exit(0)
     text = new if found[0] == old else crlf(new) if found[0] == crlf(old) else found[0]
     if text == found[0]:
@@ -535,7 +537,7 @@ try:
     with os.fdopen(fd, "wb") as f:
         f.write(text)
         os.fchmod(f.fileno(), found[1])
-    if not staged() and read() == found:
+    if not staged() and read(most) == found:
         os.replace(tmp, readme)
         tmp = None
 except (OSError, subprocess.SubprocessError):

@@ -72,7 +72,7 @@ AMENDED = ("COUNT.md", "README.md")                  # .githooks/post-commit
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
+    'above': {directory an entry needs: lanes}, 'longest': the longest entry's length, 'bare': the lanes with an entry that has no slash}.
     Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
@@ -112,7 +112,12 @@ def parse_map(text: str) -> dict:
     owned.sort()
     for (p, name), (q, other) in zip(owned, owned[1:]):
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
-    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned),
+    above: dict[str, set[str]] = {}                     # each directory a lane's entry needs: a file there displaces it
+    for p, name in owned:
+        parts = p.rstrip("/").split("/")
+        for n in range(1, len(parts) + p.endswith("/")):
+            above.setdefault("/".join(parts[:n]), set()).add(name)
+    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned), "above": above,
             "longest": max((len(p) for p, _name in owned), default=0),
             "bare": {name for p, name in owned if "/" not in p}}
 
@@ -204,6 +209,17 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
     """The extra lane that holds `path` against everyone else now, or None."""
     name = owner(lane_map, path)
     return name if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED) else None
+
+
+def displaced_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str | None:
+    """The extra lane whose reserved paths cannot exist beside a file at `path`, or None: the file is a directory one
+    of them needs, or it is under one that is a file."""
+    names = set(lane_map["above"].get(path, ()))
+    at = path.find("/")
+    while 0 <= at <= lane_map["longest"]:
+        names.add(lane_map["index"].get(path[:at], MAIN))
+        at = path.find("/", at + 1)
+    return next((n for n in sorted(names) if n != MAIN and lane_states.get(n) in (LIVE, DAMAGED)), None)
 
 
 # A run of path characters that is not the rest of an absolute path or a URL; the second holds a slash.
@@ -373,7 +389,7 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
             if owner(lane_map, p) != me:
                 reasons.append(f"{p} is outside lane {me}'s paths")
             continue
-        held = reserved_by(lane_map, lane_states, p)
+        held = reserved_by(lane_map, lane_states, p) or displaced_by(lane_map, lane_states, p)
         if held:
             how = "live" if lane_states[held] == LIVE else "reserved (its record cannot be read)"
             reasons.append(f"{p} belongs to lane {held}, which is {how}")
