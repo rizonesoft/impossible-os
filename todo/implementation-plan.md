@@ -51,7 +51,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [ ]  | `D00 T08 §67` | The push wait overlaps the next plan review                                                                           | attended    |     2 |
 | [/]  | `D00 T08 §49` | The lane map and the commit check                                                                                     | none        |     5 |
 | [ ]  | `D00 T08 §50` | Section claims on origin                                                                                              | none        |     4 |
-| [ ]  | `D00 T08 §51` | One push queue for every lane                                                                                         | none        |     3 |
+| [ ]  | `D00 T08 §51` | One push queue for every lane                                                                                         | none        |     4 |
 | [ ]  | `D00 T08 §52` | Extra lanes stay light                                                                                                | none        |     4 |
 | [ ]  | `D00 T08 §53` | The lane command and the userland lane                                                                                | none        |     5 |
 | [ ]  | `D00 T08 §54` | The run knows its lanes                                                                                               | attended    |     2 |

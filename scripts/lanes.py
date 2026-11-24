@@ -24,6 +24,7 @@ import math
 import os
 import posixpath
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -36,6 +37,7 @@ LANE_KEYS = {"engine", "model", "worktree", "paths", "output", "limits"}
 TOP_KEYS = {"stale_secs", "generated", "lane"}
 LIVE, OFF, DAMAGED = "live", "off", "damaged"
 GIT_SECS = 10
+CHECKOUT_DIRS = (".conclave", ".githooks", "scripts", "todo")
 
 
 class LaneError(Exception):
@@ -79,8 +81,8 @@ def load_map(root: Path) -> dict:
 
 
 def parse_map(text: str) -> dict:
-    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane}}.
-    Anything unexpected refuses."""
+    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
+    'longest': the longest entry's length}.    Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -101,6 +103,7 @@ def parse_map(text: str) -> dict:
         _need(all(isinstance(lane[k], str) and lane[k] for k in ("engine", "model", "worktree")),
               f"[lane.{name}] engine, model and worktree must be non-empty strings")
         _need(not os.path.isabs(lane["worktree"]), f"[lane.{name}] worktree must be relative to the primary tree")
+        _need("\0" not in lane["worktree"], f"[lane.{name}] worktree must hold no NUL")
         _need(lane["output"] in OUTPUTS, f"[lane.{name}] output must be one of {OUTPUTS}")
         _need(isinstance(lane["limits"], dict), f"[lane.{name}] limits must be a table")
         _need(_strings(lane["paths"]), f"[lane.{name}] paths must be a list of relative paths")
@@ -116,7 +119,8 @@ def parse_map(text: str) -> dict:
     owned.sort()
     for (p, name), (q, other) in zip(owned, owned[1:]):
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
-    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned)}
+    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned),
+            "longest": max((len(p) for p, _name in owned), default=0)}
 
 
 def _covers(entry: str, path: str) -> bool:
@@ -130,7 +134,7 @@ def owner(lane_map: dict, path: str) -> str:
     if path in index:
         return index[path]
     at = path.find("/")
-    while at != -1:
+    while 0 <= at < lane_map["longest"]:
         if path[:at + 1] in index:
             return index[path[:at + 1]]
         at = path.find("/", at + 1)
@@ -157,11 +161,25 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
+RECORD_MAX = 64 * 1024
+
+
+def _read_record(path: Path) -> bytes:
+    """A record's bytes. Anything but a small regular file is an OSError: a FIFO in its place must not hold the
+    commit that reads it."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    with open(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_size > RECORD_MAX:
+            raise OSError(errno.EINVAL, "not a small regular file", str(path))
+        return f.read(RECORD_MAX)
+
+
 def lane_state(lane_map: dict, name: str, now: float | None = None) -> str:
     """live, off (no record, or a stale or dead one) or damaged (a record that cannot be read)."""
     path = state_dir() / f"{name}.json"
     try:
-        raw = path.read_bytes()
+        raw = _read_record(path)
     except FileNotFoundError:
         return OFF
     except OSError:
@@ -289,12 +307,16 @@ def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
     alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
     primary = common.resolve().parent
-    # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout.
-    if common.name != ".git" or not (primary / MAP).is_file():
+    # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout (known by the
+    # directories every checkout has, so an unstaged deletion of one file changes nothing).
+    if common.name != ".git" or not any((primary / d).is_dir() for d in CHECKOUT_DIRS):
         raise LaneError(f"the primary tree cannot be found from its git directory {common}")
     seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
-        tree = (primary / lane["worktree"]).resolve()
+        try:
+            tree = (primary / lane["worktree"]).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:         # RuntimeError: a symlink loop, before 3.13
+            raise LaneError(f"lane {name}'s worktree cannot be resolved ({type(exc).__name__})") from exc
         if tree in seen:
             raise LaneError(f"lanes {seen[tree]} and {name} name the same worktree {tree}")
         seen[tree] = name
@@ -356,13 +378,10 @@ def _blob(toplevel: Path, spec: str, deadline: float | None = None) -> str | Non
 
 def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
     """The map in force before this commit: HEAD's, so an edit in progress (staged or not) never releases a
-    reservation. Only the commit that first adds the map is judged by the copy it stages. `deadline` bounds
-    both reads together (triage runs inside the Stop hook's budget)."""
+    reservation. `deadline` bounds the read (triage runs inside the Stop hook's budget)."""
     text = _blob(toplevel, f"HEAD:{MAP}", deadline)
     if text is None:
-        text = _blob(toplevel, f":{MAP}", deadline)
-    if text is None:
-        raise LaneError(f"{MAP} is in neither HEAD nor the index")
+        raise LaneError(f"{MAP} is not in HEAD")
     return parse_map(text)
 
 
@@ -408,14 +427,14 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         except LaneError:
             if proposed is None:
                 raise
-            # HEAD's map is broken, so a commit repairing it is judged by its own, unless a lane has a record:
-            # nothing then says which paths that lane holds.
+            # HEAD's map is broken or not there, so the commit that repairs or adds it is judged by its own,
+            # unless a lane has a record: nothing then says which paths that lane holds.
             try:
                 recorded = has_records()
             except OSError as exc:
                 raise LaneError(f"the lane records cannot be listed ({type(exc).__name__})") from exc
             if recorded:
-                raise LaneError(f"HEAD's {MAP} is broken and a lane has a record in {state_dir()}; stop the lane "
+                raise LaneError(f"HEAD's {MAP} is broken or missing and a lane has a record in {state_dir()}; stop the lane "
                                 "and clear its record before repairing the map") from None
             lane_map = proposed
             me = trees.get(toplevel.resolve())

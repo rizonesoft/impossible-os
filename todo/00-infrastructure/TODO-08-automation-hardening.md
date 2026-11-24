@@ -1703,6 +1703,7 @@ The commit gate's judgment of a lane's ship (its Astra receipt instead of Claude
 
 - [ ] One flock at `~/.local/state/impossible-os/push.lock`, held from rebase through the gates, the push and `scripts/overnight/ci-wait.py` to green
 - [ ] After a rebase the generated files are rebuilt: `todo-plan.py --sync`, the todo-graph cache, `scripts/site/build.py --sync`
+- [ ] The push refuses an unpushed commit that changes another live lane's paths; `git am -n` runs no hook before it commits (found by [§49](#49-the-lane-map-and-the-commit-check))
 - [ ] Commit: `"lanes: one push queue for every lane"`
 
 **Test checkpoint:** a second lane queues and rebases onto the first lane's push; a dead holder's lock is released.
@@ -1729,7 +1730,7 @@ Operator decision 2026-11-20: the extra lanes do nothing resource-intensive. Hea
 - [ ] `scripts/lane.sh <lane> start|watch|stop|status`; `status` with no lane prints all four
 - [ ] Start refuses loudly unless main is running, the worktree exists and is clean on main, the engine is installed and signed in, and the lane is not already live
 - [ ] The worktrees `../impossible-os-userland`, `../impossible-os-neon-a` and `../impossible-os-neon-b` (neon-b detached at `origin/main`, refreshed before each task)
-- [ ] The userland lane reuses `scripts/overnight/run-common.sh` with its own session name and worktree, and owns `user/`, `src/apps/` and `src/shell/`
+- [ ] The userland lane reuses `scripts/overnight/run-common.sh` with its own session name and worktree, and owns the paths `.conclave/lanes.toml` gives it
 - [ ] Commit: `"lanes: the lane command and the userland lane"`
 
 **Test checkpoint:** each refusal names its reason; a userland lane starts beside main and ships one section with no clash.

@@ -124,8 +124,8 @@ def live(name, pid=None, age=0.0):
         {"lane": name, "pid": pid or os.getpid(), "heartbeat": time.time() - age, "task": "t"}))
 
 
-def check(tree):
-    return run([sys.executable, str(tree / "scripts" / "lanes.py"), "check-staged"], cwd=tree,
+def check(tree, timeout=60):
+    return run([sys.executable, str(tree / "scripts" / "lanes.py"), "check-staged"], cwd=tree, timeout=timeout,
                env=os.environ.copy())
 
 
@@ -920,16 +920,20 @@ def test_a_broken_map_is_not_repaired_while_a_lane_has_a_record(repo):
     good = toml.read_text()
     (repo["tmp"] / "alias").symlink_to(repo["userland"])
     for broken in (good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"').encode(), b"[lane.main\n",
-                   good.encode() + b"# \xff\n"):
-        toml.write_bytes(broken)
-        git(p, "add", "--", ".conclave/lanes.toml")
+                   good.encode() + b"# \xff\n", None):
+        if broken is None:
+            toml.unlink()
+        else:
+            toml.write_bytes(broken)
+        git(p, "add", "-A", "--", ".conclave")
         git(p, "commit", "-qm", "broken map")                         # landed past the hooks
+        toml.parent.mkdir(exist_ok=True)
         toml.write_text(good.replace('"user/", ', ""))                # the repair also releases user/
         git(p, "add", "--", ".conclave/lanes.toml")
         stage(p, "user/a.c", "main\n")
         live("userland")
         r = check(p)
-        assert r.returncode == 2 and "is broken and a lane has a record" in r.stderr, r
+        assert r.returncode == 2 and "is broken or missing and a lane has a record" in r.stderr, r
         lanes.clear("userland")
         assert check(p).returncode == 0
         git(p, "reset", "-q", "--hard")
@@ -993,3 +997,57 @@ def test_blockers_are_collected_while_the_corpus_is_classified(triage, capsys, m
     assert out["status"] == t.BLOCKED and out["lane_reserved"], out
     assert out["blockers"] == [{"file": "todo/00-x/TODO-01-x.md", "section": 1, "awaiting": "awaiting-hardware"}]
     assert len(scans) == 1, scans
+
+
+def test_a_fifo_in_place_of_a_record_is_damaged_and_holds_nothing_up(repo):
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    os.mkfifo(d / "userland.json")
+    stage(repo["primary"], "src/kernel/k.c")
+    assert check(repo["primary"], timeout=20).returncode == 0
+    stage(repo["primary"], "user/a.c")
+    r = check(repo["primary"], timeout=20)
+    assert r.returncode == 1 and "reserved (its record cannot be read)" in r.stderr, r
+
+
+def test_an_unstaged_deletion_of_the_map_blocks_no_linked_worktree(repo):
+    (repo["primary"] / ".conclave" / "lanes.toml").unlink()
+    live("userland")
+    stage(repo["userland"], "user/a.c")
+    r = check(repo["userland"])
+    assert r.returncode == 0, r
+
+
+def test_a_worktree_that_cannot_be_resolved_refuses_and_can_be_repaired(repo, monkeypatch):
+    p = repo["primary"]
+    toml = p / ".conclave" / "lanes.toml"
+    good = toml.read_text()
+    toml.write_text(good.replace('worktree = "../wt-neon-b"', 'worktree = "../loop/x"'))
+    git(p, "add", "--", ".conclave/lanes.toml")
+    git(p, "commit", "-qm", "loop map")
+    real = Path.resolve
+
+    def resolve(self, *a, **k):
+        if "loop" in self.parts:
+            raise RuntimeError("Symlink loop")                        # Python 3.11 and 3.12; newer ones resolve it
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    stage(p, "src/kernel/k.c")
+    assert lanes.check_staged(p) == 2
+    monkeypatch.setenv("SKIP_LANE_CHECK", "1")
+    monkeypatch.setenv("SKIP_LANE_CHECK_REASON", "r")
+    assert lanes.check_staged(p) == 0
+    monkeypatch.delenv("SKIP_LANE_CHECK")
+    toml.write_text(good)
+    git(p, "add", "--", ".conclave/lanes.toml")
+    assert lanes.check_staged(p) == 0
+    with pytest.raises(lanes.LaneError, match="NUL"):
+        lanes.parse_map(good.replace('"../wt-neon-b"', r'"../wt\u0000b"'))
+
+
+def test_a_slash_heavy_text_is_read_in_linear_time(repo):
+    lane_map = lanes.load_map(repo["primary"])
+    text = "(data:image/png;base64," + "Ab9/" * 65536 + ")"
+    start = time.monotonic()
+    assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, text, "todo/00-x") is None
+    assert time.monotonic() - start < 2                               # 7.2 s when every prefix was looked up
