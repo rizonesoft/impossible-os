@@ -436,6 +436,10 @@ hhdm_wrong_check_log() {
     if ! grep -qF -- "KiB allocated, clear of $2 kernel segments" "$1"; then
         HW_FAIL_MSG="the kernel buffer was not kept clear of its $2 segments"; return 1
     fi
+    # The control loader takes the top page of every span it chose first.
+    if ! grep -qF -- 'Kernel buffer: the memory map moved' "$1"; then
+        HW_FAIL_MSG="no span was lost, so reading the memory map again is untested"; return 1
+    fi
 }
 
 uki_check_override_log() {

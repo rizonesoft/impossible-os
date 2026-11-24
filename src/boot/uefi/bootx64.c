@@ -10114,23 +10114,21 @@ static EFI_STATUS kernel_segment_spans(EFI_FILE_PROTOCOL *file, UINT64 file_size
 /* The memory map load_kernel() judges placement by. */
 static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 
-/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
- * the `nkeep` spans already in `keep`, which has room for two more; 0 when no
- * free range has the room. AllocateAnyPages may answer with a range over the
- * segments, and the destination policy then refuses the kernel. */
-static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *keep,
-                                                unsigned nkeep)
+/* How often a memory map that moved before its span was claimed is read again. */
+#define KERNEL_BUFFER_TRIES 4
+
+/* Claim `pages` clear of `keep` in one snapshot of the memory map. 0: nothing
+ * was claimed, and *lost says whether a span that the map calls free was. */
+static EFI_PHYSICAL_ADDRESS claim_free_span(UINTN pages, const struct boot_span *keep,
+                                            unsigned nkeep, int try, int *lost)
 {
     UINTN map_size, desc_size;
 
+    (void)try;
+    *lost = 0;
     if (EFI_ERROR(pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
                                         &map_size, &desc_size)))
         return 0;
-    keep[nkeep].base = BOOT_INFO_PHYS_ADDR;
-    keep[nkeep++].bytes = sizeof(struct boot_info);
-    keep[nkeep].base = g_boot_info_ptr->fb.addr;
-    keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
-        (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
     /* Below 4 GiB first, where every storage controller can write. */
     for (int above = 0; above < 2; above++) {
         for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
@@ -10148,10 +10146,41 @@ static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *k
             }
             EFI_PHYSICAL_ADDRESS at =
                 boot_span_pick(room, (UINT64)pages * EFI_PAGE_SIZE, keep, nkeep);
-            if (at != 0 && !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData,
-                                                         pages, &at)))
+            if (at == 0)
+                continue;
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+            if (try == 0) {             /* the control: every top page is taken first */
+                EFI_PHYSICAL_ADDRESS top = at + (UINT64)(pages - 1) * EFI_PAGE_SIZE;
+                (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &top);
+            }
+#endif
+            if (!EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &at)))
                 return at;
+            *lost = 1;
         }
+    }
+    return 0;
+}
+
+/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
+ * the `nkeep` spans already in `keep`, which has room for two more; 0 when no
+ * free range has the room. AllocateAnyPages may answer with a range over the
+ * segments, and the destination policy then refuses the kernel. */
+static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *keep,
+                                                unsigned nkeep)
+{
+    keep[nkeep].base = BOOT_INFO_PHYS_ADDR;
+    keep[nkeep++].bytes = sizeof(struct boot_info);
+    keep[nkeep].base = g_boot_info_ptr->fb.addr;
+    keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
+        (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
+    for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
+        int lost;
+        EFI_PHYSICAL_ADDRESS at = claim_free_span(pages, keep, nkeep, try, &lost);
+        if (at != 0 || !lost)
+            return at;
+        /* The firmware took part of a span after the map was read. */
+        serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
     }
     return 0;
 }
