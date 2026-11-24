@@ -82,7 +82,7 @@ def load_map(root: Path) -> dict:
 
 def parse_map(text: str) -> dict:
     """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane},
-    'longest': the longest entry's length}.    Anything unexpected refuses."""
+    'longest': the longest entry's length, 'bare': whether an entry is a name with no slash}.    Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -120,7 +120,8 @@ def parse_map(text: str) -> dict:
     for (p, name), (q, other) in zip(owned, owned[1:]):
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
     return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned),
-            "longest": max((len(p) for p, _name in owned), default=0)}
+            "longest": max((len(p) for p, _name in owned), default=0),
+            "bare": any("/" not in p for p, _name in owned)}
 
 
 def _covers(entry: str, path: str) -> bool:
@@ -212,29 +213,37 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
     return name if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED) else None
 
 
-def _paths_named(text: str, folder: str):
-    """The repository paths `text` names: each run of path characters. `./` is the repository root, and a path
-    that then starts `../` is relative to `folder`, the text's own directory. A sentence's full stop is dropped."""
-    for m in re.finditer(r"[\w.-][\w./-]*", text):
+# A run of path characters that is not the rest of an absolute path or a URL; the second holds a slash.
+_WORD = re.compile(r"(?<![\w./-])[\w.-][\w./-]*")
+_PATH = re.compile(r"(?<![\w./-])[\w.-]+/[\w./-]*")
+
+
+def _paths_named(text: str, folder: str, bare: bool):
+    """The repository paths `text` names, words with no slash only when `bare`. `./` is the repository root, and a
+    path that then starts `../` is relative to `folder`, the text's own directory. A sentence's full stop is
+    dropped, and a run in Markdown emphasis (`_user/x_`) is read both with and without its underscores."""
+    for m in (_WORD if bare else _PATH).finditer(text):
         word = m.group()
-        if m.start() and text[m.start() - 1] == "/":   # the rest of an absolute path or a URL
-            continue
         dots = len(word) - len(word.rstrip("."))
         if dots and dots != 2:                         # a full stop or an ellipsis; two are the parent directory
             word = word[:-dots]
-        if "/" not in word:
-            yield word
-            continue
-        word = word[re.match(r"(?:\./+)*", word).end():]
-        path = posixpath.normpath(posixpath.join(folder, word) if word.startswith("../") else word)
-        yield path + ("/" if word.endswith("/") else "")
+        words = [word]
+        if word[:1] == "_" or word[-1:] == "_":
+            words.append(word.lstrip("_").rstrip("_."))
+        for word in words:
+            if "/" not in word:
+                yield word
+                continue
+            word = word[re.match(r"(?:\./+)*", word).end():]
+            path = posixpath.normpath(posixpath.join(folder, word) if word.startswith("../") else word)
+            yield path + ("/" if word.endswith("/") else "")
 
 
 def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, folder: str = "") -> str | None:
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
     a file in a lane cannot be finished outside that lane. A TODO's path is a cross-reference, not an edit, and a
     one-word directory needs its slash (`user` alone is a word). `folder` is the text's own directory."""
-    for path in _paths_named(text, folder):
+    for path in _paths_named(text, folder, lane_map["bare"]):
         if "/" not in path:                            # most words: one lookup, no directory above it
             name = lane_map["index"].get(path, MAIN)
         elif path.startswith("todo/"):
@@ -312,10 +321,15 @@ def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, .
     return r.stdout
 
 
+def _rev_path(toplevel: Path, *args: str) -> Path:
+    """The path git rev-parse prints, byte for byte (a name may end in a space or not be UTF-8)."""
+    return Path(os.fsdecode(_git(toplevel, "rev-parse", *args).removesuffix(b"\n")))
+
+
 def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
     """Each lane's worktree as the directory it resolves to. Two lanes resolving to one directory (a symlink
     alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
-    common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
+    common = _rev_path(toplevel, "--path-format=absolute", "--git-common-dir")
     primary = common.resolve().parent
     # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout (known by both
     # directories the check itself needs, so an unstaged deletion of one file changes nothing).
@@ -397,7 +411,7 @@ def committed_map(toplevel: Path, deadline: float | None = None) -> dict:
 
 
 def _git_path(toplevel: Path, name: str) -> Path:
-    return Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-path", name).decode().strip())
+    return _rev_path(toplevel, "--path-format=absolute", "--git-path", name)
 
 
 def merging(toplevel: Path) -> bool:
@@ -418,7 +432,7 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
     refused while any lane holds paths, because the index cannot show a lane's incoming change it lost."""
     me = None
     try:
-        toplevel = Path(_git(cwd, "rev-parse", "--show-toplevel").decode().strip())
+        toplevel = _rev_path(cwd, "--show-toplevel")
         # The map the commit leaves behind is validated on every path, a merge or rebase included, and as
         # fully as HEAD's is (worktrees resolved): a map that does not validate never lands, because every
         # later commit is judged by it.

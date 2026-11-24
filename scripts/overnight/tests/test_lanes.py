@@ -871,7 +871,8 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
     ("[linker](./../../user/user.ld)", "userland"), ("./user/x.c", "userland"), ("docs/../user/x.c", "userland"),
     ("[todo/11-apps/TODO-01-app.md](../11-apps/TODO-01-app.md)", None), ("/user/x", None),
     ("https://example.com/user/x", None), ("user/*.c", "userland"), ("edit the Makefile.", "neon-a"),
-    ("Makefile.old", None)])
+    ("Makefile.old", None), ("Edit _user/include/test.h_.", "userland"), ("__src/apps__", "userland"),
+    ("_edit user/x.c._", "userland"), ("_the Makefile_", "neon-a"), ("a_user/x", None), ("_user_", None)])
 def test_the_paths_a_section_names(text, held):
     table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
     lane_map = lanes.parse_map(
@@ -1114,3 +1115,40 @@ def test_a_staged_submodule_is_judged_whatever_git_is_set_to_show(repo):
     live("userland")
     r = check(p)
     assert r.returncode == 1 and "user/embedded" in r.stderr, r
+
+
+def test_words_with_no_slash_are_read_only_for_a_map_that_reserves_one(repo):
+    lane_map = lanes.load_map(repo["primary"])
+    assert not lane_map["bare"] and list(lanes._paths_named("the user edits user/x.c today", "", False)) == ["user/x.c"]
+    assert list(lanes._paths_named("a b/c", "", True)) == ["a", "b/c"]
+    start = time.monotonic()
+    assert list(lanes._paths_named("Ab9" * 400000, "", False)) == []
+    assert time.monotonic() - start < 2
+
+
+@pytest.mark.parametrize("name", [b"review ", b"review\xff"])
+def test_a_worktree_is_found_by_its_exact_name(repo, name):
+    tree = os.fsdecode(os.path.join(os.fsencode(repo["tmp"]), name))
+    git(repo["primary"], "worktree", "add", "-q", "--detach", tree)
+    live("userland")
+    stage(Path(tree), "src/kernel/k.c")
+    assert lanes.check_staged(Path(tree)) == 0
+    stage(Path(tree), "user/a.c")
+    assert lanes.check_staged(Path(tree)) == 1
+
+
+def test_the_summary_and_the_classifier_agree_on_a_file_a_lane_holds(triage, capsys, monkeypatch):
+    t, root, entries = triage
+    path = "todo/11-apps/TODO-01-app.md"
+
+    def said():
+        cache = [{"file_path": path, "domain": "11-apps", "sections": [{"n": 1, "status": " "}]}]
+        monkeypatch.setattr(t, "traversal_order", lambda c: cache)
+        t.cmd_summary(cache, root)
+        summary = capsys.readouterr().out.split("\n")[0].split()[0]
+        t.cmd_classify(cache, root, path)
+        return summary, json.loads(capsys.readouterr().out)["file_class"]
+    live("userland")
+    assert said() == (t.BLOCKED, t.BLOCKED)
+    (lanes.state_dir() / "userland.json").unlink()
+    assert said() == (t.NEEDS_WORK, t.NEEDS_WORK)

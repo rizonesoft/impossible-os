@@ -829,6 +829,16 @@ def cmd_next(cache, root):
     return 0
 
 
+def classify_reserved(entry, root, ctx):
+    """classify_file under the reservations --next applies (a section a live lane holds is never offered), plus
+    what is held: (class, per, held). A file whose open sections are all held is BLOCKED."""
+    cls, per = classify_file(entry, root)
+    per, held = lane_reservations(entry, per, root, ctx)
+    if held and cls == NEEDS_WORK and not any(c == NEEDS_WORK for _n, c in per):
+        cls = BLOCKED
+    return cls, per, held
+
+
 def cmd_classify(cache, root, target):
     target = target.replace("\\", "/")
     match = [e for e in cache if e["file_path"].endswith(target) or target.endswith(e["file_path"])]
@@ -836,12 +846,8 @@ def cmd_classify(cache, root, target):
         print(json.dumps({"error": f"file not in cache: {target}"}))
         return 1
     entry = match[0]
-    cls, per = classify_file(entry, root)
-    # The same reservations --next applies: a section a live lane holds is never offered here either.
     ctx, lane_err = _lane_context(root)
-    per, held = lane_reservations(entry, per, root, ctx)
-    if held and cls == NEEDS_WORK and not any(c == NEEDS_WORK for _n, c in per):
-        cls = BLOCKED
+    cls, per, held = classify_reserved(entry, root, ctx)
     lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
     print(json.dumps({
         "file": entry["file_path"],
@@ -863,12 +869,15 @@ def cmd_summary(cache, root):
     # (found 2026-07-27 -- the live tree has such files, so --summary was dead
     # for the operator while --next, a separate path, kept working).
     counts = {DONE: 0, NEEDS_WORK: 0, BLOCKED: 0}
+    ctx, lane_err = _lane_context(root)
     for entry in traversal_order(cache):
-        cls, _ = classify_file(entry, root)
+        cls, _per, _held = classify_reserved(entry, root, ctx)
         counts[cls] = counts.get(cls, 0) + 1
         print(f"{cls:14s} {entry['file_path']}")
     print(f"\n-- {counts[DONE]} DONE | {counts[NEEDS_WORK]} NEEDS_WORK "
           f"| {counts[BLOCKED]} BLOCKED --")
+    if lane_err:
+        print(f"-- {lane_err} --")
     return 0
 
 
