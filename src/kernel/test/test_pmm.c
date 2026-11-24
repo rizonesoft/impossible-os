@@ -79,8 +79,10 @@ static void test_pmm_bitmap_place(void)
     struct boot_span kept[PMM_BITMAP_KEEP_MAX];
     uint32_t n = pmm_bitmap_keep(kept), reserved = boot_reserved_count();
     TEST_ASSERT_EQ(n, 2 + reserved, "kept");
-    for (uint32_t i = 0; i < reserved; i++)
+    for (uint32_t i = 0; i < reserved; i++) {
         TEST_ASSERT_EQ(kept[n - reserved + i].base, boot_reserved_get(i)->phys_start, "kept");
+        TEST_ASSERT_EQ(kept[n - reserved + i].bytes, boot_reserved_get(i)->length, "kept");
+    }
 }
 
 /* A low mapping may stand where the bitmap's, or a handed-out frame's, identity
