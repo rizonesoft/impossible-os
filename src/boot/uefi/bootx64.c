@@ -10074,12 +10074,23 @@ static EFI_STATUS pt_load_snapshot_mmap(UINT8 *buf, UINTN buf_size,
 /* The largest kernel file accepted; anything above it is corruption. */
 #define ELF_MAX_KERNEL_SIZE (32ULL * 1024 * 1024)
 
+#define BL_PMM_BITMAP_PHYS_CAP 0x0000000100000000ULL  /* pmm.c 4 GiB highest_addr cap */
+#define BL_PAGE_4K    0x1000ULL
+/* The physical end of the memory the kernel uses without allocating it: the
+ * image, then the frame bitmap pmm_init() writes at __kernel_end (128 KiB at
+ * most, since pmm caps its coverage at 4 GiB), and a page of linker padding. */
+#define KERNEL_IMAGE_TAIL (BL_PMM_BITMAP_PHYS_CAP / 32768ULL + BL_PAGE_4K)
+static UINT64 kernel_guard_end(void)
+{
+    return ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1)) + KERNEL_IMAGE_TAIL;
+}
+
 /* The most program headers accepted. */
 #define ELF_MAX_PHDRS 64
 static Elf64_Phdr s_kernel_phdrs[ELF_MAX_PHDRS];
 
-/* The memory the kernel file's segments are copied to, at most ELF_MAX_PHDRS
- * spans; the file position is the start again afterwards. A header the ELF
+/* The memory the kernel file's segments are copied to, each with the tail the
+ * kernel uses after its image, at most ELF_MAX_PHDRS spans; the file position is the start again afterwards. A header the ELF
  * checks will refuse names no segment. Returns how the reads went. */
 static EFI_STATUS kernel_segment_spans(EFI_FILE_PROTOCOL *file, UINT64 file_size,
                                        struct boot_span *spans, unsigned *n)
@@ -10105,7 +10116,8 @@ static EFI_STATUS kernel_segment_spans(EFI_FILE_PROTOCOL *file, UINT64 file_size
             if (s_kernel_phdrs[i].p_type != PT_LOAD)
                 continue;
             spans[*n].base = s_kernel_phdrs[i].p_paddr;
-            spans[(*n)++].bytes = s_kernel_phdrs[i].p_memsz;
+            spans[(*n)++].bytes = s_kernel_phdrs[i].p_memsz > ~0ULL - BL_PAGE_4K - KERNEL_IMAGE_TAIL
+                ? ~0ULL : s_kernel_phdrs[i].p_memsz + BL_PAGE_4K + KERNEL_IMAGE_TAIL;
         }
     }
     return EFI_ERROR(status) ? status : file->SetPosition(file, 0);
@@ -10117,18 +10129,21 @@ static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 /* How often a memory map that moved before its span was claimed is read again. */
 #define KERNEL_BUFFER_TRIES 4
 
-/* Claim `pages` clear of `keep` in one snapshot of the memory map. 0: nothing
- * was claimed, and *lost says whether a span that the map calls free was. */
-static EFI_PHYSICAL_ADDRESS claim_free_span(UINTN pages, const struct boot_span *keep,
-                                            unsigned nkeep, int try, int *lost)
+/* Claim `pages` clear of `keep` in one snapshot of the memory map. The status is
+ * the map's own when it cannot be read; *at is 0 when nothing was claimed, and
+ * *lost then says whether a span that the map calls free was refused. */
+static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, unsigned nkeep,
+                                  int try, EFI_PHYSICAL_ADDRESS *at_out, int *lost)
 {
     UINTN map_size, desc_size;
+    EFI_STATUS status = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+                                              &map_size, &desc_size);
 
     (void)try;
+    *at_out = 0;
     *lost = 0;
-    if (EFI_ERROR(pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
-                                        &map_size, &desc_size)))
-        return 0;
+    if (EFI_ERROR(status))
+        return status;
     /* Below 4 GiB first, where every storage controller can write. */
     for (int above = 0; above < 2; above++) {
         for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
@@ -10154,20 +10169,22 @@ static EFI_PHYSICAL_ADDRESS claim_free_span(UINTN pages, const struct boot_span 
                 (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &top);
             }
 #endif
-            if (!EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &at)))
-                return at;
+            if (!EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &at))) {
+                *at_out = at;
+                return EFI_SUCCESS;
+            }
             *lost = 1;
         }
     }
-    return 0;
+    return EFI_SUCCESS;
 }
 
 /* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and
- * the `nkeep` spans already in `keep`, which has room for two more; 0 when no
- * free range has the room. AllocateAnyPages may answer with a range over the
+ * the `nkeep` spans already in `keep`, which has room for two more; *at is 0
+ * when no free range has the room. AllocateAnyPages may answer with a range over the
  * segments, and the destination policy then refuses the kernel. */
-static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *keep,
-                                                unsigned nkeep)
+static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsigned nkeep,
+                                      EFI_PHYSICAL_ADDRESS *at)
 {
     keep[nkeep].base = BOOT_INFO_PHYS_ADDR;
     keep[nkeep++].bytes = sizeof(struct boot_info);
@@ -10176,13 +10193,45 @@ static EFI_PHYSICAL_ADDRESS alloc_kernel_buffer(UINTN pages, struct boot_span *k
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
     for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
         int lost;
-        EFI_PHYSICAL_ADDRESS at = claim_free_span(pages, keep, nkeep, try, &lost);
-        if (at != 0 || !lost)
-            return at;
+        EFI_STATUS status = claim_free_span(pages, keep, nkeep, try, at, &lost);
+        if (EFI_ERROR(status) || *at != 0 || !lost)
+            return status;
         /* The firmware took part of a span after the map was read. */
         serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
     }
-    return 0;
+    return EFI_SUCCESS;
+}
+
+/* Claim the kernel's image and its tail, so that no later allocation lands on a
+ * segment that was copied or on memory the kernel writes without asking. The
+ * policy passed every segment against this same map, so a page of the image that
+ * cannot be claimed was taken since. The tail is the kernel's to check. */
+static EFI_STATUS claim_kernel_memory(const UINT8 *map, UINTN map_size, UINTN desc_size)
+{
+    UINT64 lo[2], hi[2];
+
+    if (g_kernel_img_hi <= g_kernel_img_lo)
+        return EFI_SUCCESS;
+    lo[0] = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    hi[1] = kernel_guard_end();
+    hi[0] = lo[1] = hi[1] - KERNEL_IMAGE_TAIL;
+    for (UINTN off = 0; off + desc_size <= map_size; off += desc_size) {
+        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(map + off);
+        if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
+            continue;
+        for (int part = 0; part < 2; part++) {
+            UINT64 end = boot_span_end(d->PhysicalStart, d->NumberOfPages * BL_PAGE_4K);
+            EFI_PHYSICAL_ADDRESS at = d->PhysicalStart > lo[part] ? d->PhysicalStart : lo[part];
+            end = end < hi[part] ? end : hi[part];
+            if (end <= at)
+                continue;
+            EFI_STATUS status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                                   (UINTN)((end - at) / BL_PAGE_4K), &at);
+            if (EFI_ERROR(status) && part == 0)
+                return status;
+        }
+    }
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS load_kernel(UINT64 *entry_point)
@@ -10570,7 +10619,16 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             root_dir->Close(root_dir);
             return status;
         }
-        load_buf_addr = alloc_kernel_buffer(pages, keep, nsegments);
+        status = alloc_kernel_buffer(pages, keep, nsegments, &load_buf_addr);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FAIL] Kernel buffer: GetMemoryMap failed status=0x");
+            serial_early_print_hex16((UINT16)((UINT64)status >> 16));
+            serial_early_print_hex16((UINT16)status);
+            serial_early_print("\n");
+            kernel_file->Close(kernel_file);
+            root_dir->Close(root_dir);
+            return status;
+        }
         if (load_buf_addr == 0) {
             serial_early_print("[FAIL] Cannot allocate a kernel buffer of ");
             serial_early_print_uint((UINT32)(pages * (EFI_PAGE_SIZE / 1024)));
@@ -10701,7 +10759,7 @@ kernel_loaded:
         }
     }
 
-    /* Load PT_LOAD segments with per-segment validation */
+    /* Every PT_LOAD segment is validated before any is copied */
     phdr = (Elf64_Phdr *)(file_buf + ehdr->e_phoff);
     /* Initialize the kernel-image envelope accumulators at RUNTIME. The
      * bootloader does not zero .bss (firmware pool-poisons it with 0xAF), so a
@@ -10849,6 +10907,31 @@ kernel_loaded:
             }
         }
 
+        /* Higher-half section 2: record the loaded kernel-image physical
+         * envelope from the ACTUAL loaded ELF p_paddr (design finding F2:
+         * use loaded p_paddr, never kernel symbols). The HHDM writable
+         * alias excludes [g_kernel_img_lo, g_kernel_img_hi) so it cannot
+         * defeat W^X, and the arena disjointness check rejects an arena
+         * that would overlap it. */
+        if (phdr[i].p_memsz > 0) {
+            UINT64 seg_lo = phdr[i].p_paddr;
+            UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
+            if (seg_lo < g_kernel_img_lo) g_kernel_img_lo = seg_lo;
+            if (seg_hi > g_kernel_img_hi) g_kernel_img_hi = seg_hi;
+        }
+    }
+
+    status = claim_kernel_memory(s_pt_load_mmap_buf, pt_mmap_size, pt_desc_size);
+    if (EFI_ERROR(status)) {
+        serial_early_print("[FAIL] Kernel image: its memory was taken while it was loaded\n");
+        load_err_status = status;
+        goto load_error;
+    }
+
+    for (i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type != PT_LOAD)
+            continue;
+
         /* Log loaded segment */
         serial_early_print("[BOOT] ELF segment ");
         serial_early_print_uint(i);
@@ -10874,19 +10957,6 @@ kernel_loaded:
             /* Zero BSS portion (memsz > filesz) */
             if (mem_size > copy_size)
                 efi_memset(dst + copy_size, 0, mem_size - copy_size);
-        }
-
-        /* Higher-half section 2: record the loaded kernel-image physical
-         * envelope from the ACTUAL loaded ELF p_paddr (design finding F2:
-         * use loaded p_paddr, never kernel symbols). The HHDM writable
-         * alias excludes [g_kernel_img_lo, g_kernel_img_hi) so it cannot
-         * defeat W^X, and the arena disjointness check rejects an arena
-         * that would overlap it. */
-        if (phdr[i].p_memsz > 0) {
-            UINT64 seg_lo = phdr[i].p_paddr;
-            UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
-            if (seg_lo < g_kernel_img_lo) g_kernel_img_lo = seg_lo;
-            if (seg_hi > g_kernel_img_hi) g_kernel_img_hi = seg_hi;
         }
     }
 
@@ -10985,6 +11055,17 @@ kernel_loaded:
                                           load_buf_pages, &load_buf_addr))) {
             serial_early_print("[BOOT] Kernel buffer: free again\n");
             (void)gBS->FreePages(load_buf_addr, load_buf_pages);
+        }
+        {
+            /* ... and no page of the kernel's own memory may be. */
+            UINTN taken = 0;
+            for (UINT64 p = g_kernel_img_lo & ~(BL_PAGE_4K - 1); p < kernel_guard_end();
+                 p += BL_PAGE_4K) {
+                EFI_PHYSICAL_ADDRESS at = p;
+                taken += !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at));
+            }
+            serial_early_print(taken ? "[FAIL] Kernel image: pages are free to take\n"
+                                     : "[BOOT] Kernel image: every page is held\n");
         }
 #endif
     }
@@ -13276,14 +13357,12 @@ static void copy_config_tables(void)
  * highest_addr cap). This is a DISTINCT constant from MM_PML4_PHYS_LIMIT (the
  * AP 32-bit CR3 ceiling) that happens to share the 4 GiB value; keep them
  * separate so a change to one never silently resizes the bitmap guard. */
-#define BL_PMM_BITMAP_PHYS_CAP 0x0000000100000000ULL  /* pmm.c 4 GiB highest_addr cap */
 
 /* Page-table entry flags + sizes. */
 #define BL_PTE_P      (1ULL << 0)
 #define BL_PTE_RW     (1ULL << 1)
 #define BL_PTE_PS     (1ULL << 7)   /* 2 MiB leaf when set in a PDE */
 #define BL_PTE_NX     (1ULL << 63)  /* requires EFER.NXE; walk faults otherwise */
-#define BL_PAGE_4K    0x1000ULL
 #define BL_PAGE_2M    0x200000ULL
 #define BL_PADDR_MASK 0x000ffffffffff000ULL  /* 52-bit phys, 4 KiB aligned */
 
@@ -13564,30 +13643,17 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
      * PLUS the PMM frame bitmap. pmm_init() writes that bitmap at a FIXED
      * kernel_end_phys (= __kernel_end, just above the image), sized
      * ceil(highest_usable_phys / 32768) with highest capped at 4 GiB
-     * (src/kernel/mm/pmm.c); neither the image (loaded to unclaimed
-     * EfiConventionalMemory by load_kernel) nor the bitmap is claimed. */
+     * (src/kernel/mm/pmm.c). load_kernel() claimed the image, and what was free
+     * of the bitmap's pages. */
     UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-    /* pmm caps its bitmap coverage at 4 GiB (src/kernel/mm/pmm.c: highest_addr
-     * clamped to 0x100000000), so the frame bitmap is NEVER larger than
-     * 4 GiB / 4 KiB / 8 = 128 KiB, regardless of how large or fragmented the
-     * map is. Use that FIXED maximum -- truncation-proof and churn-proof, no
-     * dependence on the sizing snapshot. Guard = kernel image + max bitmap +
-     * 1 page for any linker padding between page_up(image end) and the real
-     * __kernel_end where pmm actually places the bitmap. */
-    UINT64 bitmap_max = BL_PMM_BITMAP_PHYS_CAP / 32768ULL;   /* 128 KiB, page-aligned */
-    UINT64 kguard_hi = ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1))
-                       + bitmap_max + BL_PAGE_4K;
+    UINT64 kguard_hi = kernel_guard_end();
 
-    /* Claim the FREE (EfiConventionalMemory) pages inside the guard so firmware
-     * cannot hand them back for the arena REGARDLESS of its AllocatePages
-     * placement policy -- the UEFI spec does not require AllocateMaxAddress to
-     * be top-down, so relying on a high placement to dodge the low kernel is
-     * not portable. The free pages inside the guard are exactly the loaded-
-     * kernel pages load_kernel copied into UNCLAIMED conventional memory (the
-     * only guard pages an arena could legally land on; firmware-reserved pages
-     * it already will not reallocate). Claimed per-conventional-range because
-     * AllocateAddress is all-or-nothing and the guard spans mixed types. pmm
-     * re-reserves the image + bitmap, so the EfiLoaderData tag is harmless. */
+    /* Claim what was freed inside the guard since, so that firmware cannot hand
+     * it back for the arena REGARDLESS of its AllocatePages placement policy --
+     * the UEFI spec does not require AllocateMaxAddress to be top-down. Claimed
+     * per-conventional-range because AllocateAddress is all-or-nothing and the
+     * guard spans mixed types. pmm re-reserves the image + bitmap, so the
+     * EfiLoaderData tag is harmless. */
     if (g_kernel_img_hi > g_kernel_img_lo && kguard_hi > kguard_lo) {
         UINTN goff;
         for (goff = 0; raw_dsize && goff + raw_dsize <= raw_size; goff += raw_dsize) {
@@ -13866,8 +13932,7 @@ static UINT64 g_kstack_base;   /* 0 until reserved; page-aligned when set */
  *     0x10000, the AP trampoline envelope (same exclusion the HHDM arena uses);
  *   - the kernel image plus the PMM bitmap pmm_init() writes right above it
  *     (same envelope arithmetic as bl_hhdm_reserve: image + 128 KiB max
- *     bitmap + one page of linker padding), which load_kernel() loads into
- *     unclaimed EfiConventionalMemory and never claims;
+ *     bitmap + one page of linker padding);
  *   - the user page-table window, re-pointed per process by the kernel.
  * The kernel mirrors the low-memory refusal in boot_stack_validate() and
  * boot_reserved's overlap boot_fatal covers the rest consumer-side. */
@@ -13876,8 +13941,7 @@ static int bl_kstack_placement_ok(UINT64 addr)
     UINT64 lo = addr;
     UINT64 hi = addr + BL_KSTACK_SIZE;
     UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
-    UINT64 kguard_hi = ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1))
-                       + (BL_PMM_BITMAP_PHYS_CAP / 32768ULL) + BL_PAGE_4K;
+    UINT64 kguard_hi = kernel_guard_end();
 
     if (lo < 0x100000ULL)
         return 0;
