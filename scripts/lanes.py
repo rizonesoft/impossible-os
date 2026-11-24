@@ -55,7 +55,7 @@ def _need(cond, msg):
 def _canonical(v) -> bool:
     """A repository path in git's own spelling: relative, `/`-separated, no `.`, `..` or empty component. Git
     reports `user/x.c`, so a map entry spelled `./user/` would match nothing and release its reservation."""
-    if not isinstance(v, str) or not v or v.startswith("/") or "\\" in v:
+    if not isinstance(v, str) or re.fullmatch(r"[\w.-][\w./-]*", v) is None:    # the characters a path token has
         return False
     parts = v[:-1].split("/") if v.endswith("/") else v.split("/")
     return all(p not in ("", ".", "..") for p in parts)
@@ -79,7 +79,8 @@ def load_map(root: Path) -> dict:
 
 
 def parse_map(text: str) -> dict:
-    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}}. Anything unexpected refuses."""
+    """The validated map: {'stale_secs', 'generated', 'lanes': {name: table}, 'index': {paths entry: lane}}.
+    Anything unexpected refuses."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -115,7 +116,7 @@ def parse_map(text: str) -> dict:
     owned.sort()
     for (p, name), (q, other) in zip(owned, owned[1:]):
         _need(not _covers(p, q), f"{other} path {q!r} overlaps {name} path {p!r}")
-    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes}
+    return {"stale_secs": stale, "generated": list(generated), "lanes": lanes, "index": dict(owned)}
 
 
 def _covers(entry: str, path: str) -> bool:
@@ -124,9 +125,15 @@ def _covers(entry: str, path: str) -> bool:
 
 
 def owner(lane_map: dict, path: str) -> str:
-    for name, lane in lane_map["lanes"].items():
-        if any(_covers(p, path) for p in lane["paths"]):
-            return name
+    """The lane whose paths hold `path`, else main: one lookup for each directory above it."""
+    index = lane_map["index"]
+    if path in index:
+        return index[path]
+    at = path.find("/")
+    while at != -1:
+        if path[:at + 1] in index:
+            return index[path[:at + 1]]
+        at = path.find("/", at + 1)
     return MAIN
 
 
@@ -185,39 +192,34 @@ def reserved_by(lane_map: dict, lane_states: dict[str, str], path: str) -> str |
     return name if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED) else None
 
 
-def _named(entry: str) -> str:
-    """A pattern for a path in `entry` named in prose: whole components only (`src/apps` names `src/apps/`,
-    `x.md.bak` does not name `x.md`). A one-word directory needs its slash: `user` alone is a word."""
-    if not entry.endswith("/"):
-        return r"(?<![\w./-])" + re.escape(entry) + r"(?![\w/-]|\.\w)"
-    if "/" not in entry[:-1]:
-        return r"(?<![\w./-])" + re.escape(entry)
-    return r"(?<![\w./-])" + re.escape(entry[:-1]) + r"(?![\w-]|\.\w)"
-
-
-def _relative_targets(text: str, folder: str) -> list[str]:
-    """The repository paths `text` names relative to its own folder (`](../../user/x)`, `../../user/x`). A link
-    into todo/ is a cross-reference, not a file the section edits."""
-    out = []
-    for m in re.finditer(r"(?<![\w./-])(?:\.\./)+[\w./-]*", text):
-        path = posixpath.normpath(posixpath.join(folder, m.group()))
-        if not path.startswith(("..", "todo/")):
-            out.append(path + "/" if m.group().endswith("/") else path)
-    return out
+def _paths_named(text: str, folder: str):
+    """The repository paths `text` names: each run of path characters. `./` is the repository root, and a path
+    that then starts `../` is relative to `folder`, the text's own directory. A sentence's full stop is dropped."""
+    for m in re.finditer(r"[\w.-][\w./-]*", text):
+        word = m.group()
+        if m.start() and text[m.start() - 1] == "/":   # the rest of an absolute path or a URL
+            continue
+        if "/" not in word:
+            yield word.rstrip(".")
+            continue
+        while word.startswith("./"):
+            word = word[2:]
+        path = posixpath.normpath(posixpath.join(folder, word) if word.startswith("../") else word)
+        yield path.rstrip(".") + ("/" if word.endswith("/") else "")
 
 
 def names_reserved_path(lane_map: dict, lane_states: dict[str, str], text: str, folder: str = "") -> str | None:
     """The live (or damaged) lane one of whose paths `text` names, or None: a section whose text says it edits
-    a file in a lane cannot be finished outside that lane. `folder` is the text's own directory."""
-    # A repository-relative `./user/x` names the same file as `user/x`; a nested `vendor/user/x` does not.
-    if "./" in text:
-        text = "\n".join([re.sub(r"(?<![\w./-])\./", " ", text), *_relative_targets(text, folder)])
-    for name, lane in lane_map["lanes"].items():
-        if name == MAIN or lane_states.get(name) not in (LIVE, DAMAGED):
+    a file in a lane cannot be finished outside that lane. A TODO's path is a cross-reference, not an edit, and a
+    one-word directory needs its slash (`user` alone is a word). `folder` is the text's own directory."""
+    for path in _paths_named(text, folder):
+        if path.startswith("todo/"):
             continue
-        for p in lane["paths"]:
-            if (p.rstrip("/") if "/" in p[:-1] else p) in text and re.search(_named(p), text):
-                return name
+        name = owner(lane_map, path)
+        if name == MAIN and "/" in path:
+            name = owner(lane_map, path + "/")         # `src/apps` names the directory `src/apps/`
+        if name != MAIN and lane_states.get(name) in (LIVE, DAMAGED):
+            return name
     return None
 
 
@@ -286,6 +288,8 @@ def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
     """Each lane's worktree as the directory it resolves to. Two lanes resolving to one directory (a symlink
     alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
+    if common.name != ".git":                      # a git directory kept elsewhere does not say where the tree is
+        raise LaneError(f"the primary tree cannot be found from its git directory {common}")
     primary = common.resolve().parent
     seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
@@ -319,8 +323,9 @@ def judge(lane_map: dict, me: str | None, paths: list[str], lane_states: dict[st
             return [f"lane {me} is not live ({why}); start it with its launcher, or clear the record with "
                     f"`python3 scripts/lanes.py clear {me}`"]
     reasons = []
+    generated = set(lane_map["generated"])
     for p in paths:
-        if p in lane_map["generated"]:
+        if p in generated:
             continue
         if me not in (None, MAIN):
             if owner(lane_map, p) != me:
@@ -397,7 +402,16 @@ def check_staged(cwd: Path, replay: bool = False) -> int:
         except LaneError:
             if proposed is None:
                 raise
-            lane_map = proposed                    # HEAD's map is broken: a commit repairing it is judged by its own
+            # HEAD's map is broken, so a commit repairing it is judged by its own, unless a lane has a record:
+            # nothing then says which paths that lane holds.
+            try:
+                recorded = has_records()
+            except OSError as exc:
+                raise LaneError(f"the lane records cannot be listed ({type(exc).__name__})") from exc
+            if recorded:
+                raise LaneError(f"HEAD's {MAP} is broken and a lane has a record in {state_dir()}; stop the lane "
+                                "and clear its record before repairing the map") from None
+            lane_map = proposed
         me = committer(lane_map, toplevel)
         lane_states = states(lane_map)
         paths = [] if replay and replaying(toplevel) else changed

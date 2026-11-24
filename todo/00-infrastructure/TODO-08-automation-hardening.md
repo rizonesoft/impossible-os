@@ -1677,7 +1677,7 @@ A lane reserves its directories only while it is live; when it is off, main take
   - A reports-only lane is refused before the empty-index exit, generated files included; a revert or cherry-pick is checked in `prepare-commit-msg`, which runs where pre-commit does not
   - Every commit is judged on what the index changes against HEAD; no merge commits and no map change while a lane is live, and a rebase's clean pick is judged only on who commits
 - [x] `.claude/hooks/sequencer_triage.py` skips sections in a live lane's directories
-  - A section is reserved when its TODO file is the lane's or its text names a path in the lane; when only reserved work remains, `--next` reports BLOCKED naming the lane, never DONE
+  - A section is reserved when its TODO file is the lane's or its text names a path in the lane (a TODO's path is a cross-reference); when only reserved work remains, `--next` reports BLOCKED naming the lane, never DONE
 - [x] Commit: `"lanes: the lane map and the commit check"`
 
 **Test checkpoint:** a commit into a live lane's directory is refused, the same commit with that lane off passes, and a generated file passes for any lane that may commit.

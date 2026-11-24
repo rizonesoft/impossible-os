@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -59,9 +60,24 @@ def _load(name, path):
 lanes = _load("lanes_under_test", LANES_PY)
 
 
-def git(cwd, *args, check=True, env=None):
-    return subprocess.run([*GIT, "-C", str(cwd), *args], capture_output=True, text=True, timeout=60,
-                          check=check, env=env)
+def run(argv, cwd=None, input=None, env=None, timeout=60, check=False):
+    """The command in its own process group, ended whole on a timeout: git starts hooks, checks and editors."""
+    p = subprocess.Popen(argv, cwd=cwd, env=env, text=True, start_new_session=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL)
+    try:
+        out, err = p.communicate(input, timeout=timeout)
+    except BaseException:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        raise
+    r = subprocess.CompletedProcess(argv, p.returncode, out, err)
+    if check:
+        r.check_returncode()
+    return r
+
+
+def git(cwd, *args, check=True, env=None, input=None):
+    return run([*GIT, "-C", str(cwd), *args], check=check, env=env, input=input)
 
 
 @pytest.fixture
@@ -109,8 +125,8 @@ def live(name, pid=None, age=0.0):
 
 
 def check(tree):
-    return subprocess.run([sys.executable, str(tree / "scripts" / "lanes.py"), "check-staged"], cwd=tree,
-                          capture_output=True, text=True, timeout=60, env=os.environ.copy())
+    return run([sys.executable, str(tree / "scripts" / "lanes.py"), "check-staged"], cwd=tree,
+               env=os.environ.copy())
 
 
 def hooked_commit(r, tree, *args):
@@ -172,13 +188,13 @@ def test_a_mail_patch_into_a_live_lanes_path_is_refused_and_applies_with_the_lan
     git(repo["primary"], "reset", "-q", "--hard", "HEAD~1")
     git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
     live("userland")
-    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "am"], input=patch, capture_output=True, text=True,
+    r = run([*GIT, "-C", str(repo["primary"]), "am"], input=patch,
                        timeout=60, env=os.environ.copy())
     assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
     assert head(repo["primary"]) == "seed"
     git(repo["primary"], "am", "--abort")
     lanes.clear("userland")
-    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "am"], input=patch, capture_output=True, text=True,
+    r = run([*GIT, "-C", str(repo["primary"]), "am"], input=patch,
                        timeout=60, env=os.environ.copy())
     assert r.returncode == 0 and head(repo["primary"]) == "patch", r
 
@@ -203,8 +219,7 @@ def test_a_revert_read_through_ps_is_judged_too(repo, monkeypatch):
     live("userland")
     git(repo["primary"], "config", "core.hooksPath", str(repo["hooks"]))
     monkeypatch.setenv("PREPARE_COMMIT_MSG_PROC_ROOT", str(repo["tmp"] / "no-proc"))
-    r = subprocess.run([*GIT, "-C", str(repo["primary"]), "revert", "--no-edit", "HEAD"], capture_output=True,
-                       text=True, timeout=60, env=os.environ.copy())
+    r = run([*GIT, "-C", str(repo["primary"]), "revert", "--no-edit", "HEAD"], timeout=60, env=os.environ.copy())
     assert r.returncode != 0 and "user/a.c belongs to lane userland" in r.stderr, r
     assert head(repo["primary"]) == "edit"
 
@@ -298,6 +313,7 @@ def test_the_skip_needs_a_stated_reason(repo, monkeypatch):
     (lambda t: t.replace('output = "reports"', 'output = "logs"'), "output must be one of"),
     (lambda t: t.replace('paths = ["user/"', 'paths = ["./user/"'), "paths must be a list"),
     (lambda t: t.replace('"src/shell/"', '"src//shell/"'), "paths must be a list"),
+    (lambda t: t.replace('"src/shell/"', '"src/a shell/"'), "paths must be a list"),
     (lambda t: t.replace('worktree = "../wt-neon-b"', 'worktree = "../wt-userland/"'), "is also lane userland"),
 ])
 def test_a_map_that_does_not_validate_never_lands(repo, edit, why):
@@ -340,8 +356,7 @@ def test_clear_takes_a_lane_name_never_a_path(repo):
     keep = repo["tmp"] / "keep.json"
     keep.write_text("{}")
     rel = os.path.relpath(keep.with_suffix(""), d)
-    r = subprocess.run([sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "clear", rel],
-                       capture_output=True, text=True, timeout=60)
+    r = run([sys.executable, str(repo["primary"] / "scripts" / "lanes.py"), "clear", rel])
     assert r.returncode == 2 and keep.exists(), r
     with pytest.raises(lanes.LaneError):
         lanes.clear(rel)
@@ -652,7 +667,7 @@ def _merge_into_main(repo, kind):
         (p / ".git" / "MERGE_HEAD").unlink()
         os.mkfifo(p / ".git" / "MERGE_HEAD")
     git(p, "checkout", "HEAD", "--", "user/a.c", "src/kernel/k.c")    # every incoming change lost by mistake
-    r = subprocess.run(["bash", str(repo["hooks"] / "pre-commit")], cwd=p, capture_output=True, text=True,
+    r = run(["bash", str(repo["hooks"] / "pre-commit")], cwd=p,
                        timeout=30, env=os.environ.copy())
     return r
 
@@ -852,10 +867,17 @@ def test_a_record_beat_would_not_write_is_damaged(repo, rec):
     ("everything in src/apps.", "userland"), ("`src/apps`", "userland"), ("user/x.c", "userland"),
     ("src/apps-old/x", None), ("src/apps.md", None), ("the user starts it", None), ("vendor/user/x", None),
     ("[other](../user/x)", None), ("[apps](../11-apps/TODO-01-app.md)", None),
-    ("docs/inv/one.md", "neon-a"), ("docs/inv/one.md.bak", None), ("(docs/inv/one.md).", "neon-a")])
+    ("docs/inv/one.md", "neon-a"), ("docs/inv/one.md.bak", None), ("(docs/inv/one.md).", "neon-a"), ("docs/inv/one.md/x", None),
+    ("[linker](./../../user/user.ld)", "userland"), ("./user/x.c", "userland"), ("docs/../user/x.c", "userland"),
+    ("[todo/11-apps/TODO-01-app.md](../11-apps/TODO-01-app.md)", None), ("/user/x", None),
+    ("https://example.com/user/x", None), ("user/*.c", "userland"), ("edit the Makefile.", "neon-a"),
+    ("Makefile.old", None)])
 def test_the_paths_a_section_names(text, held):
-    lane_map = {"lanes": {"main": {"paths": []}, "userland": {"paths": ["user/", "src/apps/", "todo/11-apps/"]},
-                          "neon-a": {"paths": ["docs/inv/one.md"]}}}
+    table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
+    lane_map = lanes.parse_map(
+        f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+        f'[lane.userland]\n{table}worktree = "../u"\npaths = ["user/", "src/apps/", "todo/11-apps/"]\n'
+        f'[lane.neon-a]\n{table}worktree = "../n"\npaths = ["docs/inv/one.md", "Makefile"]\n')
     states = {"userland": lanes.LIVE, "neon-a": lanes.LIVE}
     assert lanes.names_reserved_path(lane_map, states, text, "todo/00-x") == held
 
@@ -890,3 +912,48 @@ def test_one_scanned_todo_is_kept_at_a_time(triage):
     for f in entries:
         t._read_scan(os.path.join(root, f))
     assert len(t._SCAN_MEMO) == 1
+
+
+def test_a_broken_map_is_not_repaired_while_a_lane_has_a_record(repo):
+    p = repo["primary"]
+    toml = p / ".conclave" / "lanes.toml"
+    good = toml.read_text()
+    (repo["tmp"] / "alias").symlink_to(repo["userland"])
+    for broken in (good.replace('worktree = "../wt-neon-b"', 'worktree = "../alias"'), "[lane.main\n"):
+        toml.write_text(broken)
+        git(p, "add", "--", ".conclave/lanes.toml")
+        git(p, "commit", "-qm", "broken map")                         # landed past the hooks
+        toml.write_text(good.replace('"user/", ', ""))                # the repair also releases user/
+        git(p, "add", "--", ".conclave/lanes.toml")
+        stage(p, "user/a.c", "main\n")
+        live("userland")
+        r = check(p)
+        assert r.returncode == 2 and "is broken and a lane has a record" in r.stderr, r
+        lanes.clear("userland")
+        assert check(p).returncode == 0
+        git(p, "reset", "-q", "--hard")
+
+
+def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(repo):
+    clone = repo["tmp"] / "far" / "clone"
+    (repo["tmp"] / "meta").mkdir()
+    git(repo["tmp"], "clone", "-q", f"--separate-git-dir={repo['tmp'] / 'meta' / 'clone.git'}", str(repo["primary"]),
+        str(clone))
+    git(clone, "worktree", "add", "-q", "--detach", str(repo["tmp"] / "far" / "wt-neon-b"))
+    r = check(repo["tmp"] / "far" / "wt-neon-b")
+    assert r.returncode == 2 and "the primary tree cannot be found" in r.stderr, r
+
+
+def test_scheduling_cost_does_not_grow_with_the_paths_a_live_lane_holds():
+    files = ", ".join(f'"user/f{i}.c"' for i in range(4000))
+    table = 'engine = "e"\nmodel = "m"\noutput = "commits"\nlimits = {}\n'
+    lane_map = lanes.parse_map(f'[lane.main]\n{table}worktree = "."\npaths = []\n'
+                               f'[lane.a]\n{table}worktree = "../a"\npaths = [{files}]\n')
+    text = "Edit src/kernel/mm/pmm.c and the notes in docs/x.md.\n" * 200
+    start = time.monotonic()
+    for _ in range(20):
+        assert lanes.names_reserved_path(lane_map, {"a": lanes.LIVE}, text, "todo/00-x") is None
+    assert time.monotonic() - start < 2                               # 4000 searches a text took over 10 s
+    start = time.monotonic()
+    assert lanes.judge(lane_map, lanes.MAIN, [f"src/p{i}.c" for i in range(20000)], {"a": lanes.OFF}) == []
+    assert time.monotonic() - start < 2
