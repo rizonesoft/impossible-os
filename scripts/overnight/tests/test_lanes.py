@@ -942,7 +942,7 @@ def test_a_broken_map_is_not_repaired_while_a_lane_has_a_record(repo):
 @pytest.mark.parametrize("gitdir", ["clone.git", ".git"])
 def test_a_tree_whose_git_directory_is_kept_elsewhere_is_never_judged_as_main(repo, gitdir):
     clone = repo["tmp"] / "far" / "clone"
-    (repo["tmp"] / "meta").mkdir()
+    (repo["tmp"] / "meta" / "scripts").mkdir(parents=True)
     git(repo["tmp"], "clone", "-q", f"--separate-git-dir={repo['tmp'] / 'meta' / gitdir}", str(repo["primary"]),
         str(clone))
     git(clone, "worktree", "add", "-q", "--detach", str(repo["tmp"] / "far" / "wt-neon-b"))
@@ -1051,3 +1051,33 @@ def test_a_slash_heavy_text_is_read_in_linear_time(repo):
     start = time.monotonic()
     assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, text, "todo/00-x") is None
     assert time.monotonic() - start < 2                               # 7.2 s when every prefix was looked up
+
+
+def test_a_dangling_record_link_reserves_its_lane(repo):
+    d = lanes.state_dir()
+    d.mkdir(parents=True)
+    (d / "userland.json").symlink_to(d / "moved.json")
+    assert lanes.lane_state(lanes.load_map(repo["primary"]), "userland") == lanes.DAMAGED
+    stage(repo["primary"], "user/a.c")
+    r = check(repo["primary"])
+    assert r.returncode == 1 and "reserved (its record cannot be read)" in r.stderr, r
+
+
+def test_a_heartbeat_the_reader_would_refuse_is_not_written(repo, monkeypatch):
+    lane_map = lanes.load_map(repo["primary"])
+    monkeypatch.setattr(lanes.time, "time", lambda: 1.5e9)            # a fixed width in the record
+    empty = lanes.beat("userland", os.getpid(), "").stat().st_size
+    path = lanes.beat("userland", os.getpid(), "x" * (lanes.RECORD_MAX - empty))
+    assert path.stat().st_size == lanes.RECORD_MAX and lanes.lane_state(lane_map, "userland") == lanes.LIVE
+    before = path.read_bytes()
+    with pytest.raises(lanes.LaneError, match="too long"):
+        lanes.beat("userland", os.getpid(), "x" * (lanes.RECORD_MAX - empty + 1))
+    assert path.read_bytes() == before and lanes.lane_state(lane_map, "userland") == lanes.LIVE
+
+
+def test_leading_dot_components_are_read_in_linear_time(repo):
+    lane_map = lanes.load_map(repo["primary"])
+    start = time.monotonic()
+    assert lanes.names_reserved_path(lane_map, {"userland": lanes.LIVE}, "./" * 524288 + "../../user/x",
+                                     "todo/00-x") == "userland"
+    assert time.monotonic() - start < 2                               # 8.7 s when each one copied the rest

@@ -37,7 +37,7 @@ LANE_KEYS = {"engine", "model", "worktree", "paths", "output", "limits"}
 TOP_KEYS = {"stale_secs", "generated", "lane"}
 LIVE, OFF, DAMAGED = "live", "off", "damaged"
 GIT_SECS = 10
-CHECKOUT_DIRS = (".conclave", ".githooks", "scripts", "todo")
+CHECKOUT_DIRS = (".conclave", "scripts")           # the map and this script live in every checkout
 
 
 class LaneError(Exception):
@@ -165,9 +165,9 @@ RECORD_MAX = 64 * 1024
 
 
 def _read_record(path: Path) -> bytes:
-    """A record's bytes. Anything but a small regular file is an OSError: a FIFO in its place must not hold the
-    commit that reads it."""
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    """A record's bytes. Anything but a small regular file is an OSError other than FileNotFoundError: a FIFO in its
+    place must not hold the commit that reads it, and a link to nothing is not an absent record."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
     with open(fd, "rb") as f:
         st = os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode) or st.st_size > RECORD_MAX:
@@ -220,8 +220,7 @@ def _paths_named(text: str, folder: str):
         if "/" not in word:
             yield word.rstrip(".")
             continue
-        while word.startswith("./"):
-            word = word[2:]
+        word = word[re.match(r"(?:\./+)*", word).end():]
         path = posixpath.normpath(posixpath.join(folder, word) if word.startswith("../") else word)
         yield path.rstrip(".") + ("/" if word.endswith("/") else "")
 
@@ -264,12 +263,15 @@ def has_records() -> bool:
 def beat(name: str, pid: int, task: str) -> Path:
     if not _pid_ok(pid):
         raise LaneError(f"pid {pid} is not a process id (1 to {PID_MAX})")
+    record = json.dumps({"lane": name, "pid": pid, "heartbeat": time.time(), "task": task}).encode()
+    if len(record) > RECORD_MAX:
+        raise LaneError(f"the task is too long for a record ({len(record)} bytes; at most {RECORD_MAX})")
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{name}.json"
     tmp = d / f".{name}.json.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"lane": name, "pid": pid, "heartbeat": time.time(), "task": task}, f)
+    with open(tmp, "wb") as f:
+        f.write(record)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
@@ -307,9 +309,9 @@ def lane_trees(lane_map: dict, toplevel: Path) -> dict[Path, str]:
     alias, or another spelling of the primary tree) refuse: the committing lane is found by its tree."""
     common = Path(_git(toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
     primary = common.resolve().parent
-    # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout (known by the
-    # directories every checkout has, so an unstaged deletion of one file changes nothing).
-    if common.name != ".git" or not any((primary / d).is_dir() for d in CHECKOUT_DIRS):
+    # A git directory kept elsewhere does not say where the tree is: its parent holds no checkout (known by both
+    # directories the check itself needs, so an unstaged deletion of one file changes nothing).
+    if common.name != ".git" or not all((primary / d).is_dir() for d in CHECKOUT_DIRS):
         raise LaneError(f"the primary tree cannot be found from its git directory {common}")
     seen: dict[Path, str] = {}
     for name, lane in lane_map["lanes"].items():
