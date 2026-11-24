@@ -306,7 +306,7 @@ def _git(root: Path, *args: str, deadline: float | None = None, ok: tuple[int, .
         raise GitStalled(f"git {args[0]} has no time left in its caller's budget")
     try:
         # A local replacement ref must not change what the check sees: it judges the objects git stores.
-        r = subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args], capture_output=True,
+        r = subprocess.run(["git", "--no-replace-objects", "-c", "core.fsmonitor=false", "-C", str(root), *args], capture_output=True,
                            timeout=secs)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitStalled(f"git {args[0]} could not run ({type(exc).__name__})") from exc

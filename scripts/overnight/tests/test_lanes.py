@@ -1711,11 +1711,12 @@ def test_a_busy_ref_is_refused_at_once(repo, backend):
     assert not (p / ".git" / "index.lock").exists() and git(p, "show", "HEAD:COUNT.md").stdout == "0\n"
 
 
-@pytest.mark.parametrize("markers", ["no end", "no start", "reversed", "two pairs"])
+@pytest.mark.parametrize("markers", ["no end", "no start", "reversed", "two pairs", "one line"])
 def test_broken_badge_markers_never_cost_readme_text(repo, markers):
     p = repo["primary"]
     start, end = "<!-- COUNT-BADGE:START -->\n", "<!-- COUNT-BADGE:END -->\n"
-    body = {"no end": start, "no start": end, "reversed": end + start, "two pairs": (start + end) * 2}[markers]
+    body = {"no end": start, "no start": end, "reversed": end + start, "two pairs": (start + end) * 2,
+            "one line": start.strip() + end}[markers]
     text = "# Top\n" + body + "the rest\n"
     (p / "README.md").write_text(text)
     (p / "scripts" / "site").mkdir()
@@ -1753,3 +1754,42 @@ def test_a_count_that_cannot_be_generated_changes_nothing(repo):
     r = commit_with_hook(repo, hook.replace(write, 'if ! { head -c 10 > "$COUNT_TARGET"; false; } << EOF'))   # a short write
     assert "could not be generated" in r.stderr and git(p, "show", "HEAD:COUNT.md").stdout == "0\n", r
     assert (p / "COUNT.md").read_text() == "0\n"
+
+
+def monitor(repo):
+    """A filesystem monitor that records every question it is asked, and the record."""
+    asked, script = repo["tmp"] / "asked", repo["tmp"] / "monitor"
+    script.write_text(f'#!/bin/sh\necho asked >> "{asked}"\nprintf "token\\0/\\0"\n')
+    script.chmod(0o755)
+    return script, asked
+
+
+def test_the_staged_check_never_waits_for_a_filesystem_monitor(repo):
+    p = repo["primary"]
+    script, asked = monitor(repo)
+    git(p, "config", "core.fsmonitor", str(script))
+    (p / "src/kernel/k.c").write_text("k2\n")
+    git(p, "add", "--", "src/kernel/k.c")
+    git(p, "diff", "--cached", "--name-only")
+    assert asked.exists(), "the monitor answers an ordinary diff, so silence below means something"
+    asked.unlink()
+    assert lanes.staged_paths(p) == ["src/kernel/k.c"]
+    assert not asked.exists()
+
+
+def test_post_commit_never_waits_for_a_filesystem_monitor(repo):
+    p = repo["primary"]
+    script, asked = monitor(repo)
+    (p / "README.md").write_text(README_TEXT)
+    (p / "scripts" / "site").mkdir()
+    (p / "scripts" / "site" / "build.py").write_text(EMIT)
+    git(p, "add", "--", "README.md", "scripts/site")
+    git(p, "commit", "-qm", "readme")
+    git(p, "config", "core.fsmonitor", str(script))
+    git(p, "ls-files", "-s", "--", "README.md")
+    assert asked.exists(), "the monitor answers the plain lookup"
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    shebang, rest = hook.split("\n", 1)
+    r = commit_with_hook(repo, f'{shebang}\nrm -f "{asked}"\n{rest}')          # what git asked before the hook ran is not ours
+    assert r.returncode == 0 and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
+    assert not asked.exists()
