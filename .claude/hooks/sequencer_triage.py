@@ -675,7 +675,7 @@ def _has_lane_map(root, deadline):
     if left <= 0:
         return True
     try:
-        done = subprocess.run(["git", "-C", root, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml"],
+        done = subprocess.run(["git", "--no-replace-objects", "-C", root, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml"],
                               capture_output=True, timeout=left)
     except (subprocess.TimeoutExpired, OSError):
         return True

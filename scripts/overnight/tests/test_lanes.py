@@ -1812,3 +1812,45 @@ def test_a_local_replacement_never_becomes_committed_text(repo):
     assert r.returncode == 0 and git(p, "show", "HEAD:COUNT.md").stdout != "0\n", r
     assert git(p, "--no-replace-objects", "show", "HEAD:README.md").stdout == "new text\n"
     assert (p / "README.md").read_text() == "new text\n"
+
+
+def raw_commit(tree, rev):
+    return subprocess.run([*GIT, "cat-file", "commit", rev], cwd=tree, capture_output=True, timeout=20, check=True).stdout
+
+
+@pytest.mark.parametrize("signed", [False, True])
+def test_the_amend_changes_only_the_commits_tree(repo, signed):
+    p = repo["primary"]
+    hook = (REPO / ".githooks" / "post-commit").read_text()
+    shebang, rest = hook.split("\n", 1)
+    git(p, "config", "i18n.logOutputEncoding", "ASCII//TRANSLIT")
+    git(p, "config", "i18n.commitEncoding", "ISO-8859-1")
+    sign = ("b=\"$(git cat-file commit HEAD | sed '/^committer /a gpgsig -----BEGIN PGP SIGNATURE-----\\n \\n "
+            "abc\\n -----END PGP SIGNATURE-----' | git hash-object -t commit -w --stdin)\"; git update-ref HEAD \"$b\"\n")
+    (repo["hooks"] / "post-commit").write_text(f"{shebang}\n{sign if signed else ''}git update-ref refs/before HEAD\n{rest}")
+    (repo["hooks"] / "post-commit").chmod(0o755)
+    (p / "src/kernel/k.c").write_text("k2\n")
+    message = "lanes: \u00a757 caf\u00e9\n\n\n gpgsig in the text\ngpgsig kept\n\nno newline at the end".encode("latin-1")
+    (repo["tmp"] / "message").write_bytes(message)
+    run([*GIT, "-c", f"core.hooksPath={repo['hooks']}", "commit", "-q", "--cleanup=verbatim", "-F", str(repo["tmp"] / "message"),
+         "--author=Other <o@example.com>", "--date=2020-01-02T03:04:05+0200", "--only", "src/kernel/k.c"], cwd=p, timeout=60,
+        env={**os.environ, "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"})
+    before, after = raw_commit(p, "refs/before"), raw_commit(p, "HEAD")
+    assert b"encoding ISO-8859-1" in after and after.endswith(message)
+    if signed:
+        assert b"\ngpgsig -----BEGIN" in before and b"BEGIN PGP" not in after
+        head, _, rest = before.partition(b"\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----")
+        before = head + rest
+    assert before.split(b"\n", 1)[0] != after.split(b"\n", 1)[0] and before.split(b"\n", 1)[1] == after.split(b"\n", 1)[1]
+    assert git(p, "show", "HEAD:COUNT.md").stdout != "0\n"
+
+
+def test_triage_sees_the_map_through_a_replacement(repo):
+    t = _load("triage_replacement", TRIAGE_PY)
+    p = repo["primary"]
+    git(p, "rm", "-q", "--", ".conclave/lanes.toml")
+    empty = git(p, "write-tree").stdout.strip()
+    git(p, "reset", "-q")
+    git(p, "replace", git(p, "rev-parse", "HEAD^{tree}").stdout.strip(), empty)
+    assert git(p, "ls-tree", "--name-only", "HEAD", "--", ".conclave/lanes.toml").stdout == "", "the replacement is live"
+    assert t._has_lane_map(str(p), time.monotonic() + 20) is True

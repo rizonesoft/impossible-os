@@ -541,8 +541,7 @@ fi
 # still equals $base, and the real index is touched only after that succeeds, so a
 # concurrent commit or a lock failure loses nothing.
 plumb_amend() {
-    local base="$BASE" root changed name cb rb="" tree new msg an ae ad gitdir idx lock cur_r par
-    local -a pargs=()
+    local base="$BASE" root changed name cb rb="" tree new gitdir idx lock cur_r
     [ -n "$base" ] || return 1
     cb="$(git -C "$ROOT" hash-object -w "$COUNT_TARGET")" || return 1
     local -a readme=()
@@ -561,18 +560,14 @@ plumb_amend() {
     while read -r name; do
         case "$name" in "" | COUNT.md | README.md) ;; *) return 1 ;; esac
     done <<< "$changed"
-    # Parents come from the commit object itself (a shallow boundary makes
-    # rev-list report none); an empty list is allowed only for a true root.
-    while read -r par; do pargs+=(-p "$par"); done < <(git -C "$ROOT" cat-file commit "$base" | awk '/^$/{exit} /^parent /{print $2}')
-    if [ "${#pargs[@]}" -eq 0 ] && [ "$(git -C "$ROOT" rev-list --count "$base" 2>/dev/null)" != "1" ]; then
-        return 1
-    fi
-    msg="$(git -C "$ROOT" log -1 --format=%B "$base")" || return 1
-    an="$(git -C "$ROOT" log -1 --format=%an "$base")" || return 1
-    ae="$(git -C "$ROOT" log -1 --format=%ae "$base")" || return 1
-    ad="$(git -C "$ROOT" log -1 --format=%aD "$base")" || return 1
-    new="$(printf '%s\n' "$msg" | GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
-        git -C "$ROOT" commit-tree "$tree" "${pargs[@]}")" || return 1
+    # The stored commit with its tree replaced: parents, people, encoding and message keep their bytes, and a
+    # signature goes, since it signed the other tree.
+    new="$(git -C "$ROOT" cat-file commit "$base" | python3 -I -c '
+import re, sys
+head, _, message = sys.stdin.buffer.read().partition(b"\n\n")
+head = re.sub(rb"\ngpgsig(-sha256)? .*(\n .*)*", b"", head)
+head = re.sub(rb"\Atree [0-9a-f]+", b"tree " + sys.argv[1].encode(), head)
+sys.stdout.buffer.write(head + b"\n\n" + message)' "$tree" | git -C "$ROOT" hash-object -t commit -w --stdin)" || return 1
     # Hold the real index lock for the whole transaction: validate, prepare the
     # new index privately in the lock file, move HEAD with a compare-and-swap,
     # and only then publish the index by renaming the lock into place. Any
