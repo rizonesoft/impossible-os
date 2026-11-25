@@ -688,3 +688,12 @@ The pass cap counts every returned pass. The session bumped the counter once for
 - **B:** leave it in the machinery queue and bump by hand, once a pass.
 
 A: (run decided, 2026-11-25) A. The same loss happened twice (sections 49 and 72), and it held product sections for half a day, which is the product-first rule's exception. Until it ships, the counter is bumped once for each returned pass. Reversal cost: none, the item is already filed; only its order changes.
+
+## Q63 (08-graphics-ui/TODO-17 §30): does a reference-VM script run again under `bosun run`, or hold the place beside it?
+
+The operator's request names `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <command>` and asks for one shared place, with exit codes, `-Stop` and the VM lock as they are.
+
+- **A:** each script starts itself again under `bosun run`.
+- **B:** the script runs `bosun run` with exactly those options over a holder that lives as long as the script, and works in its own process.
+
+A: (run decided, 2026-11-25) B. Started again, `-Command` goes through a second round of Windows PowerShell 5.1 argument quoting, which loses embedded quotes; a caller that times out kills the outer script while Bosun's child goes on holding the VM lock, so `-Stop` answers 4 instead of taking over; and the 100 GB write budget would count what update-iso.ps1 copies. Held beside it, the pipe closes when the script ends for any reason and the place frees. What B gives up: Bosun does not end the script's own children, as it does not today. Reversal cost: one function in ref-common.ps1.

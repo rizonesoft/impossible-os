@@ -95,6 +95,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  27   | §27 Host Captures                                                                           | §2, §24                     |  [x]   |
 | 💎  |  28   | §28 Recovery Branches: Reset This PC and Automatic Repair                                   | §9                          |  [ ]   |
 | 💎  |  29   | §29 Host Captures: GPU Preferences and the Radio Flyouts                                    | §8, §27                     |  [ ]   |
+| ⭐  |  30   | §30 Take turns with the SDK's test machine                                                  | §2, §24                     |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -1279,6 +1280,31 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 - [ ] Commit: `"inventory: host captures, GPU preferences and radio flyouts"`
 
 **Test checkpoint:** each of the four states has its own records: the GPU choices (or the recorded observation that the host offers none) in `settings/host-gpu.json` for graphics-advanced and graphics-app-options, still there after a §27 retake, and the Wi-Fi network list and Bluetooth device list tiles in `flyouts/host.json`; with the state-matched campaign check, `inventory-report.py --campaign --check` reports none of the four rows, and `check-inventory.py` passes.
+
+---
+
+## 30. Take turns with the SDK's test machine
+
+> **Spawned-by:** root (operator request, 2026-11-24)
+
+**Design:** n/a -- host tooling, it draws nothing
+
+> **User impact:** two 4 GB virtual machines started at once leave the host short of memory, and a capture of the reference then runs slowly, times out or fails.
+
+Impossible SDK has its own Hyper-V machine, `ui-test-win11`, in `D:\11\ui-test-win11`. It shares no disk, checkpoint, lock or password with `ios-win11-ref`, and it does not start while `ios-win11-ref` is anything but Off. Its jobs queue under `bosun run --ns Bosun.VM --slots 1`. Our scripts never start, stop, change or delete it, or anything in its folder.
+
+The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <command>` gives (Bosun `8d5f318` or later). The command is a small holder (`ref-turn.ps1`) that keeps the place for as long as the script that started it lives. The script itself is not started again under `bosun run`: that would pass `-Command` through a second round of Windows PowerShell 5.1 quoting, and a run killed by its caller would leave its child holding the VM lock, which `-Stop` could then not take over (todo/answers.md Q63).
+
+- [ ] `Enter-RefTurn` in `ref-common.ps1` takes the place before the VM starts: called by `Restore-RefCheckpoint` (not with `-NoStart`) and by `Start-RefVm`, the only code that starts the VM
+  - A test refuses `Start-VM`, `Restore-VMSnapshot`, `Resume-VM`, `Restart-VM` and `Start-VM` through CIM anywhere else under `scripts/inventory`, so a new script cannot forget it.
+  - The VM lock is taken first and is unchanged: a second run is refused at once (exit 4), never queued. `-Stop` never queues.
+- [ ] Inventory is never refused: after 360 seconds it starts anyway; with no Bosun, or one that answers nothing, it runs directly and says so; `--or-skip` is never passed
+- [ ] A script already inside the queue passes straight through, its own children too (`BOSUN_SLOT`, `BOSUN_NS` and `WSLENV` as Bosun gave them), and every exit code is the script's own
+- [ ] `capture.py` and `host-capture.py` allow 360 seconds more than before, from one constant a test holds equal to the one in `ref-common.ps1`
+- [ ] `REFERENCE.md` says that inventory takes turns, how long it waits and what happens then
+- [ ] Commit: `"inventory: take turns with the SDK's test machine"`
+
+**Test checkpoint:** on the Windows host, with the place held by a dummy job: `ref-run.ps1` waits and goes on when the place frees; held longer than a short test wait, it goes on anyway; with Bosun off the PATH it runs directly; run inside `bosun run --ns` it does not wait for itself; exit codes 2, 3, 4 and a script's own code come back unchanged; `-Stop` answers while the place is held; a killed run frees the place. The VM cmdlets are stubs in these tests and the queue has a name of its own, so no machine starts and no SDK job is delayed. Each test fails on the commit before.
 
 ---
 
