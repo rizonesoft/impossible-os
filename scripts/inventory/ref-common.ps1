@@ -278,6 +278,8 @@ $script:RefTurnSpent = 0       # seconds this script has waited; all its waits s
 function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
     if ($script:RefTurn -and $script:RefTurn.Slot -ge 0 -and -not $script:RefTurn.Process.HasExited) { return }
     Exit-RefTurn
+    # Inside a job that holds this queue's place, the place is that job's.
+    if ($env:BOSUN_SLOT -and ";$env:BOSUN_NS;".Contains(";$script:RefTurnNs;")) { return }
     $left = $script:RefTurnWaitSec + $script:RefTurnSlackSec - $script:RefTurnSpent
     $limit = [Math]::Max(5, [Math]::Min($left, $WaitSec + $script:RefTurnSlackSec))
     $WaitSec = [Math]::Max(1, [Math]::Min($WaitSec, [int][Math]::Floor($left - $script:RefTurnSlackSec)))

@@ -91,9 +91,12 @@ try {
         }
     }
 } finally {
-    if ($s) { Remove-PSSession $s }
-    # Only a VM this run restored is turned off; a refusal leaves it as it was.
-    if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    Exit-RefTurn
+    try {
+        if ($s) { Remove-PSSession $s }
+        # Only a VM this run restored is turned off; a refusal leaves it as it was.
+        if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    } finally {
+        Exit-RefTurn
+    }
 }
 exit $code

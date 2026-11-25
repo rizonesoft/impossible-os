@@ -50,7 +50,7 @@ function Get-RefCredential([string]$VmPath) { }
 function New-RefSession([string]$Name, [string]$VmPath) { 'session' }
 function Test-RefIdentity($Session, [string]$Name) { if ($Session -ne 'session') { "the session is $Session" } }
 function Invoke-Command { }
-function Remove-PSSession { }
+function Remove-PSSession { if ($env:IOS_TEARDOWN) { throw 'the stub does not tear down' } }
 function Receive-RefTree { 0 }
 function Invoke-RefInteractive($Session, [string]$Command, [int]$TimeoutSec) {
     if ($Command -eq 'hold') { for ($i = 0; $i -lt 600 -and -not (Test-Path -LiteralPath '@GO@'); $i++) { Start-Sleep -Milliseconds 100 } }
@@ -288,6 +288,33 @@ class Turns(unittest.TestCase):
         self.assertIn("slot=0", self.noted())
         self.assertIn("nested exit=9 quick=True", self.noted())
 
+    def test_a_run_inside_the_queue_asks_no_bosun(self):
+        # One that hangs would keep the outer job's place idle.
+        path, scripts = self.fake_path(), self.scripts(60, 5)
+        code, out = self.call(self.bosun(20, "powershell.exe", *self.ref_run_with_path(path, scripts, command="exit")[1:]))
+        self.assertEqual(code, 7, out)
+        self.assertIn("slot=0", self.noted())
+        self.assertFalse((self.tmp / "fake" / "pid.txt").exists())
+
+    def test_a_run_in_another_queue_takes_a_place_in_this_one(self):
+        code, out = self.call([BOSUN, "run", "--ns", self.ns + "-other", "--slots", "1", "--max-wait", "20", "--",
+                               "powershell.exe", *self.ref_run(self.scripts(60))[1:]])
+        self.assertEqual(code, 7, out)
+        self.assertRegex(self.noted(), rf"slot=0 ns=([^ ]*;)?{re.escape(self.ns)}(;| )")
+
+    def test_a_teardown_that_fails_frees_the_place(self):
+        # In a shell that lives on, as an operator's does.
+        first, *rest = self.args(self.scripts(60))
+        line = " ".join([f"& '{first}'"] + [x if x.startswith("-") else f"'{x}'" for x in rest])
+        p = self.start([POWERSHELL, *BYPASS, "-Command",
+                        f"$env:IOS_TEARDOWN = '1'; try {{ {line} }} catch {{ \"caught $($_.Exception.Message)\" }}; "
+                        "\"after=$env:BOSUN_SLOT$env:BOSUN_NS.\"; [void][Console]::In.ReadLine()"])
+        self.wait_for(lambda: any("after=" in x for x in p.lines), lambda: p.lines)
+        said = "".join(p.lines)
+        self.assertIn("caught the stub does not tear down", said)
+        self.assertIn("after=.", said)
+        self.assertEqual(self.slot(1), "0")
+
     def test_a_job_started_by_a_run_passes_through(self):
         code, out = self.call(self.ref_run(self.scripts(60), command="nested"))
         self.assertEqual(code, 7, out)
@@ -487,7 +514,9 @@ class Sources(unittest.TestCase):
             # Every string a script takes is a path, but for these.
             taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
             self.assertEqual(set(named[1].split(", ")), taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
-            self.assertIn("Exit-RefTurn", lines, p.name)
+            # Freed whatever the teardown before it does.
+            last = len(lines) - 1 - lines[::-1].index("Exit-RefTurn")
+            self.assertEqual(lines[last - 1], "} finally {", p.name)
 
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")

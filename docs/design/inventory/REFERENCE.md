@@ -119,7 +119,7 @@ The machine and the tools are kept after the inventory is captured, so anything 
 Inventory takes turns. The host is short of memory, and Impossible SDK has a 4 GB machine of its own, `ui-test-win11`, which shares no disk, checkpoint, lock or password with this one. Before any script here starts the VM it takes the one place of Bosun's `Bosun.VM` queue, the place the SDK's jobs take too (`Enter-RefTurn` in `ref-common.ps1`, which runs `bosun run --ns Bosun.VM --slots 1 --max-wait 360`), and frees it once the VM is off. A run that is killed frees it as well.
 
 - A run waits up to 6 minutes, then starts anyway: inventory is never refused. `capture.py` and `host-capture.py` allow for the wait.
-- Without Bosun, or when Bosun fails or does not answer within 20 seconds more, the run goes on without a place and says so. The script's next start of the VM asks again; all the waits of one script together last 380 seconds at most, and after that a start only asks. Bosun `8d5f318` or later is needed.
+- Without Bosun, or when Bosun fails or does not answer within 20 seconds more, the run goes on without a place and says so. The script's next start of the VM asks again. All the waits of one script share a budget of 380 seconds; once it is spent a start asks for 1 second, or waits 5 for a Bosun that says nothing, and goes on. Bosun `8d5f318` or later is needed.
 - The VM's own lock comes first and is as it was: a second run on this VM exits 4 at once. `ref-run.ps1 -Stop` never waits.
 - A job a run starts under the same queue name passes straight through.
 - A script given `ui-test-win11` as `-Name`, or a path inside a folder of that name, refuses (exit 2) and changes nothing. So does a `-Name` that is a pattern.

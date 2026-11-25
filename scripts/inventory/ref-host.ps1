@@ -446,19 +446,22 @@ try {
         }
     }
 } finally {
-    Close-Session
-    if ($script:RefTouched) {
-        # Put the VM back on its checkpoint, so what a walk changed (the boot
-        # walk's boot entry and crash settings) does not outlive the run, on a
-        # failed step too (review, 2026-11-18). Restore-RefCheckpoint turns it
-        # off first and attaches the media again from the VM's own folder, which
-        # a plain restore of pre-oobe would leave pointing at the build folder.
-        try { Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart } catch {
-            $why = "the VM could not be restored to $Checkpoint after the run: $($_.Exception.Message)"
-            Write-Host "ref-host: $why"
-            if (-not $failed) { $failed = $why }
-            if ($code -eq 0) { $code = 1 }
+    try {
+        Close-Session
+        if ($script:RefTouched) {
+            # Put the VM back on its checkpoint, so what a walk changed (the boot
+            # walk's boot entry and crash settings) does not outlive the run, on a
+            # failed step too (review, 2026-11-18). Restore-RefCheckpoint turns it
+            # off first and attaches the media again from the VM's own folder, which
+            # a plain restore of pre-oobe would leave pointing at the build folder.
+            try { Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart } catch {
+                $why = "the VM could not be restored to $Checkpoint after the run: $($_.Exception.Message)"
+                Write-Host "ref-host: $why"
+                if (-not $failed) { $failed = $why }
+                if ($code -eq 0) { $code = 1 }
+            }
         }
+    } finally {
         Exit-RefTurn
     }
     # thumbnail: the revision of Save-Thumbnail's reading of Hyper-V's bytes;

@@ -753,8 +753,11 @@ try {
     if ($Derive) { Invoke-Derive } elseif ($Reclean) { Invoke-Reclean } elseif (-not $Verify) { Invoke-Build }
     if ($script:Refused) { $rc = $script:Refused } else { $rc = Invoke-Verify | Select-Object -Last 1 }
 } finally {
-    $vm = Get-VM | Where-Object { $_.Name -eq $Name }
-    if ($script:RefTouched -and $vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    Exit-RefTurn
+    try {
+        $vm = Get-VM | Where-Object { $_.Name -eq $Name }
+        if ($script:RefTouched -and $vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    } finally {
+        Exit-RefTurn
+    }
 }
 exit $rc
