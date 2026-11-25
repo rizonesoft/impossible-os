@@ -164,6 +164,24 @@ def expect_powerdown(name: str, off_after: float, reply_delay: float, closes: bo
     print("%s  %s" % ("PASS" if ok else "FAIL", name))
 
 
+def expect_running(name: str, status: bytes, passes: bool) -> None:
+    global failures
+    real, ss.monitor = ss.monitor, lambda path, command, deadline: (
+        b"QEMU monitor\n(qemu) info status\r\nVM status: " + status + b"\r\n(qemu) ")
+    try:
+        ss.running("", 0.0)
+        got = True
+    except ss.ScreenError:
+        got = False
+    ss.monitor = real
+    if got != passes:
+        failures += 1
+    print("%s  %s" % ("PASS" if got == passes else "FAIL", name))
+
+
+expect_running("a guest that runs passes", b"running", True)
+expect_running("a guest that reset under -no-reboot fails", b"paused (shutdown)", False)
+expect_running("a guest with an internal error fails", b"paused (internal-error)", False)
 expect_powerdown("a guest that powers off in time passes", 0.5, 0.0, False, True)
 expect_powerdown("a guest that stays up fails when the time ends", 9.0, 0.0, False, False)
 expect_powerdown("a reply after the time fails", 0.0, 1.3, False, False)

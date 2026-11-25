@@ -1374,10 +1374,8 @@ if [ -n "$CT_MODE$CT_END" ] || [ "$SHUTDOWN" = "1" ]; then
     for _f in "${QEMU_FLAGS[@]}"; do [ "$_f" = "-no-reboot" ] || _qf+=("$_f"); done
     QEMU_FLAGS=("${_qf[@]}")
 fi
-if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ] || [ "$SHUTDOWN" = "1" ]; then
-    rm -f "$MONITOR_SOCK"
-    QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
-fi
+rm -f "$MONITOR_SOCK"
+QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
 
 if [ "${SMOKE_ENGINE:-}" = "kvm" ] || { [ -c /dev/kvm ] && [ -w /dev/kvm ] && [ -z "${SMOKE_FORCE_TCG:-}" ]; }; then
     QEMU_FLAGS+=(-accel kvm -cpu host)
@@ -1550,6 +1548,15 @@ elif [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ] && [ -z "$CT_END"
     sleep "$GRACE_SEC"
     strip_ansi
     printf "\r"
+fi
+
+# A guest that reset sits paused under -no-reboot, its transcript as whole as a halt's.
+# The other legs run without that flag and judge the restart themselves.
+if [ "$BOOT_PASSED" = true ] && [[ " ${QEMU_FLAGS[*]} " == *" -no-reboot "* ]]; then
+    if ! _run_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" running "$MONITOR_SOCK" 2>&1); then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="the guest reset or died after its last marker ($_run_err)"
+    fi
 fi
 
 # The bad-strings crash leg judges the SCREEN, not only serial: printk writes

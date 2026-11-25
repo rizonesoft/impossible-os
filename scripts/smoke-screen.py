@@ -13,6 +13,8 @@ so the text can be decoded cell by cell against that same font table.
     smoke-screen.py monitor <monitor-socket> <hmp-command>
         send one HMP command (the double-panic legs' system_reset) and wait
         for the prompt after it, under the same deadline
+    smoke-screen.py running <monitor-socket>
+        exit 0 only when the guest runs: it has not reset (under -no-reboot)
     smoke-screen.py powerdown <monitor-socket> <seconds>
         press the power button; exit 0 only when the guest powered itself off
         within that time of the press
@@ -176,8 +178,8 @@ def _read_until(sock: socket.socket, buf: bytearray, count: int, deadline: float
         buf.extend(chunk)
 
 
-def monitor(sock_path: str, command: str, deadline: float) -> None:
-    """Send one HMP command and wait for the prompt that follows it."""
+def monitor(sock_path: str, command: str, deadline: float) -> bytes:
+    """Send one HMP command, wait for the prompt that follows it and return what came."""
     buf = bytearray()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -186,8 +188,18 @@ def monitor(sock_path: str, command: str, deadline: float) -> None:
         _read_until(sock, buf, 1, deadline)  # the greeting's prompt
         sock.sendall((command + "\n").encode())
         _read_until(sock, buf, 2, deadline)  # the prompt after the command
+        return bytes(buf)
     finally:
         sock.close()
+
+
+def running(sock_path: str, deadline: float) -> None:
+    """Refuse a guest that reset or faulted: -no-reboot leaves it "paused (shutdown)",
+    while a halted guest and one at its prompt both run."""
+    reply = monitor(sock_path, "info status", deadline)
+    if b"VM status: running" not in reply:
+        raise ScreenError("the guest does not run: %s" % reply.split(b"VM status:")[-1].split(b"\r\n")[0].decode(
+            "ascii", "replace").strip())
 
 
 def powerdown(sock_path: str, seconds: int) -> None:
@@ -244,6 +256,9 @@ def main(argv: list[str]) -> int:
     try:
         if len(argv) == 3 and argv[0] == "monitor":
             monitor(argv[1], argv[2], time.monotonic() + 15.0)
+            return 0
+        if len(argv) == 2 and argv[0] == "running":
+            running(argv[1], time.monotonic() + 15.0)
             return 0
         if len(argv) == 3 and argv[0] == "powerdown":
             powerdown(argv[1], int(argv[2]))
