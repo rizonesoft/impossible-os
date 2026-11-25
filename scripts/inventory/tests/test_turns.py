@@ -86,6 +86,8 @@ class Turns(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.ns = "ios-turns-" + uuid.uuid4().hex[:12]
         self.log, self.go = self.tmp / "log.txt", self.tmp / "go"
+        self.started = []
+        self.addCleanup(self.end)
         (self.tmp / "vm").mkdir()
         self.win = winpath(self.tmp)
 
@@ -124,7 +126,7 @@ class Turns(unittest.TestCase):
         # Read by a thread, so no wait for a line or for the end lacks a deadline.
         p.lines, p.reader = [], threading.Thread(target=lambda: p.lines.extend(p.stdout), daemon=True)
         p.reader.start()
-        self.addCleanup(self.end, p)
+        self.started.append(p)
         return p
 
     def wait_for(self, ready, what):
@@ -144,17 +146,20 @@ class Turns(unittest.TestCase):
         p.reader.join(LIMIT)
         return code, "".join(p.lines)
 
-    def end(self, p):
-        self.go.touch()          # a held run goes on
-        p.stdin.close()          # a dummy job ends
-        try:
-            p.wait(LIMIT)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.wait()
-        p.reader.join(5)
-        if not p.reader.is_alive():
-            p.stdout.close()
+    def end(self):
+        self.go.touch()                                  # a held run goes on
+        for p in self.started:
+            p.stdin.close()                              # a dummy job ends
+        end = time.monotonic() + 30
+        for p in self.started:
+            try:
+                p.wait(max(0.1, end - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+            p.reader.join(5)
+            if not p.reader.is_alive():
+                p.stdout.close()
 
     def call(self, argv):
         for _ in range(2):
@@ -343,6 +348,25 @@ class Turns(unittest.TestCase):
         self.assert_bounded(out)
         self.assertIn("on", out.split())
 
+    def test_a_folder_is_one_machines_and_one_builds(self):
+        # A mistyped -Name wrote a new credential over the reference's (2026-11-25).
+        common, vm = winpath(self.scripts(60)) + "\\ref-common.ps1", self.win + "\\vm"
+
+        def enter(name, owner, then=""):
+            return [POWERSHELL, *BYPASS, "-Command",
+                    f". '{common}'; function Get-VM {{ [pscustomobject]@{{ Name = 'ref'; ConfigurationLocation = '{owner}' }} }}; "
+                    f"Enter-RefFolder '{name}' '{vm}'; 'entered'; {then}"]
+
+        for name, owner, code in (("typo", vm, 2), ("typo", vm.upper() + "\\ref", 2), ("ref", vm, 0), ("typo", vm + "-2", 0)):
+            got, out = self.call(enter(name, owner))
+            self.assertEqual((got, "entered" in out), (code, code == 0), out)
+        p, line = self.first_line(enter("one", "x", "[void][Console]::In.ReadLine()"))
+        self.assertEqual(line.strip(), "entered")
+        self.assertEqual(self.call(enter("two", "x"))[0], 4)
+        p.stdin.close()
+        self.finish(p)
+        self.assertEqual(self.call(enter("two", "x"))[0], 0)
+
     def test_the_checked_path_is_the_path_used(self):
         # PowerShell and .NET read a relative path and a ~ in two ways.
         common = winpath(self.scripts(60)) + "\\ref-common.ps1"
@@ -350,6 +374,10 @@ class Turns(unittest.TestCase):
                                f"Set-Location '{self.win}\\vm'; . '{common}'; [string]$A = 'x'; [string]$B = '~\\y'; [string]$C = ''; "
                                "Resolve-RefTarget 'n' A, B, C; $A; $B.Replace($HOME, 'HOME'); \"C=$C\""])
         self.assertEqual(out.split(), [f"{self.win}\\vm\\x", "HOME\\y", "C="], out)
+        # Another provider's path is none of these (Env:x would come back as x).
+        code, out = self.call(self.ref_run(self.scripts(60), vm="Env:x"))
+        self.assertEqual(code, 2, out)
+        self.assertIn("is not a file path", out)
 
     def test_the_sdk_machine_is_refused_before_anything_changes(self):
         folder = self.scripts(60)
@@ -422,6 +450,8 @@ class Sources(unittest.TestCase):
             taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
             self.assertEqual(set(named[1].split(", ")), taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
             self.assertIn("Exit-RefTurn", lines, p.name)
+            if p.name == "ref-vm.ps1":                   # the one that makes a folder's machine
+                self.assertEqual(lines[lines.index("Enter-RefLock $Name") + 1], "Enter-RefFolder $Name $VmPath")
 
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")

@@ -228,10 +228,6 @@ function Invoke-Build() {
             return
         }
     }
-    # A mistyped -Name must not write over the machine whose folder this is.
-    $root = $VmPath.TrimEnd('\') + '\'
-    $owner = @(Get-VM | Where-Object { $_.Name -ne $Name -and "$($_.ConfigurationLocation)\".StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })
-    if ($owner.Count) { Write-Host "ref-vm: $VmPath holds $($owner[0].Name), not $Name"; $script:Refused = 2; return }
     if ($existing.Count) {
         if (-not $Rebuild) { Write-Host "ref-vm: $Name exists; -Rebuild removes it and its checkpoints"; $script:Refused = 3; return }
         # Checked before anything is deleted: a mistyped ISO path must not cost the reference.
@@ -744,6 +740,7 @@ function Invoke-Reclean() {
 }
 
 Enter-RefLock $Name
+Enter-RefFolder $Name $VmPath
 $script:ProfileProbe = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-profile.ps1'
 $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
 # Every path that changed the VM ends with it off, a failed one included: a

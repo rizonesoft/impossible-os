@@ -225,6 +225,18 @@ function Enter-RefLock([string]$Name) {
     }
 }
 
+# One build per folder too: two names can be given the same one, and each writes
+# its credential there. A mistyped -Name must not write over the machine whose
+# folder it is.
+function Enter-RefFolder([string]$Name, [string]$VmPath) {
+    $root = $VmPath.TrimEnd('\') + '\'
+    $script:RefFolderLock = New-Object Threading.Mutex($false, "Global\ios-ref-folder-$($root.ToLowerInvariant() -replace '[\\/:]', '_')")
+    try { $held = $script:RefFolderLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
+    if (-not $held) { Write-Host "ref: another ref-vm is using $VmPath"; exit 4 }
+    $owner = @(Get-VM | Where-Object { $_.Name -ne $Name -and "$($_.ConfigurationLocation)\".StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })
+    if ($owner.Count) { Write-Host "ref: $VmPath holds $($owner[0].Name), not $Name"; exit 2 }
+}
+
 # A shell that PowerShell 7 started hands its module path on, through WSL too,
 # and Windows PowerShell then finds that edition's modules first and loses
 # cmdlets of its own (Get-FileHash, 2026-11-25).
@@ -247,7 +259,9 @@ function Resolve-RefTarget([string]$Name, [string[]]$Paths) {
     foreach ($p in $Paths) {
         $given = Get-Variable -Name $p -Scope 1 -ValueOnly
         if (-not $given) { continue }
-        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given)
+        $provider = $drive = $null
+        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given, [ref]$provider, [ref]$drive)
+        if ($provider.Name -ne 'FileSystem') { Write-Host "ref: -$p $given is not a file path"; exit 2 }
         if (($full -split '[\\/]') -contains $reserved) { $hit = $true }
         Set-Variable -Name $p -Scope 1 -Value $full
     }
