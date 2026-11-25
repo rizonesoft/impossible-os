@@ -581,6 +581,10 @@ void klog_crash_persist(void);
 /* Why the `bytes` at `log` are not a whole crash log, or NULL when they are one. Pure. */
 const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes);
 
+/* The same for `bytes` of physical memory, which are read only where the direct map has
+ * them. *log is the log when the answer is NULL. */
+const char *klog_crash_log_at(uint64_t phys, uint64_t bytes, const klog_crash_header_t **log);
+
 /* The serialize-and-publish half of klog_crash_persist(), against a
  * CALLER-SUPPLIED region. Returns the number of entries written, clamped to
  * what the region holds.

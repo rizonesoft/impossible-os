@@ -122,6 +122,10 @@ void vmm_unmap_page(uintptr_t virt, int free_frame);
 /* Get the physical address mapped to a virtual address. Returns 0 if not mapped */
 uintptr_t vmm_get_physical(uintptr_t virt);
 
+/* Does the direct map cover every byte of [phys, phys + bytes)? The window's size does
+ * not say: it holds RAM only, without ACPI and firmware ranges. From vmm_init() on. */
+int vmm_hhdm_maps(uint64_t phys, uint64_t bytes);
+
 /* Flush a single TLB entry */
 void vmm_flush_tlb(uintptr_t virt);
 

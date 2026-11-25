@@ -250,6 +250,13 @@ done
 # measured. Each leg's serial log is published beside its capture.
 serial="$REPO_ROOT/build/smoke-test.stripped.log"
 rt_region=""; kernel_buffer=""; frame_bitmap=""
+# Where the boot of serial log $2 put its kernel buffer or its frame bitmap.
+placed_at() {
+    case "$1" in
+        buffer) grep -aoE 'Kernel buffer: [0-9]+ KiB allocated.* at 0x[0-9a-fA-F]+' "$2" | head -1 | grep -oE '0x[0-9a-fA-F]+$' ;;
+        bitmap) grep -aoE 'PMM: frame bitmap at 0x[0-9a-fA-F]+' "$2" | head -1 | grep -oE '0x[0-9a-fA-F]+$' ;;
+    esac
+}
 for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|kept" \
            "bitmap|@bitmap|kept" "image|0x300000|kept" "damaged|0x3000000|damaged"; do
     name="${leg%%|*}"; rest="${leg#*|}"
@@ -270,12 +277,18 @@ for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|
         cp "$serial" "$scap"
         CAPTURES="$CAPTURES $scap:$LOG_DIR/crashptr-$name.serial.log"
         if [ "$name" = "mmio" ]; then
-            kernel_buffer="$(grep -aoE 'Kernel buffer: [0-9]+ KiB allocated.* at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
-            frame_bitmap="$(grep -aoE 'PMM: frame bitmap at 0x[0-9a-fA-F]+\.\.0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
-            [ -z "$frame_bitmap" ] || frame_bitmap="$(printf '0x%x' $((frame_bitmap - 131072)))"
+            kernel_buffer="$(placed_at buffer "$scap")"
+            frame_bitmap="$(placed_at bitmap "$scap")"
             rt_region="$(grep -aoE 'kind=rt_mmap src=1 phys=0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
         fi
     fi
+    # The leg proves nothing unless ITS boot used the memory the log was in.
+    case "$name:$rc" in buffer:0|bitmap:0)
+        put="$(placed_at "$name" "$serial")"
+        if [ -z "$put" ] || [ $((put)) != $((addr)) ]; then
+            echo "SMOKE TEST FAILED: the log was at $addr and this boot put its $name at ${put:-no address}" >> "$cap"; rc=1
+        fi ;;
+    esac
     CAPTURES="$CAPTURES $cap:$log"
     dur=$(( $(date +%s) - t0 ))
     if [ "$rc" = "0" ]; then

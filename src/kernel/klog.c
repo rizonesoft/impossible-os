@@ -777,6 +777,7 @@ int klog_disk_enable(void)
 #include "kernel/boot_init.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/memmap.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/kchecksum.h"       /* kcrc32 -- the tree's one table-driven CRC-32 */
 
 /* klog_crash_entry_t and its layout assert live in kernel/klog.h, beside the
@@ -995,6 +996,16 @@ const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes)
     return (const char *)0;
 }
 
+const char *klog_crash_log_at(uint64_t phys, uint64_t bytes, const klog_crash_header_t **log)
+{
+    const klog_crash_header_t *at = mm_phys_to_hhdm(phys);
+
+    if (!at || !vmm_hhdm_maps(phys, bytes))
+        return "not in the direct map";
+    *log = at;
+    return klog_crash_log_fault(at, bytes);
+}
+
 /* The previous boot's log as the loader copied it, or NULL. The reservation pass keeps
  * the bytes for the whole boot, so the entries are read where they are. */
 static const klog_crash_header_t *klog_crash_previous(void)
@@ -1006,10 +1017,8 @@ static const klog_crash_header_t *klog_crash_previous(void)
 
     if (base == 0)
         return log;
-    if (boot_reserved_crash_log_is_pinned(base, bytes)) {
-        log = mm_phys_to_hhdm(base);
-        fault = log ? klog_crash_log_fault(log, bytes) : "outside the direct map";
-    }
+    if (boot_reserved_crash_log_is_pinned(base, bytes))
+        fault = klog_crash_log_at(base, bytes, &log);
     if (!fault)
         return log;
     klog(LOG_WARN, "boot", "crash recovery: the log at %p is lost -- %s", base, fault);

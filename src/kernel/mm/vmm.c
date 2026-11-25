@@ -586,6 +586,19 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     return vmm_translate(virt, &phys, (uint64_t *)0) ? phys : 0;
 }
 
+int vmm_hhdm_maps(uint64_t phys, uint64_t bytes)
+{
+    if (!mm_phys_extent_in_hhdm(phys, bytes))
+        return 0;
+    for (uint64_t at = phys & ~(uint64_t)0xFFF; at < phys + bytes; at += 0x1000) {
+        uintptr_t mapped = 0;
+
+        if (!vmm_translate((uintptr_t)(MM_HHDM_BASE + at), &mapped, (uint64_t *)0) || mapped != at)
+            return 0;
+    }
+    return 1;
+}
+
 /* Does this translation snapshot describe `page` mapped to ITSELF and
  * kernel-writable? That is the exact condition a guarded frame must satisfy
  * before it can go back to the PMM: identity mapping restored, writable so the

@@ -767,7 +767,7 @@ The log a kernel left when it crashed, carried into the next boot. The loader co
 
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| `crash_log_base` | bootx64 | P0 | `boot_reserved` / `klog_crash_recover` | handoff | automation-hardening | Readable RAM below 4 GiB and clear of every other retained region (`BOOT_RESERVED_CRASH_LOG`). A refusal costs the log, not the boot. 0 when there is no log. |
+| `crash_log_base` | bootx64 | P0 | `boot_reserved` / `klog_crash_recover` | handoff | automation-hardening | Readable RAM below 4 GiB and clear of every other retained region (`BOOT_RESERVED_CRASH_LOG`); the kernel reads it only where the direct map covers all of it (`vmm_hhdm_maps`). A refusal costs the log, not the boot. 0 when there is no log. |
 | `crash_log_bytes` | bootx64 | P0 | same | handoff | automation-hardening | 188 to 131072 bytes, equal to what the log's header says; the kernel checks the CRC32 again. 0 when there is no log. |
 | `_crash_log_pad` | bootx64 | P0 | none | handoff | automation-hardening | 0. |
 

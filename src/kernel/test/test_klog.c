@@ -12,6 +12,8 @@
 #include "kernel/test/klog_suppress.h"
 #include "kernel/klog.h"
 #include "kernel/kchecksum.h"
+#include "kernel/mm/memmap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/boot_init.h"
 #include "kernel/etw.h"
 #include "kernel/nt/ssdt.h"
@@ -857,6 +859,47 @@ static void test_klog_crash_log_fault(void)
     TEST_ASSERT_EQ(boot_crash_log_bytes(KLOG_CRASH_MAGIC, 0xFFFFFFFFu), 0u, "no wrap");
 }
 
+/* A log is read only where the direct map has all of it. */
+static void test_klog_crash_log_at(void)
+{
+    const klog_crash_header_t *log = (const klog_crash_header_t *)0;
+    const uint64_t bytes = sizeof(klog_crash_header_t) + sizeof(klog_crash_entry_t);
+    uintptr_t phys = 0;
+    uint64_t pages = 0;
+    klog_crash_header_t *h = pmm_alloc_pages_hhdm(4096, &phys, &pages);
+
+    TEST_ASSERT(h != (klog_crash_header_t *)0, "a page");
+    if (!h)
+        return;
+    memset(h, 0, 4096);
+    h->magic = KLOG_CRASH_MAGIC;
+    h->entry_count = 1;
+    h->crc32 = kcrc32(h + 1, sizeof(klog_crash_entry_t));
+    TEST_ASSERT(klog_crash_log_at(phys, bytes, &log) == (const char *)0, "RAM is read");
+    TEST_ASSERT_EQ((uint64_t)log, (uint64_t)h, "where it is");
+    TEST_ASSERT_EQ(strcmp(klog_crash_log_at(MM_HHDM_SIZE - 8192, bytes, &log), "not in the direct map"), 0,
+                   "in the window, with no mapping");
+    TEST_ASSERT(klog_crash_log_at(MM_HHDM_SIZE - 4096, 8192, &log) != (const char *)0, "past the window");
+    TEST_ASSERT(klog_crash_log_at(0, bytes, &log) != (const char *)0, "no address");
+    TEST_ASSERT(klog_crash_log_at(phys, 0, &log) != (const char *)0, "no bytes");
+    pmm_free_contiguous(phys, pages);
+
+    /* Firmware's ACPI ranges pass the reservation's backing check and are not in the
+     * direct map: the first of this machine's, and a range that runs into it. */
+    for (uint64_t i = 0; i < g_boot_info.mmap_count; i++) {
+        const struct boot_mmap_entry *e = &g_boot_info.mmap[i];
+
+        if (e->uefi_memory_type != UEFI_MMAP_ACPI_NVS && e->uefi_memory_type != UEFI_MMAP_ACPI_RECLAIM)
+            continue;
+        TEST_ASSERT_EQ(strcmp(klog_crash_log_at(e->base_addr, bytes, &log), "not in the direct map"), 0,
+                       "an ACPI range is not read");
+        TEST_ASSERT_EQ(strcmp(klog_crash_log_at(e->base_addr - 4096, 8192, &log), "not in the direct map"), 0,
+                       "nor what runs into it");
+        return;
+    }
+    TEST_SKIP("no ACPI range in the memory map");
+}
+
 static void test_klog_crash_post_codes(void)
 {
     TEST_ASSERT(POST16_CRASHLOG != 0, "POST16_CRASHLOG is non-zero");
@@ -1518,6 +1561,7 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log whole", test_klog_crash_log_fault, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash log address", test_klog_crash_log_at, TEST_CAT_BOOT);
 
     /* Crash persistence: deeper checks */
     test_suite_register_cat("Klog: crash entry layout", test_klog_crash_entry_layout, TEST_CAT_BOOT);

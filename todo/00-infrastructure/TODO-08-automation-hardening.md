@@ -2035,9 +2035,9 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
   - Redesigned after the gap came back: the log lay in free memory while the loader and the kernel allocated around it, so each placement that was taught to avoid it left another that was not. The loader now copies a log that is free memory, whole and CRC-clean into its own image before it allocates anything but the fixed panic page, and hands the copy over in `boot_info` (`crash_log_base`).
   - It is not a payload: a payload's slot, its share of the byte budget and its pages each competed with something the boot needs (wave 28). The copy allocates nothing, so a log, whole or damaged, changes no other allocation.
   - Nothing is read that the memory map does not call free, so a stale pointer reaches no device; a refusal is named in the boot log (`none kept from`).
-  - The kernel reads only the reserved copy (`klog_crash_previous`, `klog_crash_log_fault`, `test_boot_reserved_crash_log`) and reads the entries where they are; claiming the old run, sparing it in the bitmap, reading the pointer again and the second 128 KiB copy are gone.
+  - The kernel reads only the reserved copy (`klog_crash_previous`, `klog_crash_log_fault`, `test_boot_reserved_crash_log`), only where the direct map has all of it (`vmm_hhdm_maps`), and reads the entries where they are; claiming the old run, sparing it in the bitmap, reading the pointer again and the second 128 KiB copy are gone.
   - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status.
-  - The smoke test plants a whole log, not only its pointer, and requires every entry back in order (`SMOKE_CRASH_NVRAM`).
+  - The smoke test plants a whole log, not only its pointer, and requires every entry back in order (`SMOKE_CRASH_NVRAM`); the matrix requires the buffer and bitmap legs to have put theirs where the log was.
 - [x] A claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves
   - The file is taken whatever the entries' ends, and free entries that touch or overlap are one run (`test_kernel_claim_rooms`).
 - [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
