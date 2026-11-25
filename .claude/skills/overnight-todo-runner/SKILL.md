@@ -191,7 +191,7 @@ What does NOT work automatically:
   # crontab -e
   # Resume the overnight run at 03:00 daily IF state is active.
   # Adjust to the hour after your usage window resets.
-  0 3 * * * cd /home/derickpayne/impossible-os \
+  0 3 * * * cd /home/derickpayne/impossible/OS \
             && [ "$(python3 .claude/hooks/overnight_guard.py status | head -c 12)" != "[overnight-g" ] \
             && claude --print "resume the overnight TODO run" >> /tmp/claude-overnight.log 2>&1
   ```
