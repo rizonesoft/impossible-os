@@ -51,7 +51,7 @@ title: "TODO-13 -- What Programs Need of This OS"
 - [ ] `kernel32.dll`: `GetFileSizeEx`, `GetLastError`, `GetModuleFileNameW`, `GetModuleHandleW`, `GetProcAddress`, `GetProcessHeap`, `GetStdHandle`, `GetSystemInfo` act as on Windows, whichever section builds each
 - [ ] `kernel32.dll`: `GetSystemTimeAsFileTime`, `HeapAlloc`, `HeapFree`, `HeapReAlloc`, `LoadLibraryW`, `MoveFileExW`, `QueryPerformanceCounter`, `QueryPerformanceFrequency` act as on Windows, whichever section builds each
 - [ ] `kernel32.dll`: `ReadConsoleW`, `ReadFile`, `ReleaseSRWLockExclusive`, `SetEndOfFile`, `SetEvent`, `SetFilePointerEx`, `Sleep`, `VirtualAlloc` act as on Windows, whichever section builds each
-- [ ] `kernel32.dll`: `VirtualFree`, `WaitForSingleObject`, `WriteConsoleW`, `WriteFile` act as on Windows, whichever section builds each
+- [ ] `kernel32.dll`: `VirtualFree`, `WaitForSingleObject`, `WriteConsoleW`, `WriteFile`, `GetCurrentDirectoryW` act as on Windows, whichever section builds each
 - [ ] Run Impossible SDK's test of each on this OS and on Windows, and compare the results and the errors
 - [ ] Commit: `"win32: tier 0 of Impossible SDK"`
 
