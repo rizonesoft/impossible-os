@@ -194,7 +194,8 @@ def powerdown(sock_path: str, seconds: int) -> None:
     """Press the power button and wait, that long from the press, for the guest to be off.
 
     -no-shutdown keeps QEMU up after a guest powers off and reports the VM as
-    "paused (shutdown)"; only the guest's own power-off sets that state."""
+    "paused (shutdown)"; only the guest's own power-off sets that state. The status is
+    asked for every 0.3 s, and a power-off first seen after the time does not pass."""
     buf = bytearray()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:

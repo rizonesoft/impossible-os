@@ -872,9 +872,14 @@ static void __attribute__((noinline)) one_line(char *s)
             *s = ' ';
 }
 
-uint32_t klog_ring_newest(uint32_t head, uint32_t count)
+uint32_t __attribute__((noinline, minsize)) klog_ring_window(uint64_t seq, uint32_t max, uint32_t *start)
 {
-    return (head + KLOG_RING_SIZE - count) % KLOG_RING_SIZE;
+    uint32_t count = seq < KLOG_RING_SIZE ? (uint32_t)seq : KLOG_RING_SIZE;
+
+    if (count > max)
+        count = max;
+    *start = (uint32_t)((seq - count) % KLOG_RING_SIZE);
+    return count;
 }
 
 uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
@@ -895,9 +900,10 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
     /* How many entries fit after the header? */
     uint32_t max_entries = (region_size - sizeof(klog_crash_header_t)) /
                            sizeof(klog_crash_entry_t);
-    uint32_t count = klog_ring_count < KLOG_RING_SIZE ? klog_ring_count : KLOG_RING_SIZE;
-    if (count > max_entries)
-        count = max_entries;
+    /* The newest of them, oldest first: what the crash came after. */
+    uint64_t seq = klog_get_seq();
+    uint32_t start;
+    uint32_t count = klog_ring_window(seq, max_entries, &start);
 
     /* UN-PUBLISH, but deliberately WITHOUT flushing the clear.
      *
@@ -927,10 +933,6 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
      * region does not have and which is parked in TODO-10 with an owner. */
     hdr->magic = 0u;
 
-    /* The newest `count` entries, oldest of them first: what the crash came after. */
-    uint32_t head = klog_ring_head;
-    uint32_t start = klog_ring_newest(head, count);
-
     for (uint32_t i = 0; i < count; i++) {
         uint32_t idx = (start + i) % KLOG_RING_SIZE;
         dst[i].level     = (uint32_t)klog_ring[idx].level;
@@ -948,7 +950,7 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 
     /* Write header (every field except the magic, which publishes below) */
     hdr->entry_count    = count;
-    hdr->ring_head      = head;
+    hdr->ring_head      = (uint32_t)(seq % KLOG_RING_SIZE);
     /* 10 ms units from the coarse cached interrupt time -- lock-free (no
      * seqlock/clocksource read), required because klog_crash_persist() runs in
      * panic context where a seqlock left odd by the faulting path (or the PIT
@@ -1758,25 +1760,19 @@ const klog_entry_t *klog_get_ring_snapshot(uint32_t *out_count,
     return klog_ring;
 }
 
-uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
+uint32_t __attribute__((minsize)) klog_panic_snapshot(klog_entry_t *out, uint32_t max)
 {
     /* Lock-free by design: a collector running at the top of a fault funnel may
      * be on a CPU that already holds s_klog_lock inside klog(), so taking it
-     * here could self-deadlock. We read head/count without the lock and copy
-     * the last entries; a concurrent append on another CPU may yield a torn
-     * tail entry, which is acceptable for best-effort crash forensics. */
+     * here could self-deadlock. The window comes from one read of the sequence;
+     * an append on another CPU can at worst rewrite the oldest slot of a full
+     * ring under this copy, and only for a caller that asks for all of it. */
     if (!out || max == 0u)
         return 0u;
-    uint32_t head  = klog_ring_head;     /* next write slot */
-    uint32_t count = klog_ring_count;    /* valid entries, capped below */
-    if (count > KLOG_RING_SIZE)
-        count = KLOG_RING_SIZE;
-    uint32_t n = (count < max) ? count : max;
-    for (uint32_t i = 0u; i < n; i++) {
-        /* oldest-of-the-last-n first: ring index head-1-(n-1-i) = head-n+i */
-        uint32_t idx = (head + KLOG_RING_SIZE - n + i) % KLOG_RING_SIZE;
-        out[i] = klog_ring[idx];
-    }
+    uint32_t start;
+    uint32_t n = klog_ring_window(klog_get_seq(), max, &start);
+    for (uint32_t i = 0u; i < n; i++)
+        out[i] = klog_ring[(start + i) % KLOG_RING_SIZE];
     return n;
 }
 
@@ -1972,7 +1968,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
         klog_ring_head = (klog_ring_head + 1) % KLOG_RING_SIZE;
         if (klog_ring_count < KLOG_RING_SIZE)
             klog_ring_count++;
-        klog_ring_seq++;
+        /* Last, and with release: a lock-free reader that sees the number sees the entry. */
+        __atomic_store_n(&klog_ring_seq, klog_ring_seq + 1, __ATOMIC_RELEASE);
     }
 
     spin_unlock_irqrestore(&s_klog_lock, irq_flags);

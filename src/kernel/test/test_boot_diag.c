@@ -1133,9 +1133,19 @@ static void test_klog_crash_region_publishes_magic_last(void)
     for (uint32_t i = 0; i < count; i++)
         seen += memcmp(dst[i].message, marker, sizeof marker) == 0;
     TEST_ASSERT_EQ(seen, 1u, "the newest entry is kept");
-    TEST_ASSERT_EQ(klog_ring_newest(800, 799), 1u, "a ring that has not wrapped drops its oldest");
-    TEST_ASSERT_EQ(klog_ring_newest(300, 799), 501u, "a wrapped ring too");
-    TEST_ASSERT_EQ(klog_ring_newest(450, 450), 0u, "all of it when it fits");
+    static const struct { uint64_t seq; uint32_t count, start; } windows[] = {
+        { 0, 0, 0 }, { 400, 400, 0 }, { 401, 401, 0 }, { 799, 799, 0 }, { 800, 799, 1 },
+        { 1000, 799, 201 }, { 1300, 799, 501 }, { 4294967296300ull, 799, 501 },
+    };
+    uint32_t wrong = 0, ring_count, ring_head, start;
+    uint64_t ring_seq;
+#pragma clang loop unroll(disable)
+    for (uint32_t i = 0; i < sizeof windows / sizeof windows[0]; i++)
+        wrong += klog_ring_window(windows[i].seq, 799, &start) != windows[i].count || start != windows[i].start;
+    (void)klog_get_ring_snapshot(&ring_count, &ring_head, &ring_seq);
+    wrong += klog_ring_window(ring_seq, ~0u, &start) != ring_count;     /* the live ring agrees */
+    wrong += (start + ring_count) % KLOG_RING_SIZE != ring_head;
+    TEST_ASSERT_EQ(wrong, 0u, "the sequence number alone gives count and start");
     TEST_ASSERT(mm_hhdm_to_phys(klog_test_crash_region()) != 0, "the direct map");
 
     /* A region too small to hold even a header is refused outright rather
