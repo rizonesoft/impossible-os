@@ -679,3 +679,12 @@ A: (run decided, 2026-11-24) B, by the two-waves rule. README is published by on
 ## Q61 (00-infrastructure/TODO-08 §72): may a loader hand off to a kernel that still writes its frame bitmap after its own image?
 
 A: (run decided, 2026-11-24) No: `BOOT_INFO_VERSION` is 25, so each side refuses the other's older version, and the room the loader kept after the image is gone. The struct is unchanged; what changed is who owns those pages, and an older kernel overwrites whatever is there (OVMF's ACPI NVS). The loader also refuses a kernel whose segments overlap, share a page or descend, which no linker script here produces; waves 9 to 12 of that review each found a new fault in claiming arbitrary shapes. Cost: no kernel from before this date boots with this loader, the A/B rollback slot included; no release carries one. Reversing it means setting the version back to 24 and restoring the tail claim from `a34aedc5b`.
+
+## Q62 (00-infrastructure/TODO-08 §72): the review counter said 55 when the receipts said 149; what now?
+
+The pass cap counts every returned pass. The session bumped the counter once for each wave of up to three passes, so the 55th pass returned at 03:38 on 2026-11-25 (during wave 24 or 25) and the loop went on for 94 more passes and 12.7 hours, 30 of them rounds. By the fix commits, waves 25 to 36 and 44 to 50 repaired the loss of the previous crash log and its pointer (kernel and loader code), and waves 37 to 43, 46 and 53 to 55 repaired smoke scripts and unit tests.
+
+- **A:** move section 64's item "the dispatcher refuses a round past the cap, counted from the receipts" to the front of the machinery queue, right after the operator's VM-turns section.
+- **B:** leave it in the machinery queue and bump by hand, once a pass.
+
+A: (run decided, 2026-11-25) A. The same loss happened twice (sections 49 and 72), and it held product sections for half a day, which is the product-first rule's exception. Until it ships, the counter is bumped once for each returned pass. Reversal cost: none, the item is already filed; only its order changes.

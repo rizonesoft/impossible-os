@@ -137,7 +137,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  69   |   §69   | Review attempts are bound end to end                                                             | §35                        |  [ ]   |
 | ⭐  |  70   |   §70   | Reviewer effort follows the area and the chain                                                   | §2                         |  [x]   |
 | ⭐  |  71   |   §71   | A lane's ship is judged by its Astra receipt                                                     | §49                        |  [ ]   |
-| 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [ ]   |
+| 🔥  |  72   |   §72   | The direct-map check passes on machines with 1 GiB or less                                       | --                         |  [x]   |
 | ⭐  |  73   |   §73   | The line tally counts the commit                                                                 | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
@@ -1897,6 +1897,7 @@ Changed 2026-11-21 (operator): this section was "Re-dispatched passes review onl
 
 - [ ] A re-dispatched round, performance or completion pass names the repair range since the last reviewed candidate as where to look first, and still reviews the whole section
 - [ ] The dispatcher refuses a `round` pass once the section's returned passes reach `pass_cap`, counted from the receipts (section 49 was sent a round past the cap: its counter was never bumped)
+  - Section 72 was sent 30: its counter was bumped once a wave of three passes. The count comes from the receipts, so `--bump` has nothing to get wrong (todo/answers.md Q62).
 - [ ] Commit: `"review: re-dispatched passes name the repair"`
 
 **Test checkpoint:** a re-dispatch prompt names the whole section range and, separately, the repair range; a first dispatch names no repair range.
@@ -2056,13 +2057,20 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] After the power-off request the kernel no longer reports a failure: the CPU can go on before the platform stops
 - [x] A log line of the panic owner's waits, as long as a report does, for the park line of a second panicking CPU (`serial_report_begin`)
   - The `dbl-race` leg caught it; with the park line held open the leg failed 4 of 5 times before and 0 of 5 after.
-- [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
+- [x] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke-matrix.sh` green with the 512 MB legs; the halt control refuses a wrong map. Test on: QEMU KVM + TCG.
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | `bash scripts/test.sh SUITE=boot` (the buffer's placement and the claims, `test_kernel_buffer_span`, `test_kernel_buffer_overlap`, `test_kernel_claim_spans`, `test_kernel_claim_rooms`, `test_kernel_segment_order`, `test_kernel_entry_span`) and `TEST_MEM=4G bash scripts/test.sh SUITE=mm` (the bitmap's, `test_pmm_bitmap_place`, `test_pmm_map_ordered`, `test_pmm_low_mappings`; the KUSD frame exists only above 2 GiB); the direct-map check itself runs before the kernel and is tested in the booted image.
 
 > **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 40 legs: `double-cut` resets a two-CPU crash where its log save begins, `abandon` and `nofb` crash where the panic path does not return, the `crashptr` ones plant a log where the kernel buffer, the frame bitmap or the kernel itself would go, and the 96 MB leg one that splits the only run with room for the buffer; each must be replayed whole. In the test flavor `__kernel_end` is 0x7fd000, three pages below the 0x800000 image ceiling (the attestation test's 12 KiB static buffer is frames now); 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
+>
+> **Completion review:** two mechanisms were replaced after a gap came back, and each class is closed by a test.
+> - The crash log (gap 5) is copied by the loader before it allocates, and the pointer is written until a read shows it (`SMOKE_CRASH_NVRAM` legs, `test_klog_crash_log_take`).
+> - The shutdown record (waves 50 and 51): "Storage is quiesced" claimed what FAT32 does not do. The record now says only that the steps ran, and the FAT32 defects are in 05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §6 with their acceptance tests; the FAT32 sources are the base revision.
+
+> **Verified:** 2026-11-25 | commit `82a5c2aca` | 14/14 items | `=== BUILD OK ===` | `scripts/test.sh` 38391 kernel + 17 user-mode passed | `scripts/test-smoke-matrix.sh` 40/40 legs (641 s) | static analysis 15 files, no findings | lint 0 errors | not run: WHPX and bare metal (no host in this run); real firmware after a crash is covered by the stated limits only
+> **Quality reviewed:** 2026-11-25 | Codex: plan 1, round 54, performance 57, completion 1, reconciliation 36 (149 checked passes, 94 past the cap of 55: the counter was bumped once a wave, not once a pass, and 30 rounds were sent past it, todo/answers.md Q62) | the performance and reconciliation passes on `82a5c2aca` are both clean (HIGHEST none, RECONCILIATION: complete) | the last round (`596d9cca9`) ended P3 on one unit test, fixed with a control; past the cap no round was sent on the stamped candidate | 0 open on the candidate | the dispatcher refusing a round past the cap is [section 64](#64-re-dispatched-passes-name-the-repair)
 
 ## 73. The line tally counts the commit
 
