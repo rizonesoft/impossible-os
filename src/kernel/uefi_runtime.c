@@ -13,6 +13,8 @@
 
 #include "kernel/uefi_runtime.h"
 #include "kernel/uefi_vars.h"
+#include "boot/crash_log.h"
+#include "libc/string.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/uefi_config.h"
@@ -2850,18 +2852,15 @@ static int kn_wide_name_eq_ascii(const uint16_t *wname, const char *aname)
  * tolerant counter protocol. Defense in depth on top of the state-
  * binding in the MarkGood handoff record (see
  * include/boot/boot_health_handoff.h). */
-static int kn_is_reserved_uefi_var(const struct boot_uefi_guid *g,
-                                    const uint16_t *name)
+int __attribute__((minsize)) uefi_var_is_reserved(const struct boot_uefi_guid *g, const uint16_t *name)
 {
     static const struct boot_uefi_guid vendor = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
+    /* The last POST code, the boot times and the crash-log pointer: all of it is the
+     * kernel's, whatever the name. */
+    static const struct boot_uefi_guid post = BOOT_CRASH_LOG_GUID;
     if (!g || !name) return 0;
-    /* GUID compare via byte compare -- struct layout is firmware-defined. */
-    {
-        const unsigned char *a = (const unsigned char *)g;
-        const unsigned char *b = (const unsigned char *)&vendor;
-        for (unsigned int i = 0; i < sizeof(*g); i++)
-            if (a[i] != b[i]) return 0;
-    }
+    if (memcmp(g, &post, sizeof post) == 0) return 1;
+    if (memcmp(g, &vendor, sizeof vendor) != 0) return 0;
     if (kn_wide_name_eq_ascii(name, "ImpossibleOS-MarkGood"))         return 1;
     if (kn_wide_name_eq_ascii(name, "ImpossibleOS-CurBootCtr"))       return 1;
     if (kn_wide_name_eq_ascii(name, "ImpossibleOS-HealthSubset"))     return 1;
@@ -2901,11 +2900,11 @@ static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
         return s;
 
     /* Reserved-name guard. Kernel-owned variables under the Impossible
-     * OS vendor GUID may only be written by kernel code via the direct
+     * OS GUIDs may only be written by kernel code via the direct
      * uefi_var_set / uefi_set_variable path -- never through this
      * user-mode-facing Nt syscall. The list lives in
-     * kn_is_reserved_uefi_var; updates require auditing every consumer. */
-    if (kn_is_reserved_uefi_var(&kguid, kname)) {
+     * uefi_var_is_reserved; updates require auditing every consumer. */
+    if (uefi_var_is_reserved(&kguid, kname)) {
         kfree(kname);
         return STATUS_ACCESS_DENIED;
     }

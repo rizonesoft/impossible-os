@@ -1072,34 +1072,43 @@ klog_crash_entry_t __attribute__((noinline)) klog_crash_entry_read(const klog_cr
     return e;
 }
 
+#define CRASH_PUBLISH_TRIES 3u
+
 static const struct klog_crash_vars s_crash_vars = { uefi_get_variable, uefi_set_variable };
 
 void __attribute__((minsize)) klog_crash_publish(uint64_t phys, const struct klog_crash_vars *vars)
 {
-    uint64_t named = 0, size = sizeof named, st;
-    uint32_t attrs = 0;
+    uint64_t get_st = 0, set_st = 0, named, size;
+    uint32_t attrs, stale = 1;
 
-    if (phys) {
-        /* The same memory map gives the same region: then there is nothing to write, and
-         * no failed write to lose the pointer over. */
-        st = vars->get(&s_crash_guid, s_crash_varname, &attrs, &size, &named);
-        if (st == 0 && size == sizeof named && attrs == CRASH_NVRAM_ATTRS && named == phys)
+    /* Until a read shows the pointer: no status of a write says what the store holds. */
+    for (uint32_t tries = 0; phys; tries++) {
+        named = 0;
+        size = sizeof named;
+        attrs = 0;
+        get_st = vars->get(&s_crash_guid, s_crash_varname, &attrs, &size, &named);
+        stale = get_st == 0;
+        if (stale && size == sizeof named && attrs == CRASH_NVRAM_ATTRS && named == phys)
             return;
-        st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, sizeof phys, &phys);
-        if (st == 0)
-            return;
-        klog(LOG_WARN, "boot",
-             "crash recovery: publishing this boot's region %p failed (status %p); "
-             "the next boot cannot recover a crash from this one",
-             phys, st);
+        if (tries == CRASH_PUBLISH_TRIES) {
+            klog(LOG_WARN, "boot",
+                 "crash recovery: publishing this boot's region %p failed (write %p, read %p); "
+                 "the next boot may not recover a crash from this one",
+                 phys, set_st, get_st);
+            break;
+        }
+        set_st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, sizeof phys, &phys);
     }
-    /* Nor may the next boot follow an earlier one's. */
-    st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, 0, (const void *)0);
-    if (st != 0 && st != UEFI_NOT_FOUND)
+    /* The next boot may not follow an earlier one's pointer. One that cannot be read may be
+     * this boot's, and stays. */
+    if (!stale)
+        return;
+    set_st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, 0, (const void *)0);
+    if (set_st != 0 && set_st != UEFI_NOT_FOUND)
         klog(LOG_WARN, "boot",
              "crash recovery: deleting the NVRAM pointer failed (status %p); "
              "a later boot may follow it again",
-             st);
+             set_st);
 }
 
 /* Give this boot a crash region, and name it in NVRAM in place of the last boot's. */

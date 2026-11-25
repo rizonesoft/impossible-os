@@ -589,7 +589,8 @@ void klog_crash_persist(void);
 void klog_ring_hold(uint32_t on);
 
 /* Name the crash region at `phys` in NVRAM for the next boot, or with 0 delete the pointer.
- * A pointer that already names it is kept as it is; one that cannot be replaced is deleted. */
+ * Written until a read shows it, so one that is already right is not written at all; after
+ * three writes a pointer that a read shows to be another is deleted, and no other is. */
 struct boot_uefi_guid;
 struct klog_crash_vars {
     uint64_t (*get)(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t *attrs,

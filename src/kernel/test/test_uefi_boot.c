@@ -778,6 +778,25 @@ static void test_esp_registry_uuid_format(void)
 #include "kernel/pe.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
+#include "boot/crash_log.h"
+
+static void __attribute__((minsize)) test_uefi_reserved_vars(void)
+{
+    struct boot_uefi_guid g = BOOT_CRASH_LOG_GUID;
+    static const struct boot_uefi_guid vendor = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
+    static const uint16_t unset[] = u"ImpossibleUnset";
+
+    TEST_ASSERT(uefi_var_is_reserved(&g, BOOT_CRASH_LOG_VAR), "the crash-log pointer");
+    TEST_ASSERT(uefi_var_is_reserved(&vendor, u"ImpossibleOS-MarkGood"), "MarkGood");
+    TEST_ASSERT(!uefi_var_is_reserved(&vendor, unset), "another name of the vendor's");
+    /* A delete through the syscall, of a name nothing uses: refused before the firmware
+     * could say that it does not exist. */
+    TEST_ASSERT_EQ(ssdt_dispatch(SSDT_NtSetSystemEnvironmentValueEx, (uint64_t)(uintptr_t)unset,
+                                 (uint64_t)(uintptr_t)&g, 0, 0, 0, 0),
+                   STATUS_ACCESS_DENIED, "refused");
+    g.data1++;
+    TEST_ASSERT(!uefi_var_is_reserved(&g, BOOT_CRASH_LOG_VAR), "another namespace");
+}
 
 static void test_kernel32_exports_sorted(void)
 {
@@ -1644,6 +1663,8 @@ void test_register_uefi_boot(void)
                             test_uefi_sb_mode_bytes_drifted, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: Secure Boot enforcing predicate",
                             test_uefi_secureboot_enforcing_eval, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: user mode cannot write the kernel's variables",
+                            test_uefi_reserved_vars, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: runtime available",
                             test_uefi_rt_available, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: var_get SecureBoot",

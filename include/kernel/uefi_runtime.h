@@ -128,6 +128,9 @@ uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
                            uint64_t *data_size,
                            void *data);
 
+/* 1 for a variable the kernel owns: user mode may not write or delete it. */
+int uefi_var_is_reserved(const struct boot_uefi_guid *guid, const uint16_t *name);
+
 /* Set a UEFI variable. data_size=0 deletes the variable.
  * Returns EFI status code. */
 uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,

@@ -11,6 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/klog.h"
+#include "kernel/uefi_runtime.h"
 #include "kernel/kchecksum.h"
 #include "kernel/mm/memmap.h"
 #include "kernel/mm/pmm.h"
@@ -962,52 +963,67 @@ static void test_klog_crash_log_take(void)
 }
 
 /* A log is read only where the direct map has all of it. */
-/* An NVRAM store of one variable whose writes may fail. */
-static struct { uint64_t value, size, get_st, set_st, del_st; uint32_t attrs, sets, dels; } s_nv;
+/* An NVRAM store of one variable: what it holds, and how many of its next reads and writes
+ * fail. A failed write changes nothing. */
+static struct { uint64_t value, size; uint32_t attrs, get_fails, set_fails, sets, dels; } s_nv;
 
 static uint64_t nv_get(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t *attrs,
                        uint64_t *size, void *data)
 {
-    (void)guid; (void)name;
+    if (s_nv.get_fails && s_nv.get_fails--)
+        return UEFI_DEVICE_ERROR;
+    if (s_nv.size == 0 || !uefi_var_is_reserved(guid, name) || name[10] != 'C')
+        return UEFI_NOT_FOUND;
     *attrs = s_nv.attrs;
     *size = s_nv.size;
     *(uint64_t *)data = s_nv.value;
-    return s_nv.get_st;
+    return UEFI_SUCCESS;
 }
 
 static uint64_t nv_set(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t attrs,
                        uint64_t size, const void *data)
 {
-    (void)guid; (void)name; (void)attrs; (void)data;
-    if (size == 0) {
+    if (size)
+        s_nv.sets++;
+    else
         s_nv.dels++;
-        return s_nv.del_st;
-    }
-    s_nv.sets++;
-    return s_nv.set_st;
+    if ((size && s_nv.set_fails && s_nv.set_fails--) || !uefi_var_is_reserved(guid, name) || name[10] != 'C')
+        return UEFI_DEVICE_ERROR;
+    if (size)
+        s_nv.value = *(const uint64_t *)data;
+    s_nv.size = size;
+    s_nv.attrs = attrs;
+    return UEFI_SUCCESS;
 }
 
 static void __attribute__((minsize)) test_klog_crash_publish(void)
 {
     static const struct klog_crash_vars nv = { nv_get, nv_set };
-    /* what the store holds and answers, and the writes and deletes that must follow */
-    static const struct { uint64_t value, size, get_st, set_st, phys; uint32_t attrs, sets, dels; } c[] = {
-        { 0x900000, 8, 0, 7, 0x900000, 7, 0, 0 },   /* already right: a store that fails loses nothing */
-        { 0x900000, 8, 0, 0, 0xA00000, 7, 1, 0 },   /* another region */
-        { 0x900000, 8, 0, 7, 0xA00000, 7, 1, 1 },   /* ... that cannot be named */
-        { 0x900000, 4, 0, 0, 0x900000, 7, 1, 0 },   /* not a pointer */
-        { 0x900000, 8, 0, 0, 0x900000, 6, 1, 0 },   /* volatile */
-        { 0x900000, 8, 14, 0, 0x900000, 7, 1, 0 },  /* not there */
-        { 0x900000, 8, 0, 0, 0, 7, 0, 1 },          /* no region to name */
+    /* the pointer that is there, what fails, the region; the writes and deletes that must
+     * follow, and the pointer that is there then */
+    static const struct { uint64_t value, phys, then; uint8_t size, attrs, gets, fails, sets, dels; } c[] = {
+        { 0x900000, 0x900000, 0x900000, 8, 7, 0, 9, 0, 0 },     /* right, in a store that takes no write */
+        { 0x900000, 0x900000, 0x900000, 8, 7, 1, 9, 1, 0 },     /* ... whose first read fails */
+        { 0x900000, 0x900000, 0x900000, 8, 7, 9, 9, 3, 0 },     /* ... that cannot be read at all */
+        { 0x900000, 0xA00000, 0xA00000, 8, 7, 0, 0, 1, 0 },     /* another region's */
+        { 0x900000, 0xA00000, 0xA00000, 8, 7, 0, 2, 3, 0 },     /* ... replaced by the third write */
+        { 0x900000, 0xA00000, 0,        8, 7, 0, 9, 3, 1 },     /* ... that cannot be replaced */
+        { 0x900000, 0x900000, 0x900000, 4, 7, 0, 0, 1, 0 },     /* not a pointer */
+        { 0x900000, 0x900000, 0x900000, 8, 6, 0, 0, 1, 0 },     /* volatile */
+        { 0,        0x900000, 0x900000, 0, 0, 0, 0, 1, 0 },     /* none */
+        { 0,        0x900000, 0,        0, 0, 0, 9, 3, 0 },     /* ... and none can be written */
+        { 0x900000, 0,        0,        8, 7, 0, 0, 0, 1 },     /* no region to name */
     };
     uint32_t wrong = 0;
+    TEST_KLOG_SUPPRESS("boot");
 
     for (uint32_t i = 0; i < sizeof c / sizeof c[0]; i++) {
         s_nv.value = c[i].value; s_nv.size = c[i].size; s_nv.attrs = c[i].attrs;
-        s_nv.get_st = c[i].get_st; s_nv.set_st = c[i].set_st;
-        s_nv.del_st = s_nv.sets = s_nv.dels = 0;
+        s_nv.get_fails = c[i].gets; s_nv.set_fails = c[i].fails;
+        s_nv.sets = s_nv.dels = 0;
         klog_crash_publish(c[i].phys, &nv);
-        wrong += s_nv.sets != c[i].sets || s_nv.dels != c[i].dels;
+        wrong += s_nv.sets != c[i].sets || s_nv.dels != c[i].dels ||
+                 (s_nv.size ? s_nv.value : 0) != c[i].then || (s_nv.size && s_nv.attrs != 7);
     }
     TEST_ASSERT_EQ(wrong, 0u, "the crash pointer is written, kept or deleted as it must be");
 }
