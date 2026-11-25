@@ -62,14 +62,15 @@ boot_span_clip(struct boot_span *room, unsigned long long at, unsigned long long
     return 1;
 }
 
-/* Let `run` take in `next` when it begins where `run` ends; answers whether it did. */
+/* Extend `run` by `next` when that leaves no gap and ends further up; answers whether it did. */
 static inline int
 boot_span_join(struct boot_span *run, struct boot_span next)
 {
-    if (next.bytes == 0 || next.base != boot_span_end(run->base, run->bytes) ||
-        next.bytes > ~0ULL - next.base)
+    unsigned long long end = boot_span_end(run->base, run->bytes);
+
+    if (next.base > end || next.bytes > ~0ULL - next.base || next.base + next.bytes <= end)
         return 0;
-    run->bytes += next.bytes;
+    run->bytes = next.base + next.bytes - run->base;
     return 1;
 }
 

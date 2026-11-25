@@ -2032,9 +2032,9 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
   - `BOOT_INFO_VERSION` 25: a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
 - [x] The kernel file and the frame bitmap are never placed over the previous boot's crash log (`include/boot/crash_log.h`) while another free run has the room
-  - The loader allocates the log's pages before it places the file, so the kernel reads them as loader memory; adjacent free map entries are one run.
+  - The loader allocates the log's pages before it places the file, so the kernel reads them as loader memory; free map entries that touch or overlap are one run.
   - Redesigned after the gap came back twice: a claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves, so the log and the file are taken whatever the entries' ends and the record of pieces always fits (`test_kernel_claim_rooms`).
-  - A variable store that fails a read is asked again, and any answer except success and not-found is warned about with its status.
+  - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status.
 - [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
 - [x] A kernel is entered only at its own code, and every segment lies between 1 MiB (the fixed page tables are below) and the end of the identity map
   - A `GetInfo` answer too short to hold the file size is refused.

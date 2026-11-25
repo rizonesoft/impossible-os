@@ -390,9 +390,23 @@ static void test_kernel_claim_rooms(void)
     TEST_ASSERT_EQ(fw.asked, 0u, "asks for nothing");
     const struct boot_span twice[2] = { { 0x100000, 0x1000 }, { 0x100000, 0x3000 } };
     const struct boot_span three = { 0x100000, 0x3000 };
+    run = boot_span_run(twice, 2, 0);
+    TEST_ASSERT_EQ(run.bytes, three.bytes, "rooms that begin together are the longest one");
     fw = (struct room_firmware){ twice, 2, 0, 0, 0, three.base };
     TEST_ASSERT_EQ(boot_span_claim_rooms(three, twice, 2, room_take, &fw), 1, "rooms that begin together");
     TEST_ASSERT_EQ(fw.asked, 1u, "the longest serves");
+
+    /* Two that overlap, found and claimed in both orders. */
+    for (unsigned order = 0; order < 2; order++) {
+        const struct boot_span over[2] = { { order ? 0xA000 : 0x2000, 0xA000 }, { order ? 0x2000 : 0xA000, 0xA000 } };
+        struct boot_span want = { 0, 0x11000 };
+        run = boot_span_run(over, 2, order);
+        want.base = boot_span_pick(run, want.bytes, (void *)0, 0);
+        TEST_ASSERT_EQ(want.base, 0x3000ULL, "a span that neither holds");
+        fw = (struct room_firmware){ over, 2, 0, 0, 0, want.base };
+        TEST_ASSERT_EQ(boot_span_claim_rooms(want, over, 2, room_take, &fw), 1, "is claimed");
+        TEST_ASSERT_EQ(fw.pages, 17ULL, "each page once");
+    }
 }
 
 static void test_kernel_entry_span(void)

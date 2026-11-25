@@ -1,6 +1,6 @@
 {
   "total_suites": 3769,
-  "total_assertions": 17735,
+  "total_assertions": 17739,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 69},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -124,7 +124,7 @@
     {"file": "test_tpm_seal.c", "suites": 11, "assertions": 122},
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 131},
     {"file": "test_uefi_advanced.c", "suites": 13, "assertions": 42},
-    {"file": "test_uefi_boot.c", "suites": 66, "assertions": 209},
+    {"file": "test_uefi_boot.c", "suites": 66, "assertions": 213},
     {"file": "test_unwind.c", "suites": 46, "assertions": 191},
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 10, "assertions": 119},
