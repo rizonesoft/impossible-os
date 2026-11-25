@@ -521,7 +521,7 @@ static void test_panic_evidence(void)
 
 /* Section 23: the publication epoch, and the lifecycle transitions keyed by it.
  * All over a FIXTURE page -- see s_pe_fixture. */
-static void test_panic_evidence_epoch(void)
+static void __attribute__((minsize)) test_panic_evidence_epoch(void)
 {
     volatile struct panic_evidence *fx = &s_pe_fixture;
 
@@ -669,23 +669,26 @@ static void test_panic_evidence_epoch(void)
 static void __attribute__((minsize)) test_klog_panic_snapshot(void)
 {
     klog_entry_t s3[3], s2[2];
-    uint32_t n3, n2;
+    const klog_entry_t *live = (const klog_entry_t *)0, *newest;
+    uint32_t n3 = 0, n2 = 0, count, head = 0, same = 0;
+    uint64_t seq;
 
-    /* The boot ring already holds entries; klog() is suppressed under the test
-     * harness so the tail cannot be staged with known content. Instead verify
-     * the oldest-first index math by SELF-CONSISTENCY: snapshot(2) must equal
-     * the last 2 of snapshot(3) (the oldest of the three is the one dropped),
-     * compared by per-entry timestamp. Two adjacent calls read the same ring. */
-    /* BACK-TO-BACK with nothing between: a TEST_ASSERT logs via klog and would
-     * advance the ring, so both snapshots must be taken before any assertion. */
-    n3 = klog_panic_snapshot(s3, 3u);
-    n2 = klog_panic_snapshot(s2, 2u);
-    TEST_ASSERT(n3 <= 3u, "snapshot returns at most max (3)");
-    TEST_ASSERT(n2 <= 2u, "snapshot caps at max (2)");
-    if (n3 == 3u && n2 == 2u) {
-        TEST_ASSERT_EQ(s2[0].timestamp, s3[1].timestamp, "snapshot(2)[0] == snapshot(3)[1]");
-        TEST_ASSERT_EQ(s2[1].timestamp, s3[2].timestamp, "snapshot(2)[1] == snapshot(3)[2] (newest)");
+    /* The live ring, while it is held: the newest entries, oldest first, so the shorter copy
+     * is the end of the longer one. An append that began before the hold is let in first. */
+    klog_ring_hold(1u);
+    for (uint32_t i = 0; i < 100u && !same; i++) {
+        live = klog_get_ring_snapshot(&count, &head, &seq);
+        n3 = klog_panic_snapshot(s3, 3u);
+        n2 = klog_panic_snapshot(s2, 2u);
+        same = klog_get_seq() == seq;
     }
+    newest = &live[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    same = same && n3 == 3u && n2 == 2u
+        && memcmp(s3[2].message, newest->message, sizeof newest->message) == 0
+        && memcmp(s2[1].message, newest->message, sizeof newest->message) == 0
+        && memcmp(s2[0].message, s3[1].message, sizeof newest->message) == 0;
+    klog_ring_hold(0u);
+    TEST_ASSERT_EQ(same, 1u, "the newest entries of the live ring, oldest first");
 
     /* Degenerate inputs fail closed. */
     TEST_ASSERT_EQ(klog_panic_snapshot(s2, 0u), 0u, "max 0 -> 0");
@@ -695,10 +698,10 @@ static void __attribute__((minsize)) test_klog_panic_snapshot(void)
     const uint64_t pages = (2u * KLOG_RING_SIZE * sizeof(klog_entry_t) + 4095u) / 4096u;
     const uint64_t written = 2u * KLOG_RING_SIZE + 7u;
     klog_entry_t *ring = (klog_entry_t *)pmm_alloc_contiguous(pages);
-    klog_entry_t *copy = ring + KLOG_RING_SIZE;
     TEST_ASSERT(ring != (klog_entry_t *)0, "a ring of its own");
     if (!ring)
         return;
+    klog_entry_t *copy = ring + KLOG_RING_SIZE;
     for (uint32_t i = 0; i < KLOG_RING_SIZE; i++)
         ring[i].timestamp = i;
     n3 = klog_ring_copy(ring, &written, copy, KLOG_RING_SIZE);
