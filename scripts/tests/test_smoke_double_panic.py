@@ -186,6 +186,7 @@ expect_cut("a record that names the loser fails",
            CUT_BOOT + [AFTER[0], RECORD.replace("0xdead", "0xe2")], False)
 expect_cut("no record after a cut crash fails", CUT_BOOT + AFTER[:1] + CUT_BOOT + AFTER, False)
 expect_cut("one report alone fails", CUT_BOOT[:4] + CUT_BOOT[6:] + AFTER, False)
+expect_cut("a second report from one CPU fails", CUT_BOOT[:-1] + CUT_REPORTS[2:] + CUT_BOOT[-1:] + AFTER, False)
 expect_cut("a crash that was never cut fails", CUT_BOOT[:-1] + AFTER, False)
 
 
@@ -204,6 +205,9 @@ expect_done("the prompt without a record ends the wait", SECOND, "[  2.0] Boot c
 expect_done("a third boot ends the wait", SECOND, "[BOOT] efi_main entered", True)
 expect_done("its own crash ends the wait", SECOND, CRASH_BOOT[1], True)
 expect_done("the crash of the boot before, replayed, does not", SECOND, "[CRASH-PREV] " + LONE, False)
+expect_done("a loader that gives up ends the wait", SECOND, "[CRIT] BOOT FATAL (0x0000000A): no kernel", True)
+expect_done("a kernel that halts ends the wait", SECOND, "[BOOT HALT] no memory", True)
+expect_done("a halt that is replayed does not", SECOND, "[CRASH-PREV] [BOOT HALT] no memory", False)
 expect_done("a record or a prompt of the first boot does not", CRASH_BOOT + [RECORD], "Boot complete", False)
 
 print("%d failure(s)" % failures)

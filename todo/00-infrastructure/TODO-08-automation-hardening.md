@@ -2037,6 +2037,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
   - The region lies wholly in memory that was free when this boot's firmware handed over, the longest run first (`pmm_alloc_firmware_free`), and is written through the direct map, because a panic runs on any process's page tables.
   - A region smaller than the ring keeps the newest entries (`klog_ring_newest`); it used to keep the oldest.
   - First-fit put it at 0xc01000, in boot-services memory that OVMF writes again at every reset, so no log of a real crash ever came back.
+  - The kernel needs the copy's pages in the handoff map: a firmware map past its 512 entries may lose them, as it loses any memory above the cut (01-boot-platform/TODO-03).
   - What the next firmware does before the loader runs is its own: RAM recovery is best effort there. Proven on OVMF, where the three double-panic legs reset a crashed guest and require its log back (404 entries measured).
   - The panic owner saves the log as soon as the evidence record names its crash (`SMOKE_CRASH_TEST=double-cut`, crash_test=8), before a halt without a framebuffer or a disk dump that never returns (`SMOKE_CRASH_TEST=nofb`, `abandon`; crash_test=7).
   - The new region is published before the old log is replayed, so a crash during a slow replay is recorded too.

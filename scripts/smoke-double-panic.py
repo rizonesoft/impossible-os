@@ -40,8 +40,8 @@ one record, the winner's (the BSP).
 
     python3 scripts/smoke-double-panic.py next-boot <serial-log>
 
-exits 0 once the second boot has reported its whole record, reached its
-own crash or the prompt, or ended, so that either verdict can be given.
+exits 0 once the second boot has reported its whole record, reached the
+prompt, crashed, failed or ended, so that either verdict can be given.
 
 Prints "STOP_NAME=<name>" (the stop code the screen must show) and a summary
 on success; prints the reason and exits 1 otherwise.
@@ -174,7 +174,8 @@ def check(text: str, mode: str) -> tuple[str, str]:
                   % (winner, name, loser, got))
 
 
-FIXTURE_RE = re.compile(r"crash_test=\d+ -- ")
+# Past where a boot reports its record: the prompt, its own crash, or a boot that failed.
+END_RE = re.compile(r"Boot complete|crash_test=\d+ -- |\[CRIT\] BOOT FATAL|\[BOOT HALT\]")
 LONE_RE = re.compile(r"crash_test=7 -- triggering deliberate BSOD")
 
 
@@ -210,8 +211,9 @@ def check_cut(text: str, last: str) -> str:
             raise VerdictError("fixture: %s" % bad)
     if [m.group(1) for m in (ORDER_RE.search(x) for x in first) if m] != ["8"]:
         raise VerdictError("the crash boot did not log its fixture once")
-    if len(set(reports(first))) != 2:
-        raise VerdictError("expected a panic report from each of two CPUs, saw apic %s" % reports(first))
+    cpus = reports(first)
+    if len(cpus) != 2 or len(set(cpus)) != 2:
+        raise VerdictError("expected one panic report from each of two CPUs, saw apic %s" % (cpus or "none"))
     if last not in body or DUMP in body:
         raise VerdictError("the crash boot was not reset at %r" % last)
     records = [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in second) if m]
@@ -226,9 +228,8 @@ def next_boot_done(text: str) -> bool:
     if len(boots) > 2:
         return True         # the second boot is over
     return len(boots) == 2 and any(
-        RECORD_RE.search(x) or "Boot complete" in x or
-        (FIXTURE_RE.search(x) and not x.startswith(REPLAY))     # past the record, at its own crash
-        for x in boots[1])
+        RECORD_RE.search(x) or END_RE.search(x)
+        for x in boots[1] if not x.startswith(REPLAY))
 
 
 def main(argv: list[str]) -> int:
