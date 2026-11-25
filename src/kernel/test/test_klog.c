@@ -962,6 +962,56 @@ static void test_klog_crash_log_take(void)
 }
 
 /* A log is read only where the direct map has all of it. */
+/* An NVRAM store of one variable whose writes may fail. */
+static struct { uint64_t value, size, get_st, set_st, del_st; uint32_t attrs, sets, dels; } s_nv;
+
+static uint64_t nv_get(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t *attrs,
+                       uint64_t *size, void *data)
+{
+    (void)guid; (void)name;
+    *attrs = s_nv.attrs;
+    *size = s_nv.size;
+    *(uint64_t *)data = s_nv.value;
+    return s_nv.get_st;
+}
+
+static uint64_t nv_set(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t attrs,
+                       uint64_t size, const void *data)
+{
+    (void)guid; (void)name; (void)attrs; (void)data;
+    if (size == 0) {
+        s_nv.dels++;
+        return s_nv.del_st;
+    }
+    s_nv.sets++;
+    return s_nv.set_st;
+}
+
+static void __attribute__((minsize)) test_klog_crash_publish(void)
+{
+    static const struct klog_crash_vars nv = { nv_get, nv_set };
+    /* what the store holds and answers, and the writes and deletes that must follow */
+    static const struct { uint64_t value, size, get_st, set_st, phys; uint32_t attrs, sets, dels; } c[] = {
+        { 0x900000, 8, 0, 7, 0x900000, 7, 0, 0 },   /* already right: a store that fails loses nothing */
+        { 0x900000, 8, 0, 0, 0xA00000, 7, 1, 0 },   /* another region */
+        { 0x900000, 8, 0, 7, 0xA00000, 7, 1, 1 },   /* ... that cannot be named */
+        { 0x900000, 4, 0, 0, 0x900000, 7, 1, 0 },   /* not a pointer */
+        { 0x900000, 8, 0, 0, 0x900000, 6, 1, 0 },   /* volatile */
+        { 0x900000, 8, 14, 0, 0x900000, 7, 1, 0 },  /* not there */
+        { 0x900000, 8, 0, 0, 0, 7, 0, 1 },          /* no region to name */
+    };
+    uint32_t wrong = 0;
+
+    for (uint32_t i = 0; i < sizeof c / sizeof c[0]; i++) {
+        s_nv.value = c[i].value; s_nv.size = c[i].size; s_nv.attrs = c[i].attrs;
+        s_nv.get_st = c[i].get_st; s_nv.set_st = c[i].set_st;
+        s_nv.del_st = s_nv.sets = s_nv.dels = 0;
+        klog_crash_publish(c[i].phys, &nv);
+        wrong += s_nv.sets != c[i].sets || s_nv.dels != c[i].dels;
+    }
+    TEST_ASSERT_EQ(wrong, 0u, "the crash pointer is written, kept or deleted as it must be");
+}
+
 static void test_klog_crash_log_at(void)
 {
     const klog_crash_header_t *log = (const klog_crash_header_t *)0;
@@ -1666,6 +1716,8 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: one line", test_klog_one_line, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log copy", test_klog_crash_log_take, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log address", test_klog_crash_log_at, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: the crash pointer is published",
+                            test_klog_crash_publish, TEST_CAT_BOOT);
 
     /* Crash persistence: deeper checks */
     test_suite_register_cat("Klog: crash entry layout", test_klog_crash_entry_layout, TEST_CAT_BOOT);

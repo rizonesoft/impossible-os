@@ -578,14 +578,27 @@ _Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
                 sizeof(klog_crash_entry_t)))
 
 /* Persist ring buffer to reserved physical memory (no kmalloc, no VFS).
- * Called from panic_screen() after BSOD render, before halt. */
+ * Called from panic_screen() once the evidence record names the crash, before anything
+ * the panic may not come back from. */
 void klog_crash_persist(void);
 
 /* Keep new lines out of the ring (on = 1) while the panic owner copies it: no other CPU can
  * then reuse a slot under the copy. At most the one append already past the check still
- * lands, in a slot the save does not read. A line another CPU logs meanwhile is lost: the
- * owner has the emergency serial port, which drops other CPUs' output. */
+ * lands, in a slot the save does not read. A line another CPU logs meanwhile is missing from
+ * the saved log, and from serial, whose emergency port the panic owner has. */
 void klog_ring_hold(uint32_t on);
+
+/* Name the crash region at `phys` in NVRAM for the next boot, or with 0 delete the pointer.
+ * A pointer that already names it is kept as it is; one that cannot be replaced is deleted. */
+struct boot_uefi_guid;
+struct klog_crash_vars {
+    uint64_t (*get)(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t *attrs,
+                    uint64_t *size, void *data);
+    uint64_t (*set)(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t attrs,
+                    uint64_t size, const void *data);
+};
+void klog_crash_publish(uint64_t phys, const struct klog_crash_vars *vars);
+
 /* The newest entries of a ring that `seq` entries were ever written to, `max` at most:
  * how many there are, and the slot they begin at. Pure; one number names the whole
  * window, so a lock-free reader cannot pair a count with the head of another moment. */

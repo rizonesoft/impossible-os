@@ -1072,12 +1072,29 @@ klog_crash_entry_t __attribute__((noinline)) klog_crash_entry_read(const klog_cr
     return e;
 }
 
-/* Delete the pointer to the crash region. */
-static void klog_crash_unpublish(void)
-{
-    uint64_t st = uefi_set_variable(&s_crash_guid, s_crash_varname,
-                                    CRASH_NVRAM_ATTRS, 0, (const void *)0);
+static const struct klog_crash_vars s_crash_vars = { uefi_get_variable, uefi_set_variable };
 
+void __attribute__((minsize)) klog_crash_publish(uint64_t phys, const struct klog_crash_vars *vars)
+{
+    uint64_t named = 0, size = sizeof named, st;
+    uint32_t attrs = 0;
+
+    if (phys) {
+        /* The same memory map gives the same region: then there is nothing to write, and
+         * no failed write to lose the pointer over. */
+        st = vars->get(&s_crash_guid, s_crash_varname, &attrs, &size, &named);
+        if (st == 0 && size == sizeof named && attrs == CRASH_NVRAM_ATTRS && named == phys)
+            return;
+        st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, sizeof phys, &phys);
+        if (st == 0)
+            return;
+        klog(LOG_WARN, "boot",
+             "crash recovery: publishing this boot's region %p failed (status %p); "
+             "the next boot cannot recover a crash from this one",
+             phys, st);
+    }
+    /* Nor may the next boot follow an earlier one's. */
+    st = vars->set(&s_crash_guid, s_crash_varname, CRASH_NVRAM_ATTRS, 0, (const void *)0);
     if (st != 0 && st != UEFI_NOT_FOUND)
         klog(LOG_WARN, "boot",
              "crash recovery: deleting the NVRAM pointer failed (status %p); "
@@ -1086,7 +1103,7 @@ static void klog_crash_unpublish(void)
 }
 
 /* Give this boot a crash region, and name it in NVRAM in place of the last boot's. */
-static void klog_crash_arm(void)
+static void __attribute__((minsize)) klog_crash_arm(void)
 {
     uint64_t phys = pmm_alloc_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap,
                                             g_boot_info.mmap_count, KLOG_CRASH_PAGES);
@@ -1096,7 +1113,7 @@ static void klog_crash_arm(void)
              "a crash in this one leaves no log");
         if (phys)
             pmm_free_contiguous(phys, KLOG_CRASH_PAGES);
-        klog_crash_unpublish();     /* a pointer an earlier boot left */
+        klog_crash_publish(0, &s_crash_vars);
         return;
     }
     s_crash_region = mm_phys_to_hhdm(phys);
@@ -1114,21 +1131,10 @@ static void klog_crash_arm(void)
      * a stale log indistinguishable from this boot's. */
     cache_writeback_range(s_crash_region, sizeof(klog_crash_header_t));
 
-    /* Save this region's address to NVRAM so next boot can find it */
-    {
-        uint64_t st = uefi_set_variable(&s_crash_guid, s_crash_varname,
-                                        CRASH_NVRAM_ATTRS, sizeof(phys), &phys);
-        if (st != 0)
-            klog(LOG_WARN, "boot",
-                 "crash recovery: publishing this boot's region %p failed (status %p); "
-                 "the next boot cannot recover a crash from this one",
-                 phys, st);
-        if (st != 0)
-            klog_crash_unpublish();     /* nor may it follow an earlier boot's */
-    }
+    klog_crash_publish(phys, &s_crash_vars);
 }
 
-void klog_crash_recover(void)
+void __attribute__((minsize)) klog_crash_recover(void)
 {
     s_recovered = (const klog_crash_entry_t *)0;
     s_recovered_count = 0;
