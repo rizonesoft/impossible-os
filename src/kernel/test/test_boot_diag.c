@@ -11,6 +11,7 @@
 #include "kernel/panic.h"
 #include "kernel/klog.h"
 #include "kernel/mm/memmap.h"     /* mm_hhdm_to_phys */
+#include "kernel/mm/pmm.h"
 #include "kernel/time_iso.h"
 #include "kernel/kchecksum.h"   /* kcrc32 -- the panic record's checksum */
 #include "kernel/cache.h"       /* cross-boot durability primitives */
@@ -665,7 +666,7 @@ static void test_panic_evidence_epoch(void)
     TEST_ASSERT_EQ((uint32_t)fx->magic, PANIC_EVIDENCE_MAGIC, "restore retained the page");
 }
 
-static void test_klog_panic_snapshot(void)
+static void __attribute__((minsize)) test_klog_panic_snapshot(void)
 {
     klog_entry_t s3[3], s2[2];
     uint32_t n3, n2;
@@ -689,6 +690,21 @@ static void test_klog_panic_snapshot(void)
     /* Degenerate inputs fail closed. */
     TEST_ASSERT_EQ(klog_panic_snapshot(s2, 0u), 0u, "max 0 -> 0");
     TEST_ASSERT_EQ(klog_panic_snapshot((klog_entry_t *)0, 3u), 0u, "NULL out -> 0");
+
+    /* A whole full ring that nobody writes to: all but the slot of the next entry. */
+    const uint64_t pages = (2u * KLOG_RING_SIZE * sizeof(klog_entry_t) + 4095u) / 4096u;
+    const uint64_t written = 2u * KLOG_RING_SIZE + 7u;
+    klog_entry_t *ring = (klog_entry_t *)pmm_alloc_contiguous(pages);
+    klog_entry_t *copy = ring + KLOG_RING_SIZE;
+    TEST_ASSERT(ring != (klog_entry_t *)0, "a ring of its own");
+    if (!ring)
+        return;
+    for (uint32_t i = 0; i < KLOG_RING_SIZE; i++)
+        ring[i].timestamp = i;
+    n3 = klog_ring_copy(ring, &written, copy, KLOG_RING_SIZE);
+    n2 = n3 == KLOG_RING_SIZE - 1u && copy[0].timestamp == 8u && copy[n3 - 1u].timestamp == 6u;
+    pmm_free_contiguous((uintptr_t)ring, pages);
+    TEST_ASSERT_EQ(n2, 1u, "a full ring is copied, oldest to newest");
 }
 
 /* The RETIRED bit-at-a-time panic_crc32, kept here and nowhere else.

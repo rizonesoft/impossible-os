@@ -606,6 +606,12 @@ void klog_crash_publish(uint64_t phys, const struct klog_crash_vars *vars);
  * window, so a lock-free reader cannot pair a count with the head of another moment. */
 uint32_t klog_ring_window(uint64_t seq, uint32_t max, uint32_t *start);
 
+/* The copy behind klog_panic_snapshot(), of any ring of KLOG_RING_SIZE entries that
+ * `*written` entries were ever written to. The window comes from one read of that number,
+ * and a copy that the ring came round to is given up, not handed out mixed. */
+uint32_t klog_ring_copy(const klog_entry_t *ring, const uint64_t *written,
+                        klog_entry_t *out, uint32_t max);
+
 #ifdef KERNEL_TESTS
 /* The address the live crash region is written at. */
 const void *klog_test_crash_region(void);

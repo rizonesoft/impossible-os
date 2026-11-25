@@ -1785,21 +1785,24 @@ const klog_entry_t *klog_get_ring_snapshot(uint32_t *out_count,
     return klog_ring;
 }
 
+uint32_t __attribute__((minsize)) klog_ring_copy(const klog_entry_t *ring, const uint64_t *written,
+                                                 klog_entry_t *out, uint32_t max)
+{
+    uint32_t start;
+    uint64_t seq = __atomic_load_n(written, __ATOMIC_ACQUIRE);
+    uint32_t n = klog_ring_window(seq, max, &start);
+    for (uint32_t i = 0u; i < n; i++)
+        out[i] = ring[(start + i) % KLOG_RING_SIZE];
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    return __atomic_load_n(written, __ATOMIC_ACQUIRE) - seq < KLOG_RING_SIZE - n ? n : 0u;
+}
+
 uint32_t __attribute__((minsize)) klog_panic_snapshot(klog_entry_t *out, uint32_t max)
 {
     /* Lock-free by design: a collector running at the top of a fault funnel may
      * be on a CPU that already holds s_klog_lock inside klog(), so taking it
-     * here could self-deadlock. The window comes from one read of the sequence,
-     * and a copy that the ring came round to is given up, not handed out mixed. */
-    if (!out || max == 0u)
-        return 0u;
-    uint32_t start;
-    uint64_t seq = klog_get_seq();
-    uint32_t n = klog_ring_window(seq, max, &start);
-    for (uint32_t i = 0u; i < n; i++)
-        out[i] = klog_ring[(start + i) % KLOG_RING_SIZE];
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-    return klog_get_seq() - seq < KLOG_RING_SIZE - n ? n : 0u;
+     * here could self-deadlock. */
+    return out ? klog_ring_copy(klog_ring, &klog_ring_seq, out, max) : 0u;
 }
 
 /* Fill one entry: level, tag, coarse timestamp, CPU/pid/tid context and the
