@@ -358,6 +358,17 @@ static void test_kernel_segment_order(void)
     TEST_ASSERT_EQ(boot_span_follows(odd, shares), 0, "on the page the first ends on");
     TEST_ASSERT_EQ(boot_span_follows(first, inside), 0, "inside it");
     TEST_ASSERT_EQ(boot_span_follows(first, below), 0, "below it");
+
+    struct boot_span run = { 0x100000, 0x1000 };
+    const struct boot_span next = { 0x101000, 0x2000 }, wraps = { 0x103000, ~0ULL };
+    TEST_ASSERT_EQ(boot_span_join(&run, next), 1, "joined");
+    TEST_ASSERT_EQ(run.bytes, 0x3000ULL, "by its length");
+    TEST_ASSERT_EQ(boot_span_join(&run, next), 0, "not twice");
+    TEST_ASSERT_EQ(boot_span_join(&run, wraps), 0, "not past the top");
+    TEST_ASSERT_EQ(boot_span_within(run, 0x100000, 0x103000), 1, "exactly inside");
+    TEST_ASSERT_EQ(boot_span_within(run, 0x101000, 0x103000), 0, "below the floor");
+    TEST_ASSERT_EQ(boot_span_within(run, 0x100000, 0x102FFF), 0, "past the top");
+    TEST_ASSERT_EQ(boot_span_within(wraps, 0x100000, ~0ULL), 0, "a wrapping span");
     TEST_ASSERT_EQ(boot_span_follows(top, first), 0, "after one that wraps");
 }
 

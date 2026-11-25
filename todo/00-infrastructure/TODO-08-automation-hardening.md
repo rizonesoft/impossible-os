@@ -2031,10 +2031,12 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] The frame bitmap goes in free RAM from the memory map (`pmm_bitmap_place`); above 128 MB of RAM it overwrote OVMF's ACPI NVS at 0x800000
   - `BOOT_INFO_VERSION` 25: a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
-- [x] The kernel file is never read over the previous boot's crash log (`include/boot/crash_log.h`) while another free range has the room
-  - A variable store that fails a read is asked again; a range is one memory-map entry (no map measured from 96 MB to 8 GB holds two adjacent free ones).
+- [x] The kernel file and the frame bitmap are never placed over the previous boot's crash log (`include/boot/crash_log.h`) while another free run has the room
+  - The loader allocates the log's pages before it places the file, so the kernel reads them as loader memory; adjacent free map entries are one run.
+  - A variable store that fails a read is asked again, and any answer except success and not-found is warned about with its status.
 - [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
-- [x] A kernel is entered only at its own code, and none of its segments may end above the identity map
+- [x] A kernel is entered only at its own code, and every segment lies between 1 MiB (the fixed page tables are below) and the end of the identity map
+  - A `GetInfo` answer too short to hold the file size is refused.
 - [x] After the power-off request the kernel no longer reports a failure: the CPU can go on before the platform stops
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
@@ -2042,7 +2044,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | `bash scripts/test.sh SUITE=boot` (the buffer's placement and the claims, `test_kernel_buffer_span`, `test_kernel_buffer_overlap`, `test_kernel_claim_spans`, `test_kernel_segment_order`, `test_kernel_entry_span`) and `TEST_MEM=4G bash scripts/test.sh SUITE=mm` (the bitmap's, `test_pmm_bitmap_place`, `test_pmm_map_ordered`, `test_pmm_low_mappings`; the KUSD frame exists only above 2 GiB); the direct-map check itself runs before the kernel and is tested in the booted image.
 
-> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 34 legs: `crashptr buffer` plants a crash-log pointer where the buffer would go, and the 96 MB leg plants one that splits the only run with room for it. In the test flavor `__kernel_end` is 0x7fe000, one page short of the last the 0x800000 image ceiling allows; 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
+> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 35 legs: `crashptr buffer` plants a crash-log pointer where the buffer would go, `crashptr bitmap` one where the frame bitmap would go (it fails when the loader does not hold the log), and the 96 MB leg plants one that splits the only run with room for the buffer. In the test flavor `__kernel_end` is 0x7fe000, one page short of the last the 0x800000 image ceiling allows; 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
 
 ## 73. The line tally counts the commit
 

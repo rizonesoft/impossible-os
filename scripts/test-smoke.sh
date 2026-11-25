@@ -812,14 +812,17 @@ fi
 # fresh store, so no gate saw the pointer an update inherits: on 2026-11-13 one
 # named the new heap guard page and the first boot faulted in Phase 0.
 # SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print;
-# crowded is skipped, and the loader found no room for its buffer clear of the pointer.
+# crowded is claimed, but the loader found no room for its buffer clear of the pointer.
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
-# Whether the loader's kernel buffer, named on stdin, misses the 128 KiB run at $1.
-crash_nvram_buffer_clear() {
-    local kib at
-    read -r kib at < <(sed -nE 's/.*Kernel buffer: ([0-9]+) KiB allocated.* at (0x[0-9a-fA-F]+).*/\1 \2/p' | head -1)
-    [ -n "$at" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 ))
+# Whether the loader's kernel buffer and the kernel's frame bitmap, both named in the
+# log $2, miss the 128 KiB run at $1.
+crash_nvram_clear() {
+    local kib at from to
+    read -r kib at < <(sed -nE 's/.*Kernel buffer: ([0-9]+) KiB allocated.* at (0x[0-9a-fA-F]+).*/\1 \2/p' "$2" | head -1)
+    read -r from to < <(sed -nE 's/.*PMM: frame bitmap at (0x[0-9a-fA-F]+)\.\.(0x[0-9a-fA-F]+).*/\1 \2/p' "$2" | head -1)
+    [ -n "$at" ] && [ -n "$to" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 )) \
+        && (( $1 + 131072 <= from || $1 >= to ))
 }
 if [ -n "$CRASH_NVRAM" ]; then
     case "$CRASH_NVRAM_EXPECT" in claimed|skipped|crowded) ;; *)
@@ -1752,7 +1755,7 @@ fi
 # ---- Stale crash-region pointer verdict (SMOKE_CRASH_NVRAM) ----------------
 if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     strip_ansi
-    if [ "$CRASH_NVRAM_EXPECT" = claimed ]; then
+    if [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
         CRASH_NVRAM_LINE="crash recovery: previous region $CRASH_NVRAM_HEX claimed"
     else
         CRASH_NVRAM_LINE="crash recovery: NVRAM address $CRASH_NVRAM_HEX skipped"
@@ -1766,9 +1769,9 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Kernel buffer: no room clear of the previous crash log' "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer found room clear of the pointer, so this leg tests nothing"
-    elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_buffer_clear "$CRASH_NVRAM_HEX" < "$STRIPPED_LOG"; then
+    elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_clear "$CRASH_NVRAM_HEX" "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel file was read over the planted region"
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer or the frame bitmap was placed over the planted region"
     else
         echo -e "  ${GREEN}✓${NC} stale crash-region pointer $CRASH_NVRAM_HEX $CRASH_NVRAM_EXPECT and the boot reached the prompt"
     fi

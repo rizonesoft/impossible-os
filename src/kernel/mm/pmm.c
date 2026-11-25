@@ -115,9 +115,9 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     for (uint32_t i = 0; i < count; i++) {
         if (map[i].uefi_memory_type != UEFI_MMAP_CONVENTIONAL)
             continue;
-        if (run.bytes == 0 || map[i].base_addr != run.base + run.bytes)
-            run = (struct boot_span){ map[i].base_addr, 0 };
-        run.bytes += map[i].length;
+        struct boot_span entry = { map[i].base_addr, map[i].length };
+        if (!boot_span_join(&run, entry))
+            run = entry;
         struct boot_span room = run;
         uint64_t at;
         if (room.base >= PMM_PHYS_ADDR_CAP)

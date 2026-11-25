@@ -62,6 +62,24 @@ boot_span_clip(struct boot_span *room, unsigned long long at, unsigned long long
     return 1;
 }
 
+/* Let `run` take in `next` when it begins where `run` ends; answers whether it did. */
+static inline int
+boot_span_join(struct boot_span *run, struct boot_span next)
+{
+    if (next.bytes == 0 || next.base != boot_span_end(run->base, run->bytes) ||
+        next.bytes > ~0ULL - next.base)
+        return 0;
+    run->bytes += next.bytes;
+    return 1;
+}
+
+/* Whether `span` lies wholly inside [lo, hi). */
+static inline int
+boot_span_within(struct boot_span span, unsigned long long lo, unsigned long long hi)
+{
+    return span.base >= lo && span.bytes <= hi && span.base <= hi - span.bytes;
+}
+
 /* Whether `next` begins on a later page than `prev` ends on. */
 static inline int
 boot_span_follows(struct boot_span prev, struct boot_span next)
