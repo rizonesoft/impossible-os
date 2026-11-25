@@ -85,8 +85,8 @@ WORK = pathlib.Path("/mnt/d/11/captures")
 # own finally (which turns the VM off) always gets to run before the host gives up.
 RUN_MARGIN = 1800
 # Enter-RefTurn (ref-common.ps1) waits for the SDK's machine before the VM starts:
-# at most its limit, then this long to end a Bosun that never answered.
-TURN_WAIT = 420 + 30
+# its wait, its slack, then this long to end a Bosun that never answered.
+TURN_WAIT = 360 + 20 + 30
 STANDIN_STOP_GRACE = 120   # run.py's own teardown: QEMU's 30 s grace, twice, plus the reap
 LOCK = REPO / "build" / "inventory" / "capture.lock"
 JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap of checkout files only (baselines)

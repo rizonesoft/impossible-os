@@ -65,7 +65,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
-Assert-RefTarget $Name @($VmPath, $RuntimeCache, $IsoPath)
+Resolve-RefTarget $Name VmPath, RuntimeCache, IsoPath
 
 # fhd-100: the profile every canonical record is captured under. Its values live
 # once, in docs/design/inventory/profiles.json, which the capture tool reads too.
@@ -228,6 +228,10 @@ function Invoke-Build() {
             return
         }
     }
+    # A mistyped -Name must not write over the machine whose folder this is.
+    $root = $VmPath.TrimEnd('\') + '\'
+    $owner = @(Get-VM | Where-Object { $_.Name -ne $Name -and "$($_.ConfigurationLocation)\".StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })
+    if ($owner.Count) { Write-Host "ref-vm: $VmPath holds $($owner[0].Name), not $Name"; $script:Refused = 2; return }
     if ($existing.Count) {
         if (-not $Rebuild) { Write-Host "ref-vm: $Name exists; -Rebuild removes it and its checkpoints"; $script:Refused = 3; return }
         # Checked before anything is deleted: a mistyped ISO path must not cost the reference.

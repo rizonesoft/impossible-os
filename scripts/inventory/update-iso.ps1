@@ -52,7 +52,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
-Assert-RefTarget $Name @($VmPath, $Work, $PackageDisk, $Out, $Iso, $Package)
+Resolve-RefTarget $Name VmPath, Work, PackageDisk, Out, Iso, Package
 
 # True when $Parts holds a finished servicing of the inputs $Key names:
 # parts.json (written last) matches $Key and every part it lists is there at

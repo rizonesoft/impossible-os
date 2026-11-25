@@ -57,7 +57,7 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
-Assert-RefTarget $Name @($VmPath, $Out, $Steps)
+Resolve-RefTarget $Name VmPath, Out, Steps
 
 if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force).Count) {
     Write-Host "ref-host: $Out is not empty; give a new folder for each run"; exit 2

@@ -232,24 +232,24 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $env:PSModulePath = @($env:PSModulePath -split ';' | Where-Object { $_ -and $_ -notmatch '\\PowerShell\\' }) -join ';'
 }
 
-# .NET reads a relative path against the process's folder, which Set-Location
-# does not move: both are the same folder from here on, so a path that was
-# checked is the path that is used.
-[Environment]::CurrentDirectory = (Get-Location -PSProvider FileSystem).ProviderPath
-
 # Impossible SDK's own machine and its folder are never ours to start, stop,
 # change or delete: a script given either refuses before it does anything. A
 # pattern is refused too: Hyper-V's cmdlets expand one, and the VM lock does not.
-function Assert-RefTarget([string]$Name, [string[]]$Paths) {
+# $Paths are the names of the caller's path variables, and each becomes the full
+# path that was checked: PowerShell and .NET read a relative path or a ~ in two
+# ways, so the script never sees one.
+function Resolve-RefTarget([string]$Name, [string[]]$Paths) {
     if ([Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Name)) {
         Write-Host "ref: -Name $Name is a pattern; give the VM's own name"; exit 2
     }
     $reserved = 'ui-test-win11'
     $hit = $Name.Trim() -eq $reserved
     foreach ($p in $Paths) {
-        if (-not $p) { continue }
-        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)
+        $given = Get-Variable -Name $p -Scope 1 -ValueOnly
+        if (-not $given) { continue }
+        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given)
         if (($full -split '[\\/]') -contains $reserved) { $hit = $true }
+        Set-Variable -Name $p -Scope 1 -Value $full
     }
     if ($hit) { Write-Host "ref: $reserved is Impossible SDK's machine; refused"; exit 2 }
 }
@@ -266,7 +266,7 @@ function Assert-RefTarget([string]$Name, [string[]]$Paths) {
 # Bosun says of itself goes to this process's own stderr.
 $script:RefTurnNs = 'Bosun.VM'
 $script:RefTurnWaitSec = 360
-$script:RefTurnLimitSec = 420
+$script:RefTurnSlackSec = 20   # how long after the wait Bosun may take to say so
 $script:RefTurn = $null
 
 function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
@@ -282,6 +282,7 @@ function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
     $si.CreateNoWindow = $true
     $si.RedirectStandardInput = $true
     $si.RedirectStandardOutput = $true
+    $limit = $WaitSec + $script:RefTurnSlackSec
     $clock = [Diagnostics.Stopwatch]::StartNew()
     try { $p = [Diagnostics.Process]::Start($si) } catch {
         Write-Ref "Bosun did not start ($($_.Exception.Message)): going on without a place"; return
@@ -289,9 +290,9 @@ function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
     $script:RefTurn.Process = $p
     $given = @{}
     $said = $false
-    while (-not $given.ContainsKey('BOSUN_SLOT') -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
+    while (-not $given.ContainsKey('BOSUN_SLOT') -and $clock.Elapsed.TotalSeconds -lt $limit) {
         $read = $p.StandardOutput.ReadLineAsync()
-        while (-not $read.IsCompleted -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
+        while (-not $read.IsCompleted -and $clock.Elapsed.TotalSeconds -lt $limit) {
             Start-Sleep -Milliseconds 100
             if (-not $said -and $clock.Elapsed.TotalSeconds -ge 3) {
                 $said = $true

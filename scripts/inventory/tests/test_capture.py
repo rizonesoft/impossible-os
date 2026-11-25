@@ -1649,6 +1649,23 @@ class Profile(unittest.TestCase):
         self.assertEqual(lines, ["running-checkpoint: Off starts=0", "saved-checkpoint: Saved starts=0",
                                  "capture: Running starts=1", "error: media refused state=Off"], out.stderr)
 
+    def test_a_build_under_another_name_leaves_the_folders_machine_alone(self):
+        # A mistyped -Name wrote a new random credential over the reference's
+        # before it made a VM (review, 2026-11-25).
+        shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
+        ps = (self._ps_functions((INV / "ref-vm.ps1", ["Invoke-Build"]))
+              + "$VmPath = Join-Path ([IO.Path]::GetTempPath()) ('ios-own-' + [Guid]::NewGuid().ToString('N')); "
+              "New-Item -ItemType Directory -Path $VmPath | Out-Null; $c = Join-Path $VmPath 'ref.clixml'; Set-Content -LiteralPath $c -Value keep; "
+              "$IsoPath = $c; $Name = 'typo'; $script:where = Join-Path $VmPath 'ref'; "
+              "function Get-VM { [pscustomobject]@{ Name = 'ref'; ConfigurationLocation = $script:where } }; "
+              "function Protect-RefPath { throw 'built' }; "
+              "try { Invoke-Build } catch { $_.Exception.Message }; 'refused=' + $script:Refused + ' ' + (Get-Content -LiteralPath $c -Raw).Trim(); "
+              # Its neighbour's folder is not its own.
+              "$script:where = $VmPath + '-2'; try { Invoke-Build } catch { $_.Exception.Message }; Remove-Item -LiteralPath $VmPath -Recurse -Force")
+        out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip() and not line.startswith("ref-vm:")]
+        self.assertEqual(lines, ["refused=2 keep", "built"], out.stdout + out.stderr)
+
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
         # A VM moved with Move-VMStorage keeps its disks under "Virtual Hard
         # Disks"; the cleanup removed only disk.vhdx and left them (2026-11-16).
