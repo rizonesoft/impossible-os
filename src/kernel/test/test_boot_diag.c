@@ -1146,6 +1146,8 @@ static void test_klog_crash_region_publishes_magic_last(void)
     for (uint32_t i = 0; i < sizeof windows / sizeof windows[0]; i++)
         wrong += klog_ring_window(windows[i].seq, 799, &start) != windows[i].count || start != windows[i].start;
     (void)klog_get_ring_snapshot(&ring_count, &ring_head, &ring_seq);
+    wrong += klog_ring_window(KLOG_RING_SIZE, ~0u, &start) != KLOG_RING_SIZE - 1 || start != 1;
+    ring_count -= ring_count == KLOG_RING_SIZE;     /* one slot is the next entry's */
     wrong += klog_ring_window(ring_seq, ~0u, &start) != ring_count;     /* the live ring agrees */
     wrong += (start + ring_count) % KLOG_RING_SIZE != ring_head;
     TEST_ASSERT_EQ(wrong, 0u, "the sequence number alone gives count and start");

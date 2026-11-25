@@ -258,9 +258,9 @@ const klog_entry_t *klog_get_ring_snapshot(uint32_t *out_count,
                                            uint64_t *out_seq);
 
 /* Lock-free best-effort snapshot of the last `max` ring entries into `out`
- * (oldest-first); returns the number copied. For the panic path ONLY: takes no
- * lock (the faulting CPU may already hold s_klog_lock) and tolerates a torn
- * entry. Never use outside a crash collector. */
+ * (oldest-first); returns the number copied, or 0 when the ring came round to
+ * the copy. For the panic path ONLY: takes no lock (the faulting CPU may
+ * already hold s_klog_lock). Never use outside a crash collector. */
 uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max);
 
 /* Set minimum level that appears on the framebuffer.
@@ -601,7 +601,8 @@ struct klog_crash_vars {
 void klog_crash_publish(uint64_t phys, const struct klog_crash_vars *vars);
 
 /* The newest entries of a ring that `seq` entries were ever written to, `max` at most:
- * how many there are, and the slot they begin at. Pure; one number names the whole
+ * how many there are, and the slot they begin at. The oldest of a full ring is not one of
+ * them: its slot is where the next entry is written before it is counted. Pure; one number names the whole
  * window, so a lock-free reader cannot pair a count with the head of another moment. */
 uint32_t klog_ring_window(uint64_t seq, uint32_t max, uint32_t *start);
 

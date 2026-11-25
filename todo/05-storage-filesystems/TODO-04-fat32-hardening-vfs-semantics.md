@@ -214,7 +214,8 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [ ] **FAT marker write error propagation** -- `mark_dirty`/`mark_clean` are void and bail mid-mirror. <- XREF: 01-boot-platform/TODO-24 §12
   - A torn clean-marker reads false-clean on the next mount and skips fsck entirely. Return a status and fail not-clean.
   - Reproduced by the shutdown reviews of `00-infrastructure/TODO-08` section 72 (2026-11-25). Done when all of these hold, each with an injected-failure test in `test_fat32.c`; commit `049128629` holds a partial version of the first.
-  - `fat32_mark_clean` and `fat32_fsinfo_flush` return what they could not write (the primary and the backup FSInfo sector), and `fsinfo_dirty` stays set.
+  - `fat32_mark_clean` and `fat32_fsinfo_flush` return what they could not write, and `fsinfo_dirty` stays set: a failed read or write of the primary FSInfo sector, and of the backup one.
+  - The backup read is a case of its own: with the primary written and the backup unreadable the call fails, and a retry writes both. Today that read skips the backup and clears `fsinfo_dirty`.
   - `acpi_storage_quiesce` flushes X: before it marks it clean, and flushes the mark after: today the mark is queued first, so a data sector that fails can leave a volume marked clean.
   - The mark is one checked full-word read-modify-write per FAT copy: today a failed first read writes `FAT32_EOC` into FAT[1] of every copy.
   - The mark holds `vol->lock`: it uses the volume's shared `sector_buf`, which a writer on another CPU can replace between its read and its write.

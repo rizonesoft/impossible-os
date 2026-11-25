@@ -875,7 +875,7 @@ static void __attribute__((noinline)) one_line(char *s)
 
 uint32_t __attribute__((noinline, minsize)) klog_ring_window(uint64_t seq, uint32_t max, uint32_t *start)
 {
-    uint32_t count = seq < KLOG_RING_SIZE ? (uint32_t)seq : KLOG_RING_SIZE;
+    uint32_t count = seq < KLOG_RING_SIZE ? (uint32_t)seq : KLOG_RING_SIZE - 1u;
 
     if (count > max)
         count = max;
