@@ -33,7 +33,7 @@ uint32_t fat32_last_cluster(const struct fat32_volume *vol)
 
 #define FAT32_CLEAN_SHUTDOWN_BIT  0x08000000  /* bit 27 of FAT[1] */
 
-void fat32_read_dirty_marker(struct fat32_volume *vol)
+void __attribute__((minsize)) fat32_read_dirty_marker(struct fat32_volume *vol)
 {
     uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
 
@@ -46,7 +46,7 @@ void fat32_read_dirty_marker(struct fat32_volume *vol)
     }
 }
 
-void fat32_set_dirty_marker(struct fat32_volume *vol)
+void __attribute__((minsize)) fat32_set_dirty_marker(struct fat32_volume *vol)
 {
     uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
 
@@ -71,7 +71,7 @@ void fat32_set_dirty_marker(struct fat32_volume *vol)
     vol->volume_dirty = 1;
 }
 
-void fat32_set_clean_marker(struct fat32_volume *vol)
+int __attribute__((minsize)) fat32_set_clean_marker(struct fat32_volume *vol)
 {
     uint32_t fat1_entry = fat32_get_fat_entry(vol, 1);
 
@@ -91,14 +91,15 @@ void fat32_set_clean_marker(struct fat32_volume *vol)
             uint32_t sector = fat_sector + fi * vol->bpb.fat_size_sectors;
 
             if (fat32_read_sector(vol, sector, vol->sector_buf) != 0)
-                return;
+                return -1;
 
             *(uint32_t *)&vol->sector_buf[entry_offset] = fat1_entry;
 
             if (fat32_write_sector(vol, sector, vol->sector_buf) != 0)
-                return;
+                return -1;
         }
     }
+    return 0;
 }
 
 /* ---- Dual-FAT compare and repair ---- */
@@ -449,23 +450,24 @@ uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster)
 
 /* ---- FSInfo sector I/O ---- */
 
-void fat32_fsinfo_flush(struct fat32_volume *vol)
+int __attribute__((minsize)) fat32_fsinfo_flush(struct fat32_volume *vol)
 {
     uint8_t buf[512];
 
     if (!vol->fsinfo_valid || !vol->fsinfo_dirty)
-        return;
+        return 0;
 
     if (fat32_read_sector(vol, vol->fsinfo_sector, buf) != 0)
-        return;
+        return -1;
 
     if (*(uint32_t *)&buf[0] != FSINFO_LEAD_SIG)
-        return;
+        return -1;
 
     *(uint32_t *)&buf[488] = vol->fsinfo_free_count;
     *(uint32_t *)&buf[492] = vol->fsinfo_next_free;
 
-    fat32_write_sector(vol, vol->fsinfo_sector, buf);
+    if (fat32_write_sector(vol, vol->fsinfo_sector, buf) != 0)
+        return -1;
 
     if (vol->fsinfo_sector + 6 < vol->bpb.reserved_sectors) {
         if (fat32_read_sector(vol, vol->fsinfo_sector + 6, buf) == 0) {
@@ -478,6 +480,7 @@ void fat32_fsinfo_flush(struct fat32_volume *vol)
     }
 
     vol->fsinfo_dirty = 0;
+    return 0;
 }
 
 /* ---- Full FAT scan for free cluster count ---- */
@@ -579,8 +582,7 @@ int fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster)
 
 int fat32_flush_disk(struct fat32_volume *vol)
 {
-    int rc = 0;
-    fat32_fsinfo_flush(vol);
+    int rc = fat32_fsinfo_flush(vol);
     /* NOTE: deliberately NO fat32_set_clean_marker here. This runs on
      * every vfs_flush of a mounted, still-mutable volume; marking the
      * FAT clean mid-session would let a later crash skip dirty-volume

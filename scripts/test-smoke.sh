@@ -825,18 +825,19 @@ fi
 # SMOKE_CRASH_NVRAM_EXPECT says what becomes of it: kept (the loader copies the
 # log and the kernel replays it), damaged (a log whose CRC does not match is
 # planted, and the loader refuses it), skipped (no log is planted: the address
-# is not free memory, and nothing is read there).
+# is not free memory, and nothing is read there), malformed (a variable of nine
+# bytes: the loader deletes it, and the kernel can publish its own).
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
 CRASH_NVRAM_ATTRS="${SMOKE_CRASH_NVRAM_ATTRS:-0x7}"     # 0x7 is what the kernel writes
 CRASH_LOG_IMG="$REPO_ROOT/build/smoke-crash-log.bin"
 CRASH_LOG_ENTRIES=120               # several pages of them
-# Plant the crash-log pointer $1 in the boot's variable store.
+# Plant the crash-log pointer $1, with bytes $2 after it, in the boot's variable store.
 plant_crash_nvram() {
     local le
     le="$(python3 -c 'import struct, sys; print(struct.pack("<Q", int(sys.argv[1], 0)).hex())' "$1")"
     if ! python3 "$REPO_ROOT/tools/uefi-varstore/plant.py" "$OVMF_VARS_CP" ImpossibleCrashLog \
-            494d504f-5354-4f53-504f-535447554944 "$le" --attrs "$CRASH_NVRAM_ATTRS"; then
+            494d504f-5354-4f53-504f-535447554944 "$le$2" --attrs "$CRASH_NVRAM_ATTRS"; then
         echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
     fi
 }
@@ -852,14 +853,16 @@ open(path, "wb").write(struct.pack("<IIIIQ", 0x4B4C4F47, count, crc, 0, 0) + bod
 PYEOF
 }
 if [ -n "$CRASH_NVRAM" ]; then
-    case "$CRASH_NVRAM_EXPECT" in kept|damaged|skipped) ;; *)
-        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=kept, damaged or skipped${NC}"; exit 1 ;;
+    case "$CRASH_NVRAM_EXPECT" in kept|damaged|skipped|malformed) ;; *)
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=kept, damaged, skipped or malformed${NC}"; exit 1 ;;
     esac
     if ! CRASH_NVRAM_HEX="$(python3 -c 'import sys; print("0x%016x" % int(sys.argv[1], 0))' "$CRASH_NVRAM" 2>/dev/null)"; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM=$CRASH_NVRAM is not an address${NC}"; exit 1
     fi
-    plant_crash_nvram "$CRASH_NVRAM"
-    if [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
+    CRASH_NVRAM_TAIL=""
+    [ "$CRASH_NVRAM_EXPECT" != malformed ] || CRASH_NVRAM_TAIL=00
+    plant_crash_nvram "$CRASH_NVRAM" "$CRASH_NVRAM_TAIL"
+    if [ "$CRASH_NVRAM_EXPECT" = kept ] || [ "$CRASH_NVRAM_EXPECT" = damaged ]; then
         CRASH_LOG_WRONG=0
         [ "$CRASH_NVRAM_EXPECT" != damaged ] || CRASH_LOG_WRONG=1
         if ! write_crash_log "$CRASH_LOG_IMG" "$CRASH_LOG_ENTRIES" "$CRASH_LOG_WRONG"; then
@@ -1370,7 +1373,7 @@ QEMU_FLAGS=(
 if [ -n "${SMOKE_MACHINE:-}" ]; then
     QEMU_FLAGS+=(-machine "$SMOKE_MACHINE")
 fi
-if [ -n "$CRASH_NVRAM" ] && [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
+if [ "$CRASH_NVRAM_EXPECT" = kept ] || [ "$CRASH_NVRAM_EXPECT" = damaged ]; then
     QEMU_FLAGS+=(-device "loader,file=$CRASH_LOG_IMG,addr=$CRASH_NVRAM_HEX,force-raw=on")
 fi
 if [ -n "$CT_MODE$CT_END" ] || [ "$SHUTDOWN" = "1" ]; then
@@ -1815,6 +1818,7 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
         kept)    CRASH_NVRAM_LINE="Previous crash log: $((24 + CRASH_LOG_ENTRIES * 164)) bytes from ${CRASH_NVRAM_HEX} kept at 0x"
                  CRASH_NVRAM_WANT="$(seq 1 "$CRASH_LOG_ENTRIES" | xargs)" ;;
         damaged) CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, the log is damaged"; CRASH_NVRAM_WANT="" ;;
+        malformed) CRASH_NVRAM_LINE="Previous crash log: none kept from 0x0000000000000000, not the address of a log"; CRASH_NVRAM_WANT="" ;;
         *)       CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, not free memory"; CRASH_NVRAM_WANT="" ;;
     esac
     if ! grep -qiF -- "$CRASH_NVRAM_LINE" "$STRIPPED_LOG" 2>/dev/null; then
@@ -1823,9 +1827,9 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif [ "$CRASH_NVRAM_REPLAYED" != "$CRASH_NVRAM_WANT" ]; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the planted entries were replayed as '$CRASH_NVRAM_REPLAYED', not as '$CRASH_NVRAM_WANT'"
-    elif [ "$CRASH_NVRAM_ATTRS" != 0x7 ] && ! grep -qF "its variable had other attributes and is deleted" "$STRIPPED_LOG"; then
+    elif [ "$CRASH_NVRAM_ATTRS" != 0x7 ] && ! grep -qF "its variable was malformed and is deleted" "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the loader left a variable with attributes $CRASH_NVRAM_ATTRS"
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the loader left a malformed variable"
     elif grep -qF "crash recovery: " "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: $(grep -m1 -F "crash recovery: " "$STRIPPED_LOG")"

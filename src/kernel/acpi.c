@@ -2387,7 +2387,7 @@ int acpi_enter_sleep_state(uint8_t state)
  * (NVMe CC.SHN). MUST run with interrupts enabled (driver shutdown paths poll
  * via hlt). Multi-volume FS flush/unmount is the clean-shutdown orchestrator's
  * job; this covers the BlackBox X: volume that ACPI itself marks clean. */
-static void acpi_storage_quiesce(void)
+static void __attribute__((minsize)) acpi_storage_quiesce(void)
 {
     extern int vfs_is_mounted(char letter);
     extern struct vfs_node *vfs_get_drive_root(char letter);
@@ -2399,8 +2399,8 @@ static void acpi_storage_quiesce(void)
         struct vfs_node *x_root = vfs_get_drive_root('X');
         if (x_root) {
             struct fat32_volume *vol = fat32_volume_from_root(x_root);
-            if (vol) fat32_mark_clean(vol);
-            if (vfs_flush(x_root) != 0) {
+            int marked = vol ? fat32_mark_clean(vol) : 0;
+            if (vfs_flush(x_root) != 0 || marked != 0) {
                 clean = 0;
                 printk("[ACPI] WARNING: X: cache flush failed -- "
                        "clean bit may not be durable\n");
@@ -2418,7 +2418,7 @@ static void acpi_storage_quiesce(void)
 /* Power off WITHOUT the (interrupt-requiring) storage quiesce -- IF-off-safe,
  * for callers already running under cli (the degraded-boot recovery screen).
  * Everything below is port writes. Does not return on success. */
-void acpi_poweroff_now(void)
+void __attribute__((minsize)) acpi_poweroff_now(void)
 {
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
@@ -2457,7 +2457,7 @@ void acpi_poweroff_now(void)
         __asm__ volatile("hlt");
 }
 
-void acpi_shutdown(void)
+void __attribute__((minsize)) acpi_shutdown(void)
 {
     printk("[ACPI] Initiating shutdown...\n");
     /* Flush X: + cleanly shut down storage controllers BEFORE the poweroff (the
@@ -2472,7 +2472,7 @@ void acpi_shutdown(void)
  * recovery screen reaches a reset with interrupts already disabled (the keypress
  * poll runs under cli), so it calls this directly. Everything below is port
  * writes + triple-fault -- all IF-off-safe. */
-void acpi_reset_now(void)
+void __attribute__((minsize)) acpi_reset_now(void)
 {
     __asm__ volatile("cli");
 
@@ -2555,7 +2555,7 @@ void acpi_reset_now(void)
         __asm__ volatile("hlt");
 }
 
-void acpi_reboot(void)
+void __attribute__((minsize)) acpi_reboot(void)
 {
     printk("[ACPI] Initiating reboot...\n");
 

@@ -10291,7 +10291,8 @@ static struct {
     EFI_STATUS read;                    /* how the variable's last read went */
     UINT32 tries;
     UINT32 attrs;                       /* the variable's */
-    EFI_STATUS deleted;                 /* how deleting one with other attributes went */
+    int malformed;                      /* it is not what the kernel writes */
+    EFI_STATUS deleted;                 /* how deleting such a one went */
     const char *why;                    /* why there is no copy, though a log was named */
 } s_crash_log;
 
@@ -10352,13 +10353,16 @@ static void keep_crash_log(void)
 #endif
         s_crash_log.tries++;
     }
+    if (s_crash_log.read == EFI_BUFFER_TOO_SMALL)
+        s_crash_log.read = EFI_SUCCESS;     /* there is one, and its size says it is no pointer */
     if (s_crash_log.read != EFI_SUCCESS)
         return;
     s_crash_log.named = size == sizeof named ? named : 0;
     s_crash_log.why = copy_crash_log(s_crash_log.named);
     /* A variable's attributes cannot be changed, and one that is volatile or not for the
      * run time cannot be deleted later: the kernel could not name its own log. */
-    if (s_crash_log.attrs != CRASH_LOG_VAR_ATTRS)
+    s_crash_log.malformed = size != sizeof named || s_crash_log.attrs != CRASH_LOG_VAR_ATTRS;
+    if (s_crash_log.malformed)
         s_crash_log.deleted = rt->SetVariable
             ? rt->SetVariable(BOOT_CRASH_LOG_VAR, &guid, 0, 0, (void *)0) : EFI_UNSUPPORTED;
 }
@@ -10368,10 +10372,10 @@ static void report_crash_log(void)
 {
     if (s_crash_log.tries > 1)
         serial_early_print("[BOOT] Previous crash log: its variable was read again\n");
-    if (s_crash_log.read == EFI_SUCCESS && s_crash_log.attrs != CRASH_LOG_VAR_ATTRS) {
+    if (s_crash_log.malformed) {
         serial_early_print(EFI_ERROR(s_crash_log.deleted)
-            ? "[WARN] Previous crash log: its variable has other attributes and cannot be deleted, status=0x"
-            : "[BOOT] Previous crash log: its variable had other attributes and is deleted, status=0x");
+            ? "[WARN] Previous crash log: its variable is malformed and cannot be deleted, status=0x"
+            : "[BOOT] Previous crash log: its variable was malformed and is deleted, status=0x");
         serial_early_print_hex64(s_crash_log.deleted);
         serial_early_print("\n");
     }

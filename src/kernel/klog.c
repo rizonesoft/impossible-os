@@ -1090,8 +1090,7 @@ void __attribute__((minsize)) klog_crash_publish(uint64_t phys, const struct klo
         stale = get_st == 0;
         if (stale && size == sizeof named && attrs == CRASH_NVRAM_ATTRS && named == phys)
             return;
-        /* Attributes cannot be changed; the loader has deleted one that has others. */
-        if (tries == CRASH_PUBLISH_TRIES || (stale && attrs != CRASH_NVRAM_ATTRS)) {
+        if (tries == CRASH_PUBLISH_TRIES) {
             klog(LOG_WARN, "boot",
                  "crash recovery: publishing this boot's region %p failed (write %p, read %p); "
                  "the next boot may not recover a crash from this one",

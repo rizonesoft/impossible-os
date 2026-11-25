@@ -1023,7 +1023,7 @@ static void __attribute__((minsize)) test_klog_crash_publish(void)
         { 0x900000, 0xA00000, 0xA00000, 8, 7, 0, 2, 3, 0 },     /* ... replaced by the third write */
         { 0x900000, 0xA00000, 0,        8, 7, 0, 9, 3, 1 },     /* ... that cannot be replaced */
         { 0x900000, 0x900000, 0x900000, 4, 7, 0, 0, 1, 0 },     /* not a pointer */
-        { 0x900000, 0x900000, 0,        8, 6, 0, 0, 0, 1 },     /* volatile: the loader deletes it */
+        { 0x900000, 0x900000, 0,        8, 6, 0, 0, 3, 1 },     /* volatile: the loader deletes it */
         { 0,        0x900000, 0x900000, 0, 0, 0, 0, 1, 0 },     /* none */
         { 0,        0x900000, 0,        0, 0, 0, 9, 3, 0 },     /* ... and none can be written */
         { 0x900000, 0,        0,        8, 7, 0, 0, 0, 1 },     /* no region to name */

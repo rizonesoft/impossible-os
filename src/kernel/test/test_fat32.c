@@ -987,6 +987,29 @@ static void test_fat32_fsck_unreadable_fat_repairs_nothing(void)
     fx_close(&fx);
 }
 
+/* A shutdown that could not write the free counts or the clean mark says so. */
+static void __attribute__((minsize)) test_fat32_mark_clean_reports(void)
+{
+    struct fx_volume fx;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    fx.vol->fsinfo_sector = 1u;
+    fx.vol->fsinfo_valid = fx.vol->fsinfo_dirty = 1;
+    fx.fail_read_lba = 1u;
+    /* The free counts cannot be written: not clean, not flushed, and still to be written. */
+    int ok = fat32_mark_clean(fx.vol) != 0 && fat32_flush_disk(fx.vol) != 0 && fx.vol->fsinfo_dirty;
+    *(uint32_t *)(fx.disk + 512u) = FSINFO_LEAD_SIG;
+    fx.fail_read_lba = FX_NO_FAULT;
+    ok = ok && fat32_mark_clean(fx.vol) == 0 && !fx.vol->fsinfo_dirty;
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    fx.fail_read_lba = fx.vol->bpb.first_fat_sector;
+    ok = ok && fat32_mark_clean(fx.vol) != 0;       /* the mark cannot */
+    TEST_ASSERT(ok, "a clean mark reports what it could not write");
+    fx_close(&fx);
+}
+
 /* A FAT sector that passes the mirror compare and then fails during the walk
  * must not turn a live chain's tail into lost clusters. Chain: c -> 200 -> 100,
  * with entry 200 in FAT sector 1 and the tail's entry in readable sector 0, so
@@ -2267,6 +2290,8 @@ void test_register_fat32(void)
                             test_nt_basic_info_zero_means_unchanged, TEST_CAT_FS);
     test_suite_register_cat("FAT32: failed removal keeps the chain",
                             test_fat32_failed_removal_keeps_chain, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: a clean mark reports what it could not write",
+                            test_fat32_mark_clean_reports, TEST_CAT_FS);
     test_suite_register_cat("FAT32: fsck drops a duplicate name",
                             test_fat32_fsck_drops_duplicate_name, TEST_CAT_FS);
     test_suite_register_cat("FAT32: replace survives a crash at every write",

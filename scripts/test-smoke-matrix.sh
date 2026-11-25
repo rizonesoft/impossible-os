@@ -245,6 +245,8 @@ done
 # as well, where this boot puts something else (the loader its kernel buffer,
 # the kernel its frame bitmap, the loader the kernel itself), and every entry of
 # it must come back; `damaged` plants one whose CRC is wrong, which must not.
+# `malformed` plants a variable that is no pointer, and the kernel must be able to
+# publish its own over it; `image` one with attributes the kernel cannot change.
 # `mmio` runs first and the addresses of the next three are read from ITS serial
 # log, a boot of the same configuration: they were the same on every boot
 # measured. Each leg's serial log is published beside its capture.
@@ -258,7 +260,8 @@ placed_at() {
     esac
 }
 for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|kept" \
-           "bitmap|@bitmap|kept" "image|0x300000|kept" "damaged|0x3000000|damaged"; do
+           "bitmap|@bitmap|kept" "image|0x300000|kept" "damaged|0x3000000|damaged" \
+           "malformed|0x3000000|malformed"; do
     name="${leg%%|*}"; rest="${leg#*|}"
     addr="${rest%%|*}"; expect="${rest#*|}"
     case "$addr" in @runtime) addr="$rt_region" ;; @buffer) addr="$kernel_buffer" ;; @bitmap) addr="$frame_bitmap" ;; esac
@@ -269,7 +272,8 @@ for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|
         echo "SMOKE TEST FAILED: no $name address in the mmio leg's serial log" > "$cap"; rc=1
     else
         attrs=0x7
-        [ "$name" != image ] || attrs=0x3       # not for the run time: only the loader can delete it
+        # not for the run time: only the loader can delete it
+        case "$name" in image|malformed) attrs=0x3 ;; esac
         SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" SMOKE_CRASH_NVRAM_ATTRS="$attrs" \
             bash scripts/test-smoke.sh > "$cap" 2>&1
         rc=$?
