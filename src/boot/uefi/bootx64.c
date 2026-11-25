@@ -10282,7 +10282,7 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
 }
 
 /* The copy of the previous boot's crash log, and what there is to say about it. The copy
- * is part of this image, so keeping a log allocates nothing. */
+ * is part of this image, so keeping a log holds no memory. */
 static UINT32 s_crash_log_copy[BOOT_CRASH_LOG_MAX_BYTES / sizeof(UINT32)]
     __attribute__((aligned(EFI_PAGE_SIZE)));
 static struct {
@@ -10294,41 +10294,35 @@ static struct {
 } s_crash_log;
 
 #define CRASH_LOG_READ_TRIES 4
-static BOOLEAN crash_log_is_free(struct boot_span log, UINTN map_size, UINTN desc_size)
+static int claim_crash_log(unsigned long long base, unsigned int pages)
 {
-    struct boot_span room = log;
-    return boot_span_free(log, s_rooms, s_nrooms) &&
-           !clip_to_free(map_size, desc_size, &room, log.base, log.bytes);
+    EFI_PHYSICAL_ADDRESS at = base;
+    return !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &at));
 }
 
-/* Copy the log at log.base. Answers why there is no copy, or NULL. Nothing is read that
- * the memory map does not call free: the variable may hold any value. */
-static const char *copy_crash_log(struct boot_span log)
+static void release_crash_log(unsigned long long base, unsigned int pages)
 {
-    UINTN map_size, desc_size;
+    (void)gBS->FreePages(base, pages);
+}
+
+/* Copy the log at base. Answers why there is no copy, or NULL. Nothing is read that cannot
+ * be claimed: the variable may hold any value. */
+static const char *copy_crash_log(UINT64 base)
+{
+    const struct boot_crash_log_pages pages = { claim_crash_log, release_crash_log };
+    const char *why = (const char *)0;
     UINT32 crc = 0;
 
-    if (log.base < BL_KERNEL_FLOOR || (log.base & (EFI_PAGE_SIZE - 1)) != 0)
+    if (base < BL_KERNEL_FLOOR || (base & (EFI_PAGE_SIZE - 1)) != 0)
         return "not the address of a log";
-    if (EFI_ERROR(read_rooms(&map_size, &desc_size)))
-        return "the memory map cannot be read";
-    log.bytes = EFI_PAGE_SIZE;
-    if (!crash_log_is_free(log, map_size, desc_size))
-        return "not free memory";
-    const volatile UINT32 *head = (const volatile UINT32 *)(UINTN)log.base;
-    log.bytes = boot_crash_log_bytes(head[0], head[1]);
-    if (log.bytes == 0)
-        return "no log there";
-    if (!crash_log_is_free(log, map_size, desc_size))
-        return "not free memory";
-
-    efi_memcpy(s_crash_log_copy, (const void *)(UINTN)log.base, (UINTN)log.bytes);
-    if (boot_crash_log_bytes(s_crash_log_copy[0], s_crash_log_copy[1]) != log.bytes ||
-        EFI_ERROR(gBS->CalculateCrc32((UINT8 *)s_crash_log_copy + BOOT_CRASH_LOG_HEADER_BYTES,
-                                      (UINTN)log.bytes - BOOT_CRASH_LOG_HEADER_BYTES, &crc)) ||
+    UINT32 bytes = boot_crash_log_take(base, s_crash_log_copy, pages, &why);
+    if (bytes == 0)
+        return why;
+    if (EFI_ERROR(gBS->CalculateCrc32((UINT8 *)s_crash_log_copy + BOOT_CRASH_LOG_HEADER_BYTES,
+                                      bytes - BOOT_CRASH_LOG_HEADER_BYTES, &crc)) ||
         crc != s_crash_log_copy[BOOT_CRASH_LOG_CRC_WORD])
         return "the log is damaged";
-    s_crash_log.bytes = (UINTN)log.bytes;
+    s_crash_log.bytes = bytes;
     return (const char *)0;
 }
 
@@ -10338,16 +10332,16 @@ static void keep_crash_log(void)
 {
     EFI_GUID guid = BOOT_CRASH_LOG_GUID;
     EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
-    struct boot_span log = { 0, 0 };
+    UINT64 named = 0;
     UINTN size = 0;
 
     efi_memset(&s_crash_log, 0, sizeof s_crash_log);
     s_crash_log.read = EFI_DEVICE_ERROR;
     while (s_crash_log.read == EFI_DEVICE_ERROR && s_crash_log.tries < CRASH_LOG_READ_TRIES) {
         UINT32 attrs;
-        size = sizeof log.base;
+        size = sizeof named;
         s_crash_log.read = rt && rt->GetVariable
-            ? rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &log.base) : EFI_UNSUPPORTED;
+            ? rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &named) : EFI_UNSUPPORTED;
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
         if (s_crash_log.tries == 0)     /* the control: the first read fails */
             s_crash_log.read = EFI_DEVICE_ERROR;
@@ -10356,12 +10350,8 @@ static void keep_crash_log(void)
     }
     if (s_crash_log.read != EFI_SUCCESS)
         return;
-    s_crash_log.named = size == sizeof log.base ? log.base : 0;
-    log.base = s_crash_log.named;
-    /* At TPL_NOTIFY nothing of firmware's takes memory between the map and the copy. */
-    EFI_TPL tpl = gBS->RaiseTPL(TPL_NOTIFY);
-    s_crash_log.why = copy_crash_log(log);
-    gBS->RestoreTPL(tpl);
+    s_crash_log.named = size == sizeof named ? named : 0;
+    s_crash_log.why = copy_crash_log(s_crash_log.named);
 }
 
 /* Say what became of it, once the serial port works. */

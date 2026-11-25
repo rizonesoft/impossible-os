@@ -335,7 +335,7 @@ for mode in bad-strings abandon nofb; do
     log="$LOG_DIR/crash-$mode.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crash.XXXXXX")"
     t0=$(date +%s)
-    SMOKE_CRASH_TEST="$mode" bash scripts/test-smoke.sh > "$cap" 2>&1
+    SMOKE_CRASH_TEST="$mode" SMOKE_SMP=1 bash scripts/test-smoke.sh > "$cap" 2>&1
     rc=$?
     CAPTURES="$CAPTURES $cap:$log"
     dur=$(( $(date +%s) - t0 ))

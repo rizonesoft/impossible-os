@@ -1,6 +1,6 @@
 {
-  "total_suites": 3772,
-  "total_assertions": 17789,
+  "total_suites": 3773,
+  "total_assertions": 17797,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 69},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -64,7 +64,7 @@
     {"file": "test_kernel_config.c", "suites": 49, "assertions": 309},
     {"file": "test_kimage.c", "suites": 6, "assertions": 62},
     {"file": "test_klibs.c", "suites": 25, "assertions": 316},
-    {"file": "test_klog.c", "suites": 46, "assertions": 201},
+    {"file": "test_klog.c", "suites": 47, "assertions": 214},
     {"file": "test_knf.c", "suites": 30, "assertions": 234},
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},
     {"file": "test_loader_vars.c", "suites": 16, "assertions": 116},
@@ -124,7 +124,7 @@
     {"file": "test_tpm_seal.c", "suites": 11, "assertions": 122},
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 131},
     {"file": "test_uefi_advanced.c", "suites": 13, "assertions": 42},
-    {"file": "test_uefi_boot.c", "suites": 66, "assertions": 227},
+    {"file": "test_uefi_boot.c", "suites": 66, "assertions": 222},
     {"file": "test_unwind.c", "suites": 46, "assertions": 191},
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 10, "assertions": 119},

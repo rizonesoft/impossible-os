@@ -30,4 +30,40 @@ static inline unsigned int boot_crash_log_bytes(unsigned int magic, unsigned int
     return BOOT_CRASH_LOG_HEADER_BYTES + entries * BOOT_CRASH_LOG_ENTRY_BYTES;
 }
 
+/* The loader takes and gives back whole pages at an address. */
+struct boot_crash_log_pages {
+    int (*claim)(unsigned long long base, unsigned int pages);      /* nonzero when they were free */
+    void (*release)(unsigned long long base, unsigned int pages);
+};
+
+/* Copy the log at base into copy (BOOT_CRASH_LOG_MAX_BYTES long). Its pages are claimed
+ * first, the header's and then the rest of what it says: free memory is nobody's to read.
+ * Answers how long the copy is, or 0 with the reason. The caller checks the CRC. */
+static inline unsigned int boot_crash_log_take(unsigned long long base, unsigned int *copy,
+                                               struct boot_crash_log_pages pages, const char **why)
+{
+    const volatile unsigned int *log = (const volatile unsigned int *)(unsigned long long)base;
+    unsigned int bytes, rest;
+
+    *why = "not free memory";
+    if (!pages.claim(base, 1))
+        return 0;
+    copy[0] = log[0];
+    copy[1] = log[1];
+    bytes = boot_crash_log_bytes(copy[0], copy[1]);
+    rest = bytes ? (bytes - 1) / 4096 : 0;
+    if (bytes == 0) {
+        *why = "no log there";
+    } else if (rest != 0 && !pages.claim(base + 4096, rest)) {
+        bytes = 0;
+    } else {
+        for (unsigned int i = 2; i < bytes / sizeof(*copy); i++)
+            copy[i] = log[i];
+        if (rest != 0)
+            pages.release(base + 4096, rest);
+    }
+    pages.release(base, 1);
+    return bytes;
+}
+
 #endif /* BOOT_CRASH_LOG_H */

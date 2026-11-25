@@ -859,6 +859,78 @@ static void test_klog_crash_log_fault(void)
     TEST_ASSERT_EQ(boot_crash_log_bytes(KLOG_CRASH_MAGIC, 0xFFFFFFFFu), 0u, "no wrap");
 }
 
+/* The loader's pages, which hold a log only while they are claimed: its header in the
+ * first, its last word in the third. */
+#define TAKE_ENTRIES    60u
+#define TAKE_BYTES      (24u + TAKE_ENTRIES * 164u)
+#define TAKE_LAST       (TAKE_BYTES / 4u - 1u)
+static uint32_t *s_take_run;
+static uint32_t s_take_entries, s_take_held, s_take_free;
+
+static int take_claim(unsigned long long base, unsigned int pages)
+{
+    uint32_t first = (uint32_t)((base - (uintptr_t)s_take_run) / 4096u);
+
+    if (first + pages > s_take_free)
+        return 0;
+    for (uint32_t i = first; i < first + pages; i++)
+        s_take_held |= 1u << i;
+    if (first == 0) {
+        s_take_run[0] = KLOG_CRASH_MAGIC;
+        s_take_run[1] = s_take_entries;
+    }
+    if (s_take_held & 4u)
+        s_take_run[TAKE_LAST] = 0x5EEDu;
+    return 1;
+}
+
+static void take_release(unsigned long long base, unsigned int pages)
+{
+    uint32_t first = (uint32_t)((base - (uintptr_t)s_take_run) / 4096u);
+
+    for (uint32_t i = first; i < first + pages; i++)
+        s_take_held &= ~(1u << i);
+    memset(s_take_run + first * 1024u, 0, pages * 4096u);
+}
+
+static void test_klog_crash_log_take(void)
+{
+    const struct boot_crash_log_pages pages = { take_claim, take_release };
+    const char *why = (const char *)0;
+    uintptr_t phys = 0;
+    uint64_t got = 0;
+    uint32_t *run = pmm_alloc_pages_hhdm(6 * 4096, &phys, &got);
+
+    TEST_ASSERT(run != (uint32_t *)0, "six pages");
+    if (!run)
+        return;
+    memset(run, 0, 6 * 4096);
+    s_take_run = run;
+    s_take_held = 0;
+    s_take_entries = TAKE_ENTRIES;
+    s_take_free = 3;        /* what follows the log need not be free */
+    TEST_ASSERT_EQ(boot_crash_log_take((uintptr_t)run, run + 3072, pages, &why), TAKE_BYTES,
+                   "read while claimed");
+    TEST_ASSERT_EQ(run[3072], KLOG_CRASH_MAGIC, "from its first word");
+    TEST_ASSERT_EQ(run[3072 + TAKE_LAST], 0x5EEDu, "to its last");
+    TEST_ASSERT_EQ(run[3072 + TAKE_LAST + 1], 0u, "and no further");
+    TEST_ASSERT_EQ(s_take_held, 0u, "and given back");
+
+    s_take_free = 2;
+    TEST_ASSERT_EQ(boot_crash_log_take((uintptr_t)run, run + 3072, pages, &why), 0u, "its last page is in use");
+    TEST_ASSERT_EQ(strcmp(why, "not free memory"), 0, "says so");
+    s_take_free = 0;
+    TEST_ASSERT_EQ(boot_crash_log_take((uintptr_t)run, run + 3072, pages, &why), 0u, "its first page is in use");
+    s_take_free = 1;
+    s_take_entries = 1;
+    TEST_ASSERT_EQ(boot_crash_log_take((uintptr_t)run, run + 3072, pages, &why), 24u + 164u, "one page");
+    s_take_entries = 0;
+    TEST_ASSERT_EQ(boot_crash_log_take((uintptr_t)run, run + 3072, pages, &why), 0u, "no log");
+    TEST_ASSERT_EQ(strcmp(why, "no log there"), 0, "says so");
+    TEST_ASSERT_EQ(s_take_held, 0u, "each given back");
+    pmm_free_contiguous(phys, got);
+}
+
 /* A log is read only where the direct map has all of it. */
 static void test_klog_crash_log_at(void)
 {
@@ -1561,6 +1633,7 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log whole", test_klog_crash_log_fault, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash log copy", test_klog_crash_log_take, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log address", test_klog_crash_log_at, TEST_CAT_BOOT);
 
     /* Crash persistence: deeper checks */

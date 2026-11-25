@@ -421,16 +421,10 @@ static void test_kernel_claim_rooms(void)
     TEST_ASSERT_EQ(run.bytes, 0x2000ULL, "a gap ends a run");
     run = boot_span_run(gap, 3, &next);
     TEST_ASSERT_EQ(run.base, 0x9000ULL, "and the next begins after it");
-    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x1800, 0x1800 }, gap, 3), 1, "free across two rooms");
-    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x2000, 0x8000 }, gap, 3), 0, "not across a gap");
-    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x9000, 0x1001 }, gap, 3), 0, "nor past the end");
-    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ ~0ULL, 2 }, gap, 3), 0, "nor wrapping");
 
     /* A descriptor that wraps makes nothing free, above its base or anywhere. */
     struct boot_span wraps = boot_span_pages(0x200000000ULL, ~0ULL >> 12);
     TEST_ASSERT_EQ(wraps.bytes, 0ULL, "a wrapping descriptor is no range");
-    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x300000000ULL, 0x1000 }, &wraps, 1), 0,
-                   "what lies above its base is not free");
     TEST_ASSERT_EQ(boot_span_pages(0x1000, ~0ULL).bytes, 0ULL, "nor a count that overflows");
     TEST_ASSERT_EQ(boot_span_pages(0x1000, 3).bytes, 0x3000ULL, "three pages");
     TEST_ASSERT_EQ(boot_span_pages(~0xFFFULL - 0x1000, 1).bytes, 0x1000ULL, "the last that fits");
