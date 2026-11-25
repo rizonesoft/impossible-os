@@ -361,10 +361,8 @@ static void test_vmm_guard_page_install_alias_refused(void)
                    VMM_GUARD_VA_UNSAFE,
                    "install refuses a read-only identity mapping as not reusable");
 
-    /* User-accessible is deliberately NOT a refusal at install: SMEP is off and
-     * the boot PML4 sets User on every 2 MiB page, so every frame the PMM hands
-     * out starts life under a User mapping. Refusing it would halt the boot in
-     * ist_alloc(). The guard is about to unmap the page anyway, and uninstall
+    /* User-accessible is deliberately NOT a refusal at install: a frame may have
+     * been a user page before. The guard is about to unmap the page anyway, and uninstall
      * rewrites the leaf kernel-only before authorizing any free. */
     TEST_ASSERT_EQ(vmm_map_page(frame, frame,
                                 VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER), 0,
@@ -615,6 +613,37 @@ static void test_vmm_map_fault_inject_max_cap(void)
  * space. PTE phys field is bits 12-51. */
 #define TEST_PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
+/* User-accessible leaves under `table` that map the address they stand at: at level 3
+ * an entry covers 1 GiB, at 2 it covers 2 MiB, at 1 a page. A mapping of another frame
+ * (KUSER_SHARED_DATA's) is a user page and is not counted. */
+static uint64_t user_identity_leaves(uint64_t table, uint64_t va, int level, int entries)
+{
+    const uint64_t *t = (const uint64_t *)mm_phys_to_hhdm(table);
+    uint64_t found = 0;
+
+    for (int i = 0; t != (void *)0 && i < entries; i++, va += 1ULL << (12 + 9 * (level - 1))) {
+        if ((t[i] & (VMM_FLAG_PRESENT | VMM_FLAG_USER)) != (VMM_FLAG_PRESENT | VMM_FLAG_USER))
+            continue;
+        if (level > 1 && !(t[i] & VMM_FLAG_HUGE))
+            found += user_identity_leaves(t[i] & TEST_PTE_ADDR_MASK, va, level - 1, 512);
+        else if ((t[i] & TEST_PTE_ADDR_MASK) == va)
+            found++;
+    }
+    return found;
+}
+
+/* A process reaches physical memory only through pages mapped for it: the frame
+ * bitmap, the heap and every other frame below 4 GiB stand in its address space too. */
+static void test_vmm_user_pml4_identity_is_supervisor(void)
+{
+    uintptr_t cr3 = vmm_create_user_pml4();
+    TEST_ASSERT(cr3 != 0, "vmm_create_user_pml4 returns non-zero PML4 phys");
+    const uint64_t *pml4 = (const uint64_t *)mm_phys_to_hhdm(cr3);
+    uint64_t found = pml4 == (void *)0 ? 1 : user_identity_leaves(pml4[0] & TEST_PTE_ADDR_MASK, 0, 3, 4);
+    vmm_destroy_user_pml4(cr3);
+    TEST_ASSERT_EQ(found, 0ULL, "no identity mapping below 4 GiB is open to ring 3");
+}
+
 static void test_vmm_user_pml4_create_destroy(void)
 {
     uint64_t free0 = pmm_get_free_frames();
@@ -816,6 +845,8 @@ void test_register_vmm(void)
                             test_vmm_map_fault_inject_max_cap, TEST_CAT_MM);
     test_suite_register_cat("VMM: user PML4 create/destroy U-S bits",
                             test_vmm_user_pml4_create_destroy, TEST_CAT_MM);
+    test_suite_register_cat("VMM: user PML4 identity map is supervisor-only",
+                            test_vmm_user_pml4_identity_is_supervisor, TEST_CAT_MM);
     test_suite_register_cat("VMM: set_user_page sets User bit",
                             test_vmm_set_user_page_sets_bit, TEST_CAT_MM);
 }

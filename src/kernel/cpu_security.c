@@ -150,10 +150,9 @@ void cpu_enable_nx(void)
  * Bare metal: always supported (no VM exits). */
 static int hv_supports_cr4_smep_smap(void)
 {
-    /* The boot PML4 (entry.asm flag 0x87) has User bit on ALL 2 MiB pages.
-     * Enabling SMEP faults because kernel code pages have User bit.
-     * This affects ALL platforms -- not just bare metal.
-     * Disabled globally until boot PML4 clears User on kernel pages. */
+    /* Until 2026-11-25 the boot identity map carried User on kernel pages, and
+     * SMEP faulted the kernel on every platform. The map is supervisor-only now;
+     * enabling the two bits belongs to the kernel security hardening roadmap. */
     (void)platform_detect();
     return 0;
 }
@@ -164,7 +163,7 @@ void cpu_enable_smep(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMEP: skipped (kernel pages have User bit -- needs KPTI S6)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMEP: skipped (not enabled yet on any platform)");
         return;
     }
 
@@ -183,7 +182,7 @@ void cpu_enable_smap(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMAP: skipped (kernel pages have User bit -- needs KPTI S6)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMAP: skipped (not enabled yet on any platform)");
         return;
     }
 
@@ -891,8 +890,7 @@ void cpu_verify_hardening(void)
     /* Verify SMEP/SMAP (CR4 bits 20, 21) */
     cr4 = read_cr4();
     /* SMEP/SMAP are skipped on EVERY platform today: hv_supports_cr4_smep_smap()
-     * returns 0 because the boot PML4 carries the User bit on all kernel pages,
-     * so enabling CR4.SMEP would #PF on kernel code fetch. The skip path is the
+     * returns 0 until kernel security hardening enables them. The skip path is the
      * honest report on all platforms -- there is NO "enforced via EPT" branch:
      * EPT is second-level address translation and does not provide SMEP's
      * supervisor-no-execute-user-page semantics, so claiming Hyper-V enforces
@@ -901,7 +899,7 @@ void cpu_verify_hardening(void)
         if (cr4 & CR4_SMEP)
             klog(LOG_INFO, "cpu", "Verify: SMEP enabled (CR4.SMEP set)");
         else if (!hv_supports_cr4_smep_smap())
-            klog(LOG_INFO, "cpu", "Verify: SMEP skipped (kernel PTE User bit -- needs KPTI)");
+            klog(LOG_INFO, "cpu", "Verify: SMEP skipped (not enabled yet on any platform)");
         else
             klog(LOG_WARN, "cpu", "Verify: SMEP FAILED -- CR4.SMEP not set");
     }
@@ -911,7 +909,7 @@ void cpu_verify_hardening(void)
         if (cr4 & CR4_SMAP)
             klog(LOG_INFO, "cpu", "Verify: SMAP enabled (CR4.SMAP set)");
         else if (!hv_supports_cr4_smep_smap())
-            klog(LOG_INFO, "cpu", "Verify: SMAP skipped (kernel PTE User bit -- needs KPTI)");
+            klog(LOG_INFO, "cpu", "Verify: SMAP skipped (not enabled yet on any platform)");
         else
             klog(LOG_WARN, "cpu", "Verify: SMAP FAILED -- CR4.SMAP not set");
     }

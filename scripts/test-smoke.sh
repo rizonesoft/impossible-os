@@ -449,6 +449,10 @@ hhdm_wrong_check_log() {
     if ! grep -qF -- 'Kernel buffer: the memory map moved' "$1"; then
         HW_FAIL_MSG="no span was lost, so reading the memory map again is untested"; return 1
     fi
+    # It also fails the first read of the crash-log variable.
+    if ! grep -qF -- 'Previous crash log: read again' "$1"; then
+        HW_FAIL_MSG="a crash-log variable that failed one read was not read again"; return 1
+    fi
 }
 
 uki_check_override_log() {

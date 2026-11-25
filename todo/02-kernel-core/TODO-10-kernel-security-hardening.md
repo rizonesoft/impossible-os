@@ -134,7 +134,8 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 - [x] `read_cr4()`/`write_cr4()` + `CR4_SMEP`/`CR4_SMAP` in `cpu_security.c`
 - [x] `cpu_enable_smep()` + `cpu_enable_smap()` call `hv_supports_cr4_smep_smap()` before touching CR4 (intended: skip WHPX/Hyper-V VM exits; enable KVM/VBox/bare metal when kernel PTE U/S is fixed)
-- [/] **CR4.SMEP/SMAP actually set on any host:** blocked until shared boot PML4 clears **User** from kernel text/data huge pages (see `CLAUDE.md` SMEP/SMAP + `hv_supports_cr4_smep_smap()` in `src/kernel/cpu_security.c`); today the helper returns 0 always, so CR4 SMEP/SMAP never turn on
+- [ ] **CR4.SMEP/SMAP actually set on any host:** `hv_supports_cr4_smep_smap()` still returns 0 always
+  - Unblocked 2026-11-25: the boot identity map's leaves no longer carry User -> XREF: 00-infrastructure/TODO-08-automation-hardening.md §72 (item: "The boot identity map is supervisor-only")
 - [x] Called on BSP via `cpu_harden_post_pagetable()` after `vmm_apply_nx_policy()` and on each AP in `ap_entry()` after the same policy pass
 - [x] `stac()`/`clac()` inlines + `KERNEL_ACCESS_USER_BEGIN()`/`KERNEL_ACCESS_USER_END()` macros in `cpu_security.h`; no-op if `!cpu_has(CPU_FEATURE_SMAP)`
 - [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets

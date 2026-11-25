@@ -609,13 +609,10 @@ static int guard_map_is_kernel_identity(uintptr_t page, int present,
 /* Would this frame be safe to hand back to the PMM as it stands?
  *
  * Weaker than guard_map_is_kernel_identity by exactly one bit: it does NOT
- * require User to be clear. That is not laxity, it is this kernel's boot
- * identity map -- SMEP is disabled globally and the boot PML4 sets User on
- * every 2 MiB page (CLAUDE.md "Bare Metal Gotchas"), so EVERY frame the PMM
- * hands out lives under a User-flagged mapping until something splits it.
- * Requiring User clear here would refuse every legitimate guard install and
- * halt the boot in ist_alloc(); that is measured, not theoretical (2026-07-28).
- * Writable IS required: the next owner's zero-fill writes through the identity
+ * require User to be clear, because a kernel stack may have been made a user
+ * page (vmm_set_user_page) before it is guarded. The boot identity map itself
+ * has been supervisor-only since 2026-11-25; until then it carried User on
+ * every leaf. Writable IS required: the next owner's zero-fill writes through the identity
  * address. The stricter predicate applies where it can be honoured -- after
  * uninstall rewrites the leaf itself as a kernel-only 4 KiB PTE. */
 static int guard_map_is_reusable_frame(uintptr_t page, int present,
@@ -1806,8 +1803,7 @@ int vmm_uninstall_guard_page(uintptr_t virt)
      * kernel-only before the frame is reusable, and a same-frame mapping left
      * read-only or user-accessible by some other path would otherwise be waved
      * through. An unregistered VA is only INSPECTED -- normalizing there would
-     * rewrite a mapping this function does not own, and the boot identity map
-     * legitimately carries User on its 2 MiB pages. */
+     * rewrite a mapping this function does not own. */
     present = vmm_translate(page, &phys, &flags);
 
     if (present && phys != page) {
@@ -1825,7 +1821,7 @@ int vmm_uninstall_guard_page(uintptr_t virt)
             guard_page_unregister_locked(page);   /* commit */
     } else {
         /* Never guarded: INSPECT, never rewrite. This mapping is not ours --
-         * the boot identity map carries User on its 2 MiB pages, and an ABSENT
+         * something else may have opened it to user mode, and an ABSENT
          * unregistered VA is the very state vmm_install_guard_page() refuses as
          * VMM_GUARD_VA_UNSAFE, so repairing it here would launder a refused
          * install into an authorized free. Judge the snapshot and fail CLOSED;

@@ -55,8 +55,7 @@ static void test_smep_smap_state(void)
     uint64_t cr4;
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
 
-    /* SMEP/SMAP are skipped on EVERY platform (kernel PTE User bit --
-     * needs KPTI); there is NO EPT-enforcement path (that claim was
+    /* SMEP/SMAP are skipped on EVERY platform (not enabled yet); there is NO EPT-enforcement path (that claim was
      * retracted as a false security signal in the TODO-10 bare-metal
      * hardening CPU-security review). The test just confirms no crash
      * accessing cr4. */

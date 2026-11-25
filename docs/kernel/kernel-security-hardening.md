@@ -9,7 +9,7 @@ Kernel security hardening is the set of CPU and kernel mitigations that make exp
 
 `cpu_harden()` runs on the BSP and on every AP. It sets `EFER.NXE` through `cpu_enable_nx()` in [`cpu_security.c`](../../src/kernel/cpu_security.c), and `vmm_apply_nx_policy()` marks the non-code pages of the kernel image range no-execute. Firmware regions, MMIO, UEFI runtime memory and memory above the kernel image are skipped, so no-execute does not yet cover every mapping.
 
-SMEP and SMAP have complete code paths, `cpu_enable_smep()` and `cpu_enable_smap()`, but neither turns its CR4 bit on: both first ask `hv_supports_cr4_smep_smap()`, which returns 0 because the shared boot page tables set the User bit on every kernel page, so enabling SMEP would fault on the kernel's own code. Serial reports `SMEP: skipped` and `SMAP: skipped` on every boot and every platform. The SMAP-bracketed `copy_from_user()` and `copy_to_user()` are ready for when it is enabled.
+SMEP and SMAP have complete code paths, `cpu_enable_smep()` and `cpu_enable_smap()`, but neither turns its CR4 bit on: both first ask `hv_supports_cr4_smep_smap()`, which returns 0. The boot identity map has been supervisor-only since 2026-11-25, so the kernel's own pages no longer stand in the way; enabling the bits has not been done yet. Serial reports `SMEP: skipped` and `SMAP: skipped` on every boot and every platform. The SMAP-bracketed `copy_from_user()` and `copy_to_user()` are ready for when it is enabled.
 
 Kernel page-table isolation (KPTI) is in the same state: `kpti_init()` in [`kpti.c`](../../src/kernel/kpti.c) sets up a trampoline page and per-CPU kernel and user CR3 fields ([`kpti.h`](../../include/kernel/kpti.h)), but both CR3 values are the same and no entry path switches them. SMEP, SMAP and KPTI all wait on the same root cause: the kernel image shares its address range with user space, and moving it to the higher half is the prerequisite ([kernel address space](../infrastructure/kernel-address-space.md)).
 
@@ -54,7 +54,7 @@ Serial shows what actually turned on: the SMEP and SMAP skip lines, and `[wx]` l
 
 ## What is not implemented yet?
 
-- **SMEP and SMAP** are never enabled while kernel pages carry the User bit ([SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#2-smep--smap-cr4-activation--clacstac-wrappers)).
+- **SMEP and SMAP** are not enabled on any platform yet ([SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#2-smep--smap-cr4-activation--clacstac-wrappers)).
 - **KPTI** never switches CR3 on entry or exit ([KPTI SYSCALL CR3 Swap](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#4-kpti-syscall-cr3-swap)).
 - **CET** shadow stacks and indirect branch tracking are not enabled ([CET Shadow Stack](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#9-cet-shadow-stack-kernel-ring-0)).
 - **KASLR** waits on the same higher-half move ([KASLR](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#14-kaslr-rdrand-kernel-load-address)).

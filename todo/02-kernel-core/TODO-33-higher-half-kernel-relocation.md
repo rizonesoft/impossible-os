@@ -236,7 +236,7 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
   - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
 - [ ] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
   - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [ ] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
+- [ ] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope (User is clear since 2026-11-25) -- a retained 4 GiB map is a writable+exec low alias of kernel text (§1 Decision 6)
   - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
 - [ ] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
   - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.

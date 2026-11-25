@@ -10201,18 +10201,32 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
     return EFI_SUCCESS;
 }
 
-/* The previous boot's crash log, which the kernel reads later; empty when none. */
+/* The previous boot's crash log, which the kernel reads later; empty when none. A
+ * variable store that fails a read is asked again: the kernel may read it later. */
 static struct boot_span previous_crash_log(void)
 {
     EFI_GUID guid = BOOT_CRASH_LOG_GUID;
     EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
     struct boot_span log = { 0, BOOT_CRASH_LOG_PAGES * EFI_PAGE_SIZE };
     UINT32 attrs;
-    UINTN size = sizeof log.base;
+    UINTN size = 0;
+    EFI_STATUS status = EFI_NOT_FOUND;
 
-    if (!rt || !rt->GetVariable ||
-        EFI_ERROR(rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &log.base)) ||
-        size != sizeof log.base)
+    for (int try = 0; rt && rt->GetVariable && try < KERNEL_BUFFER_TRIES; try++) {
+        size = sizeof log.base;
+        status = rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &log.base);
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+        if (try == 0)                   /* the control: the first read fails */
+            status = EFI_DEVICE_ERROR;
+        else
+            serial_early_print("[BOOT] Previous crash log: read again\n");
+#endif
+        if (status != EFI_DEVICE_ERROR)
+            break;
+    }
+    if (status == EFI_DEVICE_ERROR)
+        serial_early_print("[WARN] Previous crash log: its variable cannot be read\n");
+    if (EFI_ERROR(status) || size != sizeof log.base)
         log.bytes = 0;
     return log;
 }
@@ -14094,7 +14108,7 @@ static void setup_page_tables(void)
         pd = (UINT64 *)(UINTN)(PT_PD0 + pdi * 4096);
         for (i = 0; i < 512; i++) {
             UINT64 addr = ((UINT64)pdi * 512 + i) * 0x200000;
-            pd[i] = addr | 0x87;  /* Present + Writable + User + PageSize(2MiB) */
+            pd[i] = addr | 0x83;  /* Present + Writable + PageSize(2MiB), supervisor-only */
         }
     }
 

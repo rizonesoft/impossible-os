@@ -11,7 +11,7 @@ This roadmap overlaps the [Kernel Security Hardening](../kernel/kernel-security-
 
 No-execute is on. `cpu_enable_nx()` in [`cpu_security.c`](../../src/kernel/cpu_security.c) sets `EFER.NXE`, and the VMM's `vmm_apply_nx_policy()` marks data pages no-execute during Phase 0; [`wx.c`](../../src/kernel/security/wx.c) then makes `.text` and `.rodata` read-only with `kernel_wx_protect()` and `kernel_rodata_protect()`.
 
-SMEP and SMAP have complete enable paths, `cpu_enable_smep()` and `cpu_enable_smap()`, declared in [`cpu_security.h`](../../include/kernel/cpu_security.h). They skip turning the CR4 bits on because the shared boot page tables carry the User bit on kernel pages, so enabling SMEP would fault on the kernel's own code. The user-copy side is already in place: `copy_from_user()` and `copy_to_user()` bracket the copy with `stac`/`clac` through `KERNEL_ACCESS_USER_BEGIN` and `KERNEL_ACCESS_USER_END`, and recover from a fault on a bad user pointer through the `__uaccess_copy_from`/`__uaccess_copy_to` fixups, so enabling SMAP later changes no caller.
+SMEP and SMAP have complete enable paths, `cpu_enable_smep()` and `cpu_enable_smap()`, declared in [`cpu_security.h`](../../include/kernel/cpu_security.h). They do not turn the CR4 bits on yet. The boot identity map has been supervisor-only since 2026-11-25: no process can reach a frame through it. The user-copy side is already in place: `copy_from_user()` and `copy_to_user()` bracket the copy with `stac`/`clac` through `KERNEL_ACCESS_USER_BEGIN` and `KERNEL_ACCESS_USER_END`, and recover from a fault on a bad user pointer through the `__uaccess_copy_from`/`__uaccess_copy_to` fixups, so enabling SMAP later changes no caller.
 
 KPTI is prepared but inactive. [`kpti.h`](../../include/kernel/kpti.h) places the entry trampoline at `KPTI_TRAMPOLINE_VA` (`0xFFFFFFFFFFFFF000`) and gives each CPU kernel and user CR3 fields; [`kpti.c`](../../src/kernel/kpti.c) keeps `s_kpti_active` at 0 until the SYSCALL and IDT entry paths are redirected through the trampoline.
 
@@ -39,7 +39,7 @@ bash scripts/test.sh SUITE=x86
 
 - **User-space ASLR.** Every process loads at fixed bases ([User-Space ASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#1-user-space-aslr)).
 - **KASLR.** The kernel loads at a fixed address; the owner is the hardening roadmap's KASLR section ([KASLR](../../todo/03-memory-concurrency/TODO-02-memory-security.md#2-kaslr----kernel-address-space-randomization)).
-- **SMEP and SMAP enforcement.** Blocked on per-process page tables that drop the User bit from kernel pages ([SMEP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#3-smep), [SMAP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#4-smap--copy_from_user--copy_to_user)).
+- **SMEP and SMAP enforcement.** Not enabled on any platform yet ([SMEP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#3-smep), [SMAP](../../todo/03-memory-concurrency/TODO-02-memory-security.md#4-smap--copy_from_user--copy_to_user)).
 - **An audit of every mapping for NX** and the boot log line that reports it ([NX / DEP Mapping Audit](../../todo/03-memory-concurrency/TODO-02-memory-security.md#5-nx--dep-mapping-audit)).
 - **KPTI switching.** No entry path changes CR3 yet ([KPTI Basic](../../todo/03-memory-concurrency/TODO-02-memory-security.md#6-kpti-basic)).
 - **CET shadow stacks** ([CET Shadow Stack Stub](../../todo/03-memory-concurrency/TODO-02-memory-security.md#7-cet-shadow-stack-stub)).

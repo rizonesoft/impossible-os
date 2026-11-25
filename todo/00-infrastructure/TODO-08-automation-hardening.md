@@ -2015,11 +2015,11 @@ Split from [§49](#49-the-lane-map-and-the-commit-check) on 2026-11-23. -> XREF:
 ## 72. The Direct-Map Check Passes on Machines With 1 GiB or Less
 
 > **Spawned-by:** root (found 2026-11-23 while reproducing GitHub issue 6; filed here by operator direction)
-> **User impact:** `main` does not boot on a machine or VM with 1 GiB of RAM or less.
+> **User impact:** before this section `main` did not boot on a machine or VM with 1 GiB of RAM or less.
 
-The direct map is correct; the loader's check of it is not. `jump_to_kernel()` (`src/boot/uefi/bootx64.c:13893`) reads the arena's first word through the identity map, then through its HHDM alias, and halts when they differ. That word is the live PDPT's entry 0. When the arena lies in the first GiB, the HHDM read walks through that same entry, and the CPU sets its Accessed bit between the two reads. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "`bl_hhdm_install_leaves()`")
+At `ac558184` the direct map was correct and the loader's check of it was not. `jump_to_kernel()` read the arena's first word through the identity map, then through its HHDM alias, and halted when they differed. That word was the live PDPT's entry 0. When the arena lay in the first GiB, the HHDM read walked through that same entry, and the CPU set its Accessed bit between the two reads. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "`bl_hhdm_install_leaves()`")
 
-Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with `HHDM: identity vs direct-map readback mismatch` (512 MB and 1 GiB on KVM and TCG); 1100 MB and above boot. In gdb at 1 GiB on TCG, the identity read was `0x3d02a003` and the HHDM read `0x3d02a023`, a difference of `0x20`, bit 5 (Accessed). Stepping past the compare, the same boot completed. The smoke scripts boot with `-m 2G`, which is why nothing caught it.
+Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with `HHDM: identity vs direct-map readback mismatch` (512 MB and 1 GiB on KVM and TCG); 1100 MB and above boot. In gdb at 1 GiB on TCG, the identity read was `0x3d02a003` and the HHDM read `0x3d02a023`, a difference of `0x20`, bit 5 (Accessed). Stepping past the compare, the same boot completed. Every smoke leg then booted with `-m 2G`, which is why nothing caught it.
 
 - [x] `jump_to_kernel()` compares a word the HHDM walk does not modify
   - A frame that is mapped by the HHDM and is not a page table on the walked path. Masking the Accessed bit out of the compare is not the fix.
@@ -2031,7 +2031,9 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] The frame bitmap goes in free RAM from the memory map (`pmm_bitmap_place`); above 128 MB of RAM it overwrote OVMF's ACPI NVS at 0x800000
   - `BOOT_INFO_VERSION` 25: a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
-- [x] The kernel file is never read over the previous boot's crash log (`include/boot/crash_log.h`) unless nothing else fits
+- [x] The kernel file is never read over the previous boot's crash log (`include/boot/crash_log.h`) while another free range has the room
+  - A variable store that fails a read is asked again; a range is one memory-map entry (no map measured from 96 MB to 8 GB holds two adjacent free ones).
+- [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
 - [x] A kernel is entered only at its own code, and none of its segments may end above the identity map
 - [x] After the power-off request the kernel no longer reports a failure: the CPU can go on before the platform stops
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
@@ -2040,7 +2042,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | `bash scripts/test.sh SUITE=boot` (the buffer's placement and the claims, `test_kernel_buffer_span`, `test_kernel_buffer_overlap`, `test_kernel_claim_spans`, `test_kernel_segment_order`, `test_kernel_entry_span`) and `TEST_MEM=4G bash scripts/test.sh SUITE=mm` (the bitmap's, `test_pmm_bitmap_place`, `test_pmm_map_ordered`, `test_pmm_low_mappings`; the KUSD frame exists only above 2 GiB); the direct-map check itself runs before the kernel and is tested in the booted image.
 
-> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 34 legs: `crashptr buffer` plants a crash-log pointer where the buffer would go, and the 96 MB leg plants one that splits the only run with room for it. The 0x800000 kernel image ceiling has no page to spare in the test flavor; 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
+> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 34 legs: `crashptr buffer` plants a crash-log pointer where the buffer would go, and the 96 MB leg plants one that splits the only run with room for it. In the test flavor `__kernel_end` is 0x7fe000, one page short of the last the 0x800000 image ceiling allows; 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
 
 ## 73. The line tally counts the commit
 

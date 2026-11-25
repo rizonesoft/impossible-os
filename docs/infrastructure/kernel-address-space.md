@@ -154,10 +154,10 @@ The bring-up identity map is **transient**. It is not retained.
 
 This is worth stating plainly because the naive reading of the AP constraint (below) suggests keeping the 4 GiB
 identity map forever, and that would be a security regression: `setup_page_tables()` marks every 2 MiB page
-`Present | Writable | User | PageSize` (`bootx64.c:10648`) with no NX. Retaining it would preserve a writable,
-executable, **user-accessible** alias of all kernel text and data at low addresses -- defeating Decision 5's alias
-policy and `kernel_wx_protect()`, and handing ring 3 direct access to physical memory if those entries ever leaked
-into a process PML4.
+`Present | Writable | PageSize` with no NX. Retaining it would preserve a writable, executable alias of all kernel
+text and data at low addresses, defeating Decision 5's alias policy and `kernel_wx_protect()`. Until 2026-11-25 its
+leaves also carried User, and every process held those of the second to fourth GiB, so ring 3 could write physical
+memory there; the leaves are supervisor-only now and a unit test holds a fresh process to it.
 
 Teardown sequence:
 
