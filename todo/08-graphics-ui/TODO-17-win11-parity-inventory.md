@@ -1293,12 +1293,13 @@ What the VM cannot show and the operator's Windows host has, captured on the hos
 
 Impossible SDK has its own Hyper-V machine, `ui-test-win11`, in `D:\11\ui-test-win11`. It shares no disk, checkpoint, lock or password with `ios-win11-ref`, and it does not start while `ios-win11-ref` is anything but Off. Its jobs queue under `bosun run --ns Bosun.VM --slots 1`. Our scripts never start, stop, change or delete it, or anything in its folder.
 
-The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <command>` gives (Bosun `8d5f318` or later). The command is a small holder (`ref-turn.ps1`) that keeps the place for as long as the script that started it lives. The script itself is not started again under `bosun run`: that would pass `-Command` through a second round of Windows PowerShell 5.1 quoting, and a run killed by its caller would leave its child holding the VM lock, which `-Stop` could then not take over (todo/answers.md Q63).
+The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <command>` gives (Bosun `8d5f318` or later). The command is a holder, `cmd.exe /d /c set BOSUN_& sort >nul`: it prints the place Bosun gave and then reads its standard input, a pipe the script holds, until the script ends for any reason. The script itself is not started again under `bosun run`: that would pass `-Command` through a second round of Windows PowerShell 5.1 quoting, and a run killed by its caller would leave its child holding the VM lock, which `-Stop` could then not take over (todo/answers.md Q63).
 
 - [ ] `Enter-RefTurn` in `ref-common.ps1` takes the place before the VM starts: called by `Restore-RefCheckpoint` (not with `-NoStart`) and by `Start-RefVm`, the only code that starts the VM
   - A test refuses `Start-VM`, `Restore-VMSnapshot`, `Resume-VM`, `Restart-VM` and `Start-VM` through CIM anywhere else under `scripts/inventory`, so a new script cannot forget it.
+  - `ref-vm.ps1`'s resume of a build whose VM is already running takes it too, before its checkpoints.
   - The VM lock is taken first and is unchanged: a second run is refused at once (exit 4), never queued. `-Stop` never queues.
-- [ ] Inventory is never refused: after 360 seconds it starts anyway; with no Bosun, or one that answers nothing, it runs directly and says so; `--or-skip` is never passed
+- [ ] Inventory is never refused: after 360 seconds it starts anyway; with no Bosun, or one that fails or does not answer within 420 seconds, it runs directly and says so; `--or-skip` is never passed
 - [ ] A script already inside the queue passes straight through, its own children too (`BOSUN_SLOT`, `BOSUN_NS` and `WSLENV` as Bosun gave them), and every exit code is the script's own
 - [ ] `capture.py` and `host-capture.py` allow 360 seconds more than before, from one constant a test holds equal to the one in `ref-common.ps1`
 - [ ] `REFERENCE.md` says that inventory takes turns, how long it waits and what happens then
