@@ -190,5 +190,20 @@ except ss.ScreenError:
     print("PASS  bytes read after the time count for nothing")
 ss.time = time
 
+
+class SlowPress(socket.socket):
+    """The client is held up for two seconds once the press is on its way."""
+
+    def sendall(self, data: bytes) -> None:
+        super().sendall(data)
+        if data == b"system_powerdown\n":
+            ss.time = types.SimpleNamespace(monotonic=lambda: time.monotonic() + 2.0, sleep=time.sleep)
+
+
+ss.socket = types.SimpleNamespace(socket=SlowPress, AF_UNIX=socket.AF_UNIX, SOCK_STREAM=socket.SOCK_STREAM,
+                                  timeout=socket.timeout)
+expect_powerdown("the time runs from the press, not from its return", 0.0, 0.0, False, False)
+ss.time, ss.socket = time, socket
+
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)

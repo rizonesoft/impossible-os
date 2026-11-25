@@ -201,8 +201,8 @@ def powerdown(sock_path: str, seconds: int) -> None:
         sock.settimeout(15.0)
         sock.connect(sock_path)
         _read_until(sock, buf, 1, time.monotonic() + 15.0)
-        sock.sendall(b"system_powerdown\n")
         deadline = time.monotonic() + seconds
+        sock.sendall(b"system_powerdown\n")
         prompts = 2
         _read_until(sock, buf, prompts, deadline)
         while True:
