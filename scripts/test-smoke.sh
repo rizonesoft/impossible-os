@@ -454,11 +454,6 @@ hhdm_wrong_check_log() {
        ! grep -qF -- 'Previous crash log: read again' "$1"; then
         HW_FAIL_MSG="a crash-log variable that failed one read was not reported and read again"; return 1
     fi
-    # It refuses the first claim of the planted log, then every allocation beside it.
-    if ! grep -qF -- 'Previous crash log: held at 0x' "$1" ||
-       ! grep -qF -- 'Previous crash log: given back, an allocation needs its memory' "$1"; then
-        HW_FAIL_MSG="a crash log whose claim was refused once was not held, or was not given back when no memory was left beside it"; return 1
-    fi
 }
 
 uki_check_override_log() {
@@ -996,9 +991,7 @@ esac
 # SMOKE_HHDM_WRONG=1 boots a loader built with BL_TEST_HHDM_WRONG_ALIAS, whose
 # direct map is wrong at the frame the loader checks: it must halt on that check
 # and never enter the kernel. The shipped loader holds none of that code.
-# Its crash-log pointer is there to be held and given back.
 HHDM_WRONG="${SMOKE_HHDM_WRONG:-0}"
-[ "$HHDM_WRONG" != 1 ] || plant_crash_nvram 0x2500000
 if [ -n "$CT_MODE" ] && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
     echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST=$CRASH_TEST needs SMOKE_SMP >= 2 (got: ${SMOKE_SMP})${NC}"; exit 1
 fi
@@ -1779,7 +1772,7 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
-    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Previous crash log: given back, an allocation needs its memory' "$STRIPPED_LOG"; then
+    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Kernel buffer: no room clear of the previous crash log' "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer found room clear of the pointer, so this leg tests nothing"
     elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_clear "$CRASH_NVRAM_HEX" "$STRIPPED_LOG"; then

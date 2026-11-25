@@ -76,6 +76,21 @@ static void test_pmm_bitmap_place(void)
     pair[1].base_addr += 4 * kib;
     TEST_ASSERT_EQ(pmm_bitmap_place(pair, 2, 128 * kib, keep, 2), 0ULL, "a gap");
 
+    /* The previous boot's crash log is spared while another placement has the room. */
+    struct boot_span room[3] = { keep[0], keep[1] };
+    struct boot_span log = { 64 * mib, 4 * kib };
+    pair[1].base_addr = 80 * mib;
+    pair[0].length = 128 * kib;
+    pair[1].length = 128 * kib;
+    TEST_ASSERT_EQ(pmm_bitmap_place_sparing(pair, 2, 128 * kib, room, 2, log), 80 * mib, "elsewhere");
+    log.base = 80 * mib + 64 * kib;
+    TEST_ASSERT_EQ(pmm_bitmap_place_sparing(pair, 2, 128 * kib, room, 2, log), 64 * mib,
+                   "the highest one is not taken over it");
+    TEST_ASSERT_EQ(pmm_bitmap_place_sparing(pair, 1, 128 * kib, room, 2, (struct boot_span){ 64 * mib, 4 * kib }),
+                   64 * mib, "taken over it when that is all there is");
+    log.bytes = 0;
+    TEST_ASSERT_EQ(pmm_bitmap_place_sparing(pair, 2, 128 * kib, room, 2, log), 80 * mib, "no log");
+
     struct boot_span kept[PMM_BITMAP_KEEP_MAX];
     uint32_t n = pmm_bitmap_keep(kept), reserved = boot_reserved_count();
     TEST_ASSERT_EQ(n, 2 + reserved, "kept");

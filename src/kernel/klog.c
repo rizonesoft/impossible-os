@@ -998,6 +998,7 @@ void klog_crash_persist(void)
 
 /* UEFI NVRAM variable for crash region address -- same GUID as ImpossiblePOST */
 #include "kernel/uefi_runtime.h"
+#include "boot/free_span.h"
 
 static const struct boot_uefi_guid s_crash_guid = BOOT_CRASH_LOG_GUID;
 static const uint16_t s_crash_varname[] = BOOT_CRASH_LOG_VAR;
@@ -1059,22 +1060,28 @@ static klog_crash_entry_t *klog_recovered_pool_acquire(uint64_t prev_phys,
  * Written once in boot_phase0 (single CPU, interrupts off, before the APs
  * start) and read by klog_crash_recover() later in the same phase; no other
  * accessor, so no lock. */
+static uint64_t    s_prev_named;         /* what the variable names, or 0     */
+static int         s_prev_read;          /* the variable exists and was read  */
 static uint64_t    s_prev_phys;          /* claimed run, 0 when none          */
 static uint64_t    s_prev_skip_addr;     /* refused pointer, for the warning  */
 static const char *s_prev_skip_why;      /* why it was refused, NULL if not   */
 static uint64_t    s_prev_get_status;    /* failed read other than NOT_FOUND  */
 static uint64_t    s_prev_delete_status; /* failed delete of the pointer      */
 
+/* A region from pmm_alloc_contiguous is page-aligned and sits above the low
+ * kernel/user window, and the WHOLE run must lie inside the boot identity map
+ * with no overflow, because recovery reads it by its physical address. */
+static int klog_crash_prev_in_reach(uint64_t phys)
+{
+    return (phys & (PMM_FRAME_SIZE - 1)) == 0 && phys >= USER_ELF_END &&
+           phys <= BOOT_INFO_EARLY_MAP_END - (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
+}
+
 const char *klog_crash_prev_refusal(uint64_t phys)
 {
     const uint64_t bytes = (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
 
-    /* A region from pmm_alloc_contiguous is page-aligned and sits above the
-     * low kernel/user window, and the WHOLE run must lie inside the boot
-     * identity map with no overflow, because recovery reads it by its
-     * physical address. */
-    if ((phys & (PMM_FRAME_SIZE - 1)) != 0 || phys < USER_ELF_END ||
-        phys > BOOT_INFO_EARLY_MAP_END - bytes)
+    if (!klog_crash_prev_in_reach(phys))
         return "not page-aligned or outside the boot identity map";
 
     /* Ownership. pmm_init starts every frame used and frees only usable
@@ -1103,19 +1110,34 @@ uint64_t klog_crash_read_pointer(klog_get_variable_fn get, uint64_t *prev, uint6
     return status;
 }
 
-void klog_crash_claim_previous(void)
+struct boot_span klog_crash_find_previous(void)
 {
-    uint64_t prev;
+    struct boot_span run = { 0, (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE };
     uint64_t sz;
-    uint64_t status = klog_crash_read_pointer(uefi_get_variable, &prev, &sz);
+    uint64_t status = klog_crash_read_pointer(uefi_get_variable, &s_prev_named, &sz);
 
+    s_prev_read = status == 0;
     if (status != 0) {
+        s_prev_named = 0;
         if (status != UEFI_NOT_FOUND)
             s_prev_get_status = status;
-        return;
+    } else if (sz != sizeof(s_prev_named)) {
+        s_prev_skip_addr = s_prev_named;
+        s_prev_named = 0;
     }
-    if (sz != sizeof(prev) || prev == 0) {
-        s_prev_skip_addr = prev;
+    run.base = s_prev_named;
+    if (!klog_crash_prev_in_reach(run.base))
+        run.bytes = 0;
+    return run;
+}
+
+void klog_crash_claim_previous(void)
+{
+    uint64_t prev = s_prev_named;
+
+    if (!s_prev_read)
+        return;
+    if (prev == 0) {
         s_prev_skip_why  = "the NVRAM value is not one address";
     } else {
         const char *why = klog_crash_prev_refusal(prev);

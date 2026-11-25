@@ -573,11 +573,18 @@ _Static_assert(sizeof(klog_crash_entry_t) == 164,
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
 
+/* Read the ImpossibleCrashLog NVRAM pointer and return the run it names, with no
+ * bytes when it names none that could be claimed. Called from pmm_init(), which
+ * keeps its frame bitmap off the run; klog_crash_claim_previous() uses the same
+ * answer. Needs UEFI runtime only. */
+struct boot_span;
+struct boot_span klog_crash_find_previous(void);
+
 /* Claim the PREVIOUS boot's crash region before anything else allocates.
  * Called from boot_phase0 right after pmm_init() and before vmm_init() and
- * heap_init(): reads and deletes the ImpossibleCrashLog NVRAM pointer, and
- * reserves the run in the PMM only when klog_crash_prev_refusal() accepts
- * it. klog_crash_recover() later reads only a claimed run and reports the
+ * heap_init(): deletes the NVRAM pointer that was found, and reserves the run in
+ * the PMM only when klog_crash_prev_refusal() accepts it. klog_crash_recover()
+ * later reads only a claimed run and reports the
  * outcome. Single CPU, interrupts off: the APs are not started yet.
  *
  * Why here: the pointer was written by an older build, so it can name memory

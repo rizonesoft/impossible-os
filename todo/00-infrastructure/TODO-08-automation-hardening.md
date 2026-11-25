@@ -2032,15 +2032,15 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
   - `BOOT_INFO_VERSION` 25: a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
 - [x] The kernel file and the frame bitmap are never placed over the previous boot's crash log (`include/boot/crash_log.h`) while another free run has the room
-  - The loader allocates the log's pages before it places the file, so the kernel reads them as loader memory; free map entries that touch or overlap are one run.
-  - Redesigned after the gap came back twice: a claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves, so the log and the file are taken whatever the entries' ends and the record of pieces always fits (`test_kernel_claim_rooms`).
+  - Each placement takes the log's extent as one more range to stay off, and is made without it when nothing else fits; the pointer may name anything, so it holds no memory. Holding the pages (waves 22 to 25) made every later allocation depend on the pointer, and was removed.
+  - The kernel reads the pointer before it places the bitmap (`klog_crash_find_previous`, `pmm_bitmap_place_sparing`); free map entries that touch or overlap are one run.
+  - Redesigned after the gap came back twice: a claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves, so the file is taken whatever the entries' ends and the record of pieces always fits (`test_kernel_claim_rooms`).
   - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status; the kernel reads it again too (`klog_crash_read_pointer`).
-  - A claim that firmware refuses is made again from a new map, and the log is given back when any later loader allocation finds no room beside it (`loader_pages`), so a stale pointer never keeps a machine from booting.
 - [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
 - [x] A kernel is entered only at its own code, and every segment lies between 1 MiB (the fixed page tables are below) and the end of the identity map
   - A `GetInfo` answer too short to hold the file size is refused.
 - [x] After the power-off request the kernel no longer reports a failure: the CPU can go on before the platform stops
-- [x] A log line of the panic owner's no longer lands inside the park line of a second panicking CPU (`serial_report_begin`)
+- [x] A log line of the panic owner's waits, as long as a report does, for the park line of a second panicking CPU (`serial_report_begin`)
   - The `dbl-race` leg caught it; with the park line held open the leg failed 4 of 5 times before and 0 of 5 after.
 - [ ] Commit: `"boot: the direct-map check compares a word its own walk cannot change"`
 
