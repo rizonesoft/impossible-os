@@ -85,56 +85,70 @@ static void test_pmm_bitmap_place(void)
     }
 }
 
+/* Frames of a conventional run, held for as long as a case looks at them. */
+static uintptr_t fw_take(const struct boot_mmap_entry *map, uint32_t entries, uint64_t count,
+                         uintptr_t want, const char *what)
+{
+    uintptr_t at = pmm_alloc_firmware_free(map, entries, count);
+
+    TEST_ASSERT_EQ(at, want, what);
+    return at;
+}
+
+static void fw_give(uintptr_t at, uint64_t count)
+{
+    if (at != 0)
+        pmm_free_contiguous(at, count);
+}
+
 /* A record for the next boot goes where firmware had nothing in this one. */
 static void test_pmm_firmware_free(void)
 {
     const uint64_t kib4 = PMM_FRAME_SIZE;
     struct boot_mmap_entry map[4];
     uintptr_t a = pmm_alloc_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap,
-                                          g_boot_info.mmap_count, 8), b;
-    uint32_t i;
+                                          g_boot_info.mmap_count, 8), b, c;
+    uint64_t covered = a;
 
     TEST_ASSERT(a != 0, "eight frames of this machine's");
-    for (i = 0; i < g_boot_info.mmap_count; i++) {
-        if (a >= g_boot_info.mmap[i].base_addr &&
-            a + 8 * kib4 <= g_boot_info.mmap[i].base_addr + g_boot_info.mmap[i].length)
-            break;
-    }
-    TEST_ASSERT(i < g_boot_info.mmap_count, "inside one entry");
-    if (i < g_boot_info.mmap_count)
-        TEST_ASSERT_EQ(g_boot_info.mmap[i].uefi_memory_type, UEFI_MMAP_CONVENTIONAL, "conventional");
     if (a == 0)
         return;
-    pmm_free_contiguous(a, 8);
+    for (uint32_t i = 0; i < g_boot_info.mmap_count; i++) {     /* ascending */
+        if (g_boot_info.mmap[i].uefi_memory_type == UEFI_MMAP_CONVENTIONAL &&
+            g_boot_info.mmap[i].base_addr <= covered &&
+            g_boot_info.mmap[i].base_addr + g_boot_info.mmap[i].length > covered)
+            covered = g_boot_info.mmap[i].base_addr + g_boot_info.mmap[i].length;
+    }
+    TEST_ASSERT(covered >= a + 8 * kib4, "conventional memory, all of it");
+    fw_give(a, 8);
 
-    /* The kernel has all eight free; which of them firmware had is what differs. */
+    /* The kernel has all eight free; which of them firmware had is what differs. They
+     * are far above what first-fit takes, so nothing else comes to them meanwhile. */
     map[0] = (struct boot_mmap_entry){ a, 3 * kib4, 1, UEFI_MMAP_CONVENTIONAL, 0 };
     map[1] = (struct boot_mmap_entry){ a + 3 * kib4, kib4, 1, UEFI_MMAP_BOOT_SERVICES_DATA, 0 };
     map[2] = (struct boot_mmap_entry){ a + 4 * kib4, 4 * kib4, 1, UEFI_MMAP_BOOT_SERVICES_DATA, 0 };
-    TEST_ASSERT_EQ(pmm_alloc_firmware_free(map, 3, 4), 0ULL, "never into boot-services memory");
-    TEST_ASSERT_EQ(pmm_alloc_firmware_free(&map[1], 2, 1), 0ULL, "no conventional memory");
+    fw_give(fw_take(map, 3, 4, 0, "never into boot-services memory"), 4);
+    fw_give(fw_take(&map[1], 2, 1, 0, "no conventional memory"), 1);
 
     map[2].uefi_memory_type = UEFI_MMAP_CONVENTIONAL;
-    b = pmm_alloc_firmware_free(map, 3, 4);
-    TEST_ASSERT_EQ(b, a + 4 * kib4, "the run that holds it");
-    b = pmm_alloc_firmware_free(map, 3, 3);
-    TEST_ASSERT_EQ(b, a, "then one that still has room");
-    pmm_free_contiguous(a, 3);
-    pmm_free_contiguous(a + 4 * kib4, 4);
+    b = fw_take(map, 3, 4, a + 4 * kib4, "the run that holds it");
+    c = fw_take(map, 3, 3, a, "then one that still has room");
+    fw_give(b, 4);
+    fw_give(c, 3);
 
     map[1].uefi_memory_type = UEFI_MMAP_CONVENTIONAL;     /* one run of eight, in three entries */
-    b = pmm_alloc_firmware_free(map, 3, 4);
-    TEST_ASSERT_EQ(b, a + 2 * kib4, "a quarter of the way in");
-    pmm_free_contiguous(b, 4);
-    b = pmm_alloc_firmware_free(map, 3, 7);
-    TEST_ASSERT_EQ(b, a, "or from its start when the rest is too short");
-    pmm_free_contiguous(b, 7);
+    fw_give(fw_take(map, 3, 4, a + 2 * kib4, "a quarter of the way in"), 4);
+    fw_give(fw_take(map, 3, 7, a, "or from its start when the rest is too short"), 7);
 
     map[0] = (struct boot_mmap_entry){ PMM_PHYS_ADDR_CAP, 64 * kib4, 1, UEFI_MMAP_CONVENTIONAL, 0 };
-    TEST_ASSERT_EQ(pmm_alloc_firmware_free(map, 1, 2), 0ULL, "nothing above the cap");
-    TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a + 1, a + 2 * kib4, 1), a + kib4, "whole frames only");
-    pmm_free_frame(a + kib4);
-    TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a, a + 8 * kib4 - 1, 8), 0ULL, "none that ends outside");
+    fw_give(fw_take(map, 1, 2, 0, "nothing above the cap"), 2);
+
+    b = pmm_alloc_contiguous_in(a + 1, a + 2 * kib4, 1);
+    TEST_ASSERT_EQ(b, a + kib4, "whole frames only");
+    fw_give(b, 1);
+    b = pmm_alloc_contiguous_in(a, a + 8 * kib4 - 1, 8);
+    TEST_ASSERT_EQ(b, 0ULL, "none that ends outside");
+    fw_give(b, 8);
     TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a, a + 8 * kib4, 0), 0ULL, "no frames");
 }
 

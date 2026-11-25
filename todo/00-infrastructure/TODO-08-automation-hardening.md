@@ -2031,13 +2031,14 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] The frame bitmap goes in free RAM from the memory map (`pmm_bitmap_place`); above 128 MB of RAM it overwrote OVMF's ACPI NVS at 0x800000
   - `BOOT_INFO_VERSION` 25 (two fields added, 28696 bytes): a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
-- [x] The previous boot's crash log survives the boot that reads it (`include/boot/crash_log.h`), and the firmware before it
+- [x] The previous boot's crash log survives the boot that reads it (`include/boot/crash_log.h`)
   - Redesigned after the gap came back: the log lay in free memory while the loader and the kernel allocated around it, so each placement that was taught to avoid it left another that was not. The loader now copies a log that is free memory, whole and CRC-clean into its own image before it allocates anything but the fixed panic page, and hands the copy over in `boot_info` (`crash_log_base`).
   - It is not a payload: a payload's slot, its share of the byte budget and its pages each competed with something the boot needs (wave 28). The copy allocates nothing, so a log, whole or damaged, changes no other allocation.
   - The region lies wholly in memory that was free when this boot's firmware handed over, the longest run first (`pmm_alloc_firmware_free`), and is written through the direct map, because a panic runs on any process's page tables.
   - A region smaller than the ring keeps the newest entries (`klog_ring_newest`); it used to keep the oldest.
   - First-fit put it at 0xc01000, in boot-services memory that OVMF writes again at every reset, so no log of a real crash ever came back.
-  - The three double-panic legs reset a crashed guest and require its log back (450 entries measured).
+  - What the next firmware does before the loader runs is its own: RAM recovery is best effort there. Proven on OVMF, where the three double-panic legs reset a crashed guest and require its log back (450 entries measured).
+  - The panic path saves the log before it writes the disk dump, which a controller that cannot be stopped never returns from (`SMOKE_CRASH_TEST=abandon`, crash_test=7).
   - Nothing is read that the memory map does not call free, so a stale pointer reaches no device; a refusal is named in the boot log (`none kept from`).
   - The kernel reads only the reserved copy (`klog_crash_previous`, `klog_crash_log_fault`, `test_boot_reserved_crash_log`), only where the direct map has all of it (`vmm_hhdm_maps`), and reads the entries where they are; claiming the old run, sparing it in the bitmap, reading the pointer again and the second 128 KiB copy are gone.
   - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status.

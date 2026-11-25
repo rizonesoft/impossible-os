@@ -80,6 +80,10 @@ const char *panic_stop_code_name(const struct interrupt_frame *frame,
 uint32_t panic_fixture_state(void);
 void     panic_fixture_hold_claim(uint32_t apic_id);
 
+/* crash_test=7: the disk dump ends in panic_abandon_storage(), as it does when a
+ * controller's DMA cannot be stopped. */
+void     panic_fixture_abandon_dump(void);
+
 /* Convenience macro that captures file/line automatically.
  * Routes through KeBugCheckEx for uniform bugcheck handling.
  * Usage: KPANIC("something terrible happened"); */

@@ -5047,11 +5047,11 @@ _sm_got=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh")
 _sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
 grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
 _sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
-_sm_want="33 2 28 512M:kvm 512M:tcg 96M:tcg wrong"; _sm_want_tcg="28 1 0 512M:tcg 96M:tcg wrong"
+_sm_want="34 2 29 512M:kvm 512M:tcg 96M:tcg wrong"; _sm_want_tcg="29 1 0 512M:tcg 96M:tcg wrong"
 _sm_tcg=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" tcg:2 1 /nonexistent)
 _sm_nokvm=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" "" "" /nonexistent)
 if [ "$_sm_got" = "$_sm_want" ] && [ "$_sm_ctl" != "$_sm_want" ] && [ "$_sm_tcg" = "$_sm_want_tcg" ] && [ "$_sm_nokvm" = "0 0 0 " ]; then
-    t_pass "smoke_matrix_orchestration  33 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
+    t_pass "smoke_matrix_orchestration  34 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
 else
     t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '$_sm_want', and '$_sm_want_tcg' with SMOKE_FORCE_TCG=1 and tcg:2), control '$_sm_ctl', tcg:2 '$_sm_tcg', without KVM '$_sm_nokvm' (want no boot)"
 fi

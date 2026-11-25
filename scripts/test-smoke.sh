@@ -989,6 +989,9 @@ DEGRADE="${SMOKE_DEGRADE:-}"
 # auto-restart countdown, the others through the monitor) and the next boot
 # must report the cross-boot record. scripts/smoke-double-panic.py
 # is the verdict. These legs need 2 CPUs and drop -no-reboot for the reset.
+#
+# SMOKE_CRASH_TEST=abandon boots crash_test=7: the disk dump ends the panic, the
+# kernel resets the machine, and the next boot must replay the crashed boot's log.
 CRASH_TEST="${SMOKE_CRASH_TEST:-}"
 CT_VAL=""
 CT_MODE=""
@@ -998,7 +1001,8 @@ case "$CRASH_TEST" in
     double-race) CT_VAL=4; CT_MODE=race ;;
     double-ap) CT_VAL=5; CT_MODE=ap ;;
     double-split) CT_VAL=6; CT_MODE=split ;;
-    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap or double-split (got: $CRASH_TEST)${NC}"; exit 1 ;;
+    abandon) CT_VAL=7 ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap, double-split or abandon (got: $CRASH_TEST)${NC}"; exit 1 ;;
 esac
 # SMOKE_HHDM_WRONG=1 boots a loader built with BL_TEST_HHDM_WRONG_ALIAS, whose
 # direct map is wrong at the frame the loader checks: it must halt on that check
@@ -1260,6 +1264,18 @@ if [ -n "$CT_MODE" ]; then
         "never reached the ordering point"
         "needs a second online CPU"
     )
+elif [ "$CRASH_TEST" = "abandon" ]; then
+    PASS_PATTERNS_ALL=(
+        "[PANIC] crash dump abandoned: crash_test=7"
+        "[CRASH-PREV] boot: crash_test=7 -- triggering deliberate BSOD whose disk dump is abandoned"
+        "Previous crash evidence found (STOP 0xdead"
+    )
+    FAIL_PATTERNS=(
+        "ASSERT FAILED"
+        "triple fault"
+        "Crash dump saved"
+        "[BOOT HALT]"
+    )
 elif [ -n "$CRASH_TEST" ]; then
     CT_PLACEHOLDER='(unreadable: the panic string pointer faulted)'
     PASS_PATTERNS_ALL=(
@@ -1363,8 +1379,8 @@ fi
 if [ -n "$CRASH_NVRAM" ] && [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
     QEMU_FLAGS+=(-device "loader,file=$CRASH_LOG_IMG,addr=$CRASH_NVRAM_HEX,force-raw=on")
 fi
-if [ -n "$CT_MODE" ]; then
-    # The double-panic legs warm-reset the guest through the monitor and judge
+if [ -n "$CT_MODE" ] || [ "$CRASH_TEST" = "abandon" ]; then
+    # These legs reset the guest (through the monitor, or the kernel does) and judge
     # the NEXT boot, which -no-reboot would turn into a QEMU exit.
     _qf=()
     for _f in "${QEMU_FLAGS[@]}"; do [ "$_f" = "-no-reboot" ] || _qf+=("$_f"); done
@@ -1562,7 +1578,7 @@ fi
 # painted. Capture the scanout while the guest still sits on the stop screen.
 CT_SCREEN="$BUILD/smoke-crash-screen.ppm"
 CT_SCREEN_ERR=""
-if [ -n "$CRASH_TEST" ] && [ "$BOOT_PASSED" = true ]; then
+if [ -n "$CRASH_TEST" ] && [ "$CRASH_TEST" != "abandon" ] && [ "$BOOT_PASSED" = true ]; then
     CT_SCREEN_ERR=$(python3 "$SCRIPT_DIR/smoke-screen.py" capture "$MONITOR_SOCK" "$CT_SCREEN" 2>&1) || true
 fi
 
@@ -1651,6 +1667,22 @@ if [ -n "$CT_MODE" ]; then
     echo -e "  ${GREEN}✓${NC} stop screen on the display: $dp_screen"
     echo ""
     echo -e "${GREEN}  DOUBLE-PANIC $CT_MODE LEG PASSED${NC}"
+    echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
+    exit 0
+fi
+
+# ---- Abandoned-dump verdict (SMOKE_CRASH_TEST=abandon) ---------------------
+if [ "$CRASH_TEST" = "abandon" ]; then
+    strip_ansi
+    if [ "$BOOT_PASSED" != true ]; then
+        echo -e "${RED}SMOKE TEST FAILED (abandoned-dump leg): ${FAIL_REASON:-the boot after the reset did not replay the log within ${TIMEOUT_SEC}s}${NC}"
+        grep -aE "crash_test|abandoned|CRASH-PREV. ===|Previous crash|efi_main entered" "$STRIPPED_LOG" 2>/dev/null \
+            | sed 's/^/    /' | head -12
+        exit 1
+    fi
+    echo -e "  ${GREEN}✓${NC} the dump was abandoned, and the next boot replayed the log"
+    echo ""
+    echo -e "${GREEN}  ABANDONED-DUMP LEG PASSED${NC}"
     echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
     exit 0
 fi

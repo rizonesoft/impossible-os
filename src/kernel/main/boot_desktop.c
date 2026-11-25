@@ -449,6 +449,20 @@ void boot_phase3(void)
         panic_screen((struct interrupt_frame *)0, 0xDEAD,
                      PANIC_FAULTING_STR_PTR, PANIC_FAULTING_STR_PTR, __LINE__);
     }
+    else if (g_boot_info.config.crash_test == 7) {
+        /* A crash whose disk dump never returns. What it logged has to reach
+         * the next boot all the same. Driven by SMOKE_CRASH_TEST=abandon. */
+        extern void panic_screen(struct interrupt_frame *frame,
+                                 uint64_t error_code,
+                                 const char *description,
+                                 const char *file, uint32_t line);
+        klog(LOG_WARN, "boot",
+             "crash_test=7 -- triggering deliberate BSOD whose disk dump is abandoned");
+        panic_fixture_abandon_dump();
+        panic_screen((struct interrupt_frame *)0, 0xDEAD,
+                     "CRASH_TEST: Deliberate panic without a disk",
+                     __FILE__, __LINE__);
+    }
     else if (g_boot_info.config.crash_test >= 4 &&
              g_boot_info.config.crash_test <= 6) {
         /* Two CPUs panic at once: an NMI makes one online AP raise
@@ -516,12 +530,12 @@ void boot_phase3(void)
              g_boot_info.config.crash_test != 2) {
         /* Say so rather than booting normally. Before the exact-match
          * narrowing above, ANY nonzero value fired this site, so an
-         * operator typo was self-evident; now 7-255 are handled by
+         * operator typo was self-evident; now 8-255 are handled by
          * nobody and the knob would just look broken. */
         klog(LOG_WARN, "boot",
              "crash_test=%u is not a known crash site (0=off, 1=here, "
              "2=pre-first-composite, 3=here with unreadable strings, "
-             "4-6=here racing a second CPU) -- "
+             "4-6=here racing a second CPU, 7=here with the dump abandoned) -- "
              "no crash will be triggered",
              (uint64_t)g_boot_info.config.crash_test);
     }

@@ -325,27 +325,30 @@ for name in rtc fb; do
     fi
 done
 
-# Bad-strings crash fixture, one boot on the default engine: crash_test=3 panics
-# with a description and file pointer that fault when read, and the leg passes
-# only when the stop screen renders both placeholders and the crash dump lands.
-# It is also the only boot that reaches the stop screen at all: every other leg
-# is healthy, which is how a panic that hung under the boot splash shipped.
-log="$LOG_DIR/crash-bad-strings.log"
-cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crash.XXXXXX")"
-t0=$(date +%s)
-SMOKE_CRASH_TEST=bad-strings bash scripts/test-smoke.sh > "$cap" 2>&1
-rc=$?
-CAPTURES="$CAPTURES $cap:$log"
-dur=$(( $(date +%s) - t0 ))
-if [ "$rc" = "0" ]; then
-    PASS=$((PASS + 1))
-    printf "  ${GREEN}PASS${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "strings" "$dur" "$log"
-else
-    FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS crash:strings"
-    printf "  ${RED}FAIL${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "strings" "$dur" "$log"
-    reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
-    [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
-fi
+# One-CPU crash fixtures, one boot each on the default engine. bad-strings: crash_test=3
+# panics with a description and file pointer that fault when read, and the leg passes
+# only when the stop screen renders both placeholders and the crash dump lands. It is
+# the one-CPU boot that reaches the stop screen: a panic that hung under the boot splash
+# shipped while every leg was a healthy boot. abandon: crash_test=7 ends the panic inside
+# the disk dump, and the next boot must replay the log.
+for mode in bad-strings abandon; do
+    log="$LOG_DIR/crash-$mode.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crash.XXXXXX")"
+    t0=$(date +%s)
+    SMOKE_CRASH_TEST="$mode" bash scripts/test-smoke.sh > "$cap" 2>&1
+    rc=$?
+    CAPTURES="$CAPTURES $cap:$log"
+    dur=$(( $(date +%s) - t0 ))
+    if [ "$rc" = "0" ]; then
+        PASS=$((PASS + 1))
+        printf "  ${GREEN}PASS${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "${mode#bad-}" "$dur" "$log"
+    else
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS crash:${mode#bad-}"
+        printf "  ${RED}FAIL${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "${mode#bad-}" "$dur" "$log"
+        reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
+        [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+done
 
 # Double-panic fixtures, one 2-CPU boot each on the default engine: two CPUs
 # panic in one boot in a forced ordering, the guest is warm-reset, and the leg

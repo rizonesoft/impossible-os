@@ -39,8 +39,8 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
 
 /* `count` contiguous frames of memory the map calls conventional, below PMM_PHYS_ADDR_CAP,
  * or 0 when no conventional run has them free. Firmware did not need this memory in this
- * boot, so it is where a record for the next boot lasts: boot-services memory is free here
- * too, and the next firmware writes it before anything of ours runs. The longest run is
+ * boot, so it is where a record for the next boot is likeliest to last (RAM promises no
+ * more): boot-services memory is free here too, and the next firmware writes it again. The longest run is
  * tried first, a quarter of the way in, clear of both ends, where firmware allocates. */
 uintptr_t pmm_alloc_firmware_free(const struct boot_mmap_entry *map, uint32_t entries, uint64_t count);
 

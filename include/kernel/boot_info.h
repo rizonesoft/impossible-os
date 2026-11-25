@@ -1443,7 +1443,8 @@ struct boot_config {
                                 * 3 = as 1, with unreadable panic strings,
                                 * 4-6 = as 1 racing an NMI'd AP's panic
                                 *     (4 race, 5 AP wins, 6 AP owns the
-                                *     record first, BSP wins) */
+                                *     record first, BSP wins),
+                                * 7 = as 1, with the disk dump abandoned */
     /* Object Manager tracing (S15) */
     uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
     /* Config version (S7) -- future boot.conf changes can key on this */

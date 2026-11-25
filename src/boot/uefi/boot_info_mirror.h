@@ -102,7 +102,8 @@ struct boot_config {
                                 * 3 = as 1, with unreadable panic strings,
                                 * 4-6 = as 1 racing an NMI'd AP's panic
                                 *     (4 race, 5 AP wins, 6 AP owns the
-                                *     record first, BSP wins) */
+                                *     record first, BSP wins),
+                                * 7 = as 1, with the disk dump abandoned */
     UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
     UINT8   config_version;    /* 0 = legacy, 1+ = versioned (S7) */
     UINT8   error_screen_test; /* 1 = call boot_fatal() before kernel load (S14) */

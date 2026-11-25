@@ -493,6 +493,7 @@ static int panic_try_claim_owner(void)
  * reader is another CPU's boot path, the writers are panic paths. */
 static volatile uint32_t s_fixture_hold_apic = PANIC_FIXTURE_NO_HOLD;
 static volatile uint32_t s_fixture_held = 0;
+static volatile uint32_t s_fixture_abandon_dump = 0;
 /* How long the held CPU waits for another to claim before claiming itself:
  * 2^28 `pause`s, seconds on current parts, so a fixture whose second CPU never
  * panics still ends in a stop screen rather than a hang. */
@@ -603,6 +604,11 @@ void panic_fixture_hold_claim(uint32_t apic_id)
 {
     __atomic_store_n(&s_fixture_held, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&s_fixture_hold_apic, apic_id, __ATOMIC_RELEASE);
+}
+
+void panic_fixture_abandon_dump(void)
+{
+    __atomic_store_n(&s_fixture_abandon_dump, 1u, __ATOMIC_RELEASE);
 }
 
 static void panic_fixture_hold_point(uint32_t ev_cpu)
@@ -1442,6 +1448,9 @@ static int write_crash_dump(struct interrupt_frame *frame, uint32_t ctx,
         }
         cd_put(buf, sizeof buf, &pos, "\n");
     }
+
+    if (__atomic_load_n(&s_fixture_abandon_dump, __ATOMIC_ACQUIRE))
+        panic_abandon_storage("crash_test=7");
 
     /* Ensure the directory exists and write the crash dump */
     {
@@ -3640,6 +3649,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     s_panic_terminal.ctx   = snap_ctx;
     s_panic_terminal.valid = 1;
 
+    /* === Persist klog ring buffer to reserved physical memory === */
+    /* Before the dump: a disk that cannot be stopped ends the panic inside it
+     * (panic_abandon_storage), and this log is then all the next boot has. */
+    klog_crash_persist();
+
     /* === Write crash dump to disk === */
     /* The SAME capture the BSOD rendered above, not a second walk: sharing it
      * halves the guarded reads on the terminal path and guarantees the screen
@@ -3647,9 +3661,6 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     int dump_written = write_crash_dump(frame, snap_ctx, desc_snap,
                                         have_file ? file_snap : (const char *)0,
                                         line, frames, nframes);
-
-    /* === Persist klog ring buffer to reserved physical memory === */
-    klog_crash_persist();
 
     {
         fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
