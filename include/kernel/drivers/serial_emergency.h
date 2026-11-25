@@ -119,6 +119,11 @@ void serial_emergency_release(serial_lock_t *lock, int acquired);
 int  serial_emergency_acquire_wait(serial_lock_t *lock, uint32_t owner,
                                    uint32_t spins, volatile uint32_t *gave_up);
 
+/* Hold the wire for one panic report, or one line rerouted from the ordinary writers:
+ * bounded as above. `raw_id` is the caller's panic-safe APIC id. */
+int  serial_report_begin(uint32_t raw_id);
+void serial_report_end(int locked);
+
 /* Hand the driver's own UART lock back if THIS CPU is the recorded holder.
  *
  * For a CPU that is about to park forever and therefore can never release it

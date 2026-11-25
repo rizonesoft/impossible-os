@@ -586,6 +586,14 @@ void klog_crash_persist(void);
  * heap exists, the run can never be placed under the heap or its guard. */
 void klog_crash_claim_previous(void);
 
+/* Read the pointer with `get`, again when the variable store answers with a device
+ * error, up to KLOG_CRASH_READ_TRIES times; the last status is returned. */
+#define KLOG_CRASH_READ_TRIES 4
+struct boot_uefi_guid;
+typedef uint64_t (*klog_get_variable_fn)(const struct boot_uefi_guid *guid, const uint16_t *name,
+                                         uint32_t *attributes, uint64_t *data_size, void *data);
+uint64_t klog_crash_read_pointer(klog_get_variable_fn get, uint64_t *prev, uint64_t *size);
+
 /* Why `phys` cannot be claimed as the previous crash region, or NULL when it
  * can: page-aligned, the whole KLOG_CRASH_PAGES run inside the boot identity
  * map at or above USER_ELF_END with no overflow, and every frame free in the

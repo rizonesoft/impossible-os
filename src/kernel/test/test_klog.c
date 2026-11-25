@@ -11,6 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/klog.h"
+#include "kernel/uefi_runtime.h"
 #include "kernel/boot_init.h"
 #include "kernel/etw.h"
 #include "kernel/nt/ssdt.h"
@@ -842,6 +843,41 @@ static int crash_refusal_is(uint64_t phys, const char *want)
     return got && strcmp(got, want) == 0;
 }
 
+/* A variable store that fails its first `s_vs_fail` reads, and shortens the size then. */
+static int s_vs_fail;
+static int s_vs_reads;
+static uint64_t test_failing_get_variable(const struct boot_uefi_guid *guid, const uint16_t *name,
+                                          uint32_t *attributes, uint64_t *data_size, void *data)
+{
+    (void)guid; (void)name; (void)attributes;
+    s_vs_reads++;
+    if (s_vs_reads <= s_vs_fail) {
+        *data_size = 0;
+        return UEFI_DEVICE_ERROR;
+    }
+    if (*data_size != sizeof(uint64_t))
+        return UEFI_NOT_FOUND;
+    *(uint64_t *)data = 0x2500000;
+    return 0;
+}
+
+static void test_klog_crash_read_pointer(void)
+{
+    uint64_t prev, size;
+
+    s_vs_fail = 1; s_vs_reads = 0;
+    TEST_ASSERT_EQ(klog_crash_read_pointer(test_failing_get_variable, &prev, &size), 0ULL,
+                   "a device error is asked again");
+    TEST_ASSERT_EQ(prev, 0x2500000ULL, "and the pointer is read");
+    TEST_ASSERT_EQ(size, sizeof(prev), "with its size");
+    TEST_ASSERT_EQ(s_vs_reads, 2, "in two reads");
+    s_vs_fail = 100; s_vs_reads = 0;
+    TEST_ASSERT_EQ(klog_crash_read_pointer(test_failing_get_variable, &prev, &size),
+                   UEFI_DEVICE_ERROR, "a store that always fails is reported");
+    TEST_ASSERT_EQ(s_vs_reads, KLOG_CRASH_READ_TRIES, "after the last try");
+    TEST_ASSERT_EQ(prev, 0ULL, "with no pointer");
+}
+
 static void test_klog_crash_prev_refusal(void)
 {
     const uint64_t run = (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
@@ -1545,6 +1581,7 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash pointer read again", test_klog_crash_read_pointer, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash previous-region refusal", test_klog_crash_prev_refusal, TEST_CAT_BOOT);
 
     /* Crash persistence: deeper checks */

@@ -94,19 +94,28 @@ boot_span_holds(struct boot_span span, unsigned long long at)
     return at >= span.base && at - span.base < span.bytes;
 }
 
-/* The run that begins with rooms[first]: firmware may list one free run as several
- * ranges, in any order. */
-static inline struct boot_span
-boot_span_run(const struct boot_span *rooms, unsigned n, unsigned first)
+/* Order free ranges by where they begin: firmware lists them in any order. */
+static inline void
+boot_span_sort(struct boot_span *rooms, unsigned n)
 {
-    struct boot_span run = rooms[first];
-    int grew;
+    for (unsigned i = 1; i < n; i++) {
+        struct boot_span room = rooms[i];
+        unsigned j = i;
+        for (; j > 0 && rooms[j - 1].base > room.base; j--)
+            rooms[j] = rooms[j - 1];
+        rooms[j] = room;
+    }
+}
 
-    do {
-        grew = 0;
-        for (unsigned i = 0; i < n; i++)
-            grew |= boot_span_join(&run, rooms[i]);
-    } while (grew);
+/* The whole run that begins with rooms[*next], which firmware may list as several
+ * ranges; *next is then the first room after it. `rooms` is in order. */
+static inline struct boot_span
+boot_span_run(const struct boot_span *rooms, unsigned n, unsigned *next)
+{
+    struct boot_span run = rooms[(*next)++];
+
+    for (; *next < n && rooms[*next].base <= boot_span_end(run.base, run.bytes); (*next)++)
+        (void)boot_span_join(&run, rooms[*next]);
     return run;
 }
 

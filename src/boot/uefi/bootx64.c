@@ -1215,10 +1215,16 @@ static void boot_fatal_statics_reset(void)
 #define MANIFEST_PCR_BOUND_COOKIE  0x4D50435242303131ull   /* "MPCRB011" */
 static volatile UINT64 g_manifest_pcr_bound_cookie;
 
+/* How many pieces of s_taken are held, and how many of them are the crash log. */
+static unsigned s_ntaken;
+static unsigned s_nlog;
+
 static void boot_early_reset_all(void)
 {
     early_diag_reset();
     boot_fatal_statics_reset();
+    s_ntaken = 0;
+    s_nlog = 0;
     g_manifest_pcr_bound_cookie = 0;
 }
 
@@ -10146,7 +10152,7 @@ static int clip_to_free(UINTN map_size, UINTN desc_size, struct boot_span *room,
     return 0;
 }
 
-/* The free descriptors of the last map read. */
+/* The free descriptors of the last map read, in order. */
 #define MMAP_DESCRIPTORS (PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE / sizeof(EFI_MEMORY_DESCRIPTOR))
 static struct boot_span s_rooms[MMAP_DESCRIPTORS];
 static unsigned s_nrooms;
@@ -10155,7 +10161,6 @@ static unsigned s_nrooms;
  * boot's crash log, then the kernel file's buffer. A claim takes one piece of each
  * room it crosses, so the record holds any claim. */
 static struct { EFI_PHYSICAL_ADDRESS at; UINTN pages; } s_taken[MMAP_DESCRIPTORS + BOOT_CRASH_LOG_PAGES];
-static unsigned s_ntaken;
 
 static int take_pages(void *ctx, unsigned long long base, unsigned long long pages)
 {
@@ -10193,19 +10198,34 @@ static EFI_STATUS give_back(unsigned keep)
     return worst;
 }
 
-/* Read the memory map, and s_rooms from it. */
-static EFI_STATUS read_rooms(UINTN *map_size, UINTN *desc_size)
+/* Give the crash log's pages back, for an allocation that cannot be made without them;
+ * 0 when there are none. The variable may name any free memory, so it must never be
+ * what keeps a machine from booting. */
+static int release_crash_log(void)
 {
-    EFI_STATUS status = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
-                                              map_size, desc_size);
+    if (s_nlog == 0 || s_ntaken != s_nlog)
+        return 0;
+    serial_early_print("[WARN] Previous crash log: given back, an allocation needs its memory\n");
+    (void)give_back(0);
+    s_nlog = 0;
+    return 1;
+}
 
-    s_nrooms = 0;
-    for (UINTN off = 0; !EFI_ERROR(status) && off + *desc_size <= *map_size; off += *desc_size) {
-        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
-        if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
-            continue;
-        s_rooms[s_nrooms].base = d->PhysicalStart;
-        s_rooms[s_nrooms++].bytes = d->NumberOfPages * EFI_PAGE_SIZE;
+/* AllocatePages for loader memory, without the crash log when there is no room beside it. */
+static EFI_STATUS loader_pages(EFI_ALLOCATE_TYPE type, UINTN pages, EFI_PHYSICAL_ADDRESS *at)
+{
+    const EFI_PHYSICAL_ADDRESS limit = *at;
+    EFI_STATUS status = gBS->AllocatePages(type, EfiLoaderData, pages, at);
+
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+    if (s_nlog != 0 && !EFI_ERROR(status)) {    /* the control: no room beside the log */
+        (void)gBS->FreePages(*at, pages);
+        status = EFI_OUT_OF_RESOURCES;
+    }
+#endif
+    if (EFI_ERROR(status) && release_crash_log()) {
+        *at = limit;
+        status = gBS->AllocatePages(type, EfiLoaderData, pages, at);
     }
     return status;
 }
@@ -10227,6 +10247,27 @@ static void bl_control_split_room(void)
 }
 #endif
 
+/* Read the memory map, and s_rooms from it. */
+static EFI_STATUS read_rooms(UINTN *map_size, UINTN *desc_size)
+{
+    EFI_STATUS status = pt_load_snapshot_mmap(s_pt_load_mmap_buf, sizeof s_pt_load_mmap_buf,
+                                              map_size, desc_size);
+
+    s_nrooms = 0;
+    for (UINTN off = 0; !EFI_ERROR(status) && off + *desc_size <= *map_size; off += *desc_size) {
+        const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
+        if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
+            continue;
+        s_rooms[s_nrooms].base = d->PhysicalStart;
+        s_rooms[s_nrooms++].bytes = d->NumberOfPages * EFI_PAGE_SIZE;
+    }
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+    bl_control_split_room();
+#endif
+    boot_span_sort(s_rooms, s_nrooms);
+    return status;
+}
+
 /* Claim `pages` clear of `keep` in one snapshot of the memory map. The status is
  * the map's own when it cannot be read; *at is 0 when nothing was claimed, and
  * *lost then says whether a span that the map calls free was refused. */
@@ -10242,13 +10283,10 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
     *lost = 0;
     if (EFI_ERROR(status))
         return status;
-#ifdef BL_TEST_HHDM_WRONG_ALIAS
-    bl_control_split_room();
-#endif
     /* Below 4 GiB first, where every storage controller can write. */
     for (int above = 0; above < 2; above++) {
-        for (unsigned i = 0; i < s_nrooms; i++) {
-            struct boot_span room = boot_span_run(s_rooms, s_nrooms, i);
+        for (unsigned i = 0; i < s_nrooms;) {
+            struct boot_span room = boot_span_run(s_rooms, s_nrooms, &i);
             struct boot_span want = { 0, (UINT64)pages * EFI_PAGE_SIZE };
             if (above && boot_span_end(room.base, room.bytes) <= 0x100000000ULL)
                 continue;
@@ -10319,28 +10357,41 @@ static void hold_crash_log(const struct boot_span *keep, unsigned nkeep)
 {
     struct boot_span log = { previous_crash_log(), BOOT_CRASH_LOG_PAGES * EFI_PAGE_SIZE };
     UINTN map_size, desc_size;
+    int fits = (log.base & (EFI_PAGE_SIZE - 1)) == 0 &&
+        boot_span_within(log, BL_KERNEL_FLOOR, (UINT64)BL_IDENTITY_GIB << 30) &&
+        boot_span_pick(log, log.bytes, keep, nkeep) != 0;
 
     s_ntaken = 0;
+    s_nlog = 0;
     if (log.base == 0)
         return;
-    if ((log.base & (EFI_PAGE_SIZE - 1)) == 0 &&
-        boot_span_within(log, BL_KERNEL_FLOOR, (UINT64)BL_IDENTITY_GIB << 30) &&
-        boot_span_pick(log, log.bytes, keep, nkeep) != 0 &&
-        !EFI_ERROR(read_rooms(&map_size, &desc_size)) &&
-        boot_span_claim_rooms(log, s_rooms, s_nrooms, take_and_record, (void *)0))
-        return;
-    (void)give_back(0);
+    /* A piece that the map calls free may have been taken since: read it again. */
+    for (int try = 0; fits && try < KERNEL_BUFFER_TRIES; try++) {
+        int got = !EFI_ERROR(read_rooms(&map_size, &desc_size)) &&
+            boot_span_claim_rooms(log, s_rooms, s_nrooms, take_and_record, (void *)0);
+#ifdef BL_TEST_HHDM_WRONG_ALIAS
+        if (try == 0)                   /* the control: the first claim is refused */
+            got = 0;
+#endif
+        if (got) {
+            s_nlog = s_ntaken;
+            serial_early_print("[BOOT] Previous crash log: held at 0x");
+            serial_early_print_hex64(log.base);
+            serial_early_print("\n");
+            return;
+        }
+        (void)give_back(0);
+    }
     serial_early_print("[WARN] Previous crash log: its address is not free memory\n");
 }
 
 /* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and the
  * `nkeep` spans already in `keep`, which has room for KERNEL_BUFFER_KEEPS more; *at is
- * 0 when no free run has the room, and the pieces after the first *log are the buffer.
- * The crash log is given back when that is what it takes to boot: its variable may hold
- * any value. AllocateAnyPages may answer with a range over the segments, and the
- * destination policy then refuses the kernel. */
+ * 0 when no free run has the room. The pieces after the first s_nlog are the buffer.
+ * AllocateAnyPages may answer with a range over the segments, and the destination
+ * policy then refuses the kernel. */
 static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsigned nkeep,
-                                      unsigned *log, EFI_PHYSICAL_ADDRESS *at)
+                                      EFI_PHYSICAL_ADDRESS *at)
 {
     keep[nkeep].base = BOOT_INFO_PHYS_ADDR;
     keep[nkeep++].bytes = sizeof(struct boot_info);
@@ -10348,8 +10399,7 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
     keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
     hold_crash_log(keep, nkeep);
-    for (;;) {
-        *log = s_ntaken;
+    do {
         for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
             int lost;
             EFI_STATUS status = claim_free_span(pages, keep, nkeep, try, at, &lost);
@@ -10360,11 +10410,8 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
             /* The firmware took part of a span after the map was read. */
             serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
         }
-        if (*log == 0)
-            return EFI_SUCCESS;
-        serial_early_print("[WARN] Kernel buffer: no room clear of the previous crash log\n");
-        (void)give_back(0);
-    }
+    } while (release_crash_log());
+    return EFI_SUCCESS;
 }
 
 /* Claim the kernel's segments, so that no later allocation lands on one that was
@@ -10417,7 +10464,6 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
      * to FreePages, so the UKI path's failure returns are no-ops here. */
     EFI_PHYSICAL_ADDRESS load_buf_addr  = 0;
     UINTN                load_buf_pages = 0;
-    unsigned             load_buf_log = 0;      /* the pieces before the buffer's are the log's */
     EFI_STATUS           load_err_status;
 
     /* UKI fast path: when the bootloader was invoked through a Unified
@@ -10789,7 +10835,7 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             root_dir->Close(root_dir);
             return status;
         }
-        status = alloc_kernel_buffer(pages, keep, nsegments, &load_buf_log, &load_buf_addr);
+        status = alloc_kernel_buffer(pages, keep, nsegments, &load_buf_addr);
         if (EFI_ERROR(status)) {
             serial_early_print("[FAIL] Kernel buffer: GetMemoryMap failed status=0x");
             serial_early_print_hex16((UINT16)((UINT64)status >> 16));
@@ -11257,7 +11303,7 @@ kernel_loaded:
     /* Nothing reads the file again, and the page tables need a low run of their
      * own: on a fragmented machine this one may be the only one left. */
     if (load_buf_pages != 0) {
-        if (EFI_ERROR(give_back(load_buf_log)))
+        if (EFI_ERROR(give_back(s_nlog)))
             serial_early_print("[WARN] Kernel buffer: not freed\n");
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
         /* The control: the span must be free to take again. */
@@ -11282,7 +11328,7 @@ load_error:
      * open (e.g. post-Read errors close before validation; UKI path
      * never opened them). */
     if (load_buf_pages != 0)
-        (void)give_back(load_buf_log);
+        (void)give_back(s_nlog);
     return load_err_status;
 }
 
@@ -12195,8 +12241,7 @@ static void retrieve_tpm_event_log(void)
      * retain exactly the log's pages in the kernel PMM. */
     UINTN log_pages = ((UINTN)log_size + EFI_PAGE_SIZE - 1u) / EFI_PAGE_SIZE;
     EFI_PHYSICAL_ADDRESS log_addr = 0;
-    status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
-                                log_pages, &log_addr);
+    status = loader_pages(AllocateAnyPages, log_pages, &log_addr);
     if (EFI_ERROR(status) || !log_addr) {
         serial_early_print("[BOOT] TPM: failed to allocate log buffer; log degraded\n");
         tpm_publish_log_degraded(tpm_ver);
@@ -12813,8 +12858,7 @@ static void collect_boot_entropy(void)
      * the boot identity map, which covers the first 4 GiB only --
      * AllocateAny on high-memory firmware can return frames above that. */
     EFI_PHYSICAL_ADDRESS seed_addr = 0xFFFFFFFFull;
-    EFI_STATUS status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
-                                           1, &seed_addr);
+    EFI_STATUS status = loader_pages(AllocateMaxAddress, 1, &seed_addr);
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] RNG: seed page AllocatePages failed -- degraded\n");
         post_code16(POST16_BL_ENTROPY_OK);
@@ -13208,7 +13252,7 @@ static void publish_headless_authz_payload(void)
      * perfectly valid signed authorization -- a headless machine that cannot
      * enroll, with the cause visible only as an out-of-map log line. */
     blob_addr = 0xFFFFFFFFull;
-    status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1, &blob_addr);
+    status = loader_pages(AllocateMaxAddress, 1, &blob_addr);
     if (EFI_ERROR(status)) {
         serial_early_print("[WARN] headless authz: AllocatePages failed\n");
         goto done_file;
@@ -13843,8 +13887,7 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
     UINT64 kimage_hi = kernel_image_end();
 
     EFI_PHYSICAL_ADDRESS arena = BL_MM_PML4_PHYS_LIMIT - 1;  /* max addr < 4 GiB */
-    EFI_STATUS st = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
-                                       (UINTN)pages, &arena);
+    EFI_STATUS st = loader_pages(AllocateMaxAddress, (UINTN)pages, &arena);
     if (EFI_ERROR(st)) {
         boot_fatal(BOOT_ERR_ALLOC_FAIL, "HHDM arena AllocatePages failed",
                    "could not reserve page-table frames for the direct map.");
@@ -14146,7 +14189,7 @@ static void bl_kstack_reserve(void)
      * hand back the identical range forever. */
     for (attempt = 0; attempt < BL_KSTACK_PLACEMENT_TRIES; attempt++) {
         addr = 0xFFFFFFFFull;
-        status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, pages, &addr);
+        status = loader_pages(AllocateMaxAddress, pages, &addr);
         if (EFI_ERROR(status))
             break;
         if (bl_kstack_placement_ok((UINT64)addr))
@@ -14520,7 +14563,7 @@ static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
      * map only covers the low 4 GiB and a 32-bit-only xHCI cannot address
      * above it, so AllocateMaxAddress keeps every inherited DMA page reachable
      * by both the controller and the pre-EBS identity map. */
-    status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1, &addr);
+    status = loader_pages(AllocateMaxAddress, 1, &addr);
     if (EFI_ERROR(status) || addr == 0) {
         ctrl->alloc_fail_status = (UINT32)(status & 0xFFFFFFFF);
         ctrl->alloc_fail_page   = ctrl->dma_page_count;
@@ -14694,8 +14737,7 @@ found_xhci:
 
         /* Scratchpad array: sp_count × 8 bytes (fits in 1 page for up to 512 entries) */
         sp_array_addr = 0xFFFFFFFF;  /* ceiling: keep DMA below 4 GiB */
-        sp_status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
-                                       (sp_count * 8 + 4095) / 4096, &sp_array_addr);
+        sp_status = loader_pages(AllocateMaxAddress, (sp_count * 8 + 4095) / 4096, &sp_array_addr);
         if (EFI_ERROR(sp_status) || sp_array_addr == 0) {
             serial_early_print("[BOOT] xHCI DMA: scratchpad array alloc failed\n");
             ctrl->alloc_fail_status = (UINT32)(sp_status & 0xFFFFFFFF);
@@ -14709,8 +14751,7 @@ found_xhci:
 
         /* Scratchpad buffer pages: allocate all contiguously */
         sp_base_addr = 0xFFFFFFFF;  /* ceiling: keep DMA below 4 GiB */
-        sp_status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
-                                       sp_count, &sp_base_addr);
+        sp_status = loader_pages(AllocateMaxAddress, sp_count, &sp_base_addr);
         if (EFI_ERROR(sp_status) || sp_base_addr == 0) {
             serial_early_print("[BOOT] xHCI DMA: scratchpad pages alloc failed (");
             serial_early_print_uint(sp_count);
@@ -15268,9 +15309,7 @@ static EFI_STATUS uki_copy_payload(const char *name,
      * a payload this loader had copied successfully -- losing a signed
      * payload silently instead of failing here, visibly. */
     EFI_PHYSICAL_ADDRESS phys = UKI_PAYLOAD_MAX_ADDRESS;
-    EFI_STATUS status = gBS->AllocatePages(AllocateMaxAddress,
-                                           EfiLoaderData,
-                                           pages, &phys);
+    EFI_STATUS status = loader_pages(AllocateMaxAddress, pages, &phys);
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] UKI ");
         serial_early_print(name);

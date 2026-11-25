@@ -680,11 +680,53 @@ void serial_lock_release_if_owner(void)
                                            serial_emerg_self_cpu());
 }
 
+/* One panic report on the wire at a time (see panic.c). */
+static serial_lock_t s_report_lock = SERIAL_LOCK_INIT;
+static volatile uint32_t s_report_gave_up = SERIAL_LOCK_FREE;
+/* A report is at most a few hundred bytes of reason plus registers, ~1 KiB of
+ * UART time (~90 ms at 115200); 2^24 `pause`s comfortably covers it. */
+#define SERIAL_REPORT_WAIT_SPINS (1u << 24)
+
+int serial_report_begin(uint32_t raw_id)
+{
+    return serial_emergency_acquire_wait(&s_report_lock, SERIAL_LOCK_OWNER_OF(raw_id),
+                                         SERIAL_REPORT_WAIT_SPINS, &s_report_gave_up);
+}
+
+void serial_report_end(int locked)
+{
+    serial_emergency_release(&s_report_lock, locked);
+}
+
 /* Forward declarations: the ordinary entry points below re-route into the
  * emergency path, which is defined further down beside the rest of it. */
 static void serial_emergency_emit(const char *buf, uint32_t len,
                                   int terminal, uint32_t *recov);
 static void serial_emergency_write_str(const char *str, int terminal, uint32_t ctx);
+
+/* Output rerouted from the ordinary writers waits out a report that another CPU is
+ * printing: the panic owner gives the report lock up before its last log lines. */
+static void serial_rerouted_write(const char *str)
+{
+    int report = serial_report_begin(serial_emerg_self_cpu());
+
+    /* PANIC_CTX_UNKNOWN: the indirect emitters funnelled through here (klog's serial
+     * sink, subsystem dumps) cannot say which vector is being handled above them, so
+     * they keep the plain load they have always used rather than being handed the NMI
+     * hazard by default. */
+    serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
+    serial_report_end(report);
+}
+
+static void serial_rerouted_putchar(char c)
+{
+    uint32_t recov = 0;
+    int report = serial_report_begin(serial_emerg_self_cpu());
+
+    serial_emergency_emit(&c, 1u, 1 /*terminal*/, &recov);
+    serial_report_end(report);
+}
+
 static int  serial_emerg_reroute_should_drop(void);
 
 /* Raw unlocked UART write -- caller must hold g_serial_lock. Returns 0 if it
@@ -928,7 +970,6 @@ void serial_putchar(char c)
         /* REROUTED, not direct: drop on contention rather than writing
          * unlocked, so a CPU still running user code cannot interleave stdout
          * bytes into the panic record. See serial.h. */
-        uint32_t recov = 0;
         /* Positively-identified non-owner: discard BEFORE touching the lock or
          * the budget. Dropping only on contention was not enough -- with the
          * lock free, a CPU still running user code would acquire it, emit
@@ -936,7 +977,7 @@ void serial_putchar(char c)
          * reservations the panic owner then would not have. */
         if (serial_emerg_reroute_should_drop())
             return;
-        serial_emergency_emit(&c, 1u, 1 /*terminal*/, &recov);
+        serial_rerouted_putchar(c);
         return;
     }
 
@@ -959,10 +1000,9 @@ void serial_putchar(char c)
          * during the INIT window still reads the latch as not-armed, retakes
          * this same lock, abandons again, and recurses without bound on a panic
          * stack. */
-        uint32_t recov = 0;
         serial_lock_release(flags);
         if (!serial_emerg_reroute_should_drop())
-            serial_emergency_emit(&c, 1u, 1 /*terminal*/, &recov);
+            serial_rerouted_putchar(c);
         return;
     }
     serial_lock_release(flags);
@@ -978,13 +1018,7 @@ void serial_write(const char *str)
          * before any lock acquisition or budget reservation. */
         if (serial_emerg_reroute_should_drop())
             return;
-        /* PANIC_CTX_UNKNOWN: this is the REROUTED ordinary path, reached from
-         * serial_write / serial_putchar once the latch is armed. The indirect
-         * emitters funnelled through here (klog's serial sink, subsystem dumps)
-         * cannot say which vector is being handled above them, so they keep the
-         * plain load they have always used rather than being handed the NMI
-         * hazard by default. */
-        serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
+        serial_rerouted_write(str);
         return;
     }
 
@@ -1014,15 +1048,8 @@ void serial_write(const char *str)
          * emergency route DIRECTLY -- re-calling serial_write would re-enter the
          * blocking path during the INIT window and recurse without bound. */
         serial_lock_release(flags);
-        /* PANIC_CTX_UNKNOWN: this is the REROUTED ordinary path, reached from
-         * serial_write / serial_putchar once the latch is armed. The indirect
-         * emitters funnelled through here (klog's serial sink, subsystem dumps)
-         * cannot say which vector is being handled above them, so they keep the
-         * plain load they have always used rather than being handed the NMI
-         * hazard by default. */
-        if (!serial_emerg_reroute_should_drop()) {
-            serial_emergency_write_str(str, 1 /*terminal*/, PANIC_CTX_UNKNOWN);
-        }
+        if (!serial_emerg_reroute_should_drop())
+            serial_rerouted_write(str);
         return;
     }
     serial_lock_release(flags);

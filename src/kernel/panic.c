@@ -960,24 +960,16 @@ static void panic_emit(const char *s)
  * must still print), waits a bounded time for another CPU, and stops waiting
  * on a holder that outlasted one full wait, so a CPU wedged mid-report costs
  * the next one a single wait and never its output. Keyed by the panic-safe
- * APIC id, not gs:-derived state. */
-static serial_lock_t s_panic_report_lock = SERIAL_LOCK_INIT;
-static volatile uint32_t s_panic_report_gave_up = SERIAL_LOCK_FREE;
-/* A report is at most a few hundred bytes of reason plus registers, ~1 KiB of
- * UART time (~90 ms at 115200); 2^24 `pause`s comfortably covers it. */
-#define PANIC_REPORT_WAIT_SPINS  (1u << 24)
-
+ * APIC id, not gs:-derived state. The lock is serial.c's, because output that
+ * the ordinary writers reroute during a panic waits for it too. */
 static int panic_report_begin(uint32_t ev_cpu)
 {
-    return serial_emergency_acquire_wait(&s_panic_report_lock,
-                                         SERIAL_LOCK_OWNER_OF(ev_cpu),
-                                         PANIC_REPORT_WAIT_SPINS,
-                                         &s_panic_report_gave_up);
+    return serial_report_begin(ev_cpu);
 }
 
 static void panic_report_end(int locked)
 {
-    serial_emergency_release(&s_panic_report_lock, locked);
+    serial_report_end(locked);
 }
 
 
@@ -3261,7 +3253,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
          * this branch depends on) is the right writer.
          *
          * ONE REPORT AT A TIME across CPUs: the whole block below is held
-         * under s_panic_report_lock, so a second CPU panicking at the same
+         * under the report lock, so a second CPU panicking at the same
          * moment prints its report after this one instead of between its
          * fragments (see panic_report_begin). */
         int report_locked = panic_report_begin(ev_cpu);

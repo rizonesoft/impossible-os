@@ -1090,13 +1090,24 @@ const char *klog_crash_prev_refusal(uint64_t phys)
     return (const char *)0;
 }
 
+uint64_t klog_crash_read_pointer(klog_get_variable_fn get, uint64_t *prev, uint64_t *size)
+{
+    uint64_t status = UEFI_DEVICE_ERROR;
+
+    for (int tries = 0; tries < KLOG_CRASH_READ_TRIES && status == UEFI_DEVICE_ERROR; tries++) {
+        uint32_t attrs = 0;
+        *prev = 0;
+        *size = sizeof(*prev);
+        status = get(&s_crash_guid, s_crash_varname, &attrs, size, prev);
+    }
+    return status;
+}
+
 void klog_crash_claim_previous(void)
 {
-    uint64_t prev = 0;
-    uint64_t sz = sizeof(prev);
-    uint32_t attrs = 0;
-    uint64_t status = uefi_get_variable(&s_crash_guid, s_crash_varname,
-                                        &attrs, &sz, &prev);
+    uint64_t prev;
+    uint64_t sz;
+    uint64_t status = klog_crash_read_pointer(uefi_get_variable, &prev, &sz);
 
     if (status != 0) {
         if (status != UEFI_NOT_FOUND)

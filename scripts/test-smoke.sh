@@ -454,6 +454,11 @@ hhdm_wrong_check_log() {
        ! grep -qF -- 'Previous crash log: read again' "$1"; then
         HW_FAIL_MSG="a crash-log variable that failed one read was not reported and read again"; return 1
     fi
+    # It refuses the first claim of the planted log, then every allocation beside it.
+    if ! grep -qF -- 'Previous crash log: held at 0x' "$1" ||
+       ! grep -qF -- 'Previous crash log: given back, an allocation needs its memory' "$1"; then
+        HW_FAIL_MSG="a crash log whose claim was refused once was not held, or was not given back when no memory was left beside it"; return 1
+    fi
 }
 
 uki_check_override_log() {
@@ -825,6 +830,15 @@ crash_nvram_clear() {
     [ -n "$at" ] && [ -n "$to" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 )) \
         && (( $1 + 131072 <= from || $1 >= to ))
 }
+# Plant the crash-log pointer $1 in the boot's variable store.
+plant_crash_nvram() {
+    local le
+    le="$(python3 -c 'import struct, sys; print(struct.pack("<Q", int(sys.argv[1], 0)).hex())' "$1")"
+    if ! python3 "$REPO_ROOT/tools/uefi-varstore/plant.py" "$OVMF_VARS_CP" ImpossibleCrashLog \
+            494d504f-5354-4f53-504f-535447554944 "$le"; then
+        echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
+    fi
+}
 if [ -n "$CRASH_NVRAM" ]; then
     case "$CRASH_NVRAM_EXPECT" in claimed|skipped|crowded) ;; *)
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed, skipped or crowded${NC}"; exit 1 ;;
@@ -832,11 +846,7 @@ if [ -n "$CRASH_NVRAM" ]; then
     if ! CRASH_NVRAM_HEX="$(python3 -c 'import sys; print("0x%016x" % int(sys.argv[1], 0))' "$CRASH_NVRAM" 2>/dev/null)"; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM=$CRASH_NVRAM is not an address${NC}"; exit 1
     fi
-    CRASH_NVRAM_LE="$(python3 -c 'import struct, sys; print(struct.pack("<Q", int(sys.argv[1], 0)).hex())' "$CRASH_NVRAM")"
-    if ! python3 "$REPO_ROOT/tools/uefi-varstore/plant.py" "$OVMF_VARS_CP" ImpossibleCrashLog \
-            494d504f-5354-4f53-504f-535447554944 "$CRASH_NVRAM_LE"; then
-        echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
-    fi
+    plant_crash_nvram "$CRASH_NVRAM"
     echo -e "  ${DIM}planted ImpossibleCrashLog = $CRASH_NVRAM_HEX (expect: $CRASH_NVRAM_EXPECT)${NC}"
 fi
 
@@ -986,7 +996,9 @@ esac
 # SMOKE_HHDM_WRONG=1 boots a loader built with BL_TEST_HHDM_WRONG_ALIAS, whose
 # direct map is wrong at the frame the loader checks: it must halt on that check
 # and never enter the kernel. The shipped loader holds none of that code.
+# Its crash-log pointer is there to be held and given back.
 HHDM_WRONG="${SMOKE_HHDM_WRONG:-0}"
+[ "$HHDM_WRONG" != 1 ] || plant_crash_nvram 0x2500000
 if [ -n "$CT_MODE" ] && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
     echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST=$CRASH_TEST needs SMOKE_SMP >= 2 (got: ${SMOKE_SMP})${NC}"; exit 1
 fi
@@ -1767,7 +1779,7 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
-    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Kernel buffer: no room clear of the previous crash log' "$STRIPPED_LOG"; then
+    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Previous crash log: given back, an allocation needs its memory' "$STRIPPED_LOG"; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer found room clear of the pointer, so this leg tests nothing"
     elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_clear "$CRASH_NVRAM_HEX" "$STRIPPED_LOG"; then

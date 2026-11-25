@@ -372,9 +372,12 @@ static void test_kernel_claim_rooms(void)
         uint64_t from = i == 0 ? 0 : i * 256 + 1, to = i == 15 ? 4096 : (i + 1) * 256 + 1;
         rooms[15 - i] = (struct boot_span){ file.base + from * 4096, (to - from) * 4096 };
     }
-    struct boot_span run = boot_span_run(rooms, 16, 15);
+    boot_span_sort(rooms, 16);
+    unsigned next = 0;
+    struct boot_span run = boot_span_run(rooms, 16, &next);
     TEST_ASSERT_EQ(run.base, file.base, "the run begins with the lowest room");
     TEST_ASSERT_EQ(run.bytes, file.bytes, "and takes in all sixteen, in any order");
+    TEST_ASSERT_EQ(next, 16u, "in one pass");
     TEST_ASSERT_EQ(boot_span_claim_rooms(file, rooms, 16, room_take, &fw), 1, "the whole run");
     TEST_ASSERT_EQ(fw.pages, 4096ULL, "each page once");
     TEST_ASSERT_EQ(fw.asked, 16u, "one request a room");
@@ -385,12 +388,13 @@ static void test_kernel_claim_rooms(void)
     TEST_ASSERT_EQ(fw.pages, 32ULL, "all of it");
     fw = (struct room_firmware){ rooms, 16, 2, 0, 0, log.base };
     TEST_ASSERT_EQ(boot_span_claim_rooms(log, rooms, 16, room_take, &fw), 0, "the second one refused");
-    fw = (struct room_firmware){ rooms, 1, 0, 0, 0, log.base };
-    TEST_ASSERT_EQ(boot_span_claim_rooms(log, rooms, 1, room_take, &fw), 0, "in no room");
+    fw = (struct room_firmware){ &rooms[15], 1, 0, 0, 0, log.base };
+    TEST_ASSERT_EQ(boot_span_claim_rooms(log, &rooms[15], 1, room_take, &fw), 0, "in no room");
     TEST_ASSERT_EQ(fw.asked, 0u, "asks for nothing");
     const struct boot_span twice[2] = { { 0x100000, 0x1000 }, { 0x100000, 0x3000 } };
     const struct boot_span three = { 0x100000, 0x3000 };
-    run = boot_span_run(twice, 2, 0);
+    next = 0;
+    run = boot_span_run(twice, 2, &next);
     TEST_ASSERT_EQ(run.bytes, three.bytes, "rooms that begin together are the longest one");
     fw = (struct room_firmware){ twice, 2, 0, 0, 0, three.base };
     TEST_ASSERT_EQ(boot_span_claim_rooms(three, twice, 2, room_take, &fw), 1, "rooms that begin together");
@@ -398,15 +402,26 @@ static void test_kernel_claim_rooms(void)
 
     /* Two that overlap, found and claimed in both orders. */
     for (unsigned order = 0; order < 2; order++) {
-        const struct boot_span over[2] = { { order ? 0xA000 : 0x2000, 0xA000 }, { order ? 0x2000 : 0xA000, 0xA000 } };
+        struct boot_span over[2] = { { order ? 0xA000 : 0x2000, 0xA000 }, { order ? 0x2000 : 0xA000, 0xA000 } };
         struct boot_span want = { 0, 0x11000 };
-        run = boot_span_run(over, 2, order);
+        boot_span_sort(over, 2);
+        next = 0;
+        run = boot_span_run(over, 2, &next);
         want.base = boot_span_pick(run, want.bytes, (void *)0, 0);
         TEST_ASSERT_EQ(want.base, 0x3000ULL, "a span that neither holds");
         fw = (struct room_firmware){ over, 2, 0, 0, 0, want.base };
         TEST_ASSERT_EQ(boot_span_claim_rooms(want, over, 2, room_take, &fw), 1, "is claimed");
         TEST_ASSERT_EQ(fw.pages, 17ULL, "each page once");
     }
+
+    struct boot_span gap[3] = { { 0x9000, 0x1000 }, { 0x1000, 0x1000 }, { 0x2000, 0x1000 } };
+    boot_span_sort(gap, 3);
+    next = 0;
+    run = boot_span_run(gap, 3, &next);
+    TEST_ASSERT_EQ(run.bytes, 0x2000ULL, "a gap ends a run");
+    run = boot_span_run(gap, 3, &next);
+    TEST_ASSERT_EQ(run.base, 0x9000ULL, "and the next begins after it");
+    TEST_ASSERT_EQ(next, 3u, "the last");
 }
 
 static void test_kernel_entry_span(void)
