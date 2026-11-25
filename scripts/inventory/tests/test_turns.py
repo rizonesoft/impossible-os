@@ -333,11 +333,37 @@ class Turns(unittest.TestCase):
 
     def test_a_place_lost_with_bosun_is_taken_again(self):
         common = winpath(self.scripts(60)) + "\\ref-common.ps1"
+        p, line = self.first_line([POWERSHELL, *BYPASS, "-Command",
+                                   f". '{common}'; Enter-RefTurn; $p = $script:RefTurn.Process; Stop-Process -Id $p.Id -Force; "
+                                   "[void]$p.WaitForExit(9000); Enter-RefTurn; \"again=$env:BOSUN_SLOT\"; "
+                                   "[void][Console]::In.ReadLine(); Exit-RefTurn"])
+        self.assertEqual(line.strip(), "again=0")
+        self.assertEqual(self.slot(1), "-1")             # another job's own word that it is held
+        p.stdin.close()
+        self.finish(p)
+        self.assertEqual(self.slot(1), "0")
+
+    def test_a_bosun_that_failed_is_asked_again_at_the_next_start(self):
+        common = winpath(self.scripts(60)) + "\\ref-common.ps1"
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f"$was = $env:PATH; $env:PATH = {self.fake_path()}; . '{common}'; Enter-RefTurn 2; "
+                               "\"first=$env:BOSUN_SLOT\"; $env:PATH = $was; Enter-RefTurn; \"then=$env:BOSUN_SLOT\"; Exit-RefTurn"])
+        self.assertIn("Bosun gave no place", out)
+        self.assertIn("first=\n", out.replace("\r", ""))
+        self.assertIn("then=0", out)
+
+    def test_the_waits_of_one_script_share_one_budget(self):
+        dummy = self.hold()
+        common = winpath(self.scripts(4, 5)) + "\\ref-common.ps1"
         code, out = self.call([POWERSHELL, *BYPASS, "-Command",
                                f". '{common}'; Enter-RefTurn; $p = $script:RefTurn.Process; Stop-Process -Id $p.Id -Force; "
-                               "[void]$p.WaitForExit(9000); Enter-RefTurn; "
-                               "\"again=$env:BOSUN_SLOT held=$(-not $script:RefTurn.Process.HasExited)\"; Exit-RefTurn"])
-        self.assertIn("again=0 held=True", out)
+                               "[void]$p.WaitForExit(9000); Enter-RefTurn; \"spent=$([int]$script:RefTurnSpent)\"; Exit-RefTurn; "
+                               f"$script:RefTurnSpent = 0; $env:PATH = {self.fake_path()}; Enter-RefTurn 1; Enter-RefTurn 1; Enter-RefTurn 1; "
+                               "\"silent=$([int]$script:RefTurnSpent)\""])
+        self.assertIsNone(dummy.poll())
+        for what in ("spent", "silent"):
+            self.assertLessEqual(int(re.search(rf"{what}=(\d+)", out)[1]), 10, out)     # 4 and 5, and a second to end it
+        self.assertIn("the wait for a place is spent", out)
 
     def test_a_turn_for_a_vm_already_on_does_not_wait(self):
         dummy = self.hold()
@@ -384,7 +410,14 @@ class Turns(unittest.TestCase):
 
     def test_a_host_step_writes_only_in_its_out_folder(self):
         folder = self.scripts(60)
+        # A shot's name may be any name of a file; only the lock ends this run.
+        (self.tmp / "steps.json").write_text('[{"op": "shot", "name": "Lock screen"}, {"op": "burst", "name": "Caf\\u00e9", "as": "a b"}]')
         shutil.copy(INV / "ref-host.ps1", folder)
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f"$m = New-Object Threading.Mutex($false, 'Global\\ios-ref-vm-{self.ns.lower()}-vm'); [void]$m.WaitOne(0); "
+                               f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File '{winpath(folder)}\\ref-host.ps1' -Steps '{self.win}\\steps.json' "
+                               f"-Out '{self.win}\\out-n' -VmPath '{self.win}\\vm' -Name '{self.ns}-vm'; exit $LASTEXITCODE"])
+        self.assertEqual(code, 4, out)
         (self.tmp / "sdk.png").write_text("theirs")
         for step in ('{"op": "shot", "name": "..\\\\sdk"}', '{"op": "burst", "name": "..\\\\sdk", "count": 1}',
                      '{"op": "burst", "name": "b", "count": 1, "as": "..\\\\sdk"}', '{"op": "fetch", "name": "../sdk.png"}',

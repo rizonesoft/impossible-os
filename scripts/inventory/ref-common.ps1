@@ -270,12 +270,16 @@ $script:RefTurnNs = 'Bosun.VM'
 $script:RefTurnWaitSec = 360
 $script:RefTurnSlackSec = 20   # how long after the wait Bosun may take to say so
 $script:RefTurn = $null
+$script:RefTurnSpent = 0       # seconds this script has waited; all its waits share one budget
 
+# Every start asks again unless a Bosun of this script still holds its turn: one
+# that failed or ended decides nothing for the next start.
 function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
-    # Bosun ended under this run gave the place up with it.
-    if ($script:RefTurn -and $script:RefTurn.Process -and $script:RefTurn.Process.HasExited) { Exit-RefTurn }
-    if ($script:RefTurn) { return }
-    $script:RefTurn = @{ Process = $null; Env = @{} }
+    if ($script:RefTurn -and -not $script:RefTurn.Process.HasExited) { return }
+    Exit-RefTurn
+    $left = $script:RefTurnWaitSec + $script:RefTurnSlackSec - $script:RefTurnSpent
+    if ($left -lt 1) { Write-Ref 'the wait for a place is spent: going on without one'; return }
+    $limit = [Math]::Min($left, $WaitSec + $script:RefTurnSlackSec)
     $bosun = @(Get-Command bosun.exe -CommandType Application -ErrorAction SilentlyContinue)[0]
     if (-not $bosun) { Write-Ref 'Bosun is not installed: going on without a place'; return }
     $si = New-Object Diagnostics.ProcessStartInfo
@@ -286,12 +290,11 @@ function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
     $si.CreateNoWindow = $true
     $si.RedirectStandardInput = $true
     $si.RedirectStandardOutput = $true
-    $limit = $WaitSec + $script:RefTurnSlackSec
     $clock = [Diagnostics.Stopwatch]::StartNew()
     try { $p = [Diagnostics.Process]::Start($si) } catch {
         Write-Ref "Bosun did not start ($($_.Exception.Message)): going on without a place"; return
     }
-    $script:RefTurn.Process = $p
+    $script:RefTurn = @{ Process = $p; Env = @{} }
     $given = @{}
     $said = $false
     while (-not $given.ContainsKey('BOSUN_SLOT') -and $clock.Elapsed.TotalSeconds -lt $limit) {
@@ -300,17 +303,18 @@ function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
             Start-Sleep -Milliseconds 100
             if (-not $said -and $clock.Elapsed.TotalSeconds -ge 3) {
                 $said = $true
-                Write-Ref "waiting for a place in $script:RefTurnNs, up to $WaitSec s"
+                Write-Ref "waiting for a place in $script:RefTurnNs, up to $([int][Math]::Min($limit, $WaitSec)) s"
             }
         }
         if ($read.Status -ne 'RanToCompletion' -or $null -eq $read.Result) { break }
         if ($read.Result -match '^(BOSUN_SLOT|BOSUN_NS)=(.*)$') { $given[$Matches[1]] = $Matches[2] }
     }
+    $script:RefTurnSpent += $clock.Elapsed.TotalSeconds
     if (-not $given.ContainsKey('BOSUN_SLOT')) {
         # The limit is spent, so Bosun is ended at once.
         try { if (-not $p.HasExited) { $p.Kill() } } catch { Write-Ref "ending Bosun: $($_.Exception.Message)" }
         Write-Ref "Bosun gave no place after $([int]$clock.Elapsed.TotalSeconds) s: going on without one"
-        $script:RefTurn.Process = $null
+        $script:RefTurn = $null
         return
     }
     $want = @(("$env:WSLENV" -split ':') | Where-Object { $_ })
@@ -332,7 +336,6 @@ function Exit-RefTurn() {
     foreach ($n in $script:RefTurn.Env.Keys) { [Environment]::SetEnvironmentVariable($n, $script:RefTurn.Env[$n]) }
     $p = $script:RefTurn.Process
     $script:RefTurn = $null
-    if (-not $p) { return }
     try {
         $p.StandardInput.Close()
         if (-not $p.WaitForExit(5000)) { $p.Kill() }

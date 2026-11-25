@@ -67,12 +67,13 @@ if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force)
 try { $plan = @((Get-Content -LiteralPath $Steps -Raw | ConvertFrom-Json) | ForEach-Object { $_ }) } catch {
     Write-Host "ref-host: $Steps is not a JSON array of steps: $($_.Exception.Message)"; exit 2
 }
-# These become files in -Out, so each is a plain file name.
+# These become files in -Out, so none may lead out of it; a fetched file's is plain.
 foreach ($step in $plan) {
     if ($step.op -isnot [string]) { Write-Host "ref-host: a step's op is one word, not '$($step.op)'"; exit 2 }
     $files = @(if ($step.op -in 'shot', 'burst', 'fetch') { "$($step.name)" }; if ($step.as) { "$($step.as)" })
     foreach ($f in $files) {
-        if ($f -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') { Write-Host "ref-host: $($step.op): '$f' is not a plain file name"; exit 2 }
+        $bad = -not $f -or $f.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0
+        if ($bad -or ($step.op -eq 'fetch' -and $f -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z')) { Write-Host "ref-host: $($step.op): '$f' is not a plain file name"; exit 2 }
     }
 }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
