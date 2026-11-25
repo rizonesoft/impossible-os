@@ -201,12 +201,7 @@ try {
             Invoke-Command -Session $s { Stop-Computer -Force } -ErrorAction SilentlyContinue
             Wait-Until -TimeoutSec 600 -EverySec 5 -What 'the guest to shut down' -Test { (Get-VM -Name $Name).State -eq 'Off' } | Out-Null
         } finally {
-            try {
-                if ($s) { Remove-PSSession $s -ErrorAction SilentlyContinue }
-                if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-            } finally {
-                Exit-RefTurn
-            }
+            try { if ($s) { Remove-PSSession $s -ErrorAction SilentlyContinue } } finally { Stop-RefRun $Name }
         }
     }
 } finally { Dismount-DiskImage -ImagePath $isoFile.FullName | Out-Null }

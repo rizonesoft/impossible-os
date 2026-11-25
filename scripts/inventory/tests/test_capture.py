@@ -1628,11 +1628,12 @@ class Profile(unittest.TestCase):
         # lock with the guest running (review, 2026-11-18). A checkpoint taken
         # while running restores Running: -NoStart turns it off.
         shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
-        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint", "Find-RefMedia", "Start-RefVm"]))
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint", "Find-RefMedia", "Start-RefVm", "Stop-RefVm", "Wait-Until"]))
               + "function Repair-RefPromotion { }; function Enter-RefTurn { }; function Get-VMDvdDrive { @() }; "
               "function Get-VMSnapshot { @([pscustomobject]@{ Name = 'clean' }) }; "
               "$script:state = 'Running'; $script:after = 'Running'; "
               "function Get-VM { [pscustomobject]@{ State = $script:state; Id = 'id' } }; "
+              "function Get-RefSystem { [pscustomobject]@{ EnabledState = $(if ($script:state -eq 'Off') { 3 } else { 2 }) } }; "
               "function Stop-VM { $script:state = 'Off' }; function Restore-VMSnapshot { $script:state = $script:after }; "
               "$script:starts = 0; function Start-VM { $script:starts++; $script:state = 'Running' }; "
               "$p = [IO.Path]::GetTempPath(); "
@@ -1646,7 +1647,7 @@ class Profile(unittest.TestCase):
               "try { Restore-RefCheckpoint 'x' 'clean' $p -NoStart; 'no error' } catch { 'error: ' + $_.Exception.Message + ' state=' + $script:state }")
         out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
         lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
-        self.assertEqual(lines, ["running-checkpoint: Off starts=0", "saved-checkpoint: Saved starts=0",
+        self.assertEqual(lines, ["running-checkpoint: Off starts=0", "saved-checkpoint: Off starts=0",
                                  "capture: Running starts=1", "error: media refused state=Off"], out.stderr)
 
     def test_a_rebuild_removes_the_disks_the_vm_uses_and_only_those(self):
@@ -1660,15 +1661,15 @@ class Profile(unittest.TestCase):
         if shell.endswith(".exe"):
             script = subprocess.run(["wslpath", "-w", str(script)], capture_output=True, text=True, check=True).stdout.strip()
         ps = ("$a = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$null); "
-              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Remove-RefVm' }, $true) | Select-Object -First 1; "
-              "Invoke-Expression $f.Extent.Text; "
+              "$f = $a.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in 'Remove-RefVm', 'Stop-RefVm', 'Wait-Until' }, $true); "
+              "foreach ($d in $f) { Invoke-Expression $d.Extent.Text }; "
               "$root = Join-Path ([IO.Path]::GetTempPath()) ('ios-rm-' + [Guid]::NewGuid().ToString('N')); "
               "$vm = Join-Path $root 'vm'; $vhd = Join-Path $vm 'Virtual Hard Disks'; "
               "New-Item -ItemType Directory -Force $vhd, (Join-Path $vm 'Snapshots') | Out-Null; "
               "$base = Join-Path $vhd 'base.vhdx'; $cur = Join-Path $vhd 'cur.avhdx'; $snap = Join-Path $vhd 'snap.avhdx'; $data = Join-Path $root 'data.vhdx'; "
               "foreach ($p in $base, $cur, $snap, $data) { Set-Content -LiteralPath $p -Value x }; "
               "$parent = @{ $cur = $base; $snap = $base; $base = $null; $data = $null }; "
-              "function Get-VM { [pscustomobject]@{ State = 'Off' } }; function Stop-VM { throw 'stopped an Off VM' }; "
+              "function Get-RefSystem { [pscustomobject]@{ EnabledState = 3 } }; function Stop-VM { throw 'stopped an Off VM' }; "
               "function Get-VMHardDiskDrive { [pscustomobject]@{ Path = $cur }, [pscustomobject]@{ Path = $data } }; "
               "function Get-VMSnapshot { [pscustomobject]@{ HardDrives = @([pscustomobject]@{ Path = $snap }) } }; "
               "function Get-VHD([string]$Path) { [pscustomobject]@{ ParentPath = $parent[$Path] } }; "

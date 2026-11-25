@@ -227,9 +227,12 @@ function Enter-RefLock([string]$Name) {
 
 # A shell that PowerShell 7 started hands its module path on, through WSL too,
 # and Windows PowerShell then finds that edition's modules first and loses
-# cmdlets of its own (Get-FileHash, 2026-11-25).
+# cmdlets of its own (Get-FileHash, 2026-11-25). Its own are named by their
+# folder: the path belongs to the shell, which outlives a script.
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
-    $env:PSModulePath = @($env:PSModulePath -split ';' | Where-Object { $_ -and $_ -notmatch '\\PowerShell\\' }) -join ';'
+    foreach ($m in 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Security', 'CimCmdlets') {
+        Import-Module "$PSHOME\Modules\$m\$m.psd1"
+    }
 }
 
 # Impossible SDK's own machine and its folder are never ours to start, stop,
@@ -243,17 +246,19 @@ function Resolve-RefTarget([string]$Name, [string[]]$Paths) {
         Write-Host "ref: -Name $Name is a pattern; give the VM's own name"; exit 2
     }
     $reserved = 'ui-test-win11'
-    $hit = $Name.Trim() -eq $reserved
+    $refuse = { Write-Host "ref: $reserved is Impossible SDK's machine; refused"; exit 2 }
+    if ($Name.Trim() -eq $reserved) { & $refuse }
     foreach ($p in $Paths) {
         $given = Get-Variable -Name $p -Scope 1 -ValueOnly
         if (-not $given) { continue }
         $provider = $drive = $null
-        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given, [ref]$provider, [ref]$drive)
+        try { $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given, [ref]$provider, [ref]$drive) } catch {
+            Write-Host "ref: -$p $given is not a file path: $($_.Exception.Message)"; exit 2
+        }
         if ($provider.Name -ne 'FileSystem') { Write-Host "ref: -$p $given is not a file path"; exit 2 }
-        if (($full -split '[\\/]') -contains $reserved) { $hit = $true }
+        if (($full -split '[\\/]') -contains $reserved) { & $refuse }
         Set-Variable -Name $p -Scope 1 -Value $full
     }
-    if ($hit) { Write-Host "ref: $reserved is Impossible SDK's machine; refused"; exit 2 }
 }
 
 # The host is too short of memory to run this VM and the SDK's ui-test-win11 at
@@ -344,6 +349,28 @@ function Exit-RefTurn() {
         $p.StandardInput.Close()
         if (-not $p.WaitForExit(5000)) { $p.Kill() }
     } catch { Write-Ref "ending Bosun: $($_.Exception.Message)" }
+}
+
+# Off by Hyper-V's own word. After a restore this process's Get-VM can give the
+# state before it for some seconds: one that failed for want of memory read Off
+# and was Saved, which holds the SDK's machine back (seen 2026-11-25).
+function Stop-RefVm([string]$Name) {
+    Wait-Until -TimeoutSec 60 -EverySec 1 -What "$Name to be off" -Test {
+        if ((Get-RefSystem $Name).EnabledState -eq 3) { return $true }
+        try { Stop-VM -Name $Name -TurnOff -Force } catch { Write-Ref "turning $Name off: $($_.Exception.Message)" }
+    } | Out-Null
+}
+
+# The end of every script that starts the VM: off, then the place is freed,
+# whatever the turning off does. Only a VM this run touched is turned off; a
+# refusal leaves it as it was.
+function Stop-RefRun([string]$Name) {
+    try {
+        $vm = Get-VM | Where-Object { $_.Name -eq $Name }
+        if ($script:RefTouched -and $vm) { Stop-RefVm $Name }
+    } finally {
+        Exit-RefTurn
+    }
 }
 
 # The only two places that start the VM are this and Restore-RefCheckpoint, and
@@ -545,13 +572,13 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     if ($snap.Count -ne 1) { throw "$Name has $($snap.Count) checkpoints named '$Checkpoint'; want exactly one" }
     $script:RefTouched = $true   # from here the VM is this run's to turn off
     # A VM that a killed run left on gives its memory back before this one waits.
-    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Stop-RefVm $Name
     # Before the restore, which can start the VM. A teardown never waits.
     if (-not $NoStart) { Enter-RefTurn }
     Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
-    # A checkpoint taken while running restores running: a teardown stops it
-    # before the media repair, so a repair that fails cannot leave it running.
-    if ($NoStart -and (Get-VM -Name $Name).State -eq 'Running') { Stop-VM -Name $Name -TurnOff -Force }
+    # A checkpoint taken while running restores running, or Saved: a teardown
+    # turns it off before the media repair, so one that fails cannot leave it on.
+    if ($NoStart) { Stop-RefVm $Name }
     # A checkpoint taken while the VM was built in its -next folder keeps that
     # folder's media path in its saved state after the folder became $VmPath,
     # though Get-VMDvdDrive already reports the new path; starting it then fails
@@ -574,10 +601,7 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
         try { $out = & cmd.exe /c "icacls.exe `"$($d.Path)`" /grant `"NT VIRTUAL MACHINE\${id}:(R)`" 2>&1" } finally { Pop-Location }
         if ($LASTEXITCODE -ne 0) { throw "icacls on $($d.Path) failed: $out" }
     }
-    if ($NoStart) {
-        if ((Get-VM -Name $Name).State -eq 'Running') { throw "$Name is still running after the restore of $Checkpoint" }
-        return
-    }
+    if ($NoStart) { return }
     if ((Get-VM -Name $Name).State -ne 'Running') { Start-RefVm $Name }
 }
 
@@ -587,7 +611,7 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
 # of names would leave them behind. Only files inside -VmPath go: a data disk a
 # run attached (update-iso.ps1's package disk) lives elsewhere and stays.
 function Remove-RefVm([string]$Name, [string]$VmPath) {
-    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Stop-RefVm $Name
     $disks = @(Get-VMHardDiskDrive -VMName $Name | ForEach-Object Path) +
         @(Get-VMSnapshot -VMName $Name | ForEach-Object { $_.HardDrives.Path })
     $chain = @()

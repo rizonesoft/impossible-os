@@ -36,10 +36,15 @@ ENV["WSLENV"] = ":".join(x for x in ENV.get("WSLENV", "").split(":") if x and no
 STUBS = r"""
 $script:State = '@STATE@'
 function Note([string]$Text) { Add-Content -LiteralPath '@LOG@' -Value $Text }
-function Get-VM([string]$Name) { [pscustomobject]@{ Name = $Name; State = $script:State; Id = 'x' } }
+# Get-VM is a step behind after a failed restore, as Hyper-V's is for some seconds.
+function Get-VM([string]$Name = $script:Name) { [pscustomobject]@{ Name = $Name; State = $(if ($Name -like '*short*') { 'Off' } else { $script:State }); Id = 'x' } }
+function Get-RefSystem([string]$Name) { [pscustomobject]@{ EnabledState = $(if ($script:State -eq 'Off') { 3 } else { 6 }) } }
 function Get-VMSnapshot([string]$VMName) { [pscustomobject]@{ Name = 'clean' } }
 function Get-VMDvdDrive([string]$VMName) { }
-function Restore-VMSnapshot($VMSnapshot, [switch]$Confirm) { Note 'restore' }
+function Restore-VMSnapshot($VMSnapshot, [switch]$Confirm) {
+    Note 'restore'
+    if ($script:Name -like '*short*') { $script:State = 'Saved'; throw 'no memory for the stub' }
+}
 function Start-VM([string]$Name) {
     Note "start pid=$PID slot=$env:BOSUN_SLOT ns=$env:BOSUN_NS wslenv=$env:WSLENV"
     if ($Name -like '*fail*') { throw 'the stub does not start' }
@@ -169,6 +174,21 @@ class Turns(unittest.TestCase):
                 break
         return r.returncode, r.stdout + r.stderr
 
+    def wait_said(self, p, what):
+        self.wait_for(lambda: any(what in x for x in p.lines) or p.poll() is not None, lambda: f"it did not say {what}: {p.lines}")
+        if p.poll() is not None:
+            p.reader.join(5)
+        return any(what in x for x in p.lines)
+
+    def says(self, argv, what):
+        """The process, once it has said so."""
+        for _ in range(2):
+            p = self.start(argv)
+            if self.wait_said(p, what) or not any(NOT_STARTED in x for x in p.lines):
+                break
+        self.assertTrue(any(what in x for x in p.lines), p.lines)
+        return p
+
     def first_line(self, argv):
         """The process and the first line it prints."""
         for _ in range(2):
@@ -296,6 +316,17 @@ class Turns(unittest.TestCase):
         self.assertIn("slot=0", self.noted())
         self.assertFalse((self.tmp / "fake" / "pid.txt").exists())
 
+    def test_a_restore_that_fails_leaves_the_vm_off(self):
+        # One that failed for want of memory left it Saved, which holds the SDK's machine back.
+        folder = self.scripts(60)
+        for extra, want in (((), 3), (("-Stop",), 1)):
+            code, out = self.call(self.ref_run(folder, *extra, name="ios-turns-short"))
+            self.assertEqual(code, want, out)
+            self.assertIn("no memory for the stub", out)
+            self.assertEqual(self.noted().split()[-2:], ["restore", "stop"])
+            self.log.unlink()
+        self.assertEqual(self.slot(1), "0")
+
     def test_a_run_in_another_queue_takes_a_place_in_this_one(self):
         code, out = self.call([BOSUN, "run", "--ns", self.ns + "-other", "--slots", "1", "--max-wait", "20", "--",
                                "powershell.exe", *self.ref_run(self.scripts(60))[1:]])
@@ -306,13 +337,14 @@ class Turns(unittest.TestCase):
         # In a shell that lives on, as an operator's does.
         first, *rest = self.args(self.scripts(60))
         line = " ".join([f"& '{first}'"] + [x if x.startswith("-") else f"'{x}'" for x in rest])
-        p = self.start([POWERSHELL, *BYPASS, "-Command",
-                        f"$env:IOS_TEARDOWN = '1'; try {{ {line} }} catch {{ \"caught $($_.Exception.Message)\" }}; "
-                        "\"after=$env:BOSUN_SLOT$env:BOSUN_NS.\"; [void][Console]::In.ReadLine()"])
-        self.wait_for(lambda: any("after=" in x for x in p.lines), lambda: p.lines)
+        p = self.says([POWERSHELL, *BYPASS, "-Command",
+                       f"$was = $env:PSModulePath; $env:IOS_TEARDOWN = '1'; try {{ {line} }} catch {{ \"caught $($_.Exception.Message)\" }}; "
+                       "\"same=$($was -eq $env:PSModulePath)\"; \"after=$env:BOSUN_SLOT$env:BOSUN_NS.\"; [void][Console]::In.ReadLine()"], "after=")
         said = "".join(p.lines)
         self.assertIn("caught the stub does not tear down", said)
         self.assertIn("after=.", said)
+        self.assertIn("same=True", said)
+        self.assertEqual(self.noted().split()[-1], "stop")
         self.assertEqual(self.slot(1), "0")
 
     def test_a_job_started_by_a_run_passes_through(self):
@@ -382,15 +414,14 @@ class Turns(unittest.TestCase):
     def test_a_start_after_one_that_timed_out_asks_again(self):
         dummy = self.hold()
         common = winpath(self.scripts(60)) + "\\ref-common.ps1"
-        p = self.start([POWERSHELL, *BYPASS, "-Command",
-                        f". '{common}'; Enter-RefTurn 1; \"first=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); "
-                        "Enter-RefTurn; \"then=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); Exit-RefTurn"])
-        self.wait_for(lambda: any("first=-1" in x for x in p.lines), lambda: p.lines)
+        p = self.says([POWERSHELL, *BYPASS, "-Command",
+                       f". '{common}'; Enter-RefTurn 1; \"first=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); "
+                       "Enter-RefTurn; \"then=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); Exit-RefTurn"], "first=-1")
         dummy.stdin.close()
         dummy.wait(LIMIT)
         p.stdin.write("\n")
         p.stdin.flush()
-        self.wait_for(lambda: any("then=0" in x for x in p.lines), lambda: p.lines)
+        self.wait_said(p, "then=0")
         self.assertEqual(self.slot(1), "-1")
         p.stdin.close()
         self.finish(p)
@@ -425,6 +456,14 @@ class Turns(unittest.TestCase):
         self.assert_bounded(out)
         self.assertIn("on", out.split())
 
+    def test_a_shell_from_powershell_7_loses_no_cmdlet(self):
+        common = winpath(self.scripts(60)) + "\\ref-common.ps1"
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f"$env:PSModulePath = \"$env:ProgramFiles\\PowerShell\\7\\Modules;$env:PSModulePath\"; . '{common}'; "
+                               "(Get-FileHash -LiteralPath $PSHOME\\powershell.exe).Algorithm; (ConvertTo-SecureString 'x' -AsPlainText -Force).Length; "
+                               "(Get-Command Get-CimInstance).Version.Major"])
+        self.assertEqual(out.split(), ["SHA256", "1", "1"], out)
+
     def test_the_checked_path_is_the_path_used(self):
         # PowerShell and .NET read a relative path and a ~ in two ways.
         common = winpath(self.scripts(60)) + "\\ref-common.ps1"
@@ -442,7 +481,8 @@ class Turns(unittest.TestCase):
         sdk, pattern = "Impossible SDK's machine", "is a pattern"
         for name, path, why in (("ui-test-win11", None, sdk), ("UI-Test-Win11", None, sdk), ("ui-test*", None, pattern),
                                 ("ios-win11-re[f]", None, pattern), (None, "D:\\11\\ui-test-win11", sdk),
-                                (None, "D:\\11\\x\\..\\UI-test-win11\\disks", sdk)):
+                                (None, "D:\\11\\x\\..\\UI-test-win11\\disks", sdk), ("ui-test-win11", "NoDrive:\\x", sdk),
+                                (None, "NoDrive:\\x", "is not a file path")):
             code, out = self.call(self.ref_run(folder, name=name, vm=path))
             self.assertEqual(code, 2, out)
             self.assertIn(why, out)
@@ -514,9 +554,9 @@ class Sources(unittest.TestCase):
             # Every string a script takes is a path, but for these.
             taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
             self.assertEqual(set(named[1].split(", ")), taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
-            # Freed whatever the teardown before it does.
-            last = len(lines) - 1 - lines[::-1].index("Exit-RefTurn")
-            self.assertEqual(lines[last - 1], "} finally {", p.name)
+            # Off and freed whatever the teardown before it does.
+            ends = self.code(p).count("finally { Stop-RefRun $Name }")
+            self.assertEqual(ends, 2 if p.name == "ref-run.ps1" else 1, p.name)
 
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")

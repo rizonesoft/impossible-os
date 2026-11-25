@@ -461,9 +461,7 @@ try {
                 if ($code -eq 0) { $code = 1 }
             }
         }
-    } finally {
-        Exit-RefTurn
-    }
+    } finally { Stop-RefRun $Name }
     # thumbnail: the revision of Save-Thumbnail's reading of Hyper-V's bytes;
     # host-capture.py refuses shots from any other (revision 2 skips the 4
     # bytes before the pixels, 2026-11-18).

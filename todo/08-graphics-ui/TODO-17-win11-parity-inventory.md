@@ -1316,16 +1316,16 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 
 **Test checkpoint:** on the Windows host, with the place held by a dummy job: `ref-run.ps1` waits and goes on when the place frees; held longer than a short test wait, it goes on anyway; with Bosun off the PATH it runs directly; run inside `bosun run --ns` it does not wait for itself; exit codes 2, 3, 4 and a script's own code come back unchanged; `-Stop` answers while the place is held; a killed run frees the place. The VM cmdlets are stubs in these tests and the queue has a name of its own, so no machine starts and no SDK job is delayed. Each test fails on the commit before.
 
-> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (29 tests: 4 source checks anywhere, 25 cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
+> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (31 tests: 4 source checks anywhere, 27 cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
 >
 > **Notes:**
 > - `Enter-RefTurn` and `Exit-RefTurn` in `ref-common.ps1` hold Bosun's place through `cmd.exe /d /c set BOSUN_& sort >nul`; `Start-RefVm` and `Restore-RefCheckpoint` are the only code that starts the VM
 > - `update-iso.ps1` frees the place before it builds the ISO and `derive.ps1` before it converts the disk, since the VM is off by then
 > - All waits of one script share one budget of 380 s; a start asks again unless the script holds a place, and once the budget is spent it asks for 1 s (5 s for a silent Bosun)
-> - Every script frees the place in a `finally` of its own, so a teardown that fails leaves no marker in the shell it ran in; inside a job that holds the place no Bosun is asked
+> - Every script ends in `Stop-RefRun` from a `finally` of its own: the VM off, then the place freed, whatever its teardown does, and off by Hyper-V's own word: after a restore that failed for want of memory (a real run, 2026-11-25) `Get-VM` read Off for seconds while the VM was Saved, which holds the SDK's machine back; inside a job that holds the place no Bosun is asked
 > - A VM that a killed run left on is turned off before the wait, so it gives its 4 GB back
 > - Build guards of `ref-vm.ps1` that the passes found missing before this section are filed as §31
-> - Windows PowerShell started under PowerShell 7 lost `Get-FileHash` (`update-iso.ps1`); `ref-common.ps1` drops that edition's module folders
+> - Windows PowerShell started under PowerShell 7 lost `Get-FileHash` (`update-iso.ps1`); `ref-common.ps1` imports its own edition's modules by their folder and leaves the shell's module path alone
 > - The run goes on without a place when Bosun is absent, fails or stays silent for 380 s; `Resolve-RefTarget` refuses the SDK's machine, and its folder in any path argument (a test holds the list complete), and makes each path the full one it checked
 > - A job that itself started on Bosun's timeout (slot -1) passes any inner queue straight through: Bosun's own rule, kept
 > - Canonical doc: `docs/design/inventory/REFERENCE.md`, the section on sharing the host with the SDK's test machine

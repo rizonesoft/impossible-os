@@ -101,9 +101,6 @@ try {
     try {
         if ($mounted) { Dismount-DiskImage -ImagePath $pin.iso | Out-Null }
         if ($s) { Remove-PSSession $s }
-        if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    } finally {
-        Exit-RefTurn
-    }
+    } finally { Stop-RefRun $Name }
 }
 exit $code

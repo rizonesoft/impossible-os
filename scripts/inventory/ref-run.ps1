@@ -47,8 +47,8 @@ if ($Stop) {
     # Back to -Checkpoint, not only off: a killed host walk may have changed the
     # disk (the boot walk's boot entry and crash settings) before its own
     # teardown could restore it (review, 2026-11-18).
-    Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart
-    Write-Host "ref-run: $Name is back on $Checkpoint and not running ($((Get-VM -Name $Name).State))"
+    try { Restore-RefCheckpoint $Name $Checkpoint $VmPath -NoStart } finally { Stop-RefRun $Name }
+    Write-Host "ref-run: $Name is back on $Checkpoint and not running (Off)"
     exit 0
 }
 if (-not $Out) { Write-Host 'ref-run: give -Out'; exit 2 }
@@ -91,12 +91,6 @@ try {
         }
     }
 } finally {
-    try {
-        if ($s) { Remove-PSSession $s }
-        # Only a VM this run restored is turned off; a refusal leaves it as it was.
-        if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
-    } finally {
-        Exit-RefTurn
-    }
+    try { if ($s) { Remove-PSSession $s } } finally { Stop-RefRun $Name }
 }
 exit $code
