@@ -37,13 +37,17 @@ STUBS = r"""
 $script:State = '@STATE@'
 function Note([string]$Text) { Add-Content -LiteralPath '@LOG@' -Value $Text }
 # Get-VM is a step behind after a failed restore, as Hyper-V's is for some seconds.
-function Get-VM([string]$Name = $script:Name) { [pscustomobject]@{ Name = $Name; State = $(if ($Name -like '*short*') { 'Off' } else { $script:State }); Id = 'x' } }
-function Get-RefSystem([string]$Name) { [pscustomobject]@{ EnabledState = $(if ($script:State -eq 'Off') { 3 } else { 6 }) } }
-function Get-VMSnapshot([string]$VMName) { [pscustomobject]@{ Name = 'clean' } }
+function Get-VM([string]$Name = $script:Name) { if ($Name -like '*gone*') { throw 'no answer from the stub' }; [pscustomobject]@{ Name = $Name; State = $(if ($Name -like '*short*') { 'Off' } else { $script:State }); Id = 'x' } }
+$script:Deaf = 0
+function Get-CimInstance {
+    if ($script:Name -like '*gone*' -or $script:Deaf-- -gt 0) { throw 'no answer from the stub' }
+    [pscustomobject]@{ EnabledState = $(if ($script:State -eq 'Off') { 3 } else { 6 }) }
+}
+function Get-VMSnapshot([string]$VMName) { if ($VMName -like '*gone*') { throw 'no answer from the stub' }; [pscustomobject]@{ Name = 'clean' } }
 function Get-VMDvdDrive([string]$VMName) { }
 function Restore-VMSnapshot($VMSnapshot, [switch]$Confirm) {
     Note 'restore'
-    if ($script:Name -like '*short*') { $script:State = 'Saved'; throw 'no memory for the stub' }
+    if ($script:Name -like '*short*') { $script:State = 'Saved'; $script:Deaf = 1; throw 'no memory for the stub' }
 }
 function Start-VM([string]$Name) {
     Note "start pid=$PID slot=$env:BOSUN_SLOT ns=$env:BOSUN_NS wslenv=$env:WSLENV"
@@ -323,9 +327,15 @@ class Turns(unittest.TestCase):
             code, out = self.call(self.ref_run(folder, *extra, name="ios-turns-short"))
             self.assertEqual(code, want, out)
             self.assertIn("no memory for the stub", out)
+            self.assertIn("no answer from the stub", out)        # the first reading of its state fails too
             self.assertEqual(self.noted().split()[-2:], ["restore", "stop"])
             self.log.unlink()
         self.assertEqual(self.slot(1), "0")
+
+    def test_a_run_that_reaches_no_vm_keeps_its_exit_code(self):
+        code, out = self.call(self.ref_run(self.scripts(60), name="ios-turns-gone"))
+        self.assertEqual(code, 3, out)
+        self.assertEqual(out.count("no answer from the stub"), 1, out)      # the start's own; the end asks nothing
 
     def test_a_run_in_another_queue_takes_a_place_in_this_one(self):
         code, out = self.call([BOSUN, "run", "--ns", self.ns + "-other", "--slots", "1", "--max-wait", "20", "--",
@@ -461,7 +471,7 @@ class Turns(unittest.TestCase):
         code, out = self.call([POWERSHELL, *BYPASS, "-Command",
                                f"$env:PSModulePath = \"$env:ProgramFiles\\PowerShell\\7\\Modules;$env:PSModulePath\"; . '{common}'; "
                                "(Get-FileHash -LiteralPath $PSHOME\\powershell.exe).Algorithm; (ConvertTo-SecureString 'x' -AsPlainText -Force).Length; "
-                               "(Get-Command Get-CimInstance).Version.Major"])
+                               "(Get-Command Get-CimInstance -CommandType Cmdlet).Version.Major"])
         self.assertEqual(out.split(), ["SHA256", "1", "1"], out)
 
     def test_the_checked_path_is_the_path_used(self):

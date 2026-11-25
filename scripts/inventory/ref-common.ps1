@@ -20,8 +20,10 @@ function Wait-Until([scriptblock]$Test, [int]$TimeoutSec, [string]$What, [int]$E
     throw "timed out after $TimeoutSec s waiting for $What"
 }
 
+function Get-RefFilter([string]$Name) { "ElementName='$($Name.Replace('\', '\\').Replace("'", "\'"))'" }
+
 function Get-RefSystem([string]$Name) {
-    $vm = Get-CimInstance -Namespace $script:Ns -ClassName Msvm_ComputerSystem -Filter "ElementName='$Name'"
+    $vm = Get-CimInstance -Namespace $script:Ns -ClassName Msvm_ComputerSystem -Filter (Get-RefFilter $Name)
     if (-not $vm) { throw "no VM named $Name" }
     return $vm
 }
@@ -72,7 +74,7 @@ function Clear-RefPendingSetup($Session) {
 
 # Host-to-guest values already set on the VM, by name.
 function Get-HostKvp([string]$Name) {
-    $vm = Get-WmiObject -Namespace $script:Ns -Class Msvm_ComputerSystem -Filter "ElementName='$Name'"
+    $vm = Get-WmiObject -Namespace $script:Ns -Class Msvm_ComputerSystem -Filter (Get-RefFilter $Name)
     $sd = $vm.GetRelated('Msvm_KvpExchangeComponent') | ForEach-Object { $_.GetRelated('Msvm_KvpExchangeComponentSettingData') }
     $values = @{}
     foreach ($x in @($sd.HostExchangeItems)) {
@@ -87,7 +89,7 @@ function Get-HostKvp([string]$Name) {
 # HKLM\SOFTWARE\Microsoft\Virtual Machine\External.
 function Set-HostKvp([string]$Name, [string]$Key, [string]$Value = '', [switch]$Remove) {
     $svc = Get-WmiObject -Namespace $script:Ns -Class Msvm_VirtualSystemManagementService
-    $vm = Get-WmiObject -Namespace $script:Ns -Class Msvm_ComputerSystem -Filter "ElementName='$Name'"
+    $vm = Get-WmiObject -Namespace $script:Ns -Class Msvm_ComputerSystem -Filter (Get-RefFilter $Name)
     $item = ([wmiclass]"\\.\${script:Ns}:Msvm_KvpExchangeDataItem").CreateInstance()
     $item.Name = $Key; $item.Data = $Value; $item.Source = 0
     $text = $item.PSBase.GetText([Management.TextFormat]::CimDtd20)
@@ -354,23 +356,27 @@ function Exit-RefTurn() {
 # Off by Hyper-V's own word. After a restore this process's Get-VM can give the
 # state before it for some seconds: one that failed for want of memory read Off
 # and was Saved, which holds the SDK's machine back (seen 2026-11-25).
+# One that will not turn off is asked for a minute once, and then one more time
+# by each step of the teardown.
+$script:RefStopTries = 60
 function Stop-RefVm([string]$Name) {
-    Wait-Until -TimeoutSec 60 -EverySec 1 -What "$Name to be off" -Test {
-        if ((Get-RefSystem $Name).EnabledState -eq 3) { return $true }
-        try { Stop-VM -Name $Name -TurnOff -Force } catch { Write-Ref "turning $Name off: $($_.Exception.Message)" }
-    } | Out-Null
+    $why = 'Hyper-V says it is on'
+    for ($try = 1; $true; $try++) {
+        if ($try -gt 2) { Start-Sleep -Seconds 1 }
+        try {
+            $vm = Get-CimInstance -Namespace $script:Ns -ClassName Msvm_ComputerSystem -Filter (Get-RefFilter $Name)
+            if (-not $vm -or $vm.EnabledState -eq 3) { $script:RefStopTries = 60; return }
+            Stop-VM -Name $Name -TurnOff -Force
+        } catch { $why = $_.Exception.Message; Write-Ref "turning $Name off: $why" }
+        if ($try -ge $script:RefStopTries) { $script:RefStopTries = 1; throw "$Name is not off: $why" }
+    }
 }
 
 # The end of every script that starts the VM: off, then the place is freed,
 # whatever the turning off does. Only a VM this run touched is turned off; a
 # refusal leaves it as it was.
 function Stop-RefRun([string]$Name) {
-    try {
-        $vm = Get-VM | Where-Object { $_.Name -eq $Name }
-        if ($script:RefTouched -and $vm) { Stop-RefVm $Name }
-    } finally {
-        Exit-RefTurn
-    }
+    try { if ($script:RefTouched) { Stop-RefVm $Name } } finally { Exit-RefTurn }
 }
 
 # The only two places that start the VM are this and Restore-RefCheckpoint, and

@@ -1299,6 +1299,8 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 - [x] `Enter-RefTurn` in `ref-common.ps1` takes the place before the VM starts: called by `Restore-RefCheckpoint` (not with `-NoStart`) and by `Start-RefVm`, the only code that starts the VM
   - A test refuses `Start-VM`, `Restore-VMSnapshot`, `Resume-VM`, `Restart-VM` and `Start-VM` through CIM anywhere else under `scripts/inventory`, so a new script cannot forget it. It is for a script that forgets, not for one shaped so that the check reads it wrong (a closing brace moved off the first column).
   - `ref-vm.ps1`'s resume of a build whose VM is already running takes a free place but does not wait for one: the SDK's machine does not start while this one is on, so a wait would only keep the memory from the job that has the place.
+  - Rejected (performance pass, P2): a deadline around a Hyper-V call that does not return. Every step of these scripts makes such calls and did before this section; while one hangs the VM's memory is not known to be free, so holding the place is right, and the callers' deadlines end the run.
+  - Rejected (round, P2): a run killed in the moment a hung Bosun has taken the place and not yet started the holder. Between the two Bosun only writes its record and sets three variables (`src/app.cpp:722-736`), it takes two accidents in those milliseconds, and later runs start after their 360 seconds all the same.
   - Rejected (performance pass, P2): a deadline on finding `bosun.exe`. Only a dead network folder on PATH could delay it, PATH holds none, and every command of these scripts is found the same way.
   - Rejected (performance pass, P2): a run killed while it queues leaves Bosun waiting. It holds no place, starts nothing and ends within its 360 seconds; the callers' deadlines are longer than the queue's.
   - The VM lock is taken first and is unchanged: a second run is refused at once (exit 4), never queued.
@@ -1316,7 +1318,7 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 
 **Test checkpoint:** on the Windows host, with the place held by a dummy job: `ref-run.ps1` waits and goes on when the place frees; held longer than a short test wait, it goes on anyway; with Bosun off the PATH it runs directly; run inside `bosun run --ns` it does not wait for itself; exit codes 2, 3, 4 and a script's own code come back unchanged; `-Stop` answers while the place is held; a killed run frees the place. The VM cmdlets are stubs in these tests and the queue has a name of its own, so no machine starts and no SDK job is delayed. Each test fails on the commit before.
 
-> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (31 tests: 4 source checks anywhere, 27 cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
+> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (32 tests: 4 source checks anywhere, 28 cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
 >
 > **Notes:**
 > - `Enter-RefTurn` and `Exit-RefTurn` in `ref-common.ps1` hold Bosun's place through `cmd.exe /d /c set BOSUN_& sort >nul`; `Start-RefVm` and `Restore-RefCheckpoint` are the only code that starts the VM
