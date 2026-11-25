@@ -85,6 +85,40 @@ static void test_pmm_bitmap_place(void)
     }
 }
 
+/* A record for the next boot goes where firmware had nothing in this one. */
+static void test_pmm_firmware_free(void)
+{
+    const uint64_t mib = 1024 * 1024;
+    struct boot_mmap_entry map[] = {
+        { 1 * mib, 7 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+        { 9 * mib, 100 * mib, 4, UEFI_MMAP_BOOT_SERVICES_DATA, 0 },    /* free later, not here */
+        { 200 * mib, 8 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },          /* two entries, one run */
+        { 208 * mib, 8 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+        { 300 * mib, 12 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
+        { 0x100000000ULL, 1024 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },  /* above the cap */
+    };
+
+    TEST_ASSERT_EQ(pmm_firmware_free(map, 6), 204 * mib, "a quarter into the longest run");
+    TEST_ASSERT_EQ(pmm_firmware_free(map, 2), 1 * mib + 7 * mib / 4, "never boot-services memory");
+    TEST_ASSERT_EQ(pmm_firmware_free(&map[1], 1), 0ULL, "none");
+    map[5].base_addr -= 16 * mib + 4096;
+    TEST_ASSERT_EQ(pmm_firmware_free(map, 6), 0x100000000ULL - 12 * mib - 4096,
+                   "a run across the cap ends at it");
+
+    /* An allocation from an address is the first free run at or above it. */
+    uintptr_t a = pmm_alloc_contiguous(3), b, c;
+    TEST_ASSERT(a != 0, "three frames");
+    pmm_free_contiguous(a, 3);
+    b = pmm_alloc_contiguous_from(a + 1, 2);
+    TEST_ASSERT(b >= a + PMM_FRAME_SIZE, "above, and on a frame");
+    c = pmm_alloc_contiguous_from(b, 2);
+    TEST_ASSERT(c >= b + 2 * PMM_FRAME_SIZE, "not what is taken");
+    pmm_free_contiguous(b, 2);
+    pmm_free_contiguous(c, 2);
+    TEST_ASSERT_EQ(pmm_alloc_contiguous_from(PMM_PHYS_ADDR_CAP, 2), 0ULL, "nothing up there");
+    TEST_ASSERT_EQ(pmm_alloc_contiguous_from(a, 0), 0ULL, "no frames");
+}
+
 /* A low mapping may stand where the bitmap's, or a handed-out frame's, identity
  * address was; KUSER_SHARED_DATA's does on every boot. */
 static void test_pmm_low_mappings(void)
@@ -452,6 +486,7 @@ void test_register_pmm(void)
                             test_pmm_fault_inject_countdown, TEST_CAT_MM);
     test_suite_register_cat("PMM: memory map order", test_pmm_map_ordered, TEST_CAT_MM);
     test_suite_register_cat("PMM: bitmap placement", test_pmm_bitmap_place, TEST_CAT_MM);
+    test_suite_register_cat("PMM: memory for the next boot", test_pmm_firmware_free, TEST_CAT_MM);
     test_suite_register_cat("PMM: low mappings", test_pmm_low_mappings, TEST_CAT_MM);
     test_suite_register_cat("PMM: fault-inject IRQL gate (IRQ context bypass)",
                             test_pmm_fault_inject_irql_gate, TEST_CAT_MM);

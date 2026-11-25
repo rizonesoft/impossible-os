@@ -298,8 +298,8 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
   - The panic owner is same-CPU re-entrant and CLI does not block NMI or machine-check entry, so a nested panic reaches `klog_crash_serialize_region` while a complete record from the outer invocation is already published. It clears the magic and rewrites the entries in place; if it then faults or resets before republishing, the outer record is gone.
   - TODO-10 §28 narrowed this by NOT flushing the magic clear, so the zero is usually still only in cache. That is a narrowing, not a fix: ordinary cache replacement can write the line back at any point during serialization, and TODO-10 §28 does not own this region.
   - The closure is a protocol that never overwrites a complete record in place -- two slots plus a generation to choose between them, or claim arbitration like the panic evidence page's. Both change the on-region format that `klog_crash_recover` and the NVRAM pointer contract describe, so this is a design, not a patch.
-- [ ] The crash region survives a warm reset on OVMF: the double-race leg's second boot claims the published region (0xc03000) but finds no valid magic, so no `[CRASH-PREV]` replays.
-  - No leg checked the replay before 2026-11-13. Find what overwrites the region between the panic and the next kernel (firmware use of low RAM is the first suspect), then add a matrix assertion on `[CRASH-PREV]`.
+- [x] The crash region survives a warm reset on OVMF, and the double-panic legs require the replay.
+  - Fixed 2026-11-25 by [the direct-map check section](../00-infrastructure/TODO-08-automation-hardening.md): first-fit took boot-services memory, which OVMF writes again at every reset.
 - [x] Moved to §18: the previous boot's crash region is claimed before any allocation, and both NVRAM results are checked.
 - [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 

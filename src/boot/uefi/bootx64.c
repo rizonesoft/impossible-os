@@ -10220,10 +10220,9 @@ static EFI_STATUS read_rooms(UINTN *map_size, UINTN *desc_size)
     s_nrooms = 0;
     for (UINTN off = 0; !EFI_ERROR(status) && off + *desc_size <= *map_size; off += *desc_size) {
         const EFI_MEMORY_DESCRIPTOR *d = (const EFI_MEMORY_DESCRIPTOR *)(s_pt_load_mmap_buf + off);
-        if (d->Type != EfiConventionalMemory || d->NumberOfPages > (~0ULL >> 12))
-            continue;
-        s_rooms[s_nrooms].base = d->PhysicalStart;
-        s_rooms[s_nrooms++].bytes = d->NumberOfPages * EFI_PAGE_SIZE;
+        struct boot_span room = boot_span_pages(d->PhysicalStart, d->NumberOfPages);
+        if (d->Type == EfiConventionalMemory && room.bytes != 0)
+            s_rooms[s_nrooms++] = room;
     }
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
     bl_control_split_room();

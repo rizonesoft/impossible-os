@@ -35,13 +35,20 @@ def park(loser: int, owner: int) -> str:
             % (loser, owner))
 
 
-def log(ct: int, first: list[str], stop: str, record: int | None, boots: int = 2) -> str:
+REPLAY = "[CRASH-PREV] boot: crash_test=%d -- NMI to CPU 1 (apic 1), then a BSOD here"
+
+
+def log(ct: int, first: list[str], stop: str, record: int | None, boots: int = 2,
+        replay: int | None = -1) -> str:
     lines = ["[BOOT] efi_main entered", "[BOOT] Panic evidence: 0x00080000 pinned",
              "[  1.4] [cpu:0] [WARN] boot: crash_test=%d -- NMI to CPU 1 (apic 1), then a BSOD here" % ct]
     lines += first
     lines += ["    Stop code:  %s" % stop, DUMP]
     if boots >= 2:
         lines += ["[BOOT] efi_main entered"]
+        if replay is not None:
+            lines += ["[CRASH-PREV] === Recovered 2 entries from previous crash ===",
+                      "[CRASH-PREV] boot: earlier", REPLAY % (ct if replay < 0 else replay)]
         if record is not None:
             lines += ["[  0.000] [FAIL] panic: [PANIC] Previous crash evidence found "
                       "(STOP 0x%x rip=0x0)" % record]
@@ -114,6 +121,10 @@ expect("no record on the next boot fails",
        log(4, bsp_wins, "KERNEL_PANIC", None), "race", False)
 expect("no boot after the reset fails",
        log(4, bsp_wins, "KERNEL_PANIC", 0xDEAD, boots=1), "race", False)
+expect("a next boot that does not replay the log fails",
+       log(4, bsp_wins, "KERNEL_PANIC", 0xDEAD, replay=None), "race", False)
+expect("a replay of another crash's log fails",
+       log(4, bsp_wins, "KERNEL_PANIC", 0xDEAD, replay=5), "race", False)
 expect("a missing crash dump fails",
        log(4, bsp_wins, "KERNEL_PANIC", 0xDEAD).replace(DUMP + "\n", ""), "race", False)
 expect("an ordering timeout fails",

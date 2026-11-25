@@ -33,7 +33,7 @@ Double-click the corresponding `.bat` file. The OS will boot and crash.
 
 ### 3. Verify crash recovery
 
-After the crash, run `run-crash-recovery-test.bat` or any normal boot. Check serial output for `[CRASH-PREV]` entries. On QEMU (cold restart), recovery depends on physical memory preservation -- works best on VBox or bare metal warm reboot.
+After the crash, run `run-crash-recovery-test.bat` or any normal boot. Check serial output for `[CRASH-PREV]` entries. The log is in RAM: a warm reset keeps it (QEMU `system_reset`, VBox reset, a bare metal reboot), a QEMU that was closed and started again does not.
 
 ## Crash Recovery Architecture
 

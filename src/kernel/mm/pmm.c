@@ -131,6 +131,24 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     return best;
 }
 
+uint64_t pmm_firmware_free(const struct boot_mmap_entry *map, uint32_t count)
+{
+    struct boot_span run = { 0, 0 }, best = { 0, 0 };
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (map[i].uefi_memory_type != UEFI_MMAP_CONVENTIONAL || map[i].base_addr >= PMM_PHYS_ADDR_CAP)
+            continue;
+        struct boot_span entry = { map[i].base_addr, map[i].length };
+        if (entry.bytes > PMM_PHYS_ADDR_CAP - entry.base)
+            entry.bytes = PMM_PHYS_ADDR_CAP - entry.base;
+        if (!boot_span_join(&run, entry))
+            run = entry;
+        if (run.bytes > best.bytes)
+            best = run;
+    }
+    return (best.base + best.bytes / 4) & ~(uint64_t)(PMM_FRAME_SIZE - 1);
+}
+
 uint32_t pmm_bitmap_keep(struct boot_span *keep)
 {
     uint32_t n = 0;
@@ -656,23 +674,28 @@ uintptr_t pmm_alloc_frame(void)
 /* Allocate N contiguous physical frames by scanning the bitmap for a run */
 uintptr_t pmm_alloc_contiguous(uint64_t count)
 {
-    uint64_t run_start = 0;
-    uint64_t run_len = 0;
-    uint64_t f;
-
     if (count == 0) return 0;
     /* count==1 delegates to pmm_alloc_frame, which runs its own
      * fault-inject check -- avoids double-decrementing the countdown
      * for a single-frame call routed through _contiguous. */
     if (count == 1) return pmm_alloc_frame();
+    return pmm_alloc_contiguous_from(0, count);
+}
+
+uintptr_t pmm_alloc_contiguous_from(uintptr_t from, uint64_t count)
+{
+    uint64_t run_start = from / PMM_FRAME_SIZE + (from % PMM_FRAME_SIZE != 0);
+    uint64_t run_len = 0;
+    uint64_t f;
+
+    if (count == 0) return 0;
 
 #ifdef KERNEL_TESTS
     if (pmm_fault_should_fire())
         return 0;
 #endif
 
-
-    for (f = 0; f < total_frames; f++) {
+    for (f = run_start; f < total_frames; f++) {
         if (bitmap_test(f)) {
             /* Used frame -- reset run */
             run_len = 0;

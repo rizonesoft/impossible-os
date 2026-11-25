@@ -1085,8 +1085,12 @@ void klog_crash_recover(void)
     }
 
     /* Step 2: Allocate fresh crash persistence region for THIS boot */
-    uint64_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
+    uint64_t phys = pmm_alloc_contiguous_from(
+        pmm_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap, g_boot_info.mmap_count),
+        KLOG_CRASH_PAGES);
 
+    if (!phys)
+        phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
     if (!phys) {
         serial_write("[CRASH] Failed to allocate crash log region\n");
         POST16(POST16_CRASHLOG_ALLOC);

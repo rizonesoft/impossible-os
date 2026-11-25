@@ -22,6 +22,16 @@ boot_span_end(unsigned long long base, unsigned long long bytes)
     return bytes > ~0ULL - base ? ~0ULL : base + bytes;
 }
 
+/* The range of `pages` pages from `base`; 0 bytes when its end does not fit in 64 bits,
+ * which no memory does: such a descriptor is wrong, and nothing is free because of it. */
+static inline struct boot_span
+boot_span_pages(unsigned long long base, unsigned long long pages)
+{
+    struct boot_span span = { base, pages > (~0ULL - base) / FREE_SPAN_PAGE ? 0 : pages * FREE_SPAN_PAGE };
+
+    return span;
+}
+
 /* The highest page-aligned start of `bytes` inside `room` that overlaps none
  * of the `n` ranges in `keep`; 0 when there is none. */
 static inline unsigned long long

@@ -15,7 +15,8 @@ acknowledgment is there and agrees:
     the BSP's 0) as the owner;
   * exactly one stop screen, whose stop code is the WINNER's bugcheck;
   * the crash dump landed;
-  * the next boot found the record, and its STOP is the winner's code.
+  * the next boot found the record, and its STOP is the winner's code;
+  * the next boot replayed the crashed boot's log, the fixture's line in it.
 
 The mode fixes which CPU must win: "ap" (crash_test=5) the AP, "split"
 (crash_test=6, the AP owns the evidence page first and is held before its
@@ -48,6 +49,9 @@ DUMP = r"Crash dump saved to C:\Impossible\System\crashdump.log"
 FORBIDDEN = ("never reached the ordering point", "needs a second online CPU")
 # A report's header, then at most the "  at <file>" line, then its CPU line.
 REPORT_SPAN = 3
+
+
+REPLAY = "[CRASH-PREV] "
 
 
 class VerdictError(Exception):
@@ -144,6 +148,10 @@ def check(text: str, mode: str) -> tuple[str, str]:
     if got != code:
         raise VerdictError("the record names STOP 0x%x, the winner (apic %d) was 0x%x"
                            % (got, winner, code))
+    replayed = [m.group(0) for m in (ORDER_RE.search(x) for x in second if x.startswith(REPLAY)) if m]
+    if replayed != [orders[0].group(0)]:
+        raise VerdictError("the boot after the reset did not replay the crashed boot's log "
+                           "(its fixture line came back %d times)" % len(replayed))
     return name, ("winner apic %d (%s), loser apic %d parked, record STOP 0x%x on the next boot"
                   % (winner, name, loser, got))
 
