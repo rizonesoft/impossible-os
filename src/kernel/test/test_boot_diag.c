@@ -668,30 +668,32 @@ static void __attribute__((minsize)) test_panic_evidence_epoch(void)
 
 static void __attribute__((minsize)) test_klog_panic_snapshot(void)
 {
-    klog_entry_t s3[3], s2[2];
-    const klog_entry_t *live = (const klog_entry_t *)0, *newest;
-    uint32_t n3 = 0, n2 = 0, count, head = 0, same = 0;
+    klog_entry_t out[4];
+    const klog_entry_t *live, *want;
+    uint32_t count, head, bad = 1, n, i;
     uint64_t seq;
 
-    /* The live ring, while it is held: the newest entries, oldest first, so the shorter copy
-     * is the end of the longer one. An append that began before the hold is let in first. */
+    /* The live ring, while it is held: each entry is the one in its slot, and nothing is
+     * written past the copy. An append that began before the hold is let in first. */
     klog_ring_hold(1u);
-    for (uint32_t i = 0; i < 100u && !same; i++) {
+    for (uint32_t tries = 0; tries < 100u && bad; tries++) {
         live = klog_get_ring_snapshot(&count, &head, &seq);
-        n3 = klog_panic_snapshot(s3, 3u);
-        n2 = klog_panic_snapshot(s2, 2u);
-        same = klog_get_seq() == seq;
+        for (bad = 0, n = 3u; n >= 2u; n--) {
+            memset(out, 0xA5, sizeof out);
+            bad += klog_panic_snapshot(out, n) != n || out[n].timestamp != 0xA5A5A5A5u;
+            for (i = 0; i < n; i++) {
+                want = &live[(head + KLOG_RING_SIZE - n + i) % KLOG_RING_SIZE];
+                bad += out[i].timestamp != want->timestamp
+                    || memcmp(out[i].message, want->message, sizeof want->message) != 0;
+            }
+        }
+        bad += klog_get_seq() != seq;
     }
-    newest = &live[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
-    same = same && n3 == 3u && n2 == 2u
-        && memcmp(s3[2].message, newest->message, sizeof newest->message) == 0
-        && memcmp(s2[1].message, newest->message, sizeof newest->message) == 0
-        && memcmp(s2[0].message, s3[1].message, sizeof newest->message) == 0;
     klog_ring_hold(0u);
-    TEST_ASSERT_EQ(same, 1u, "the newest entries of the live ring, oldest first");
+    TEST_ASSERT_EQ(bad, 0u, "the newest entries of the live ring, oldest first");
 
     /* Degenerate inputs fail closed. */
-    TEST_ASSERT_EQ(klog_panic_snapshot(s2, 0u), 0u, "max 0 -> 0");
+    TEST_ASSERT_EQ(klog_panic_snapshot(out, 0u), 0u, "max 0 -> 0");
     TEST_ASSERT_EQ(klog_panic_snapshot((klog_entry_t *)0, 3u), 0u, "NULL out -> 0");
 
     /* A whole full ring that nobody writes to: all but the slot of the next entry. */
@@ -702,12 +704,14 @@ static void __attribute__((minsize)) test_klog_panic_snapshot(void)
     if (!ring)
         return;
     klog_entry_t *copy = ring + KLOG_RING_SIZE;
-    for (uint32_t i = 0; i < KLOG_RING_SIZE; i++)
+    for (i = 0; i < KLOG_RING_SIZE; i++)
         ring[i].timestamp = i;
-    n3 = klog_ring_copy(ring, &written, copy, KLOG_RING_SIZE);
-    n2 = n3 == KLOG_RING_SIZE - 1u && copy[0].timestamp == 8u && copy[n3 - 1u].timestamp == 6u;
+    n = klog_ring_copy(ring, &written, copy, KLOG_RING_SIZE);
+    bad = n != KLOG_RING_SIZE - 1u;
+    for (i = 0; i < KLOG_RING_SIZE - 1u; i++)
+        bad += copy[i].timestamp != (8u + i) % KLOG_RING_SIZE;
     pmm_free_contiguous((uintptr_t)ring, pages);
-    TEST_ASSERT_EQ(n2, 1u, "a full ring is copied, oldest to newest");
+    TEST_ASSERT_EQ(bad, 0u, "a full ring is copied, oldest to newest");
 }
 
 /* The RETIRED bit-at-a-time panic_crc32, kept here and nowhere else.
