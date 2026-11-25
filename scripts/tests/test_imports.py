@@ -498,6 +498,46 @@ class Imports(unittest.TestCase):
         with mock.patch.dict(os.environ, {"IMPOSSIBLE_REPOS": str(repos / "nowhere")}):
             self.assertEqual(imports.wanted(self.root), [])
 
+    def test_a_checkout_named_apart_from_its_repository_is_found_by_its_origin(self):
+        repos = Path(self.temp.name, "repos")
+        for name, origin in (("SDK", "https://github.com/rizonesoft/ImpossibleSDK.git"), ("Calc", "git@github.com:rizonesoft/Calculator.git"),
+                             ("Fork", "https://github.com/someone/Notepad.git"), ("Old", "https://github.com/rizonesoft/Notepad-old.git")):
+            (repos / name).mkdir(parents=True)
+            self.start(repos / name)
+            self.git("remote", "add", "origin", origin, root=repos / name)
+        self.assertEqual(imports.checkout(repos, "ImpossibleSDK"), repos / "SDK")
+        self.assertEqual(imports.checkout(repos, "Calculator"), repos / "Calc")
+        self.assertFalse(imports.checkout(repos, "Notepad").exists(), "another owner's repository or a longer name is not it")
+        for name, origin in (("Elsewhere", "https://gitlab.com/rizonesoft/Paint.git"), ("Lower", "https://github.com/rizonesoft/clock")):
+            (repos / name).mkdir()
+            self.start(repos / name)
+            self.git("remote", "add", "origin", origin, root=repos / name)
+        self.assertFalse(imports.checkout(repos, "Paint").exists(), "the same owner on another host is not it")
+        self.assertEqual(imports.checkout(repos, "Clock"), repos / "Lower", "GitHub's names ignore case")
+        (repos / "Locked").mkdir(mode=0)
+        self.addCleanup((repos / "Locked").chmod, 0o755)
+        self.assertEqual(imports.checkout(repos, "ImpossibleSDK"), repos / "SDK", "a folder it may not read is passed over")
+        (repos / "ImpossibleSDK").mkdir()
+        self.assertEqual(imports.checkout(repos, "ImpossibleSDK"), repos / "ImpossibleSDK", "the folder of its name comes first")
+        (repos / "Calc2").mkdir()
+        self.start(repos / "Calc2")
+        self.git("remote", "add", "origin", "https://github.com/rizonesoft/Calculator", root=repos / "Calc2")
+        self.assertFalse(imports.checkout(repos, "Calculator").exists(), "two checkouts of it are not guessed between")
+
+    def test_the_repositories_beside_are_those_in_the_folder_this_checkout_sits_in(self):
+        sdk = Path(self.temp.name, "SDK")
+        sdk.mkdir()
+        self.start(sdk)
+        self.git("remote", "add", "origin", "https://github.com/rizonesoft/ImpossibleSDK.git", root=sdk)
+        self.write("abi/tiers.json", json.dumps({"tiers": [{"tier": 1, "functions": {"kernel32.dll": ["FunctionOfNobody"]}}]}), root=sdk)
+        self.commit(root=sdk)
+        self.ledger["sources"]["impossible-sdk"] = {**self.ledger["sources"]["calculator"], "repository": "ImpossibleSDK", "kind": "part", "path": "src/libs/sdk", "commit": None, "tree": None, "section": f"{FILE} {imports.SIGN}2"}
+        self.ledger["needs"] = [{"id": "impossible-sdk-tier-1", "source": "impossible-sdk", "what": "tier 1", "section": f"{imports.NEEDS} {imports.SIGN}1"}]
+        self.save()
+        self.write(imports.NEEDS, "# T\n\n## 1. One\n\n**Need:** impossible-sdk-tier-1\n")
+        self.git("add", "-A")
+        self.assertEqual(imports.wanted(self.root), ["impossible-sdk needs 1 more Windows function(s) of tier 1: FunctionOfNobody"])
+
     def test_a_new_function_is_planned_before_its_tier(self):
         row = {n: f"| [ ] | `D{10} T{13} {imports.SIGN}{n}` | x |" for n in (4, 7, 47)}
         for lines, then in (([row[4], row[47], row[7], "end"], [row[7], row[4], row[47], "end"]), ([row[7], row[4]], [row[7], row[4]]), ([row[4]], [row[4]])):

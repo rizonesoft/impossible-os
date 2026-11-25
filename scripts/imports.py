@@ -203,15 +203,32 @@ def upstream(source):
     folder = os.environ.get("IMPOSSIBLE_REPOS")
     if not folder:
         return None
-    if not (Path(folder) / source["repository"]).is_dir():
+    there = checkout(folder, source["repository"])
+    if not there.is_dir():
         return "of a repository that is not there"
     def ask(what):
-        asked = git(Path(folder) / source["repository"], "rev-parse", "--verify", "-q", what, check=False, env=clean())
+        asked = git(there, "rev-parse", "--verify", "-q", what, check=False, env=clean())
         return asked.stdout.decode().strip() if asked.returncode == 0 else "unknown"
 
     if ask(source["commit"] + "^{commit}") != source["commit"]:  # a tree or a tag has files too
         return "of something that is not a commit"
-    return picked(Path(folder) / source["repository"], source["commit"], source["from"], env=clean()) or "unknown"
+    return picked(there, source["commit"], source["from"], env=clean()) or "unknown"
+
+
+def checkout(folder, repository):
+    """The checkout of that repository in folder: the folder of its name, else the one folder whose origin is it.
+
+    A checkout may be named apart from its repository (SDK holds rizonesoft/ImpossibleSDK). When none or
+    several match, the folder of its name is returned, and it is not there."""
+    named = Path(folder) / repository
+    if named.is_dir():
+        return named
+    host, owner = REMOTE.split("://", 1)[1].split("/", 1)
+    ends = re.compile(rf"(?:^|[@/]){re.escape(host)}[/:]{re.escape(owner)}/{re.escape(repository)}(?:\.git)?/?$", re.IGNORECASE)  # GitHub's names ignore case
+    folders = sorted(Path(folder).iterdir()) if Path(folder).is_dir() else []
+    found = [there for there in folders if os.path.exists(there / ".git")  # False, not an error, for a folder it may not read
+             and ends.search(git(there, "remote", "get-url", "origin", check=False, env=clean()).stdout.decode().strip())]
+    return found[0] if len(found) == 1 else named
 
 
 def check(root):
@@ -324,10 +341,10 @@ def unanswered(root):
     ledger, faults = load(git(root, "show", f":{LEDGER}").stdout)  # what would be committed
     if faults:
         raise SystemExit("\n".join(f"imports: {f}" for f in faults))
-    beside = Path(os.environ.get("IMPOSSIBLE_REPOS") or Path.home() / "ImpossibleOS")
+    beside = Path(os.environ.get("IMPOSSIBLE_REPOS") or Path(root).resolve().parent)  # the folder this checkout sits in
     known, missing = {row["id"] for row in ledger["needs"]}, []
     for name, source in ledger["sources"].items():
-        shown = git(beside / source["repository"], "show", "HEAD:app.json", check=False, env=clean())
+        shown = git(checkout(beside, source["repository"]), "show", "HEAD:app.json", check=False, env=clean())
         try:
             needs = json.loads(shown.stdout)["needs"] if shown.returncode == 0 and source["kind"] == "app" else []
             for need in needs:
@@ -337,7 +354,7 @@ def unanswered(root):
                     missing.append((name, need["id"], need["what"], []))
         except (ValueError, KeyError, TypeError):
             raise SystemExit(f"imports: {name}: the needs in its app.json cannot be read") from None
-    tiers = git(beside / "ImpossibleSDK", "show", "HEAD:abi/tiers.json", check=False, env=clean())
+    tiers = git(checkout(beside, "ImpossibleSDK"), "show", "HEAD:abi/tiers.json", check=False, env=clean())
     if tiers.returncode == 0:
         shown = git(root, "show", f":{NEEDS}", check=False)
         items, current = {}, None
