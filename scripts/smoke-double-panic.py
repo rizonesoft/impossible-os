@@ -51,6 +51,7 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+from typing import NamedTuple
 
 MODES = {"race": 4, "ap": 5, "split": 6}
 LOADER_ENTRY = "efi_main entered"
@@ -67,8 +68,6 @@ DUMP = r"Crash dump saved to C:\Impossible\System\crashdump.log"
 FORBIDDEN = ("never reached the ordering point", "needs a second online CPU")
 # A report's header, then at most the "  at <file>" line, then its CPU line.
 REPORT_SPAN = 3
-
-
 REPLAY = "[CRASH-PREV] "
 
 
@@ -76,15 +75,33 @@ class VerdictError(Exception):
     pass
 
 
-def split_boots(text: str) -> list[list[str]]:
-    """The log's lines, one list per loader entry (lines before the first dropped)."""
-    boots: list[list[str]] = []
+class Boot(NamedTuple):
+    live: list[str]         # what this boot says itself
+    replayed: list[str]     # what it repeats of the log of the boot before
+
+
+def split_boots(text: str) -> list[Boot]:
+    """The log's lines, one Boot per loader entry (lines before the first dropped)."""
+    boots: list[Boot] = []
     for line in text.splitlines():
-        if LOADER_ENTRY in line:
-            boots.append([])
+        replay = line.startswith(REPLAY)
+        if LOADER_ENTRY in line and not replay:
+            boots.append(Boot([], []))
         if boots:
-            boots[-1].append(line)
+            (boots[-1].replayed if replay else boots[-1].live).append(line)
     return boots
+
+
+def crash_and_next(text: str) -> tuple[list[str], Boot]:
+    """The live lines of the crash boot, and the boot after it."""
+    boots = split_boots(text)
+    if len(boots) < 2:
+        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
+    return boots[0].live, boots[1]
+
+
+def records(lines: list[str]) -> list[int]:
+    return [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in lines) if m]
 
 
 def reports(lines: list[str]) -> list[int]:
@@ -107,10 +124,7 @@ def reports(lines: list[str]) -> list[int]:
 def check(text: str, mode: str) -> tuple[str, str]:
     if mode not in MODES:
         raise VerdictError("mode must be one of %s" % ", ".join(MODES))
-    boots = split_boots(text)
-    if len(boots) < 2:
-        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
-    first, second = boots[0], boots[1]
+    first, second = crash_and_next(text)
     body = "\n".join(first)
 
     for bad in FORBIDDEN:
@@ -158,15 +172,15 @@ def check(text: str, mode: str) -> tuple[str, str]:
     if DUMP not in body:
         raise VerdictError("the crash dump never landed")
 
-    records = [m for m in (RECORD_RE.search(x) for x in second) if m]
-    if len(records) != 1:
+    found = records(second.live)
+    if len(found) != 1:
         raise VerdictError("the boot after the reset reported %d crash record(s), expected 1"
-                           % len(records))
-    got = int(records[0].group(1), 16)
+                           % len(found))
+    got = found[0]
     if got != code:
         raise VerdictError("the record names STOP 0x%x, the winner (apic %d) was 0x%x"
                            % (got, winner, code))
-    replayed = [m.group(0) for m in (ORDER_RE.search(x) for x in second if x.startswith(REPLAY)) if m]
+    replayed = [m.group(0) for m in (ORDER_RE.search(x) for x in second.replayed) if m]
     if replayed != [orders[0].group(0)]:
         raise VerdictError("the boot after the reset did not replay the crashed boot's log "
                            "(its fixture line came back %d times)" % len(replayed))
@@ -180,31 +194,25 @@ LONE_RE = re.compile(r"crash_test=7 -- triggering deliberate BSOD")
 
 
 def check_replay(text: str, last: str) -> str:
-    boots = split_boots(text)
-    if len(boots) < 2:
-        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
-    first, second = boots[0], boots[1]
+    first, second = crash_and_next(text)
     if sum(1 for x in first if LONE_RE.search(x)) != 1:
         raise VerdictError("the crash boot did not log its fixture once")
     if not any(last in x for x in first):
         raise VerdictError("the crash boot never reached %r" % last)
     if DUMP in "\n".join(first):
         raise VerdictError("the crash boot saved a dump it was to do without")
-    replayed = sum(1 for x in second if x.startswith(REPLAY) and LONE_RE.search(x))
+    replayed = sum(1 for x in second.replayed if LONE_RE.search(x))
     if replayed != 1:
         raise VerdictError("the boot after the reset did not replay the crashed boot's log "
                            "(its fixture line came back %d times)" % replayed)
-    records = [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in second) if m]
-    if records != [BSP_STOP[1]]:
-        raise VerdictError("the boot after the reset found records %s" % [hex(x) for x in records])
+    found = records(second.live)
+    if found != [BSP_STOP[1]]:
+        raise VerdictError("the boot after the reset found records %s" % [hex(x) for x in found])
     return "the panic ended at %r and the next boot replayed its log" % last
 
 
 def check_cut(text: str, last: str) -> str:
-    boots = split_boots(text)
-    if len(boots) < 2:
-        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
-    first, second = boots[0], boots[1]
+    first, second = crash_and_next(text)
     body = "\n".join(first)
     for bad in FORBIDDEN:
         if bad in body:
@@ -216,10 +224,10 @@ def check_cut(text: str, last: str) -> str:
         raise VerdictError("expected one panic report from each of two CPUs, saw apic %s" % (cpus or "none"))
     if last not in body or DUMP in body:
         raise VerdictError("the crash boot was not reset at %r" % last)
-    records = [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in second) if m]
-    if records != [BSP_STOP[1]]:
+    found = records(second.live)
+    if found != [BSP_STOP[1]]:
         raise VerdictError("the record names %s, the winner was 0x%x"
-                           % ([hex(x) for x in records] or "nothing", BSP_STOP[1]))
+                           % ([hex(x) for x in found] or "nothing", BSP_STOP[1]))
     return "the record named the winner's STOP 0x%x before the log was saved" % BSP_STOP[1]
 
 
@@ -227,9 +235,7 @@ def next_boot_done(text: str) -> bool:
     boots = split_boots(text)
     if len(boots) > 2:
         return True         # the second boot is over
-    return len(boots) == 2 and any(
-        RECORD_RE.search(x) or END_RE.search(x)
-        for x in boots[1] if not x.startswith(REPLAY))
+    return len(boots) == 2 and any(RECORD_RE.search(x) or END_RE.search(x) for x in boots[1].live)
 
 
 def main(argv: list[str]) -> int:

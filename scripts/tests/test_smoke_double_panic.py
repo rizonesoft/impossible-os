@@ -157,6 +157,10 @@ expect_lone("a third boot changes nothing", CRASH_BOOT + NEXT_BOOT + NEXT_BOOT, 
 expect_lone("a replay that first comes in the third boot fails", CRASH_BOOT + BARE_BOOT + NEXT_BOOT, False)
 expect_lone("no boot after the crash fails", CRASH_BOOT, False)
 expect_lone("a replay without the record fails", CRASH_BOOT + [x for x in NEXT_BOOT if x != RECORD], False)
+expect_lone("a replayed record is not this boot's",
+            CRASH_BOOT + [x for x in NEXT_BOOT[:2]] + ["[CRASH-PREV] panic: " + RECORD, "[BOOT HALT] no memory"], False)
+expect_lone("a replayed record beside this boot's passes",
+            CRASH_BOOT + NEXT_BOOT[:2] + ["[CRASH-PREV] panic: " + RECORD] + NEXT_BOOT[2:], True)
 expect_lone("a crash that never reached its last line fails", CRASH_BOOT[:2] + NEXT_BOOT, False)
 expect_lone("a crash that saved its dump fails", CRASH_BOOT + [DUMP] + NEXT_BOOT, False)
 
@@ -185,6 +189,8 @@ expect_cut("a cut crash whose record names the winner passes", CUT_BOOT + AFTER,
 expect_cut("a record that names the loser fails",
            CUT_BOOT + [AFTER[0], RECORD.replace("0xdead", "0xe2")], False)
 expect_cut("no record after a cut crash fails", CUT_BOOT + AFTER[:1] + CUT_BOOT + AFTER, False)
+expect_cut("a replayed record is not the next boot's own",
+           CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] panic: " + RECORD], False)
 expect_cut("one report alone fails", CUT_BOOT[:4] + CUT_BOOT[6:] + AFTER, False)
 expect_cut("a second report from one CPU fails", CUT_BOOT[:-1] + CUT_REPORTS[2:] + CUT_BOOT[-1:] + AFTER, False)
 expect_cut("a crash that was never cut fails", CUT_BOOT[:-1] + AFTER, False)
@@ -208,6 +214,7 @@ expect_done("the crash of the boot before, replayed, does not", SECOND, "[CRASH-
 expect_done("a loader that gives up ends the wait", SECOND, "[CRIT] BOOT FATAL (0x0000000A): no kernel", True)
 expect_done("a kernel that halts ends the wait", SECOND, "[BOOT HALT] no memory", True)
 expect_done("a halt that is replayed does not", SECOND, "[CRASH-PREV] [BOOT HALT] no memory", False)
+expect_done("a replayed loader entry is no third boot", SECOND, "[CRASH-PREV] boot: efi_main entered", False)
 expect_done("a record or a prompt of the first boot does not", CRASH_BOOT + [RECORD], "Boot complete", False)
 
 print("%d failure(s)" % failures)

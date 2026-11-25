@@ -94,6 +94,13 @@ case "${SMOKE_MENU:-0}" in keys|default) [ "$TIMEOUT_SEC" -lt 60 ] && TIMEOUT_SE
 # file before pattern matching. The kernel emits `\x1b[31m[FAIL]...` etc., and
 # OVMF emits screen-clear sequences that collide with any bracketed substring.
 # Matching the stripped copy keeps patterns robust against future color edits.
+# Seconds since the host booted: a deadline on it does not move when the wall clock is set.
+uptime_s() {
+    local up
+    read -r up _ < /proc/uptime
+    echo "${up%%.*}"
+}
+
 strip_ansi() {
     sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b[=>]//g' "$SERIAL_LOG" > "$STRIPPED_LOG" 2>/dev/null || :
 }
@@ -1554,8 +1561,8 @@ if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
     else
         # -no-shutdown keeps QEMU up after the guest powers off and reports the VM
         # as "paused (shutdown)"; only the guest's own power-off sets that state.
-        _sd_end=$(( $(date +%s) + SHUTDOWN_SEC )); _sd_off=0
-        while [ "$(date +%s)" -lt "$_sd_end" ] && kill -0 "$QEMU_PID" 2>/dev/null; do
+        _sd_end=$(( $(uptime_s) + SHUTDOWN_SEC )); _sd_off=0
+        while [ "$(uptime_s)" -lt "$_sd_end" ] && kill -0 "$QEMU_PID" 2>/dev/null; do
             if monitor_status | grep -q 'VM status: paused (shutdown)'; then _sd_off=1; break; fi
             sleep 0.3
         done
@@ -1628,11 +1635,11 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     exit 0
 fi
 
-# Wait, until $1 (epoch seconds), for the boot after a crash to have reported its whole
+# Wait, until $1 (uptime_s seconds), for the boot after a crash to have reported its whole
 # record or reached the prompt. A guest that is gone has nothing left to report.
 NEXT_BOOT_NOTE=""
 crash_next_boot_wait() {
-    while [ "$(date +%s)" -lt "$1" ]; do
+    while [ "$(uptime_s)" -lt "$1" ]; do
         python3 "$SCRIPT_DIR/smoke-double-panic.py" next-boot "$SERIAL_LOG" > /dev/null 2>&1 && return
         if ! kill -0 "$QEMU_PID" 2>/dev/null; then
             NEXT_BOOT_NOTE=" (QEMU exited)"
@@ -1663,11 +1670,11 @@ if [ -n "$CT_MODE" ]; then
     # kernel's OWN restart: that is the case where a countdown paced by the
     # BSP's clock never ended. The other legs reset through the monitor.
     if [ "$CT_MODE" = ap ]; then
-        dp_deadline=$(( $(date +%s) + ${SMOKE_AUTO_RESTART_TIMEOUT_SEC:-120} ))
+        dp_deadline=$(( $(uptime_s) + ${SMOKE_AUTO_RESTART_TIMEOUT_SEC:-120} ))
     else
         dp_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
             || dp_fail "monitor reset: $dp_err"
-        dp_deadline=$(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
+        dp_deadline=$(( $(uptime_s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
     fi
     crash_next_boot_wait "$dp_deadline"
     strip_ansi
@@ -1700,7 +1707,7 @@ if [ -n "$CT_END" ]; then
         lc_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
             || lc_fail "monitor reset: $lc_err"
     fi
-    crash_next_boot_wait $(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
+    crash_next_boot_wait $(( $(uptime_s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
     strip_ansi
     lc_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" "$CT_VERDICT" "$STRIPPED_LOG" "$CT_END" 2>&1) \
         || lc_fail "$lc_out$NEXT_BOOT_NOTE"
