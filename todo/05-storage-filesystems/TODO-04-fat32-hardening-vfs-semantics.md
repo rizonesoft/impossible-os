@@ -207,11 +207,17 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [x] `chkdsk` shell command: moved to `05-storage-filesystems/TODO-13-partition-tools-storage-suite.md §4` -- kernel `fat32_fsck()` API is ready; shell wiring is §4's scope
 - [/] **Durable repair-write contract** -- PARTIAL via 01-boot-platform/TODO-12 §6: `scache_flush` propagates `blkdev_write` failures, `fat32_flush_disk` propagates + `blkdev_sync`, exposed via `vfs_flush()`.
 - [ ] **Repair-write remainder** -- `scache_evict` discards failed writes (false durability); `fat32_compare_repair_fats` is void so failed FAT2 repairs report as repaired; `fat32_fsck` must flush post-repair and fail closed; injected-failure test.
+  - A read miss loses a sector the same way: `scache_evict` clears the dirty victim after a failed write and the read goes on. It keeps the victim and fails the read, with a full-cache test that retries.
 - [ ] **fsck cycle guard** -- `walk_directory` (`fat32_fsck.c:154`) recurses into a directory's first cluster with no visited-check, so a directory cycle drives unbounded recursion and exhausts the kernel stack. <- XREF: 01-boot-platform/TODO-24 §12
 - [ ] **fsck BPB geometry validation** -- repair (`fat32_fsck.c:227`) never checks that `fat_size_sectors` covers the cluster range, so a forged tiny-FAT BPB makes it write data sectors as FAT. <- XREF: 01-boot-platform/TODO-24 §12
 - [ ] **FAT[1] high-nibble preservation** -- the dirty/clean markers (`fat32_core.c:224`) read FAT[1] 28-bit-masked and write it back, zeroing reserved bits 28-31. Toggle only bit 27 of the raw 32-bit value. <- XREF: 01-boot-platform/TODO-24 §12
 - [ ] **FAT marker write error propagation** -- `mark_dirty`/`mark_clean` are void and bail mid-mirror. <- XREF: 01-boot-platform/TODO-24 §12
   - A torn clean-marker reads false-clean on the next mount and skips fsck entirely. Return a status and fail not-clean.
+  - Reproduced by the shutdown reviews of `00-infrastructure/TODO-08` section 72 (2026-11-25). Done when all of these hold, each with an injected-failure test in `test_fat32.c`; commit `049128629` holds a partial version of the first.
+  - `fat32_mark_clean` and `fat32_fsinfo_flush` return what they could not write (the primary and the backup FSInfo sector), and `fsinfo_dirty` stays set.
+  - `acpi_storage_quiesce` flushes X: before it marks it clean, and flushes the mark after: today the mark is queued first, so a data sector that fails can leave a volume marked clean.
+  - The mark is one checked full-word read-modify-write per FAT copy: today a failed first read writes `FAT32_EOC` into FAT[1] of every copy.
+  - The mark holds `vol->lock`: it uses the volume's shared `sector_buf`, which a writer on another CPU can replace between its read and its write.
   - All four arrived 2026-08-29 from `01-boot-platform/TODO-24` §12, which is a Deferred section in a file the oracle classes DONE, so they were unreachable where they sat. This section owns fsck and the dirty-bit path it depends on; the TODO-24 copies are now `- [/]` parks pointing here.
 - [x] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 

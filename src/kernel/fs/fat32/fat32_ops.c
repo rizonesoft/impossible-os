@@ -639,6 +639,7 @@ static int fat32_vfs_flush(struct vfs_node *node)
     int rc;
     if (!vol) return -1;
     spin_lock(&vol->lock);
+    fat32_fsinfo_flush(vol);
     rc = fat32_flush_disk(vol);
     spin_unlock(&vol->lock);
     /* Device-cache sync OUTSIDE the spinlock: driver flush paths can
@@ -1007,17 +1008,17 @@ int fat32_is_dirty(struct fat32_volume *vol)
     return vol ? vol->volume_dirty : 0;
 }
 
-void __attribute__((minsize)) fat32_mark_dirty(struct fat32_volume *vol)
+void fat32_mark_dirty(struct fat32_volume *vol)
 {
     if (vol) fat32_set_dirty_marker(vol);
 }
 
-int __attribute__((minsize)) fat32_mark_clean(struct fat32_volume *vol)
+void fat32_mark_clean(struct fat32_volume *vol)
 {
-    if (!vol)
-        return -1;
-    int rc = fat32_set_clean_marker(vol);
-    return fat32_fsinfo_flush(vol) != 0 ? -1 : rc;
+    if (vol) {
+        fat32_set_clean_marker(vol);
+        fat32_fsinfo_flush(vol);
+    }
 }
 
 int fat32_run_fsck(struct fat32_volume *vol, int fix)

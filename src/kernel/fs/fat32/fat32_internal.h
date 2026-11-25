@@ -219,10 +219,10 @@ int      fat32_compare_repair_fats(struct fat32_volume *vol, int fix);
 /* Dirty volume marker -- reads/writes FAT[1] bit 27 */
 void     fat32_read_dirty_marker(struct fat32_volume *vol);
 void     fat32_set_dirty_marker(struct fat32_volume *vol);
-int      fat32_set_clean_marker(struct fat32_volume *vol);
+void     fat32_set_clean_marker(struct fat32_volume *vol);
 
 /* FSInfo flush and free cluster scan */
-int      fat32_fsinfo_flush(struct fat32_volume *vol);
+void     fat32_fsinfo_flush(struct fat32_volume *vol);
 uint32_t fat32_count_free_clusters(struct fat32_volume *vol);
 
 /* Cluster allocation */

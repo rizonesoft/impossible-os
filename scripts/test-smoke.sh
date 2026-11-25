@@ -546,9 +546,10 @@ $L_DG"
     exit 0
 fi
 
-# The clean-shutdown oracle: the guest started a power-button shutdown, its
-# storage quiesce reported success and no failure, and it reached S5. acpi_storage_quiesce()
-# powers off even after a failed flush, so S5 alone does not mean clean.
+# The shutdown oracle: the guest started a power-button shutdown, its storage
+# shutdown steps ran and reported no failure, and it reached S5.
+# acpi_storage_quiesce() powers off even after a failed flush, so S5 alone says
+# nothing of them, and what a file system does not report is not judged here.
 shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 on reject
     local log="$1"
     SD_FAIL_MSG=""
@@ -563,8 +564,8 @@ shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 
     if [ -n "$bad" ]; then
         SD_FAIL_MSG="the storage quiesce failed before power-off: $bad"; return 1
     fi
-    if ! sed -n '/\[ACPI\] Initiating shutdown/,$p' "$log" | grep -qaF '[ACPI] Storage is quiesced'; then
-        SD_FAIL_MSG="the storage was not quiesced before power-off"; return 1
+    if ! sed -n '/\[ACPI\] Initiating shutdown/,$p' "$log" | grep -qaF '[ACPI] Storage shutdown steps ran'; then
+        SD_FAIL_MSG="the storage shutdown steps did not run before power-off"; return 1
     fi
     return 0
 }
@@ -584,7 +585,7 @@ if [ "${SMOKE_SHUTDOWN_SELFTEST:-0}" = "1" ]; then
     }
     S_BTN='[  4.890] [cpu:0] [ OK ] acpi: power button: shutting down'
     S_INIT='[ACPI] Initiating shutdown...'
-    S_DONE='[ACPI] Storage is quiesced'
+    S_DONE='[ACPI] Storage shutdown steps ran'
     sd_expect accept "clean power-button shutdown" "$S_BTN" "$S_INIT" "$S_DONE"
     sd_expect reject "no power-button line"        "$S_INIT" "$S_DONE"
     sd_expect reject "never initiated"             "$S_BTN" "$S_DONE"

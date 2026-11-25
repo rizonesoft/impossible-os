@@ -77,10 +77,9 @@ const char *fat32_get_label(struct fat32_volume *vol);
 /* Returns 1 if volume was not cleanly unmounted. */
 int fat32_is_dirty(struct fat32_volume *vol);
 
-/* Mark volume dirty (on mount) or clean (on unmount/shutdown; -1 when that could not be
- * written). */
+/* Mark volume dirty (on mount) or clean (on unmount/shutdown). */
 void fat32_mark_dirty(struct fat32_volume *vol);
-int fat32_mark_clean(struct fat32_volume *vol);
+void fat32_mark_clean(struct fat32_volume *vol);
 
 /* Run filesystem consistency check. fix=0 for read-only, fix=1 to repair.
  * Returns 0 if clean, >0 = number of errors found/fixed, -1 on failure. */
