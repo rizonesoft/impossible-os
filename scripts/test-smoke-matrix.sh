@@ -355,8 +355,9 @@ done
 # passes only when both CPUs' reports, the one park line, the winner's stop
 # code on screen and the next boot's evidence record all name the same winner
 # (scripts/smoke-double-panic.py). These are the only legs that panic on more
-# than one CPU and the only ones that read a crash record across a reset.
-for mode in race ap split; do
+# than one CPU. cut: the split crash is reset where its log save begins, and the next
+# boot's record must already name the winner.
+for mode in race ap split cut; do
     log="$LOG_DIR/crash-double-$mode.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-double.XXXXXX")"
     t0=$(date +%s)

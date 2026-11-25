@@ -994,25 +994,31 @@ DEGRADE="${SMOKE_DEGRADE:-}"
 # panic and the kernel resets the machine. nofb: with the framebuffer refused the panic
 # halts before the stop screen, and the monitor resets it. The boot after either must
 # replay the crashed boot's log (smoke-double-panic.py check-replay).
+#
+# SMOKE_CRASH_TEST=double-cut boots crash_test=8, the double-split crash reset where the
+# log save begins: the next boot must report the winner's record (check-cut).
 CRASH_TEST="${SMOKE_CRASH_TEST:-}"
 CT_VAL=""
 CT_MODE=""
-CT_END=""      # the last line of a lone crash whose log the next boot must replay
+CT_END=""      # the last line of a crash boot that never shows its stop screen
+CT_VERDICT=check-replay
 case "$CRASH_TEST" in
     "") ;;
     bad-strings) CT_VAL=3 ;;
     double-race) CT_VAL=4; CT_MODE=race ;;
     double-ap) CT_VAL=5; CT_MODE=ap ;;
     double-split) CT_VAL=6; CT_MODE=split ;;
+    double-cut) CT_VAL=8; CT_VERDICT=check-cut
+        CT_END="[FIXTURE] crash_test=8: reset as the log is about to be saved" ;;
     abandon) CT_VAL=7; CT_END="[PANIC] crash dump abandoned: crash_test=7" ;;
     nofb) CT_VAL=7; CT_END="System halted (no framebuffer for BSOD)."; DEGRADE=fb ;;
-    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap, double-split, abandon or nofb (got: $CRASH_TEST)${NC}"; exit 1 ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap, double-split, double-cut, abandon or nofb (got: $CRASH_TEST)${NC}"; exit 1 ;;
 esac
 # SMOKE_HHDM_WRONG=1 boots a loader built with BL_TEST_HHDM_WRONG_ALIAS, whose
 # direct map is wrong at the frame the loader checks: it must halt on that check
 # and never enter the kernel. The shipped loader holds none of that code.
 HHDM_WRONG="${SMOKE_HHDM_WRONG:-0}"
-if [ -n "$CT_MODE" ] && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
+if { [ -n "$CT_MODE" ] || [ "$CRASH_TEST" = double-cut ]; } && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
     echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST=$CRASH_TEST needs SMOKE_SMP >= 2 (got: ${SMOKE_SMP})${NC}"; exit 1
 fi
 case "$DEGRADE" in
@@ -1622,6 +1628,20 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     exit 0
 fi
 
+# Wait, until $1 (epoch seconds), for the boot after a crash to have reported its whole
+# record or reached the prompt. A guest that is gone has nothing left to report.
+NEXT_BOOT_NOTE=""
+crash_next_boot_wait() {
+    while [ "$(date +%s)" -lt "$1" ]; do
+        python3 "$SCRIPT_DIR/smoke-double-panic.py" next-boot "$SERIAL_LOG" > /dev/null 2>&1 && return
+        if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+            NEXT_BOOT_NOTE=" (QEMU exited)"
+            return
+        fi
+        sleep 1
+    done
+}
+
 # ---- Double-panic verdict (SMOKE_CRASH_TEST=double-*) ----------------------
 # The stop screen is captured above, before anything else happens. Then the
 # guest is warm-reset through the monitor and the next boot is waited for,
@@ -1649,15 +1669,10 @@ if [ -n "$CT_MODE" ]; then
             || dp_fail "monitor reset: $dp_err"
         dp_deadline=$(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
     fi
-    while [ "$(date +%s)" -lt "$dp_deadline" ]; do
-        [ "$(grep -ac 'efi_main entered' "$SERIAL_LOG" 2>/dev/null || true)" -ge 2 ] \
-            && grep -aqE "Previous crash evidence found|Boot complete" "$SERIAL_LOG" 2>/dev/null \
-            && break
-        sleep 1
-    done
+    crash_next_boot_wait "$dp_deadline"
     strip_ansi
     dp_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" check "$STRIPPED_LOG" "$CT_MODE" 2>&1) \
-        || dp_fail "$dp_out"
+        || dp_fail "$dp_out$NEXT_BOOT_NOTE"
     dp_stop=$(printf '%s\n' "$dp_out" | sed -n 's/^STOP_NAME=//p')
     if ! dp_screen=$(python3 "$SCRIPT_DIR/smoke-screen.py" check "$CT_SCREEN" \
             "Stop code:  $dp_stop" 2>&1); then
@@ -1671,7 +1686,7 @@ if [ -n "$CT_MODE" ]; then
     exit 0
 fi
 
-# ---- Lone-crash verdict (SMOKE_CRASH_TEST=abandon|nofb) ---------------------
+# ---- Crash-boot verdict (SMOKE_CRASH_TEST=abandon|nofb|double-cut) ----------
 if [ -n "$CT_END" ]; then
     strip_ansi
     lc_fail() {
@@ -1685,19 +1700,13 @@ if [ -n "$CT_END" ]; then
         lc_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
             || lc_fail "monitor reset: $lc_err"
     fi
-    lc_deadline=$(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
-    while [ "$(date +%s)" -lt "$lc_deadline" ]; do
-        [ "$(grep -ac 'efi_main entered' "$SERIAL_LOG" 2>/dev/null || true)" -ge 2 ] \
-            && grep -aqE "Previous crash evidence found|Boot complete" "$SERIAL_LOG" 2>/dev/null \
-            && break
-        sleep 1
-    done
+    crash_next_boot_wait $(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
     strip_ansi
-    lc_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" check-replay "$STRIPPED_LOG" "$CT_END" 2>&1) \
-        || lc_fail "$lc_out"
+    lc_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" "$CT_VERDICT" "$STRIPPED_LOG" "$CT_END" 2>&1) \
+        || lc_fail "$lc_out$NEXT_BOOT_NOTE"
     echo -e "  ${GREEN}✓${NC} $lc_out"
     echo ""
-    echo -e "${GREEN}  LONE-CRASH $CRASH_TEST LEG PASSED${NC}"
+    echo -e "${GREEN}  CRASH-BOOT $CRASH_TEST LEG PASSED${NC}"
     echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
     exit 0
 fi

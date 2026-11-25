@@ -463,8 +463,9 @@ void boot_phase3(void)
                      "CRASH_TEST: Deliberate panic without a disk",
                      __FILE__, __LINE__);
     }
-    else if (g_boot_info.config.crash_test >= 4 &&
-             g_boot_info.config.crash_test <= 6) {
+    else if ((g_boot_info.config.crash_test >= 4 &&
+              g_boot_info.config.crash_test <= 6) ||
+             g_boot_info.config.crash_test == 8) {
         /* Two CPUs panic at once: an NMI makes one online AP raise
          * KeBugCheckExFrame(MANUALLY_INITIATED_CRASH) through
          * nmi_crash_handler while this CPU panics here, so both race the
@@ -477,7 +478,9 @@ void boot_phase3(void)
          *   6  split: the AP takes the evidence record and is held before its
          *      owner claim, so this CPU wins terminal while the AP owns the
          *      record first; the terminal winner then replaces it, so the
-         *      next boot's record names this CPU's STOP 0xDEAD.
+         *      next boot's record names this CPU's STOP 0xDEAD;
+         *   8  split, and the machine resets where the log save begins: the
+         *      record has to name this CPU's STOP by then.
          * With no second online CPU it says so and panics alone, which those
          * legs then fail on. */
         extern void panic_screen(struct interrupt_frame *frame,
@@ -499,11 +502,13 @@ void boot_phase3(void)
         }
         if (ap) {
             uint32_t want = (ct == 5) ? PANIC_FIXTURE_OWNER_CLAIMED
-                          : (ct == 6) ? PANIC_FIXTURE_HELD : 0u;
+                          : (ct >= 6) ? PANIC_FIXTURE_HELD : 0u;
             uint32_t spins = 0;
 
-            if (ct == 6)
+            if (ct >= 6)
                 panic_fixture_hold_claim(ap->lapic_id);
+            if (ct == 8)
+                panic_fixture_reset_at_save();
             klog(LOG_WARN, "boot",
                  "crash_test=%u -- NMI to CPU %u (apic %u), then a BSOD here",
                  (uint64_t)ct, (uint64_t)ap->cpu_id, (uint64_t)ap->lapic_id);
@@ -530,12 +535,12 @@ void boot_phase3(void)
              g_boot_info.config.crash_test != 2) {
         /* Say so rather than booting normally. Before the exact-match
          * narrowing above, ANY nonzero value fired this site, so an
-         * operator typo was self-evident; now 8-255 are handled by
+         * operator typo was self-evident; now 9-255 are handled by
          * nobody and the knob would just look broken. */
         klog(LOG_WARN, "boot",
              "crash_test=%u is not a known crash site (0=off, 1=here, "
              "2=pre-first-composite, 3=here with unreadable strings, "
-             "4-6=here racing a second CPU, 7=here with the dump abandoned) -- "
+             "4-6=here racing a second CPU, 7=here with the dump abandoned, 8=6 reset at the log save) -- "
              "no crash will be triggered",
              (uint64_t)g_boot_info.config.crash_test);
     }

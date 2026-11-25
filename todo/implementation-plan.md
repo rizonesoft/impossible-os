@@ -865,7 +865,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T04 §12` | ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema                            | none       |     6 |
 | [x]  | `D02 T04 §13` | Rotated-Log Compression                                                                           | none       |     8 |
 | [ ]  | `D02 T04 §14` | Serial Timestamp Render Bound                                                                     | none       |     2 |
-| [ ]  | `D02 T04 §15` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     6 |
+| [ ]  | `D02 T04 §15` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     7 |
 | [ ]  | `D02 T04 §16` | Klog Assertions and Scans That Depend on Nothing Else Having Logged                               | none       |     6 |
 | [ ]  | `D02 T04 §17` | Bounded Wait Until the Sinks Have Caught Up to a Given Sequence                                   | none       |     4 |
 | [x]  | `D02 T04 §18` | The Previous Boot's Crash Region Is Claimed Before Any Allocation                                 | none       |     5 |

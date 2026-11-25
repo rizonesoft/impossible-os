@@ -492,12 +492,10 @@ Items moved here VERBATIM from their original, already-stamped sections, where t
 
 From the stamped section 9:
 - [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
-  - `s_recovered` is frame-backed as of `02-kernel-core/TODO-33` section 12, so pool-absent is a reachable runtime state rather than an impossible one, and allocation failure degrades to serial-only instead of halting -> XREF: `02-kernel-core/TODO-33 §12` (item: "Convert exactly ONE assessed pool to frame-backed storage").
-  - The PURE half already ships assertions: `klog_recovered_at` and `klog_recovered_set_ok` are unit-tested in `src/kernel/test/test_klog.c`, including the absent-pool and incoherent-count refusals with a passing control beside each. What those cannot reach is the boot-level consequence.
-  - Not unit-testable as things stand: the allocation lives inside `klog_crash_recover()`, and `src/kernel/test/test_*.c` may not call live boot infrastructure. The injector itself already ships, so the gap is the CALL SITE and not the mechanism -> XREF: `00-infrastructure/TODO-03 §6` (item: "Extended to PMM: 4 `pmm_alloc_fail_*` fields in `per_cpu_data`").
-  - Also assert the overlap path, which is the harder half: a pool run that exactly or partially covers the previous crash region must be freed untouched and must NOT erase it. That case is what round 1 of this section's adversarial review caught.
-  - Assert this boot's crash REGION is still allocated afterwards. The two allocations are independent, and a regression conflating them would disable crash persistence for the NEXT boot while every existing test stayed green.
-  - Cover the allocation-PRIORITY path specifically, under a constrained contiguous heap: the 41-frame recovered pool is taken before the 32-frame crash region, so a fragmentation test must prove recovery can never leave this boot with crash logging unarmed, and that the fallback which releases the pool actually re-arms it.
+      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
+
+From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-08-18):
+- [x] The crash-recovery degraded path is gone: the recovered-entry pool was removed 2026-11-25 and the entries are read where the loader put them.
 
 From `01-boot-platform/TODO-24` sections 5 and 10 (BlackBox klog follow-ups, 2026-08-29) -- both sat as bare `- [ ]` inside Deferred sections of a file the oracle classes DONE, so nothing would ever revisit them:
 - [ ] **klog_disk_flush re-entrancy guard on the C: fallback path** <- XREF: 01-boot-platform/TODO-24 §5

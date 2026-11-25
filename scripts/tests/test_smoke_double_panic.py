@@ -160,5 +160,48 @@ expect_lone("a replay without the record fails", CRASH_BOOT + [x for x in NEXT_B
 expect_lone("a crash that never reached its last line fails", CRASH_BOOT[:2] + NEXT_BOOT, False)
 expect_lone("a crash that saved its dump fails", CRASH_BOOT + [DUMP] + NEXT_BOOT, False)
 
+
+CUT_END = "[FIXTURE] crash_test=8: reset as the log is about to be saved"
+CUT_REPORTS = ["[PANIC] MANUALLY_INITIATED_CRASH", "  on CPU apic=0x0000000000000001",
+               "[PANIC] CRASH_TEST", "  on CPU apic=0x0000000000000000"]
+CUT_ORDER = "[  1.5] [cpu:0] [WARN] boot: crash_test=8 -- NMI to CPU 1 (apic 1), then a BSOD here"
+CUT_BOOT = ["[BOOT] efi_main entered", CUT_ORDER] + CUT_REPORTS + [CUT_END]
+
+
+def expect_cut(name: str, lines: list[str], ok: bool) -> None:
+    global failures
+    try:
+        dp.check_cut("\n".join(lines) + "\n", CUT_END)
+        got, why = True, ""
+    except dp.VerdictError as exc:
+        got, why = False, str(exc)
+    if got != ok:
+        failures += 1
+    print("%s  %s%s" % ("PASS" if got == ok else "FAIL", name, ("  (" + why + ")") if why else ""))
+
+
+AFTER = ["[BOOT] efi_main entered", RECORD]
+expect_cut("a cut crash whose record names the winner passes", CUT_BOOT + AFTER, True)
+expect_cut("a record that names the loser fails",
+           CUT_BOOT + [AFTER[0], RECORD.replace("0xdead", "0xe2")], False)
+expect_cut("no record after a cut crash fails", CUT_BOOT + AFTER[:1] + CUT_BOOT + AFTER, False)
+expect_cut("one report alone fails", CUT_BOOT[:4] + CUT_BOOT[6:] + AFTER, False)
+expect_cut("a crash that was never cut fails", CUT_BOOT[:-1] + AFTER, False)
+
+
+def expect_done(name: str, lines: list[str], tail: str, done: bool) -> None:
+    global failures
+    got = dp.next_boot_done("\n".join(lines + [tail]))
+    if got != done:
+        failures += 1
+    print("%s  %s" % ("PASS" if got == done else "FAIL", name))
+
+
+SECOND = CRASH_BOOT + ["[BOOT] efi_main entered"]
+expect_done("half a record line is not a record yet", SECOND, RECORD[:-12], False)
+expect_done("the whole record line is", SECOND, RECORD, True)
+expect_done("the prompt without a record ends the wait", SECOND, "[  2.0] Boot complete", True)
+expect_done("a record or a prompt of the first boot does not", CRASH_BOOT + [RECORD], "Boot complete", False)
+
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)

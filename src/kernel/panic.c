@@ -494,6 +494,7 @@ static int panic_try_claim_owner(void)
 static volatile uint32_t s_fixture_hold_apic = PANIC_FIXTURE_NO_HOLD;
 static volatile uint32_t s_fixture_held = 0;
 static volatile uint32_t s_fixture_abandon_dump = 0;
+static volatile uint32_t s_fixture_reset_at_save = 0;
 /* How long the held CPU waits for another to claim before claiming itself:
  * 2^28 `pause`s, seconds on current parts, so a fixture whose second CPU never
  * panics still ends in a stop screen rather than a hang. */
@@ -609,6 +610,19 @@ void panic_fixture_hold_claim(uint32_t apic_id)
 void panic_fixture_abandon_dump(void)
 {
     __atomic_store_n(&s_fixture_abandon_dump, 1u, __ATOMIC_RELEASE);
+}
+
+void panic_fixture_reset_at_save(void)
+{
+    __atomic_store_n(&s_fixture_reset_at_save, 1u, __ATOMIC_RELEASE);
+}
+
+void panic_fixture_save_point(void)
+{
+    if (!__atomic_load_n(&s_fixture_reset_at_save, __ATOMIC_ACQUIRE))
+        return;
+    serial_write("\n[FIXTURE] crash_test=8: reset as the log is about to be saved\n");
+    panic_machine_reset();
 }
 
 static void panic_fixture_hold_point(uint32_t ev_cpu)
@@ -3350,10 +3364,6 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR,
             ev_cpu, ev_token);
 
-        /* The log for the next boot, before anything the panic may not come back
-         * from: a halt without a framebuffer, a disk dump that cannot be stopped. */
-        klog_crash_persist();
-
         /* The owner's serial dumps (transition ring, subsystem readiness,
          * quota) are one report too. Taking the report lock here waits out a
          * report another CPU is still printing, and holding it to the last dump
@@ -3401,6 +3411,11 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
                                have_file ? file_snap : (const char *)0, line,
                                ev_cpu, ev_token, 1,
                                PANIC_EVIDENCE_QUIESCE_SPINS, snap_ctx);
+
+        /* The log for the next boot, once the record names this crash and before
+         * anything the panic may not come back from: a dump that waits for a log
+         * lock, a halt without a framebuffer, a disk that cannot be stopped. */
+        klog_crash_persist();
 
         panic_capture_fpu_state();
         panic_build_context(frame, &g_panic_context);

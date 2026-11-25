@@ -55,7 +55,7 @@ void panic_build_context(struct interrupt_frame *frame, CONTEXT *ctx);
 void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
                   const char *description, const char *file, uint32_t line);
 
-/* --- Multi-CPU panic fixture seam (crash_test=5 and 6 only) ---
+/* --- Multi-CPU panic fixture seam (crash_test=5, 6 and 8 only) ---
  *
  * panic_fixture_state() reports what the panic path has reached, for a fixture
  * that must order two CPUs' panics deterministically instead of by luck:
@@ -83,6 +83,11 @@ void     panic_fixture_hold_claim(uint32_t apic_id);
 /* crash_test=7: the disk dump ends in panic_abandon_storage(), as it does when a
  * controller's DMA cannot be stopped. */
 void     panic_fixture_abandon_dump(void);
+
+/* crash_test=8: the machine resets where klog_crash_persist() starts, so the next boot
+ * shows what the panic had recorded by then. Called by klog_crash_persist(). */
+void     panic_fixture_reset_at_save(void);
+void     panic_fixture_save_point(void);
 
 /* Convenience macro that captures file/line automatically.
  * Routes through KeBugCheckEx for uniform bugcheck handling.

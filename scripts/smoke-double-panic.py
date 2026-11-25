@@ -32,6 +32,17 @@ reached its last line, and the very next boot replayed that log, once, and
 found the record. A third boot (the fixture crashes every boot) counts for
 nothing.
 
+    python3 scripts/smoke-double-panic.py check-cut <stripped-serial-log> <last line>
+
+judges crash_test=8 (the split crash, reset where its log save begins): both
+CPUs reported, the first boot reached its last line, and the next boot found
+one record, the winner's (the BSP).
+
+    python3 scripts/smoke-double-panic.py next-boot <serial-log>
+
+exits 0 once the second boot has reported its whole record or reached the
+prompt, so that either verdict can be given.
+
 Prints "STOP_NAME=<name>" (the stop code the screen must show) and a summary
 on success; prints the reason and exits 1 otherwise.
 """
@@ -187,14 +198,47 @@ def check_replay(text: str, last: str) -> str:
     return "the panic ended at %r and the next boot replayed its log" % last
 
 
+def check_cut(text: str, last: str) -> str:
+    boots = split_boots(text)
+    if len(boots) < 2:
+        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
+    first, second = boots[0], boots[1]
+    body = "\n".join(first)
+    for bad in FORBIDDEN:
+        if bad in body:
+            raise VerdictError("fixture: %s" % bad)
+    if [m.group(1) for m in (ORDER_RE.search(x) for x in first) if m] != ["8"]:
+        raise VerdictError("the crash boot did not log its fixture once")
+    if len(set(reports(first))) != 2:
+        raise VerdictError("expected a panic report from each of two CPUs, saw apic %s" % reports(first))
+    if last not in body or DUMP in body:
+        raise VerdictError("the crash boot was not reset at %r" % last)
+    records = [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in second) if m]
+    if records != [BSP_STOP[1]]:
+        raise VerdictError("the record names %s, the winner was 0x%x"
+                           % ([hex(x) for x in records] or "nothing", BSP_STOP[1]))
+    return "the record named the winner's STOP 0x%x before the log was saved" % BSP_STOP[1]
+
+
+def next_boot_done(text: str) -> bool:
+    boots = split_boots(text)
+    return len(boots) >= 2 and any(RECORD_RE.search(x) or "Boot complete" in x for x in boots[1])
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[0] not in ("check", "check-replay"):
+    if len(argv) != (2 if argv[:1] == ["next-boot"] else 3) or \
+            argv[0] not in ("check", "check-replay", "check-cut", "next-boot"):
         print(__doc__)
         return 2
     try:
         text = pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
+        if argv[0] == "next-boot":
+            return 0 if next_boot_done(text) else 1
         if argv[0] == "check-replay":
             print(check_replay(text, argv[2]))
+            return 0
+        if argv[0] == "check-cut":
+            print(check_cut(text, argv[2]))
             return 0
         name, summary = check(text, argv[2])
     except (VerdictError, OSError) as exc:

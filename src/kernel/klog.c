@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/klog.h"
+#include "kernel/panic.h"
 #include "kernel/cache.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/serial.h"
@@ -980,6 +981,7 @@ void klog_crash_persist(void)
     if (!s_crash_region || s_crash_region_size == 0)
         return;
 
+    panic_fixture_save_point();
     (void)klog_crash_serialize_region(s_crash_region, s_crash_region_size);
 
     /* POST code: crash log persisted */
