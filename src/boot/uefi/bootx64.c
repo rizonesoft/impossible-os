@@ -10358,7 +10358,10 @@ static void keep_crash_log(void)
         return;
     s_crash_log.named = size == sizeof log.base ? log.base : 0;
     log.base = s_crash_log.named;
+    /* At TPL_NOTIFY nothing of firmware's takes memory between the map and the copy. */
+    EFI_TPL tpl = gBS->RaiseTPL(TPL_NOTIFY);
     s_crash_log.why = copy_crash_log(log);
+    gBS->RestoreTPL(tpl);
 }
 
 /* Say what became of it, once the serial port works. */

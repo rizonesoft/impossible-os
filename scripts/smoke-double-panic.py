@@ -25,6 +25,13 @@ agrees on which.
 
     python3 scripts/smoke-double-panic.py check <stripped-serial-log> <race|ap|split>
 
+    python3 scripts/smoke-double-panic.py check-replay <stripped-serial-log> <last line>
+
+judges the lone crash of crash_test=7: the first boot logged the fixture and
+reached its last line, and the very next boot replayed that log, once, and
+found the record. A third boot (the fixture crashes every boot) counts for
+nothing.
+
 Prints "STOP_NAME=<name>" (the stop code the screen must show) and a summary
 on success; prints the reason and exits 1 otherwise.
 """
@@ -156,13 +163,40 @@ def check(text: str, mode: str) -> tuple[str, str]:
                   % (winner, name, loser, got))
 
 
+LONE_RE = re.compile(r"crash_test=7 -- triggering deliberate BSOD")
+
+
+def check_replay(text: str, last: str) -> str:
+    boots = split_boots(text)
+    if len(boots) < 2:
+        raise VerdictError("expected the crash boot and the boot after the reset, saw %d" % len(boots))
+    first, second = boots[0], boots[1]
+    if sum(1 for x in first if LONE_RE.search(x)) != 1:
+        raise VerdictError("the crash boot did not log its fixture once")
+    if not any(last in x for x in first):
+        raise VerdictError("the crash boot never reached %r" % last)
+    if DUMP in "\n".join(first):
+        raise VerdictError("the crash boot saved a dump it was to do without")
+    replayed = sum(1 for x in second if x.startswith(REPLAY) and LONE_RE.search(x))
+    if replayed != 1:
+        raise VerdictError("the boot after the reset did not replay the crashed boot's log "
+                           "(its fixture line came back %d times)" % replayed)
+    records = [int(m.group(1), 16) for m in (RECORD_RE.search(x) for x in second) if m]
+    if records != [BSP_STOP[1]]:
+        raise VerdictError("the boot after the reset found records %s" % [hex(x) for x in records])
+    return "the panic ended at %r and the next boot replayed its log" % last
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[0] != "check":
+    if len(argv) != 3 or argv[0] not in ("check", "check-replay"):
         print(__doc__)
         return 2
     try:
-        name, summary = check(pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace"),
-                              argv[2])
+        text = pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
+        if argv[0] == "check-replay":
+            print(check_replay(text, argv[2]))
+            return 0
+        name, summary = check(text, argv[2])
     except (VerdictError, OSError) as exc:
         print(exc)
         return 1

@@ -330,8 +330,8 @@ done
 # only when the stop screen renders both placeholders and the crash dump lands. It is
 # the one-CPU boot that reaches the stop screen: a panic that hung under the boot splash
 # shipped while every leg was a healthy boot. abandon: crash_test=7 ends the panic inside
-# the disk dump, and the next boot must replay the log.
-for mode in bad-strings abandon; do
+# the disk dump, nofb halts it without a framebuffer; the next boot must replay the log.
+for mode in bad-strings abandon nofb; do
     log="$LOG_DIR/crash-$mode.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crash.XXXXXX")"
     t0=$(date +%s)

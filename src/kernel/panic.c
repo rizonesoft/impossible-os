@@ -3350,6 +3350,10 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR,
             ev_cpu, ev_token);
 
+        /* The log for the next boot, before anything the panic may not come back
+         * from: a halt without a framebuffer, a disk dump that cannot be stopped. */
+        klog_crash_persist();
+
         /* The owner's serial dumps (transition ring, subsystem readiness,
          * quota) are one report too. Taking the report lock here waits out a
          * report another CPU is still printing, and holding it to the last dump
@@ -3648,11 +3652,6 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
     s_panic_terminal.token = ev_token;
     s_panic_terminal.ctx   = snap_ctx;
     s_panic_terminal.valid = 1;
-
-    /* === Persist klog ring buffer to reserved physical memory === */
-    /* Before the dump: a disk that cannot be stopped ends the panic inside it
-     * (panic_abandon_storage), and this log is then all the next boot has. */
-    klog_crash_persist();
 
     /* === Write crash dump to disk === */
     /* The SAME capture the BSOD rendered above, not a second walk: sharing it

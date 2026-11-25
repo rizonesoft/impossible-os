@@ -636,6 +636,8 @@ typedef EFI_STATUS (EFIAPI *EFI_LOCATE_HANDLE_BUFFER)(
 #define TPL_CALLBACK       8
 #define TPL_NOTIFY         16
 
+typedef EFI_TPL (EFIAPI *EFI_RAISE_TPL)(EFI_TPL NewTpl);
+typedef VOID (EFIAPI *EFI_RESTORE_TPL)(EFI_TPL OldTpl);
 typedef VOID (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, VOID *Context);
 typedef enum { TimerCancel, TimerPeriodic, TimerRelative } EFI_TIMER_DELAY;
 
@@ -653,8 +655,8 @@ typedef struct EFI_BOOT_SERVICES {
     EFI_TABLE_HEADER        Hdr;
 
     /* Task Priority Services */
-    VOID                   *RaiseTPL;           /* 0 */
-    VOID                   *RestoreTPL;         /* 1 */
+    EFI_RAISE_TPL           RaiseTPL;           /* 0 */
+    EFI_RESTORE_TPL         RestoreTPL;         /* 1 */
 
     /* Memory Services */
     EFI_ALLOCATE_PAGES      AllocatePages;      /* 2 */

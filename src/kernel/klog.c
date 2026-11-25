@@ -1060,47 +1060,9 @@ static void klog_crash_unpublish(void)
              st);
 }
 
-void klog_crash_recover(void)
+/* Give this boot a crash region, and name it in NVRAM in place of the last boot's. */
+static void klog_crash_arm(void)
 {
-    s_recovered = (const klog_crash_entry_t *)0;
-    s_recovered_count = 0;
-
-    POST16(POST16_CRASHLOG);
-
-    /* A log that was handed over is replayed once, even when its replay is what crashes. */
-    if (g_boot_info.crash_log_base != 0)
-        klog_crash_unpublish();
-
-    /* Step 1: the previous boot's log, when the loader kept one */
-    POST16(POST16_CRASHLOG_CHECK);
-    const klog_crash_header_t *prev = klog_crash_previous();
-    if (prev) {
-        s_recovered = (const klog_crash_entry_t *)(prev + 1);
-        s_recovered_count = prev->entry_count;
-
-        serial_write("[CRASH-PREV] === Recovered ");
-        {
-            char num[12], tmp[12];
-            uint32_t n = s_recovered_count, pos = 0, t = 0;
-            while (n) { tmp[t++] = '0' + (n % 10); n /= 10; }
-            while (t) num[pos++] = tmp[--t];
-            num[pos] = '\0';
-            serial_write(num);
-        }
-        serial_write(" entries from previous crash ===\n");
-
-        for (uint32_t i = 0; i < s_recovered_count; i++) {
-            klog_crash_entry_t e = klog_crash_entry_ended(&s_recovered[i]);
-
-            serial_write("[CRASH-PREV] ");
-            serial_write(e.subsystem);
-            serial_write(": ");
-            serial_write(e.message);
-            serial_write("\n");
-        }
-    }
-
-    /* Step 2: Allocate fresh crash persistence region for THIS boot */
     uint64_t phys = pmm_alloc_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap,
                                             g_boot_info.mmap_count, KLOG_CRASH_PAGES);
 
@@ -1110,8 +1072,6 @@ void klog_crash_recover(void)
         if (phys)
             pmm_free_contiguous(phys, KLOG_CRASH_PAGES);
         klog_crash_unpublish();     /* a pointer an earlier boot left */
-        POST16(POST16_CRASHLOG_ALLOC);
-        POST16(POST16_CRASHLOG_DONE);
         return;
     }
     s_crash_region = mm_phys_to_hhdm(phys);
@@ -1141,8 +1101,50 @@ void klog_crash_recover(void)
         if (st != 0)
             klog_crash_unpublish();     /* nor may it follow an earlier boot's */
     }
+}
 
+void klog_crash_recover(void)
+{
+    s_recovered = (const klog_crash_entry_t *)0;
+    s_recovered_count = 0;
+
+    POST16(POST16_CRASHLOG);
+
+    /* Step 1: the previous boot's log, when the loader kept one */
+    POST16(POST16_CRASHLOG_CHECK);
+    const klog_crash_header_t *prev = klog_crash_previous();
+
+    /* Step 2: this boot's region, before the replay: that takes as long as the serial
+     * port does, and a crash during it is then this boot's, not the same log again. */
+    klog_crash_arm();
     POST16(POST16_CRASHLOG_ALLOC);
+
+    if (prev) {
+        s_recovered = (const klog_crash_entry_t *)(prev + 1);
+        s_recovered_count = prev->entry_count;
+
+        serial_write("[CRASH-PREV] === Recovered ");
+        {
+            char num[12], tmp[12];
+            uint32_t n = s_recovered_count, pos = 0, t = 0;
+            while (n) { tmp[t++] = '0' + (n % 10); n /= 10; }
+            while (t) num[pos++] = tmp[--t];
+            num[pos] = '\0';
+            serial_write(num);
+        }
+        serial_write(" entries from previous crash ===\n");
+
+        for (uint32_t i = 0; i < s_recovered_count; i++) {
+            klog_crash_entry_t e = klog_crash_entry_ended(&s_recovered[i]);
+
+            serial_write("[CRASH-PREV] ");
+            serial_write(e.subsystem);
+            serial_write(": ");
+            serial_write(e.message);
+            serial_write("\n");
+        }
+    }
+
     POST16(POST16_CRASHLOG_DONE);
 }
 

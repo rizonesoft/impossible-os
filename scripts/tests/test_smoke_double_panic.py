@@ -132,5 +132,33 @@ expect("an ordering timeout fails",
            "MANUALLY_INITIATED_CRASH", 0xE2), "ap", False)
 expect("an unknown mode fails", log(4, bsp_wins, "KERNEL_PANIC", 0xDEAD), "both", False)
 
+LONE = "boot: crash_test=7 -- triggering deliberate BSOD whose disk dump is abandoned"
+LONE_END = "[PANIC] crash dump abandoned: crash_test=7"
+CRASH_BOOT = ["[BOOT] efi_main entered", "[  1.5] [cpu:0] [WARN] " + LONE, LONE_END]
+RECORD = "[  0.000] [FAIL] panic: [PANIC] Previous crash evidence found (STOP 0xdead rip=0x0)"
+NEXT_BOOT = ["[BOOT] efi_main entered", "[CRASH-PREV] " + LONE, RECORD] + CRASH_BOOT[1:]
+BARE_BOOT = ["[BOOT] efi_main entered", RECORD] + CRASH_BOOT[1:]
+
+
+def expect_lone(name: str, lines: list[str], ok: bool) -> None:
+    global failures
+    try:
+        dp.check_replay("\n".join(lines) + "\n", LONE_END)
+        got, why = True, ""
+    except dp.VerdictError as exc:
+        got, why = False, str(exc)
+    if got != ok:
+        failures += 1
+    print("%s  %s%s" % ("PASS" if got == ok else "FAIL", name, ("  (" + why + ")") if why else ""))
+
+
+expect_lone("a lone crash whose log the next boot replays passes", CRASH_BOOT + NEXT_BOOT, True)
+expect_lone("a third boot changes nothing", CRASH_BOOT + NEXT_BOOT + NEXT_BOOT, True)
+expect_lone("a replay that first comes in the third boot fails", CRASH_BOOT + BARE_BOOT + NEXT_BOOT, False)
+expect_lone("no boot after the crash fails", CRASH_BOOT, False)
+expect_lone("a replay without the record fails", CRASH_BOOT + [x for x in NEXT_BOOT if x != RECORD], False)
+expect_lone("a crash that never reached its last line fails", CRASH_BOOT[:2] + NEXT_BOOT, False)
+expect_lone("a crash that saved its dump fails", CRASH_BOOT + [DUMP] + NEXT_BOOT, False)
+
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)

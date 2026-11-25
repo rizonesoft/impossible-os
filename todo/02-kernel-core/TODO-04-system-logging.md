@@ -298,6 +298,8 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
   - The panic owner is same-CPU re-entrant and CLI does not block NMI or machine-check entry, so a nested panic reaches `klog_crash_serialize_region` while a complete record from the outer invocation is already published. It clears the magic and rewrites the entries in place; if it then faults or resets before republishing, the outer record is gone.
   - TODO-10 §28 narrowed this by NOT flushing the magic clear, so the zero is usually still only in cache. That is a narrowing, not a fix: ordinary cache replacement can write the line back at any point during serialization, and TODO-10 §28 does not own this region.
   - The closure is a protocol that never overwrites a complete record in place -- two slots plus a generation to choose between them, or claim arbitration like the panic evidence page's. Both change the on-region format that `klog_crash_recover` and the NVRAM pointer contract describe, so this is a design, not a patch.
+- [ ] The recovered log reaches serial after the scheduler starts, so a slow console does not hold the boot: 799 full entries take over 105 s at 9,600 baud in Phase 0.
+  - Phase 0 prints the count; the entries stay reserved, so the drain reads them where they are and keeps their order. The smoke legs read the transcript (`SMOKE_CRASH_NVRAM`, `smoke-double-panic.py`).
 - [x] The crash region survives a warm reset on OVMF, and the double-panic legs require the replay.
   - Fixed 2026-11-25 by [the direct-map check section](../00-infrastructure/TODO-08-automation-hardening.md): first-fit took boot-services memory, which OVMF writes again at every reset.
 - [x] Moved to §18: the previous boot's crash region is claimed before any allocation, and both NVRAM results are checked.
@@ -490,12 +492,6 @@ Items moved here VERBATIM from their original, already-stamped sections, where t
 
 From the stamped section 9:
 - [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
-      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
-
-From `02-kernel-core/TODO-33` section 12 (recovered-entry pool conversion, 2026-08-18):
-- [ ] Cover the crash-recovery DEGRADED path at boot level: force ONLY the recovered-entry pool allocation to fail and assert boot continues, serial replay still happens, and no `crash_recovery.log` is written.
-      - PARKED on the kernel image ceiling; it adds kernel `.text` and the budget is 95 bytes. XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13.
-      - SECOND blocker, independent of the ceiling: the allocation lives inside `klog_crash_recover()` and tests may not call live boot infrastructure, so the fault-injection CALL SITE has to exist first. XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` §6.
   - `s_recovered` is frame-backed as of `02-kernel-core/TODO-33` section 12, so pool-absent is a reachable runtime state rather than an impossible one, and allocation failure degrades to serial-only instead of halting -> XREF: `02-kernel-core/TODO-33 §12` (item: "Convert exactly ONE assessed pool to frame-backed storage").
   - The PURE half already ships assertions: `klog_recovered_at` and `klog_recovered_set_ok` are unit-tested in `src/kernel/test/test_klog.c`, including the absent-pool and incoherent-count refusals with a passing control beside each. What those cannot reach is the boot-level consequence.
   - Not unit-testable as things stand: the allocation lives inside `klog_crash_recover()`, and `src/kernel/test/test_*.c` may not call live boot infrastructure. The injector itself already ships, so the gap is the CALL SITE and not the mechanism -> XREF: `00-infrastructure/TODO-03 §6` (item: "Extended to PMM: 4 `pmm_alloc_fail_*` fields in `per_cpu_data`").
