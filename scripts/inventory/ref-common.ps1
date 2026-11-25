@@ -232,6 +232,11 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $env:PSModulePath = @($env:PSModulePath -split ';' | Where-Object { $_ -and $_ -notmatch '\\PowerShell\\' }) -join ';'
 }
 
+# .NET reads a relative path against the process's folder, which Set-Location
+# does not move: both are the same folder from here on, so a path that was
+# checked is the path that is used.
+[Environment]::CurrentDirectory = (Get-Location -PSProvider FileSystem).ProviderPath
+
 # Impossible SDK's own machine and its folder are never ours to start, stop,
 # change or delete: a script given either refuses before it does anything. A
 # pattern is refused too: Hyper-V's cmdlets expand one, and the VM lock does not.
@@ -264,14 +269,14 @@ $script:RefTurnWaitSec = 360
 $script:RefTurnLimitSec = 420
 $script:RefTurn = $null
 
-function Enter-RefTurn() {
+function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
     if ($script:RefTurn) { return }
     $script:RefTurn = @{ Process = $null; Env = @{} }
     $bosun = @(Get-Command bosun.exe -CommandType Application -ErrorAction SilentlyContinue)[0]
     if (-not $bosun) { Write-Ref 'Bosun is not installed: going on without a place'; return }
     $si = New-Object Diagnostics.ProcessStartInfo
     $si.FileName = $bosun.Source
-    $si.Arguments = "run --ns $script:RefTurnNs --slots 1 --max-wait $script:RefTurnWaitSec -- cmd.exe /d /c set BOSUN_& sort >nul"
+    $si.Arguments = "run --ns $script:RefTurnNs --slots 1 --max-wait $WaitSec -- cmd.exe /d /c set BOSUN_& sort >nul"
     $si.WorkingDirectory = $env:SystemRoot   # cmd.exe refuses a WSL share
     $si.UseShellExecute = $false
     $si.CreateNoWindow = $true
@@ -290,7 +295,7 @@ function Enter-RefTurn() {
             Start-Sleep -Milliseconds 100
             if (-not $said -and $clock.Elapsed.TotalSeconds -ge 3) {
                 $said = $true
-                Write-Ref "waiting for a place in $script:RefTurnNs, up to $script:RefTurnWaitSec s"
+                Write-Ref "waiting for a place in $script:RefTurnNs, up to $WaitSec s"
             }
         }
         if ($read.Status -ne 'RanToCompletion' -or $null -eq $read.Result) { break }
@@ -310,7 +315,7 @@ function Enter-RefTurn() {
         $script:RefTurn.Env[$n] = [Environment]::GetEnvironmentVariable($n)
         [Environment]::SetEnvironmentVariable($n, $given[$n])
     }
-    if ($given['BOSUN_SLOT'] -eq '-1') { Write-Ref "no place in $script:RefTurnNs after $script:RefTurnWaitSec s: starting anyway" }
+    if ($given['BOSUN_SLOT'] -eq '-1') { Write-Ref "no place in $script:RefTurnNs after $WaitSec s: starting anyway" }
     elseif ($said) { Write-Ref "took a place in $script:RefTurnNs after $([int]$clock.Elapsed.TotalSeconds) s" }
 }
 

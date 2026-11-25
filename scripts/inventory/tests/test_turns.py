@@ -135,7 +135,8 @@ class Turns(unittest.TestCase):
 
     def wait_waiting(self, p):
         said = f"waiting for a place in {self.ns}"
-        self.wait_for(lambda: any(said in x for x in p.lines), lambda: f"it did not wait: {p.lines}")
+        self.wait_for(lambda: any(said in x for x in p.lines) or p.poll() is not None, lambda: f"it did not wait: {p.lines}")
+        self.assertIsNone(p.poll(), p.lines)
 
     def finish(self, p):
         """The exit code and everything printed."""
@@ -192,8 +193,16 @@ class Turns(unittest.TestCase):
     def noted(self):
         return self.log.read_text(encoding="utf-8-sig") if self.log.exists() else ""
 
-    def wait_noted(self, what):
-        self.wait_for(lambda: what in self.noted(), lambda: f"{what} was never noted: {self.noted()}")
+    def run_that_holds(self, folder):
+        """A run whose command waits, with its VM started."""
+        for _ in range(2):
+            p = self.start(self.ref_run(folder, command="hold"))
+            self.wait_for(lambda p=p: "start" in self.noted() or p.poll() is not None, lambda: "it did not start")
+            if p.poll() is not None:
+                p.reader.join(5)
+            if not any(NOT_STARTED in x for x in p.lines):
+                break
+        self.assertIsNone(p.poll(), p.lines)
 
     def test_a_run_waits_for_the_place_and_goes_on_when_it_frees(self):
         dummy = self.hold()
@@ -209,7 +218,7 @@ class Turns(unittest.TestCase):
 
     def test_a_vm_left_on_is_off_before_the_wait(self):
         dummy = self.hold()
-        p = self.start(self.ref_run(self.scripts(60, 90, "Running")))
+        p, _ = self.first_line(self.ref_run(self.scripts(60, 90, "Running")))
         self.wait_waiting(p)
         self.assertEqual(self.noted().split(), ["stop"])
         dummy.stdin.close()
@@ -281,8 +290,7 @@ class Turns(unittest.TestCase):
         self.assertEqual(self.call(self.ref_run(folder, out=False))[0], 2)
         self.assertEqual(self.call(self.ref_run(folder, name="ios-turns-fail"))[0], 3)
         self.log.unlink()
-        self.start(self.ref_run(folder, command="hold"))
-        self.wait_noted("start")
+        self.run_that_holds(folder)
         began = time.monotonic()
         self.assertEqual(self.call(self.ref_run(folder))[0], 4)
         self.assertLess(time.monotonic() - began, 30)    # refused at once, not queued
@@ -296,8 +304,7 @@ class Turns(unittest.TestCase):
         self.assertNotIn("start", self.noted())
 
     def test_a_run_that_is_killed_frees_the_place(self):
-        self.start(self.ref_run(self.scripts(60, 90), command="hold"))
-        self.wait_noted("start")
+        self.run_that_holds(self.scripts(60, 90))
         pid = re.search(r"pid=(\d+)", self.noted())[1]
         self.assertEqual(self.slot(2), "-1")             # the run has the place
         code, out = self.call([POWERSHELL, *BYPASS, "-Command", f"Stop-Process -Id {pid} -Force -ErrorAction Stop"])
@@ -314,6 +321,22 @@ class Turns(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual([x for x in out.split() if "=" in x],
                          ["in=0", "out=", "same=True", "BOSUN_SLOT=0", "again=0"], out)
+
+    def test_a_turn_for_a_vm_already_on_does_not_wait(self):
+        dummy = self.hold()
+        common = winpath(self.scripts(60, 90)) + "\\ref-common.ps1"
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f". '{common}'; Enter-RefTurn 1; \"in=$env:BOSUN_SLOT\"; Exit-RefTurn"])
+        self.assertIsNone(dummy.poll())
+        self.assertIn("after 1 s: starting anyway", out)
+        self.assertIn("in=-1", out)
+
+    def test_a_relative_path_is_read_one_way(self):
+        # Set-Location moves PowerShell's folder and not the process's, which .NET reads.
+        common = winpath(self.scripts(60, 90)) + "\\ref-common.ps1"
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f"Set-Location '{self.win}\\vm'; . '{common}'; [IO.Path]::GetFullPath('x')"])
+        self.assertEqual(out.strip().lower(), f"{self.win}\\vm\\x".lower())
 
     def test_the_sdk_machine_is_refused_before_anything_changes(self):
         folder = self.scripts(60, 90)
@@ -334,13 +357,14 @@ class Turns(unittest.TestCase):
         shutil.copy(INV / "ref-host.ps1", folder)
         (self.tmp / "sdk.png").write_text("theirs")
         for step in ('{"op": "shot", "name": "..\\\\sdk"}', '{"op": "burst", "name": "..\\\\sdk", "count": 1}',
-                     '{"op": "burst", "name": "b", "count": 1, "as": "..\\\\sdk"}', '{"op": "fetch", "name": "../sdk.png"}'):
+                     '{"op": "burst", "name": "b", "count": 1, "as": "..\\\\sdk"}', '{"op": "fetch", "name": "../sdk.png"}',
+                     '{"op": ["fetch", "fetch"], "name": "../sdk.png"}'):
             (self.tmp / "steps.json").write_text(f"[{step}]")
             code, out = self.call([POWERSHELL, *BYPASS, "-File", winpath(folder) + "\\ref-host.ps1", "-Steps",
                                    self.win + "\\steps.json", "-Out", self.win + "\\out-h", "-VmPath", self.win + "\\vm",
                                    "-Name", f"{self.ns}-vm"])
             self.assertEqual(code, 2, out)
-            self.assertIn("is not a plain file name", out)
+            self.assertRegex(out, "is not a plain file name|op is one word")
         self.assertFalse((self.tmp / "out-h").exists())
         self.assertEqual((self.tmp / "sdk.png").read_text(), "theirs")
 
@@ -358,10 +382,13 @@ class Sources(unittest.TestCase):
         starts = re.compile(r"\b(Start-VM|Restore-VM\w+|Resume-VM|Restart-VM|RequestStateChange)\b", re.I)
         found = []
         for p in self.SCRIPTS:
-            for body in re.split(r"(?m)^function ", self.code(p)):
+            # A function's text ends at the brace in the first column.
+            for name, body in re.findall(r"(?ms)^function ([\w-]+)(.*?)^}", self.code(p)):
                 for m in starts.finditer(body):
                     self.assertIn("Enter-RefTurn", body[:m.start()], f"{p.name}: {m[0]} before the turn")
-                    found.append((p.name, re.match(r"[\w-]*", body)[0], m[0]))
+                    found.append((p.name, name, m[0]))
+            outside = re.sub(r"(?ms)^function [\w-]+.*?^}", "", self.code(p))
+            self.assertEqual(starts.findall(outside), [], f"{p.name}: outside a function")
         self.assertEqual(sorted(found), [("ref-common.ps1", "Restore-RefCheckpoint", "Restore-VMSnapshot"),
                                          ("ref-common.ps1", "Start-RefVm", "Start-VM")])
         for p in INV.rglob("*.py"):
@@ -382,17 +409,15 @@ class Sources(unittest.TestCase):
             self.assertEqual({x.strip(" $") for x in named[1].split(",")}, taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
             self.assertIn("Exit-RefTurn", lines, p.name)
 
-    def test_a_path_is_read_one_way(self):
-        # .NET reads a relative path against the process's folder, not PowerShell's.
-        for p in self.SCRIPTS:
-            if "guest" not in p.parts:
-                self.assertNotIn("GetFullPath", self.code(p), p.name)
-
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")
         for line in ("$script:RefTurnNs = 'Bosun.VM'", "$script:RefTurnWaitSec = 360"):
             self.assertIn(line, text)
-        self.assertIn("run --ns $script:RefTurnNs --slots 1 --max-wait $script:RefTurnWaitSec -- ", text)
+        self.assertIn("Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec)", text)
+        self.assertIn("run --ns $script:RefTurnNs --slots 1 --max-wait $WaitSec -- ", text)
+        # Only the resume of a build whose VM is already on waits for less.
+        own = [m for p in self.SCRIPTS for m in re.findall(r"Enter-RefTurn +\S+", self.code(p)) if not m.endswith("}")]
+        self.assertEqual(own, ["Enter-RefTurn 1"])
         for p in self.SCRIPTS:
             self.assertNotIn("--or-skip", p.read_text(encoding="utf-8-sig"), p.name)
 

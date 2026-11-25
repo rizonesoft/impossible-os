@@ -220,7 +220,9 @@ function Invoke-Build() {
         if ($names -contains 'pre-oobe' -and $names -notcontains 'clean' -and $existing[0].State -eq 'Running' -and (Get-GuestKvp $Name)['ios-desktop'] -eq 'ready') {
             $script:LogPath = Join-Path $VmPath 'ref-vm.log'
             Write-Ref 'resuming at the signed-in desktop'
-            Enter-RefTurn
+            # The VM is on, and the SDK's machine does not start while it is: a wait
+            # would only keep the memory from the job that has the place.
+            Enter-RefTurn 1
             $script:RefTouched = $true
             Complete-Clean
             return

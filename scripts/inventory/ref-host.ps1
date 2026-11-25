@@ -69,6 +69,7 @@ try { $plan = @((Get-Content -LiteralPath $Steps -Raw | ConvertFrom-Json) | ForE
 }
 # These become files in -Out, so each is a plain file name.
 foreach ($step in $plan) {
+    if ($step.op -isnot [string]) { Write-Host "ref-host: a step's op is one word, not '$($step.op)'"; exit 2 }
     $files = @(if ($step.op -in 'shot', 'burst', 'fetch') { "$($step.name)" }; if ($step.as) { "$($step.as)" })
     foreach ($f in $files) {
         if ($f -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') { Write-Host "ref-host: $($step.op): '$f' is not a plain file name"; exit 2 }
