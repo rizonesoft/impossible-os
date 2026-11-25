@@ -29,7 +29,7 @@
  * has no handler.
  *
  * A MAX OF ZERO MEANS NOT RESERVABLE AT ALL, which is the honest answer for
- * four of the twelve types rather than a guessed number. Three have no
+ * four of the eleven types rather than a guessed number. Three have no
  * producer anywhere in the tree, and `TPM_EVENT_LOG` has one that
  * deliberately does NOT emit a descriptor: the scalar `tpm_event_log`
  * fields are its single retention path, and publishing a RESERVED payload
@@ -113,10 +113,7 @@
     X(10u, "headless enrollment authorization", 152ull, 152ull,                \
         "EXACT length: the blob is a fixed TPM_HEADLESS_BLOB_LEN structure, "  \
         "static-asserted against it on the kernel side, so any other length "  \
-        "is a malformed producer rather than a smaller token")                 \
-    X(11u, "previous crash log",        188ull, 131072ull,                     \
-        "a header and one entry at least, and at most the region a kernel "    \
-        "keeps its log in; both are asserted against include/boot/crash_log.h")
+        "is a malformed producer rather than a smaller token")
 
 /* Aggregate ceiling on everything the reservation pass may pin from typed
  * payload descriptors, across the whole table.
@@ -151,9 +148,9 @@
  * reason no log would explain.
  *
  * The rest are singletons by meaning -- one initrd, one recovery image, one
- * authorization token, one warm-update region, one crash log -- so a second
- * occurrence is a malformed or hostile handoff, and pinning it multiplies the
- * memory a single type may claim. Returns 1 when repeats are allowed.
+ * authorization token, one warm-update region -- so a second occurrence is a
+ * malformed or hostile handoff, and pinning it multiplies the memory a
+ * single type may claim. Returns 1 when repeats are allowed.
  *
  * This is deliberately NOT a column in the list above: it is a cardinality
  * rule, not a length one, and folding two different defenses into one

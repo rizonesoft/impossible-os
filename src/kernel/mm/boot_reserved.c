@@ -27,6 +27,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/boot_info.h"
+#include "boot/crash_log.h"
 #include "boot/boot_payload_limits.h" /* per-type contract + aggregate budget + repeatability */
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -41,11 +42,11 @@ _Static_assert(BOOT_RESERVED_DIGEST_HEX_LEN == 2u * SHA256_DIGEST_LEN,
                "digest hex buffer must hold two characters per digest byte");
 /* Worst case per class, summed: the table must never refuse a legitimate
  * handoff. boot_info, USB DMA pages, scratchpad, TPM log, framebuffer,
- * runtime map, typed payloads, boot stack, UKI payload copies. */
+ * runtime map, typed payloads, boot stack, UKI payload copies, crash log. */
 _Static_assert(1u + (sizeof(((const struct boot_info *)0)->usb_controller.dma_pages)
                      / sizeof(uint64_t))
                + 1u + 1u + 1u + BOOT_RT_MMAP_MAX + BOOT_PAYLOAD_MAX + 1u
-               + UKI_PAYLOAD_SLOT_COUNT <= BOOT_RESERVED_MAX,
+               + UKI_PAYLOAD_SLOT_COUNT + 1u <= BOOT_RESERVED_MAX,
                "BOOT_RESERVED_MAX is below the worst-case retained-region count");
 /* sha256_update takes a 32-bit length; larger inputs are fed in chunks. */
 #define BOOT_RESERVED_DIGEST_CHUNK 0x40000000u
@@ -79,6 +80,7 @@ static const char *kind_name(uint32_t kind)
     case BOOT_RESERVED_PAYLOAD:        return "payload";
     case BOOT_RESERVED_BOOT_STACK:     return "boot_stack";
     case BOOT_RESERVED_UKI_PAYLOAD:    return "uki_payload";
+    case BOOT_RESERVED_CRASH_LOG:      return "crash_log";
     default:                           return "unknown";
     }
 }
@@ -218,6 +220,21 @@ int boot_reserved_uki_payload_is_pinned(uint32_t slot,
         if (r != (const struct boot_reserved_region *)0
             && r->kind == BOOT_RESERVED_UKI_PAYLOAD
             && r->source_index == slot
+            && r->phys_start == phys_start
+            && r->length == length)
+            return 1;
+    }
+    return 0;
+}
+
+int boot_reserved_crash_log_is_pinned(uint64_t phys_start, uint64_t length)
+{
+    uint32_t n = boot_reserved_count();
+
+    for (uint32_t k = 0u; k < n; k++) {
+        const struct boot_reserved_region *r = boot_reserved_get(k);
+        if (r != (const struct boot_reserved_region *)0
+            && r->kind == BOOT_RESERVED_CRASH_LOG
             && r->phys_start == phys_start
             && r->length == length)
             return 1;
@@ -898,6 +915,29 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                  (uint64_t)(uintptr_t)uki_name[s_idx], uki_size[s_idx],
                  uki_addr[s_idx]);
         }
+    }
+
+    /* The loader's copy of the previous boot's crash log. It is one record of a known
+     * most length, so it needs no share of the payloads' budget. A refusal costs the
+     * log, not the boot: klog_crash_recover() asks whether it was kept. */
+    if (info->crash_log_base != 0u || info->crash_log_bytes != 0u) {
+        const uint64_t base = info->crash_log_base;
+        const uint64_t bytes = info->crash_log_bytes;
+        uint32_t bad_type = 0u;
+        const char *why = "malformed";
+
+        if (base != 0u && bytes != 0u && bytes <= BOOT_CRASH_LOG_MAX_BYTES) {
+            uint32_t v = boot_reserved_range_backing(info, base, bytes, 0, &bad_type);
+            if (v != BOOT_RANGE_BACKED)
+                why = range_backing_name(v);
+            else if (add_region(base, bytes, BOOT_RESERVED_CRASH_LOG, 0u) != BOOT_RESERVED_ERR_OK)
+                why = "not admitted to the table";
+            else
+                why = (const char *)0;
+        }
+        if (why)
+            klog(LOG_ERROR, "mm", "boot_reserved: skip crash log 0x%lx+%lu (%s, map type %u)",
+                 base, bytes, (uint64_t)(uintptr_t)why, (uint64_t)bad_type);
     }
 
     /* COMMIT, and only here -- after the WHOLE table was admitted.

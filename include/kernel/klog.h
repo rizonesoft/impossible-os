@@ -568,8 +568,7 @@ _Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
  * recovery path can ever produce. Derived from the region rather than from
  * KLOG_RING_SIZE because the two are different bounds: the ring holds 1000
  * entries in RAM, while 128 KiB of region minus its header holds 799 of them.
- * Sizing the recovered-entry pool by the ring constant over-allocated 9 frames
- * that nothing could ever fill. `klog_crash_persist` already clamps to this
+ * `klog_crash_persist` already clamps to this
  * same arithmetic, so the two sides agree by construction. */
 #define KLOG_RECOVERED_MAX \
     ((uint32_t)((KLOG_CRASH_PAGES * 4096u - sizeof(klog_crash_header_t)) / \
@@ -613,9 +612,8 @@ const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes)
  * never published ahead of the entries it vouches for. */
 uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size);
 
-/* Check reserved region for valid crash data from previous boot.
- * If found, replays to serial with [CRASH-PREV] prefix.
- * Called early in klog_early_init(). */
+/* Replay the previous boot's log to serial ([CRASH-PREV]) when the loader kept one, and
+ * reserve and publish this boot's region. Phase 0, after vmm_init(). */
 void klog_crash_recover(void);
 
 /* Write recovered crash entries to disk log file.
@@ -624,9 +622,8 @@ void klog_crash_write_to_disk(void);
 
 /* Bounded, NULL-safe read of one recovered crash entry.
  *
- * The recovered-entry pool is frame-backed rather than static BSS, and its
- * allocation failure is DEGRADED rather than fatal, so the pool can legitimately
- * be absent at runtime and every read must be able to answer "no entry". Returns
+ * The recovered entries lie in the loader's copy of the log, and most boots have none,
+ * so every read must be able to answer "no entry". Returns
  * NULL when `pool` is NULL, when `index` is at or past `count`, or when `count`
  * exceeds the pool's KLOG_RECOVERED_MAX capacity (corrupted bookkeeping must not
  * become an out-of-bounds read). Pure: it reads no globals, which is what makes

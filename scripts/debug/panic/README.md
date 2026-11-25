@@ -39,7 +39,7 @@ After the crash, run `run-crash-recovery-test.bat` or any normal boot. Check ser
 
 ```
 Crash Boot:  panic_screen() -> klog_crash_persist() -> 128 KiB PMM region + NVRAM address
-Next loader: read NVRAM -> check magic + CRC32 -> copy -> BOOT_PAYLOAD_CRASH_LOG
+Next loader: read NVRAM -> check magic + CRC32 -> copy -> boot_info.crash_log_base
 Next kernel: klog_crash_recover() -> check the copy -> [CRASH-PREV] on serial
 Phase 2:     klog_crash_write_to_disk() -> crash_recovery.log on C:\
 ```

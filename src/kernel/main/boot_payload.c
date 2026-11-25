@@ -44,7 +44,6 @@
 #include "kernel/entropy.h"         /* struct entropy_seed_header, BOOT_SEED_PAYLOAD_CAP */
 #include "kernel/tpm_headless_authz.h" /* TPM_HEADLESS_BLOB_LEN */
 #include "boot/boot_payload_limits.h"  /* the per-type length contract, shared with the loader */
-#include "boot/crash_log.h"
 
 /* BOOT_INFO_PHYS_ADDR is the physical base of the BOOTLOADER's original
  * struct boot_info -- not the kernel's copy. The kernel copies it into
@@ -79,7 +78,6 @@ _Static_assert(BOOT_PAYLOAD_RANDOM_SEED       == 7u,  "limits list literal 7 mus
 _Static_assert(BOOT_PAYLOAD_USB_HANDOVER      == 8u,  "limits list literal 8 must stay BOOT_PAYLOAD_USB_HANDOVER");
 _Static_assert(BOOT_PAYLOAD_WARM_UPDATE_STATE == 9u,  "limits list literal 9 must stay BOOT_PAYLOAD_WARM_UPDATE_STATE");
 _Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ    == 10u, "limits list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
-_Static_assert(BOOT_PAYLOAD_CRASH_LOG         == 11u, "limits list literal 11 must stay BOOT_PAYLOAD_CRASH_LOG");
 
 /* The bounds the list could not spell symbolically, bound to the definitions
  * that own them by EXPANDING the table rather than restating its numbers.
@@ -100,12 +98,7 @@ _Static_assert(BOOT_PAYLOAD_CRASH_LOG         == 11u, "limits list literal 11 mu
                        || ((min_b) == (max_b)                                  \
                            && (max_b) == TPM_HEADLESS_BLOB_LEN),               \
                    "HEADLESS_AUTHZ row must stay the EXACT "                   \
-                   "TPM_HEADLESS_BLOB_LEN");                                   \
-    _Static_assert((type_value) != 11u                                         \
-                       || ((min_b) == BOOT_CRASH_LOG_HEADER_BYTES +            \
-                                          BOOT_CRASH_LOG_ENTRY_BYTES           \
-                           && (max_b) == BOOT_CRASH_LOG_MAX_BYTES),            \
-                   "CRASH_LOG row must stay what crash_log.h allows");
+                   "TPM_HEADLESS_BLOB_LEN");
 BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_KERNEL_ASSERT)
 #undef BOOT_PAYLOAD_LIMIT_KERNEL_ASSERT
 
@@ -182,7 +175,6 @@ static int type_is_known(uint32_t type)
     case (uint32_t)BOOT_PAYLOAD_USB_HANDOVER:
     case (uint32_t)BOOT_PAYLOAD_WARM_UPDATE_STATE:
     case (uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ:
-    case (uint32_t)BOOT_PAYLOAD_CRASH_LOG:
         return 1;
     default:
         return 0;

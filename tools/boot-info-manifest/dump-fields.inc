@@ -457,3 +457,8 @@ F(_gop_handle_pad);
 F(kstack_base);
 F(kstack_size);
 F(kstack_guard_size);
+
+/* v25 previous boot's crash log. */
+F(crash_log_base);
+F(crash_log_bytes);
+F(_crash_log_pad);

@@ -790,10 +790,8 @@ static uint32_t s_crash_region_size;  /* KLOG_CRASH_PAGES * 4096 */
 
 /* Recovered entries from a previous crash, held until the disk write.
  *
- * FRAME-BACKED, not static BSS. At KLOG_RECOVERED_MAX * sizeof(klog_crash_entry_t)
- * this is 131036 bytes, which is why it moved: the kernel image ends at a hard
- * ceiling (USER_BASE, enforced by scripts/build.sh) and a static array this
- * size spends 40 pages of that budget permanently.
+ * They are read where the loader put them: the reservation pass keeps those bytes for
+ * the whole boot, so nothing is allocated or copied here.
  *
  * NO LOCK, and the justification belongs here rather than at the free site: both
  * statics are written ONLY by klog_crash_recover (boot_phase0, BSP, single-CPU,
@@ -801,33 +799,14 @@ static uint32_t s_crash_region_size;  /* KLOG_CRASH_PAGES * 4096 */
  * klog_disk_enable). Nothing else in the tree touches either. They are
  * phase-confined, not synchronized, and a new reader on another CPU would need
  * a lock added here first.
- *
- * Allocated once, inside klog_crash_recover (the only writer), and deliberately
- * NOT at that function's entry: it is bought only after the previous boot's
- * crash region has been located and validated, because that region is not
- * reserved in this boot's PMM bitmap and allocating over it would erase the
- * evidence recovery exists to read. A boot with no prior crash allocates
- * nothing.
- *
- * Allocation failure is DEGRADED, never fatal. Crash-log recovery is a
- * diagnostic: without the pool the entries are still printed to serial as they
- * are read, s_recovered_count stays 0, and klog_crash_write_to_disk returns
- * early. Halting a bootable kernel because a 41-frame contiguous run was
- * unavailable would trade a working machine for a log file. The crash REGION
- * allocation further down already degrades the same way. */
-static klog_crash_entry_t *s_recovered;
-static uint32_t            s_recovered_count;
-/* Frame bookkeeping for the pool above, kept for exactly ONE purpose: the
- * Phase-0 fallback in klog_crash_recover that gives the run back if this boot's
- * own crash region cannot otherwise be allocated. It is NOT a general teardown
- * handle -- see klog_crash_write_to_disk for why that path must not free. */
-static uintptr_t           s_recovered_phys;
-static uint64_t            s_recovered_pages;
+ */
+static const klog_crash_entry_t *s_recovered;
+static uint32_t                  s_recovered_count;
 
 /* Bounded, NULL-safe read of one recovered crash entry.
  *
- * PURE, and public so the degraded contract can be asserted directly. The pool
- * behind s_recovered is frame-backed and may be ABSENT, so every read has to be
+ * PURE, and public so the degraded contract can be asserted directly. The set
+ * behind s_recovered may be ABSENT, so every read has to be
  * able to answer "no entry" instead of indexing a null base. It takes the pool
  * and count as parameters rather than reading the statics because a unit test
  * cannot call klog_crash_recover (live boot infrastructure) to set them up, and
@@ -1006,39 +985,6 @@ static const uint16_t s_crash_varname[] = BOOT_CRASH_LOG_VAR;
                            EFI_VARIABLE_BOOTSERVICE_ACCESS | \
                            EFI_VARIABLE_RUNTIME_ACCESS)
 
-/* Acquire and zero the recovered-entry pool, or return NULL to degrade.
- *
- * Everything here runs in boot_phase0, single-CPU with interrupts disabled, so
- * the unlocked PMM bitmap has no concurrent mutator. */
-static klog_crash_entry_t *klog_recovered_pool_acquire(uint32_t pool_bytes,
-                                                       uintptr_t *out_phys,
-                                                       uint64_t *out_pages)
-{
-    uintptr_t phys  = 0;
-    uint64_t  pages = 0;
-    klog_crash_entry_t *pool;
-
-    POST16(POST16_CRASHLOG_POOL);
-
-    pool = (klog_crash_entry_t *)pmm_alloc_pages_hhdm(pool_bytes, &phys, &pages);
-    if (!pool) {
-        klog(LOG_WARN, "CRASH",
-             "recovered-entry pool unavailable (%u bytes wanted); "
-             "serial replay is the record, no crash_recovery.log",
-             (uint64_t)pool_bytes);
-        return (klog_crash_entry_t *)0;
-    }
-
-    {
-        uint8_t *p = (uint8_t *)pool;
-        for (uint32_t z = 0; z < pool_bytes; z++)
-            p[z] = 0;
-    }
-    if (out_phys)  *out_phys  = phys;
-    if (out_pages) *out_pages = pages;
-    return pool;
-}
-
 const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes)
 {
     /* Both counts bound what the CRC reads: the loader's, and the log's own. */
@@ -1049,30 +995,41 @@ const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes)
     return (const char *)0;
 }
 
-/* The previous boot's log as the loader copied it, or NULL. The reservation pass has
- * taken the copy's pages, so no allocator hands them out; they stay reserved. */
+/* The previous boot's log as the loader copied it, or NULL. The reservation pass keeps
+ * the bytes for the whole boot, so the entries are read where they are. */
 static const klog_crash_header_t *klog_crash_previous(void)
 {
-    for (uint32_t slot = 0; slot < BOOT_PAYLOAD_MAX; slot++) {
-        const struct boot_payload_desc *d = &g_boot_info.payload_descriptors[slot];
-        const char *fault = "not reserved";
+    const uint64_t base = g_boot_info.crash_log_base;
+    const uint64_t bytes = g_boot_info.crash_log_bytes;
+    const klog_crash_header_t *log = (const klog_crash_header_t *)0;
+    const char *fault = "not reserved";
 
-        if (d->type != BOOT_PAYLOAD_CRASH_LOG || !(d->flags & BOOT_PAYLOAD_FLAG_VALID))
-            continue;
-        if (boot_reserved_payload_is_pinned(slot, d->phys_start, d->length)) {
-            const klog_crash_header_t *log = mm_phys_to_hhdm(d->phys_start);
-            fault = log ? klog_crash_log_fault(log, d->length) : "outside the direct map";
-            if (!fault)
-                return log;
-        }
-        klog(LOG_WARN, "boot", "crash recovery: the log at %p is lost -- %s", d->phys_start, fault);
-        return (const klog_crash_header_t *)0;
+    if (base == 0)
+        return log;
+    if (boot_reserved_crash_log_is_pinned(base, bytes)) {
+        log = mm_phys_to_hhdm(base);
+        fault = log ? klog_crash_log_fault(log, bytes) : "outside the direct map";
     }
+    if (!fault)
+        return log;
+    klog(LOG_WARN, "boot", "crash recovery: the log at %p is lost -- %s", base, fault);
     return (const klog_crash_header_t *)0;
+}
+
+/* One recovered entry with both texts ended. They are fixed-width fields out of memory
+ * another boot wrote, and a matching CRC does not prove that they carry an end. */
+static klog_crash_entry_t klog_crash_entry_ended(const klog_crash_entry_t *from)
+{
+    klog_crash_entry_t e = *from;
+
+    e.subsystem[sizeof e.subsystem - 1u] = '\0';
+    e.message[sizeof e.message - 1u] = '\0';
+    return e;
 }
 
 void klog_crash_recover(void)
 {
+    s_recovered = (const klog_crash_entry_t *)0;
     s_recovered_count = 0;
 
     POST16(POST16_CRASHLOG);
@@ -1093,29 +1050,13 @@ void klog_crash_recover(void)
     POST16(POST16_CRASHLOG_CHECK);
     const klog_crash_header_t *prev = klog_crash_previous();
     if (prev) {
-        const klog_crash_entry_t *src = (const klog_crash_entry_t *)(prev + 1);
-        const uint32_t count = prev->entry_count;
-
-        /* The pool is bought only here, where there is something to put in it: a boot
-         * with no crash before it allocates nothing. The helper owns the zeroing and
-         * the degrade policy. */
-        if (!s_recovered) {
-            uintptr_t pool_phys  = 0;
-            uint64_t  pool_pages = 0;
-            klog_crash_entry_t *pool = klog_recovered_pool_acquire(
-                (uint32_t)((uint64_t)KLOG_RECOVERED_MAX * sizeof(klog_crash_entry_t)),
-                &pool_phys, &pool_pages);
-            if (pool) {
-                s_recovered_phys  = pool_phys;
-                s_recovered_pages = pool_pages;
-                s_recovered = pool;
-            }
-        }
+        s_recovered = (const klog_crash_entry_t *)(prev + 1);
+        s_recovered_count = prev->entry_count;
 
         serial_write("[CRASH-PREV] === Recovered ");
         {
             char num[12], tmp[12];
-            uint32_t n = count, pos = 0, t = 0;
+            uint32_t n = s_recovered_count, pos = 0, t = 0;
             while (n) { tmp[t++] = '0' + (n % 10); n /= 10; }
             while (t) num[pos++] = tmp[--t];
             num[pos] = '\0';
@@ -1123,53 +1064,19 @@ void klog_crash_recover(void)
         }
         serial_write(" entries from previous crash ===\n");
 
-        for (uint32_t i = 0; i < count; i++) {
-            /* Both arrays are fixed-width fields out of untrusted cross-boot memory, and
-             * serial_write scans to a NUL. A matching CRC proves the entries are the ones
-             * that were written, not that they contain a terminator. */
-            klog_crash_entry_t e = src[i];
-
-            e.subsystem[sizeof e.subsystem - 1u] = '\0';
-            e.message[sizeof e.message - 1u] = '\0';
+        for (uint32_t i = 0; i < s_recovered_count; i++) {
+            klog_crash_entry_t e = klog_crash_entry_ended(&s_recovered[i]);
 
             serial_write("[CRASH-PREV] ");
             serial_write(e.subsystem);
             serial_write(": ");
             serial_write(e.message);
             serial_write("\n");
-            if (s_recovered && s_recovered_count < KLOG_RECOVERED_MAX)
-                s_recovered[s_recovered_count++] = e;
         }
     }
 
     /* Step 2: Allocate fresh crash persistence region for THIS boot */
     uint64_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
-
-    /* THIS BOOT'S CRASH REGION OUTRANKS THE PREVIOUS BOOT'S DISK COPY.
-     *
-     * The recovered-entry pool above is 41 contiguous frames and is taken
-     * BEFORE this 32-frame allocation. Under fragmentation it can occupy the
-     * last run large enough, and then this fails and the machine boots with no
-     * crash logging armed at all -- a regression the old static buffer could
-     * not cause, because it consumed no PMM run. Re-arming persistence for the
-     * crash that has not happened yet is worth more than a disk copy of one
-     * that already has, especially since the recovered entries HAVE ALREADY
-     * been replayed to serial by the loop above: giving the pool back costs the
-     * crash_recovery.log file, not the evidence.
-     *
-     * Freeing here is safe where freeing in klog_crash_write_to_disk is not:
-     * this runs from boot_phase0, single-CPU with interrupts disabled, so the
-     * unlocked PMM bitmap has no concurrent mutator. */
-    if (!phys && s_recovered) {
-        pmm_free_contiguous(s_recovered_phys, s_recovered_pages);
-        s_recovered       = (klog_crash_entry_t *)0;
-        s_recovered_count = 0;
-        s_recovered_phys  = 0;
-        s_recovered_pages = 0;
-        serial_write("[CRASH] released the recovered-entry pool to arm this "
-                     "boot's crash region -- serial replay above is the record\n");
-        phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
-    }
 
     if (!phys) {
         serial_write("[CRASH] Failed to allocate crash log region\n");
@@ -1272,8 +1179,8 @@ void klog_crash_write_to_disk(void)
     for (uint32_t i = 0; i < s_recovered_count; i++) {
         char line[192];
         uint32_t pos = 0;
-        /* Bounded through the accessor rather than indexed directly: the pool
-         * is frame-backed now and a torn count must not become a wild read. */
+        /* Bounded through the accessor rather than indexed directly: a torn count
+         * must not become a wild read. */
         const klog_crash_entry_t *ent =
             klog_recovered_at(s_recovered, s_recovered_count, i);
         if (!ent) {
@@ -1288,12 +1195,13 @@ void klog_crash_write_to_disk(void)
             vfs_close(file);
             return;
         }
+        const klog_crash_entry_t e = klog_crash_entry_ended(ent);
 
         /* [timestamp] LEVEL subsystem: message\n */
         line[pos++] = '[';
         /* Simple decimal for timestamp */
         {
-            uint32_t ts = ent->timestamp;
+            uint32_t ts = e.timestamp;
             char tmp[12]; uint32_t t = 0;
             if (ts == 0) { tmp[t++] = '0'; }
             else { while (ts) { tmp[t++] = '0' + (ts % 10); ts /= 10; } }
@@ -1304,7 +1212,7 @@ void klog_crash_write_to_disk(void)
         /* Level */
         {
             static const char *lvl_names[] = { "DEBUG", "INFO", "WARN", "ERROR", "FATAL" };
-            uint32_t lv = ent->level;
+            uint32_t lv = e.level;
             if (lv > 4) lv = 4;
             const char *ln = lvl_names[lv];
             while (*ln) line[pos++] = *ln++;
@@ -1318,14 +1226,14 @@ void klog_crash_write_to_disk(void)
              * that boot's frame nonce is dead by construction -- it can
              * authenticate nothing in this boot. Resolving here would instead
              * rewrite a prior boot's evidence with this boot's alias. */
-            const char *s = ent->subsystem;
+            const char *s = e.subsystem;
             while (*s && pos < 180) line[pos++] = *s++;
         }
         line[pos++] = ':'; line[pos++] = ' ';
 
         /* Message */
         {
-            const char *m = ent->message;
+            const char *m = e.message;
             while (*m && pos < 190) line[pos++] = *m++;
         }
         line[pos++] = '\n';
@@ -1365,24 +1273,9 @@ void klog_crash_write_to_disk(void)
     klog(LOG_INFO, "CRASH", "Crash recovery log: %u entries written to %scrash_recovery.log",
          (uint64_t)s_recovered_count, cr_dir);
 
-    /* Clear the recovered COUNT only after a durable, fully successful write.
-     *
-     * The POOL ITSELF IS DELIBERATELY NOT FREED HERE, and that is a decision
-     * rather than an oversight. Releasing it was implemented and then reverted:
-     * this function runs in Phase 2 from klog_disk_enable, after smp_init, and
-     * pmm_free_contiguous mutates the frame bitmap and used_frames with no
-     * synchronization, so a release here would race a timed-out boot_async_group
-     * storage worker that is still allocating. That unlocked-bitmap window is a
-     * known, owned defect, and adding a WRITE to it buys nothing: this array was
-     * static BSS before, held unconditionally for the life of every boot, so
-     * retaining 41 frames on the rare boot that actually recovered a crash is
-     * strictly better than what it replaced, not a regression. Revisit only once
-     * PMM allocation and free are synchronized.
-     *
-     * The overlap path in klog_crash_recover DOES free, and that is not the same
-     * situation: that function runs from boot_phase0, single-CPU and long before
-     * smp_init, so there is no concurrent allocator to race. The hazard here is
-     * the PHASE, not the call. */
+    /* Clear the count only after a durable, fully successful write. The loader's copy
+     * stays reserved: pmm_free_contiguous() here would change the bitmap after smp_init
+     * with no lock against a storage worker that is still allocating. */
     s_recovered_count = 0;
 }
 

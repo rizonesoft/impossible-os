@@ -832,7 +832,7 @@ static void test_klog_crash_header_size(void)
 /* A log is read only when it is whole. */
 static void test_klog_crash_log_fault(void)
 {
-    static struct { klog_crash_header_t h; klog_crash_entry_t e[2]; } log;
+    struct { klog_crash_header_t h; klog_crash_entry_t e[2]; } log;
     const uint64_t bytes = sizeof log;
 
     memset(&log, 0, sizeof log);

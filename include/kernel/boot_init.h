@@ -381,7 +381,6 @@ struct kernel_subsys_state {
 #define POST16_CRASHLOG_ALLOC   0xDE01  /* region reserved */
 #define POST16_CRASHLOG_CHECK   0xDE02  /* recovery check */
 #define POST16_CRASHLOG_DONE    0xDE03  /* recovery complete */
-#define POST16_CRASHLOG_POOL    0xDE04  /* recovered-entry pool acquire */
 
 /* Per-Entry Context Metadata (0xDE10-0xDE13) */
 #define POST16_KLOG_CTX         0xDE10  /* per-entry context init */

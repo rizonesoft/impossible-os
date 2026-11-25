@@ -1776,21 +1776,21 @@ fi
 # ---- Crash log of a previous boot: the verdict (SMOKE_CRASH_NVRAM) ----------
 if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     strip_ansi
-    CRASH_NVRAM_REPLAYED="$(tr -d '\r' < "$STRIPPED_LOG" | grep -cE "^\[CRASH-PREV\] smoke: planted entry [0-9]+ of $CRASH_LOG_ENTRIES\$" || true)"
+    CRASH_NVRAM_REPLAYED="$(tr -d '\r' < "$STRIPPED_LOG" | sed -nE "s/^\[CRASH-PREV\] smoke: planted entry ([0-9]+) of $CRASH_LOG_ENTRIES\$/\1/p" | xargs)"
     case "$CRASH_NVRAM_EXPECT" in
         kept)    CRASH_NVRAM_LINE="Previous crash log: $((24 + CRASH_LOG_ENTRIES * 164)) bytes from ${CRASH_NVRAM_HEX} kept at 0x"
-                 CRASH_NVRAM_WANT="$CRASH_LOG_ENTRIES" ;;
-        damaged) CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, the log is damaged"; CRASH_NVRAM_WANT=0 ;;
-        *)       CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, not free memory"; CRASH_NVRAM_WANT=0 ;;
+                 CRASH_NVRAM_WANT="$(seq 1 "$CRASH_LOG_ENTRIES" | xargs)" ;;
+        damaged) CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, the log is damaged"; CRASH_NVRAM_WANT="" ;;
+        *)       CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, not free memory"; CRASH_NVRAM_WANT="" ;;
     esac
     if ! grep -qiF -- "$CRASH_NVRAM_LINE" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: no '$CRASH_NVRAM_LINE' line"
     elif [ "$CRASH_NVRAM_REPLAYED" != "$CRASH_NVRAM_WANT" ]; then
         BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: $CRASH_NVRAM_REPLAYED planted entries were replayed, not $CRASH_NVRAM_WANT"
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the planted entries were replayed as '$CRASH_NVRAM_REPLAYED', not as '$CRASH_NVRAM_WANT'"
     else
-        echo -e "  ${GREEN}✓${NC} previous crash log at $CRASH_NVRAM_HEX: $CRASH_NVRAM_EXPECT, $CRASH_NVRAM_REPLAYED entries replayed"
+        echo -e "  ${GREEN}✓${NC} previous crash log at $CRASH_NVRAM_HEX: $CRASH_NVRAM_EXPECT, $(wc -w <<< "$CRASH_NVRAM_REPLAYED") entries replayed"
     fi
 fi
 

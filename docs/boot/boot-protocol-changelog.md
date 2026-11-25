@@ -34,12 +34,12 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v25 (current) -- The pages after the kernel image are free RAM
+### v25 (current) -- The pages after the kernel image are free RAM, and the previous crash log
 
 - **Commit**: pending ([The loader's direct-map check can halt a good machine](../../todo/00-infrastructure/TODO-08-automation-hardening.md))
-- **Fields added**: none; the struct is unchanged at 28680 bytes.
-- **Why**: a v24 kernel writes its frame bitmap right after `__kernel_end`, over whatever the machine has there (on OVMF, the ACPI NVS range at `0x800000`), and a v24 loader keeps its own allocations clear of those pages. A v25 kernel places the bitmap in conventional memory taken from the memory map, and a v25 loader hands those pages out like any others, so the two versions must not be mixed.
-- **Producers / consumers**: `pmm_bitmap_place()` in the kernel; `claim_kernel_memory()` and `bl_kstack_placement_ok()` in the loader.
+- **Fields added**: `crash_log_base` (`uint64_t`), `crash_log_bytes` (`uint32_t`), `_crash_log_pad` (`uint32_t`), appended at the v24 tail. Struct size 28696.
+- **Why**: a v24 kernel writes its frame bitmap right after `__kernel_end`, over whatever the machine has there (on OVMF, the ACPI NVS range at `0x800000`), and a v24 loader keeps its own allocations clear of those pages. A v25 kernel places the bitmap in conventional memory taken from the memory map, and a v25 loader hands those pages out like any others, so the two versions must not be mixed. The previous boot's crash log lay in free memory that the new placements could take, so the loader copies it first and hands the copy over.
+- **Producers / consumers**: `keep_crash_log()` in the loader and `klog_crash_recover()` in the kernel; `pmm_bitmap_place()` in the kernel; `claim_kernel_memory()` and `bl_kstack_placement_ok()` in the loader.
 - **Back-compat**: NONE -- the loader refuses a v24 kernel by its `.bootproto` version before the handoff, and a v25 kernel refuses a v24 loader in Phase 0.
 
 ### v24 -- Loader-owned kernel boot stack

@@ -1,9 +1,9 @@
 /* crash_log.h -- the previous boot's crash log, from kernel to loader to kernel.
  *
  * A kernel publishes the physical address of its crash log in a firmware variable. The
- * next boot's loader copies the log into memory of its own before anything else can take
- * the pages, and hands the copy over as a BOOT_PAYLOAD_CRASH_LOG. It compiles with the
- * UEFI types and with the kernel's.
+ * next boot's loader copies the log into its own image before anything else can take the
+ * pages, and hands the copy over in boot_info. This compiles with the UEFI types and with
+ * the kernel's.
  */
 #ifndef BOOT_CRASH_LOG_H
 #define BOOT_CRASH_LOG_H

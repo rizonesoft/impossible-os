@@ -24,6 +24,7 @@
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
+#include "boot/crash_log.h"
 #include "boot/uki_payload_limits.h" /* UKI_PAYLOAD_SLOT_*, UKI_PAYLOAD_MAX_BYTES */
 #include "kernel/entropy.h"   /* boot_seed_length_reservable -- must agree with the table */
 /* libc/string.h not needed; fixture is zeroed by scalar loop. */
@@ -1579,16 +1580,6 @@ static void test_boot_payload_length_contract_matrix(void)
                        (uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ, 151ull), 0ul,
                    "a short authorization is not a weaker one, it is malformed");
 
-    /* A crash log: a header and one entry, up to the region it was kept in. */
-    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
-                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 187ull), 0ul, "shorter");
-    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
-                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 188ull), 1ul, "least");
-    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
-                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 131072ull), 1ul, "most");
-    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
-                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 131073ull), 0ul, "longer");
-
     /* NOT-RESERVABLE types refuse every length, including plausible ones --
      * asserting only a huge length here would pass against a rule that
      * merely capped them. */
@@ -2004,6 +1995,51 @@ static void test_boot_reserved_uki_payloads_pinned(void)
     br_zero_fixture();
 }
 
+/* One populate with this crash log staged; was it kept? */
+static unsigned long br_crash_log_kept(uint64_t at, uint32_t bytes)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+
+    boot_reserved_reset_for_test();
+    TEST_BOOT_INFO.crash_log_base  = at;
+    TEST_BOOT_INFO.crash_log_bytes = bytes;
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
+                   (unsigned long)BOOT_OK, "a crash log never stops the boot");
+    return (unsigned long)boot_reserved_crash_log_is_pinned(at, bytes);
+}
+
+static void test_boot_reserved_crash_log(void)
+{
+    const uint64_t at = 0x20000000ull;
+
+    TEST_KLOG_SUPPRESS("mm");
+    (void)br_baseline_count();
+    TEST_ASSERT_EQ(br_crash_log_kept(at, BOOT_CRASH_LOG_MAX_BYTES), 1ul, "the longest log is kept");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_crash_log_is_pinned(at, 4096ull), 0ul,
+                   "another length is another range");
+    TEST_ASSERT_EQ(br_crash_log_kept(at, BOOT_CRASH_LOG_MAX_BYTES + 1u), 0ul, "longer than any log");
+    TEST_ASSERT_EQ(br_crash_log_kept(at, 0u), 0ul, "no bytes");
+    TEST_ASSERT_EQ(br_crash_log_kept(0u, 4096u), 0ul, "no address");
+    TEST_ASSERT_EQ(br_crash_log_kept(BOOT_INFO_EARLY_MAP_END, 4096u), 0ul, "above the identity map");
+    TEST_ASSERT_EQ(br_crash_log_kept(BOOT_INFO_PHYS_ADDR, 4096u), 0ul, "over another range");
+
+    /* The payloads spend their whole budget: the log is still kept. */
+    br_zero_fixture();
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 3;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
+    br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
+    TEST_ASSERT_EQ(br_crash_log_kept(at, 4096u), 1ul, "kept beside a spent budget");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(2u, 0x50000000ull, 268435456ull), 1ul,
+                   "and the third payload is pinned");
+    /* Over a payload, it is the log that goes. */
+    TEST_ASSERT_EQ(br_crash_log_kept(0x50000000ull, 4096u), 0ul, "over a payload");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(2u, 0x50000000ull, 268435456ull), 1ul,
+                   "the payload under it stays pinned");
+    br_zero_fixture();
+}
+
 static void test_boot_reserved_uki_payloads_refused(void)
 {
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
@@ -2233,6 +2269,9 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: UKI payloads refused",
                             test_boot_reserved_uki_payloads_refused,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: previous crash log",
+                            test_boot_reserved_crash_log,
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: received-payload digest",
                             test_boot_reserved_digest_hex_vectors,

@@ -310,9 +310,10 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v25 changes no field: the pages after the kernel image are no longer the
- *     kernel's. It puts its frame bitmap in free RAM from the memory map, and the
- *     loader leaves no room there (TODO-08 sec72). Mirrors include/kernel/boot_info.h.
+/* v25 appends crash_log_base/crash_log_bytes at the tail: the previous boot's
+ *     crash log, copied by the loader. The pages after the kernel image are no
+ *     longer the kernel's: it puts its frame bitmap in free RAM from the memory
+ *     map, and the loader leaves no room there (TODO-08 sec72). Mirrors include/kernel/boot_info.h.
  * v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
  *     loader-owned kernel boot stack (TODO-10 sec32). This bootloader
  *     allocates the run, poisons it, and switches RSP to its top in
@@ -364,7 +365,6 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 /* 9u is BOOT_PAYLOAD_WARM_UPDATE_STATE, defined with the rest of the
  * warm-update surface further down this header. */
 #define BOOT_PAYLOAD_HEADLESS_AUTHZ    10u
-#define BOOT_PAYLOAD_CRASH_LOG         11u
 
 /* BOOT_PAYLOAD_FLAG_* mirror */
 #define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)
@@ -857,6 +857,12 @@ struct boot_info {
     UINT64   kstack_base;
     UINT32   kstack_size;
     UINT32   kstack_guard_size;
+
+    /* v25: the previous boot's crash log, copied into this image; both 0 when there
+     * is none. Mirrors include/kernel/boot_info.h. */
+    UINT64   crash_log_base;
+    UINT32   crash_log_bytes;
+    UINT32   _crash_log_pad;
 };
 
 /* Fill pattern written across the whole kernel boot stack run before RSP is
@@ -920,6 +926,13 @@ _Static_assert(__builtin_offsetof(struct boot_info, kstack_size) ==
 _Static_assert(__builtin_offsetof(struct boot_info, kstack_guard_size) ==
                __builtin_offsetof(struct boot_info, kstack_size) + 4,
     "boot_info.kstack_guard_size must immediately follow kstack_size");
+_Static_assert(__builtin_offsetof(struct boot_info, crash_log_base) ==
+               __builtin_offsetof(struct boot_info, kstack_guard_size) + 4,
+    "boot_info.crash_log_base must immediately follow kstack_guard_size -- "
+    "kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, crash_log_bytes) ==
+               __builtin_offsetof(struct boot_info, crash_log_base) + 8,
+    "boot_info.crash_log_bytes must immediately follow crash_log_base");
 _Static_assert(__builtin_offsetof(struct boot_info, mmap_count) == 16392,
     "boot_info.mmap_count offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, gop_mode_count) == 16948,

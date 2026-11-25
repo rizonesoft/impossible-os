@@ -461,7 +461,7 @@ Per-GOP-handle enumeration appended at the struct tail (TODO-27 sec4). `init_gop
 
 ## Nested struct: `boot_payload_desc`
 
-48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER, WARM_UPDATE_STATE, HEADLESS_AUTHZ, CRASH_LOG); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
+48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER, WARM_UPDATE_STATE, HEADLESS_AUTHZ); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
 
 | Field | Size | Semantics | Validation |
 | --- | --- | --- | --- |
@@ -760,6 +760,16 @@ The run the kernel executes on from the handoff onward. The bootloader `Allocate
 | Above the 4 GiB identity map | The kernel dereferences the run through the boot identity map, which covers the first 4 GiB only. | `AllocateMaxAddress` below 4 GiB | `boot_stack_validate` -> `BOOT_STACK_ERR_ABOVE_MAP` |
 
 Two further contract terms a producer owes: the whole run (guard page INCLUDED) must be filled with `BOOT_KSTACK_POISON` before RSP is switched to it, and RSP must already be inside the published usable span when the kernel entry is called. The kernel proves both -- an unpoisoned or differently-poisoned run halts at `boot_stack_install_guard` with a named pattern-mismatch message, and an unswitched RSP halts at `boot_stack_init`.
+
+## Previous crash log (v25)
+
+The log a kernel left when it crashed, carried into the next boot. The loader copies it into its own image before it allocates anything except the fixed panic-evidence page, so nothing in the boot that reads the log can overwrite it. It checks that the bytes are free memory, the header and the CRC32 first ([`crash_log.h`](../../include/boot/crash_log.h)); see [system logging](../kernel/system-logging.md).
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `crash_log_base` | bootx64 | P0 | `boot_reserved` / `klog_crash_recover` | handoff | automation-hardening | Readable RAM below 4 GiB and clear of every other retained region (`BOOT_RESERVED_CRASH_LOG`). A refusal costs the log, not the boot. 0 when there is no log. |
+| `crash_log_bytes` | bootx64 | P0 | same | handoff | automation-hardening | 188 to 131072 bytes, equal to what the log's header says; the kernel checks the CRC32 again. 0 when there is no log. |
+| `_crash_log_pad` | bootx64 | P0 | none | handoff | automation-hardening | 0. |
 
 ## Update protocol
 

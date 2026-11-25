@@ -33,7 +33,7 @@ struct boot_info;  /* forward decl -- full definition in kernel/boot_info.h */
 
 /* Fixed upper bound. Worst-case current boot: 1 (boot_info) + 16 (USB
  * DMA) + 1 (scratchpad) + 1 (TPM) + 1 (FB) + 64 (rt_mmap_max) + 32
- * (payloads) + 1 (boot stack) + 3 (UKI payload copies) = 120; a
+ * (payloads) + 1 (boot stack) + 3 (UKI payload copies) + 1 (crash log) = 121; a
  * _Static_assert in boot_reserved.c holds the sum under this bound. */
 #define BOOT_RESERVED_MAX 128
 
@@ -48,6 +48,7 @@ enum boot_reserved_kind {
     BOOT_RESERVED_PAYLOAD = 7, /* typed payload with FLAG_RESERVED */
     BOOT_RESERVED_BOOT_STACK       = 8,  /* loader-owned kernel boot stack */
     BOOT_RESERVED_UKI_PAYLOAD      = 9,  /* signed UKI .initrd/.recovery/.modules copy */
+    BOOT_RESERVED_CRASH_LOG        = 10, /* the loader's copy of the previous crash log */
 };
 
 struct boot_reserved_region {
@@ -182,6 +183,10 @@ int boot_reserved_payload_is_pinned(uint32_t payload_index,
  * the PMM treats unpinned EfiLoaderData as free memory. */
 int boot_reserved_uki_payload_is_pinned(uint32_t slot,
                                         uint64_t phys_start, uint64_t length);
+
+/* Did the reservation pass keep the loader's copy of the previous boot's crash log
+ * at exactly this range? boot_info's crash_log fields are the loader's claim. */
+int boot_reserved_crash_log_is_pinned(uint64_t phys_start, uint64_t length);
 
 /* SHA-256 of [data, data + len) as lowercase hex, NUL-terminated. Pure. */
 #define BOOT_RESERVED_DIGEST_HEX_LEN 64u

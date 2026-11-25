@@ -179,9 +179,10 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-/* v25 changes no field: the pages after the kernel image are no longer the
- *     kernel's. It puts its frame bitmap in free RAM from the memory map, and the
- *     loader leaves no room there (TODO-08 sec72). Mirrored in src/boot/uefi/boot_info_mirror.h.
+/* v25 appends crash_log_base/crash_log_bytes at the tail: the previous boot's
+ *     crash log, copied by the loader. The pages after the kernel image are no
+ *     longer the kernel's: it puts its frame bitmap in free RAM from the memory
+ *     map, and the loader leaves no room there (TODO-08 sec72). Mirrored in src/boot/uefi/boot_info_mirror.h.
  * v24 appends kstack_base/kstack_size/kstack_guard_size at the tail: the
  *     loader-owned kernel boot stack (TODO-10 sec32). The bootloader
  *     AllocatePages a dedicated below-4-GiB run, poisons it, and switches RSP
@@ -1717,7 +1718,6 @@ enum boot_payload_type {
     BOOT_PAYLOAD_WARM_UPDATE_STATE = 9,   /* warm-kernel-update preserved memory (owner: warm-kernel-update ABI) */
     /* signed headless-enrollment authorization (owner: TPM measured-boot attestation) */
     BOOT_PAYLOAD_HEADLESS_AUTHZ    = 10,
-    BOOT_PAYLOAD_CRASH_LOG         = 11,  /* the previous boot's crash log (include/boot/crash_log.h) */
 };
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if
@@ -2239,6 +2239,14 @@ struct boot_info {
     uint64_t kstack_base;
     uint32_t kstack_size;
     uint32_t kstack_guard_size;
+
+    /* v25: the previous boot's crash log (include/boot/crash_log.h), which the
+     * loader copied into its own image before it allocated anything. The kernel
+     * reads it only where the reservation pass kept the bytes
+     * (BOOT_RESERVED_CRASH_LOG). Both 0 when there is none. */
+    uint64_t crash_log_base;
+    uint32_t crash_log_bytes;
+    uint32_t _crash_log_pad;
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -2426,6 +2434,13 @@ _Static_assert(__builtin_offsetof(struct boot_info, kstack_size) ==
 _Static_assert(__builtin_offsetof(struct boot_info, kstack_guard_size) ==
                __builtin_offsetof(struct boot_info, kstack_size) + 4,
     "boot_info.kstack_guard_size must immediately follow kstack_size");
+_Static_assert(__builtin_offsetof(struct boot_info, crash_log_base) ==
+               __builtin_offsetof(struct boot_info, kstack_guard_size) + 4,
+    "boot_info.crash_log_base must immediately follow kstack_guard_size -- "
+    "update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, crash_log_bytes) ==
+               __builtin_offsetof(struct boot_info, crash_log_base) + 8,
+    "boot_info.crash_log_bytes must immediately follow crash_log_base");
 _Static_assert(__builtin_offsetof(struct boot_info, ab_status_valid) ==
                __builtin_offsetof(struct boot_info, ab_slot_flags) + 1,
     "boot_info.ab_status_valid must immediately follow ab_slot_flags -- "
