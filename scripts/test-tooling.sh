@@ -5027,14 +5027,14 @@ fi
 # writes no serial log for them to read an address from), and each engine's clean-
 # shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
 # The control removes the second boot and must fail the same assertion.
-_sm_orch() {  # $1 = matrix script to run, $2 = legs (default all), $3 = SMOKE_FORCE_TCG; prints "<invocations> <pairs> <boots that may use KVM> <each memory size or wrong-map boot, sorted>"
+_sm_orch() {  # $1 = matrix script to run, $2 = legs (default all), $3 = SMOKE_FORCE_TCG, $4 = KVM device; prints "<invocations> <pairs> <boots that may use KVM> <each memory size or wrong-map boot, sorted>"
     local d; d="$(mktemp -d "${TMPDIR:-/tmp}/tt-smoke-orch.XXXXXX")"
-    mkdir -p "$d/scripts/lib"
+    mkdir -p "$d/scripts/lib"; : > "$d/calls"
     cp "$1" "$d/scripts/test-smoke-matrix.sh"
     cp "$REPO_ROOT/scripts/lib/boot-conf-lock.sh" "$d/scripts/lib/"
     printf '%s\n' 'mkdir -p build; echo "=== BUILD OK ===" > build/build.log; : > build/system-disk.img; echo "{}" > build/build-receipt.json' > "$d/scripts/build.sh"
     printf '%s\n' 'echo "smp=${SMOKE_SMP:-} tcg=${SMOKE_FORCE_TCG:-} trend=${SMOKE_TREND_BOOTS:-} sd=${SMOKE_SHUTDOWN:-} keep=${SMOKE_KEEP_DISK:-} mem=${SMOKE_MEM:-} wrong=${SMOKE_HHDM_WRONG:-} engine=${SMOKE_ENGINE:-}" >> "$ORCH_LOG"' > "$d/scripts/test-smoke.sh"
-    env -u SMOKE_MATRIX_LEGS -u SMOKE_FORCE_TCG ORCH_LOG="$d/calls" TMPDIR="$d" ${2:+SMOKE_MATRIX_LEGS="$2"} ${3:+SMOKE_FORCE_TCG="$3"} timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
+    env -u SMOKE_MATRIX_LEGS -u SMOKE_FORCE_TCG SMOKE_KVM_DEVICE="${4:-/dev/null}" ORCH_LOG="$d/calls" TMPDIR="$d" ${2:+SMOKE_MATRIX_LEGS="$2"} ${3:+SMOKE_FORCE_TCG="$3"} timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
     local n pairs
     n=$(wc -l < "$d/calls" 2>/dev/null || echo 0)
     pairs=$(awk '/smp=2 .*trend=1 sd=1 keep= / {want=1; next} want && /trend=2 .*keep=1 / {p++} {want=0} END {print p+0}' "$d/calls" 2>/dev/null)
@@ -5048,11 +5048,12 @@ _sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
 grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
 _sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
 _sm_want="31 2 26 512M:kvm 512M:tcg 96M:tcg wrong"; _sm_want_tcg="26 1 0 512M:tcg 96M:tcg wrong"
-_sm_tcg=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" tcg:2 1)
-if [ "$_sm_got" = "$_sm_want" ] && [ "$_sm_ctl" != "$_sm_want" ] && [ "$_sm_tcg" = "$_sm_want_tcg" ]; then
+_sm_tcg=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" tcg:2 1 /nonexistent)
+_sm_nokvm=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" "" "" /nonexistent)
+if [ "$_sm_got" = "$_sm_want" ] && [ "$_sm_ctl" != "$_sm_want" ] && [ "$_sm_tcg" = "$_sm_want_tcg" ] && [ "$_sm_nokvm" = "0 0 0 " ]; then
     t_pass "smoke_matrix_orchestration  31 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
 else
-    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '$_sm_want', and '$_sm_want_tcg' with SMOKE_FORCE_TCG=1 and tcg:2), control '$_sm_ctl', tcg:2 '$_sm_tcg'"
+    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '$_sm_want', and '$_sm_want_tcg' with SMOKE_FORCE_TCG=1 and tcg:2), control '$_sm_ctl', tcg:2 '$_sm_tcg', without KVM '$_sm_nokvm' (want no boot)"
 fi
 # Make duplicate recipes (lint Check 38). The real Makefile parses with no
 # override warning, a dry `make all` prints none, and a fixture with one target

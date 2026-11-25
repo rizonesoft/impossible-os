@@ -450,8 +450,9 @@ hhdm_wrong_check_log() {
         HW_FAIL_MSG="no span was lost, so reading the memory map again is untested"; return 1
     fi
     # It also fails the first read of the crash-log variable.
-    if ! grep -qF -- 'Previous crash log: read again' "$1"; then
-        HW_FAIL_MSG="a crash-log variable that failed one read was not read again"; return 1
+    if ! grep -qF -- 'Previous crash log: its variable cannot be read, status=0x8000000000000007' "$1" ||
+       ! grep -qF -- 'Previous crash log: read again' "$1"; then
+        HW_FAIL_MSG="a crash-log variable that failed one read was not reported and read again"; return 1
     fi
 }
 

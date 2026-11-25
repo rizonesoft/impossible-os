@@ -335,6 +335,66 @@ static void test_kernel_claim_spans(void)
     TEST_ASSERT_EQ(boot_span_claim(8 * 4096, 4, claim_span_take, &held), 0, "one that is never free");
 }
 
+/* A firmware that answers a request only inside one of its rooms, once for each page. */
+struct room_firmware {
+    const struct boot_span *rooms;
+    unsigned n, refuse;                 /* the request it refuses, counted from 1 */
+    unsigned asked;
+    uint64_t pages, next;
+};
+
+static int room_take(void *ctx, unsigned long long base, unsigned long long pages)
+{
+    struct room_firmware *fw = (struct room_firmware *)ctx;
+
+    if (++fw->asked == fw->refuse || base != fw->next)
+        return 0;
+    for (unsigned i = 0; i < fw->n; i++) {
+        struct boot_span piece = { base, pages * 4096 };
+        if (boot_span_within(piece, fw->rooms[i].base, fw->rooms[i].base + fw->rooms[i].bytes)) {
+            fw->pages += pages;
+            fw->next = base + piece.bytes;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* A claim asks once for each room it crosses, wherever the rooms end. */
+static void test_kernel_claim_rooms(void)
+{
+    struct boot_span rooms[16];
+    const struct boot_span file = { 0x1000000, 4096ULL * 4096 }, log = { 0x10F1000, 32 * 4096 };
+    struct room_firmware fw = { rooms, 16, 0, 0, 0, file.base };
+
+    /* 4,096 pages with an end at page 257, 513 and each 256 after; halves need 136 requests. */
+    for (unsigned i = 0; i < 16; i++) {
+        uint64_t from = i == 0 ? 0 : i * 256 + 1, to = i == 15 ? 4096 : (i + 1) * 256 + 1;
+        rooms[15 - i] = (struct boot_span){ file.base + from * 4096, (to - from) * 4096 };
+    }
+    struct boot_span run = boot_span_run(rooms, 16, 15);
+    TEST_ASSERT_EQ(run.base, file.base, "the run begins with the lowest room");
+    TEST_ASSERT_EQ(run.bytes, file.bytes, "and takes in all sixteen, in any order");
+    TEST_ASSERT_EQ(boot_span_claim_rooms(file, rooms, 16, room_take, &fw), 1, "the whole run");
+    TEST_ASSERT_EQ(fw.pages, 4096ULL, "each page once");
+    TEST_ASSERT_EQ(fw.asked, 16u, "one request a room");
+
+    fw = (struct room_firmware){ rooms, 16, 0, 0, 0, log.base };
+    TEST_ASSERT_EQ(boot_span_claim_rooms(log, rooms, 16, room_take, &fw), 1, "a log across two rooms");
+    TEST_ASSERT_EQ(fw.asked, 2u, "in two requests");
+    TEST_ASSERT_EQ(fw.pages, 32ULL, "all of it");
+    fw = (struct room_firmware){ rooms, 16, 2, 0, 0, log.base };
+    TEST_ASSERT_EQ(boot_span_claim_rooms(log, rooms, 16, room_take, &fw), 0, "the second one refused");
+    fw = (struct room_firmware){ rooms, 1, 0, 0, 0, log.base };
+    TEST_ASSERT_EQ(boot_span_claim_rooms(log, rooms, 1, room_take, &fw), 0, "in no room");
+    TEST_ASSERT_EQ(fw.asked, 0u, "asks for nothing");
+    const struct boot_span twice[2] = { { 0x100000, 0x1000 }, { 0x100000, 0x3000 } };
+    const struct boot_span three = { 0x100000, 0x3000 };
+    fw = (struct room_firmware){ twice, 2, 0, 0, 0, three.base };
+    TEST_ASSERT_EQ(boot_span_claim_rooms(three, twice, 2, room_take, &fw), 1, "rooms that begin together");
+    TEST_ASSERT_EQ(fw.asked, 1u, "the longest serves");
+}
+
 static void test_kernel_entry_span(void)
 {
     const struct boot_span code = { 0x100000, 0x1000 }, none = { 0x100000, 0 }, top = { ~0ULL - 15, 64 };
@@ -1589,6 +1649,8 @@ void test_register_uefi_boot(void)
                             test_kernel_entry_span, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: kernel memory claim spans",
                             test_kernel_claim_spans, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: kernel claim asks once a room",
+                            test_kernel_claim_rooms, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: UKI cmdline rejects disk-payload tokens",
                             test_uki_cmdline_rejects_initrd_token, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: serial_source valid",

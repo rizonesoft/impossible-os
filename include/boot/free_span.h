@@ -93,6 +93,22 @@ boot_span_holds(struct boot_span span, unsigned long long at)
     return at >= span.base && at - span.base < span.bytes;
 }
 
+/* The run that begins with rooms[first]: firmware may list one free run as several
+ * ranges, in any order. */
+static inline struct boot_span
+boot_span_run(const struct boot_span *rooms, unsigned n, unsigned first)
+{
+    struct boot_span run = rooms[first];
+    int grew;
+
+    do {
+        grew = 0;
+        for (unsigned i = 0; i < n; i++)
+            grew |= boot_span_join(&run, rooms[i]);
+    } while (grew);
+    return run;
+}
+
 /* Takes `pages` from `base`, all or none; answers whether it did. */
 typedef int (*boot_span_take)(void *ctx, unsigned long long base, unsigned long long pages);
 
@@ -108,6 +124,30 @@ boot_span_claim(unsigned long long base, unsigned long long pages, boot_span_tak
         return 1;
     return half != 0 && boot_span_claim(base, half, take, ctx) &&
            boot_span_claim(base + half * FREE_SPAN_PAGE, pages - half, take, ctx);
+}
+
+/* Take all of `want` with one request for each of the `n` free rooms it crosses, so at
+ * most `n`; 0 at the first that is refused, or that no room holds. */
+static inline int
+boot_span_claim_rooms(struct boot_span want, const struct boot_span *rooms, unsigned n,
+                      boot_span_take take, void *ctx)
+{
+    unsigned long long at = want.base, left = want.bytes;
+
+    while (left != 0) {
+        unsigned long long got = 0;
+        for (unsigned i = 0; i < n; i++) {
+            if (boot_span_holds(rooms[i], at) && rooms[i].bytes - (at - rooms[i].base) > got)
+                got = rooms[i].bytes - (at - rooms[i].base);
+        }
+        if (got > left)
+            got = left;
+        if (got < FREE_SPAN_PAGE || !take(ctx, at, got / FREE_SPAN_PAGE))
+            return 0;
+        at += got & ~(FREE_SPAN_PAGE - 1);
+        left -= got & ~(FREE_SPAN_PAGE - 1);
+    }
+    return 1;
 }
 
 #endif /* BOOT_FREE_SPAN_H */

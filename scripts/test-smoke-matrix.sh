@@ -40,12 +40,12 @@ cd "$REPO_ROOT"
 # reported in seconds rather than after the slow leg.
 LEGS="${SMOKE_MATRIX_LEGS:-kvm:1 kvm:2 tcg:1 tcg:2}"
 unset SMOKE_ENGINE      # a leg names its own; SMOKE_FORCE_TCG is for those that name none
+_SM_KVM="${SMOKE_KVM_DEVICE:-/dev/kvm}"      # the orchestration test names another
 case "$LEGS" in
-    *tcg:*) ;;
-    *)  if [ ! -c /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-            echo "SMOKE MATRIX FAILED  (only KVM legs were asked for and /dev/kvm is not usable)"
-            exit 1
-        fi ;;
+    *kvm:*) if [ ! -c "$_SM_KVM" ] || [ ! -r "$_SM_KVM" ] || [ ! -w "$_SM_KVM" ]; then
+                echo "SMOKE MATRIX FAILED  ($_SM_KVM is not usable; SMOKE_MATRIX_LEGS='tcg:1 tcg:2' boots the TCG legs)"
+                exit 1
+            fi ;;
 esac
 
 # ONE MATRIX PER WORKTREE (v19 capture, 2026-09-05). Two concurrent runs share
