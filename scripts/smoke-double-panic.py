@@ -38,10 +38,11 @@ judges crash_test=8 (the split crash, reset where its log save begins): both
 CPUs reported, the first boot reached its last line, and the next boot found
 one record, the winner's (the BSP).
 
-    python3 scripts/smoke-double-panic.py next-boot <serial-log>
+    python3 scripts/smoke-double-panic.py wait <serial-log> <seconds> <qemu-pid>
 
-exits 0 once the second boot has reported its whole record, reached the
-prompt, crashed, failed or ended, so that either verdict can be given.
+waits until the second boot has reported its whole record, reached the
+prompt, crashed, failed or ended, or QEMU is gone, so that a verdict can be
+given; fails when none of these happened in time.
 
 Prints "STOP_NAME=<name>" (the stop code the screen must show) and a summary
 on success; prints the reason and exits 1 otherwise.
@@ -51,6 +52,8 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+import time
+from collections.abc import Callable
 from typing import NamedTuple
 
 MODES = {"race": 4, "ap": 5, "split": 6}
@@ -83,7 +86,7 @@ class Boot(NamedTuple):
 def split_boots(text: str) -> list[Boot]:
     """The log's lines, one Boot per loader entry (lines before the first dropped)."""
     boots: list[Boot] = []
-    for line in text.splitlines():
+    for line in text.split("\n"):       # a serial line ends at LF; splitlines() ends it at more
         replay = line.startswith(REPLAY)
         if LOADER_ENTRY in line and not replay:
             boots.append(Boot([], []))
@@ -238,15 +241,34 @@ def next_boot_done(text: str) -> bool:
     return len(boots) == 2 and any(RECORD_RE.search(x) or END_RE.search(x) for x in boots[1].live)
 
 
+def wait_next_boot(read: Callable[[], str], alive: Callable[[], bool], seconds: float,
+                   now: Callable[[], float] = time.monotonic,
+                   sleep: Callable[[float], None] = time.sleep) -> None:
+    """Return once a verdict can be given; the log is last read as the time ends."""
+    end = now() + seconds
+    while True:
+        left = end - now()
+        gone = not alive()      # asked before the read, which then holds its last words
+        if next_boot_done(read()) or gone:
+            return
+        if left <= 0:
+            raise VerdictError("the boot after the crash reported nothing within %gs" % seconds)
+        sleep(min(left, 0.5))
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != (2 if argv[:1] == ["next-boot"] else 3) or \
-            argv[0] not in ("check", "check-replay", "check-cut", "next-boot"):
+    if len(argv) != (4 if argv[:1] == ["wait"] else 3) or \
+            argv[0] not in ("check", "check-replay", "check-cut", "wait"):
         print(__doc__)
         return 2
     try:
-        text = pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
-        if argv[0] == "next-boot":
-            return 0 if next_boot_done(text) else 1
+        def read() -> str:
+            return pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
+
+        if argv[0] == "wait":
+            wait_next_boot(read, pathlib.Path("/proc", argv[3]).exists, float(argv[2]))
+            return 0
+        text = read()
         if argv[0] == "check-replay":
             print(check_replay(text, argv[2]))
             return 0

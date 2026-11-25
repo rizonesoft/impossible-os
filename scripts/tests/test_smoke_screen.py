@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import socket
 import sys
+import tempfile
+import threading
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -109,6 +112,61 @@ for cut in (b"P6\n640 480\n25", b"P6\n640", b"P6\n# no newline", b""):
     if time.monotonic() - t0 > 2.0:
         failures += 1
         print("FAIL  truncated header %r took over 2 s" % cut)
+
+
+
+def expect_powerdown(name: str, off_after: float, reply_delay: float, closes: bool, passes: bool) -> None:
+    """A monitor that presses at once, powers the guest off after `off_after` seconds and
+    answers each status query `reply_delay` late, under a one-second budget."""
+    global failures
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(pathlib.Path(tmp) / "mon")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.settimeout(5.0)
+        server.bind(path)
+        server.listen(1)
+
+        def serve() -> None:
+            conn, _ = server.accept()
+            pressed = 0.0
+            with conn:
+                conn.settimeout(5.0)
+                conn.sendall(b"QEMU monitor\n(qemu) ")
+                try:
+                    for line in conn.makefile("rb"):
+                        if line == b"system_powerdown\n":
+                            pressed = time.monotonic()
+                        else:
+                            time.sleep(reply_delay)
+                            if closes:
+                                return
+                            off = time.monotonic() - pressed >= off_after
+                            conn.sendall(b"VM status: %s\r\n" % (b"paused (shutdown)" if off else b"running"))
+                        conn.sendall(b"(qemu) ")
+                except OSError:
+                    pass
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        t0 = time.monotonic()
+        try:
+            ss.powerdown(path, 1.0)
+            got = True
+        except ss.ScreenError:
+            got = False
+        took = time.monotonic() - t0
+        thread.join(10.0)
+        server.close()
+    ok = got == passes and took < 1.5
+    if not ok:
+        failures += 1
+    print("%s  %s" % ("PASS" if ok else "FAIL", name))
+
+
+expect_powerdown("a guest that powers off in time passes", 0.5, 0.0, False, True)
+expect_powerdown("a guest that stays up fails when the time ends", 9.0, 0.0, False, False)
+expect_powerdown("a reply after the time fails", 0.0, 1.3, False, False)
+expect_powerdown("a monitor that goes away fails", 0.0, 0.0, True, False)
 
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)

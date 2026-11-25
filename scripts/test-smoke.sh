@@ -94,13 +94,6 @@ case "${SMOKE_MENU:-0}" in keys|default) [ "$TIMEOUT_SEC" -lt 60 ] && TIMEOUT_SE
 # file before pattern matching. The kernel emits `\x1b[31m[FAIL]...` etc., and
 # OVMF emits screen-clear sequences that collide with any bracketed substring.
 # Matching the stripped copy keeps patterns robust against future color edits.
-# Seconds since the host booted: a deadline on it does not move when the wall clock is set.
-uptime_s() {
-    local up
-    read -r up _ < /proc/uptime
-    echo "${up%%.*}"
-}
-
 strip_ansi() {
     sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b[=>]//g' "$SERIAL_LOG" > "$STRIPPED_LOG" 2>/dev/null || :
 }
@@ -919,31 +912,7 @@ MONITOR_SOCK="$BUILD/smoke-monitor.sock"
 # monitor cannot be reached, so a dead socket fails the leg instead of reading
 # as "the menu ignored the key".
 monitor_sendkey() { monitor_cmd "sendkey $1"; }
-# Print the monitor's "info status" line (empty when the monitor is unreachable).
-monitor_status() {
-    python3 - "$MONITOR_SOCK" <<'PYEOF' 2>/dev/null
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(2.0)
-s.connect(sys.argv[1])
-s.sendall(b"info status\n")
-buf = b""
-end = time.monotonic() + 2.0
-while b"VM status" not in buf and time.monotonic() < end:
-    try:
-        chunk = s.recv(4096)
-    except socket.timeout:
-        break
-    if not chunk:
-        break
-    buf += chunk
-s.close()
-for line in buf.decode("latin-1").splitlines():
-    if "VM status" in line:
-        print(line.strip())
-PYEOF
-}
-# Send one monitor command (system_powerdown, sendkey, ...); same failure rule.
+# Send one monitor command (sendkey, ...); same failure rule.
 monitor_cmd() {
     python3 - "$MONITOR_SOCK" "$1" <<'PYEOF'
 import socket, sys
@@ -1555,26 +1524,13 @@ printf "\r"
 # longer for a broken boot wastes operator time.
 if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
     printf "  ${DIM}PASS markers detected; pressing the power button...${NC}  "
-    if ! monitor_cmd system_powerdown; then
-        BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_SHUTDOWN=1: the QEMU monitor could not be reached to press the power button"
-    else
-        # -no-shutdown keeps QEMU up after the guest powers off and reports the VM
-        # as "paused (shutdown)"; only the guest's own power-off sets that state.
-        _sd_end=$(( $(uptime_s) + SHUTDOWN_SEC )); _sd_off=0
-        while [ "$(uptime_s)" -lt "$_sd_end" ] && kill -0 "$QEMU_PID" 2>/dev/null; do
-            if monitor_status | grep -q 'VM status: paused (shutdown)'; then
-                # A reply that came after the deadline says nothing about the time before it.
-                [ "$(uptime_s)" -lt "$_sd_end" ] && _sd_off=1
-                break
-            fi
-            sleep 0.3
-        done
+    if ! _sd_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" powerdown "$MONITOR_SOCK" "$SHUTDOWN_SEC" 2>&1); then
         strip_ansi
-        if [ "$_sd_off" != "1" ]; then
-            BOOT_PASSED=false; BOOT_FAILED=true
-            FAIL_REASON="SMOKE_SHUTDOWN=1: the guest did not power off within ${SHUTDOWN_SEC}s of the power button"
-        elif ! shutdown_check_log "$STRIPPED_LOG"; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_SHUTDOWN=1: the guest did not power off within ${SHUTDOWN_SEC}s of the power button ($_sd_err)"
+    else
+        strip_ansi
+        if ! shutdown_check_log "$STRIPPED_LOG"; then
             BOOT_PASSED=false; BOOT_FAILED=true
             FAIL_REASON="SMOKE_SHUTDOWN=1: the guest reached S5 but $SD_FAIL_MSG"
         fi
@@ -1639,18 +1595,9 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     exit 0
 fi
 
-# Wait, until $1 (uptime_s seconds), for the boot after a crash to have reported its whole
-# record or reached the prompt. A guest that is gone has nothing left to report.
-NEXT_BOOT_NOTE=""
+# Wait, at most $1 seconds, until the boot after a crash can be judged; prints why not.
 crash_next_boot_wait() {
-    while [ "$(uptime_s)" -lt "$1" ]; do
-        python3 "$SCRIPT_DIR/smoke-double-panic.py" next-boot "$SERIAL_LOG" > /dev/null 2>&1 && return
-        if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-            NEXT_BOOT_NOTE=" (QEMU exited)"
-            return
-        fi
-        sleep 1
-    done
+    python3 "$SCRIPT_DIR/smoke-double-panic.py" wait "$SERIAL_LOG" "$1" "$QEMU_PID" 2>&1
 }
 
 # ---- Double-panic verdict (SMOKE_CRASH_TEST=double-*) ----------------------
@@ -1674,16 +1621,16 @@ if [ -n "$CT_MODE" ]; then
     # kernel's OWN restart: that is the case where a countdown paced by the
     # BSP's clock never ended. The other legs reset through the monitor.
     if [ "$CT_MODE" = ap ]; then
-        dp_deadline=$(( $(uptime_s) + ${SMOKE_AUTO_RESTART_TIMEOUT_SEC:-120} ))
+        dp_wait="${SMOKE_AUTO_RESTART_TIMEOUT_SEC:-120}"
     else
         dp_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
             || dp_fail "monitor reset: $dp_err"
-        dp_deadline=$(( $(uptime_s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
+        dp_wait="${SMOKE_RESET_TIMEOUT_SEC:-60}"
     fi
-    crash_next_boot_wait "$dp_deadline"
+    dp_out=$(crash_next_boot_wait "$dp_wait") || { strip_ansi; dp_fail "$dp_out"; }
     strip_ansi
     dp_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" check "$STRIPPED_LOG" "$CT_MODE" 2>&1) \
-        || dp_fail "$dp_out$NEXT_BOOT_NOTE"
+        || dp_fail "$dp_out"
     dp_stop=$(printf '%s\n' "$dp_out" | sed -n 's/^STOP_NAME=//p')
     if ! dp_screen=$(python3 "$SCRIPT_DIR/smoke-screen.py" check "$CT_SCREEN" \
             "Stop code:  $dp_stop" 2>&1); then
@@ -1711,10 +1658,10 @@ if [ -n "$CT_END" ]; then
         lc_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
             || lc_fail "monitor reset: $lc_err"
     fi
-    crash_next_boot_wait $(( $(uptime_s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
+    lc_out=$(crash_next_boot_wait "${SMOKE_RESET_TIMEOUT_SEC:-60}") || { strip_ansi; lc_fail "$lc_out"; }
     strip_ansi
     lc_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" "$CT_VERDICT" "$STRIPPED_LOG" "$CT_END" 2>&1) \
-        || lc_fail "$lc_out$NEXT_BOOT_NOTE"
+        || lc_fail "$lc_out"
     echo -e "  ${GREEN}✓${NC} $lc_out"
     echo ""
     echo -e "${GREEN}  CRASH-BOOT $CRASH_TEST LEG PASSED${NC}"

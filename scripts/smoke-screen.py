@@ -13,6 +13,9 @@ so the text can be decoded cell by cell against that same font table.
     smoke-screen.py monitor <monitor-socket> <hmp-command>
         send one HMP command (the double-panic legs' system_reset) and wait
         for the prompt after it, under the same deadline
+    smoke-screen.py powerdown <monitor-socket> <seconds>
+        press the power button; exit 0 only when the guest powered itself off
+        within that time of the press
     smoke-screen.py check <ppm> <needle> [<needle> ...]
         exit 0 only when most of the frame is the panic blue AND every needle
         appears in the decoded console text
@@ -185,6 +188,35 @@ def monitor(sock_path: str, command: str, deadline: float) -> None:
         sock.close()
 
 
+def powerdown(sock_path: str, seconds: float) -> None:
+    """Press the power button and wait, that long from the press, for the guest to be off.
+
+    -no-shutdown keeps QEMU up after a guest powers off and reports the VM as
+    "paused (shutdown)"; only the guest's own power-off sets that state."""
+    buf = bytearray()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(15.0)
+        sock.connect(sock_path)
+        _read_until(sock, buf, 1, time.monotonic() + 15.0)
+        sock.sendall(b"system_powerdown\n")
+        deadline = time.monotonic() + seconds
+        prompts = 2
+        _read_until(sock, buf, prompts, deadline)
+        while True:
+            seen = len(buf)
+            prompts += 1
+            sock.sendall(b"info status\n")
+            _read_until(sock, buf, prompts, deadline)
+            if b"VM status: paused (shutdown)" in buf[seen:]:
+                return
+            time.sleep(max(0.0, min(0.3, deadline - time.monotonic())))
+    except socket.timeout as exc:
+        raise ScreenError("the QEMU monitor could not be reached") from exc
+    finally:
+        sock.close()
+
+
 def capture(sock_path: str, out: str, timeout: float = 15.0) -> None:
     out_path = pathlib.Path(out)
     out_path.unlink(missing_ok=True)
@@ -209,6 +241,9 @@ def main(argv: list[str]) -> int:
     try:
         if len(argv) == 3 and argv[0] == "monitor":
             monitor(argv[1], argv[2], time.monotonic() + 15.0)
+            return 0
+        if len(argv) == 3 and argv[0] == "powerdown":
+            powerdown(argv[1], float(argv[2]))
             return 0
         if len(argv) == 3 and argv[0] == "capture":
             capture(argv[1], argv[2])

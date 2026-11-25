@@ -217,5 +217,35 @@ expect_done("a halt that is replayed does not", SECOND, "[CRASH-PREV] [BOOT HALT
 expect_done("a replayed loader entry is no third boot", SECOND, "[CRASH-PREV] boot: efi_main entered", False)
 expect_done("a record or a prompt of the first boot does not", CRASH_BOOT + [RECORD], "Boot complete", False)
 
+for code in (0x85, 0x2028, 0x2029):
+    expect_lone("U+%04X in a replayed line starts no live one" % code,
+                CRASH_BOOT + NEXT_BOOT[:2] + ["[CRASH-PREV] ob: " + chr(code) + RECORD, "[BOOT HALT] no memory"], False)
+
+
+def expect_wait(name: str, arrives: float, alive_until: float, passes: bool) -> None:
+    """The record arrives, and QEMU goes, at these times of a 5-second wait on a fake clock."""
+    global failures
+    clock = [100.0]
+
+    def read() -> str:
+        return "\n".join(SECOND + [RECORD] if clock[0] >= 100.0 + arrives else SECOND)
+
+    try:
+        dp.wait_next_boot(read, lambda: clock[0] < 100.0 + alive_until, 5.0,
+                          now=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        got = True
+    except dp.VerdictError:
+        got = False
+    ok = got == passes and clock[0] <= 105.0
+    if not ok:
+        failures += 1
+    print("%s  %s" % ("PASS" if ok else "FAIL", name))
+
+
+expect_wait("a record in time ends the wait", 3.2, 99.0, True)
+expect_wait("a record as the time ends counts", 4.9, 99.0, True)
+expect_wait("a record after the time does not", 5.1, 99.0, False)
+expect_wait("a QEMU that is gone ends the wait", 99.0, 2.0, True)
+
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)
