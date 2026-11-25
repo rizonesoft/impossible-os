@@ -40,8 +40,8 @@ one record, the winner's (the BSP).
 
     python3 scripts/smoke-double-panic.py next-boot <serial-log>
 
-exits 0 once the second boot has reported its whole record, reached the
-prompt or ended, so that either verdict can be given.
+exits 0 once the second boot has reported its whole record, reached its
+own crash or the prompt, or ended, so that either verdict can be given.
 
 Prints "STOP_NAME=<name>" (the stop code the screen must show) and a summary
 on success; prints the reason and exits 1 otherwise.
@@ -174,6 +174,7 @@ def check(text: str, mode: str) -> tuple[str, str]:
                   % (winner, name, loser, got))
 
 
+FIXTURE_RE = re.compile(r"crash_test=\d+ -- ")
 LONE_RE = re.compile(r"crash_test=7 -- triggering deliberate BSOD")
 
 
@@ -224,7 +225,10 @@ def next_boot_done(text: str) -> bool:
     boots = split_boots(text)
     if len(boots) > 2:
         return True         # the second boot is over
-    return len(boots) == 2 and any(RECORD_RE.search(x) or "Boot complete" in x for x in boots[1])
+    return len(boots) == 2 and any(
+        RECORD_RE.search(x) or "Boot complete" in x or
+        (FIXTURE_RE.search(x) and not x.startswith(REPLAY))     # past the record, at its own crash
+        for x in boots[1])
 
 
 def main(argv: list[str]) -> int:

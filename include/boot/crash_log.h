@@ -30,39 +30,38 @@ static inline unsigned int boot_crash_log_bytes(unsigned int magic, unsigned int
     return BOOT_CRASH_LOG_HEADER_BYTES + entries * BOOT_CRASH_LOG_ENTRY_BYTES;
 }
 
-/* The loader takes and gives back whole pages at an address. */
-struct boot_crash_log_pages {
-    int (*claim)(unsigned long long base, unsigned int pages);      /* nonzero when they were free */
-    void (*release)(unsigned long long base, unsigned int pages);
+/* The loader takes and gives back the page at an address. */
+struct boot_crash_log_page {
+    int (*claim)(unsigned long long base);      /* nonzero when it was free and is taken */
+    void (*release)(unsigned long long base);
 };
 
-/* Copy the log at base into copy (BOOT_CRASH_LOG_MAX_BYTES long). Its pages are claimed
- * first, the header's and then the rest of what it says: free memory is nobody's to read.
- * Answers how long the copy is, or 0 with the reason. The caller checks the CRC. */
+/* Copy the log at base into copy (BOOT_CRASH_LOG_MAX_BYTES long), a page at a time: its
+ * pages may lie in several of firmware's ranges. Each is claimed while it is read, since
+ * free memory is nobody's to read. Answers how long the copy is, or 0 with the reason.
+ * The caller checks the CRC. */
 static inline unsigned int boot_crash_log_take(unsigned long long base, unsigned int *copy,
-                                               struct boot_crash_log_pages pages, const char **why)
+                                               struct boot_crash_log_page page, const char **why)
 {
     const volatile unsigned int *log = (const volatile unsigned int *)(unsigned long long)base;
-    unsigned int bytes, rest;
+    unsigned int bytes = 4096;          /* until the header, in the first page, is read */
 
-    *why = "not free memory";
-    if (!pages.claim(base, 1))
-        return 0;
-    copy[0] = log[0];
-    copy[1] = log[1];
-    bytes = boot_crash_log_bytes(copy[0], copy[1]);
-    rest = bytes ? (bytes - 1) / 4096 : 0;
-    if (bytes == 0) {
-        *why = "no log there";
-    } else if (rest != 0 && !pages.claim(base + 4096, rest)) {
-        bytes = 0;
-    } else {
-        for (unsigned int i = 2; i < bytes / sizeof(*copy); i++)
+    for (unsigned int at = 0; at < bytes; at += 4096) {
+        if (!page.claim(base + at)) {
+            *why = "not free memory";
+            return 0;
+        }
+        if (at == 0) {
+            copy[0] = log[0];
+            copy[1] = log[1];
+            bytes = boot_crash_log_bytes(copy[0], copy[1]);
+        }
+        for (unsigned int i = at ? at / 4 : 2; i < bytes / 4 && i < at / 4 + 1024; i++)
             copy[i] = log[i];
-        if (rest != 0)
-            pages.release(base + 4096, rest);
+        page.release(base + at);
     }
-    pages.release(base, 1);
+    if (bytes == 0)
+        *why = "no log there";
     return bytes;
 }
 

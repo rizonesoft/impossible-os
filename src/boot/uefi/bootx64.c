@@ -10294,28 +10294,28 @@ static struct {
 } s_crash_log;
 
 #define CRASH_LOG_READ_TRIES 4
-static int claim_crash_log(unsigned long long base, unsigned int pages)
+static int claim_crash_log_page(unsigned long long base)
 {
     EFI_PHYSICAL_ADDRESS at = base;
-    return !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, pages, &at));
+    return !EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, 1, &at));
 }
 
-static void release_crash_log(unsigned long long base, unsigned int pages)
+static void release_crash_log_page(unsigned long long base)
 {
-    (void)gBS->FreePages(base, pages);
+    (void)gBS->FreePages(base, 1);
 }
 
 /* Copy the log at base. Answers why there is no copy, or NULL. Nothing is read that cannot
  * be claimed: the variable may hold any value. */
 static const char *copy_crash_log(UINT64 base)
 {
-    const struct boot_crash_log_pages pages = { claim_crash_log, release_crash_log };
+    const struct boot_crash_log_page page = { claim_crash_log_page, release_crash_log_page };
     const char *why = (const char *)0;
     UINT32 crc = 0;
 
     if (base < BL_KERNEL_FLOOR || (base & (EFI_PAGE_SIZE - 1)) != 0)
         return "not the address of a log";
-    UINT32 bytes = boot_crash_log_take(base, s_crash_log_copy, pages, &why);
+    UINT32 bytes = boot_crash_log_take(base, s_crash_log_copy, page, &why);
     if (bytes == 0)
         return why;
     if (EFI_ERROR(gBS->CalculateCrc32((UINT8 *)s_crash_log_copy + BOOT_CRASH_LOG_HEADER_BYTES,

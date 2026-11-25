@@ -48,7 +48,7 @@ After boot, `X:\Logs\kernel.log` holds every entry, the six subsystem files hold
 - Tamper-evident, HMAC-chained `events.jsonl` entries are designed but not built; where the verifier key is anchored (TPM NVRAM or protected UEFI NVRAM) is an operator decision that blocks the work ([Log Integrity Verification](../../todo/02-kernel-core/TODO-04-system-logging.md#10-log-integrity-verification)).
 - ETW provider registration and per-session keyword and level filtering are not built: `NtTraceEvent` writes to the one session its handle names, and kernel events emitted by `etw_emit_kernel_event()` go to every running session unfiltered ([ETW Provider Registration and Session Filtering](../../todo/02-kernel-core/TODO-04-system-logging.md#11-etw-provider-registration-and-session-filtering)).
 - ETW stack-walk capture, a boot-persistent autologger and self-describing schemas wait on the provider model ([ETW Advanced Capture](../../todo/02-kernel-core/TODO-04-system-logging.md#12-etw-advanced-capture----stack-walk-autologger-self-describing-schema)).
-- Section 2 of the roadmap still has open items, and several hardening items in sections 14 to 17 are parked on the kernel image-size ceiling ([System Logging roadmap](../../todo/02-kernel-core/TODO-04-system-logging.md)).
+- Section 2 of the roadmap still has open items, and so do the hardening sections 14 to 17 ([System Logging roadmap](../../todo/02-kernel-core/TODO-04-system-logging.md)).
 - The rate limiter fails open when its 32-slot table is full; a per-CPU lockless redesign is planned in [Kernel Logging v2](../../todo/02-kernel-core/TODO-32-kernel-logging-v2-lockless.md).
 - Remote syslog forwarding is owned by [Syslog Forwarding](../../todo/07-networking/TODO-11-syslog-forwarding.md).
 

@@ -202,6 +202,8 @@ expect_done("half a record line is not a record yet", SECOND, RECORD[:-12], Fals
 expect_done("the whole record line is", SECOND, RECORD, True)
 expect_done("the prompt without a record ends the wait", SECOND, "[  2.0] Boot complete", True)
 expect_done("a third boot ends the wait", SECOND, "[BOOT] efi_main entered", True)
+expect_done("its own crash ends the wait", SECOND, CRASH_BOOT[1], True)
+expect_done("the crash of the boot before, replayed, does not", SECOND, "[CRASH-PREV] " + LONE, False)
 expect_done("a record or a prompt of the first boot does not", CRASH_BOOT + [RECORD], "Boot complete", False)
 
 print("%d failure(s)" % failures)
