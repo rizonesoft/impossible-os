@@ -26,6 +26,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\ref-common.ps1')
+Assert-RefTarget $Name @($VmPath, $Out)
 if (Test-Path -LiteralPath $Out) { Write-Host "derive: $Out exists; give a new path"; exit 2 }
 $pin = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'drivers.json') | ConvertFrom-Json).'virtio-win'
 if (-not (Test-Path -LiteralPath $pin.iso)) { Write-Host "derive: no $($pin.iso); fetch $($pin.url)"; exit 2 }
@@ -99,5 +100,6 @@ try {
     if ($mounted) { Dismount-DiskImage -ImagePath $pin.iso | Out-Null }
     if ($s) { Remove-PSSession $s }
     if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Exit-RefTurn
 }
 exit $code

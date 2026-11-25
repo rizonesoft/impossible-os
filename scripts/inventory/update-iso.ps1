@@ -52,6 +52,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
+Assert-RefTarget $Name @($VmPath, $Work, $PackageDisk, $Out)
 
 # True when $Parts holds a finished servicing of the inputs $Key names:
 # parts.json (written last) matches $Key and every part it lists is there at
@@ -202,6 +203,7 @@ try {
         } finally {
             if ($s) { Remove-PSSession $s -ErrorAction SilentlyContinue }
             if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+            Exit-RefTurn
         }
     }
 } finally { Dismount-DiskImage -ImagePath $isoFile.FullName | Out-Null }

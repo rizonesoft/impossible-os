@@ -65,6 +65,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
+Assert-RefTarget $Name @($VmPath, $RuntimeCache)
 
 # fhd-100: the profile every canonical record is captured under. Its values live
 # once, in docs/design/inventory/profiles.json, which the capture tool reads too.
@@ -219,6 +220,7 @@ function Invoke-Build() {
         if ($names -contains 'pre-oobe' -and $names -notcontains 'clean' -and $existing[0].State -eq 'Running' -and (Get-GuestKvp $Name)['ios-desktop'] -eq 'ready') {
             $script:LogPath = Join-Path $VmPath 'ref-vm.log'
             Write-Ref 'resuming at the signed-in desktop'
+            Enter-RefTurn
             $script:RefTouched = $true
             Complete-Clean
             return
@@ -271,7 +273,7 @@ function Invoke-Build() {
     Set-VMFirmware -VMName $Name -FirstBootDevice $dvd
     Write-Ref 'VM created; starting the install'
 
-    Start-VM -Name $Name
+    Start-RefVm $Name
     # The firmware asks for a key to boot from the DVD. The key is x: Setup's own
     # screens come up within these seconds, and Enter or Space there presses
     # Cancel (seen 2026-11-14), while x is no accelerator on any Setup page.
@@ -677,7 +679,7 @@ function Invoke-DeriveProfile([string]$Id) {
     # next sign-in, which autologon makes.
     Stop-VM -Name $Name -Force
     Set-VMVideo -VMName $Name -ResolutionType Single -HorizontalResolution $want.width -VerticalResolution $want.height
-    Start-VM -Name $Name
+    Start-RefVm $Name
     $s = New-RefSession $Name $VmPath
     try {
         Send-GuestScripts $s
@@ -751,5 +753,6 @@ try {
 } finally {
     $vm = Get-VM | Where-Object { $_.Name -eq $Name }
     if ($script:RefTouched -and $vm -and $vm.State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Exit-RefTurn
 }
 exit $rc

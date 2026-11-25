@@ -225,6 +225,111 @@ function Enter-RefLock([string]$Name) {
     }
 }
 
+# Impossible SDK's own machine and its folder are never ours to start, stop,
+# change or delete: a script given either refuses before it does anything.
+function Assert-RefTarget([string]$Name, [string[]]$Paths) {
+    $reserved = 'ui-test-win11'
+    $hit = $reserved -like $Name   # Get-VM reads -Name as a wildcard
+    foreach ($p in $Paths) {
+        if (-not $p) { continue }
+        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)
+        if (($full -split '[\\/]') -contains $reserved) { $hit = $true }
+    }
+    if ($hit) { Write-Host "ref: $reserved is Impossible SDK's machine; refused"; exit 2 }
+}
+
+# The host is too short of memory to run this VM and the SDK's ui-test-win11 at
+# once, so both queue for one place. Bosun holds it for as long as the holder
+# below reads its standard input: a pipe this process owns, so the place frees
+# when Exit-RefTurn closes it or this process ends, whatever ends it. The holder
+# prints the place Bosun gave, which is copied here so that a job started under
+# this one passes straight through (Bosun reads these variables).
+#
+# A run is never refused: Bosun starts the holder anyway after the wait (slot
+# -1), and no Bosun, or one that fails or stays silent, means no place.
+$script:RefTurnNs = 'Bosun.VM'
+$script:RefTurnWaitSec = 360
+$script:RefTurnLimitSec = 420
+$script:RefTurn = $null
+
+function Enter-RefTurn() {
+    if ($script:RefTurn) { return }
+    $script:RefTurn = @{ Process = $null; Env = @{} }
+    $bosun = @(Get-Command bosun.exe -CommandType Application -ErrorAction SilentlyContinue)[0]
+    if (-not $bosun) { Write-Ref 'Bosun is not installed: going on without a place'; return }
+    $si = New-Object Diagnostics.ProcessStartInfo
+    $si.FileName = $bosun.Source
+    $si.Arguments = "run --ns $script:RefTurnNs --slots 1 --max-wait $script:RefTurnWaitSec -- cmd.exe /d /c set BOSUN_& sort >nul"
+    $si.WorkingDirectory = $env:SystemRoot   # cmd.exe refuses a WSL share
+    $si.UseShellExecute = $false
+    $si.CreateNoWindow = $true
+    $si.RedirectStandardInput = $true
+    $si.RedirectStandardOutput = $true
+    $si.RedirectStandardError = $true
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try { $p = [Diagnostics.Process]::Start($si) } catch {
+        Write-Ref "Bosun did not start ($($_.Exception.Message)): going on without a place"; return
+    }
+    $script:RefTurn.Process = $p
+    $err = $p.StandardError.ReadToEndAsync()   # read while it runs, so Bosun never waits to write
+    $given = @{}
+    $said = $false
+    while (-not $given.ContainsKey('BOSUN_SLOT')) {
+        $read = $p.StandardOutput.ReadLineAsync()
+        while (-not $read.IsCompleted -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
+            Start-Sleep -Milliseconds 100
+            if (-not $said -and $clock.Elapsed.TotalSeconds -ge 3) {
+                $said = $true
+                Write-Ref "waiting for a place in $script:RefTurnNs, up to $script:RefTurnWaitSec s"
+            }
+        }
+        if ($read.Status -ne 'RanToCompletion' -or $null -eq $read.Result) { break }
+        if ($read.Result -match '^(BOSUN_SLOT|BOSUN_NS)=(.*)$') { $given[$Matches[1]] = $Matches[2] }
+    }
+    if (-not $given.ContainsKey('BOSUN_SLOT')) {
+        Stop-RefTurnHolder $p
+        $why = ''
+        if ($err.Status -eq 'RanToCompletion') { $why = "$($err.Result)".Trim() }
+        if ($why.Length -gt 300) { $why = $why.Substring(0, 300) }
+        Write-Ref "Bosun gave no place after $([int]$clock.Elapsed.TotalSeconds) s: going on without one. $why"
+        $script:RefTurn.Process = $null
+        return
+    }
+    $want = @(("$env:WSLENV" -split ':') | Where-Object { $_ })
+    foreach ($n in 'BOSUN_SLOT', 'BOSUN_NS') { if ($want -notcontains $n) { $want += $n } }
+    $given['WSLENV'] = $want -join ':'
+    foreach ($n in $given.Keys) {
+        $script:RefTurn.Env[$n] = [Environment]::GetEnvironmentVariable($n)
+        [Environment]::SetEnvironmentVariable($n, $given[$n])
+    }
+    if ($given['BOSUN_SLOT'] -eq '-1') { Write-Ref "no place in $script:RefTurnNs after $script:RefTurnWaitSec s: starting anyway" }
+    elseif ($said) { Write-Ref "took a place in $script:RefTurnNs after $([int]$clock.Elapsed.TotalSeconds) s" }
+}
+
+# Frees the place once the VM is off; a later Enter-RefTurn queues again.
+function Exit-RefTurn() {
+    if (-not $script:RefTurn) { return }
+    foreach ($n in $script:RefTurn.Env.Keys) { [Environment]::SetEnvironmentVariable($n, $script:RefTurn.Env[$n]) }
+    if ($script:RefTurn.Process) { Stop-RefTurnHolder $script:RefTurn.Process }
+    $script:RefTurn = $null
+}
+
+# The holder ends with its standard input, and Bosun with the holder; a Bosun
+# that does not is ended, and its job object takes the holder with it.
+function Stop-RefTurnHolder($Process) {
+    try {
+        $Process.StandardInput.Close()
+        if (-not $Process.WaitForExit(5000)) { $Process.Kill(); [void]$Process.WaitForExit(5000) }
+    } catch { Write-Ref "ending Bosun: $($_.Exception.Message)" }
+}
+
+# The only two places that start the VM are this and Restore-RefCheckpoint, and
+# both take a place first.
+function Start-RefVm([string]$Name) {
+    Enter-RefTurn
+    Start-VM -Name $Name
+}
+
 # The reference build the inventory is pinned to, from the repository.
 function Get-RefIdentity() {
     return Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\docs\design\inventory\reference.json') -Raw | ConvertFrom-Json
@@ -415,6 +520,8 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
     $snap = @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $Checkpoint })
     if ($snap.Count -ne 1) { throw "$Name has $($snap.Count) checkpoints named '$Checkpoint'; want exactly one" }
+    # Before the VM is touched: a restore can start it. A teardown never waits.
+    if (-not $NoStart) { Enter-RefTurn }
     $script:RefTouched = $true   # from here the VM is this run's to turn off
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
     Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
@@ -447,7 +554,7 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
         if ((Get-VM -Name $Name).State -eq 'Running') { throw "$Name is still running after the restore of $Checkpoint" }
         return
     }
-    if ((Get-VM -Name $Name).State -ne 'Running') { Start-VM -Name $Name }
+    if ((Get-VM -Name $Name).State -ne 'Running') { Start-RefVm $Name }
 }
 
 # Removes the VM and every disk it and its checkpoints use, with each disk's

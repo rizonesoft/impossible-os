@@ -40,6 +40,7 @@ $ErrorActionPreference = 'Stop'
 # carry what a guest's message can hold (emoji names, 2026-11-18).
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
+Assert-RefTarget $Name @($VmPath, $Out)
 
 if ($Stop) {
     Enter-RefLock $Name
@@ -93,5 +94,6 @@ try {
     if ($s) { Remove-PSSession $s }
     # Only a VM this run restored is turned off; a refusal leaves it as it was.
     if ($script:RefTouched -and (Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Exit-RefTurn
 }
 exit $code

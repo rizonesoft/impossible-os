@@ -84,6 +84,9 @@ WORK = pathlib.Path("/mnt/d/11/captures")
 # 600 s; this margin covers restore, transfer and teardown on top, so ref-run's
 # own finally (which turns the VM off) always gets to run before the host gives up.
 RUN_MARGIN = 1800
+# Enter-RefTurn (ref-common.ps1) waits for the SDK's machine before the VM starts:
+# at most its limit, then this long to end a Bosun that never answered.
+TURN_WAIT = 420 + 30
 STANDIN_STOP_GRACE = 120   # run.py's own teardown: QEMU's 30 s grace, twice, plus the reap
 LOCK = REPO / "build" / "inventory" / "capture.lock"
 JOURNAL = LOCK.with_name("publish.journal")   # an unfinished swap of checkout files only (baselines)
@@ -287,10 +290,11 @@ def ref_run(label, files, cmd, timeout, who="capture", checkpoint="clean"):
         argv = runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
                          "-Checkpoint", checkpoint, "-Command", cmd]
         try:
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
+            deadline = timeout + RUN_MARGIN + TURN_WAIT
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=deadline)
         except subprocess.TimeoutExpired:
             # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
-            print(f"{who}: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner, checkpoint))
+            print(f"{who}: ref-run did not finish within {deadline} s; " + stop_vm(runner, checkpoint))
             return out, 3
         except KeyboardInterrupt:
             # subprocess.run has killed the runner, whose own finally may not run.

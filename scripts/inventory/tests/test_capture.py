@@ -2653,7 +2653,7 @@ class Serial(unittest.TestCase):
         finally:
             capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
         self.assertEqual(rc, 3)
-        self.assertEqual(calls[0][1], 900 + capture.RUN_MARGIN)
+        self.assertEqual(calls[0][1], 900 + capture.RUN_MARGIN + capture.TURN_WAIT)
         self.assertEqual(calls[1][0][-3:], ["-Stop", "-Checkpoint", "clean"])
         self.assertIn("is off", out.getvalue())
         self.assertEqual([p for p in self.tmp.glob("*/in")], [])   # staging removed

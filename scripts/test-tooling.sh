@@ -1387,6 +1387,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inventory_check
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py" inventory_assets
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_capture.py" inventory_capture
+_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_turns.py" inventory_turns
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_baselines.py" inventory_baselines
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_report.py" inventory_report
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
@@ -1502,6 +1503,21 @@ if [ -f "$INV_CAPTURE_TEST" ]; then
     fi
 else
     t_fail "scripts/inventory/tests/test_capture.py not found"
+fi
+
+# The reference VM takes turns with the SDK's machine (scripts/inventory/tests/
+# test_turns.py): source checks everywhere; the queue cases need Windows and Bosun.
+INV_TURNS_TEST="$REPO_ROOT/scripts/inventory/tests/test_turns.py"
+if [ -f "$INV_TURNS_TEST" ]; then
+    INV_TURNS_OUT=$(_tt_nested_collect inventory_turns python3 "$INV_TURNS_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/inventory/tests/test_turns.py PASS ($(printf '%s\n' "$INV_TURNS_OUT" | tail -3 | tr '\n' ' '))"
+    else
+        t_fail "scripts/inventory/tests/test_turns.py FAIL ($(printf '%s\n' "$INV_TURNS_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_turns" "$INV_TURNS_OUT"
+    fi
+else
+    t_fail "scripts/inventory/tests/test_turns.py not found"
 fi
 
 # Completeness baselines (scripts/inventory/tests/test_baselines.py): each row

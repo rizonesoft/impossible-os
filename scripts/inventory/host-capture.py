@@ -84,10 +84,11 @@ def run_host(label, steps, checkpoint, timeout, session=True):
                          "-Out", capture.winpath(out), "-Checkpoint", checkpoint] + ([] if session else ["-NoSession"])
         stop = runner + [capture.winpath(HERE / "ref-run.ps1")]
         try:
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + HOST_MARGIN)
+            deadline = timeout + HOST_MARGIN + capture.TURN_WAIT
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=deadline)
         except subprocess.TimeoutExpired:
             # -Stop restores the checkpoint too: the killed walk's teardown never ran.
-            print(f"host-capture: ref-host did not finish within {timeout + HOST_MARGIN} s; " + capture.stop_vm(stop, checkpoint))
+            print(f"host-capture: ref-host did not finish within {deadline} s; " + capture.stop_vm(stop, checkpoint))
             return out, 3
         except KeyboardInterrupt:
             # subprocess.run has killed ref-host, whose finally may not have run, so

@@ -57,6 +57,7 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
+Assert-RefTarget $Name @($VmPath, $Out)
 
 if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force).Count) {
     Write-Host "ref-host: $Out is not empty; give a new folder for each run"; exit 2
@@ -450,6 +451,7 @@ try {
             if (-not $failed) { $failed = $why }
             if ($code -eq 0) { $code = 1 }
         }
+        Exit-RefTurn
     }
     # thumbnail: the revision of Save-Thumbnail's reading of Hyper-V's bytes;
     # host-capture.py refuses shots from any other (revision 2 skips the 4
