@@ -10290,10 +10290,14 @@ static struct {
     UINTN bytes;                        /* how long the copy is; 0 when there is none */
     EFI_STATUS read;                    /* how the variable's last read went */
     UINT32 tries;
+    UINT32 attrs;                       /* the variable's */
+    EFI_STATUS deleted;                 /* how deleting one with other attributes went */
     const char *why;                    /* why there is no copy, though a log was named */
 } s_crash_log;
 
 #define CRASH_LOG_READ_TRIES 4
+#define CRASH_LOG_VAR_ATTRS  (EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | \
+                              EFI_VARIABLE_RUNTIME_ACCESS)
 static int claim_crash_log_page(unsigned long long base)
 {
     EFI_PHYSICAL_ADDRESS at = base;
@@ -10338,10 +10342,10 @@ static void keep_crash_log(void)
     efi_memset(&s_crash_log, 0, sizeof s_crash_log);
     s_crash_log.read = EFI_DEVICE_ERROR;
     while (s_crash_log.read == EFI_DEVICE_ERROR && s_crash_log.tries < CRASH_LOG_READ_TRIES) {
-        UINT32 attrs;
         size = sizeof named;
         s_crash_log.read = rt && rt->GetVariable
-            ? rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &named) : EFI_UNSUPPORTED;
+            ? rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &s_crash_log.attrs, &size, &named)
+            : EFI_UNSUPPORTED;
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
         if (s_crash_log.tries == 0)     /* the control: the first read fails */
             s_crash_log.read = EFI_DEVICE_ERROR;
@@ -10352,6 +10356,11 @@ static void keep_crash_log(void)
         return;
     s_crash_log.named = size == sizeof named ? named : 0;
     s_crash_log.why = copy_crash_log(s_crash_log.named);
+    /* A variable's attributes cannot be changed, and one that is volatile or not for the
+     * run time cannot be deleted later: the kernel could not name its own log. */
+    if (s_crash_log.attrs != CRASH_LOG_VAR_ATTRS)
+        s_crash_log.deleted = rt->SetVariable
+            ? rt->SetVariable(BOOT_CRASH_LOG_VAR, &guid, 0, 0, (void *)0) : EFI_UNSUPPORTED;
 }
 
 /* Say what became of it, once the serial port works. */
@@ -10359,6 +10368,13 @@ static void report_crash_log(void)
 {
     if (s_crash_log.tries > 1)
         serial_early_print("[BOOT] Previous crash log: its variable was read again\n");
+    if (s_crash_log.read == EFI_SUCCESS && s_crash_log.attrs != CRASH_LOG_VAR_ATTRS) {
+        serial_early_print(EFI_ERROR(s_crash_log.deleted)
+            ? "[WARN] Previous crash log: its variable has other attributes and cannot be deleted, status=0x"
+            : "[BOOT] Previous crash log: its variable had other attributes and is deleted, status=0x");
+        serial_early_print_hex64(s_crash_log.deleted);
+        serial_early_print("\n");
+    }
     if (s_crash_log.read != EFI_SUCCESS && s_crash_log.read != EFI_NOT_FOUND) {
         serial_early_print("[WARN] Previous crash log: its variable cannot be read, status=0x");
         serial_early_print_hex64(s_crash_log.read);

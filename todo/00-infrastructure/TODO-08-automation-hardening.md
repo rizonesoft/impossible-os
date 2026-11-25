@@ -2037,6 +2037,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
   - The region lies wholly in memory that was free when this boot's firmware handed over, the longest run first (`pmm_alloc_firmware_free`), and is written through the direct map, because a panic runs on any process's page tables.
   - A region smaller than the ring keeps the newest entries (`klog_ring_window`, from one read of the sequence number); it used to keep the oldest. Other CPUs add nothing to the ring while the save copies it (`klog_ring_hold`).
   - Redesigned after the pointer was lost twice to a failed call: it is written until a read shows it, and deleted only when a read shows another boot's (`klog_crash_publish`). An unchanged pointer costs one read by the loader and one by the kernel; a changed one a write and a second read.
+  - Attributes cannot be changed, so the loader deletes a variable that has others than the kernel writes, while it can (`SMOKE_CRASH_NVRAM_ATTRS=0x3`, the matrix's image leg).
   - User mode may not write or delete any variable in the kernel's POST namespace, which holds the pointer (`uefi_var_is_reserved`).
   - First-fit put it at 0xc01000, in boot-services memory that OVMF writes again at every reset, so no log of a real crash ever came back.
   - The kernel needs the copy's pages in the handoff map: a firmware map past its 512 entries may lose them, as it loses any memory above the cut (01-boot-platform/TODO-03).

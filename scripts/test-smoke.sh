@@ -547,7 +547,7 @@ $L_DG"
 fi
 
 # The clean-shutdown oracle: the guest started a power-button shutdown, its
-# storage quiesce reported no failure, and it reached S5. acpi_storage_quiesce()
+# storage quiesce reported success and no failure, and it reached S5. acpi_storage_quiesce()
 # powers off even after a failed flush, so S5 alone does not mean clean.
 shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 on reject
     local log="$1"
@@ -562,6 +562,9 @@ shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 
     bad=$(grep -aE 'X: cache flush failed|storage did not cleanly quiesce|cache flush FAILED on shutdown|controller shutdown FAILED' "$log" | head -1)
     if [ -n "$bad" ]; then
         SD_FAIL_MSG="the storage quiesce failed before power-off: $bad"; return 1
+    fi
+    if ! sed -n '/\[ACPI\] Initiating shutdown/,$p' "$log" | grep -qaF '[ACPI] Storage is quiesced'; then
+        SD_FAIL_MSG="the storage was not quiesced before power-off"; return 1
     fi
     return 0
 }
@@ -581,15 +584,18 @@ if [ "${SMOKE_SHUTDOWN_SELFTEST:-0}" = "1" ]; then
     }
     S_BTN='[  4.890] [cpu:0] [ OK ] acpi: power button: shutting down'
     S_INIT='[ACPI] Initiating shutdown...'
-    sd_expect accept "clean power-button shutdown" "$S_BTN" "$S_INIT"
-    sd_expect reject "no power-button line"        "$S_INIT"
-    sd_expect reject "never initiated"             "$S_BTN"
-    sd_expect accept "one boot"                    '[BOOT] efi_main entered' "$S_BTN" "$S_INIT"
-    sd_expect reject "a restart on the way"        '[BOOT] efi_main entered' '[BOOT] efi_main entered' "$S_BTN" "$S_INIT"
-    sd_expect reject "X: flush failed"             "$S_BTN" "$S_INIT" '[ACPI] WARNING: X: cache flush failed -- clean bit may not be durable'
-    sd_expect reject "storage did not quiesce"     "$S_BTN" "$S_INIT" '[ACPI] WARNING: storage did not cleanly quiesce'
-    sd_expect reject "device flush failed"         "$S_BTN" "$S_INIT" '[  4.150] [cpu:0] [ERROR] blk: sata0: cache flush FAILED on shutdown'
-    sd_expect reject "controller shutdown failed"  "$S_BTN" "$S_INIT" '[  4.150] [cpu:0] [WARN] blk: nvme0: controller shutdown FAILED'
+    S_DONE='[ACPI] Storage is quiesced'
+    sd_expect accept "clean power-button shutdown" "$S_BTN" "$S_INIT" "$S_DONE"
+    sd_expect reject "no power-button line"        "$S_INIT" "$S_DONE"
+    sd_expect reject "never initiated"             "$S_BTN" "$S_DONE"
+    sd_expect reject "the quiesce was skipped"     "$S_BTN" "$S_INIT"
+    sd_expect reject "a quiesce before it began"   "$S_BTN" "$S_DONE" "$S_INIT"
+    sd_expect accept "one boot"                    '[BOOT] efi_main entered' "$S_BTN" "$S_INIT" "$S_DONE"
+    sd_expect reject "a restart on the way"        '[BOOT] efi_main entered' '[BOOT] efi_main entered' "$S_BTN" "$S_INIT" "$S_DONE"
+    sd_expect reject "X: flush failed"             "$S_BTN" "$S_INIT" "$S_DONE" '[ACPI] WARNING: X: cache flush failed -- clean bit may not be durable'
+    sd_expect reject "storage did not quiesce"     "$S_BTN" "$S_INIT" "$S_DONE" '[ACPI] WARNING: storage did not cleanly quiesce'
+    sd_expect reject "device flush failed"         "$S_BTN" "$S_INIT" "$S_DONE" '[  4.150] [cpu:0] [ERROR] blk: sata0: cache flush FAILED on shutdown'
+    sd_expect reject "controller shutdown failed"  "$S_BTN" "$S_INIT" "$S_DONE" '[  4.150] [cpu:0] [WARN] blk: nvme0: controller shutdown FAILED'
     rm -f "$sd_st_log"
     [ "$sd_st_fails" = "0" ] && exit 0
     exit 1
@@ -822,6 +828,7 @@ fi
 # is not free memory, and nothing is read there).
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
+CRASH_NVRAM_ATTRS="${SMOKE_CRASH_NVRAM_ATTRS:-0x7}"     # 0x7 is what the kernel writes
 CRASH_LOG_IMG="$REPO_ROOT/build/smoke-crash-log.bin"
 CRASH_LOG_ENTRIES=120               # several pages of them
 # Plant the crash-log pointer $1 in the boot's variable store.
@@ -829,7 +836,7 @@ plant_crash_nvram() {
     local le
     le="$(python3 -c 'import struct, sys; print(struct.pack("<Q", int(sys.argv[1], 0)).hex())' "$1")"
     if ! python3 "$REPO_ROOT/tools/uefi-varstore/plant.py" "$OVMF_VARS_CP" ImpossibleCrashLog \
-            494d504f-5354-4f53-504f-535447554944 "$le"; then
+            494d504f-5354-4f53-504f-535447554944 "$le" --attrs "$CRASH_NVRAM_ATTRS"; then
         echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
     fi
 }
@@ -1816,6 +1823,12 @@ if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     elif [ "$CRASH_NVRAM_REPLAYED" != "$CRASH_NVRAM_WANT" ]; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the planted entries were replayed as '$CRASH_NVRAM_REPLAYED', not as '$CRASH_NVRAM_WANT'"
+    elif [ "$CRASH_NVRAM_ATTRS" != 0x7 ] && ! grep -qF "its variable had other attributes and is deleted" "$STRIPPED_LOG"; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the loader left a variable with attributes $CRASH_NVRAM_ATTRS"
+    elif grep -qF "crash recovery: " "$STRIPPED_LOG"; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: $(grep -m1 -F "crash recovery: " "$STRIPPED_LOG")"
     else
         echo -e "  ${GREEN}✓${NC} previous crash log at $CRASH_NVRAM_HEX: $CRASH_NVRAM_EXPECT, $(wc -w <<< "$CRASH_NVRAM_REPLAYED") entries replayed"
     fi

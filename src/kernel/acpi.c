@@ -2393,19 +2393,26 @@ static void acpi_storage_quiesce(void)
     extern struct vfs_node *vfs_get_drive_root(char letter);
     extern int vfs_flush(struct vfs_node *node);
     extern int blkdev_shutdown_all(void);
+    int clean = 1;
 
     if (vfs_is_mounted('X')) {
         struct vfs_node *x_root = vfs_get_drive_root('X');
         if (x_root) {
             struct fat32_volume *vol = fat32_volume_from_root(x_root);
             if (vol) fat32_mark_clean(vol);
-            if (vfs_flush(x_root) != 0)
+            if (vfs_flush(x_root) != 0) {
+                clean = 0;
                 printk("[ACPI] WARNING: X: cache flush failed -- "
                        "clean bit may not be durable\n");
+            }
         }
     }
-    if (blkdev_shutdown_all() != 0)
+    if (blkdev_shutdown_all() != 0) {
+        clean = 0;
         printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
+    }
+    if (clean)
+        printk("[ACPI] Storage is quiesced\n");
 }
 
 /* Power off WITHOUT the (interrupt-requiring) storage quiesce -- IF-off-safe,

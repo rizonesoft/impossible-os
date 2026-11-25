@@ -268,7 +268,10 @@ for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|
     if [ -z "$addr" ]; then
         echo "SMOKE TEST FAILED: no $name address in the mmio leg's serial log" > "$cap"; rc=1
     else
-        SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" bash scripts/test-smoke.sh > "$cap" 2>&1
+        attrs=0x7
+        [ "$name" != image ] || attrs=0x3       # not for the run time: only the loader can delete it
+        SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" SMOKE_CRASH_NVRAM_ATTRS="$attrs" \
+            bash scripts/test-smoke.sh > "$cap" 2>&1
         rc=$?
     fi
     # The serial log of THIS boot only: test-smoke.sh rewrites it every boot.

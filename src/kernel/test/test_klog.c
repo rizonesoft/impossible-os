@@ -967,12 +967,24 @@ static void test_klog_crash_log_take(void)
  * fail. A failed write changes nothing. */
 static struct { uint64_t value, size; uint32_t attrs, get_fails, set_fails, sets, dels; } s_nv;
 
+static int nv_key(const struct boot_uefi_guid *guid, const uint16_t *name)
+{
+    static const struct boot_uefi_guid want = BOOT_CRASH_LOG_GUID;
+    const uint16_t *w = BOOT_CRASH_LOG_VAR;
+
+    while (*w && *name == *w) {
+        name++;
+        w++;
+    }
+    return *name == *w && memcmp(guid, &want, sizeof want) == 0;
+}
+
 static uint64_t nv_get(const struct boot_uefi_guid *guid, const uint16_t *name, uint32_t *attrs,
                        uint64_t *size, void *data)
 {
     if (s_nv.get_fails && s_nv.get_fails--)
         return UEFI_DEVICE_ERROR;
-    if (s_nv.size == 0 || !uefi_var_is_reserved(guid, name) || name[10] != 'C')
+    if (s_nv.size == 0 || !nv_key(guid, name))
         return UEFI_NOT_FOUND;
     *attrs = s_nv.attrs;
     *size = s_nv.size;
@@ -987,8 +999,10 @@ static uint64_t nv_set(const struct boot_uefi_guid *guid, const uint16_t *name, 
         s_nv.sets++;
     else
         s_nv.dels++;
-    if ((size && s_nv.set_fails && s_nv.set_fails--) || !uefi_var_is_reserved(guid, name) || name[10] != 'C')
+    if (size && s_nv.set_fails && s_nv.set_fails--)
         return UEFI_DEVICE_ERROR;
+    if (!nv_key(guid, name) || (size && s_nv.size && s_nv.attrs != attrs))
+        return UEFI_INVALID_PARAMETER;
     if (size)
         s_nv.value = *(const uint64_t *)data;
     s_nv.size = size;
@@ -1009,7 +1023,7 @@ static void __attribute__((minsize)) test_klog_crash_publish(void)
         { 0x900000, 0xA00000, 0xA00000, 8, 7, 0, 2, 3, 0 },     /* ... replaced by the third write */
         { 0x900000, 0xA00000, 0,        8, 7, 0, 9, 3, 1 },     /* ... that cannot be replaced */
         { 0x900000, 0x900000, 0x900000, 4, 7, 0, 0, 1, 0 },     /* not a pointer */
-        { 0x900000, 0x900000, 0x900000, 8, 6, 0, 0, 1, 0 },     /* volatile */
+        { 0x900000, 0x900000, 0,        8, 6, 0, 0, 0, 1 },     /* volatile: the loader deletes it */
         { 0,        0x900000, 0x900000, 0, 0, 0, 0, 1, 0 },     /* none */
         { 0,        0x900000, 0,        0, 0, 0, 9, 3, 0 },     /* ... and none can be written */
         { 0x900000, 0,        0,        8, 7, 0, 0, 0, 1 },     /* no region to name */
