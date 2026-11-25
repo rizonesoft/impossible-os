@@ -274,7 +274,7 @@ function Enter-RefTurn() {
     $err = $p.StandardError.ReadToEndAsync()   # read while it runs, so Bosun never waits to write
     $given = @{}
     $said = $false
-    while (-not $given.ContainsKey('BOSUN_SLOT')) {
+    while (-not $given.ContainsKey('BOSUN_SLOT') -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
         $read = $p.StandardOutput.ReadLineAsync()
         while (-not $read.IsCompleted -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
             Start-Sleep -Milliseconds 100
@@ -287,9 +287,13 @@ function Enter-RefTurn() {
         if ($read.Result -match '^(BOSUN_SLOT|BOSUN_NS)=(.*)$') { $given[$Matches[1]] = $Matches[2] }
     }
     if (-not $given.ContainsKey('BOSUN_SLOT')) {
-        Stop-RefTurnHolder $p
+        # The limit is spent: Bosun is ended at once, and its stderr is read to
+        # the end that brings.
         $why = ''
-        if ($err.Status -eq 'RanToCompletion') { $why = "$($err.Result)".Trim() }
+        try {
+            if (-not $p.HasExited) { $p.Kill() }
+            if ($err.Wait(1000)) { $why = "$($err.Result)".Trim() }
+        } catch { $why = "ending Bosun: $($_.Exception.Message)" }
         if ($why.Length -gt 300) { $why = $why.Substring(0, 300) }
         Write-Ref "Bosun gave no place after $([int]$clock.Elapsed.TotalSeconds) s: going on without one. $why"
         $script:RefTurn.Process = $null
@@ -306,20 +310,18 @@ function Enter-RefTurn() {
     elseif ($said) { Write-Ref "took a place in $script:RefTurnNs after $([int]$clock.Elapsed.TotalSeconds) s" }
 }
 
-# Frees the place once the VM is off; a later Enter-RefTurn queues again.
+# Frees the place once the VM is off; a later Enter-RefTurn queues again. The
+# holder ends with its standard input, and Bosun with the holder; a Bosun that
+# does not is ended, and its job object takes the holder with it.
 function Exit-RefTurn() {
     if (-not $script:RefTurn) { return }
     foreach ($n in $script:RefTurn.Env.Keys) { [Environment]::SetEnvironmentVariable($n, $script:RefTurn.Env[$n]) }
-    if ($script:RefTurn.Process) { Stop-RefTurnHolder $script:RefTurn.Process }
+    $p = $script:RefTurn.Process
     $script:RefTurn = $null
-}
-
-# The holder ends with its standard input, and Bosun with the holder; a Bosun
-# that does not is ended, and its job object takes the holder with it.
-function Stop-RefTurnHolder($Process) {
+    if (-not $p) { return }
     try {
-        $Process.StandardInput.Close()
-        if (-not $Process.WaitForExit(5000)) { $Process.Kill(); [void]$Process.WaitForExit(5000) }
+        $p.StandardInput.Close()
+        if (-not $p.WaitForExit(5000)) { $p.Kill() }
     } catch { Write-Ref "ending Bosun: $($_.Exception.Message)" }
 }
 

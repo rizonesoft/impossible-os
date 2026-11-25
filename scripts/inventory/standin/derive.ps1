@@ -90,6 +90,7 @@ try {
         }
         Remove-PSSession $s; $s = $null
         Stop-VM -Name $Name -Force    # graceful: the guest shuts down
+        Exit-RefTurn                  # the disk work below needs no VM
         $disk = (Get-VMHardDiskDrive -VMName $Name).Path
         New-Item -ItemType Directory -Path (Split-Path -Parent $Out) -Force | Out-Null
         Convert-VHD -Path $disk -DestinationPath $Out -VHDType Dynamic

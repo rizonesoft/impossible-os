@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -62,12 +63,14 @@ function Invoke-RefInteractive($Session, [string]$Command, [int]$TimeoutSec) {
 }
 """
 
-# A Bosun of the test's own: hangs for at most a minute (--max-wait 1) or fails
-# after writing 200,000 characters to stderr (--max-wait 2).
+# A Bosun of the test's own: hangs for at most a minute (--max-wait 1), fails
+# after writing 200,000 characters to stderr (2), or writes lines that name no
+# place, as fast as it can, for at most half a minute (3).
 FAKE_BOSUN = r"""
-$src = 'using System; using System.IO; using System.Threading; public static class P { public static int Main(string[] a) {' +
+$src = 'using System; using System.IO; using System.Threading; public static class P { public static int Main(string[] a) { int t = Environment.TickCount;' +
     'File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pid.txt"), System.Diagnostics.Process.GetCurrentProcess().Id.ToString());' +
-    'if (a[6] == "2") { Console.Error.Write(new string((char)101, 200000)); return 70; } Thread.Sleep(60000); return 0; } }'
+    'if (a[6] == "2") { Console.Error.Write(new string((char)101, 200000)); return 70; }' +
+    'if (a[6] == "3") { for (int i = 0; Environment.TickCount - t < 30000; i++) Console.WriteLine("BOSUN_X=" + i); return 0; } Thread.Sleep(60000); File.WriteAllText(AppDomain.CurrentDomain.BaseDirectory + "lived.txt", ""); return 0; } }'
 Add-Type -TypeDefinition $src -OutputAssembly '@EXE@' -OutputType ConsoleApplication
 """
 
@@ -118,8 +121,23 @@ class Turns(unittest.TestCase):
     def start(self, argv):
         p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, cwd="/mnt/c", env=ENV)
+        # Read by a thread, so no wait for a line or for the end lacks a deadline.
+        p.lines, p.reader = [], threading.Thread(target=lambda: p.lines.extend(p.stdout), daemon=True)
+        p.reader.start()
         self.addCleanup(self.end, p)
         return p
+
+    def wait_for(self, ready, what):
+        end = time.monotonic() + LIMIT
+        while not ready():
+            self.assertLess(time.monotonic(), end, what())
+            time.sleep(0.1)
+
+    def finish(self, p):
+        """The exit code and everything printed."""
+        code = p.wait(LIMIT)
+        p.reader.join(LIMIT)
+        return code, "".join(p.lines)
 
     def end(self, p):
         self.go.touch()          # a held run goes on
@@ -129,7 +147,9 @@ class Turns(unittest.TestCase):
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
-        p.stdout.close()
+        p.reader.join(5)
+        if not p.reader.is_alive():
+            p.stdout.close()
 
     def call(self, argv):
         for _ in range(2):
@@ -143,7 +163,8 @@ class Turns(unittest.TestCase):
         """The process and the first line it prints."""
         for _ in range(2):
             p = self.start(argv)
-            line = p.stdout.readline()
+            self.wait_for(lambda p=p: p.lines or p.poll() is not None, lambda: f"no line from {argv[0]}")
+            line = p.lines[0] if p.lines else ""
             if NOT_STARTED not in line:
                 break
         return p, line
@@ -157,17 +178,18 @@ class Turns(unittest.TestCase):
         self.assertEqual(line.strip(), "BOSUN_SLOT=0")
         return p
 
-    def assert_free(self):
-        self.assertEqual(self.call(self.bosun(30, "cmd.exe", "/d", "/c", "set", "BOSUN_SLOT"))[1].strip(), "BOSUN_SLOT=0")
+    def slot(self, wait):
+        """The place a job gets that waits that long; -1 is none."""
+        out = self.call(self.bosun(wait, "cmd.exe", "/d", "/c", "set", "BOSUN_SLOT"))[1]
+        found = re.search(r"BOSUN_SLOT=(-?\d+)", out)
+        self.assertTrue(found, out)
+        return found[1]
 
     def noted(self):
         return self.log.read_text(encoding="utf-8-sig") if self.log.exists() else ""
 
     def wait_noted(self, what):
-        end = time.monotonic() + LIMIT
-        while what not in self.noted():
-            self.assertLess(time.monotonic(), end, f"{what} was never noted: {self.noted()}")
-            time.sleep(0.2)
+        self.wait_for(lambda: what in self.noted(), lambda: f"{what} was never noted: {self.noted()}")
 
     def test_a_run_waits_for_the_place_and_goes_on_when_it_frees(self):
         dummy = self.hold()
@@ -175,8 +197,8 @@ class Turns(unittest.TestCase):
         self.assertIn(f"waiting for a place in {self.ns}", line)
         self.assertEqual(self.noted(), "")       # the VM is untouched while it waits
         dummy.stdin.close()
-        out, _ = p.stdout.read(), p.wait(LIMIT)
-        self.assertEqual(p.returncode, 7, out)
+        code, out = self.finish(p)
+        self.assertEqual(code, 7, out)
         self.assertIn("took a place", out)
         self.assertRegex(self.noted(), rf"start pid=\d+ slot=0 ns={self.ns} wslenv=\S*BOSUN_SLOT:BOSUN_NS")
         self.assertLess(self.noted().index("restore"), self.noted().index("start"))
@@ -207,15 +229,22 @@ class Turns(unittest.TestCase):
         self.assertEqual(code, 7, out)
         self.assertIn("Bosun gave no place", out)
         self.assertIn("slot= ns= ", self.noted())
+        # Ended, not waited for: WSL returns only once every child of the run is gone.
+        self.assertFalse((folder / "lived.txt").exists())
         pid = (folder / "pid.txt").read_text()
         ask = f"[bool](Get-Process -Id {pid} -ErrorAction SilentlyContinue)"
         self.assertEqual(self.call([POWERSHELL, *BYPASS, "-Command", ask])[1].strip(), "False")
         return out
 
+    def assert_bounded(self, out):
+        took = int(re.search(r"gave no place after (\d+) s", out)[1])
+        self.assertIn(took, (6, 7, 8), out)              # the limit of 6, and a second to end it
+
     def test_a_bosun_that_never_answers_is_ended_and_the_run_goes_on(self):
-        began = time.monotonic()
-        self.fake(1)
-        self.assertLess(time.monotonic() - began, 50)    # not the minute it hangs for
+        self.assert_bounded(self.fake(1))
+
+    def test_a_bosun_that_only_talks_is_ended_and_the_run_goes_on(self):
+        self.assert_bounded(self.fake(3))
 
     def test_a_bosun_that_fails_is_reported_and_the_run_goes_on(self):
         out = self.fake(2)
@@ -234,7 +263,7 @@ class Turns(unittest.TestCase):
         code, out = self.call(self.ref_run(self.scripts(60, 90), command="nested"))
         self.assertEqual(code, 7, out)
         self.assertIn("nested exit=9 quick=True", self.noted())
-        self.assert_free()
+        self.assertEqual(self.slot(30), "0")
 
     def test_the_other_exit_codes_come_back_unchanged(self):
         folder = self.scripts(60, 90)
@@ -259,8 +288,10 @@ class Turns(unittest.TestCase):
         self.start(self.ref_run(self.scripts(60, 90), command="hold"))
         self.wait_noted("start")
         pid = re.search(r"pid=(\d+)", self.noted())[1]
-        self.call([POWERSHELL, *BYPASS, "-Command", f"Stop-Process -Id {pid} -Force"])
-        self.assert_free()
+        self.assertEqual(self.slot(2), "-1")             # the run has the place
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command", f"Stop-Process -Id {pid} -Force -ErrorAction Stop"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.slot(30), "0")
 
     def test_leaving_the_queue_restores_the_environment_and_frees_the_place(self):
         common = winpath(self.scripts(60, 90)) + "\\ref-common.ps1"
@@ -310,7 +341,11 @@ class Sources(unittest.TestCase):
         for p in users:
             lines = [x.strip() for x in self.code(p).splitlines() if x.strip()]
             dot = next(i for i, x in enumerate(lines) if x.startswith(". (Join-Path") and "ref-common.ps1" in x)
-            self.assertRegex(lines[dot + 1], r"^Assert-RefTarget \$Name @\(\$VmPath\b", p.name)
+            named = re.match(r"Assert-RefTarget \$Name @\((.*)\)$", lines[dot + 1])
+            self.assertTrue(named, p.name)
+            # Every string a script takes is a path, but for these.
+            taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
+            self.assertEqual({x.strip(" $") for x in named[1].split(",")}, taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
             self.assertIn("Exit-RefTurn", lines, p.name)
 
     def test_the_queue_is_the_sdks_and_never_skips(self):

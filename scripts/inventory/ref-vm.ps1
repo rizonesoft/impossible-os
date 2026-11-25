@@ -65,7 +65,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
-Assert-RefTarget $Name @($VmPath, $RuntimeCache)
+Assert-RefTarget $Name @($VmPath, $RuntimeCache, $IsoPath)
 
 # fhd-100: the profile every canonical record is captured under. Its values live
 # once, in docs/design/inventory/profiles.json, which the capture tool reads too.

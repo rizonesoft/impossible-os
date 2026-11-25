@@ -1309,12 +1309,12 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 
 **Test checkpoint:** on the Windows host, with the place held by a dummy job: `ref-run.ps1` waits and goes on when the place frees; held longer than a short test wait, it goes on anyway; with Bosun off the PATH it runs directly; run inside `bosun run --ns` it does not wait for itself; exit codes 2, 3, 4 and a script's own code come back unchanged; `-Stop` answers while the place is held; a killed run frees the place. The VM cmdlets are stubs in these tests and the queue has a name of its own, so no machine starts and no SDK job is delayed. Each test fails on the commit before.
 
-> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (16 tests: 4 source checks anywhere, 12 queue cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
+> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (17 tests: 4 source checks anywhere, 13 queue cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
 >
 > **Notes:**
 > - `Enter-RefTurn` and `Exit-RefTurn` in `ref-common.ps1` hold Bosun's place through `cmd.exe /d /c set BOSUN_& sort >nul`; `Start-RefVm` and `Restore-RefCheckpoint` are the only code that starts the VM
-> - `update-iso.ps1` frees the place before it builds the ISO, since the VM is off by then
-> - The run goes on without a place when Bosun is absent, fails or stays silent for 420 s; `Assert-RefTarget` refuses the SDK's machine and folder
+> - `update-iso.ps1` frees the place before it builds the ISO and `derive.ps1` before it converts the disk, since the VM is off by then
+> - The run goes on without a place when Bosun is absent, fails or stays silent for 420 s; `Assert-RefTarget` refuses the SDK's machine, and its folder in any path argument (a test holds the list complete)
 > - A job that itself started on Bosun's timeout (slot -1) passes any inner queue straight through: Bosun's own rule, kept
 > - Canonical doc: `docs/design/inventory/REFERENCE.md`, the section on sharing the host with the SDK's test machine
 
