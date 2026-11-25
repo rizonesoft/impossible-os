@@ -36,7 +36,7 @@ nothing.
 
 judges crash_test=8 (the split crash, reset where its log save begins): both
 CPUs reported, the first boot reached its last line, and the next boot found
-one record, the winner's (the BSP).
+one record, the winner's (the BSP), and no log of the crashed boot.
 
     python3 scripts/smoke-double-panic.py wait <serial-log> <seconds> <qemu-pid>
 
@@ -227,6 +227,8 @@ def check_cut(text: str, last: str) -> str:
         raise VerdictError("expected one panic report from each of two CPUs, saw apic %s" % (cpus or "none"))
     if last not in body or DUMP in body:
         raise VerdictError("the crash boot was not reset at %r" % last)
+    if any(ORDER_RE.search(x) for x in second.replayed):
+        raise VerdictError("the boot after the reset replayed the crashed boot's log: the cut came after its save")
     found = records(second.live)
     if found != [BSP_STOP[1]]:
         raise VerdictError("the record names %s, the winner was 0x%x"
@@ -241,19 +243,20 @@ def next_boot_done(text: str) -> bool:
     return len(boots) == 2 and any(RECORD_RE.search(x) or END_RE.search(x) for x in boots[1].live)
 
 
-def wait_next_boot(read: Callable[[], str], alive: Callable[[], bool], seconds: float,
+def wait_next_boot(read: Callable[[], str], alive: Callable[[], bool], seconds: int,
                    now: Callable[[], float] = time.monotonic,
                    sleep: Callable[[float], None] = time.sleep) -> None:
-    """Return once a verdict can be given; the log is last read as the time ends."""
+    """Return once a log read within the time allows a verdict."""
     end = now() + seconds
     while True:
-        left = end - now()
         gone = not alive()      # asked before the read, which then holds its last words
-        if next_boot_done(read()) or gone:
+        done = next_boot_done(read()) or gone
+        left = end - now()
+        if done and left >= 0:
             return
         if left <= 0:
-            raise VerdictError("the boot after the crash reported nothing within %gs" % seconds)
-        sleep(min(left, 0.5))
+            raise VerdictError("the boot after the crash reported nothing within %ds" % seconds)
+        sleep(min(left, 0.25))
 
 
 def main(argv: list[str]) -> int:
@@ -266,7 +269,7 @@ def main(argv: list[str]) -> int:
             return pathlib.Path(argv[1]).read_text(encoding="utf-8", errors="replace")
 
         if argv[0] == "wait":
-            wait_next_boot(read, pathlib.Path("/proc", argv[3]).exists, float(argv[2]))
+            wait_next_boot(read, pathlib.Path("/proc", argv[3]).exists, int(argv[2]))
             return 0
         text = read()
         if argv[0] == "check-replay":
@@ -276,7 +279,7 @@ def main(argv: list[str]) -> int:
             print(check_cut(text, argv[2]))
             return 0
         name, summary = check(text, argv[2])
-    except (VerdictError, OSError) as exc:
+    except (VerdictError, OSError, ValueError) as exc:
         print(exc)
         return 1
     print("STOP_NAME=%s" % name)

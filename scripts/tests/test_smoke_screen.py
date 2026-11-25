@@ -150,7 +150,7 @@ def expect_powerdown(name: str, off_after: float, reply_delay: float, closes: bo
         thread.start()
         t0 = time.monotonic()
         try:
-            ss.powerdown(path, 1.0)
+            ss.powerdown(path, 1)
             got = True
         except ss.ScreenError:
             got = False

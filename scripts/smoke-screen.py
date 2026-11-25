@@ -188,7 +188,7 @@ def monitor(sock_path: str, command: str, deadline: float) -> None:
         sock.close()
 
 
-def powerdown(sock_path: str, seconds: float) -> None:
+def powerdown(sock_path: str, seconds: int) -> None:
     """Press the power button and wait, that long from the press, for the guest to be off.
 
     -no-shutdown keeps QEMU up after a guest powers off and reports the VM as
@@ -243,7 +243,7 @@ def main(argv: list[str]) -> int:
             monitor(argv[1], argv[2], time.monotonic() + 15.0)
             return 0
         if len(argv) == 3 and argv[0] == "powerdown":
-            powerdown(argv[1], float(argv[2]))
+            powerdown(argv[1], int(argv[2]))
             return 0
         if len(argv) == 3 and argv[0] == "capture":
             capture(argv[1], argv[2])
@@ -254,7 +254,7 @@ def main(argv: list[str]) -> int:
                 raise ScreenError("no screen capture at %s" % path)
             print(check(path.read_bytes(), argv[2:], load_font()))
             return 0
-    except (ScreenError, OSError) as exc:
+    except (ScreenError, OSError, ValueError) as exc:
         print(exc)
         return 1
     print(__doc__)

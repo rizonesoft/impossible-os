@@ -191,6 +191,8 @@ expect_cut("a record that names the loser fails",
 expect_cut("no record after a cut crash fails", CUT_BOOT + AFTER[:1] + CUT_BOOT + AFTER, False)
 expect_cut("a replayed record is not the next boot's own",
            CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] panic: " + RECORD], False)
+expect_cut("a replayed log of the cut crash fails",
+           CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] boot: " + CUT_ORDER] + AFTER[1:], False)
 expect_cut("one report alone fails", CUT_BOOT[:4] + CUT_BOOT[6:] + AFTER, False)
 expect_cut("a second report from one CPU fails", CUT_BOOT[:-1] + CUT_REPORTS[2:] + CUT_BOOT[-1:] + AFTER, False)
 expect_cut("a crash that was never cut fails", CUT_BOOT[:-1] + AFTER, False)
@@ -222,21 +224,23 @@ for code in (0x85, 0x2028, 0x2029):
                 CRASH_BOOT + NEXT_BOOT[:2] + ["[CRASH-PREV] ob: " + chr(code) + RECORD, "[BOOT HALT] no memory"], False)
 
 
-def expect_wait(name: str, arrives: float, alive_until: float, passes: bool) -> None:
+def expect_wait(name: str, arrives: float, alive_until: float, passes: bool, read_takes: float = 0.0,
+                overslept: float = 0.0) -> None:
     """The record arrives, and QEMU goes, at these times of a 5-second wait on a fake clock."""
     global failures
     clock = [100.0]
 
     def read() -> str:
+        clock[0] += read_takes
         return "\n".join(SECOND + [RECORD] if clock[0] >= 100.0 + arrives else SECOND)
 
     try:
-        dp.wait_next_boot(read, lambda: clock[0] < 100.0 + alive_until, 5.0,
-                          now=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        dp.wait_next_boot(read, lambda: clock[0] < 100.0 + alive_until, 5,
+                          now=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s + overslept))
         got = True
     except dp.VerdictError:
         got = False
-    ok = got == passes and clock[0] <= 105.0
+    ok = got == passes and clock[0] <= 105.0 + read_takes + overslept + 0.25
     if not ok:
         failures += 1
     print("%s  %s" % ("PASS" if ok else "FAIL", name))
@@ -245,6 +249,13 @@ def expect_wait(name: str, arrives: float, alive_until: float, passes: bool) -> 
 expect_wait("a record in time ends the wait", 3.2, 99.0, True)
 expect_wait("a record as the time ends counts", 4.9, 99.0, True)
 expect_wait("a record after the time does not", 5.1, 99.0, False)
+expect_wait("a wait that oversleeps its time does not pass", 6.0, 99.0, False, overslept=7.0)
+expect_wait("a read that ends after the time does not pass", 5.5, 99.0, False, read_takes=2.0)
+for bad in ("inf", "1e309", "nan", "4.5", "soon"):
+    got = dp.main(["wait", "/nonexistent", bad, "1"])
+    if got != 1:
+        failures += 1
+    print("%s  a wait of %s is refused" % ("PASS" if got == 1 else "FAIL", bad))
 expect_wait("a QEMU that is gone ends the wait", 99.0, 2.0, True)
 
 print("%d failure(s)" % failures)

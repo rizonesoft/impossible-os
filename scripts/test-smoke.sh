@@ -1538,7 +1538,7 @@ if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
     printf "\r"
 elif [ "$HHDM_WRONG" = "1" ]; then
     sleep 1     # a boot that goes on past the refusal has time to say so
-elif [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
+elif [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ] && [ -z "$CT_END" ]; then
     GRACE_SEC="${SMOKE_GRACE_SEC:-3}"
     printf "  ${DIM}PASS markers detected; waiting %ds for disk flushes...${NC}  " "$GRACE_SEC"
     sleep "$GRACE_SEC"
