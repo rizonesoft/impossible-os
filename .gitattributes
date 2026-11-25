@@ -22,3 +22,8 @@ abi/generated/abi_contract.h   text eol=lf
 include/kernel/abi_hash.h      text eol=lf
 user/include/abi_numbers.h     text eol=lf
 scripts/gen-user-abi.py        text eol=lf
+
+# The icon and cursor contract (TODO-01 section 11) is compared byte for byte by
+# Check 30 and copied by Impossible Brand; LF keeps it identical under core.autocrlf=true.
+docs/design/brand-contract.json      text eol=lf
+docs/design/svg-profile.json         text eol=lf

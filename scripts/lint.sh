@@ -2878,6 +2878,38 @@ else
     rm -f "$SITE_OUT"
 fi
 
+# Check 30 (the brand contract, docs/design/icons.md#how-are-icons-rendered): docs/design/brand-contract.json must equal a
+# fresh generation from the sources it is read from. Dispatched on its own (not inside the site
+# check, whose working-tree prerequisites must not decide it) and on one snapshot: the index
+# under the pre-commit gate, the working tree otherwise. scripts/brand_contract_gate.sh runs the
+# checker of that same snapshot; a snapshot holding the contract or the SVG profile without the
+# gate fails, so the check never passes by absence. tests: scripts/tests/test_brand_contract.py
+# BEGIN brand-contract dispatch
+BRAND_SCOPE=""
+[ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && BRAND_SCOPE="--staged"
+brand_in_snapshot() {
+    if [ -n "$BRAND_SCOPE" ]; then git -C "$REPO_ROOT" cat-file -e ":$1" 2>/dev/null; else [ -e "$REPO_ROOT/$1" ]; fi
+}
+if brand_in_snapshot scripts/brand_contract_gate.sh; then
+    BRAND_OUT=$(mktemp)
+    BRAND_GATE=$(mktemp --suffix=.sh)
+    if [ -n "$BRAND_SCOPE" ]; then
+        git -C "$REPO_ROOT" show ":scripts/brand_contract_gate.sh" > "$BRAND_GATE"
+    else
+        cp "$REPO_ROOT/scripts/brand_contract_gate.sh" "$BRAND_GATE"
+    fi
+    if ! bash "$BRAND_GATE" "$REPO_ROOT" $BRAND_SCOPE > "$BRAND_OUT" 2>&1; then
+        sed 's/^/  /' "$BRAND_OUT"
+        echo -e "${RED}error${NC}: Check 30 (brand contract) -- run: python3 scripts/brand_contract.py"
+        ERRORS=$((ERRORS + 1))
+    fi
+    rm -f "$BRAND_OUT" "$BRAND_GATE"
+elif brand_in_snapshot scripts/brand_contract.py || brand_in_snapshot docs/design/brand-contract.json || brand_in_snapshot docs/design/svg-profile.json; then
+    echo -e "${RED}error${NC}: Check 30 (brand contract) -- the snapshot holds brand contract files but not scripts/brand_contract_gate.sh"
+    ERRORS=$((ERRORS + 1))
+fi
+# END brand-contract dispatch
+
 # ============================================================================
 # Check 31: the site tooling parses HTML and URLs with real parsers
 # ============================================================================

@@ -1,0 +1,62 @@
+{
+  "$schema_version": 1,
+  "_comment": "The system SVG profile: what a system icon may contain so that every Impossible OS renderer (the SVG runtime and the host converter) draws it the same way. scripts/brand_contract.py publishes this file inside docs/design/brand-contract.json and enforces it; todo/answers.md Q64 records the limits.",
+  "drawing_attributes": [
+    "clip-path", "clip-rule", "fill", "fill-opacity", "fill-rule", "id", "opacity", "stroke",
+    "stroke-dasharray", "stroke-dashoffset", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit",
+    "stroke-opacity", "stroke-width", "transform"
+  ],
+  "elements": {
+    "svg": {"drawing": true, "attributes": ["height", "version", "viewBox", "width"]},
+    "g": {"drawing": true, "attributes": []},
+    "defs": {"drawing": false, "attributes": ["id"]},
+    "symbol": {"drawing": true, "attributes": ["viewBox"]},
+    "use": {"drawing": true, "attributes": ["height", "href", "width", "x", "y"]},
+    "path": {"drawing": true, "attributes": ["d"]},
+    "rect": {"drawing": true, "attributes": ["height", "rx", "ry", "width", "x", "y"]},
+    "circle": {"drawing": true, "attributes": ["cx", "cy", "r"]},
+    "ellipse": {"drawing": true, "attributes": ["cx", "cy", "rx", "ry"]},
+    "line": {"drawing": true, "attributes": ["x1", "x2", "y1", "y2"]},
+    "polyline": {"drawing": true, "attributes": ["points"]},
+    "polygon": {"drawing": true, "attributes": ["points"]},
+    "clipPath": {"drawing": false, "attributes": ["clipPathUnits", "id", "transform"]},
+    "linearGradient": {"drawing": false, "attributes": ["gradientTransform", "gradientUnits", "id", "spreadMethod", "x1", "x2", "y1", "y2"]},
+    "radialGradient": {"drawing": false, "attributes": ["cx", "cy", "fr", "fx", "fy", "gradientTransform", "gradientUnits", "id", "r", "spreadMethod"]},
+    "stop": {"drawing": false, "attributes": ["offset", "stop-color", "stop-opacity"]}
+  },
+  "forbidden": [
+    "a", "animate", "animateMotion", "animateTransform", "feBlend", "filter", "foreignObject", "image", "marker",
+    "mask", "pattern", "script", "set", "style", "switch", "text", "textPath", "tspan", "view"
+  ],
+  "prolog": "Only an XML declaration may come before the root element. Processing instructions, DOCTYPE, entity declarations and entity references other than the five predefined ones and numeric references are outside the profile.",
+  "paint": {
+    "fill": ["none", "hex", "token", "gradient"],
+    "stroke": ["none", "hex", "token", "gradient"],
+    "stop-color": ["hex", "token"],
+    "hex": "#rgb, #rrggbb or #rrggbbaa",
+    "token": "var(--<name>) where <name> is in the contract's tokens",
+    "gradient": "url(#id) resolving to a linearGradient or radialGradient in the same document"
+  },
+  "references": {
+    "href": {"on": ["use"], "targets": ["circle", "ellipse", "g", "line", "path", "polygon", "polyline", "rect", "symbol"]},
+    "clip-path": {"values": "none or url(#id)", "targets": ["clipPath"]},
+    "ids": "unique across the document",
+    "cycles": "no cycle through containment, use href and clip-path together"
+  },
+  "geometry_cost": {
+    "path": "decoded commands, each implicit repetition counted",
+    "polyline": "points",
+    "polygon": "points + 1",
+    "line": 2,
+    "rect": 5,
+    "rect_rounded": 9,
+    "circle": 5,
+    "ellipse": 5
+  },
+  "limits": {
+    "use_depth": 8,
+    "nesting": 32,
+    "elements": 4096,
+    "path_commands": 65536
+  }
+}

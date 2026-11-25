@@ -1406,6 +1406,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_imports.py" imports
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_campaign_icon.py" campaign_icon
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_run_desktop_icons.py" run_desktop_icons
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_brand_contract.py" brand_contract
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_abort_path_check.py" abort_path_check
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_optin_path_check.py" optin_path_check
 _tt_nested_x "$REPO_ROOT/scripts/tests/test_exit_reason_table.sh" exit_reason_table
@@ -1726,8 +1727,9 @@ fi
 
 # The desktop run shortcuts' icons: the launcher kit's badge renderer
 # (scripts/tests/test_campaign_icon.py) and the badge each shortcut carries
-# (scripts/tests/test_run_desktop_icons.py).
-for _tt_icon in campaign_icon:test_campaign_icon run_desktop_icons:test_run_desktop_icons; do
+# (scripts/tests/test_run_desktop_icons.py); and the icon and cursor contract
+# Impossible Brand draws against (scripts/tests/test_brand_contract.py).
+for _tt_icon in campaign_icon:test_campaign_icon run_desktop_icons:test_run_desktop_icons brand_contract:test_brand_contract; do
     _tt_icon_name="${_tt_icon%%:*}"; _tt_icon_file="scripts/tests/${_tt_icon#*:}.py"
     if [ -f "$REPO_ROOT/$_tt_icon_file" ]; then
         _tt_icon_out=$(_tt_nested_collect "$_tt_icon_name" python3 "$REPO_ROOT/$_tt_icon_file")

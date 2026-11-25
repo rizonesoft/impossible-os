@@ -697,3 +697,19 @@ The operator's request names `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -
 - **B:** the script runs `bosun run` with exactly those options over a holder that lives as long as the script, and works in its own process.
 
 A: (run decided, 2026-11-25) B. Started again, `-Command` goes through a second round of Windows PowerShell 5.1 argument quoting, which loses embedded quotes; a caller that times out kills the outer script while Bosun's child goes on holding the VM lock, so `-Stop` answers 4 instead of taking over; and the 100 GB write budget would count what update-iso.ps1 copies. Held beside it, the pipe closes when the script ends for any reason and the place frees. What B gives up: Bosun does not end the script's own children, as it does not today. Reversal cost: one function in ref-common.ps1.
+
+## Q64 (08-graphics-ui/TODO-01 §11): what bounds does the system SVG profile publish for a renderer to enforce?
+
+Section 7 promises a parser bounded in nesting, element count, path commands and `use` recursion, but named no numbers, and Impossible Brand validates against whatever the contract publishes.
+
+A: (run decided, 2026-11-25) `use_depth` 8, `nesting` 32, expanded `elements` 4096 and `path_commands` 65536, with every `use` instance and every clip application charged against one document budget, and geometry counted as decoded commands (`polyline` points, `polygon` points plus one, `rect` 5 or 9 rounded, `circle` and `ellipse` 5). The 26 shipped icons use at most a few hundred commands and no `use`, so the limits leave two orders of magnitude of headroom while bounding hostile app icons. Reversal cost: one edit to `docs/design/svg-profile.json` and a contract regeneration; section 7's parser reads the same file.
+
+## Q65 (08-graphics-ui/TODO-01 §11): which cursor frame rule does the contract publish while the loader still ranks a signed nominal size?
+
+`src/kernel/drivers/cursor.c` selects the first TOC frame closest to 24 by `(int32_t)subtype`, then copies it into a 576-pixel slot without checking its size; §15 hardens that.
+
+A: (run decided, 2026-11-25) Publish the loader as it is (`closest_nominal_first`, nominal at most `INT32_MAX`, distance below 9999, the selected frame inside the 512 KiB read prefix, fitting the slot and the 48 px save-under buffer, hotspot inside), so the host never certifies a cursor the current kernel would mishandle; §15 switches the published rule to `closest_fitting` in the commit that changes the kernel. The rule is bound to the code by `BEHAVIOUR_PINS` in `scripts/brand_contract.py` (digests of `xcur_parse` and `cursor_init`), so any loader edit refuses generation until the rule is re-derived. Reversal cost: none beyond that §15 item.
+
+## Q66 (08-graphics-ui/TODO-01 §11): may section 11 take one review pass past the 55-pass cap?
+
+A: (operator, 2026-11-25) Yes, once: owner approved one pass past cap to land §11 (pass 56, a round on the staged tree, so the section-commit gate sees review evidence for the staged files); its findings are fixed without another re-review.

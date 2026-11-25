@@ -55,9 +55,13 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 | 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation                | §4, §7, §12  |  [ ]   |
 | ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                             | §8, §11, §12 |  [ ]   |
 | ⭐  |  10   | §10 Automatic icon polish and promotion -- rubric, scoring, review sheet, no manual step | §9, §12      |  [ ]   |
-| ⭐  |  11   | §11 Icon and cursor contract for Impossible Brand -- generated, drift-checked            | §4           |  [ ]   |
+| ⭐  |  11   | §11 Icon and cursor contract for Impossible Brand -- generated, drift-checked            | --           |  [x]   |
 | ⭐  |  12   | §12 Brand import kind -- explicit resource mappings, upgrade keeps other resources       | --           |  [ ]   |
 | ⭐  |  13   | §13 Switch-over to the brand pack -- reconcile, import, split the icon spec              | §11, §12     |  [ ]   |
+| ⭐  |  14   | §14 Adopt redesigned defaults from the brand pack -- wallpaper and cursor theme          | §12, §15     |  [ ]   |
+| 💎  |  15   | §15 Asset loader and packer integrity -- validated, fuzzed, fail-loud build              | --           |  [ ]   |
+| ⭐  |  16   | §16 Verified icon render and install pipeline on the contract                            | §11          |  [ ]   |
+| ⭐  |  17   | §17 Compiler-evaluated brand contract inputs                                             | §11          |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.
 > ⭐ = exclusive work -- Impossible OS goes beyond both with a simpler and more deterministic foundation.
@@ -127,7 +131,7 @@ Unify the current image, icon, and cursor code into one size-selection and theme
   - `icons.ires` is 4.2 MB with 10 icons x 9 sizes; pack only the sizes the shell draws (16, 24, 32, 48, 96) before adding 16 more
 - [ ] SVG-first (decided 2026-09-28): system icons, cursors and shell glyphs ship as SVG and are rasterised on demand at the exact size, scale and theme through §7
   - `icons.ires` shrinks to a small PNG fallback for contexts that run before the SVG renderer (boot splash, BSOD, early desktop); PNG, ICO, BMP and JPEG stay fully supported for Win32 apps and user images
-- [ ] Runtime theming: an icon's colours come from `docs/design/tokens.json` token names recorded in its SVG, so light, dark, accent and high contrast re-tint the same source instead of shipping separate files
+- [ ] Runtime theming: icon colours are `var(--<token>)` names from `docs/design/tokens.json` (§11 profile), so light, dark, accent and high contrast re-tint one source instead of shipping separate files
 - [ ] Fix the Xcursor loader's temp-buffer release (`cursor.c:485,493`): it passes a frame number to `pmm_free_frame()`, which takes an address, so it frees low frames and leaks the buffer
   - Release the buffer with `pmm_free_contiguous()` on both the short-read and the normal path
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
@@ -192,10 +196,10 @@ Impossible OS is SVG-first: icons, cursors and shell glyphs are drawn from SVG a
 - [ ] Vendor plutovg and plutosvg under `src/libs/`, pinned to a release; read each LICENSE file (and plutovg's `FTL.TXT`) before committing; add rows to `src/libs/PROVENANCE.md` and `CREDITS.md` in the same commit
 - [ ] Freestanding port: `malloc`/`realloc`/`free` onto `kmalloc` (with `pmm_alloc_contiguous` for large surfaces), `math.h` onto the kernel's float math, atomics for reference counts; no stdio; build with the kernel's flags
 - [ ] Implement `clipPath` in plutosvg (it is parsed but stubbed upstream) by porting the MIT clip logic from lunasvg, which draws on the same plutovg canvas; offer the patch upstream
-- [ ] Define the system SVG profile the OS promises to render, in `docs/design/icons.md`
+- [x] Define the system SVG profile the OS promises to render: `docs/design/svg-profile.json`, cited by `docs/design/icons.md` (shipped in §11)
   - Inside: paths and basic shapes, fills and strokes with joins/caps/dashes, linear and radial gradients (both `gradientUnits`, `gradientTransform`), opacity, transforms, `defs`/`use`/`symbol`, `clipPath`
   - Outside the profile: masks, filters, text, CSS, scripts, animation, external references. The build rejects system icons that use them; third-party SVG outside the profile still renders as far as plutosvg goes, never crashes
-- [ ] Parser hardening for untrusted SVG (app icons arrive inside executables): bounded nesting, element and path-command counts, `use` recursion depth, and a pixel-size cap; fuzz the parser on the host
+- [ ] Parser hardening for untrusted SVG (app icons arrive inside executables): the bounds in `svg-profile.json` `limits` (Q64), and a pixel-size cap; fuzz the parser on the host
 - [ ] `svg_render(svg, len, px, scale, theme, out_surface)` into a `gfx_surface_t`, applying the theme's token colours (§4)
 - [ ] Unit tests: every system icon renders without error at 16 and 256 px; a reference image comparison against the host renderer (`rsvg-convert`) within a small tolerance; malformed and hostile inputs are rejected cleanly
 - [ ] Commit: `"gfx: SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile"`
@@ -237,9 +241,9 @@ Moving to Impossible Brand ([brand split design](https://github.com/rizonesoft/I
 
 Decided 2026-09-28: when any section, the unattended run included, needs an icon that does not exist, a draft is generated in the same change instead of shipping the generic fallback; polish comes later and persists. The spec rule already binds today (drafts are hand-drawn SVGs until §8 exists); this section automates detection and generation so a missing icon cannot slip through. It does NOT re-cover §8's parts, modes, determinism or validation; it adds the fourth state (draft) and the trigger.
 
-- [ ] Icon reference inventory: a host scanner lists every icon a build can ask for
-  - `system_icon_t` names in `include/icon_store.h`, literal `icon_get_by_name("...")` arguments under `src/` and `user/`, EIF app-icon resources, and the rows of `docs/design/icons.md` The set
-  - One JSON inventory under `build/`, deterministic, reused by the check and the engine
+- [x] Icon reference inventory: a host scanner lists every icon a build can ask for (taken over and shipped by §11, `scripts/brand_contract.py`)
+  - Shipped as the `icons` array of `docs/design/brand-contract.json`; EIF app icons are `02-kernel-core/TODO-20` §12
+  - Engine consumption of the inventory stays with this section's remaining items (pending)
 - [ ] Missing-icon check: every inventoried name must have a source (hand-authored SVG or engine definition) and a spec row; ships as a lint WARN, promoted to ERROR once the corpus is clean
   - Refusal control: a fixture that references `icon_get_by_name("no_such_icon")` fails; a name with both a source and a row passes
 - [ ] Draft mode in the engine (a fourth state beside hand-authored, generated, per-size override): `status: draft` in the icon's definition, generated from the nearest parts and a named metaphor, passing every §8 validation
@@ -293,20 +297,51 @@ Decided 2026-11-14 (owner direction: no manual icon work, and icons are finished
 
 Impossible Brand draws the art; the OS owns what the art must satisfy ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md#what-is-the-contract-this-repository-validates-against)). This section turns that interface into one generated file, `docs/design/brand-contract.json`, which Impossible Brand copies at a named OS commit (`tools/contract.py pull`) and validates every icon against. It also takes over the icon reference inventory from §9, because the inventory reads OS code and stays here when §9 moves.
 
-- [ ] Make the system SVG profile data in `docs/design/svg-profile.json`, which `icons.md#how-are-icons-rendered` cites instead of restating it
-  - Lists the elements and attributes the renderer accepts: paths and basic shapes, fills, strokes, linear and radial gradients, opacity, transforms, `defs`, `use`, `symbol`, `clipPath`
-  - Outside it: masks, filters, text and CSS
-- [ ] Icon reference inventory (from §9): a host scanner lists every icon name a build can ask for, with its provider
-  - Sources: `system_icon_t` in `include/icon_store.h`, the irespack accepted list, the kernel name table, literal `icon_get_by_name("...")` arguments under `src/` and `user/`, and EIF app-icon resources
-  - Provider per name: `colour` (an IRES colour icon, Impossible Brand's work) or `glyph` (a Fluent font glyph, never drafted)
-- [ ] `scripts/brand_contract.py` writes `docs/design/brand-contract.json`, deterministic with keys sorted
-  - `profile` from `svg-profile.json`, `tokens` (the theme token names in `docs/design/tokens.json`) and `sizes` (the sizes `irespack` packs)
-  - `icons` (name, provider, used for) and `cursors` (the `CURSOR_SRCS` names in the `Makefile` and the names `include/cursor.h` exposes)
-- [ ] `scripts/brand_contract.py --check` fails when the committed contract differs from a fresh generation, naming the first difference; wired into lint as part of Check 30 so a stale contract fails the commit
-- [ ] Unit tests: generation is byte-identical across two runs; adding `icon_get_by_name("no_such_icon")` to a fixture adds a `colour` name; a Fluent-only name is reported as `glyph`; a stale committed contract fails `--check`
-- [ ] Commit: `"brand: generated icon and cursor contract for Impossible Brand"`
+- [x] System SVG profile as data in `docs/design/svg-profile.json`, cited by `icons.md#how-are-icons-rendered`
+  - Elements with their attributes, `forbidden`, the `paint` grammar (`none`, hex, `var(--token)`, local gradient), `references` and `prolog`
+  - `geometry_cost` and `limits` (`use_depth` 8, `nesting` 32, expanded `elements` 4096 and `path_commands` 65536; Q64)
+- [x] Icon reference inventory (taken over from §9) in `scripts/brand_contract.py` `generate()`, keyed (name, provider)
+  - Reads `system_icon_t` numerically, `icon_names[]`, `icon_codepoints[]`, `accepted_icons[]`, `icon_get_by_name` literals, The set
+  - Colour entries carry `sources`, `used_for`, `lookup`, `required`, `wired` and `missing`; glyph entries need a non-zero codepoint
+  - EIF app icons: none exist yet (`build-eif.py` writes no metadata); `02-kernel-core/TODO-20` §12 owns adding them
+- [x] `scripts/brand_contract.py` writes `docs/design/brand-contract.json`: sorted keys, LF, no timestamps
+  - Lists in a fixed order: icons glyph then colour, each by name; cursor shapes by enum slot
+  - `limits` read from source: `ires_sizes` (incl. the `uint8_t` wire field), `name_bytes`, `pack_icons`, `name_table`, `ires_bytes`
+  - `tokens` with per-theme values in SVG order (`#RRGGBBAA`) and `fallback_theme`; a token missing from one theme is refused
+  - `cursors`: `CURSOR_GUEST_DIR` (the Makefile variable the install recipe uses), the loader's frame rule (Q65), shapes, files
+- [x] Refusals name what is wrong: enum holes, same-half duplicates, glyphs without a codepoint, names over a limit, sizes outside 1..limit
+  - Also refused: a full pack over the loader's byte limit, a required icon without a source, a packer list not ending in one `NULL`
+  - And: any shipped SVG or cursor the validators reject, and a C initializer entry that is not exactly one literal
+- [x] Behaviour pinned, data parsed (redesign after round 3, the regex class reopened three times): `BEHAVIOUR_PINS`
+  - `xcur_parse`, `xcur_load`, `cursor_init`, `ires_load`, `icon_get_by_name`, irespack `main`, `is_known_icon`, `find_size_index` pinned
+  - Name tables, enums (resolved to numeric slots), size and file lists and `#define` values parsed with strict grammars
+  - Whitelist rule (rounds 5, 6): a form the reader does not model is refused, never read approximately
+  - Exact array declarations; IRES structs identical in packer and loader and pinned; each macro `#define`d once, unconditionally
+  - One top-level `:=` per Make variable; single plain literals (only `\\` escapes); unpadded paint; no CDATA
+  - Round 7: macro values one literal or fully parenthesised; arithmetic `+` and `*` only; `IRES_COLOR_COUNT` exact; no Make conditionals
+  - Round 8: extent structs pinned, decimal sizes, 31-bit intermediates, wire fields fit, no continuations; the compiled-value fix is §17
+- [x] Host validators Impossible Brand mirrors: `validate_svg`, `validate_xcursor`, `resolve_paint` (no renderer needed)
+  - Geometry read by linear left-to-right scanners, checked on every element; unprefixed elements only; unique temp file
+  - Reference costs by an explicit-stack walk; every start tag read by the raw scanners; ASCII numbers; file mode kept
+  - Linear by construction: one paint-independent cost summary per element, forward comment scan, no range built from a count
+  - Shipped OS sources keep literal colours (the converter renders them as written); conditional literal calls refused
+  - Pass 56 (Q66): a padded Make value refused, a declared encoding must be UTF-8, the gate needs all of its artifacts
+- [x] `--check` names the first stale JSON path; `--staged` reads the index (`git grep --cached`)
+  - Lint Check 30 dispatches `scripts/brand_contract_gate.sh` on one snapshot; a contract without gate or checker fails; `--check` compares bytes
+- [x] Tests: `scripts/tests/test_brand_contract.py` (84), registered and collected in `scripts/test-tooling.sh`
+  - Mutation controls run: dropping the duplicate-id, slot-fit, single-literal or paint-server charge check each fails its test
+- [x] Commit: `"brand: generated icon and cursor contract for Impossible Brand"`
 
-**Test checkpoint:** `python3 scripts/brand_contract.py --check` exits 0 on the committed tree; after adding a fixture `icon_get_by_name("printer")` it exits 1 naming `printer` as a `colour` icon. Test on: WSL2 dev host.
+**Test checkpoint:** `python3 scripts/brand_contract.py --check` exits 0 on the committed tree; a fixture adding `icon_get_by_name("printer")` publishes `printer` as a `colour` entry with `missing: [irespack, kernel_table]` and makes `--check` exit 1 naming `$.icons`; `python3 -m pytest scripts/tests/test_brand_contract.py` passes. Test on: WSL2 dev host.
+
+> **Test runner:** `python3 -m pytest -q scripts/tests/test_brand_contract.py` -- 84 passed (host only; no kernel source changed).
+
+> **Notes:**
+> - Shipped `scripts/brand_contract.py`, `docs/design/svg-profile.json` and the generated `docs/design/brand-contract.json`.
+> - Check 30 runs `--check` (`--staged` under the commit gate); generation needs no renderer.
+> - Impossible Brand pulls the contract from `docs/design/brand-contract.json` on `origin/main` (its D01 T01 §1 probe).
+> - Canonical doc: `docs/design/icons.md#how-are-icons-rendered`; decisions Q64 and Q65 in `todo/answers.md`.
+> - Moving the converter, asset validator and installers onto the contract is §16; kernel loader and packer hardening is §15.
 
 ## 12. Brand Import Kind -- Explicit Resource Mappings
 
@@ -353,11 +388,119 @@ The art was seeded into Impossible Brand from OS commit `75c468c32` on 2026-11-2
   - The request records name, kind, what, metaphor, needed by and the draft digest
   - Sync on a pin move: an unmodified draft the pack now holds as finished is removed with its request in the same commit; an edited draft is kept and reported, never deleted
   - The check fails a draft that duplicates a finished pack icon and still matches its digest
+- [ ] Retire `scripts/convert-icons.sh` for Impossible Brand's renderer; until then sources keep literal colours (§11)
 - [ ] Update the `CLAUDE.md` paragraph on original artwork and `.claude/skills/` icon guidance to point at Impossible Brand
 - [ ] Unit tests: a fixture missing `printer` produces a validated draft and one request; a pin move that brings `printer` removes the unmodified draft and its request; an edited draft survives the same move
 - [ ] Commit: `"brand: the OS art comes from the Impossible Brand pack"`
 
 **Test checkpoint:** after the pull, `bash scripts/build.sh` ends `=== BUILD OK ===` and the desktop shows the same icons and cursors as before at 100% and 200%; `python3 scripts/imports.py --check` and `python3 scripts/site/build.py --check` exit 0. Test on: WSL2 dev host, QEMU TCG.
+
+## 14. Adopt Redesigned Defaults from the Brand Pack
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#what-about-cursors`](../../docs/design/icons.md#what-about-cursors), [brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md#what-is-the-brand-pack)
+
+The pinned Impossible Brand pack names which of its assets are the shipped defaults, so a redesign reaches users by moving the pin, never by hand-copying files. The pack's manifest carries a `defaults` map: the wallpaper pair (light and dark), the cursor theme, and later sounds or other themed sets. Today the default wallpaper is the literal `C:\Impossible\Web\Wallpaper\default.jpg`, written by `src/kernel/registry.c` into `HKLM\SYSTEM\Theme\Wallpaper` and `HKU\Default\Desktop\Wallpaper` and read by `src/desktop/desktop.c`; the cursor is one fixed Adwaita set named in `src/kernel/drivers/cursor.c` `cursor_filenames[]`, with no theme setting at all.
+
+- [ ] Import reads the pack's `defaults` map when the pin moves (§12) and refuses a default that names an asset missing from the pack
+- [ ] Shipped default wallpaper comes from `defaults.wallpaper` (light and dark pair)
+  - `registry.c` seeds `HKLM\SYSTEM\Theme\Wallpaper` and the default user's value from a generated header, not a literal
+  - The light or dark member follows the theme, as `08-graphics-ui/TODO-03-theme-system.md` specifies
+- [ ] Shipped default cursor theme comes from `defaults.cursor_theme`, stored as `HKLM\SYSTEM\Theme\CursorTheme`
+  - Three themes ship: "Windows 11 style" (the new default), "Mac style" and "Linux style" (Adwaita)
+  - Each theme is a folder under `C:\Impossible\System\Cursors\<theme>\`
+- [ ] Cursor loader reads the theme folder named by `CursorTheme`, falling back to the default theme, then to the built-in cursors
+  - Owned in `src/kernel/drivers/cursor.c` (`cursor_filenames[]` becomes a per-theme path); -> XREF: §15 for the hardened parser it loads through
+- [ ] Upgrade keeps an explicit user choice: only an unset value or a fresh install takes the new default
+  - A value the user set (wallpaper or cursor theme) is never overwritten by a pin move
+- [ ] Settings > Personalization lists every pack wallpaper pair and every cursor theme, so earlier defaults stay selectable
+  - -> XREF: `09-desktop-shell/TODO-11-control-panel.md` `desk.cpl` wallpaper picker and `main.cpl` cursor theme picker
+- [ ] Unit tests: a fixture pack with a new default wallpaper changes the shipped default, leaves an explicit choice alone, and keeps the old wallpaper in the picker list; a missing default asset fails the import
+- [ ] Commit: `"brand: shipped defaults follow the pack's defaults map"`
+
+**Test checkpoint:** with a fixture pack whose `defaults.wallpaper` names a new pair, a fresh image boots to that wallpaper, an image whose user set a wallpaper keeps it after the upgrade, and the picker lists both pairs; a fixture whose default names a missing file makes `python3 scripts/imports.py --pull impossible-brand` exit 1 naming it. Test on: QEMU TCG.
+
+## 15. Asset Loader and Packer Integrity
+
+> **Spawned-by:** section 11 (review)
+> **User impact:** Every desktop boot, the cursor loader frees an unrelated physical frame (it passes a frame number to pmm_free_frame) and leaks its own buffer, so memory still in use can be handed out again and crash or corrupt the system unpredictably.
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered)
+
+The plan review of §11 (2026-11-25, eight passes) found that every boundary an asset crosses on its way to the screen trusts its input: the Xcursor parser, the cursor temp-buffer release, the IRES loader, `irespack` and the `sysroot-icons` recipe. Fixing them one case at a time kept reopening the same class, so this section closes it the way the repository closes untrusted-byte parsers: each parser becomes a pure validator with a host fuzz target, and the build steps around them fail loudly.
+
+- [ ] Xcursor parser as a pure validator `xcur_validate` in `src/kernel/drivers/cursor.c`, fuzzed by `tools/fuzz/fuzz_xcursor.c`
+  - Header span first, then `toc_count <= (file_size - header_size) / 12`, then every chunk and payload by remaining length, never wrapping `a + b > size`
+  - Only frames with `w * h` within the slot capacity and the hotspot inside the frame are ranked; the nominal size closest to `XCUR_TARGET_SIZE` wins
+  - A file with no fitting frame returns -1 and the shape keeps its built-in cursor
+  - Distance by defined unsigned arithmetic (today `(int32_t)subtype` lets high-bit nominals rank as near sizes)
+  - Same commit: §11's published `cursors.rules.selection` becomes `closest_fitting` and its nominal ceiling is lifted
+- [ ] Cursor buffers through `pmm_alloc_pages_hhdm` and `pmm_free_contiguous(phys, pages)` on every exit of `xcur_load`
+  - Replaces `pmm_free_frame(((uintptr_t)buf / 4096) + p)`, which passed a frame number where a byte address is expected
+  - That clears an unrelated frame's bit and leaks the buffer on every desktop boot
+- [ ] IRES loader validation as a pure `ires_validate` in `src/kernel/icon_store.c`, fuzzed by `tools/fuzz/fuzz_ires.c`
+  - The read must match the header's `file_size`; size table, index, terminated names and every pixel span are checked against those bytes
+  - Loader state is published only after validation succeeds; the 32 MiB bound becomes the named `IRES_MAX_FILE_BYTES`
+- [ ] `tools/irespack.c` output integrity
+  - Writes a sibling temporary file, checks every write and `fclose`, and renames over the destination only on success
+  - Refuses a discovered PNG that fails to decode or whose dimensions differ from its size directory; an absent variant stays legal
+  - `_Static_assert(SIZE_COUNT <= MAX_SIZES)`; refuses an archive over `IRES_MAX_FILE_BYTES` and a name table of 65536 bytes or more
+- [ ] `tools/mkfs-ixfs.c` copies each file through one descriptor: `open`, `fstat` on it, read exactly that length, fail on a short read (today `stat(path)` then `fopen(path)`)
+- [ ] Unit tests (kernel, desktop category): a 32x32-only cursor with a 576-pixel slot is refused and a sentinel past the slot is unchanged; a 32 frame listed before a 24 frame picks 24; an out-of-range hotspot picks the valid alternate
+- [ ] More unit tests: an out-of-range `toc_count`, a header past the end and a chunk near `UINT32_MAX` refused; `xcur_load` frees its extent on success and on a short file; a truncated IRES index and a truncated final payload refused
+- [ ] Host tests (pytest, `tools/irespack.c` built into tmp_path): write failure keeps the old archive and exits non-zero; corrupt PNG, wrong-size PNG and over-limit archive refused (the `sysroot-icons` recipe itself is §16's)
+- [ ] Commit: `"assets: cursor and IRES loaders validated and fuzzed; irespack fails loudly"`
+
+**Test checkpoint:** `bash tools/fuzz/run.sh` includes `fuzz_xcursor` and `fuzz_ires` and finds nothing in its run; `make test-desktop` passes the cursor and IRES cases; `python3 -m pytest scripts/tests/test_irespack.py` passes; the smoke matrix boots with the shipped cursors and icons. Test on: WSL2 dev host, QEMU TCG and KVM.
+
+## 16. Verified Icon Render and Install Pipeline on the Contract
+
+> **Spawned-by:** section 11 (split)
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered), [`icons.md#adding-or-changing-an-icon`](../../docs/design/icons.md#adding-or-changing-an-icon)
+
+§11 publishes the contract; this section makes every consumer in the OS read it, so none keeps its own copy of a list or a limit. A complete draft was built and reviewed during §11 on 2026-11-25 and taken out of that commit to keep §11 to the contract (operator scope decision): `scripts/icon_render.py` (converter, verifier, `install`, `install-cursors`) and its 24 tests, with the review findings below still open. Its §11 plan passes (41) and first round are the design record.
+
+**Needs:** operator
+
+The one check that needs the operator: the pinned CI image (`ghcr.io/rizonesoft/impossible-os-ci`) gains `librsvg2-bin` and its new digest is pinned in `build.yml` and `release.yml` before `rsvg-convert` becomes a required tool (operator scope decision, 2026-11-25: §11 makes nothing require it). Everything else in this section builds without it.
+
+- [ ] `scripts/icon_render.py render`: full canonical render or `--src DIR --out DIR` into a separate root; `convert-icons.sh` calls it
+  - Every source read once, validated with `brand_contract.validate_svg` (literal colours only), rendered from those bytes on stdin
+  - All renders staged before any rename; the PNG namespace `<size>/*.png` is generated output pruned to the expected set; stamp last
+- [ ] `verify` (sources, namespace, stamp digests, required names, sizes from the contract) used by Check 30's render-stamp check
+- [ ] `sysroot-icons` calls `install`: locked, fresh snapshot verified, packed, archive validated, renamed into place with no-follow writes
+  - Temporary file created relative to the verified destination descriptor, never in a shared staging directory
+  - The descriptor walk opens the sysroot component itself with `O_NOFOLLOW` and rejects `.` and `..`
+  - `validate_ires` refuses a size count outside 1..`ires_sizes` and a version other than the loader's `IRES_VERSION`
+- [ ] `sysroot-cursors` calls `install-cursors`: sources read once and validated, required names replaced (symlink or directory) without following, the directory pruned to the exact set
+- [ ] Neither asset target depends on `.dirs-stamp` (the installers create their own destination chains)
+- [ ] `tools/validate-assets.py` drops its own cursor list and checks for `brand_contract.validate_xcursor` with the contract's files
+- [ ] `rsvg-convert` (`librsvg2-bin`) in `scripts/ci/toolchain-packages.txt` first; once the image digest is pinned, a required tool in `scripts/setup.sh`
+- [ ] `scripts/overnight/tests/test_staged_dash_check.py` writes its own binary fixture instead of copying `resources/icons/color/64/settings.png`
+- [ ] Unit tests: the 24 of the §11 draft (render, verify, both installers, the real `make` targets from a clean build directory), plus a symlinked `build/sysroot`, a symlinked staging path and an oversized IRES size table
+- [ ] Commit: `"assets: the converter, asset validator and sysroot installers read the brand contract"`
+
+**Test checkpoint:** `bash scripts/convert-icons.sh` reproduces the committed `SOURCES.sha256` byte for byte; `make sysroot-icons sysroot-cursors BUILD_DIR=<fresh>` installs exactly `icons.ires` and the contract's 11 cursors; the smoke test logs `IRES loaded` and `11/11` cursors. Test on: WSL2 dev host, QEMU TCG.
+
+## 17. Compiler-Evaluated Brand Contract Inputs
+
+> **Spawned-by:** section 11 (review)
+> **User impact:** Nothing today: the contract reader refuses any C form it does not model, so a developer who writes one gets a refusal at lint, never a wrong contract; this section removes that friction and the digest pins.
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered)
+
+§11 reads its inputs out of C and Make text. Eight review rounds (2026-11-25) each found another place where C compiles a construct differently from how a host parser reads it (token substitution, octal and suffixed literals, integer width, line splicing, conditionals, array extents), and §11 closed each by refusing every form its reader does not model and pinning the behaviour it describes. That holds, but every new kernel or packer edit near those constructs now needs a pin refresh. This section replaces the text reader with values the compiler itself evaluated, so the class is closed by construction.
+
+- [ ] An extractor translation unit per side, compiled with the flags `compile_commands.json` records for `src/kernel/icon_store.c`, `src/kernel/drivers/cursor.c` and `tools/irespack.c`
+  - It places every value the contract publishes (enum values, array extents and contents, struct sizes and offsets, macro values) in a data section
+  - `scripts/brand_contract.py` reads that section from the object with `llvm-objcopy`, never from source text
+- [ ] Remove `BEHAVIOUR_PINS`, `LAYOUT_PINS`, `EXTENT_PINS` and the whitelist grammar where the compiled values make them redundant; keep the pins only for selection rules no constant can express
+- [ ] Unit tests: every §11 mutation case (octal size, unparenthesised macro, wrapped multiplication, continued comment, narrowed extent) yields the compiled value or a refusal, never a stale contract
+- [ ] Commit: `"brand: contract inputs come from the compiler, not from source text"`
+
+**Test checkpoint:** `python3 scripts/brand_contract.py --check` exits 0 with the extractor in place, and the §11 mutation suite passes with the whitelist grammar removed. Test on: WSL2 dev host.
 
 ## OS Comparison
 

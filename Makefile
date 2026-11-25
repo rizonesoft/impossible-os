@@ -1108,6 +1108,10 @@ CURSOR_SRCS := resources/cursors/default resources/cursors/pointer \
                resources/cursors/bd_double_arrow resources/cursors/fd_double_arrow \
                resources/cursors/progress resources/cursors/crosshair \
                resources/cursors/not-allowed
+# The guest directory the cursors are installed into (the sysroot-cursors recipe
+# below); src/kernel/drivers/cursor.c opens C:\<this>\<name>, and
+# scripts/brand_contract.py refuses a mismatch.
+CURSOR_GUEST_DIR := Impossible/System/Cursors
 
 # --- Font source files (TTF only, skip LICENSE-*) ---
 FONT_SRCS := $(wildcard resources/fonts/*.ttf)
@@ -1123,7 +1127,7 @@ $(SYSROOT)/.dirs-stamp:
 	@mkdir -p $(SYSROOT)/Impossible/Fonts
 	@mkdir -p $(SYSROOT)/Impossible/Icons
 	@mkdir -p $(SYSROOT)/Impossible/Web/Wallpaper
-	@mkdir -p $(SYSROOT)/Impossible/System/Cursors
+	@mkdir -p $(SYSROOT)/$(CURSOR_GUEST_DIR)
 	@mkdir -p $(SYSROOT)/Impossible/Media
 	@mkdir -p $(SYSROOT)/Impossible/Temp
 	@mkdir -p $(SYSROOT)/Users/Default/Desktop
@@ -1156,12 +1160,13 @@ $(SYSROOT)/Impossible/Web/Wallpaper/default.jpg: resources/backgrounds/backgroun
 sysroot-wallpapers: $(SYSROOT)/Impossible/Web/Wallpaper/default.jpg
 
 ## sysroot-cursors: Copy Adwaita XCursor files → sysroot
-$(SYSROOT)/Impossible/System/Cursors/.stamp: $(CURSOR_SRCS) | $(SYSROOT)/.dirs-stamp
-	@cp $(CURSOR_SRCS) $(SYSROOT)/Impossible/System/Cursors/
+$(SYSROOT)/$(CURSOR_GUEST_DIR)/.stamp: $(CURSOR_SRCS) | $(SYSROOT)/.dirs-stamp
+	@mkdir -p $(SYSROOT)/$(CURSOR_GUEST_DIR)
+	@cp $(CURSOR_SRCS) $(SYSROOT)/$(CURSOR_GUEST_DIR)/
 	@touch $@
 	@echo "[ASSETS] Cursors copied ($(words $(CURSOR_SRCS)) Adwaita XCursor)"
 
-sysroot-cursors: $(SYSROOT)/Impossible/System/Cursors/.stamp
+sysroot-cursors: $(SYSROOT)/$(CURSOR_GUEST_DIR)/.stamp
 
 ## sysroot-icons: Pack color icons into IRES archive → sysroot
 $(SYSROOT)/Impossible/Icons/icons.ires: $(ICON_SRCS) host-tools | $(SYSROOT)/.dirs-stamp

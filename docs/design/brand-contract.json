@@ -1,0 +1,1488 @@
+{
+ "cursors": {
+  "files": [
+   {
+    "name": "bd_double_arrow",
+    "source": "resources/cursors/bd_double_arrow"
+   },
+   {
+    "name": "crosshair",
+    "source": "resources/cursors/crosshair"
+   },
+   {
+    "name": "default",
+    "source": "resources/cursors/default"
+   },
+   {
+    "name": "fd_double_arrow",
+    "source": "resources/cursors/fd_double_arrow"
+   },
+   {
+    "name": "fleur",
+    "source": "resources/cursors/fleur"
+   },
+   {
+    "name": "not-allowed",
+    "source": "resources/cursors/not-allowed"
+   },
+   {
+    "name": "pointer",
+    "source": "resources/cursors/pointer"
+   },
+   {
+    "name": "progress",
+    "source": "resources/cursors/progress"
+   },
+   {
+    "name": "sb_h_double_arrow",
+    "source": "resources/cursors/sb_h_double_arrow"
+   },
+   {
+    "name": "sb_v_double_arrow",
+    "source": "resources/cursors/sb_v_double_arrow"
+   },
+   {
+    "name": "text",
+    "source": "resources/cursors/text"
+   }
+  ],
+  "guest_dir": "Impossible/System/Cursors",
+  "rules": {
+   "all_frames_hotspot_inside": true,
+   "all_frames_max_axis": 256,
+   "distance_cutoff": 9999,
+   "frame_pixels": 576,
+   "image_type": 4294770690,
+   "magic": 1920295768,
+   "max_axis": 256,
+   "max_nominal": 2147483647,
+   "read_prefix_bytes": 524288,
+   "save_under": 48,
+   "selection": "closest_nominal_first",
+   "target_size": 24
+  },
+  "shapes": [
+   {
+    "name": "default",
+    "path": "C:\\Impossible\\System\\Cursors\\default",
+    "shape": "CURSOR_ARROW"
+   },
+   {
+    "name": "pointer",
+    "path": "C:\\Impossible\\System\\Cursors\\pointer",
+    "shape": "CURSOR_HAND"
+   },
+   {
+    "name": "text",
+    "path": "C:\\Impossible\\System\\Cursors\\text",
+    "shape": "CURSOR_TEXT"
+   },
+   {
+    "name": "fleur",
+    "path": "C:\\Impossible\\System\\Cursors\\fleur",
+    "shape": "CURSOR_MOVE"
+   },
+   {
+    "name": "sb_v_double_arrow",
+    "path": "C:\\Impossible\\System\\Cursors\\sb_v_double_arrow",
+    "shape": "CURSOR_RESIZE_NS"
+   },
+   {
+    "name": "sb_h_double_arrow",
+    "path": "C:\\Impossible\\System\\Cursors\\sb_h_double_arrow",
+    "shape": "CURSOR_RESIZE_EW"
+   },
+   {
+    "name": "bd_double_arrow",
+    "path": "C:\\Impossible\\System\\Cursors\\bd_double_arrow",
+    "shape": "CURSOR_RESIZE_NWSE"
+   },
+   {
+    "name": "fd_double_arrow",
+    "path": "C:\\Impossible\\System\\Cursors\\fd_double_arrow",
+    "shape": "CURSOR_RESIZE_NESW"
+   },
+   {
+    "name": "progress",
+    "path": "C:\\Impossible\\System\\Cursors\\progress",
+    "shape": "CURSOR_WAIT"
+   },
+   {
+    "name": "crosshair",
+    "path": "C:\\Impossible\\System\\Cursors\\crosshair",
+    "shape": "CURSOR_CROSSHAIR"
+   },
+   {
+    "name": "not-allowed",
+    "path": "C:\\Impossible\\System\\Cursors\\not-allowed",
+    "shape": "CURSOR_FORBIDDEN"
+   }
+  ]
+ },
+ "icons": [
+  {
+   "name": "add",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "align_center",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "align_left",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "align_right",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "attach",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "back",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "bold",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "calendar",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "check",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "chevron_down",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "chevron_left",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "chevron_right",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "chevron_up",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "clipboard",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "clock",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "close",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "copy",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "cut",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "delete",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "download",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "error",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "filter",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "forward",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "fullscreen",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "grid",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "heart",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "home",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "info",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "italic",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "link",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "list",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "lock",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "maximize",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "menu",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "minimize",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "new",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "open",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "paste",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "pin",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "power",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "print",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "question",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "redo",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "refresh",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "restore",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "save",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "search",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "settings",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "share",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "sort",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "star",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "subtract",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "underline",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "undo",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "up",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "upload",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "user",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "warning",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "zoom_in",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "name": "zoom_out",
+   "provider": "glyph",
+   "sources": [
+    "kernel_table"
+   ]
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "computer",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "The This PC desktop icon and Explorer root",
+   "wired": true
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "control_panel",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "The classic Control Panel",
+   "wired": true
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "dll_default",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "`.dll` and `.sys` files",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "drive_removable",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "USB sticks and other removable media",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "drive_system",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The `C:` drive, badged with the OS mark",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "exe_default",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "`.exe` files with no embedded icon",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "file_archive",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "`.zip` and other archives",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "file_default",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "A file with no specific type",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "file_explorer",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The File Explorer app, pinned to the taskbar",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "file_image",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "`.png`, `.jpg`, `.bmp` and similar",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "folder_closed",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "Any folder",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_desktop",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Desktop known folder",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_documents",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Documents known folder",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_downloads",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Downloads known folder",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_music",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Music known folder",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "folder_open",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "Folder being opened, drag targets",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_pictures",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Pictures known folder",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "folder_videos",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Videos known folder",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "network",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "Network location and the Network desktop icon: This PC's monitor (reused, at 80 percent) with a cable running out from under its stand to three devices",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "recycle_bin_empty",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "Recycle Bin with nothing in it",
+   "wired": true
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "recycle_bin_full",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "Recycle Bin holding deleted items",
+   "wired": true
+  },
+  {
+   "lookup": "glyph",
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "settings",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Settings app",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "start",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The Start button on the taskbar",
+   "wired": false
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "terminal",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The terminal and `cmd.exe`",
+   "wired": false
+  },
+  {
+   "lookup": "colour",
+   "missing": [],
+   "name": "text_file",
+   "provider": "colour",
+   "required": true,
+   "sources": [
+    "irespack",
+    "kernel_table",
+    "spec"
+   ],
+   "used_for": "`.txt`, `.log`, `.ini` and similar",
+   "wired": true
+  },
+  {
+   "lookup": null,
+   "missing": [
+    "irespack",
+    "kernel_table"
+   ],
+   "name": "user_folder",
+   "provider": "colour",
+   "required": false,
+   "sources": [
+    "spec"
+   ],
+   "used_for": "The signed-in user's profile folder",
+   "wired": false
+  }
+ ],
+ "limits": {
+  "guest_name_bytes": 251,
+  "ires_bytes": 33554432,
+  "ires_sizes": 16,
+  "name_bytes": 63,
+  "name_table": 4096,
+  "pack_icons": 64
+ },
+ "profile": {
+  "$schema_version": 1,
+  "_comment": "The system SVG profile: what a system icon may contain so that every Impossible OS renderer (the SVG runtime and the host converter) draws it the same way. scripts/brand_contract.py publishes this file inside docs/design/brand-contract.json and enforces it; todo/answers.md Q64 records the limits.",
+  "drawing_attributes": [
+   "clip-path",
+   "clip-rule",
+   "fill",
+   "fill-opacity",
+   "fill-rule",
+   "id",
+   "opacity",
+   "stroke",
+   "stroke-dasharray",
+   "stroke-dashoffset",
+   "stroke-linecap",
+   "stroke-linejoin",
+   "stroke-miterlimit",
+   "stroke-opacity",
+   "stroke-width",
+   "transform"
+  ],
+  "elements": {
+   "circle": {
+    "attributes": [
+     "cx",
+     "cy",
+     "r"
+    ],
+    "drawing": true
+   },
+   "clipPath": {
+    "attributes": [
+     "clipPathUnits",
+     "id",
+     "transform"
+    ],
+    "drawing": false
+   },
+   "defs": {
+    "attributes": [
+     "id"
+    ],
+    "drawing": false
+   },
+   "ellipse": {
+    "attributes": [
+     "cx",
+     "cy",
+     "rx",
+     "ry"
+    ],
+    "drawing": true
+   },
+   "g": {
+    "attributes": [],
+    "drawing": true
+   },
+   "line": {
+    "attributes": [
+     "x1",
+     "x2",
+     "y1",
+     "y2"
+    ],
+    "drawing": true
+   },
+   "linearGradient": {
+    "attributes": [
+     "gradientTransform",
+     "gradientUnits",
+     "id",
+     "spreadMethod",
+     "x1",
+     "x2",
+     "y1",
+     "y2"
+    ],
+    "drawing": false
+   },
+   "path": {
+    "attributes": [
+     "d"
+    ],
+    "drawing": true
+   },
+   "polygon": {
+    "attributes": [
+     "points"
+    ],
+    "drawing": true
+   },
+   "polyline": {
+    "attributes": [
+     "points"
+    ],
+    "drawing": true
+   },
+   "radialGradient": {
+    "attributes": [
+     "cx",
+     "cy",
+     "fr",
+     "fx",
+     "fy",
+     "gradientTransform",
+     "gradientUnits",
+     "id",
+     "r",
+     "spreadMethod"
+    ],
+    "drawing": false
+   },
+   "rect": {
+    "attributes": [
+     "height",
+     "rx",
+     "ry",
+     "width",
+     "x",
+     "y"
+    ],
+    "drawing": true
+   },
+   "stop": {
+    "attributes": [
+     "offset",
+     "stop-color",
+     "stop-opacity"
+    ],
+    "drawing": false
+   },
+   "svg": {
+    "attributes": [
+     "height",
+     "version",
+     "viewBox",
+     "width"
+    ],
+    "drawing": true
+   },
+   "symbol": {
+    "attributes": [
+     "viewBox"
+    ],
+    "drawing": true
+   },
+   "use": {
+    "attributes": [
+     "height",
+     "href",
+     "width",
+     "x",
+     "y"
+    ],
+    "drawing": true
+   }
+  },
+  "forbidden": [
+   "a",
+   "animate",
+   "animateMotion",
+   "animateTransform",
+   "feBlend",
+   "filter",
+   "foreignObject",
+   "image",
+   "marker",
+   "mask",
+   "pattern",
+   "script",
+   "set",
+   "style",
+   "switch",
+   "text",
+   "textPath",
+   "tspan",
+   "view"
+  ],
+  "geometry_cost": {
+   "circle": 5,
+   "ellipse": 5,
+   "line": 2,
+   "path": "decoded commands, each implicit repetition counted",
+   "polygon": "points + 1",
+   "polyline": "points",
+   "rect": 5,
+   "rect_rounded": 9
+  },
+  "limits": {
+   "elements": 4096,
+   "nesting": 32,
+   "path_commands": 65536,
+   "use_depth": 8
+  },
+  "paint": {
+   "fill": [
+    "none",
+    "hex",
+    "token",
+    "gradient"
+   ],
+   "gradient": "url(#id) resolving to a linearGradient or radialGradient in the same document",
+   "hex": "#rgb, #rrggbb or #rrggbbaa",
+   "stop-color": [
+    "hex",
+    "token"
+   ],
+   "stroke": [
+    "none",
+    "hex",
+    "token",
+    "gradient"
+   ],
+   "token": "var(--<name>) where <name> is in the contract's tokens"
+  },
+  "prolog": "Only an XML declaration may come before the root element. Processing instructions, DOCTYPE, entity declarations and entity references other than the five predefined ones and numeric references are outside the profile.",
+  "references": {
+   "clip-path": {
+    "targets": [
+     "clipPath"
+    ],
+    "values": "none or url(#id)"
+   },
+   "cycles": "no cycle through containment, use href and clip-path together",
+   "href": {
+    "on": [
+     "use"
+    ],
+    "targets": [
+     "circle",
+     "ellipse",
+     "g",
+     "line",
+     "path",
+     "polygon",
+     "polyline",
+     "rect",
+     "symbol"
+    ]
+   },
+   "ids": "unique across the document"
+  }
+ },
+ "schema": 1,
+ "sizes": [
+  16,
+  24,
+  32,
+  48,
+  64,
+  72,
+  96,
+  128,
+  256
+ ],
+ "tokens": {
+  "fallback_theme": "dark",
+  "values": {
+   "accent": {
+    "dark": "#60CDFF",
+    "light": "#005FB8"
+   },
+   "accent_hover": {
+    "dark": "#5AB9E6",
+    "light": "#196EBF"
+   },
+   "accent_pressed": {
+    "dark": "#4FA3CC",
+    "light": "#2C77BF"
+   },
+   "badge_fill": {
+    "dark": "#60CDFF",
+    "light": "#005FB8"
+   },
+   "caption_close_hover": {
+    "dark": "#C42B1C",
+    "light": "#C42B1C"
+   },
+   "caption_close_pressed": {
+    "dark": "#C83C31",
+    "light": "#C83C31"
+   },
+   "card_bg": {
+    "dark": "#FFFFFF0D",
+    "light": "#FFFFFFB3"
+   },
+   "control_fill": {
+    "dark": "#FFFFFF0F",
+    "light": "#FFFFFFB3"
+   },
+   "control_fill_disabled": {
+    "dark": "#FFFFFF0B",
+    "light": "#F9F9F94D"
+   },
+   "control_fill_hover": {
+    "dark": "#FFFFFF15",
+    "light": "#F9F9F980"
+   },
+   "control_fill_input_active": {
+    "dark": "#1E1E1EB3",
+    "light": "#FFFFFFFF"
+   },
+   "control_fill_pressed": {
+    "dark": "#FFFFFF08",
+    "light": "#F9F9F94D"
+   },
+   "control_strong_stroke": {
+    "dark": "#FFFFFF8B",
+    "light": "#00000072"
+   },
+   "control_underline": {
+    "dark": "#FFFFFF8A",
+    "light": "#00000072"
+   },
+   "desktop_label": {
+    "dark": "#FFFFFF",
+    "light": "#FFFFFF"
+   },
+   "desktop_label_shadow": {
+    "dark": "#00000099",
+    "light": "#00000099"
+   },
+   "focus_inner": {
+    "dark": "#000000B3",
+    "light": "#FFFFFF"
+   },
+   "focus_outer": {
+    "dark": "#FFFFFF",
+    "light": "#000000E4"
+   },
+   "layer_bg": {
+    "dark": "#3A3A3A4D",
+    "light": "#FFFFFF80"
+   },
+   "note_blue": {
+    "dark": "#E2F1FF",
+    "light": "#E2F1FF"
+   },
+   "note_charcoal": {
+    "dark": "#696969",
+    "light": "#696969"
+   },
+   "note_gray": {
+    "dark": "#F3F2F1",
+    "light": "#F3F2F1"
+   },
+   "note_green": {
+    "dark": "#E4F9E0",
+    "light": "#E4F9E0"
+   },
+   "note_pink": {
+    "dark": "#FFE4F1",
+    "light": "#FFE4F1"
+   },
+   "note_purple": {
+    "dark": "#F2E6FF",
+    "light": "#F2E6FF"
+   },
+   "note_yellow": {
+    "dark": "#FFF7D1",
+    "light": "#FFF7D1"
+   },
+   "selection_fill": {
+    "dark": "#60CDFF33",
+    "light": "#005FB833"
+   },
+   "selection_stroke": {
+    "dark": "#60CDFF99",
+    "light": "#005FB899"
+   },
+   "smoke": {
+    "dark": "#0000004D",
+    "light": "#0000004D"
+   },
+   "status_caution": {
+    "dark": "#FCE100",
+    "light": "#9D5D00"
+   },
+   "status_caution_bg": {
+    "dark": "#433519",
+    "light": "#FFF4CE"
+   },
+   "status_critical": {
+    "dark": "#FF99A4",
+    "light": "#C42B1C"
+   },
+   "status_critical_bg": {
+    "dark": "#442726",
+    "light": "#FDE7E9"
+   },
+   "status_info": {
+    "dark": "#60CDFF",
+    "light": "#005FB8"
+   },
+   "status_success": {
+    "dark": "#6CCB5F",
+    "light": "#0F7B0F"
+   },
+   "status_success_bg": {
+    "dark": "#393D1B",
+    "light": "#DFF6DD"
+   },
+   "stroke_card": {
+    "dark": "#00000019",
+    "light": "#0000000F"
+   },
+   "stroke_control": {
+    "dark": "#FFFFFF12",
+    "light": "#0000000F"
+   },
+   "stroke_divider": {
+    "dark": "#FFFFFF15",
+    "light": "#0000000F"
+   },
+   "stroke_surface": {
+    "dark": "#75757566",
+    "light": "#75757566"
+   },
+   "subtle_fill_hover": {
+    "dark": "#FFFFFF0F",
+    "light": "#00000009"
+   },
+   "subtle_fill_pressed": {
+    "dark": "#FFFFFF0A",
+    "light": "#00000006"
+   },
+   "taskbar_attention_fill": {
+    "dark": "#433519",
+    "light": "#FFF4CE"
+   },
+   "taskbar_attention_indicator": {
+    "dark": "#FCE100",
+    "light": "#9D5D00"
+   },
+   "taskbar_indicator": {
+    "dark": "#60CDFF",
+    "light": "#005FB8"
+   },
+   "taskbar_indicator_idle": {
+    "dark": "#9A9A9A",
+    "light": "#8A8A8A"
+   },
+   "terminal_bg": {
+    "dark": "#0C0C0C",
+    "light": "#0C0C0C"
+   },
+   "terminal_black": {
+    "dark": "#0C0C0C",
+    "light": "#0C0C0C"
+   },
+   "terminal_blue": {
+    "dark": "#0037DA",
+    "light": "#0037DA"
+   },
+   "terminal_bright_black": {
+    "dark": "#767676",
+    "light": "#767676"
+   },
+   "terminal_bright_blue": {
+    "dark": "#3B78FF",
+    "light": "#3B78FF"
+   },
+   "terminal_bright_cyan": {
+    "dark": "#61D6D6",
+    "light": "#61D6D6"
+   },
+   "terminal_bright_green": {
+    "dark": "#16C60C",
+    "light": "#16C60C"
+   },
+   "terminal_bright_purple": {
+    "dark": "#B4009E",
+    "light": "#B4009E"
+   },
+   "terminal_bright_red": {
+    "dark": "#E74856",
+    "light": "#E74856"
+   },
+   "terminal_bright_white": {
+    "dark": "#F2F2F2",
+    "light": "#F2F2F2"
+   },
+   "terminal_bright_yellow": {
+    "dark": "#F9F1A5",
+    "light": "#F9F1A5"
+   },
+   "terminal_cursor": {
+    "dark": "#FFFFFF",
+    "light": "#FFFFFF"
+   },
+   "terminal_cyan": {
+    "dark": "#3A96DD",
+    "light": "#3A96DD"
+   },
+   "terminal_fg": {
+    "dark": "#CCCCCC",
+    "light": "#CCCCCC"
+   },
+   "terminal_green": {
+    "dark": "#13A10E",
+    "light": "#13A10E"
+   },
+   "terminal_purple": {
+    "dark": "#881798",
+    "light": "#881798"
+   },
+   "terminal_red": {
+    "dark": "#C50F1F",
+    "light": "#C50F1F"
+   },
+   "terminal_selection": {
+    "dark": "#FFFFFF66",
+    "light": "#FFFFFF66"
+   },
+   "terminal_white": {
+    "dark": "#CCCCCC",
+    "light": "#CCCCCC"
+   },
+   "terminal_yellow": {
+    "dark": "#C19C00",
+    "light": "#C19C00"
+   },
+   "text_disabled": {
+    "dark": "#5D5D5D",
+    "light": "#A0A0A0"
+   },
+   "text_on_accent": {
+    "dark": "#000000",
+    "light": "#FFFFFF"
+   },
+   "text_primary": {
+    "dark": "#FFFFFF",
+    "light": "#1B1B1B"
+   },
+   "text_secondary": {
+    "dark": "#C5C5C5",
+    "light": "#5D5D5D"
+   },
+   "text_tertiary": {
+    "dark": "#9A9A9A",
+    "light": "#8A8A8A"
+   },
+   "toggle_knob_off": {
+    "dark": "#C5C5C5",
+    "light": "#5D5D5D"
+   },
+   "window_bg": {
+    "dark": "#202020",
+    "light": "#F3F3F3"
+   },
+   "window_bg_inactive": {
+    "dark": "#2B2B2B",
+    "light": "#EBEBEB"
+   }
+  }
+ }
+}

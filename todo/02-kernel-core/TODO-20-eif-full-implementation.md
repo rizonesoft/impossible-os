@@ -331,6 +331,8 @@ Impossible OS is SVG-first: system icons are SVG and rendered at the exact size 
 - [ ] The `icon` metadata key names the resource to use; a loader API returns resource bytes by type and name without mapping the whole image
 - [ ] `scripts/build-eif.py` embeds resources from a small resource list, validating SVG icons against the system profile at build time
 - [ ] Unit tests: resource table parse with valid, truncated, overlapping and oversized entries; lookup by type/name; an EIF without a resource section still loads
+- [ ] Add every `EIF_RT_SVG_ICON` name to the brand contract's inventory (`scripts/brand_contract.py`)
+  - -> XREF: `08-graphics-ui/TODO-01-graphics-asset-foundation.md` §11, which publishes the names Impossible Brand draws
 - [ ] Icon extraction for the shell and Win32 APIs is owned by `09-desktop-shell/TODO-02-file-associations-resources.md` §9
 - [ ] Commit: `"kernel: eif -- resource section, SVG app icons"`
 
