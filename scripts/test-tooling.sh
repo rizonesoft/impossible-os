@@ -1387,7 +1387,10 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_inventory.py" inventory_check
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_check_no_ms_assets.py" inventory_assets
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_capture.py" inventory_capture
-_tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_turns.py" inventory_turns
+_TT_TRIG_INVENTORY_TURNS='^scripts/inventory/|^scripts/test-tooling\.sh$'   # ~70 s where there is Windows and Bosun
+if _tt_would_run "$_TT_TRIG_INVENTORY_TURNS"; then
+    _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_turns.py" inventory_turns
+fi
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_baselines.py" inventory_baselines
 _tt_nested_py "$REPO_ROOT/scripts/inventory/tests/test_report.py" inventory_report
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
@@ -1508,7 +1511,9 @@ fi
 # The reference VM takes turns with the SDK's machine (scripts/inventory/tests/
 # test_turns.py): source checks everywhere; the queue cases need Windows and Bosun.
 INV_TURNS_TEST="$REPO_ROOT/scripts/inventory/tests/test_turns.py"
-if [ -f "$INV_TURNS_TEST" ]; then
+if ! _tt_suite_needed "inventory turns (test_turns.py, ~70s)" "$_TT_TRIG_INVENTORY_TURNS"; then
+    :
+elif [ -f "$INV_TURNS_TEST" ]; then
     INV_TURNS_OUT=$(_tt_nested_collect inventory_turns python3 "$INV_TURNS_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/inventory/tests/test_turns.py PASS ($(printf '%s\n' "$INV_TURNS_OUT" | tail -3 | tr '\n' ' '))"

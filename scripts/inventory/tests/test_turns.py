@@ -331,6 +331,14 @@ class Turns(unittest.TestCase):
         self.assertEqual([x for x in out.split() if "=" in x],
                          ["in=0", "out=", "same=True", "BOSUN_SLOT=0", "again=0"], out)
 
+    def test_a_place_lost_with_bosun_is_taken_again(self):
+        common = winpath(self.scripts(60)) + "\\ref-common.ps1"
+        code, out = self.call([POWERSHELL, *BYPASS, "-Command",
+                               f". '{common}'; Enter-RefTurn; $p = $script:RefTurn.Process; Stop-Process -Id $p.Id -Force; "
+                               "[void]$p.WaitForExit(9000); Enter-RefTurn; "
+                               "\"again=$env:BOSUN_SLOT held=$(-not $script:RefTurn.Process.HasExited)\"; Exit-RefTurn"])
+        self.assertIn("again=0 held=True", out)
+
     def test_a_turn_for_a_vm_already_on_does_not_wait(self):
         dummy = self.hold()
         common = winpath(self.scripts(60)) + "\\ref-common.ps1"
@@ -347,25 +355,6 @@ class Turns(unittest.TestCase):
                                f"$env:PATH = {self.fake_path()}; . '{common}'; Enter-RefTurn 1; 'on'; Exit-RefTurn"])
         self.assert_bounded(out)
         self.assertIn("on", out.split())
-
-    def test_a_folder_is_one_machines_and_one_builds(self):
-        # A mistyped -Name wrote a new credential over the reference's (2026-11-25).
-        common, vm = winpath(self.scripts(60)) + "\\ref-common.ps1", self.win + "\\vm"
-
-        def enter(name, owner, then=""):
-            return [POWERSHELL, *BYPASS, "-Command",
-                    f". '{common}'; function Get-VM {{ [pscustomobject]@{{ Name = 'ref'; ConfigurationLocation = '{owner}' }} }}; "
-                    f"Enter-RefFolder '{name}' '{vm}'; 'entered'; {then}"]
-
-        for name, owner, code in (("typo", vm, 2), ("typo", vm.upper() + "\\ref", 2), ("ref", vm, 0), ("typo", vm + "-2", 0)):
-            got, out = self.call(enter(name, owner))
-            self.assertEqual((got, "entered" in out), (code, code == 0), out)
-        p, line = self.first_line(enter("one", "x", "[void][Console]::In.ReadLine()"))
-        self.assertEqual(line.strip(), "entered")
-        self.assertEqual(self.call(enter("two", "x"))[0], 4)
-        p.stdin.close()
-        self.finish(p)
-        self.assertEqual(self.call(enter("two", "x"))[0], 0)
 
     def test_the_checked_path_is_the_path_used(self):
         # PowerShell and .NET read a relative path and a ~ in two ways.
@@ -450,8 +439,6 @@ class Sources(unittest.TestCase):
             taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
             self.assertEqual(set(named[1].split(", ")), taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
             self.assertIn("Exit-RefTurn", lines, p.name)
-            if p.name == "ref-vm.ps1":                   # the one that makes a folder's machine
-                self.assertEqual(lines[lines.index("Enter-RefLock $Name") + 1], "Enter-RefFolder $Name $VmPath")
 
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")

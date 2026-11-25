@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **999 of 2814 sections complete (35%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **999 of 2815 sections complete (35%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2157,6 +2157,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T17 §28` | Recovery Branches: Reset This PC and Automatic Repair                   | none     |     5 |
 | [ ]  | `D08 T17 §29` | Host Captures: GPU Preferences and the Radio Flyouts                    | operator |     6 |
 | [ ]  | `D08 T17 §30` | Take turns with the SDK's test machine                                  | none     |     7 |
+| [ ]  | `D08 T17 §31` | Build Guards of the Reference Machine                                   | none     |     4 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none     |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none     |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none     |     6 |

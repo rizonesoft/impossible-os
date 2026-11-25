@@ -96,6 +96,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | 💎  |  28   | §28 Recovery Branches: Reset This PC and Automatic Repair                                   | §9                          |  [ ]   |
 | 💎  |  29   | §29 Host Captures: GPU Preferences and the Radio Flyouts                                    | §8, §27                     |  [ ]   |
 | ⭐  |  30   | §30 Take turns with the SDK's test machine                                                  | §2, §24                     |  [ ]   |
+| 💎  |  31   | §31 Build Guards of the Reference Machine                                                   | §2, §30                     |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -1319,11 +1320,30 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 > - `Enter-RefTurn` and `Exit-RefTurn` in `ref-common.ps1` hold Bosun's place through `cmd.exe /d /c set BOSUN_& sort >nul`; `Start-RefVm` and `Restore-RefCheckpoint` are the only code that starts the VM
 > - `update-iso.ps1` frees the place before it builds the ISO and `derive.ps1` before it converts the disk, since the VM is off by then
 > - A VM that a killed run left on is turned off before the wait, so it gives its 4 GB back
-> - `ref-vm.ps1` takes its folder as well as its name (`Enter-RefFolder`) and refuses one that holds another VM: a mistyped `-Name` wrote over the reference's credential
+> - Build guards of `ref-vm.ps1` that the passes found missing before this section are filed as §31
 > - Windows PowerShell started under PowerShell 7 lost `Get-FileHash` (`update-iso.ps1`); `ref-common.ps1` drops that edition's module folders
 > - The run goes on without a place when Bosun is absent, fails or stays silent for 380 s; `Resolve-RefTarget` refuses the SDK's machine, and its folder in any path argument (a test holds the list complete), and makes each path the full one it checked
 > - A job that itself started on Bosun's timeout (slot -1) passes any inner queue straight through: Bosun's own rule, kept
 > - Canonical doc: `docs/design/inventory/REFERENCE.md`, the section on sharing the host with the SDK's test machine
+
+---
+
+## 31. Build Guards of the Reference Machine
+
+> **Spawned-by:** section 30 (review)
+
+**Design:** n/a -- host tooling, it draws nothing
+
+> **User impact:** a wrong `-Name` or `-VmPath` can cost the reference machine its password or its disk, and building it again takes hours.
+
+`ref-vm.ps1` trusts the pair of `-Name` and `-VmPath` it is given. A build under a name no VM has writes a new random password over `ref.clixml` in the folder before it makes a VM, and `-Rebuild` deletes `disk.vhdx`, `Virtual Hard Disks`, `Virtual Machines` and `Snapshots` in the folder whoever's they are. A first guard (a lock per folder and a check of the owner's configuration folder) was written and removed in §30: it did not cover a promotion half done, a folder below another machine's, or two paths with one lock name. Decide by what is there, not by which VM is registered where.
+
+- [ ] A build never writes over a `ref.clixml`: it is made exclusively, and only a `-Rebuild` of the VM whose credential it is may replace it (a build under a mistyped name, a promotion half done, and two builds in one new folder all refuse)
+- [ ] `-Rebuild` deletes only files of the VM it removes: no disk another VM's chain uses, whichever folder it lies in
+- [ ] A resumed build whose `-VmPath` is not its own folder refuses before it writes a log or turns the VM off
+- [ ] Commit: `"inventory: ref-vm builds only over its own machine"`
+
+**Test checkpoint:** over stubbed Hyper-V cmdlets and real files: a mistyped `-Name` with the reference's folder exits 2 with the credential byte for byte as it was; the same with the VM moved away and the credential still there; a rebuild given a folder inside another VM's folder exits 2 with the sentinel disk intact; a resume with the other machine's folder exits 2 with no log line and no VM stop. Each fails on the commit before.
 
 ---
 

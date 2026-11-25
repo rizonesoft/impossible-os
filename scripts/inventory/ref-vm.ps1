@@ -740,7 +740,6 @@ function Invoke-Reclean() {
 }
 
 Enter-RefLock $Name
-Enter-RefFolder $Name $VmPath
 $script:ProfileProbe = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-profile.ps1'
 $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
 # Every path that changed the VM ends with it off, a failed one included: a

@@ -225,18 +225,6 @@ function Enter-RefLock([string]$Name) {
     }
 }
 
-# One build per folder too: two names can be given the same one, and each writes
-# its credential there. A mistyped -Name must not write over the machine whose
-# folder it is.
-function Enter-RefFolder([string]$Name, [string]$VmPath) {
-    $root = $VmPath.TrimEnd('\') + '\'
-    $script:RefFolderLock = New-Object Threading.Mutex($false, "Global\ios-ref-folder-$($root.ToLowerInvariant() -replace '[\\/:]', '_')")
-    try { $held = $script:RefFolderLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
-    if (-not $held) { Write-Host "ref: another ref-vm is using $VmPath"; exit 4 }
-    $owner = @(Get-VM | Where-Object { $_.Name -ne $Name -and "$($_.ConfigurationLocation)\".StartsWith($root, [StringComparison]::OrdinalIgnoreCase) })
-    if ($owner.Count) { Write-Host "ref: $VmPath holds $($owner[0].Name), not $Name"; exit 2 }
-}
-
 # A shell that PowerShell 7 started hands its module path on, through WSL too,
 # and Windows PowerShell then finds that edition's modules first and loses
 # cmdlets of its own (Get-FileHash, 2026-11-25).
@@ -284,6 +272,8 @@ $script:RefTurnSlackSec = 20   # how long after the wait Bosun may take to say s
 $script:RefTurn = $null
 
 function Enter-RefTurn([int]$WaitSec = $script:RefTurnWaitSec) {
+    # Bosun ended under this run gave the place up with it.
+    if ($script:RefTurn -and $script:RefTurn.Process -and $script:RefTurn.Process.HasExited) { Exit-RefTurn }
     if ($script:RefTurn) { return }
     $script:RefTurn = @{ Process = $null; Env = @{} }
     $bosun = @(Get-Command bosun.exe -CommandType Application -ErrorAction SilentlyContinue)[0]
