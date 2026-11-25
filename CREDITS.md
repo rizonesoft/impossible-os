@@ -46,6 +46,14 @@ Redistributed under `resources/fonts/`. All three are SIL Open Font License 1.1,
 
 Selawik is a trademark of Microsoft Corporation in the United States and/or other countries. The OFL Reserved Font Name clause means a modified derivative may not be distributed under the name "Selawik".
 
+## Cursors
+
+Redistributed under `resources/cursors/` (Xcursor files). The set is GNOME's Adwaita cursor theme from [adwaita-icon-theme](https://gitlab.gnome.org/GNOME/adwaita-icon-theme), by the GNOME Project (http://www.gnome.org), dual licensed under LGPL-3.0 or CC BY-SA 3.0 US. Upstream's notice travels with the files as `resources/cursors/COPYING`, copied verbatim. It stays until Impossible Brand's own cursor set replaces it ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md)).
+
+| Cursors | Copyright | License |
+| --- | --- | --- |
+| Adwaita cursor theme | The GNOME Project | LGPL-3.0 OR CC-BY-SA-3.0-US |
+
 ## Original artwork
 
 The colour icon set (`resources/icons/src/`, rendered into `resources/icons/color/<size>/`) and the Impossible OS logo (`resources/brand/logo.svg`) are original work, licensed under GPL-3.0-only with the rest of the repository. Until 2026-09-27 the colour icons were Icons8 assets under a paid license that forbids redistributing them as standalone files; those files are no longer used and are no longer present on `main`.

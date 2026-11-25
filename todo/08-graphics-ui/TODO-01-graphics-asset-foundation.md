@@ -43,18 +43,21 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                              | Depends On | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | §1 Render-target allocator, views, and cached layers                                     | --         |  [ ]   |
-| 💎  |   2   | §2 Clip, transform, and state stack                                                      | §1         |  [ ]   |
-| 💎  |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract                              | §2         |  [ ]   |
-| 💎  |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline                                 | §1, §3     |  [ ]   |
-| 💎  |   5   | §5 Thumbnail, preview, and multi-size asset cache                                        | §4         |  [ ]   |
-| ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k                 | §2, §3, §5 |  [ ]   |
-| 💎  |   7   | §7 SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile              | §3, §4     |  [ ]   |
-| 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation                | §4, §7     |  [ ]   |
-| ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                             | §8         |  [ ]   |
-| ⭐  |  10   | §10 Automatic icon polish and promotion -- rubric, scoring, review sheet, no manual step | §9         |  [ ]   |
+| ⭐  | Order | Deliverable                                                                              | Depends On   | Status |
+| --- | :---: | ---------------------------------------------------------------------------------------- | ------------ | :----: |
+| 💎  |   1   | §1 Render-target allocator, views, and cached layers                                     | --           |  [ ]   |
+| 💎  |   2   | §2 Clip, transform, and state stack                                                      | §1           |  [ ]   |
+| 💎  |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract                              | §2           |  [ ]   |
+| 💎  |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline                                 | §1, §3       |  [ ]   |
+| 💎  |   5   | §5 Thumbnail, preview, and multi-size asset cache                                        | §4           |  [ ]   |
+| ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k                 | §2, §3, §5   |  [ ]   |
+| 💎  |   7   | §7 SVG runtime -- vendored plutovg + plutosvg, clipPath, system SVG profile              | §3, §4       |  [ ]   |
+| 💎  |   8   | §8 Icon engine -- parts, deterministic incremental generation, validation                | §4, §7, §12  |  [ ]   |
+| ⭐  |   9   | §9 Missing icons -- detect, draft-generate, queue for polish                             | §8, §11, §12 |  [ ]   |
+| ⭐  |  10   | §10 Automatic icon polish and promotion -- rubric, scoring, review sheet, no manual step | §9, §12      |  [ ]   |
+| ⭐  |  11   | §11 Icon and cursor contract for Impossible Brand -- generated, drift-checked            | §4           |  [ ]   |
+| ⭐  |  12   | §12 Brand import kind -- explicit resource mappings, upgrade keeps other resources       | --           |  [ ]   |
+| ⭐  |  13   | §13 Switch-over to the brand pack -- reconcile, import, split the icon spec              | §11, §12     |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.
 > ⭐ = exclusive work -- Impossible OS goes beyond both with a simpler and more deterministic foundation.
@@ -203,6 +206,8 @@ Impossible OS is SVG-first: icons, cursors and shell glyphs are drawn from SVG a
 
 > **Spawned-by:** root
 
+Moving to Impossible Brand ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md)): the OS keeps the interface and Impossible Brand builds the art tools. §12 registers the source and marks this section `**Moved:** impossible-brand`, after which its items are kept in Impossible Brand's roadmap; until then this section is not built here, which is why it depends on §12.
+
 **Design:** [`icons.md#the-set`](../../docs/design/icons.md#the-set), [`icons.md#adding-or-changing-an-icon`](../../docs/design/icons.md#adding-or-changing-an-icon)
 
 A host tool that builds the icon set from shared parts, so the set stays consistent (This PC and Network already share one monitor), validates every icon against the system SVG profile (§7), and never loses a hand-polished icon. It replaces the one-off scripts (`scripts/site/gen_recycle_bin_full.py`).
@@ -225,6 +230,8 @@ A host tool that builds the icon set from shared parts, so the set stays consist
 ## 9. Missing Icons -- Detect, Draft-Generate, and Queue for Polish
 
 > **Spawned-by:** root
+
+Moving to Impossible Brand ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md)): the OS keeps the interface and Impossible Brand builds the art tools. §12 registers the source and marks this section `**Moved:** impossible-brand`, after which its items are kept in Impossible Brand's roadmap; until then this section is not built here, which is why it depends on §12.
 
 **Design:** [`icons.md#what-happens-when-an-icon-is-missing`](../../docs/design/icons.md#what-happens-when-an-icon-is-missing), [`icons.md#drafts-awaiting-polish`](../../docs/design/icons.md#drafts-awaiting-polish)
 
@@ -253,6 +260,8 @@ Decided 2026-09-28: when any section, the unattended run included, needs an icon
 
 > **Spawned-by:** root
 
+Moving to Impossible Brand ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md)): the OS keeps the interface and Impossible Brand builds the art tools. §12 registers the source and marks this section `**Moved:** impossible-brand`, after which its items are kept in Impossible Brand's roadmap; until then this section is not built here, which is why it depends on §12.
+
 **Design:** [`icons.md#what-happens-when-an-icon-is-missing`](../../docs/design/icons.md#what-happens-when-an-icon-is-missing), [`icons.md#small-size-rules`](../../docs/design/icons.md#small-size-rules)
 
 Decided 2026-11-14 (owner direction: no manual icon work, and icons are finished to a premium standard): a draft is polished and promoted by the run itself, in the section that needed it. No person has to review, approve or edit an icon; a person may reject one.
@@ -275,6 +284,80 @@ Decided 2026-11-14 (owner direction: no manual icon work, and icons are finished
 - [ ] Commit: `"icons: automatic polish, scoring and promotion of draft icons"`
 
 **Test checkpoint:** `icon-engine score` on the fixture off-palette icon exits 1 naming `palette`; on a passing fixture it exits 0 and `icon-engine drafts` no longer lists it. `python3 scripts/site/build.py --check` passes with the rubric section present.
+
+## 11. Icon and Cursor Contract for Impossible Brand
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#how-are-icons-rendered`](../../docs/design/icons.md#how-are-icons-rendered), [`icons.md#the-set`](../../docs/design/icons.md#the-set)
+
+Impossible Brand draws the art; the OS owns what the art must satisfy ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md#what-is-the-contract-this-repository-validates-against)). This section turns that interface into one generated file, `docs/design/brand-contract.json`, which Impossible Brand copies at a named OS commit (`tools/contract.py pull`) and validates every icon against. It also takes over the icon reference inventory from §9, because the inventory reads OS code and stays here when §9 moves.
+
+- [ ] Make the system SVG profile data in `docs/design/svg-profile.json`, which `icons.md#how-are-icons-rendered` cites instead of restating it
+  - Lists the elements and attributes the renderer accepts: paths and basic shapes, fills, strokes, linear and radial gradients, opacity, transforms, `defs`, `use`, `symbol`, `clipPath`
+  - Outside it: masks, filters, text and CSS
+- [ ] Icon reference inventory (from §9): a host scanner lists every icon name a build can ask for, with its provider
+  - Sources: `system_icon_t` in `include/icon_store.h`, the irespack accepted list, the kernel name table, literal `icon_get_by_name("...")` arguments under `src/` and `user/`, and EIF app-icon resources
+  - Provider per name: `colour` (an IRES colour icon, Impossible Brand's work) or `glyph` (a Fluent font glyph, never drafted)
+- [ ] `scripts/brand_contract.py` writes `docs/design/brand-contract.json`, deterministic with keys sorted
+  - `profile` from `svg-profile.json`, `tokens` (the theme token names in `docs/design/tokens.json`) and `sizes` (the sizes `irespack` packs)
+  - `icons` (name, provider, used for) and `cursors` (the `CURSOR_SRCS` names in the `Makefile` and the names `include/cursor.h` exposes)
+- [ ] `scripts/brand_contract.py --check` fails when the committed contract differs from a fresh generation, naming the first difference; wired into lint as part of Check 30 so a stale contract fails the commit
+- [ ] Unit tests: generation is byte-identical across two runs; adding `icon_get_by_name("no_such_icon")` to a fixture adds a `colour` name; a Fluent-only name is reported as `glyph`; a stale committed contract fails `--check`
+- [ ] Commit: `"brand: generated icon and cursor contract for Impossible Brand"`
+
+**Test checkpoint:** `python3 scripts/brand_contract.py --check` exits 0 on the committed tree; after adding a fixture `icon_get_by_name("printer")` it exits 1 naming `printer` as a `colour` icon. Test on: WSL2 dev host.
+
+## 12. Brand Import Kind -- Explicit Resource Mappings
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#the-set`](../../docs/design/icons.md#the-set)
+
+Impossible Brand publishes the art as a pack pinned by commit ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md#what-is-the-brand-pack)). `scripts/imports.py` today accepts one destination folder under `src/` per source and replaces it whole, so it cannot bring art into `resources/` without putting fonts and boot files at risk. This section adds a `brand` kind whose destinations are explicit, non-overlapping paths under `resources/`, and registers Impossible Brand as a source.
+
+- [ ] `brand` kind in `scripts/imports.py` and `todo/imports.json`: a source of this kind carries `paths`, an object mapping a top-level path of the pack to one destination under `resources/`
+  - The mappings: `icons/src` to `resources/icons/src`, `icons/color` to `resources/icons/color`, `cursors` to `resources/cursors`, `identity/png` to `resources/logo`, `identity/logo.svg`, the wordmarks, `identity/src` and `identity/shortcuts` to `resources/brand`, `wallpapers` to `resources/backgrounds`
+  - Check 42 refuses a destination outside `resources/`, two mappings that overlap, a destination that holds `resources/fonts` or `resources/boot`, and a copy whose tree differs from the pinned one at any mapped destination
+  - `--pull impossible-brand` replaces only the mapped destinations; every other file under `resources/` keeps its bytes
+- [ ] Register `impossible-brand` (repository `ImpossibleBrand`, kind `brand`) with this section as its import section, carrying `**Import:** impossible-brand`
+- [ ] Mark §8, §9 and §10 `**Moved:** impossible-brand` with their rows under `moved` in `todo/imports.json`
+  - As the app sections were closed behind their import on 2026-11-23; their items are then kept in Impossible Brand's roadmap
+  - The inventory item of §9 stays here with §11
+- [ ] Unit tests for the brand kind: upgrade isolation, refused mappings, and a build that still packs
+  - An upgrade fixture with a changed icon and a changed cursor leaves `resources/fonts`, `resources/boot` and `resources/system` byte-identical
+  - An overlapping mapping and a mapping into `resources/fonts` are each refused; after the pull the build still produces `icons.ires` and the boot logo PNGs
+- [ ] Commit: `"imports: brand kind with explicit resource mappings, Impossible Brand registered"`
+
+**Test checkpoint:** `python3 scripts/imports.py --check` exits 0 with `impossible-brand` registered; the upgrade fixture test passes and fails if `--pull` is changed to replace `resources/` whole. Test on: WSL2 dev host.
+
+## 13. Switch-over to the Brand Pack
+
+> **Spawned-by:** root
+
+**Design:** [`icons.md#what-happens-when-an-icon-is-missing`](../../docs/design/icons.md#what-happens-when-an-icon-is-missing), [`icons.md#adding-or-changing-an-icon`](../../docs/design/icons.md#adding-or-changing-an-icon)
+
+The art was seeded into Impossible Brand from OS commit `75c468c32` on 2026-11-25 ([brand split design](https://github.com/rizonesoft/ImpossibleBrand/blob/main/docs/specs/2026-11-25-brand-split-design.md#in-what-order), phase 4). This section makes the pinned pack the only source of the OS's art, keeps only the interface half of the icon spec here, and routes a missing icon through Impossible Brand's pinned engine instead of drawing it in this repository.
+
+- [ ] Three-way reconciliation of every art path against the seed (`75c468c32`), recording the reconciled OS commit in `todo/imports.json`
+  - Each OS change since the seed, including deletions and renames, is carried into Impossible Brand without overwriting work done there
+  - If the OS art changes again before the pull, reconcile again first
+- [ ] Pull the pack (`--pull impossible-brand`, §12) so the mapped destinations become the imported copies
+  - A hand edit of OS art then fails Check 42 and is made in Impossible Brand instead
+  - `resources/logo.svg` and `gh-pages/logo.svg` are derived from the imported logo by the site build, never copied by hand
+- [ ] Split `docs/design/icons.md` into the interface half, which stays, and a link to Impossible Brand's `docs/icons.md` for the art
+  - Stays: names, provider, the SVG profile, tokens, sizes, rendering, and how a name is wired into the shell
+  - Goes to Impossible Brand: grid, palette, light, small-size rules and the drawings
+- [ ] Missing-icon flow through the pinned Impossible Brand engine, drafting into `resources/brand-drafts/` and requesting in `docs/design/brand-requests.json`
+  - The §11 inventory finds a `colour` name the pinned pack lacks; the engine from the pinned commit drafts it from existing parts only, and the build packs it like any icon
+  - The request records name, kind, what, metaphor, needed by and the draft digest
+  - Sync on a pin move: an unmodified draft the pack now holds as finished is removed with its request in the same commit; an edited draft is kept and reported, never deleted
+  - The check fails a draft that duplicates a finished pack icon and still matches its digest
+- [ ] Update the `CLAUDE.md` paragraph on original artwork and `.claude/skills/` icon guidance to point at Impossible Brand
+- [ ] Unit tests: a fixture missing `printer` produces a validated draft and one request; a pin move that brings `printer` removes the unmodified draft and its request; an edited draft survives the same move
+- [ ] Commit: `"brand: the OS art comes from the Impossible Brand pack"`
+
+**Test checkpoint:** after the pull, `bash scripts/build.sh` ends `=== BUILD OK ===` and the desktop shows the same icons and cursors as before at 100% and 200%; `python3 scripts/imports.py --check` and `python3 scripts/site/build.py --check` exit 0. Test on: WSL2 dev host, QEMU TCG.
 
 ## OS Comparison
 

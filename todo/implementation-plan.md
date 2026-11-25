@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **999 of 2815 sections complete (35%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **999 of 2818 sections complete (35%).** 124 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2093,9 +2093,12 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [x]  | `D07 T10 §10` | PDF Forms Stub                                                          | none     |     1 |
 | [ ]  | `D08 T01 §6`  | Recorded Scene Lists and Deterministic Re-render                        | none     |     6 |
 | [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none     |     8 |
+| [ ]  | `D08 T01 §11` | Icon and Cursor Contract for Impossible Brand                           | none     |     6 |
+| [ ]  | `D08 T01 §12` | Brand Import Kind -- Explicit Resource Mappings                         | none     |     5 |
 | [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none     |    10 |
 | [ ]  | `D08 T01 §9`  | Missing Icons -- Detect, Draft-Generate, and Queue for Polish           | none     |     9 |
 | [ ]  | `D08 T01 §10` | Automatic Icon Polish and Promotion                                     | none     |    10 |
+| [ ]  | `D08 T01 §13` | Switch-over to the Brand Pack                                           | none     |     7 |
 | [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none     |    10 |
 | [ ]  | `D08 T02 §2`  | Fallback Chains, Emoji, and Color-Font Support                          | none     |     7 |
 | [ ]  | `D08 T02 §3`  | Shaping, Bidi, Line-Break, and Paragraph Layout Engine                  | none     |     7 |
