@@ -10,6 +10,7 @@
 #include "kernel/boot_progress.h"   /* boot_get_elapsed_ms */
 #include "kernel/panic.h"
 #include "kernel/klog.h"
+#include "kernel/mm/memmap.h"     /* mm_hhdm_to_phys */
 #include "kernel/time_iso.h"
 #include "kernel/kchecksum.h"   /* kcrc32 -- the panic record's checksum */
 #include "kernel/cache.h"       /* cross-boot durability primitives */
@@ -1118,6 +1119,24 @@ static void test_klog_crash_region_publishes_magic_last(void)
     TEST_ASSERT_EQ(hdr->entry_count, count, "header count matches the return");
     TEST_ASSERT_EQ(hdr->crc32, kcrc32(dst, count * sizeof(klog_crash_entry_t)),
                    "published CRC covers exactly the serialized entries");
+
+    /* The region keeps the newest entries when it is smaller than the ring, so the line
+     * just logged is in it; and the live region is written through the direct map, which
+     * every process has. */
+    static const char marker[] = "crash region newest-entry marker";
+    uint32_t seen = 0;
+    klog_set_level("TESTCRASH", LOG_DEBUG);         /* the test level drops the line */
+    klog(LOG_INFO, "TESTCRASH", "%s", marker);
+    count = klog_crash_serialize_region(s_klog_fixture, sizeof s_klog_fixture);
+    klog_remove_override("TESTCRASH");
+    TEST_ASSERT_EQ(count, max_entries, "the ring holds more than the region");
+    for (uint32_t i = 0; i < count; i++)
+        seen += memcmp(dst[i].message, marker, sizeof marker) == 0;
+    TEST_ASSERT_EQ(seen, 1u, "the newest entry is kept");
+    TEST_ASSERT_EQ(klog_ring_newest(800, 799), 1u, "a ring that has not wrapped drops its oldest");
+    TEST_ASSERT_EQ(klog_ring_newest(300, 799), 501u, "a wrapped ring too");
+    TEST_ASSERT_EQ(klog_ring_newest(450, 450), 0u, "all of it when it fits");
+    TEST_ASSERT(mm_hhdm_to_phys(klog_test_crash_region()) != 0, "the direct map");
 
     /* A region too small to hold even a header is refused outright rather
      * than publishing a magic over bytes it never wrote. */

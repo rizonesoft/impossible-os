@@ -1,6 +1,6 @@
 {
   "total_suites": 3772,
-  "total_assertions": 17786,
+  "total_assertions": 17796,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 69},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -16,7 +16,7 @@
     {"file": "test_boot_confirm.c", "suites": 4, "assertions": 36},
     {"file": "test_boot_decision.c", "suites": 49, "assertions": 103},
     {"file": "test_boot_device.c", "suites": 18, "assertions": 45},
-    {"file": "test_boot_diag.c", "suites": 17, "assertions": 253},
+    {"file": "test_boot_diag.c", "suites": 17, "assertions": 259},
     {"file": "test_boot_entry_kind.c", "suites": 32, "assertions": 46},
     {"file": "test_boot_entry_parser.c", "suites": 81, "assertions": 252},
     {"file": "test_boot_health.c", "suites": 5, "assertions": 15},
@@ -83,7 +83,7 @@
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 97},
     {"file": "test_pm_callback.c", "suites": 9, "assertions": 121},
     {"file": "test_pm_idle.c", "suites": 17, "assertions": 50},
-    {"file": "test_pmm.c", "suites": 20, "assertions": 81},
+    {"file": "test_pmm.c", "suites": 20, "assertions": 85},
     {"file": "test_proc_ext.c", "suites": 83, "assertions": 191},
     {"file": "test_quota.c", "suites": 80, "assertions": 566},
     {"file": "test_quota_config.c", "suites": 20, "assertions": 95},

@@ -578,6 +578,15 @@ _Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
 
+/* The ring slot where the newest `count` entries begin, `head` being the next to be
+ * written. Pure. */
+uint32_t klog_ring_newest(uint32_t head, uint32_t count);
+
+#ifdef KERNEL_TESTS
+/* The address the live crash region is written at. */
+const void *klog_test_crash_region(void);
+#endif
+
 /* Why the `bytes` at `log` are not a whole crash log, or NULL when they are one. Pure. */
 const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes);
 

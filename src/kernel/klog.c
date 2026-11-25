@@ -786,7 +786,7 @@ int klog_disk_enable(void)
  * to a caller sizing a region. */
 
 /* Reserved physical memory region for crash log persistence */
-static uint8_t *s_crash_region;       /* phys addr, identity-mapped */
+static uint8_t *s_crash_region;       /* through the direct map: a panic runs on any CR3 */
 static uint32_t s_crash_region_size;  /* KLOG_CRASH_PAGES * 4096 */
 
 /* Recovered entries from a previous crash, held until the disk write.
@@ -862,6 +862,11 @@ static void str_copy_n(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
+uint32_t klog_ring_newest(uint32_t head, uint32_t count)
+{
+    return (head + KLOG_RING_SIZE - count) % KLOG_RING_SIZE;
+}
+
 uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 {
     /* Called from panic_screen() via klog_crash_persist() -- no kmalloc, no
@@ -912,10 +917,9 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
      * region does not have and which is parked in TODO-10 with an owner. */
     hdr->magic = 0u;
 
-    /* Serialize ring entries (oldest first) */
-    uint32_t start = 0;
-    if (klog_ring_count >= KLOG_RING_SIZE)
-        start = klog_ring_head;  /* ring wrapped -- oldest is at head */
+    /* The newest `count` entries, oldest of them first: what the crash came after. */
+    uint32_t head = klog_ring_head;
+    uint32_t start = klog_ring_newest(head, count);
 
     for (uint32_t i = 0; i < count; i++) {
         uint32_t idx = (start + i) % KLOG_RING_SIZE;
@@ -934,7 +938,7 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 
     /* Write header (every field except the magic, which publishes below) */
     hdr->entry_count    = count;
-    hdr->ring_head      = klog_ring_head;
+    hdr->ring_head      = head;
     /* 10 ms units from the coarse cached interrupt time -- lock-free (no
      * seqlock/clocksource read), required because klog_crash_persist() runs in
      * panic context where a seqlock left odd by the faulting path (or the PIT
@@ -963,6 +967,13 @@ uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 
     return count;
 }
+
+#ifdef KERNEL_TESTS
+const void *klog_test_crash_region(void)
+{
+    return s_crash_region;
+}
+#endif
 
 void klog_crash_persist(void)
 {
@@ -1036,6 +1047,19 @@ static klog_crash_entry_t klog_crash_entry_ended(const klog_crash_entry_t *from)
     return e;
 }
 
+/* Delete the pointer to the crash region. */
+static void klog_crash_unpublish(void)
+{
+    uint64_t st = uefi_set_variable(&s_crash_guid, s_crash_varname,
+                                    CRASH_NVRAM_ATTRS, 0, (const void *)0);
+
+    if (st != 0 && st != UEFI_NOT_FOUND)
+        klog(LOG_WARN, "boot",
+             "crash recovery: deleting the NVRAM pointer failed (status %p); "
+             "a later boot may follow it again",
+             st);
+}
+
 void klog_crash_recover(void)
 {
     s_recovered = (const klog_crash_entry_t *)0;
@@ -1043,17 +1067,9 @@ void klog_crash_recover(void)
 
     POST16(POST16_CRASHLOG);
 
-    /* Delete the pointer whatever became of the log: it must not name memory this boot
-     * has since reused if a crash comes before this boot publishes its own. */
-    {
-        uint64_t st = uefi_set_variable(&s_crash_guid, s_crash_varname,
-                                        CRASH_NVRAM_ATTRS, 0, (const void *)0);
-        if (st != 0 && st != UEFI_NOT_FOUND)
-            klog(LOG_WARN, "boot",
-                 "crash recovery: deleting the NVRAM pointer failed (status %p); "
-                 "a later boot may follow it again",
-                 st);
-    }
+    /* A log that was handed over is replayed once, even when its replay is what crashes. */
+    if (g_boot_info.crash_log_base != 0)
+        klog_crash_unpublish();
 
     /* Step 1: the previous boot's log, when the loader kept one */
     POST16(POST16_CRASHLOG_CHECK);
@@ -1085,19 +1101,20 @@ void klog_crash_recover(void)
     }
 
     /* Step 2: Allocate fresh crash persistence region for THIS boot */
-    uint64_t phys = pmm_alloc_contiguous_from(
-        pmm_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap, g_boot_info.mmap_count),
-        KLOG_CRASH_PAGES);
+    uint64_t phys = pmm_alloc_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap,
+                                            g_boot_info.mmap_count, KLOG_CRASH_PAGES);
 
-    if (!phys)
-        phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
-    if (!phys) {
-        serial_write("[CRASH] Failed to allocate crash log region\n");
+    if (!phys || !vmm_hhdm_maps(phys, KLOG_CRASH_PAGES * 4096u)) {
+        klog(LOG_WARN, "boot", "crash recovery: no memory that lasts to the next boot; "
+             "a crash in this one leaves no log");
+        if (phys)
+            pmm_free_contiguous(phys, KLOG_CRASH_PAGES);
+        klog_crash_unpublish();     /* a pointer an earlier boot left */
         POST16(POST16_CRASHLOG_ALLOC);
         POST16(POST16_CRASHLOG_DONE);
         return;
     }
-    s_crash_region = (uint8_t *)(uintptr_t)phys;
+    s_crash_region = mm_phys_to_hhdm(phys);
     s_crash_region_size = KLOG_CRASH_PAGES * 4096;
 
     /* Zero the new region */
@@ -1121,6 +1138,8 @@ void klog_crash_recover(void)
                  "crash recovery: publishing this boot's region %p failed (status %p); "
                  "the next boot cannot recover a crash from this one",
                  phys, st);
+        if (st != 0)
+            klog_crash_unpublish();     /* nor may it follow an earlier boot's */
     }
 
     POST16(POST16_CRASHLOG_ALLOC);

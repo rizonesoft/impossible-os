@@ -131,22 +131,42 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     return best;
 }
 
-uint64_t pmm_firmware_free(const struct boot_mmap_entry *map, uint32_t count)
+/* The conventional run that holds or follows entry *next, clipped to the cap; *next is
+ * then the first entry after it. 0 when there is none. */
+static int pmm_conventional_run(const struct boot_mmap_entry *map, uint32_t entries,
+                                uint32_t *next, struct boot_span *run)
 {
-    struct boot_span run = { 0, 0 }, best = { 0, 0 };
-
-    for (uint32_t i = 0; i < count; i++) {
-        if (map[i].uefi_memory_type != UEFI_MMAP_CONVENTIONAL || map[i].base_addr >= PMM_PHYS_ADDR_CAP)
+    run->bytes = 0;
+    for (; *next < entries; (*next)++) {
+        const struct boot_mmap_entry *e = &map[*next];
+        struct boot_span entry = { e->base_addr, e->length };
+        if (e->uefi_memory_type != UEFI_MMAP_CONVENTIONAL || e->length == 0 ||
+            e->base_addr >= PMM_PHYS_ADDR_CAP)
             continue;
-        struct boot_span entry = { map[i].base_addr, map[i].length };
         if (entry.bytes > PMM_PHYS_ADDR_CAP - entry.base)
             entry.bytes = PMM_PHYS_ADDR_CAP - entry.base;
-        if (!boot_span_join(&run, entry))
-            run = entry;
+        if (run->bytes == 0)
+            *run = entry;
+        else if (!boot_span_join(run, entry))
+            break;
+    }
+    return run->bytes != 0;
+}
+
+uintptr_t pmm_alloc_firmware_free(const struct boot_mmap_entry *map, uint32_t entries, uint64_t count)
+{
+    struct boot_span run, best = { 0, 0 };
+    uintptr_t at;
+    uint32_t next = 0;
+
+    while (pmm_conventional_run(map, entries, &next, &run)) {
         if (run.bytes > best.bytes)
             best = run;
     }
-    return (best.base + best.bytes / 4) & ~(uint64_t)(PMM_FRAME_SIZE - 1);
+    at = pmm_alloc_contiguous_in(best.base + best.bytes / 4, best.base + best.bytes, count);
+    for (next = 0; at == 0 && pmm_conventional_run(map, entries, &next, &run);)
+        at = pmm_alloc_contiguous_in(run.base, run.base + run.bytes, count);
+    return at;
 }
 
 uint32_t pmm_bitmap_keep(struct boot_span *keep)
@@ -679,12 +699,13 @@ uintptr_t pmm_alloc_contiguous(uint64_t count)
      * fault-inject check -- avoids double-decrementing the countdown
      * for a single-frame call routed through _contiguous. */
     if (count == 1) return pmm_alloc_frame();
-    return pmm_alloc_contiguous_from(0, count);
+    return pmm_alloc_contiguous_in(0, PMM_PHYS_ADDR_CAP, count);
 }
 
-uintptr_t pmm_alloc_contiguous_from(uintptr_t from, uint64_t count)
+uintptr_t pmm_alloc_contiguous_in(uint64_t lo, uint64_t hi, uint64_t count)
 {
-    uint64_t run_start = from / PMM_FRAME_SIZE + (from % PMM_FRAME_SIZE != 0);
+    uint64_t run_start = lo / PMM_FRAME_SIZE + (lo % PMM_FRAME_SIZE != 0);
+    uint64_t end = hi / PMM_FRAME_SIZE < total_frames ? hi / PMM_FRAME_SIZE : total_frames;
     uint64_t run_len = 0;
     uint64_t f;
 
@@ -695,7 +716,7 @@ uintptr_t pmm_alloc_contiguous_from(uintptr_t from, uint64_t count)
         return 0;
 #endif
 
-    for (f = run_start; f < total_frames; f++) {
+    for (f = run_start; f < end; f++) {
         if (bitmap_test(f)) {
             /* Used frame -- reset run */
             run_len = 0;

@@ -37,11 +37,12 @@ uint32_t pmm_bitmap_keep(struct boot_span *keep);
 uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
                           uint64_t bytes, const struct boot_span *keep, uint32_t nkeep);
 
-/* An address a quarter of the way into the longest run of conventional memory below
- * PMM_PHYS_ADDR_CAP, or 0 when there is none. Firmware did not need it in this boot, so it
- * is where a record for the next boot lasts: boot-services memory is free here too, and
- * the next firmware writes it before anything of ours runs. Pure. */
-uint64_t pmm_firmware_free(const struct boot_mmap_entry *map, uint32_t count);
+/* `count` contiguous frames of memory the map calls conventional, below PMM_PHYS_ADDR_CAP,
+ * or 0 when no conventional run has them free. Firmware did not need this memory in this
+ * boot, so it is where a record for the next boot lasts: boot-services memory is free here
+ * too, and the next firmware writes it before anything of ours runs. The longest run is
+ * tried first, a quarter of the way in, clear of both ends, where firmware allocates. */
+uintptr_t pmm_alloc_firmware_free(const struct boot_mmap_entry *map, uint32_t entries, uint64_t count);
 
 #ifdef KERNEL_TESTS
 /* The address the bitmap is read and written at. */
@@ -54,8 +55,8 @@ uintptr_t pmm_alloc_frame(void);
 /* Allocate N contiguous 4 KiB frames. Returns base physical address, or 0 on failure */
 uintptr_t pmm_alloc_contiguous(uint64_t count);
 
-/* The same, at the first such run at or above `from`. */
-uintptr_t pmm_alloc_contiguous_from(uintptr_t from, uint64_t count);
+/* The same, all of it inside [lo, hi). */
+uintptr_t pmm_alloc_contiguous_in(uint64_t lo, uint64_t hi, uint64_t count);
 
 /* Free a previously allocated frame */
 void pmm_free_frame(uintptr_t addr);

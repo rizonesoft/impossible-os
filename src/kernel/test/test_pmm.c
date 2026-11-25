@@ -88,35 +88,54 @@ static void test_pmm_bitmap_place(void)
 /* A record for the next boot goes where firmware had nothing in this one. */
 static void test_pmm_firmware_free(void)
 {
-    const uint64_t mib = 1024 * 1024;
-    struct boot_mmap_entry map[] = {
-        { 1 * mib, 7 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
-        { 9 * mib, 100 * mib, 4, UEFI_MMAP_BOOT_SERVICES_DATA, 0 },    /* free later, not here */
-        { 200 * mib, 8 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },          /* two entries, one run */
-        { 208 * mib, 8 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
-        { 300 * mib, 12 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },
-        { 0x100000000ULL, 1024 * mib, 1, UEFI_MMAP_CONVENTIONAL, 0 },  /* above the cap */
-    };
+    const uint64_t kib4 = PMM_FRAME_SIZE;
+    struct boot_mmap_entry map[4];
+    uintptr_t a = pmm_alloc_firmware_free((const struct boot_mmap_entry *)g_boot_info.mmap,
+                                          g_boot_info.mmap_count, 8), b;
+    uint32_t i;
 
-    TEST_ASSERT_EQ(pmm_firmware_free(map, 6), 204 * mib, "a quarter into the longest run");
-    TEST_ASSERT_EQ(pmm_firmware_free(map, 2), 1 * mib + 7 * mib / 4, "never boot-services memory");
-    TEST_ASSERT_EQ(pmm_firmware_free(&map[1], 1), 0ULL, "none");
-    map[5].base_addr -= 16 * mib + 4096;
-    TEST_ASSERT_EQ(pmm_firmware_free(map, 6), 0x100000000ULL - 12 * mib - 4096,
-                   "a run across the cap ends at it");
+    TEST_ASSERT(a != 0, "eight frames of this machine's");
+    for (i = 0; i < g_boot_info.mmap_count; i++) {
+        if (a >= g_boot_info.mmap[i].base_addr &&
+            a + 8 * kib4 <= g_boot_info.mmap[i].base_addr + g_boot_info.mmap[i].length)
+            break;
+    }
+    TEST_ASSERT(i < g_boot_info.mmap_count, "inside one entry");
+    if (i < g_boot_info.mmap_count)
+        TEST_ASSERT_EQ(g_boot_info.mmap[i].uefi_memory_type, UEFI_MMAP_CONVENTIONAL, "conventional");
+    if (a == 0)
+        return;
+    pmm_free_contiguous(a, 8);
 
-    /* An allocation from an address is the first free run at or above it. */
-    uintptr_t a = pmm_alloc_contiguous(3), b, c;
-    TEST_ASSERT(a != 0, "three frames");
+    /* The kernel has all eight free; which of them firmware had is what differs. */
+    map[0] = (struct boot_mmap_entry){ a, 3 * kib4, 1, UEFI_MMAP_CONVENTIONAL, 0 };
+    map[1] = (struct boot_mmap_entry){ a + 3 * kib4, kib4, 1, UEFI_MMAP_BOOT_SERVICES_DATA, 0 };
+    map[2] = (struct boot_mmap_entry){ a + 4 * kib4, 4 * kib4, 1, UEFI_MMAP_BOOT_SERVICES_DATA, 0 };
+    TEST_ASSERT_EQ(pmm_alloc_firmware_free(map, 3, 4), 0ULL, "never into boot-services memory");
+    TEST_ASSERT_EQ(pmm_alloc_firmware_free(&map[1], 2, 1), 0ULL, "no conventional memory");
+
+    map[2].uefi_memory_type = UEFI_MMAP_CONVENTIONAL;
+    b = pmm_alloc_firmware_free(map, 3, 4);
+    TEST_ASSERT_EQ(b, a + 4 * kib4, "the run that holds it");
+    b = pmm_alloc_firmware_free(map, 3, 3);
+    TEST_ASSERT_EQ(b, a, "then one that still has room");
     pmm_free_contiguous(a, 3);
-    b = pmm_alloc_contiguous_from(a + 1, 2);
-    TEST_ASSERT(b >= a + PMM_FRAME_SIZE, "above, and on a frame");
-    c = pmm_alloc_contiguous_from(b, 2);
-    TEST_ASSERT(c >= b + 2 * PMM_FRAME_SIZE, "not what is taken");
-    pmm_free_contiguous(b, 2);
-    pmm_free_contiguous(c, 2);
-    TEST_ASSERT_EQ(pmm_alloc_contiguous_from(PMM_PHYS_ADDR_CAP, 2), 0ULL, "nothing up there");
-    TEST_ASSERT_EQ(pmm_alloc_contiguous_from(a, 0), 0ULL, "no frames");
+    pmm_free_contiguous(a + 4 * kib4, 4);
+
+    map[1].uefi_memory_type = UEFI_MMAP_CONVENTIONAL;     /* one run of eight, in three entries */
+    b = pmm_alloc_firmware_free(map, 3, 4);
+    TEST_ASSERT_EQ(b, a + 2 * kib4, "a quarter of the way in");
+    pmm_free_contiguous(b, 4);
+    b = pmm_alloc_firmware_free(map, 3, 7);
+    TEST_ASSERT_EQ(b, a, "or from its start when the rest is too short");
+    pmm_free_contiguous(b, 7);
+
+    map[0] = (struct boot_mmap_entry){ PMM_PHYS_ADDR_CAP, 64 * kib4, 1, UEFI_MMAP_CONVENTIONAL, 0 };
+    TEST_ASSERT_EQ(pmm_alloc_firmware_free(map, 1, 2), 0ULL, "nothing above the cap");
+    TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a + 1, a + 2 * kib4, 1), a + kib4, "whole frames only");
+    pmm_free_frame(a + kib4);
+    TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a, a + 8 * kib4 - 1, 8), 0ULL, "none that ends outside");
+    TEST_ASSERT_EQ(pmm_alloc_contiguous_in(a, a + 8 * kib4, 0), 0ULL, "no frames");
 }
 
 /* A low mapping may stand where the bitmap's, or a handed-out frame's, identity

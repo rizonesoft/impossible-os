@@ -2034,7 +2034,9 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] The previous boot's crash log survives the boot that reads it (`include/boot/crash_log.h`), and the firmware before it
   - Redesigned after the gap came back: the log lay in free memory while the loader and the kernel allocated around it, so each placement that was taught to avoid it left another that was not. The loader now copies a log that is free memory, whole and CRC-clean into its own image before it allocates anything but the fixed panic page, and hands the copy over in `boot_info` (`crash_log_base`).
   - It is not a payload: a payload's slot, its share of the byte budget and its pages each competed with something the boot needs (wave 28). The copy allocates nothing, so a log, whole or damaged, changes no other allocation.
-  - The region lies a quarter into the longest run that was free when this boot's firmware handed over (`pmm_firmware_free`). First-fit put it at 0xc01000, in boot-services memory that OVMF writes again at every reset, so no log of a real crash ever came back.
+  - The region lies wholly in memory that was free when this boot's firmware handed over, the longest run first (`pmm_alloc_firmware_free`), and is written through the direct map, because a panic runs on any process's page tables.
+  - A region smaller than the ring keeps the newest entries (`klog_ring_newest`); it used to keep the oldest.
+  - First-fit put it at 0xc01000, in boot-services memory that OVMF writes again at every reset, so no log of a real crash ever came back.
   - The three double-panic legs reset a crashed guest and require its log back (450 entries measured).
   - Nothing is read that the memory map does not call free, so a stale pointer reaches no device; a refusal is named in the boot log (`none kept from`).
   - The kernel reads only the reserved copy (`klog_crash_previous`, `klog_crash_log_fault`, `test_boot_reserved_crash_log`), only where the direct map has all of it (`vmm_hhdm_maps`), and reads the entries where they are; claiming the old run, sparing it in the bitmap, reading the pointer again and the second 128 KiB copy are gone.
