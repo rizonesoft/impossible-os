@@ -364,6 +364,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 /* 9u is BOOT_PAYLOAD_WARM_UPDATE_STATE, defined with the rest of the
  * warm-update surface further down this header. */
 #define BOOT_PAYLOAD_HEADLESS_AUTHZ    10u
+#define BOOT_PAYLOAD_CRASH_LOG         11u
 
 /* BOOT_PAYLOAD_FLAG_* mirror */
 #define BOOT_PAYLOAD_FLAG_VALID        (1u << 0)

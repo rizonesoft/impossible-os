@@ -5022,8 +5022,8 @@ if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >
     fi
 fi
 # The matrix's orchestration, run against stub build and smoke scripts that only
-# record their settings: the default run is 31 test-smoke.sh boots (the
-# crashptr guard, runtime, buffer and bitmap legs fail without booting, as the stub
+# record their settings: the default run is 33 test-smoke.sh boots (the
+# crashptr runtime, buffer and bitmap legs fail without booting, as the stub
 # writes no serial log for them to read an address from), and each engine's clean-
 # shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
 # The control removes the second boot and must fail the same assertion.
@@ -5047,11 +5047,11 @@ _sm_got=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh")
 _sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
 grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
 _sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
-_sm_want="31 2 26 512M:kvm 512M:tcg 96M:tcg wrong"; _sm_want_tcg="26 1 0 512M:tcg 96M:tcg wrong"
+_sm_want="33 2 28 512M:kvm 512M:tcg 96M:tcg wrong"; _sm_want_tcg="28 1 0 512M:tcg 96M:tcg wrong"
 _sm_tcg=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" tcg:2 1 /nonexistent)
 _sm_nokvm=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh" "" "" /nonexistent)
 if [ "$_sm_got" = "$_sm_want" ] && [ "$_sm_ctl" != "$_sm_want" ] && [ "$_sm_tcg" = "$_sm_want_tcg" ] && [ "$_sm_nokvm" = "0 0 0 " ]; then
-    t_pass "smoke_matrix_orchestration  31 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
+    t_pass "smoke_matrix_orchestration  33 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
 else
     t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '$_sm_want', and '$_sm_want_tcg' with SMOKE_FORCE_TCG=1 and tcg:2), control '$_sm_ctl', tcg:2 '$_sm_tcg', without KVM '$_sm_nokvm' (want no boot)"
 fi

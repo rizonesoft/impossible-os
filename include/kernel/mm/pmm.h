@@ -28,7 +28,7 @@ int pmm_map_ordered(const struct boot_mmap_entry *map, uint32_t count);
 
 /* What the frame bitmap is clear of, into `keep` (PMM_BITMAP_KEEP_MAX): the image, the
  * user window and every boot_reserved entry. Returns how many. */
-#define PMM_BITMAP_KEEP_MAX (2 + BOOT_RESERVED_MAX + 1)     /* and one range to spare */
+#define PMM_BITMAP_KEEP_MAX (2 + BOOT_RESERVED_MAX)
 struct boot_span;
 uint32_t pmm_bitmap_keep(struct boot_span *keep);
 
@@ -36,10 +36,6 @@ uint32_t pmm_bitmap_keep(struct boot_span *keep);
  * PMM_PHYS_ADDR_CAP clear of `keep`, or 0. Pure. */
 uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
                           uint64_t bytes, const struct boot_span *keep, uint32_t nkeep);
-
-/* The same, off `spare` as well while any placement is; `keep` has room for it. Pure. */
-uint64_t pmm_bitmap_place_sparing(const struct boot_mmap_entry *map, uint32_t count, uint64_t bytes,
-                                  struct boot_span *keep, uint32_t nkeep, struct boot_span spare);
 
 #ifdef KERNEL_TESTS
 /* The address the bitmap is read and written at. */

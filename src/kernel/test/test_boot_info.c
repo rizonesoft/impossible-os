@@ -1427,7 +1427,7 @@ _Static_assert(BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX) > 0,
  * and the UEFI mirror declare the same constants differently, and it asks each
  * includer to pin its own side. `bootx64.c` pins the mirror; these pin the
  * kernel. Without them `include/kernel/boot_info.h` could renumber either
- * enumerator and still build, leaving the loader publishing 7 and 10 while
+ * enumerator and still build, leaving the loader publishing 7, 10 and 11 while
  * kernel consumers searched for the drifted value. The generated ABI manifest
  * does not cover enum VALUES -- that is section 26's deferred surface -- so a
  * compile-time pin on each side is the guard that exists today. */
@@ -1435,6 +1435,8 @@ _Static_assert(BOOT_PAYLOAD_RANDOM_SEED == 7u,
                "implicit-payload list literal 7 must stay BOOT_PAYLOAD_RANDOM_SEED");
 _Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ == 10u,
                "implicit-payload list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
+_Static_assert(BOOT_PAYLOAD_CRASH_LOG == 11u,
+               "implicit-payload list literal 11 must stay BOOT_PAYLOAD_CRASH_LOG");
 
 /* Table-driven so the whole matrix costs one loop rather than one call site and
  * one message string per case. The kernel test image sits within a page of the
@@ -1449,6 +1451,7 @@ static void test_implicit_reservation_covers_every_publisher(void)
     static const struct implicit_index_case cases[] = {
         { BOOT_PAYLOAD_RANDOM_SEED,     0, "seed"    },
         { BOOT_PAYLOAD_HEADLESS_AUTHZ,  1, "authz"   },
+        { BOOT_PAYLOAD_CRASH_LOG,       2, "crash log" },
         /* boot.conf payloads are bounded by staging, not by the reservation. */
         { BOOT_PAYLOAD_MODULE,         -1, "module"  },
         { BOOT_PAYLOAD_INITRD,         -1, "initrd"  },
@@ -1465,7 +1468,7 @@ static void test_implicit_reservation_covers_every_publisher(void)
      * boundary. Reserving fewer slots than publishers IS the bug. */
     TEST_ASSERT_EQ((int)(BOOT_PAYLOAD_MAX - BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX)),
                    (int)BOOT_IMPLICIT_PAYLOAD_COUNT, "reserved==pub");
-    TEST_ASSERT_EQ((int)BOOT_IMPLICIT_PAYLOAD_COUNT, 2, "count 2");
+    TEST_ASSERT_EQ((int)BOOT_IMPLICIT_PAYLOAD_COUNT, 3, "count 3");
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         TEST_ASSERT_EQ(boot_implicit_payload_index(cases[i].type), cases[i].want,
@@ -1479,17 +1482,17 @@ static void test_implicit_reservation_covers_every_publisher(void)
     TEST_ASSERT(boot_implicit_payload_degradation(BOOT_PAYLOAD_MODULE)[0] != '\0', "degr");
 }
 
-static void test_implicit_claim_serves_both_in_either_order(void)
+static void test_implicit_claim_serves_all_in_any_order(void)
 {
     unsigned int mask;
     unsigned int count;
     unsigned int order;
-    static const uint32_t seq[2][2] = {
-        { BOOT_PAYLOAD_HEADLESS_AUTHZ, BOOT_PAYLOAD_RANDOM_SEED },
-        { BOOT_PAYLOAD_RANDOM_SEED, BOOT_PAYLOAD_HEADLESS_AUTHZ },
+    static const uint32_t seq[2][BOOT_IMPLICIT_PAYLOAD_COUNT] = {
+        { BOOT_PAYLOAD_HEADLESS_AUTHZ, BOOT_PAYLOAD_CRASH_LOG, BOOT_PAYLOAD_RANDOM_SEED },
+        { BOOT_PAYLOAD_RANDOM_SEED, BOOT_PAYLOAD_CRASH_LOG, BOOT_PAYLOAD_HEADLESS_AUTHZ },
     };
 
-    /* boot.conf has filled staging to its bound. Both publishers must still get
+    /* boot.conf has filled staging to its bound. Every publisher must still get
      * a slot -- exactly the case that used to drop one -- and the outcome must
      * not depend on which call site runs first, which is what it used to depend
      * on. The mask starts with an unrelated high bit set: a claim that ASSIGNED
@@ -1498,21 +1501,17 @@ static void test_implicit_claim_serves_both_in_either_order(void)
     for (order = 0; order < 2; order++) {
         mask  = 0x80000000u;
         count = (unsigned int)BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX);
-        TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][0], count,
-                           BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_OK, "1st ok");
-        count++;
-        TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][1], count,
-                           BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_OK, "2nd ok");
-        count++;
+        for (unsigned int i = 0; i < BOOT_IMPLICIT_PAYLOAD_COUNT; i++, count++)
+            TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][i], count,
+                               BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_OK, "claim ok");
         TEST_ASSERT_EQ((int)count, (int)BOOT_PAYLOAD_MAX, "exact fill");
         TEST_ASSERT_EQ((int)(mask & 0x80000000u), (int)0x80000000u, "hi bit kept");
-        TEST_ASSERT_EQ((int)(mask & 0x3u), 3, "bits accum");
-        /* Re-offering either publisher must now be refused. An assigning claim
+        TEST_ASSERT_EQ((int)(mask & 0x7u), 7, "bits accum");
+        /* Re-offering any publisher must now be refused. An assigning claim
          * would have erased the first bit and admitted a duplicate descriptor. */
-        TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][0], count,
-                           BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_DUPLICATE, "re1 dup");
-        TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][1], count,
-                           BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_DUPLICATE, "re2 dup");
+        for (unsigned int i = 0; i < BOOT_IMPLICIT_PAYLOAD_COUNT; i++)
+            TEST_ASSERT_EQ((int)boot_implicit_payload_claim(seq[order][i], count,
+                               BOOT_PAYLOAD_MAX, &mask), (int)BOOT_IMPLICIT_CLAIM_DUPLICATE, "dup");
     }
 }
 
@@ -1557,7 +1556,7 @@ static void test_implicit_claim_refusals(void)
                    (int)BOOT_IMPLICIT_CLAIM_NULL_STATE, "null mask");
 }
 
-static void test_payload_table_exactly_full_with_both_implicit(void)
+static void test_payload_table_exactly_full_with_all_implicit(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
@@ -1565,10 +1564,10 @@ static void test_payload_table_exactly_full_with_both_implicit(void)
     uint32_t stage_max = (uint32_t)BOOT_PAYLOAD_STAGE_MAX_FOR(BOOT_PAYLOAD_MAX);
     uint64_t total = (uint64_t)BOOT_PAYLOAD_MAX * SAFE_PAYLOAD_LEN;
     struct boot_payload_desc d;
-    static const uint32_t implicit_types[2] = {
-        BOOT_PAYLOAD_HEADLESS_AUTHZ, BOOT_PAYLOAD_RANDOM_SEED
+    static const uint32_t implicit_types[BOOT_IMPLICIT_PAYLOAD_COUNT] = {
+        BOOT_PAYLOAD_HEADLESS_AUTHZ, BOOT_PAYLOAD_RANDOM_SEED, BOOT_PAYLOAD_CRASH_LOG
     };
-    int saw[2] = { 0, 0 };
+    uint32_t saw = 0;
 
     bi_payload_zero();
 
@@ -1584,11 +1583,11 @@ static void test_payload_table_exactly_full_with_both_implicit(void)
     TEST_BOOT_INFO.payload_count       = stage_max;
     TEST_BOOT_INFO.payload_total_bytes = (uint64_t)stage_max * SAFE_PAYLOAD_LEN;
 
-    /* Both implicit publishers go in through the SAME macro bootx64.c commits
+    /* The implicit publishers go in through the SAME macro bootx64.c commits
      * with, so a wrong index or a dropped counter update fails HERE rather than
      * only at boot. That is the difference between testing the production
      * transaction and hand-building a table that was already correct. */
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < BOOT_IMPLICIT_PAYLOAD_COUNT; i++) {
         uint32_t at = stage_max + i;
         memset(&d, 0, sizeof(d));
         d.type       = implicit_types[i];
@@ -1607,12 +1606,10 @@ static void test_payload_table_exactly_full_with_both_implicit(void)
                    "full table ok");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "no payload error");
 
-    for (i = 0; i < BOOT_PAYLOAD_MAX; i++) {
-        if (TEST_BOOT_INFO.payload_descriptors[i].type == BOOT_PAYLOAD_HEADLESS_AUTHZ) { saw[0] = 1; }
-        if (TEST_BOOT_INFO.payload_descriptors[i].type == BOOT_PAYLOAD_RANDOM_SEED)    { saw[1] = 1; }
-    }
-    TEST_ASSERT_EQ(saw[0], 1, "authz kept");
-    TEST_ASSERT_EQ(saw[1], 1, "seed kept");
+    for (i = 0; i < BOOT_PAYLOAD_MAX; i++)
+        saw |= 1u << TEST_BOOT_INFO.payload_descriptors[i].type;
+    for (i = 0; i < BOOT_IMPLICIT_PAYLOAD_COUNT; i++)
+        TEST_ASSERT_EQ((saw >> implicit_types[i]) & 1u, 1u, "kept");
 }
 
 static void test_payload_retained_fb_wrap_rejected(void)
@@ -1899,11 +1896,11 @@ void test_register_boot_info(void)
     test_suite_register_cat("boot_payload: reservation covers every implicit publisher",
                             test_implicit_reservation_covers_every_publisher, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: both implicit publishers served, either order",
-                            test_implicit_claim_serves_both_in_either_order, TEST_CAT_BOOT);
+                            test_implicit_claim_serves_all_in_any_order, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: implicit claim refusals",
                             test_implicit_claim_refusals, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: table exactly full with both implicit publishers",
-                            test_payload_table_exactly_full_with_both_implicit, TEST_CAT_BOOT);
+                            test_payload_table_exactly_full_with_all_implicit, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

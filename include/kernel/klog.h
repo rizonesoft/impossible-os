@@ -526,7 +526,7 @@ void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer *
 
 /* ---- Crash-persistent log capture (klog.c) ---- */
 
-#define KLOG_CRASH_MAGIC    0x4B4C4F47  /* "KLOG" */
+#define KLOG_CRASH_MAGIC    BOOT_CRASH_LOG_MAGIC
 #define KLOG_CRASH_PAGES    BOOT_CRASH_LOG_PAGES
 
 /* Header at start of crash persistence region (physical memory) */
@@ -555,8 +555,14 @@ typedef struct {
  * back by the next boot's klog_crash_recover, and the persist/recover capacity
  * math divides the region size by this sizeof. A silent field add would change
  * the on-region format and the entry count without warning. */
-_Static_assert(sizeof(klog_crash_entry_t) == 164,
+_Static_assert(sizeof(klog_crash_entry_t) == BOOT_CRASH_LOG_ENTRY_BYTES,
                "klog_crash_entry_t serialized layout must stay 164 bytes");
+/* The loader reads these before it copies a log (include/boot/crash_log.h). */
+_Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
+               __builtin_offsetof(klog_crash_header_t, magic) == 0 &&
+               __builtin_offsetof(klog_crash_header_t, entry_count) == 4 &&
+               __builtin_offsetof(klog_crash_header_t, crc32) == 4 * BOOT_CRASH_LOG_CRC_WORD,
+               "klog_crash_header_t must stay what crash_log.h describes");
 
 /* Most entries the crash REGION can actually hold, and therefore the most the
  * recovery path can ever produce. Derived from the region rather than from
@@ -573,41 +579,8 @@ _Static_assert(sizeof(klog_crash_entry_t) == 164,
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
 
-/* Read the ImpossibleCrashLog NVRAM pointer and return the run it names, with no
- * bytes when it names none that could be claimed. Called from pmm_init(), which
- * keeps its frame bitmap off the run; klog_crash_claim_previous() uses the same
- * answer. Needs UEFI runtime only. */
-struct boot_span;
-struct boot_span klog_crash_find_previous(void);
-
-/* Claim the PREVIOUS boot's crash region before anything else allocates.
- * Called from boot_phase0 right after pmm_init() and before vmm_init() and
- * heap_init(): deletes the NVRAM pointer that was found, and reserves the run in
- * the PMM only when klog_crash_prev_refusal() accepts it. klog_crash_recover()
- * later reads only a claimed run and reports the
- * outcome. Single CPU, interrupts off: the APs are not started yet.
- *
- * Why here: the pointer was written by an older build, so it can name memory
- * the current layout gives to something else. On 2026-11-13 it named the new
- * heap guard page and the first boot faulted in Phase 0. Claimed before the
- * heap exists, the run can never be placed under the heap or its guard. */
-void klog_crash_claim_previous(void);
-
-/* Read the pointer with `get`, again when the variable store answers with a device
- * error, up to KLOG_CRASH_READ_TRIES times; the last status is returned. */
-#define KLOG_CRASH_READ_TRIES 4
-struct boot_uefi_guid;
-typedef uint64_t (*klog_get_variable_fn)(const struct boot_uefi_guid *guid, const uint16_t *name,
-                                         uint32_t *attributes, uint64_t *data_size, void *data);
-uint64_t klog_crash_read_pointer(klog_get_variable_fn get, uint64_t *prev, uint64_t *size);
-
-/* Why `phys` cannot be claimed as the previous crash region, or NULL when it
- * can: page-aligned, the whole KLOG_CRASH_PAGES run inside the boot identity
- * map at or above USER_ELF_END with no overflow, and every frame free in the
- * PMM (usable RAM this boot does not own: pmm_init starts all-used and frees
- * only usable memory types). Pure query over the live PMM bitmap; mutates
- * nothing, so it is testable. */
-const char *klog_crash_prev_refusal(uint64_t phys);
+/* Why the `bytes` at `log` are not a whole crash log, or NULL when they are one. Pure. */
+const char *klog_crash_log_fault(const klog_crash_header_t *log, uint64_t bytes);
 
 /* The serialize-and-publish half of klog_crash_persist(), against a
  * CALLER-SUPPLIED region. Returns the number of entries written, clamped to

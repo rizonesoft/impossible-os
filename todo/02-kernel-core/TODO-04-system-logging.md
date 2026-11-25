@@ -614,7 +614,7 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 
 `klog_crash_recover()` runs after PMM, VMM and heap init and dereferences the NVRAM-supplied address after checking only alignment and that it lies in `[USER_ELF_END, BOOT_INFO_EARLY_MAP_END)`. On 2026-11-13 the heap sat at 0xA01000 to 0xC01000 with its guard page unmapped, so a pointer stored by an older build page-faulted on QEMU TCG and VirtualBox (`RIP 0x24CE9E`, `CR2 0xC01000`, two variable stores written two months apart). The smoke test and the matrix boot from a fresh store, so no gate held a stale pointer. The fix is to claim the run when nothing else has allocated yet, so the layout can never be placed over it.
 
-- [x] Claim the previous run right after `pmm_init`, before `vmm_init` and `heap_init` allocate: `klog_crash_claim_previous()`.
+- [x] Take the previous run before `vmm_init` and `heap_init` allocate (since 2026-11-25 the loader copies it): `klog_crash_log_fault()`.
   - Reserves the run only when all 32 frames are free in the PMM (usable RAM this boot does not own); anything else is skipped with a warning naming the address and why.
 - [x] Read the claimed run only through pages proven identity-mapped, then release it to the allocator.
 - [x] Check both NVRAM results: a failed get, delete or publish of this boot's region is reported on serial.
@@ -630,6 +630,7 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 > - What shipped: `klog_crash_claim_previous()` in `src/kernel/klog.c` reads and deletes the NVRAM pointer right after `pmm_init` and reserves the 32-frame run only when `klog_crash_prev_refusal()` finds every frame free; recovery reads it through identity-mapped pages, then frees it.
 > - How it integrates: called from `src/kernel/main/boot_hw.c` before `vmm_init` and `heap_init`, so no later owner can be placed over the old region; the get, delete and publish NVRAM results are reported.
 > - Downstream effects: `tools/uefi-varstore/plant.py` plants any variable in a copy of OVMF's store; `SMOKE_CRASH_NVRAM` uses it, and the matrix gains three legs (29 in all).
+> - Replaced 2026-11-25 by [the direct-map check section](../00-infrastructure/TODO-08-automation-hardening.md): the loader copies the log before anything allocates and hands the copy over, so the kernel no longer claims or reads the old run and `crashptr-guard` is gone (tests: "Klog: crash log whole" and the six `crashptr` legs).
 > - Canonical doc: [system logging](../../docs/kernel/system-logging.md).
 > - Scope boundary: replay after a warm reset is broken on OVMF and owned by §8's item on the region surviving a warm reset; the loader's boot stack moves between identical boots, so it is covered by the unit test, not a matrix leg.
 

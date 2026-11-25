@@ -1579,6 +1579,16 @@ static void test_boot_payload_length_contract_matrix(void)
                        (uint32_t)BOOT_PAYLOAD_HEADLESS_AUTHZ, 151ull), 0ul,
                    "a short authorization is not a weaker one, it is malformed");
 
+    /* A crash log: a header and one entry, up to the region it was kept in. */
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 187ull), 0ul, "shorter");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 188ull), 1ul, "least");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 131072ull), 1ul, "most");
+    TEST_ASSERT_EQ((unsigned long)boot_payload_length_reservable(
+                       (uint32_t)BOOT_PAYLOAD_CRASH_LOG, 131073ull), 0ul, "longer");
+
     /* NOT-RESERVABLE types refuse every length, including plausible ones --
      * asserting only a huge length here would pass against a rule that
      * merely capped them. */

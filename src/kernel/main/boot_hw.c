@@ -541,13 +541,6 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     kernel_subsystem_set_ready(SUBSYS_PMM, true);
     boot_progress(0, "PMM", POST16_PMM_OK);
 
-    /* Claim the previous boot's crash region NOW, before vmm_init and
-     * heap_init allocate: its NVRAM pointer was written by whatever build ran
-     * last, and a later claim can find the heap or its guard page there
-     * (2026-11-13: a Phase 0 page fault at the new heap guard). Needs only
-     * PMM and UEFI runtime; klog_crash_recover below reads the claimed run. */
-    klog_crash_claim_previous();
-
     /* --- Virtual memory manager: BOOT_FATAL if PMM not ready --- */
     if (!kernel_subsystem_ready(SUBSYS_PMM))
         boot_halt("PMM not ready -- cannot init VMM");
@@ -610,7 +603,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     kernel_subsystem_set_ready(SUBSYS_KLOG, true);
     boot_progress(0, "KLOG", POST16_KLOG_OK);
 
-    /* Recover crash log from the region claimed after pmm_init above */
+    /* Recover the previous boot's log from the copy the loader handed over */
     klog_crash_recover();
 
     /* --- CPUID: probe CPU features --- */

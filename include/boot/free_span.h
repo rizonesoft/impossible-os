@@ -119,6 +119,18 @@ boot_span_run(const struct boot_span *rooms, unsigned n, unsigned *next)
     return run;
 }
 
+/* Whether one run of `rooms`, which are in order, holds all of `span`. */
+static inline int
+boot_span_free(struct boot_span span, const struct boot_span *rooms, unsigned n)
+{
+    for (unsigned i = 0; i < n;) {
+        struct boot_span run = boot_span_run(rooms, n, &i);
+        if (boot_span_within(span, run.base, boot_span_end(run.base, run.bytes)))
+            return 1;
+    }
+    return 0;
+}
+
 /* Takes `pages` from `base`, all or none; answers whether it did. */
 typedef int (*boot_span_take)(void *ctx, unsigned long long base, unsigned long long pages);
 

@@ -7,7 +7,7 @@
  * `load_staged_payloads` flushes them into the table. An IMPLICIT payload has
  * no boot.conf entry -- the loader manufactures it because the machine needs
  * it (the firmware entropy seed; the signed headless-enrollment
- * authorization). Nobody asked for it, so nobody notices when it is missing.
+ * authorization; the previous boot's crash log). Nobody asked for it, so nobody notices when it is missing.
  *
  * THE PROBLEM THIS HEADER EXISTS TO REMOVE. The staging table used to reserve
  * `BOOT_PAYLOAD_MAX - 1` slots against a comment naming THREE implicit
@@ -27,13 +27,13 @@
  * static assertion re-checks it, and no call site changes. Each publisher gets
  * a slot by construction, so the yield is deleted rather than generalized.
  *
- * THE COST, STATED PLAINLY. The reservation is WORST-CASE and static: both
- * publishers are conditional (the authorization only when a valid file is
- * present, the seed only when seeding succeeded), so a machine using neither
- * still gives up two of its thirty-two slots. It cannot be dynamic. Staging
+ * THE COST, STATED PLAINLY. The reservation is WORST-CASE and static: every
+ * publisher is conditional (the authorization only when a valid file is
+ * present, the seed only when seeding succeeded, the crash log only after a
+ * crash), so a machine using none still gives up three of its thirty-two slots. It cannot be dynamic. Staging
  * happens while boot.conf is parsed, long before either condition is knowable,
  * and a reservation decided after staging could only be honoured by refusing a
- * payload already accepted. Two slots of headroom is the price of never
+ * payload already accepted. Three slots of headroom is the price of never
  * silently dropping an entropy seed.
  *
  * PURE BY DESIGN. Nothing here touches `struct boot_info`, and that is
@@ -84,7 +84,9 @@
     X(7u,  "firmware entropy seed",                                            \
         "CSPRNG and stack canary stay on their degraded TSC-derived path")     \
     X(10u, "headless enrollment authorization",                                \
-        "this machine cannot enroll without a console")
+        "this machine cannot enroll without a console")                        \
+    X(11u, "previous crash log",                                               \
+        "the previous boot's crash log is lost")
 
 /* Count the list. `0 + 1 + 1` rather than a hand-maintained number, so the
  * reservation below cannot fall behind the publishers it is reserving for.

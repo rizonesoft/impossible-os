@@ -236,29 +236,25 @@ for leg in VALID:valid:SMOKE_VALID_STORE=1 \
     fi
 done
 
-# Stale crash-region pointer fixtures, one boot each on the default engine.
+# Crash logs of a previous boot, one boot each on the default engine.
 # Every other leg boots a fresh variable store, so none of them sees the
 # ImpossibleCrashLog pointer an update inherits from an older build; on
 # 2026-11-13 one named the new heap guard page and Phase 0 faulted. `mmio`
-# plants the IOAPIC window and `runtime` a firmware runtime-services region,
-# which the PMM owns; both are in range for the old check and must be
-# skipped. `guard` plants THIS build's heap guard address and must be claimed
-# with the heap placed elsewhere (the claim runs before the heap exists).
-# `buffer` plants the address the loader gives its kernel buffer, which must move:
-# reading the kernel file there would overwrite the log before the kernel reads it.
-# `bitmap` plants a run that ends where the frame bitmap does, with the same harm.
-# `mmio` runs first and the other addresses are read from ITS serial log,
-# a boot of the same configuration. Both were the same on every boot measured;
-# the loader's boot stack was not (it moved between identical boots), so it
-# cannot be planted from an earlier boot. Each leg's serial log is published
-# beside its capture.
+# plants the IOAPIC window and `runtime` a firmware runtime-services region:
+# neither is free memory and nothing may be read there. The others plant a log
+# as well, where this boot puts something else (the loader its kernel buffer,
+# the kernel its frame bitmap, the loader the kernel itself), and every entry of
+# it must come back; `damaged` plants one whose CRC is wrong, which must not.
+# `mmio` runs first and the addresses of the next three are read from ITS serial
+# log, a boot of the same configuration: they were the same on every boot
+# measured. Each leg's serial log is published beside its capture.
 serial="$REPO_ROOT/build/smoke-test.stripped.log"
-heap_guard=""; rt_region=""; kernel_buffer=""; frame_bitmap=""
-for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|skipped" "buffer|@buffer|claimed" \
-           "bitmap|@bitmap|claimed"; do
+rt_region=""; kernel_buffer=""; frame_bitmap=""
+for leg in "mmio|0xFEC00000|skipped" "runtime|@runtime|skipped" "buffer|@buffer|kept" \
+           "bitmap|@bitmap|kept" "image|0x300000|kept" "damaged|0x3000000|damaged"; do
     name="${leg%%|*}"; rest="${leg#*|}"
     addr="${rest%%|*}"; expect="${rest#*|}"
-    case "$addr" in @heap) addr="$heap_guard" ;; @runtime) addr="$rt_region" ;; @buffer) addr="$kernel_buffer" ;; @bitmap) addr="$frame_bitmap" ;; esac
+    case "$addr" in @runtime) addr="$rt_region" ;; @buffer) addr="$kernel_buffer" ;; @bitmap) addr="$frame_bitmap" ;; esac
     log="$LOG_DIR/crashptr-$name.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name.XXXXXX")"
     t0=$(date +%s)
@@ -274,7 +270,6 @@ for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|ski
         cp "$serial" "$scap"
         CAPTURES="$CAPTURES $scap:$LOG_DIR/crashptr-$name.serial.log"
         if [ "$name" = "mmio" ]; then
-            heap_guard="$(grep -aoE 'Kernel heap: .*guard at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
             kernel_buffer="$(grep -aoE 'Kernel buffer: [0-9]+ KiB allocated.* at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
             frame_bitmap="$(grep -aoE 'PMM: frame bitmap at 0x[0-9a-fA-F]+\.\.0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
             [ -z "$frame_bitmap" ] || frame_bitmap="$(printf '0x%x' $((frame_bitmap - 131072)))"
@@ -369,11 +364,11 @@ done
 # less its direct-map check halted a correct boot until 2026-11-24. 96 MB is the
 # smallest size the guides state: the loader has to read the kernel into a buffer
 # no larger than the file (a 16 MiB one cut the file off).
-# The 96 MB leg also inherits a crash-log pointer that splits
-# the only run with room for that buffer: it must not stop the boot.
+# The 96 MB leg also inherits a crash log that splits the only run with room for
+# that buffer: both must fit.
 # A leg that names an engine runs only when LEGS does.
 for leg in "kvm-512M|SMOKE_ENGINE=kvm SMOKE_MEM=512M" "tcg-512M|SMOKE_ENGINE=tcg SMOKE_MEM=512M" \
-           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M SMOKE_CRASH_NVRAM=0x2500000 SMOKE_CRASH_NVRAM_EXPECT=crowded" \
+           "tcg-96M|SMOKE_ENGINE=tcg SMOKE_MEM=96M SMOKE_CRASH_NVRAM=0x2500000 SMOKE_CRASH_NVRAM_EXPECT=kept" \
            "wrong|SMOKE_HHDM_WRONG=1"; do
     name="${leg%%|*}"
     case "$name" in kvm-*|tcg-*) case "$LEGS" in *"${name%%-*}:"*) ;; *) continue ;; esac ;; esac

@@ -2031,11 +2031,14 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 - [x] The frame bitmap goes in free RAM from the memory map (`pmm_bitmap_place`); above 128 MB of RAM it overwrote OVMF's ACPI NVS at 0x800000
   - `BOOT_INFO_VERSION` 25: a kernel that writes after its image is refused by the loader, and the loader leaves it no room.
   - It joins adjacent free entries and stays clear of every `boot_reserved` range; an overlapping or descending map halts.
-- [x] The kernel file and the frame bitmap are never placed over the previous boot's crash log (`include/boot/crash_log.h`) while another free run has the room
-  - Each placement takes the log's extent as one more range to stay off, and is made without it when nothing else fits; the pointer may name anything, so it holds no memory. Holding the pages (waves 22 to 25) made every later allocation depend on the pointer, and was removed.
-  - The kernel reads the pointer before it places the bitmap (`klog_crash_find_previous`, `pmm_bitmap_place_sparing`); free map entries that touch or overlap are one run.
-  - Redesigned after the gap came back twice: a claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves, so the file is taken whatever the entries' ends and the record of pieces always fits (`test_kernel_claim_rooms`).
-  - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status; the kernel reads it again too (`klog_crash_read_pointer`).
+- [x] The previous boot's crash log survives the boot that reads it (`include/boot/crash_log.h`)
+  - Redesigned after the gap came back: the log lay in free memory while the loader and the kernel allocated around it, so each placement that was taught to avoid it left another that was not. The loader now copies a log that is free memory, whole and CRC-clean before any allocation but the panic page's, and hands the copy over as a payload (`BOOT_PAYLOAD_CRASH_LOG`).
+  - Nothing is read that the memory map does not call free, so a stale pointer reaches no device; a refusal is named in the boot log (`none kept from`).
+  - The kernel reads only the reserved copy (`klog_crash_previous`, `klog_crash_log_fault`); claiming the old run, sparing it in the bitmap and reading the pointer again are gone.
+  - A read that the variable store answers with `EFI_DEVICE_ERROR` is made again, and any answer except success and not-found is warned about with its status.
+  - The smoke test plants a whole log, not only its pointer, and counts every entry that comes back (`SMOKE_CRASH_NVRAM`).
+- [x] A claim asks firmware once for each free map entry it crosses (`boot_span_claim_rooms`), not by halves
+  - The file is taken whatever the entries' ends, and free entries that touch or overlap are one run (`test_kernel_claim_rooms`).
 - [x] The boot identity map is supervisor-only: a fresh process held 1022 leaves open to ring 3, the bitmap's among them
 - [x] A kernel is entered only at its own code, and every segment lies between 1 MiB (the fixed page tables are below) and the end of the identity map
   - A `GetInfo` answer too short to hold the file size is refused.
@@ -2048,7 +2051,7 @@ Measured on commit `ac558184` (q35, OVMF 4M): 512 MB, 768 MB and 1 GiB halt with
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` (the `map` legs) | `bash scripts/test.sh SUITE=boot` (the buffer's placement and the claims, `test_kernel_buffer_span`, `test_kernel_buffer_overlap`, `test_kernel_claim_spans`, `test_kernel_claim_rooms`, `test_kernel_segment_order`, `test_kernel_entry_span`) and `TEST_MEM=4G bash scripts/test.sh SUITE=mm` (the bitmap's, `test_pmm_bitmap_place`, `test_pmm_map_ordered`, `test_pmm_low_mappings`; the KUSD frame exists only above 2 GiB); the direct-map check itself runs before the kernel and is tested in the booted image.
 
-> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 35 legs: `crashptr buffer` plants a crash-log pointer where the buffer would go, `crashptr bitmap` one where the frame bitmap would go (it fails when the loader does not hold the log), and the 96 MB leg plants one that splits the only run with room for the buffer. In the test flavor `__kernel_end` is 0x7ff000, the last page the 0x800000 image ceiling allows; 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
+> **Notes:** On the unmodified loader both 512 MB legs end on the mismatch line. A check that compares one value passes the wrong-map control (its wrong frame holds the first value); taking the probe frame out of the arena fails both 512 MB legs. Measured after the fix, on KVM and TCG: 96 MB to 2 GiB boot to the prompt, 64 and 80 MB are refused with "Cannot allocate a kernel buffer" (the test-flavor kernel file is 16.1 MiB). The matrix has 36 legs: the `crashptr` ones plant a log where the kernel buffer, the frame bitmap or the kernel itself would go, and the 96 MB leg one that splits the only run with room for the buffer; each must be replayed whole. In the test flavor `__kernel_end` is 0x7fd000, three pages below the 0x800000 image ceiling (the attestation test's 12 KiB static buffer is frames now); 02-kernel-core/TODO-33-higher-half-kernel-relocation.md owns it.
 
 ## 73. The line tally counts the commit
 

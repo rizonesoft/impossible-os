@@ -446,13 +446,12 @@ hhdm_wrong_check_log() {
         HW_FAIL_MSG="the kernel's memory was not held before each of its $2 segments was copied"; return 1
     fi
     # The control loader takes the top page of every span it chose first.
-    if ! grep -qF -- 'Kernel buffer: the memory map moved' "$1"; then
+    if ! grep -qF -- 'Free memory: the memory map moved' "$1"; then
         HW_FAIL_MSG="no span was lost, so reading the memory map again is untested"; return 1
     fi
     # It also fails the first read of the crash-log variable.
-    if ! grep -qF -- 'Previous crash log: its variable cannot be read, status=0x8000000000000007' "$1" ||
-       ! grep -qF -- 'Previous crash log: read again' "$1"; then
-        HW_FAIL_MSG="a crash-log variable that failed one read was not reported and read again"; return 1
+    if ! grep -qF -- 'Previous crash log: its variable was read again' "$1"; then
+        HW_FAIL_MSG="a crash-log variable that failed one read was not read again"; return 1
     fi
 }
 
@@ -807,24 +806,19 @@ else
     cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 fi
 
-# ---- Optional stale crash-region pointer (SMOKE_CRASH_NVRAM=<address>) -----
+# ---- Optional crash log of a previous boot (SMOKE_CRASH_NVRAM=<address>) ----
 # Plants ImpossibleCrashLog, the NVRAM pointer to the previous boot's klog
-# crash region, as an older build would have left it. Every other leg boots a
+# crash region, and in guest memory the log it names. Every other leg boots a
 # fresh store, so no gate saw the pointer an update inherits: on 2026-11-13 one
 # named the new heap guard page and the first boot faulted in Phase 0.
-# SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print;
-# crowded is claimed, but the loader found no room for its buffer clear of the pointer.
+# SMOKE_CRASH_NVRAM_EXPECT says what becomes of it: kept (the loader copies the
+# log and the kernel replays it), damaged (a log whose CRC does not match is
+# planted, and the loader refuses it), skipped (no log is planted: the address
+# is not free memory, and nothing is read there).
 CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
 CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
-# Whether the loader's kernel buffer and the kernel's frame bitmap, both named in the
-# log $2, miss the 128 KiB run at $1.
-crash_nvram_clear() {
-    local kib at from to
-    read -r kib at < <(sed -nE 's/.*Kernel buffer: ([0-9]+) KiB allocated.* at (0x[0-9a-fA-F]+).*/\1 \2/p' "$2" | head -1)
-    read -r from to < <(sed -nE 's/.*PMM: frame bitmap at (0x[0-9a-fA-F]+)\.\.(0x[0-9a-fA-F]+).*/\1 \2/p' "$2" | head -1)
-    [ -n "$at" ] && [ -n "$to" ] && (( $1 + 131072 <= at || $1 >= at + kib * 1024 )) \
-        && (( $1 + 131072 <= from || $1 >= to ))
-}
+CRASH_LOG_IMG="$REPO_ROOT/build/smoke-crash-log.bin"
+CRASH_LOG_ENTRIES=120               # several pages of them
 # Plant the crash-log pointer $1 in the boot's variable store.
 plant_crash_nvram() {
     local le
@@ -834,14 +828,32 @@ plant_crash_nvram() {
         echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
     fi
 }
+# Write a crash log of $2 entries to $1; $3 is added to its CRC.
+write_crash_log() {
+    python3 - "$1" "$2" "$3" <<'PYEOF'
+import struct, sys, zlib
+path, count, wrong = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+body = b"".join(struct.pack("<IIB3xII16s128s", 3, i, 0, 0, 0, b"smoke", b"planted entry %d of %d" % (i + 1, count))
+                for i in range(count))
+crc = (zlib.crc32(body) + wrong) & 0xFFFFFFFF
+open(path, "wb").write(struct.pack("<IIIIQ", 0x4B4C4F47, count, crc, 0, 0) + body)
+PYEOF
+}
 if [ -n "$CRASH_NVRAM" ]; then
-    case "$CRASH_NVRAM_EXPECT" in claimed|skipped|crowded) ;; *)
-        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed, skipped or crowded${NC}"; exit 1 ;;
+    case "$CRASH_NVRAM_EXPECT" in kept|damaged|skipped) ;; *)
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=kept, damaged or skipped${NC}"; exit 1 ;;
     esac
     if ! CRASH_NVRAM_HEX="$(python3 -c 'import sys; print("0x%016x" % int(sys.argv[1], 0))' "$CRASH_NVRAM" 2>/dev/null)"; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM=$CRASH_NVRAM is not an address${NC}"; exit 1
     fi
     plant_crash_nvram "$CRASH_NVRAM"
+    if [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
+        CRASH_LOG_WRONG=0
+        [ "$CRASH_NVRAM_EXPECT" != damaged ] || CRASH_LOG_WRONG=1
+        if ! write_crash_log "$CRASH_LOG_IMG" "$CRASH_LOG_ENTRIES" "$CRASH_LOG_WRONG"; then
+            echo -e "${RED}SMOKE TEST FAILED: could not write $CRASH_LOG_IMG${NC}"; exit 1
+        fi
+    fi
     echo -e "  ${DIM}planted ImpossibleCrashLog = $CRASH_NVRAM_HEX (expect: $CRASH_NVRAM_EXPECT)${NC}"
 fi
 
@@ -1348,6 +1360,9 @@ QEMU_FLAGS=(
 if [ -n "${SMOKE_MACHINE:-}" ]; then
     QEMU_FLAGS+=(-machine "$SMOKE_MACHINE")
 fi
+if [ -n "$CRASH_NVRAM" ] && [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
+    QEMU_FLAGS+=(-device "loader,file=$CRASH_LOG_IMG,addr=$CRASH_NVRAM_HEX,force-raw=on")
+fi
 if [ -n "$CT_MODE" ]; then
     # The double-panic legs warm-reset the guest through the monitor and judge
     # the NEXT boot, which -no-reboot would turn into a QEMU exit.
@@ -1758,28 +1773,24 @@ if [ -n "$DEGRADE" ] && [ "$BOOT_PASSED" = true ]; then
     fi
 fi
 
-# ---- Stale crash-region pointer verdict (SMOKE_CRASH_NVRAM) ----------------
+# ---- Crash log of a previous boot: the verdict (SMOKE_CRASH_NVRAM) ----------
 if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
     strip_ansi
-    if [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
-        CRASH_NVRAM_LINE="crash recovery: previous region $CRASH_NVRAM_HEX claimed"
-    else
-        CRASH_NVRAM_LINE="crash recovery: NVRAM address $CRASH_NVRAM_HEX skipped"
-    fi
-    if ! grep -qF -- "$CRASH_NVRAM_LINE" "$STRIPPED_LOG" 2>/dev/null; then
+    CRASH_NVRAM_REPLAYED="$(tr -d '\r' < "$STRIPPED_LOG" | grep -cE "^\[CRASH-PREV\] smoke: planted entry [0-9]+ of $CRASH_LOG_ENTRIES\$" || true)"
+    case "$CRASH_NVRAM_EXPECT" in
+        kept)    CRASH_NVRAM_LINE="Previous crash log: $((24 + CRASH_LOG_ENTRIES * 164)) bytes from ${CRASH_NVRAM_HEX} kept at 0x"
+                 CRASH_NVRAM_WANT="$CRASH_LOG_ENTRIES" ;;
+        damaged) CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, the log is damaged"; CRASH_NVRAM_WANT=0 ;;
+        *)       CRASH_NVRAM_LINE="Previous crash log: none kept from $CRASH_NVRAM_HEX, not free memory"; CRASH_NVRAM_WANT=0 ;;
+    esac
+    if ! grep -qiF -- "$CRASH_NVRAM_LINE" "$STRIPPED_LOG" 2>/dev/null; then
         BOOT_PASSED=false; BOOT_FAILED=true
         FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: no '$CRASH_NVRAM_LINE' line"
-    elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
+    elif [ "$CRASH_NVRAM_REPLAYED" != "$CRASH_NVRAM_WANT" ]; then
         BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
-    elif [ "$CRASH_NVRAM_EXPECT" = crowded ] && ! grep -qF -- 'Kernel buffer: no room clear of the previous crash log' "$STRIPPED_LOG"; then
-        BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer found room clear of the pointer, so this leg tests nothing"
-    elif [ "$CRASH_NVRAM_EXPECT" = claimed ] && ! crash_nvram_clear "$CRASH_NVRAM_HEX" "$STRIPPED_LOG"; then
-        BOOT_PASSED=false; BOOT_FAILED=true
-        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the kernel buffer or the frame bitmap was placed over the planted region"
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: $CRASH_NVRAM_REPLAYED planted entries were replayed, not $CRASH_NVRAM_WANT"
     else
-        echo -e "  ${GREEN}✓${NC} stale crash-region pointer $CRASH_NVRAM_HEX $CRASH_NVRAM_EXPECT and the boot reached the prompt"
+        echo -e "  ${GREEN}✓${NC} previous crash log at $CRASH_NVRAM_HEX: $CRASH_NVRAM_EXPECT, $CRASH_NVRAM_REPLAYED entries replayed"
     fi
 fi
 

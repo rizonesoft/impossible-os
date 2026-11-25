@@ -461,7 +461,7 @@ Per-GOP-handle enumeration appended at the struct tail (TODO-27 sec4). `init_gop
 
 ## Nested struct: `boot_payload_desc`
 
-48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
+48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER, WARM_UPDATE_STATE, HEADLESS_AUTHZ, CRASH_LOG); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
 
 | Field | Size | Semantics | Validation |
 | --- | --- | --- | --- |

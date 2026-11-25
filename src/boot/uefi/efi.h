@@ -711,7 +711,7 @@ typedef struct EFI_BOOT_SERVICES {
     VOID                   *UninstallMultipleProtocolInterfaces; /* 39 */
 
     /* 32-bit CRC Services */
-    VOID                   *CalculateCrc32;     /* 40 */
+    EFI_STATUS (EFIAPI *CalculateCrc32)(VOID *Data, UINTN DataSize, UINT32 *Crc32); /* 40 */
 
     /* Misc */
     VOID                   *CopyMem;            /* 41 */

@@ -3493,6 +3493,8 @@ _Static_assert(BOOT_PAYLOAD_RANDOM_SEED == 7u,
                "implicit-payload list literal 7 must stay BOOT_PAYLOAD_RANDOM_SEED");
 _Static_assert(BOOT_PAYLOAD_HEADLESS_AUTHZ == 10u,
                "implicit-payload list literal 10 must stay BOOT_PAYLOAD_HEADLESS_AUTHZ");
+_Static_assert(BOOT_PAYLOAD_CRASH_LOG == 11u,
+               "implicit-payload list literal 11 must stay BOOT_PAYLOAD_CRASH_LOG");
 _Static_assert(BOOT_PAYLOAD_STAGE_MAX > 0,
                "implicit reservation must leave room for at least one boot.conf payload");
 _Static_assert(BOOT_PAYLOAD_STAGE_MAX + BOOT_IMPLICIT_PAYLOAD_COUNT == BOOT_PAYLOAD_MAX,
@@ -10128,7 +10130,7 @@ static UINT8 s_pt_load_mmap_buf[PT_LOAD_POLICY_MMAP_BUF_PAGES * EFI_PAGE_SIZE];
 
 /* How often a memory map that moved before its span was claimed is read again. */
 #define KERNEL_BUFFER_TRIES 4
-#define KERNEL_BUFFER_KEEPS 3
+#define KERNEL_BUFFER_KEEPS 2
 #define BL_KERNEL_FLOOR 0x100000ULL     /* fixed addresses lie below: page tables, boot_info */
 
 /* Whether a descriptor that is not free lies over [at, at + bytes), and `room` now ends below it. */
@@ -10151,10 +10153,12 @@ static int clip_to_free(UINTN map_size, UINTN desc_size, struct boot_span *room,
 static struct boot_span s_rooms[MMAP_DESCRIPTORS];
 static unsigned s_nrooms;
 
-/* The pieces of the kernel file's buffer. A claim takes one of each room it crosses, so
- * the record holds any claim. */
-static struct { EFI_PHYSICAL_ADDRESS at; UINTN pages; } s_taken[MMAP_DESCRIPTORS];
+/* How long each piece of the kernel file's buffer is, and where the last ends. A claim
+ * takes one of each room it crosses, upwards and with no gap, so this records any claim. */
+static UINT16 s_taken[MMAP_DESCRIPTORS];
 static unsigned s_ntaken;
+static UINT64 s_taken_end;
+_Static_assert(ELF_MAX_KERNEL_SIZE / EFI_PAGE_SIZE <= 0xFFFF, "a piece's length must fit its record");
 
 static int take_pages(void *ctx, unsigned long long base, unsigned long long pages)
 {
@@ -10174,8 +10178,8 @@ static int take_and_record(void *ctx, unsigned long long base, unsigned long lon
     if (s_ntaken == sizeof s_taken / sizeof s_taken[0] ||
         EFI_ERROR(gBS->AllocatePages(AllocateAddress, EfiLoaderData, (UINTN)pages, &at)))
         return 0;
-    s_taken[s_ntaken].at = at;
-    s_taken[s_ntaken++].pages = (UINTN)pages;
+    s_taken[s_ntaken++] = (UINT16)pages;
+    s_taken_end = at + pages * EFI_PAGE_SIZE;
     return 1;
 }
 
@@ -10183,8 +10187,9 @@ static EFI_STATUS give_back(void)
 {
     EFI_STATUS worst = EFI_SUCCESS;
     while (s_ntaken > 0) {
-        s_ntaken--;
-        EFI_STATUS status = gBS->FreePages(s_taken[s_ntaken].at, s_taken[s_ntaken].pages);
+        UINTN pages = s_taken[--s_ntaken];
+        s_taken_end -= pages * EFI_PAGE_SIZE;
+        EFI_STATUS status = gBS->FreePages(s_taken_end, pages);
         if (EFI_ERROR(status))
             worst = status;
     }
@@ -10279,50 +10284,155 @@ static EFI_STATUS claim_free_span(UINTN pages, const struct boot_span *keep, uns
     return EFI_SUCCESS;
 }
 
-/* Where the variable says the previous boot's crash log is; no bytes when it names no
- * run that a kernel could have put there. A variable store that fails a read is asked
- * again: the kernel may read it later. */
-static struct boot_span previous_crash_log(void)
+/* The same, again while the firmware takes part of a span after the map was read. */
+static EFI_STATUS claim_free_span_settled(UINTN pages, const struct boot_span *keep, unsigned nkeep,
+                                          EFI_PHYSICAL_ADDRESS *at)
+{
+    EFI_STATUS status = EFI_SUCCESS;
+    int lost = 1;
+    *at = 0;
+    for (int try = 0; try < KERNEL_BUFFER_TRIES && lost && *at == 0 && !EFI_ERROR(status); try++) {
+        status = claim_free_span(pages, keep, nkeep, try, at, &lost);
+        if (*at == 0 && lost)
+            serial_early_print("[BOOT] Free memory: the memory map moved\n");
+    }
+    return status;
+}
+
+/* The copy of the previous boot's crash log, and what there is to say about it. */
+static struct {
+    EFI_PHYSICAL_ADDRESS named;         /* where the variable says the log is */
+    EFI_PHYSICAL_ADDRESS at;            /* the copy */
+    UINTN bytes;                        /* its length; 0 when there is none */
+    EFI_STATUS read;                    /* how the variable's last read went */
+    UINT32 tries;
+    const char *why;                    /* why there is no copy, though a log was named */
+} s_crash_log;
+
+#define CRASH_LOG_READ_TRIES 4
+/* The copy stays off the kernel's memory and the user window. */
+#define CRASH_LOG_FLOOR 0x1000000ULL
+
+static BOOLEAN crash_log_is_free(struct boot_span log, UINTN map_size, UINTN desc_size)
+{
+    struct boot_span room = log;
+    return boot_span_free(log, s_rooms, s_nrooms) &&
+           !clip_to_free(map_size, desc_size, &room, log.base, log.bytes);
+}
+
+/* Copy the log at log.base. Answers why there is no copy, or NULL. Nothing is read that
+ * the memory map does not call free: the variable may hold any value. */
+static const char *copy_crash_log(struct boot_span log)
+{
+    UINTN map_size, desc_size;
+    UINT32 crc = 0;
+
+    if (log.base < BL_KERNEL_FLOOR || (log.base & (EFI_PAGE_SIZE - 1)) != 0)
+        return "not the address of a log";
+    if (EFI_ERROR(read_rooms(&map_size, &desc_size)))
+        return "the memory map cannot be read";
+    log.bytes = EFI_PAGE_SIZE;
+    if (!crash_log_is_free(log, map_size, desc_size))
+        return "not free memory";
+    const volatile UINT32 *head = (const volatile UINT32 *)(UINTN)log.base;
+    log.bytes = boot_crash_log_bytes(head[0], head[1]);
+    if (log.bytes == 0)
+        return "no log there";
+    if (!crash_log_is_free(log, map_size, desc_size))
+        return "not free memory";
+
+    struct boot_span keep[] = { { 0, CRASH_LOG_FLOOR }, log };
+    UINTN pages = (UINTN)((log.bytes + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE);
+    if (EFI_ERROR(claim_free_span_settled(pages, keep, 2, &s_crash_log.at)) || s_crash_log.at == 0 ||
+        s_crash_log.at + log.bytes > 0x100000000ULL)
+        return "no memory for a copy";
+    UINT32 *copy = (UINT32 *)(UINTN)s_crash_log.at;
+    efi_memcpy(copy, (const void *)(UINTN)log.base, (UINTN)log.bytes);
+    if (boot_crash_log_bytes(copy[0], copy[1]) != log.bytes ||
+        EFI_ERROR(gBS->CalculateCrc32((UINT8 *)copy + BOOT_CRASH_LOG_HEADER_BYTES,
+                                      (UINTN)log.bytes - BOOT_CRASH_LOG_HEADER_BYTES, &crc)) ||
+        crc != copy[BOOT_CRASH_LOG_CRC_WORD])
+        return "the log is damaged";
+    s_crash_log.bytes = (UINTN)log.bytes;
+    return (const char *)0;
+}
+
+/* Read the variable and copy the log it names. Before any allocation but the panic page's,
+ * which is fixed and below BL_KERNEL_FLOOR: the log lies in memory that is free to take. */
+static void keep_crash_log(void)
 {
     EFI_GUID guid = BOOT_CRASH_LOG_GUID;
     EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
     struct boot_span log = { 0, 0 };
+    UINTN size = 0;
 
-    for (int try = 0; rt && rt->GetVariable && try < KERNEL_BUFFER_TRIES; try++) {
-        EFI_PHYSICAL_ADDRESS at = 0;
+    efi_memset(&s_crash_log, 0, sizeof s_crash_log);
+    s_crash_log.read = EFI_DEVICE_ERROR;
+    while (s_crash_log.read == EFI_DEVICE_ERROR && s_crash_log.tries < CRASH_LOG_READ_TRIES) {
         UINT32 attrs;
-        UINTN size = sizeof at;
-        EFI_STATUS status = rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &at);
+        size = sizeof log.base;
+        s_crash_log.read = rt && rt->GetVariable
+            ? rt->GetVariable(BOOT_CRASH_LOG_VAR, &guid, &attrs, &size, &log.base) : EFI_UNSUPPORTED;
 #ifdef BL_TEST_HHDM_WRONG_ALIAS
-        if (try == 0)                   /* the control: the first read fails */
-            status = EFI_DEVICE_ERROR;
-        else
-            serial_early_print("[BOOT] Previous crash log: read again\n");
+        if (s_crash_log.tries == 0)     /* the control: the first read fails */
+            s_crash_log.read = EFI_DEVICE_ERROR;
 #endif
-        if (status == EFI_SUCCESS) {
-            log.base = at;
-            log.bytes = BOOT_CRASH_LOG_PAGES * EFI_PAGE_SIZE;
-            if (size != sizeof at || (at & (EFI_PAGE_SIZE - 1)) != 0 ||
-                !boot_span_within(log, BL_KERNEL_FLOOR, (UINT64)BL_IDENTITY_GIB << 30))
-                log.bytes = 0;
-            return log;
-        }
-        if (status == EFI_NOT_FOUND)
-            return log;
-        serial_early_print("[WARN] Previous crash log: its variable cannot be read, status=0x");
-        serial_early_print_hex64(status);
-        serial_early_print("\n");
-        if (status != EFI_DEVICE_ERROR)
-            return log;
+        s_crash_log.tries++;
     }
-    return log;
+    if (EFI_ERROR(s_crash_log.read))
+        return;
+    s_crash_log.named = size == sizeof log.base ? log.base : 0;
+    log.base = s_crash_log.named;
+    s_crash_log.why = copy_crash_log(log);
 }
 
-/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer, the previous
- * boot's crash log and the `nkeep` spans already in `keep`, which has room for
- * KERNEL_BUFFER_KEEPS more; *at is 0 when no free run has the room. The log is only a
- * preference: its variable may hold any value. AllocateAnyPages may answer with a range
- * over the segments, and the destination policy then refuses the kernel. */
+/* Say what became of it, once the serial port works. */
+static void report_crash_log(void)
+{
+    if (s_crash_log.tries > 1)
+        serial_early_print("[BOOT] Previous crash log: its variable was read again\n");
+    if (EFI_ERROR(s_crash_log.read) && s_crash_log.read != EFI_NOT_FOUND) {
+        serial_early_print("[WARN] Previous crash log: its variable cannot be read, status=0x");
+        serial_early_print_hex64(s_crash_log.read);
+        serial_early_print("\n");
+    } else if (s_crash_log.why) {
+        serial_early_print("[BOOT] Previous crash log: none kept from 0x");
+        serial_early_print_hex64(s_crash_log.named);
+        serial_early_print(", ");
+        serial_early_print(s_crash_log.why);
+        serial_early_print("\n");
+    } else if (s_crash_log.bytes != 0) {
+        serial_early_print("[BOOT] Previous crash log: ");
+        serial_early_print_uint((UINT32)s_crash_log.bytes);
+        serial_early_print(" bytes from 0x");
+        serial_early_print_hex64(s_crash_log.named);
+        serial_early_print(" kept at 0x");
+        serial_early_print_hex64(s_crash_log.at);
+        serial_early_print("\n");
+    }
+}
+
+/* Hand the copy to the kernel. It carries its own CRC, which the kernel checks. */
+static void publish_crash_log(void)
+{
+    struct boot_payload_desc desc;
+
+    if (s_crash_log.bytes == 0)
+        return;
+    efi_memset(&desc, 0, sizeof desc);
+    desc.type        = BOOT_PAYLOAD_CRASH_LOG;
+    desc.flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+    desc.phys_start  = s_crash_log.at;
+    desc.length      = s_crash_log.bytes;
+    desc.alignment   = EFI_PAGE_SIZE;
+    desc.producer_id = BOOT_PRODUCER_UEFI;
+    (void)publish_implicit_payload(&desc);
+}
+
+/* Allocate `pages` for the kernel file, clear of boot_info, the framebuffer and the
+ * `nkeep` spans already in `keep`, which has room for KERNEL_BUFFER_KEEPS more; *at is 0
+ * when no free run has the room. AllocateAnyPages may answer with a range over the
+ * segments, and the destination policy then refuses the kernel. */
 static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsigned nkeep,
                                       EFI_PHYSICAL_ADDRESS *at)
 {
@@ -10331,22 +10441,7 @@ static EFI_STATUS alloc_kernel_buffer(UINTN pages, struct boot_span *keep, unsig
     keep[nkeep].base = g_boot_info_ptr->fb.addr;
     keep[nkeep++].bytes = g_boot_info_ptr->fb.addr == 0 ? 0 :
         (UINT64)g_boot_info_ptr->fb.pitch * g_boot_info_ptr->fb.height;
-    keep[nkeep] = previous_crash_log();
-    for (unsigned log = keep[nkeep].bytes != 0 ? 1 : 0;; log--) {
-        for (int try = 0; try < KERNEL_BUFFER_TRIES; try++) {
-            int lost;
-            EFI_STATUS status = claim_free_span(pages, keep, nkeep + log, try, at, &lost);
-            if (EFI_ERROR(status) || *at != 0)
-                return status;
-            if (!lost)
-                break;
-            /* The firmware took part of a span after the map was read. */
-            serial_early_print("[BOOT] Kernel buffer: the memory map moved\n");
-        }
-        if (log == 0)
-            return EFI_SUCCESS;
-        serial_early_print("[WARN] Kernel buffer: no room clear of the previous crash log\n");
-    }
+    return claim_free_span_settled(pages, keep, nkeep, at);
 }
 
 /* Claim the kernel's segments, so that no later allocation lands on one that was
@@ -13055,7 +13150,11 @@ static void collect_boot_entropy(void)
     _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_HEADLESS_AUTHZ                 \
                        || ((min_b) == (max_b)                                                  \
                                            && (max_b) == BL_HEADLESS_AUTHZ_LEN), \
-                   "HEADLESS_AUTHZ row must stay the EXACT blob length this loader publishes");
+                   "HEADLESS_AUTHZ row must stay the EXACT blob length this loader publishes"); \
+    _Static_assert((type_value) != (unsigned long long)BOOT_PAYLOAD_CRASH_LOG \
+                       || ((min_b) == BOOT_CRASH_LOG_HEADER_BYTES + BOOT_CRASH_LOG_ENTRY_BYTES \
+                           && (max_b) == BOOT_CRASH_LOG_MAX_BYTES), \
+                   "CRASH_LOG row must stay what this loader publishes");
 BOOT_PAYLOAD_LIMIT_LIST(BOOT_PAYLOAD_LIMIT_LOADER_ASSERT)
 #undef BOOT_PAYLOAD_LIMIT_LOADER_ASSERT
 
@@ -18773,6 +18872,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                                  1, &pe_addr);
         g_panic_page_attempted = 1;
     }
+    keep_crash_log();
 
     /* Clear the UEFI text console immediately -- firmware (BdsDxe, QEMU MMIO
      * warnings) may have left text on screen before our image was launched. */
@@ -18845,6 +18945,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                " record may be overwritten\n");
         }
     }
+
+    report_crash_log();
 
     /* UKI globals reset BEFORE any path that consults them. Must run
      * unconditionally because detect_uki_sections() is gated on
@@ -19760,6 +19862,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * malformed authorization means this machine simply cannot enroll a
      * baseline without a console, which is the pre-existing behavior. */
     publish_headless_authz_payload();
+    publish_crash_log();
 
     /*: Boot device enumeration log -- gated behind verbose=1 in boot.conf
      * to avoid per-handle Open/Close overhead on firmware with many devices.

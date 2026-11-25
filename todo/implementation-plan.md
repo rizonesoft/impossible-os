@@ -40,7 +40,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ----------- | ----: |
 | [x]  | `D00 T08 §48` | Two engines, one gate set: the lane policy                                                                            | none        |     5 |
 | [x]  | `D00 T08 §70` | Reviewer effort follows the area and the chain                                                                        | third-party |     8 |
-| [ ]  | `D00 T08 §72` | The Direct-Map Check Passes on Machines With 1 GiB or Less                                                            | none        |    13 |
+| [ ]  | `D00 T08 §72` | The Direct-Map Check Passes on Machines With 1 GiB or Less                                                            | none        |    14 |
 | [ ]  | `D00 T08 §60` | Review receipts are written atomically                                                                                | none        |     4 |
 | [ ]  | `D00 T08 §61` | A P2 comes with a failing test                                                                                        | none        |     3 |
 | [ ]  | `D00 T08 §62` | Review depth per path                                                                                                 | none        |     4 |

@@ -131,18 +131,6 @@ uint64_t pmm_bitmap_place(const struct boot_mmap_entry *map, uint32_t count,
     return best;
 }
 
-uint64_t pmm_bitmap_place_sparing(const struct boot_mmap_entry *map, uint32_t count, uint64_t bytes,
-                                  struct boot_span *keep, uint32_t nkeep, struct boot_span spare)
-{
-    uint64_t at = 0;
-
-    if (spare.bytes != 0) {
-        keep[nkeep] = spare;
-        at = pmm_bitmap_place(map, count, bytes, keep, nkeep + 1);
-    }
-    return at != 0 ? at : pmm_bitmap_place(map, count, bytes, keep, nkeep);
-}
-
 uint32_t pmm_bitmap_keep(struct boot_span *keep)
 {
     uint32_t n = 0;
@@ -271,9 +259,8 @@ boot_result_t pmm_init(void)
 
     /* Memory nobody owns: conventional, and clear of every range that is kept. What
      * follows the kernel image may be firmware's (OVMF keeps ACPI NVS at 0x800000), so
-     * the bitmap is not simply put there. The highest range, because pmm_alloc_* hands
-     * out low memory first: a warm reset then finds the previous boot's crash region,
-     * which no map names, still intact. */
+     * the bitmap is not simply put there. The highest range, because low memory is what
+     * pmm_alloc_* hands out first and what devices with short addresses need. */
     kernel_end_phys = (uintptr_t)__kernel_end;
     {
         enum boot_reserved_error br_err = BOOT_RESERVED_ERR_OK;
@@ -285,10 +272,10 @@ boot_result_t pmm_init(void)
             return BOOT_FATAL;
         }
         struct boot_span keep[PMM_BITMAP_KEEP_MAX];
-        uint64_t at = pmm_bitmap_place_sparing(
+        uint64_t at = pmm_bitmap_place(
             (const struct boot_mmap_entry *)g_boot_info.mmap, g_boot_info.mmap_count,
             (bitmap_size + PMM_FRAME_SIZE - 1) & ~((uint64_t)PMM_FRAME_SIZE - 1),
-            keep, pmm_bitmap_keep(keep), klog_crash_find_previous());
+            keep, pmm_bitmap_keep(keep));
         if (at == 0) {
             klog(LOG_FATAL, "mm", "PMM: no free RAM below 4 GiB holds the %lu byte bitmap",
                  bitmap_size);

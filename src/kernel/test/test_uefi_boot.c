@@ -421,6 +421,10 @@ static void test_kernel_claim_rooms(void)
     TEST_ASSERT_EQ(run.bytes, 0x2000ULL, "a gap ends a run");
     run = boot_span_run(gap, 3, &next);
     TEST_ASSERT_EQ(run.base, 0x9000ULL, "and the next begins after it");
+    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x1800, 0x1800 }, gap, 3), 1, "free across two rooms");
+    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x2000, 0x8000 }, gap, 3), 0, "not across a gap");
+    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ 0x9000, 0x1001 }, gap, 3), 0, "nor past the end");
+    TEST_ASSERT_EQ(boot_span_free((struct boot_span){ ~0ULL, 2 }, gap, 3), 0, "nor wrapping");
     TEST_ASSERT_EQ(next, 3u, "the last");
 }
 

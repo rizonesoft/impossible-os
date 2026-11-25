@@ -22,6 +22,7 @@
 #include "kernel/nt/attest_syscall_info.h"
 #include "kernel/security/token.h"        /* SeCreateUserToken */
 #include "kernel/ob/ob.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/sched/task.h"
 
 extern const struct boot_proto_descriptor kernel_boot_proto;
@@ -497,7 +498,6 @@ static void test_attest_report_scoped_verdict(void)
 
 /* The snapshot buffer must hold the largest report the serializer accepts:
  * every length at its cap and every text field escaped at six bytes a byte. */
-static uint8_t s_big[ATTEST_REPORT_JSON_MAX];
 static char    s_label[65];
 static char    s_scope[513];
 
@@ -507,7 +507,14 @@ static void test_attest_report_size_bound(void)
     struct attest_json_mem m;
     uint32_t i;
     int rc;
+    /* Frames, not a static array: the image has no room for one this large. */
+    uintptr_t big_phys = 0;
+    uint64_t big_pages = 0;
+    uint8_t *big = (uint8_t *)pmm_alloc_pages_hhdm(ATTEST_REPORT_JSON_MAX, &big_phys, &big_pages);
 
+    TEST_ASSERT(big != (uint8_t *)0, "frames for the rendering");
+    if (!big)
+        return;
     memset(nonce, 0x5Au, sizeof nonce);
     rc = (int)tpm_attest_report_build(nonce, sizeof nonce, &s_report);
     TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)TPM_ATTEST_OK, "base report built");
@@ -538,8 +545,8 @@ static void test_attest_report_size_bound(void)
     memset(s_report.loader_identity.build_label, 0x01,
            sizeof s_report.loader_identity.build_label);
 
-    m.buf = s_big;
-    m.cap = (uint32_t)sizeof s_big;
+    m.buf = big;
+    m.cap = ATTEST_REPORT_JSON_MAX;
     m.len = 0u;
     rc = tpm_attest_report_to_json(&s_report, tpm_attest_json_mem_write, &m);
     TEST_ASSERT_EQ(rc, 0, "worst-case report fits ATTEST_REPORT_JSON_MAX");
@@ -552,11 +559,12 @@ static void test_attest_report_size_bound(void)
     m.len = 0u;
     TEST_ASSERT(tpm_attest_report_to_json(&s_report, tpm_attest_json_mem_write, &m) != 0,
                 "a short sink fails the serializer");
-    m.cap = (uint32_t)sizeof s_big;
+    m.cap = ATTEST_REPORT_JSON_MAX;
     m.len = 4u;
     TEST_ASSERT(tpm_attest_json_mem_write(&m, 0u, nonce, 1u) != 0, "out-of-order write refused");
     TEST_ASSERT(tpm_attest_json_mem_write(&m, 4u, nonce, 1u) == 0, "in-order write accepted");
     TEST_ASSERT(tpm_attest_json_mem_write((void *)0, 0u, nonce, 1u) != 0, "NULL sink refused");
+    pmm_free_contiguous(big_phys, big_pages);
 }
 
 /* NtQuerySystemInformation(SystemAttestationReportInformation): refusal first,

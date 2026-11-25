@@ -1717,6 +1717,7 @@ enum boot_payload_type {
     BOOT_PAYLOAD_WARM_UPDATE_STATE = 9,   /* warm-kernel-update preserved memory (owner: warm-kernel-update ABI) */
     /* signed headless-enrollment authorization (owner: TPM measured-boot attestation) */
     BOOT_PAYLOAD_HEADLESS_AUTHZ    = 10,
+    BOOT_PAYLOAD_CRASH_LOG         = 11,  /* the previous boot's crash log (include/boot/crash_log.h) */
 };
 
 /* Descriptor flags (bitmask). New bits are ignored by older kernels if
