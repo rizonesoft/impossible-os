@@ -352,18 +352,34 @@ class Turns(unittest.TestCase):
         self.assertIn("first=\n", out.replace("\r", ""))
         self.assertIn("then=0", out)
 
+    def test_a_start_after_one_that_timed_out_asks_again(self):
+        dummy = self.hold()
+        common = winpath(self.scripts(60)) + "\\ref-common.ps1"
+        p = self.start([POWERSHELL, *BYPASS, "-Command",
+                        f". '{common}'; Enter-RefTurn 1; \"first=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); "
+                        "Enter-RefTurn; \"then=$env:BOSUN_SLOT\"; [void][Console]::In.ReadLine(); Exit-RefTurn"])
+        self.wait_for(lambda: any("first=-1" in x for x in p.lines), lambda: p.lines)
+        dummy.stdin.close()
+        dummy.wait(LIMIT)
+        p.stdin.write("\n")
+        p.stdin.flush()
+        self.wait_for(lambda: any("then=0" in x for x in p.lines), lambda: p.lines)
+        self.assertEqual(self.slot(1), "-1")
+        p.stdin.close()
+        self.finish(p)
+        self.assertEqual(self.slot(1), "0")
+
     def test_the_waits_of_one_script_share_one_budget(self):
         dummy = self.hold()
-        common = winpath(self.scripts(4, 5)) + "\\ref-common.ps1"
+        common = winpath(self.scripts(60, 20)) + "\\ref-common.ps1"
         code, out = self.call([POWERSHELL, *BYPASS, "-Command",
-                               f". '{common}'; Enter-RefTurn; $p = $script:RefTurn.Process; Stop-Process -Id $p.Id -Force; "
-                               "[void]$p.WaitForExit(9000); Enter-RefTurn; \"spent=$([int]$script:RefTurnSpent)\"; Exit-RefTurn; "
-                               f"$script:RefTurnSpent = 0; $env:PATH = {self.fake_path()}; Enter-RefTurn 1; Enter-RefTurn 1; Enter-RefTurn 1; "
-                               "\"silent=$([int]$script:RefTurnSpent)\""])
+                               f". '{common}'; Enter-RefTurn 4; \"spent=$([int]$script:RefTurnSpent)\"; $script:RefTurnSpent = 79; "
+                               f"Enter-RefTurn; Exit-RefTurn; $env:PATH = {self.fake_path()}; Enter-RefTurn"])
         self.assertIsNone(dummy.poll())
-        for what in ("spent", "silent"):
-            self.assertLessEqual(int(re.search(rf"{what}=(\d+)", out)[1]), 10, out)     # 4 and 5, and a second to end it
-        self.assertIn("the wait for a place is spent", out)
+        self.assertGreaterEqual(int(re.search(r"spent=(\d+)", out)[1]), 4, out)
+        # With the budget spent a start only asks, and a silent Bosun costs it 5 s.
+        self.assertIn(" after 1 s: starting anyway", out)
+        self.assertIn(int(re.search(r"gave no place after (\d+) s", out)[1]), (5, 6, 7), out)
 
     def test_a_turn_for_a_vm_already_on_does_not_wait(self):
         dummy = self.hold()
