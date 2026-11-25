@@ -1267,7 +1267,7 @@ void quota_stall_dump(void)
     if (quota_stall_snapshot_all(&summary) != 0)
         return;
 
-    klog(LOG_INFO, "quota", "stall: system=%s windows=%llu\n",
+    klog(LOG_INFO, "quota", "stall: system=%s windows=%llu",
          quota_pressure_level_name((quota_pressure_level_t)summary.system_level),
          (unsigned long long)summary.windows_closed);
 

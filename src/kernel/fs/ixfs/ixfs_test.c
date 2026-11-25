@@ -179,7 +179,7 @@ void ixfs_test_performance(void)
                     tv = (struct ixfs_vnode *)tdir->fs_data;
                     pass = (tv && tv->dir_hash != (void *)0);
                     if (pass) {
-                        klog(LOG_DEBUG, "TEST", "Hash index: table built (%u nodes, %u buckets)\n",
+                        klog(LOG_DEBUG, "TEST", "Hash index: table built (%u nodes, %u buckets)",
                                (uint64_t)tv->dir_hash->node_count,
                                (uint64_t)IXFS_HASH_BUCKETS);
                     } else {

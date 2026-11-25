@@ -863,6 +863,15 @@ static void str_copy_n(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
+/* A record is one line in every sink: a line break or a terminal code in a caller's text
+ * (a user string, a path) would otherwise write lines of its own. */
+static void __attribute__((noinline)) one_line(char *s)
+{
+    for (; *s; s++)
+        if ((unsigned char)*s < 0x20u || *s == 0x7F)
+            *s = ' ';
+}
+
 uint32_t klog_ring_newest(uint32_t head, uint32_t count)
 {
     return (head + KLOG_RING_SIZE - count) % KLOG_RING_SIZE;
@@ -1038,14 +1047,16 @@ static const klog_crash_header_t *klog_crash_previous(void)
     return (const klog_crash_header_t *)0;
 }
 
-/* One recovered entry with both texts ended. They are fixed-width fields out of memory
- * another boot wrote, and a matching CRC does not prove that they carry an end. */
-static klog_crash_entry_t klog_crash_entry_ended(const klog_crash_entry_t *from)
+/* One recovered entry with both texts ended and each on one line. They are fixed-width
+ * fields out of memory another boot wrote, and a matching CRC does not prove either. */
+klog_crash_entry_t __attribute__((noinline)) klog_crash_entry_read(const klog_crash_entry_t *from)
 {
     klog_crash_entry_t e = *from;
 
     e.subsystem[sizeof e.subsystem - 1u] = '\0';
     e.message[sizeof e.message - 1u] = '\0';
+    one_line(e.subsystem);
+    one_line(e.message);
     return e;
 }
 
@@ -1137,7 +1148,7 @@ void klog_crash_recover(void)
         serial_write(" entries from previous crash ===\n");
 
         for (uint32_t i = 0; i < s_recovered_count; i++) {
-            klog_crash_entry_t e = klog_crash_entry_ended(&s_recovered[i]);
+            klog_crash_entry_t e = klog_crash_entry_read(&s_recovered[i]);
 
             serial_write("[CRASH-PREV] ");
             serial_write(e.subsystem);
@@ -1231,7 +1242,7 @@ void klog_crash_write_to_disk(void)
             vfs_close(file);
             return;
         }
-        const klog_crash_entry_t e = klog_crash_entry_ended(ent);
+        const klog_crash_entry_t e = klog_crash_entry_read(ent);
 
         /* [timestamp] LEVEL subsystem: message\n */
         line[pos++] = '[';
@@ -1809,6 +1820,7 @@ static void klog_entry_fill(klog_entry_t *e, log_level_t level, const char *subs
     }
 
     vformat_buf(e->message, sizeof(e->message), fmt, ap);
+    one_line(e->message);
 }
 
 /* Shared core for klog() and klog_unrated(). `bypass_rate` skips ONLY the

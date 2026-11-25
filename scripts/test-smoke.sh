@@ -928,8 +928,8 @@ s.settimeout(2.0)
 s.connect(sys.argv[1])
 s.sendall(b"info status\n")
 buf = b""
-end = time.time() + 2.0
-while b"VM status" not in buf and time.time() < end:
+end = time.monotonic() + 2.0
+while b"VM status" not in buf and time.monotonic() < end:
     try:
         chunk = s.recv(4096)
     except socket.timeout:
@@ -1563,7 +1563,11 @@ if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
         # as "paused (shutdown)"; only the guest's own power-off sets that state.
         _sd_end=$(( $(uptime_s) + SHUTDOWN_SEC )); _sd_off=0
         while [ "$(uptime_s)" -lt "$_sd_end" ] && kill -0 "$QEMU_PID" 2>/dev/null; do
-            if monitor_status | grep -q 'VM status: paused (shutdown)'; then _sd_off=1; break; fi
+            if monitor_status | grep -q 'VM status: paused (shutdown)'; then
+                # A reply that came after the deadline says nothing about the time before it.
+                [ "$(uptime_s)" -lt "$_sd_end" ] && _sd_off=1
+                break
+            fi
             sleep 0.3
         done
         strip_ansi

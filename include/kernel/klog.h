@@ -557,6 +557,9 @@ typedef struct {
  * the on-region format and the entry count without warning. */
 _Static_assert(sizeof(klog_crash_entry_t) == BOOT_CRASH_LOG_ENTRY_BYTES,
                "klog_crash_entry_t serialized layout must stay 164 bytes");
+
+/* One recovered entry, both texts ended and each on one line. */
+klog_crash_entry_t klog_crash_entry_read(const klog_crash_entry_t *from);
 /* The loader reads these before it copies a log (include/boot/crash_log.h). */
 _Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
                __builtin_offsetof(klog_crash_header_t, magic) == 0 &&

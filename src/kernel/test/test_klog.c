@@ -832,6 +832,33 @@ static void test_klog_crash_header_size(void)
 }
 
 /* A log is read only when it is whole. */
+static void test_klog_one_line(void)
+{
+    static const char *const tag = "ONELINE";
+    klog_crash_entry_t e;
+    const klog_entry_t *ring;
+    uint32_t count, head, i, found = 0;
+
+    memset(&e, 'x', sizeof e);
+    e.subsystem[0] = '\n';
+    memcpy(e.message, "a\r\n[PANIC] b", 13);
+    e = klog_crash_entry_read(&e);
+    TEST_ASSERT_EQ(e.subsystem[0], ' ', "subsystem on one line");
+    TEST_ASSERT_EQ(strcmp(e.message, "a  [PANIC] b"), 0, "recovered message on one line");
+
+    klog(LOG_WARN, tag, "%s", "c\n[PANIC] d\x1b[0m\t\x7f\xc3\xa9");
+    ring = klog_get_ring(&count, &head);
+    for (i = 0; i < count && !found; i++) {
+        const klog_entry_t *r = &ring[(head + KLOG_RING_SIZE - 1u - i) % KLOG_RING_SIZE];
+
+        if (r->subsystem == tag) {
+            TEST_ASSERT_EQ(strcmp(r->message, "c [PANIC] d [0m  \xc3\xa9"), 0, "record on one line");
+            found = 1;
+        }
+    }
+    TEST_ASSERT_EQ(found, 1, "record found");
+}
+
 static void test_klog_crash_log_fault(void)
 {
     struct { klog_crash_header_t h; klog_crash_entry_t e[2]; } log;
@@ -1636,6 +1663,7 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log whole", test_klog_crash_log_fault, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: one line", test_klog_one_line, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log copy", test_klog_crash_log_take, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash log address", test_klog_crash_log_at, TEST_CAT_BOOT);
 
