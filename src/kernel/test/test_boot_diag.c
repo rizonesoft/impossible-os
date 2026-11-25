@@ -1126,13 +1126,16 @@ static void test_klog_crash_region_publishes_magic_last(void)
     static const char marker[] = "crash region newest-entry marker";
     uint32_t seen = 0;
     klog_set_level("TESTCRASH", LOG_DEBUG);         /* the test level drops the line */
+    klog_ring_hold(1u);
+    klog(LOG_INFO, "TESTCRASH", "%s", marker);      /* kept out of a ring that is being copied */
+    klog_ring_hold(0u);
     klog(LOG_INFO, "TESTCRASH", "%s", marker);
     count = klog_crash_serialize_region(s_klog_fixture, sizeof s_klog_fixture);
     klog_remove_override("TESTCRASH");
     TEST_ASSERT_EQ(count, max_entries, "the ring holds more than the region");
     for (uint32_t i = 0; i < count; i++)
         seen += memcmp(dst[i].message, marker, sizeof marker) == 0;
-    TEST_ASSERT_EQ(seen, 1u, "the newest entry is kept");
+    TEST_ASSERT_EQ(seen, 1u, "the newest entry is kept, and nothing joins a held ring");
     static const struct { uint64_t seq; uint32_t count, start; } windows[] = {
         { 0, 0, 0 }, { 400, 400, 0 }, { 401, 401, 0 }, { 799, 799, 0 }, { 800, 799, 1 },
         { 1000, 799, 201 }, { 1300, 799, 501 }, { 4294967296300ull, 799, 501 },

@@ -581,6 +581,10 @@ _Static_assert(sizeof(klog_crash_header_t) == BOOT_CRASH_LOG_HEADER_BYTES &&
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
 
+/* Keep new lines out of the ring (on = 1; they still reach serial) while the panic owner
+ * copies it: no other CPU can then reuse a slot under the copy. At most the one append
+ * already past the check still lands, in a slot the save does not read. */
+void klog_ring_hold(uint32_t on);
 /* The newest entries of a ring that `seq` entries were ever written to, `max` at most:
  * how many there are, and the slot they begin at. Pure; one number names the whole
  * window, so a lock-free reader cannot pair a count with the head of another moment. */

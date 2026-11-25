@@ -84,6 +84,7 @@ static klog_entry_t klog_ring[KLOG_RING_SIZE];
 static uint32_t     klog_ring_head = 0;
 static uint32_t     klog_ring_count = 0;
 static uint64_t     klog_ring_seq = 0;   /* monotonic sequence -- never wraps */
+static uint32_t     s_ring_held;         /* the panic owner is copying the ring */
 
 /* SMP lock: protects ring head/count/seq and rate-limit slot mutations.
  * Uses irqsave because klog() can be called from interrupt context. */
@@ -882,7 +883,7 @@ uint32_t __attribute__((noinline, minsize)) klog_ring_window(uint64_t seq, uint3
     return count;
 }
 
-uint32_t klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
+uint32_t __attribute__((minsize)) klog_crash_serialize_region(uint8_t *region, uint32_t region_size)
 {
     /* Called from panic_screen() via klog_crash_persist() -- no kmalloc, no
      * VFS, no locks. Direct memory write to a pre-reserved region.
@@ -987,13 +988,22 @@ const void *klog_test_crash_region(void)
 }
 #endif
 
+_Static_assert(KLOG_RECOVERED_MAX < KLOG_RING_SIZE,
+               "the append under way when the ring is held must land outside the saved window");
+void klog_ring_hold(uint32_t on)
+{
+    __atomic_store_n(&s_ring_held, on, __ATOMIC_SEQ_CST);
+}
+
 void klog_crash_persist(void)
 {
     if (!s_crash_region || s_crash_region_size == 0)
         return;
 
     panic_fixture_save_point();
+    klog_ring_hold(1u);
     (void)klog_crash_serialize_region(s_crash_region, s_crash_region_size);
+    klog_ring_hold(0u);
 
     /* POST code: crash log persisted */
     POST16(POST16_CRASHLOG);
@@ -1764,16 +1774,17 @@ uint32_t __attribute__((minsize)) klog_panic_snapshot(klog_entry_t *out, uint32_
 {
     /* Lock-free by design: a collector running at the top of a fault funnel may
      * be on a CPU that already holds s_klog_lock inside klog(), so taking it
-     * here could self-deadlock. The window comes from one read of the sequence;
-     * an append on another CPU can at worst rewrite the oldest slot of a full
-     * ring under this copy, and only for a caller that asks for all of it. */
+     * here could self-deadlock. The window comes from one read of the sequence,
+     * and a copy that the ring came round to is given up, not handed out mixed. */
     if (!out || max == 0u)
         return 0u;
     uint32_t start;
-    uint32_t n = klog_ring_window(klog_get_seq(), max, &start);
+    uint64_t seq = klog_get_seq();
+    uint32_t n = klog_ring_window(seq, max, &start);
     for (uint32_t i = 0u; i < n; i++)
         out[i] = klog_ring[(start + i) % KLOG_RING_SIZE];
-    return n;
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    return klog_get_seq() - seq < KLOG_RING_SIZE - n ? n : 0u;
 }
 
 /* Fill one entry: level, tag, coarse timestamp, CPU/pid/tid context and the
@@ -1951,7 +1962,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
 
     /* ---- Store formatted message in ring buffer ---- */
     {
-        klog_entry_t *e = &klog_ring[klog_ring_head];
+        uint32_t held = __atomic_load_n(&s_ring_held, __ATOMIC_ACQUIRE);
+        klog_entry_t *e = held ? &snapshot : &klog_ring[klog_ring_head];
         /* Only the test-build watch formats a record ahead of the ring. A
          * release build has no such path, so `snapshot` is first written by
          * the copy below and must not be read here. */
@@ -1963,13 +1975,14 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
             klog_entry_fill(e, level, subsystem, fmt, ap);
 
         /* Snapshot for output outside the lock */
-        snapshot = *e;
-
-        klog_ring_head = (klog_ring_head + 1) % KLOG_RING_SIZE;
-        if (klog_ring_count < KLOG_RING_SIZE)
-            klog_ring_count++;
-        /* Last, and with release: a lock-free reader that sees the number sees the entry. */
-        __atomic_store_n(&klog_ring_seq, klog_ring_seq + 1, __ATOMIC_RELEASE);
+        if (!held) {
+            snapshot = *e;
+            klog_ring_head = (klog_ring_head + 1) % KLOG_RING_SIZE;
+            if (klog_ring_count < KLOG_RING_SIZE)
+                klog_ring_count++;
+            /* Last, and with release: a lock-free reader that sees the number sees the entry. */
+            __atomic_store_n(&klog_ring_seq, klog_ring_seq + 1, __ATOMIC_RELEASE);
+        }
     }
 
     spin_unlock_irqrestore(&s_klog_lock, irq_flags);

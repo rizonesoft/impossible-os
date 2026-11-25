@@ -555,6 +555,9 @@ shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 
     if ! grep -qaF 'power button: shutting down' "$log" || ! grep -qaF '[ACPI] Initiating shutdown' "$log"; then
         SD_FAIL_MSG="the guest never logged a power-button shutdown"; return 1
     fi
+    if [ "$(grep -acF '[BOOT] efi_main entered' "$log")" -gt 1 ]; then
+        SD_FAIL_MSG="the guest restarted"; return 1
+    fi
     local bad
     bad=$(grep -aE 'X: cache flush failed|storage did not cleanly quiesce|cache flush FAILED on shutdown|controller shutdown FAILED' "$log" | head -1)
     if [ -n "$bad" ]; then
@@ -581,6 +584,8 @@ if [ "${SMOKE_SHUTDOWN_SELFTEST:-0}" = "1" ]; then
     sd_expect accept "clean power-button shutdown" "$S_BTN" "$S_INIT"
     sd_expect reject "no power-button line"        "$S_INIT"
     sd_expect reject "never initiated"             "$S_BTN"
+    sd_expect accept "one boot"                    '[BOOT] efi_main entered' "$S_BTN" "$S_INIT"
+    sd_expect reject "a restart on the way"        '[BOOT] efi_main entered' '[BOOT] efi_main entered' "$S_BTN" "$S_INIT"
     sd_expect reject "X: flush failed"             "$S_BTN" "$S_INIT" '[ACPI] WARNING: X: cache flush failed -- clean bit may not be durable'
     sd_expect reject "storage did not quiesce"     "$S_BTN" "$S_INIT" '[ACPI] WARNING: storage did not cleanly quiesce'
     sd_expect reject "device flush failed"         "$S_BTN" "$S_INIT" '[  4.150] [cpu:0] [ERROR] blk: sata0: cache flush FAILED on shutdown'
@@ -1361,9 +1366,10 @@ fi
 if [ -n "$CRASH_NVRAM" ] && [ "$CRASH_NVRAM_EXPECT" != skipped ]; then
     QEMU_FLAGS+=(-device "loader,file=$CRASH_LOG_IMG,addr=$CRASH_NVRAM_HEX,force-raw=on")
 fi
-if [ -n "$CT_MODE$CT_END" ]; then
-    # These legs reset the guest (through the monitor, or the kernel does) and judge
-    # the NEXT boot, which -no-reboot would turn into a QEMU exit.
+if [ -n "$CT_MODE$CT_END" ] || [ "$SHUTDOWN" = "1" ]; then
+    # The crash legs reset the guest (through the monitor, or the kernel does) and judge
+    # the NEXT boot, which -no-reboot would turn into a QEMU exit. Under it a shutdown
+    # leg would take a reset for a power-off: both read "paused (shutdown)".
     _qf=()
     for _f in "${QEMU_FLAGS[@]}"; do [ "$_f" = "-no-reboot" ] || _qf+=("$_f"); done
     QEMU_FLAGS=("${_qf[@]}")
