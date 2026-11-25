@@ -193,6 +193,8 @@ expect_cut("a replayed record is not the next boot's own",
            CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] panic: " + RECORD], False)
 expect_cut("a replayed log of the cut crash fails",
            CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] boot: " + CUT_ORDER] + AFTER[1:], False)
+expect_cut("a replay without the fixture's line fails too",
+           CUT_BOOT + AFTER[:1] + ["[CRASH-PREV] mm: ready"] + AFTER[1:], False)
 expect_cut("one report alone fails", CUT_BOOT[:4] + CUT_BOOT[6:] + AFTER, False)
 expect_cut("a second report from one CPU fails", CUT_BOOT[:-1] + CUT_REPORTS[2:] + CUT_BOOT[-1:] + AFTER, False)
 expect_cut("a crash that was never cut fails", CUT_BOOT[:-1] + AFTER, False)
@@ -252,10 +254,13 @@ expect_wait("a record after the time does not", 5.1, 99.0, False)
 expect_wait("a wait that oversleeps its time does not pass", 6.0, 99.0, False, overslept=7.0)
 expect_wait("a read that ends after the time does not pass", 5.5, 99.0, False, read_takes=2.0)
 for bad in ("inf", "1e309", "nan", "4.5", "soon"):
+    waited = []
+    real, dp.wait_next_boot = dp.wait_next_boot, lambda *a: waited.append(a)
     got = dp.main(["wait", "/nonexistent", bad, "1"])
-    if got != 1:
+    dp.wait_next_boot = real
+    if got != 1 or waited:
         failures += 1
-    print("%s  a wait of %s is refused" % ("PASS" if got == 1 else "FAIL", bad))
+    print("%s  a wait of %s is refused" % ("PASS" if got == 1 and not waited else "FAIL", bad))
 expect_wait("a QEMU that is gone ends the wait", 99.0, 2.0, True)
 
 print("%d failure(s)" % failures)

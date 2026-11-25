@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("smoke_screen", HERE.parent / "smoke-screen.py")
@@ -167,6 +168,27 @@ expect_powerdown("a guest that powers off in time passes", 0.5, 0.0, False, True
 expect_powerdown("a guest that stays up fails when the time ends", 9.0, 0.0, False, False)
 expect_powerdown("a reply after the time fails", 0.0, 1.3, False, False)
 expect_powerdown("a monitor that goes away fails", 0.0, 0.0, True, False)
+
+
+
+class LateSocket:
+    """The bytes are there, and the reader gets them after its time."""
+
+    def settimeout(self, left: float) -> None:
+        self.left = left
+
+    def recv(self, size: int) -> bytes:
+        ss.time = types.SimpleNamespace(monotonic=lambda: time.monotonic() + self.left + 1.0)
+        return b"VM status: paused (shutdown)\r\n(qemu) "
+
+
+try:
+    ss._read_until(LateSocket(), bytearray(), 1, time.monotonic() + 1.0)
+    failures += 1
+    print("FAIL  bytes read after the time count for nothing")
+except ss.ScreenError:
+    print("PASS  bytes read after the time count for nothing")
+ss.time = time
 
 print("%d failure(s)" % failures)
 sys.exit(1 if failures else 0)

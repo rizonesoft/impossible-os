@@ -171,6 +171,8 @@ def _read_until(sock: socket.socket, buf: bytearray, count: int, deadline: float
             raise ScreenError("QEMU monitor gave no prompt in time") from exc
         if not chunk:
             raise ScreenError("QEMU monitor closed the connection")
+        if time.monotonic() > deadline:     # the bytes may have come after it
+            raise ScreenError("QEMU monitor gave no prompt in time")
         buf.extend(chunk)
 
 

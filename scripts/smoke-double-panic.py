@@ -227,7 +227,7 @@ def check_cut(text: str, last: str) -> str:
         raise VerdictError("expected one panic report from each of two CPUs, saw apic %s" % (cpus or "none"))
     if last not in body or DUMP in body:
         raise VerdictError("the crash boot was not reset at %r" % last)
-    if any(ORDER_RE.search(x) for x in second.replayed):
+    if second.replayed:
         raise VerdictError("the boot after the reset replayed the crashed boot's log: the cut came after its save")
     found = records(second.live)
     if found != [BSP_STOP[1]]:
