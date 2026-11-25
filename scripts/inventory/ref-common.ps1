@@ -225,11 +225,22 @@ function Enter-RefLock([string]$Name) {
     }
 }
 
+# A shell that PowerShell 7 started hands its module path on, through WSL too,
+# and Windows PowerShell then finds that edition's modules first and loses
+# cmdlets of its own (Get-FileHash, 2026-11-25).
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $env:PSModulePath = @($env:PSModulePath -split ';' | Where-Object { $_ -and $_ -notmatch '\\PowerShell\\' }) -join ';'
+}
+
 # Impossible SDK's own machine and its folder are never ours to start, stop,
-# change or delete: a script given either refuses before it does anything.
+# change or delete: a script given either refuses before it does anything. A
+# pattern is refused too: Hyper-V's cmdlets expand one, and the VM lock does not.
 function Assert-RefTarget([string]$Name, [string[]]$Paths) {
+    if ([Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Name)) {
+        Write-Host "ref: -Name $Name is a pattern; give the VM's own name"; exit 2
+    }
     $reserved = 'ui-test-win11'
-    $hit = $reserved -like $Name   # Get-VM reads -Name as a wildcard
+    $hit = $Name.Trim() -eq $reserved
     foreach ($p in $Paths) {
         if (-not $p) { continue }
         $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)
@@ -246,7 +257,8 @@ function Assert-RefTarget([string]$Name, [string[]]$Paths) {
 # this one passes straight through (Bosun reads these variables).
 #
 # A run is never refused: Bosun starts the holder anyway after the wait (slot
-# -1), and no Bosun, or one that fails or stays silent, means no place.
+# -1), and no Bosun, or one that fails or stays silent, means no place. What
+# Bosun says of itself goes to this process's own stderr.
 $script:RefTurnNs = 'Bosun.VM'
 $script:RefTurnWaitSec = 360
 $script:RefTurnLimitSec = 420
@@ -265,13 +277,11 @@ function Enter-RefTurn() {
     $si.CreateNoWindow = $true
     $si.RedirectStandardInput = $true
     $si.RedirectStandardOutput = $true
-    $si.RedirectStandardError = $true
     $clock = [Diagnostics.Stopwatch]::StartNew()
     try { $p = [Diagnostics.Process]::Start($si) } catch {
         Write-Ref "Bosun did not start ($($_.Exception.Message)): going on without a place"; return
     }
     $script:RefTurn.Process = $p
-    $err = $p.StandardError.ReadToEndAsync()   # read while it runs, so Bosun never waits to write
     $given = @{}
     $said = $false
     while (-not $given.ContainsKey('BOSUN_SLOT') -and $clock.Elapsed.TotalSeconds -lt $script:RefTurnLimitSec) {
@@ -287,15 +297,9 @@ function Enter-RefTurn() {
         if ($read.Result -match '^(BOSUN_SLOT|BOSUN_NS)=(.*)$') { $given[$Matches[1]] = $Matches[2] }
     }
     if (-not $given.ContainsKey('BOSUN_SLOT')) {
-        # The limit is spent: Bosun is ended at once, and its stderr is read to
-        # the end that brings.
-        $why = ''
-        try {
-            if (-not $p.HasExited) { $p.Kill() }
-            if ($err.Wait(1000)) { $why = "$($err.Result)".Trim() }
-        } catch { $why = "ending Bosun: $($_.Exception.Message)" }
-        if ($why.Length -gt 300) { $why = $why.Substring(0, 300) }
-        Write-Ref "Bosun gave no place after $([int]$clock.Elapsed.TotalSeconds) s: going on without one. $why"
+        # The limit is spent, so Bosun is ended at once.
+        try { if (-not $p.HasExited) { $p.Kill() } } catch { Write-Ref "ending Bosun: $($_.Exception.Message)" }
+        Write-Ref "Bosun gave no place after $([int]$clock.Elapsed.TotalSeconds) s: going on without one"
         $script:RefTurn.Process = $null
         return
     }
@@ -522,10 +526,11 @@ function Restore-RefCheckpoint([string]$Name, [string]$Checkpoint, [string]$VmPa
     $root = (Resolve-Path -LiteralPath $VmPath).ProviderPath.TrimEnd('\') + '\'
     $snap = @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $Checkpoint })
     if ($snap.Count -ne 1) { throw "$Name has $($snap.Count) checkpoints named '$Checkpoint'; want exactly one" }
-    # Before the VM is touched: a restore can start it. A teardown never waits.
-    if (-not $NoStart) { Enter-RefTurn }
     $script:RefTouched = $true   # from here the VM is this run's to turn off
+    # A VM that a killed run left on gives its memory back before this one waits.
     if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    # Before the restore, which can start the VM. A teardown never waits.
+    if (-not $NoStart) { Enter-RefTurn }
     Restore-VMSnapshot -VMSnapshot $snap[0] -Confirm:$false
     # A checkpoint taken while running restores running: a teardown stops it
     # before the media repair, so a repair that fails cannot leave it running.

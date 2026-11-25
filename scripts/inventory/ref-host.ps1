@@ -67,6 +67,13 @@ if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force)
 try { $plan = @((Get-Content -LiteralPath $Steps -Raw | ConvertFrom-Json) | ForEach-Object { $_ }) } catch {
     Write-Host "ref-host: $Steps is not a JSON array of steps: $($_.Exception.Message)"; exit 2
 }
+# These become files in -Out, so each is a plain file name.
+foreach ($step in $plan) {
+    $files = @(if ($step.op -in 'shot', 'burst', 'fetch') { "$($step.name)" }; if ($step.as) { "$($step.as)" })
+    foreach ($f in $files) {
+        if ($f -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z') { Write-Host "ref-host: $($step.op): '$f' is not a plain file name"; exit 2 }
+    }
+}
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 Enter-RefLock $Name
 
@@ -208,7 +215,6 @@ function Invoke-Step($step) {
         }
         'admin' { Invoke-Command -Session $script:Session -ScriptBlock ([scriptblock]::Create($step.script)) | Out-Host }
         'fetch' {
-            if ($step.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "fetch: name '$($step.name)' is not a plain file name" }
             Copy-Item -FromSession $script:Session -LiteralPath $step.path -Destination (Join-Path $Out $step.name) -Force
         }
         'key' { Send-RefKey $Name ([uint32]$step.vk) }

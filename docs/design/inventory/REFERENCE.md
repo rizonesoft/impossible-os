@@ -122,7 +122,8 @@ Inventory takes turns. The host is short of memory, and Impossible SDK has a 4 G
 - Without Bosun, or when Bosun fails or does not answer within 7 minutes, the run goes on without a place and says so. Bosun `8d5f318` or later is needed.
 - The VM's own lock comes first and is as it was: a second run on this VM exits 4 at once. `ref-run.ps1 -Stop` never waits.
 - A job a run starts under the same queue name passes straight through.
-- A script given `ui-test-win11` as `-Name`, or a path inside a folder of that name, refuses (exit 2) and changes nothing.
+- A script given `ui-test-win11` as `-Name`, or a path inside a folder of that name, refuses (exit 2) and changes nothing. So does a `-Name` that is a pattern.
+- A VM that a killed run left on is turned off before the next run waits.
 
 ## How are the screens UI Automation cannot see captured?
 

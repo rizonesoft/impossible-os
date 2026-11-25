@@ -34,7 +34,7 @@ ENV = {k: v for k, v in os.environ.items() if not k.startswith("BOSUN_")}
 ENV["WSLENV"] = ":".join(x for x in ENV.get("WSLENV", "").split(":") if x and not x.startswith("BOSUN_"))
 
 STUBS = r"""
-$script:State = 'Off'
+$script:State = '@STATE@'
 function Note([string]$Text) { Add-Content -LiteralPath '@LOG@' -Value $Text }
 function Get-VM([string]$Name) { [pscustomobject]@{ Name = $Name; State = $script:State; Id = 'x' } }
 function Get-VMSnapshot([string]$VMName) { [pscustomobject]@{ Name = 'clean' } }
@@ -89,7 +89,7 @@ class Turns(unittest.TestCase):
         (self.tmp / "vm").mkdir()
         self.win = winpath(self.tmp)
 
-    def scripts(self, wait, limit):
+    def scripts(self, wait, limit, state="Off"):
         """Copies of ref-run.ps1 and ref-common.ps1 with this test's queue and stubs."""
         folder = self.tmp / f"scripts-{wait}-{limit}"
         folder.mkdir(exist_ok=True)
@@ -100,7 +100,7 @@ class Turns(unittest.TestCase):
                          ("$script:RefTurnLimitSec = 420", f"$script:RefTurnLimitSec = {limit}")):
             self.assertEqual(text.count(old), 1, old)
             text = text.replace(old, new)
-        stubs = STUBS.replace("@LOG@", self.win + "\\log.txt").replace("@GO@", self.win + "\\go").replace("@NS@", self.ns)
+        stubs = STUBS.replace("@STATE@", state).replace("@LOG@", self.win + "\\log.txt").replace("@GO@", self.win + "\\go").replace("@NS@", self.ns)
         (folder / "ref-common.ps1").write_text(text + stubs, encoding="utf-8")
         return folder
 
@@ -132,6 +132,10 @@ class Turns(unittest.TestCase):
         while not ready():
             self.assertLess(time.monotonic(), end, what())
             time.sleep(0.1)
+
+    def wait_waiting(self, p):
+        said = f"waiting for a place in {self.ns}"
+        self.wait_for(lambda: any(said in x for x in p.lines), lambda: f"it did not wait: {p.lines}")
 
     def finish(self, p):
         """The exit code and everything printed."""
@@ -193,8 +197,8 @@ class Turns(unittest.TestCase):
 
     def test_a_run_waits_for_the_place_and_goes_on_when_it_frees(self):
         dummy = self.hold()
-        p, line = self.first_line(self.ref_run(self.scripts(60, 90)))
-        self.assertIn(f"waiting for a place in {self.ns}", line)
+        p, _ = self.first_line(self.ref_run(self.scripts(60, 90)))
+        self.wait_waiting(p)
         self.assertEqual(self.noted(), "")       # the VM is untouched while it waits
         dummy.stdin.close()
         code, out = self.finish(p)
@@ -202,6 +206,15 @@ class Turns(unittest.TestCase):
         self.assertIn("took a place", out)
         self.assertRegex(self.noted(), rf"start pid=\d+ slot=0 ns={self.ns} wslenv=\S*BOSUN_SLOT:BOSUN_NS")
         self.assertLess(self.noted().index("restore"), self.noted().index("start"))
+
+    def test_a_vm_left_on_is_off_before_the_wait(self):
+        dummy = self.hold()
+        p = self.start(self.ref_run(self.scripts(60, 90, "Running")))
+        self.wait_waiting(p)
+        self.assertEqual(self.noted().split(), ["stop"])
+        dummy.stdin.close()
+        code, out = self.finish(p)
+        self.assertEqual(code, 7, out)
 
     def test_a_place_held_too_long_never_refuses_the_run(self):
         dummy = self.hold()
@@ -247,9 +260,7 @@ class Turns(unittest.TestCase):
         self.assert_bounded(self.fake(3))
 
     def test_a_bosun_that_fails_is_reported_and_the_run_goes_on(self):
-        out = self.fake(2)
-        self.assertIn("eee", out)
-        self.assertLess(len(out), 2000)
+        self.assertIn("eee", self.fake(2))               # what Bosun said is shown
 
     def test_a_run_inside_the_queue_does_not_wait_for_itself(self):
         inner = self.ref_run(self.scripts(60, 90), command="nested")
@@ -306,14 +317,32 @@ class Turns(unittest.TestCase):
 
     def test_the_sdk_machine_is_refused_before_anything_changes(self):
         folder = self.scripts(60, 90)
-        for name, path in (("ui-test-win11", None), ("UI-Test-Win11", None), ("ui-test*", None),
-                           (None, "D:\\11\\ui-test-win11"), (None, "D:\\11\\x\\..\\UI-test-win11\\disks")):
+        sdk, pattern = "Impossible SDK's machine", "is a pattern"
+        for name, path, why in (("ui-test-win11", None, sdk), ("UI-Test-Win11", None, sdk), ("ui-test*", None, pattern),
+                                ("ios-win11-re[f]", None, pattern), (None, "D:\\11\\ui-test-win11", sdk),
+                                (None, "D:\\11\\x\\..\\UI-test-win11\\disks", sdk)):
             code, out = self.call(self.ref_run(folder, name=name, vm=path))
             self.assertEqual(code, 2, out)
-            self.assertIn("Impossible SDK's machine", out)
+            self.assertIn(why, out)
         self.assertEqual(self.noted(), "")
         self.assertEqual(list(self.tmp.glob("out-*")), [])
         self.assertEqual(self.call(self.ref_run(folder, name="ui-test-win11-ours"))[0], 7)
+
+
+    def test_a_host_step_writes_only_in_its_out_folder(self):
+        folder = self.scripts(60, 90)
+        shutil.copy(INV / "ref-host.ps1", folder)
+        (self.tmp / "sdk.png").write_text("theirs")
+        for step in ('{"op": "shot", "name": "..\\\\sdk"}', '{"op": "burst", "name": "..\\\\sdk", "count": 1}',
+                     '{"op": "burst", "name": "b", "count": 1, "as": "..\\\\sdk"}', '{"op": "fetch", "name": "../sdk.png"}'):
+            (self.tmp / "steps.json").write_text(f"[{step}]")
+            code, out = self.call([POWERSHELL, *BYPASS, "-File", winpath(folder) + "\\ref-host.ps1", "-Steps",
+                                   self.win + "\\steps.json", "-Out", self.win + "\\out-h", "-VmPath", self.win + "\\vm",
+                                   "-Name", f"{self.ns}-vm"])
+            self.assertEqual(code, 2, out)
+            self.assertIn("is not a plain file name", out)
+        self.assertFalse((self.tmp / "out-h").exists())
+        self.assertEqual((self.tmp / "sdk.png").read_text(), "theirs")
 
 
 class Sources(unittest.TestCase):
@@ -327,9 +356,14 @@ class Sources(unittest.TestCase):
     def test_only_the_shared_code_starts_the_vm(self):
         # A new script that starts the VM itself would skip the queue.
         starts = re.compile(r"\b(Start-VM|Restore-VM\w+|Resume-VM|Restart-VM|RequestStateChange)\b", re.I)
-        found = {p.name: sorted(starts.findall(self.code(p))) for p in self.SCRIPTS}
-        self.assertEqual({k: v for k, v in found.items() if v},
-                         {"ref-common.ps1": ["Restore-VMSnapshot", "Start-VM"]})
+        found = []
+        for p in self.SCRIPTS:
+            for body in re.split(r"(?m)^function ", self.code(p)):
+                for m in starts.finditer(body):
+                    self.assertIn("Enter-RefTurn", body[:m.start()], f"{p.name}: {m[0]} before the turn")
+                    found.append((p.name, re.match(r"[\w-]*", body)[0], m[0]))
+        self.assertEqual(sorted(found), [("ref-common.ps1", "Restore-RefCheckpoint", "Restore-VMSnapshot"),
+                                         ("ref-common.ps1", "Start-RefVm", "Start-VM")])
         for p in INV.rglob("*.py"):
             if "tests" not in p.parts:
                 self.assertEqual(starts.findall(p.read_text(encoding="utf-8")), [], p)
@@ -347,6 +381,12 @@ class Sources(unittest.TestCase):
             taken = set(re.findall(r"\[string\]\$(\w+)", self.code(p).split("$ErrorActionPreference")[0]))
             self.assertEqual({x.strip(" $") for x in named[1].split(",")}, taken - {"Name", "Checkpoint", "Command", "ProfileId"}, p.name)
             self.assertIn("Exit-RefTurn", lines, p.name)
+
+    def test_a_path_is_read_one_way(self):
+        # .NET reads a relative path against the process's folder, not PowerShell's.
+        for p in self.SCRIPTS:
+            if "guest" not in p.parts:
+                self.assertNotIn("GetFullPath", self.code(p), p.name)
 
     def test_the_queue_is_the_sdks_and_never_skips(self):
         text = self.code(INV / "ref-common.ps1")

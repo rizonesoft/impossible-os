@@ -105,7 +105,9 @@ if ((Get-FileHash -Algorithm SHA1 -LiteralPath $Package).Hash -ne $pkgSha) { Wri
 
 # Both locks before anything under -Work changes: a rejected second run must
 # leave the first one's files alone, whichever VM it names.
-$Work = [IO.Path]::GetFullPath($Work).TrimEnd('\')
+# As Assert-RefTarget reads it: against PowerShell's location, which Set-Location
+# moves and the process's current folder does not follow.
+$Work = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Work).TrimEnd('\')
 $workKey = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($Work.ToLowerInvariant()))).Replace('-', '').Substring(0, 16)
 $WorkLock = New-Object Threading.Mutex($false, "Global\ios-update-iso-$workKey")
 try { $held = $WorkLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }

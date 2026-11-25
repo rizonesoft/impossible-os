@@ -1304,16 +1304,20 @@ The place is the one `bosun run --ns Bosun.VM --slots 1 --max-wait 360 -- <comma
 - [x] A script already inside the queue passes straight through, its own children too (`BOSUN_SLOT`, `BOSUN_NS` and `WSLENV` as Bosun gave them), and every exit code is the script's own
 - [x] `capture.py` and `host-capture.py` allow the whole bounded wait more than before (420 seconds and 30 to end a hung Bosun), for the reference machine only; a test holds their constant against `ref-common.ps1`
 - [x] A script given `ui-test-win11` as `-Name`, or a path inside a folder of that name, refuses with exit 2 before it changes anything (plan pass, P1: `ref-vm.ps1 -Rebuild` would have deleted it)
+  - A `-Name` with a wildcard refuses too: Hyper-V's cmdlets expand it and the VM lock does not, so it named a VM whose lock it did not hold. `ref-host.ps1` refuses a step whose file name is not plain.
+  - Rejected (completion pass, P1): a junction that leads into the SDK's folder. Nothing in either project makes one and `D:\11` holds none (checked 2026-11-25); the check guards against a wrong argument, not against a folder made to hide another.
 - [x] `REFERENCE.md` says that inventory takes turns, how long it waits and what happens then
-- [ ] Commit: `"inventory: take turns with the SDK's test machine"`
+- [x] Commit: `"inventory: take turns with the SDK's test machine"` (357668b57)
 
 **Test checkpoint:** on the Windows host, with the place held by a dummy job: `ref-run.ps1` waits and goes on when the place frees; held longer than a short test wait, it goes on anyway; with Bosun off the PATH it runs directly; run inside `bosun run --ns` it does not wait for itself; exit codes 2, 3, 4 and a script's own code come back unchanged; `-Stop` answers while the place is held; a killed run frees the place. The VM cmdlets are stubs in these tests and the queue has a name of its own, so no machine starts and no SDK job is delayed. Each test fails on the commit before.
 
-> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (17 tests: 4 source checks anywhere, 13 queue cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
+> **Test runner:** `python3 scripts/inventory/tests/test_turns.py` (20 tests: 5 source checks anywhere, 15 cases that need Windows PowerShell and Bosun) | nested suite `inventory_turns` of `scripts/test-tooling.sh`
 >
 > **Notes:**
 > - `Enter-RefTurn` and `Exit-RefTurn` in `ref-common.ps1` hold Bosun's place through `cmd.exe /d /c set BOSUN_& sort >nul`; `Start-RefVm` and `Restore-RefCheckpoint` are the only code that starts the VM
 > - `update-iso.ps1` frees the place before it builds the ISO and `derive.ps1` before it converts the disk, since the VM is off by then
+> - A VM that a killed run left on is turned off before the wait, so it gives its 4 GB back
+> - Windows PowerShell started under PowerShell 7 lost `Get-FileHash` (`update-iso.ps1`); `ref-common.ps1` drops that edition's module folders
 > - The run goes on without a place when Bosun is absent, fails or stays silent for 420 s; `Assert-RefTarget` refuses the SDK's machine, and its folder in any path argument (a test holds the list complete)
 > - A job that itself started on Bosun's timeout (slot -1) passes any inner queue straight through: Bosun's own rule, kept
 > - Canonical doc: `docs/design/inventory/REFERENCE.md`, the section on sharing the host with the SDK's test machine

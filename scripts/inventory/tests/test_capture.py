@@ -1565,10 +1565,13 @@ class Profile(unittest.TestCase):
         # renames a checkpoint that already existed, may look it up by name.
         by_name = []
         for path in sorted(INV.glob("**/*.ps1")):
-            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            function = None
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("function "):
+                    function = line.split()[1].split("(")[0]
                 if "Rename-VMSnapshot" in line and "-VMSnapshot" not in line.replace("Rename-VMSnapshot", ""):
-                    by_name.append(f"{path.relative_to(INV)}:{n}")
-        self.assertEqual(by_name, ["ref-common.ps1:390"])
+                    by_name.append(f"{path.relative_to(INV)}:{function}")
+        self.assertEqual(by_name, ["ref-common.ps1:Repair-RefPromotion"])
 
     def test_a_restore_finds_media_the_store_move_left_behind(self):
         # The store moved from R:\11 to D:\11 (2026-11-19): every checkpoint
@@ -1625,8 +1628,8 @@ class Profile(unittest.TestCase):
         # lock with the guest running (review, 2026-11-18). A checkpoint taken
         # while running restores Running: -NoStart turns it off.
         shell = self._powershell(INV / "ref-common.ps1", windows=True)[0]
-        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint", "Find-RefMedia"]))
-              + "function Repair-RefPromotion { }; function Get-VMDvdDrive { @() }; "
+        ps = (self._ps_functions((INV / "ref-common.ps1", ["Restore-RefCheckpoint", "Find-RefMedia", "Start-RefVm"]))
+              + "function Repair-RefPromotion { }; function Enter-RefTurn { }; function Get-VMDvdDrive { @() }; "
               "function Get-VMSnapshot { @([pscustomobject]@{ Name = 'clean' }) }; "
               "$script:state = 'Running'; $script:after = 'Running'; "
               "function Get-VM { [pscustomobject]@{ State = $script:state; Id = 'id' } }; "
@@ -1731,7 +1734,7 @@ class Profile(unittest.TestCase):
               "New-Item -ItemType Directory (Join-Path $w 'iso'), (Join-Path $w 'parts') | Out-Null; "
               "Set-Content -LiteralPath (Join-Path $w 'parts\\install.swm') -Value keep; "
               "$pkgDir = Join-Path $w 'pkg'; New-Item -ItemType Directory $pkgDir | Out-Null; $tmp = Join-Path $pkgDir 'p'; Set-Content -LiteralPath $tmp -Value x; "
-              "$pkg = Join-Path $pkgDir ('windows11.0-kb1-x64_' + (Get-FileHash -Algorithm SHA1 -LiteralPath $tmp).Hash.ToLower() + '.msu'); Move-Item $tmp $pkg; "
+              "$pkg = Join-Path $pkgDir ('windows11.0-kb1-x64_' + [BitConverter]::ToString([Security.Cryptography.SHA1]::Create().ComputeHash([IO.File]::ReadAllBytes($tmp))).Replace('-', '').ToLower() + '.msu'); Move-Item $tmp $pkg; "
               "$full = [IO.Path]::GetFullPath($w).TrimEnd('\\'); "
               "$k = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($full.ToLowerInvariant()))).Replace('-', '').Substring(0, 16); "
               "$m = New-Object Threading.Mutex($true, \"Global\\ios-update-iso-$k\"); "
