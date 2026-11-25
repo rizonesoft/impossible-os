@@ -673,8 +673,8 @@ static void __attribute__((minsize)) test_klog_panic_snapshot(void)
     uint32_t count, head, bad = 1, n, i;
     uint64_t seq;
 
-    /* The live ring, while it is held: each entry is the one in its slot, and nothing is
-     * written past the copy. An append that began before the hold is let in first. */
+    /* The live ring, while it is held: each entry is the one in its slot, whole, and
+     * nothing is written past the copy. An append that began before the hold is let in first. */
     klog_ring_hold(1u);
     for (uint32_t tries = 0; tries < 100u && bad; tries++) {
         live = klog_get_ring_snapshot(&count, &head, &seq);
@@ -683,8 +683,7 @@ static void __attribute__((minsize)) test_klog_panic_snapshot(void)
             bad += klog_panic_snapshot(out, n) != n || out[n].timestamp != 0xA5A5A5A5u;
             for (i = 0; i < n; i++) {
                 want = &live[(head + KLOG_RING_SIZE - n + i) % KLOG_RING_SIZE];
-                bad += out[i].timestamp != want->timestamp
-                    || memcmp(out[i].message, want->message, sizeof want->message) != 0;
+                bad += memcmp(&out[i], want, sizeof *want) != 0;
             }
         }
         bad += klog_get_seq() != seq;
@@ -704,12 +703,14 @@ static void __attribute__((minsize)) test_klog_panic_snapshot(void)
     if (!ring)
         return;
     klog_entry_t *copy = ring + KLOG_RING_SIZE;
-    for (i = 0; i < KLOG_RING_SIZE; i++)
+    for (i = 0; i < KLOG_RING_SIZE; i++) {
+        memset(&ring[i], (int)i, sizeof ring[i]);
         ring[i].timestamp = i;
+    }
     n = klog_ring_copy(ring, &written, copy, KLOG_RING_SIZE);
     bad = n != KLOG_RING_SIZE - 1u;
     for (i = 0; i < KLOG_RING_SIZE - 1u; i++)
-        bad += copy[i].timestamp != (8u + i) % KLOG_RING_SIZE;
+        bad += memcmp(&copy[i], &ring[(8u + i) % KLOG_RING_SIZE], sizeof copy[i]) != 0;
     pmm_free_contiguous((uintptr_t)ring, pages);
     TEST_ASSERT_EQ(bad, 0u, "a full ring is copied, oldest to newest");
 }
