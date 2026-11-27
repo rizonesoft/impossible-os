@@ -27,6 +27,8 @@ title: "TODO-16 -- Rizonesoft Office"
 - -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §16` -- per-thread vector state, which must be in place before Office runs threaded here (§4)
 - -> XREF: `11-apps/TODO-14-inkeys.md` -- the other bundled app that follows the Windows-first rule; Inkeys keeps its own Win32 approach and does not use the SDK seam
 - `src/libs/PROVENANCE.md`, `CREDITS.md` -- vendoring records (§1)
+- Office `todo/03-architecture/TODO-01-tech-stack.md` -- the 2026-11-27 decision and the sections that build Office on the SDK
+- `impossible-sdk` `todo/09-platform/` -- the SDK sections Office waits for (C++ `TODO-01`, boundary `TODO-02`)
 
 ---
 

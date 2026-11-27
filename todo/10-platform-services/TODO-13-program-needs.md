@@ -21,6 +21,7 @@ title: "TODO-13 -- What Programs Need of This OS"
 - `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`: the GPU tier, its `resolved` and `methods` records (§7 to §9)
 - -> XREF: `11-apps/TODO-14-inkeys.md` §3, §5 and `12-user-platform-sdk/TODO-07-win32-compat-matrix.md` §13: Inkeys' Direct3D 11 needs are answered by §7 and §8, never by a second list
 - -> XREF: `11-apps/TODO-16-office.md`, `11-apps/TODO-17-isotone.md` §5: the programs that call the tier
+- `impossible-sdk` `todo/09-platform/TODO-03-gpu.md` -- the SDK's GPU tier, the owner of the list that §7 to §9 implement
 
 ## Outcome
 

@@ -28,6 +28,8 @@ title: "TODO-17 -- Isotone"
 - -> XREF: `10-platform-services/TODO-13-program-needs.md §1,§2,§3` -- the Windows functions of tiers 0 to 2
 - -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §16` -- per-thread vector state, which must be in place before Isotone runs threaded here (§4)
 - `src/libs/PROVENANCE.md`, `CREDITS.md` -- vendoring records (§1)
+- Isotone `todo/00-workspace/TODO-08-sdk-platform-build.md` and `todo/01-core/TODO-28-foundation-sdk-platform.md` -- the sections that build Isotone on the SDK
+- `impossible-sdk` `todo/09-platform/` -- the SDK sections Isotone waits for (C++ `TODO-01`, boundary `TODO-02`, GPU `TODO-03`)
 
 ---
 

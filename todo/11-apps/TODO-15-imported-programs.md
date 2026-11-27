@@ -21,6 +21,7 @@ title: "TODO-15 -- Imported Programs and Parts"
 - -> XREF: `11-apps/TODO-05-pdf-viewer.md` §21 -- Recto's one transfer onto the SDK build; it needs §21, §22 and §23 here before it replaces anything
 - -> XREF: `11-apps/TODO-16-office.md` §3, `11-apps/TODO-17-isotone.md` §3 -- the programs that use the shared reproducible build check of §23 and the `cxx` part of §22
 - `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md` -- the approved design these sections carry out
+- `impossible-sdk` `todo/09-platform/TODO-01-cxx.md` (the `cxx` part §22 imports) and `TODO-02-boundary.md` (the checks §23 reruns on import)
 
 ## Outcome
 

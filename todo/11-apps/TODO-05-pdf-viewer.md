@@ -40,6 +40,8 @@ title: "TODO-05 -- PDF Viewer"
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, app_path)` -- §9
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- §1 file loading
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free_contiguous()` -- all large buffers
+- Recto `todo/00-workspace/TODO-06-impossible-sdk-platform.md` -- the Recto sections that move it onto the SDK, the new owners for most of §21's rows
+- `impossible-sdk` `todo/09-platform/` -- the SDK sections that own the `cxx` part, the boundary checks and the GPU tier
 
 ---
 
