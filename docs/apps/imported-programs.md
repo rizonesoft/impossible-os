@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/11-apps/TODO-15-imported-programs.md sources=todo/imports.json,scripts/imports.py reviewed=2026-11-23 order=15 -->
+<!-- docs: covers=todo/11-apps/TODO-15-imported-programs.md sources=todo/imports.json,scripts/imports.py reviewed=2026-11-27 order=15 -->
 # Imported Programs and Parts
 
 ## What is it?
@@ -14,6 +14,7 @@ Impossible OS gets many of its programs from their own repositories: games, tool
 1. **Parts.** Impossible SDK, its parts and Impossible UI arrive first, because the programs are built with them.
 2. **Programs.** Each program arrives when the OS can run it, with its tests.
 3. **Changes.** A change made here lands here at once and goes to the program's repository; the pin moves when it is merged.
+4. **Moved rows and builds.** A section that moves to another repository will carry the hash of its old text in the ledger (section 21), so a changed old text is detected. The SDK's `cxx` part gets its own import section (section 22), and one check compares each imported program's built executables with the hash its release recorded (section 23), so no program writes its own. None of the three is built yet.
 
 ```mermaid
 flowchart LR

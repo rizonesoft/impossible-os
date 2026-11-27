@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/10-platform-services/TODO-13-program-needs.md sources=scripts/imports.py,todo/imports.json reviewed=2026-11-23 order=13 -->
+<!-- docs: covers=todo/10-platform-services/TODO-13-program-needs.md sources=scripts/imports.py,todo/imports.json reviewed=2026-11-27 order=13 -->
 # What Programs Need
 
 ## What is it?
@@ -18,12 +18,15 @@ flowchart LR
     S --> B[Built in the OS]
 ```
 
+**The GPU tier.** [Impossible SDK](https://github.com/rizonesoft/ImpossibleSDK) is getting a tier after Desktop for the Direct3D 11 and DXGI subset that Recto, Isotone and Inkeys use. Its list will hold functions, names looked up at run time and COM methods by interface. Sections 7 and 8 of the roadmap implement them, shared with Inkeys, and section 9 teaches `--needs` to read the two new kinds and to report a missing method under its interface. None of this is built yet.
+
 ## What are its interfaces?
 
 | Interface | Status |
 | --- | --- |
 | `scripts/imports.py --needs`, `--file-needs` | Shipped |
 | The functions of each tier | Planned |
+| The GPU tier: functions, run-time names and methods, and `--needs` reading them | Planned |
 
 ## How do I use it?
 

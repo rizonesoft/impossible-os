@@ -745,6 +745,40 @@
       "commit": null,
       "tree": null,
       "open": null
+    },
+    "office": {
+      "repository": "Office",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/office",
+      "section": "todo/11-apps/TODO-16-office.md §1",
+      "commit": null,
+      "tree": null,
+      "open": null
+    },
+    "isotone": {
+      "repository": "Isotone",
+      "from": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "app.json",
+        "sdk.json",
+        "src",
+        "tests"
+      ],
+      "kind": "app",
+      "path": "src/apps/isotone",
+      "section": "todo/11-apps/TODO-17-isotone.md §1",
+      "commit": null,
+      "tree": null,
+      "open": null
     }
   },
   "moved": [

@@ -16,6 +16,9 @@ title: "TODO-05 -- PDF Viewer"
 > [!NOTE]
 > **Owner direction, 2026-11-14:** Recto is bundled in Impossible OS, and it is ported with a backend, not run as an unmodified Windows binary: its toolkit draws through the Impossible OS graphics, text and UI engines, and it is built from source in this tree. Reversal cost: low; the unmodified binary remains a later Win32 compatibility test and needs no change here. Vendor verdict: Recto is GPL-3.0-or-later (same licence family as this project, read at `D:\Recto\LICENSE`); the C++ runtime is LLVM libc++ (Apache-2.0 with the LLVM exception).
 
+> [!IMPORTANT]
+> **Under reconciliation, 2026-11-27.** The approved design `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md` gives Recto one shipping build: `Recto.exe` and `recto-cli.exe`, built with the Impossible SDK toolchain from imported source, calling the OS only through the SDK. §11 to §20 below were written for a separate Impossible OS build of Recto over a private seam and an OS backend; they are kept unchanged, and none is replaced or deleted until §21 (the transfer item) is done and lists an owner and a test for every obligation of that section. §21 first needs `11-apps/TODO-15-imported-programs.md` §21 (moved rows carry the old text's hash), §22 (the SDK's `cxx` part here) and §23 (the reproducible build check). Until then these sections stay as written; a session that builds one of them must read §21 first.
+
 ---
 
 ## Inputs
@@ -26,6 +29,8 @@ title: "TODO-05 -- PDF Viewer"
 - -> XREF: `07-networking/TODO-10-pdf-viewer.md §9` -- PDFs opened from the network are handed to Recto (§18)
 - -> XREF: `10-platform-services/TODO-09-compiler-sdk.md §11` -- on-device C++ compilers stay there; the C++ runtime for bundled apps is §11 here
 - -> XREF: `11-apps/TODO-14-inkeys.md §4` -- Inkeys, the bundled annotation app, also builds on the C++ runtime of §11
+- `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md` -- the approved design that replaces the private seam with Impossible SDK (§21)
+- -> XREF: `11-apps/TODO-15-imported-programs.md` §21, §22, §23 and `11-apps/TODO-16-office.md`, `11-apps/TODO-17-isotone.md` -- the hash field, the `cxx` part and the reproducible build check that §21 needs, and the other two programs built the same way
 - `02-kernel-core/TODO-03-kernel-libraries.md §4` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
 - `include/kernel/image.h` -- `image_load_mem(img, data, size)` -- §5 image rendering
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §4 text rendering
@@ -68,6 +73,7 @@ title: "TODO-05 -- PDF Viewer"
 | 18   | System Integration                        | 💎    | §15, D08 T18 §19,§20                   |
 | 19   | Packaging and Updates                     | 💎    | §15                                    |
 | 20   | Recto Conformance on Impossible OS        | ⭐    | §13, §15                               |
+| 21   | Recto Transfer to the SDK Build           | ⭐    | §10, D11 T15 §21,§22,§23               |
 
 ---
 
@@ -157,6 +163,9 @@ title: "TODO-05 -- PDF Viewer"
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the import stays, as the ledger import section of the one shipping build. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Design:** n/a -- source import and licence records, it draws nothing
 
 Recto (`D:\Recto` on the operator's host, the operator's own project, GPL-3.0-or-later) becomes the system PDF app. It is imported as source, never forked: every change Impossible OS needs is made in Recto behind its platform seam (§12) and re-imported.
@@ -175,6 +184,9 @@ Recto (`D:\Recto` on the operator's host, the operator's own project, GPL-3.0-or
 ## 11. C++23 User-Mode Runtime
 
 > **Spawned-by:** root
+
+> [!NOTE]
+> **To be replaced (2026-11-27):** the C++ runtime moves to the SDK `cxx` part, and the OS keeps its unwinder, the cross-reference and the runtime tests as `11-apps/TODO-15-imported-programs.md` §22. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
 
 **Design:** n/a -- a language runtime, it draws nothing
 
@@ -195,6 +207,9 @@ Recto is C++23. Impossible OS user mode has a C library only, so the C++ runtime
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the seam becomes Recto's move onto the SDK, and `--seam-check` becomes the SDK's source check. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Needs:** third-party
 
 **Design:** n/a -- an interface between Recto and its host, it draws nothing
@@ -212,6 +227,9 @@ Recto's engine and toolkit call Windows directly today. The seam is one interfac
 ## 13. Recto PDF Engine on Impossible OS
 
 > **Spawned-by:** root
+
+> [!NOTE]
+> **To be replaced (2026-11-27):** there is no separate user-mode or Linux build, the cache budget becomes Recto's, and the fuzz checkpoint stays until Recto's CI runs the real fuzz entry points. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
 
 **Needs:** third-party
 
@@ -231,6 +249,9 @@ Recto's engine and toolkit call Windows directly today. The seam is one interfac
 ## 14. Recto UI Backend on Impossible OS Engines
 
 > **Spawned-by:** root
+
+> [!NOTE]
+> **To be replaced (2026-11-27):** the UI backend is superseded by the OS implementing the SDK's listed tiers, and its acceptance tests move to the import section. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
 
 **Needs:** third-party
 
@@ -252,6 +273,9 @@ Recto's engine and toolkit call Windows directly today. The seam is one interfac
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the app is the same executable the import builds, not a build of `src/app` over a §14 backend. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Needs:** third-party
 
 **Design:** [`shell.md#app-window-layout`](../../docs/design/shell.md#app-window-layout), [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
@@ -272,6 +296,9 @@ The application itself: Recto's window, its three layout presets and its reading
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the OCR provider is chosen at run time from those available, with the launch and cancellation checks kept. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Needs:** third-party
 
 **Design:** n/a -- a recognition engine, it draws nothing
@@ -289,6 +316,9 @@ Recto has two OCR paths: its built-in neural engine and `Windows.Media.Ocr`. Onl
 ## 17. Convert and Organize Features
 
 > **Spawned-by:** root
+
+> [!NOTE]
+> **To be replaced (2026-11-27):** the conversions and organizing run from the same executables, `Recto.exe` and `recto-cli.exe`. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
 
 **Needs:** third-party
 
@@ -308,6 +338,9 @@ Recto's later milestones (convert, organize) arrive through re-import. This sect
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the registrations and handlers stay as OS host work and register the imported executable. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Design:** n/a -- registrations and handlers, it draws nothing new
 
 Recto is the system's PDF handler everywhere a PDF appears.
@@ -325,6 +358,9 @@ Recto is the system's PDF handler everywhere a PDF appears.
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** packaging installs the same executables and keeps its image budget. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Design:** n/a -- packaging, it draws nothing
 
 - [ ] Install Recto into the image at `C:\Program Files\Recto\` with its resources and models, a Start entry and its file association, from `scripts/build.sh`
@@ -339,6 +375,9 @@ Recto is the system's PDF handler everywhere a PDF appears.
 
 > **Spawned-by:** root
 
+> [!NOTE]
+> **To be replaced (2026-11-27):** the conformance suite runs the imported executable's tests. This section is replaced only when §21 lists an owner and a test for every obligation of it and is done; see `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md`.
+
 **Design:** n/a -- a test suite, it draws nothing
 
 One command proves the bundled Recto still works after an import or an OS change.
@@ -349,6 +388,92 @@ One command proves the bundled Recto still works after an import or an OS change
 - [ ] Commit: `"test: Recto conformance suite"`
 
 **Test checkpoint:** `bash scripts/test-recto.sh` ends with `recto: conformance OK` and exits 0; breaking the seam's file read makes it fail at the first document open.
+
+
+## 21. Recto Transfer to the SDK Build
+
+> **Spawned-by:** root
+
+**Design:** n/a -- a reconciliation of owners and tests, it draws nothing
+
+The approved design `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md` gives Recto one shipping build: `Recto.exe` and `recto-cli.exe`, built with the pinned Impossible SDK toolchain from imported source. Impossible OS still imports Recto's source at a pinned commit under the 2026-11-23 ledger rule and builds it with the same toolchain; the builds are reproducible, so each executable built here is compared with the hash Recto's release recorded for it (`11-apps/TODO-15-imported-programs.md` §23), and a mismatch fails the import. §11 to §20 were written for a private seam and an OS backend; this one item reconciles all 20 sections at once, never section by section. Nothing is retired without a new owner and a test that proves its obligation.
+
+**Owners in the table below.** SDK means Impossible SDK (its own `todo/` tree). R-import is §10, rewritten as the ledger import section (`**Import:** recto`). R-app is §15 and R-conf is §20, rewritten to run the imported executable. OS-cxx is `11-apps/TODO-15-imported-programs.md` §22. OS §18 and §19 stay as host work. The table lists the obligations known on 2026-11-27 and is the item's first output, not its end: each cell is confirmed against the SDK's own items by address when the item runs.
+
+| From  | Obligation                              | New owner                                 | Test                              |
+| ----- | --------------------------------------- | ----------------------------------------- | --------------------------------- |
+| §1-§9 | In-house engine and window              | Superseded by §10 to §20                  | Rows for §10 to §20               |
+| §10   | Import at a pinned commit               | R-import: ledger import `recto`           | `imports.py --check` exits 0      |
+| §10   | `LICENSE`, `NOTICE.md`, provenance rows | R-import                                  | Rows exist in the commit          |
+| §10   | Recto's notices in `CREDITS.md`         | R-import                                  | `CREDITS.md` lists each notice    |
+| §10   | Update procedure; local edit refused    | R-import: Check 42                        | Editing one file exits 1          |
+| §10   | The refusal wired into lint             | R-import: Check 42 is wired               | `bash scripts/lint.sh`            |
+| §11   | libc++, libc++abi, libunwind built      | SDK `cxx` part                            | SDK C++ sample on Windows         |
+| §11   | Static, exceptions, RTTI, threads       | SDK `cxx` part                            | Same sample, import check         |
+| §11   | C library pieces, each tested           | SDK `cxx` part                            | SDK `cxx` tests, one per piece    |
+| §11   | Unwinding on the image's unwind tables  | OS-cxx                                    | Two-frame catch, launcher         |
+| §11   | C++ build and six `user/tests/cxx/`     | OS-cxx                                    | `cxx: 6 of 6 passed`, TCG, KVM    |
+| §11   | Subset page; link from `D10 T09` §11    | SDK `docs/guide/cxx.md`; OS-cxx link      | Link resolves; `site/build.py`    |
+| §12   | `recto-platform` interface              | Recto's move onto the SDK                 | Recto's Windows tests stay green  |
+| §12   | Windows calls behind it                 | Recto's move onto the SDK                 | SDK link rule in Recto CI         |
+| §12   | `recto-platform-ios` backend            | Dropped: the OS provides the tiers        | `D10 T13` tiers pass              |
+| §12   | `--seam-check`, no Windows header       | SDK source check, rule 4, run by R-import | Planted `<windows.h>` file fails  |
+| §12   | Files, mapping, save, threads, pool     | R-import, user-mode launcher              | Tests pass on TCG and KVM         |
+| §13   | recto-core, recto-pdf libraries         | One shipping build, R-import              | `imports.py --repro recto`        |
+| §13   | Engine unit tests                       | R-import, launcher                        | `recto-pdf: N of N tests passed`  |
+| §13   | Fuzz under ASan and UBSan               | Recto CI, 10 s per entry point            | No finding; checkpoint stays      |
+| §13   | Render the set, compare with Windows    | R-conf                                    | `test-recto.sh` renders           |
+| §13   | Cache budget; oversized file errors     | Recto, budget from SDK; R-import          | Oversized fixture errors, lives   |
+| §14   | Drawing on the graphics foundation      | SDK `draw` (`D01 T01` §10, §13)           | Gallery matches Recto's tolerance |
+| §14   | Text layout, measure, hit-test          | SDK `text` (`D01 T02` §1 to §14)          | Gallery text matches              |
+| §14   | Page surface, scroll, transitions       | SDK `gpu`, CPU path; `D10 T13` §7, §8     | GPU and CPU give one picture      |
+| §14   | Pointer, touch, wheel, key, IME         | SDK `window` and its IME item             | Scripted input in R-app           |
+| §14   | Theme: light, dark, contrast            | Recto Vellum over SDK `window`            | Theme switch restyles it          |
+| §14   | Automation for every element            | SDK screen reader item                    | Dump names every control          |
+| §15   | Build the app from `src/app`            | R-import builds `Recto.exe`               | `imports.py --repro recto`        |
+| §15   | Tabs in the title bar                   | Recto Vellum over SDK `window`            | R-app shows the tabbed window     |
+| §15   | Views, zoom, panels, `Ctrl+F`           | Recto's tests; R-conf session             | Session in `test-recto.sh`        |
+| §15   | Open, save, print dialogs               | SDK dialog calls; `D10 T13` §3            | Scripted open and save            |
+| §15   | Settings in the user profile            | SDK files; `D10 T13` §1                   | A setting survives restart        |
+| §15   | What differs, in `docs/scope.md`        | Recto repository via R-import             | File at the pinned commit         |
+| §16   | Built-in OCR engine, CPU only           | One build; provider chosen at run time    | Scanned page is searchable        |
+| §16   | One provider here, no Windows OCR       | Recto, run-time provider choice           | One provider listed on the OS     |
+| §16   | Models as data, licences recorded       | OS §19                                    | `dir` lists models; `CREDITS.md`  |
+| §16   | OCR low priority, cancellable           | Recto, checks kept                        | Cancel returns within 1 s         |
+| §17   | Convert, one fixture a direction        | R-conf                                    | Fixtures pass in `test-recto.sh`  |
+| §17   | Organize on a copy, atomic save         | Recto over SDK files; R-conf              | Power cut keeps the original      |
+| §17   | `recto-cli` installed beside the app    | One build, `recto-cli.exe`; OS §19        | `recto-cli convert` writes PNGs   |
+| §17   | Print hidden until a print path         | SDK printing item; OS print path          | Print absent, not broken          |
+| §18   | Register `.pdf`, single instance        | OS §18, host work                         | Double-click opens Recto          |
+| §18   | Thumbnail and preview handler           | OS §18, host work                         | Thumbnail shows page 1            |
+| §18   | Property handler                        | OS §18, host work                         | Details pane shows page count     |
+| §18   | Index PDF text                          | OS §18, host work                         | Searching a word finds the file   |
+| §18   | Open from the network                   | OS §18, host work                         | Downloaded PDF opens in Recto     |
+| §19   | Install, Start entry, association       | OS §19, host work                         | `dir` lists both executables      |
+| §19   | Commit and version in manifest, About   | OS §19                                    | Manifest holds the commit         |
+| §19   | Updates with the OS                     | OS §19                                    | A new pin ships in a fixture      |
+| §19   | Image cost and its budget               | OS §19                                    | Log prints `recto: image cost`    |
+| §20   | Tests, fuzz smoke, renders, session     | R-conf                                    | `recto: conformance OK`           |
+| §20   | Recto's performance targets             | R-conf, pictures and timings apart        | Each run records them             |
+| §20   | Smoke matrix leg                        | R-conf                                    | The matrix has the Recto leg      |
+
+**The rule for any other section.** An OS section that plans a second drawing library, text engine, control set or C++ runtime is not moved by this item: the portable obligation moves to the SDK item that owns it by the 2026-11-23 ledger rule, and the host work stays here (owner decision 2026-11-27, no double work). It already conflicts only at `08-graphics-ui/TODO-01` §3 and `08-graphics-ui/TODO-02` §3 and §7; `gfx.h` and `font_mgr.h` keep working and are not grown further, and each of those sections moves only through its own ledger row.
+
+- [ ] Confirm every owner in the table exists as an item with an address, and every test is a command or an assertion that fails when its obligation breaks
+  - SDK items are named by their address in the SDK's `todo/` tree, OS items by theirs; fill any cell still open
+  - A row without both an owner and a test blocks the replacement of its section
+- [ ] Add the `recto` source to `todo/imports.json` (repository `Recto`, kind app, `from` against Recto's top level at the pin) and rewrite §10 as its import section with `**Import:** recto`
+- [ ] Build `Recto.exe` and `recto-cli.exe` from the imported source with the pinned SDK toolchain and pass `python3 scripts/imports.py --repro recto`, the SDK's boundary checks and the SDK's import check
+- [ ] Rewrite §15 and §20 to run the imported executable and its tests under the user-mode launcher, keeping the acceptance tests of §12, §13 and §14 in R-import
+  - §13's fuzz checkpoint stays until Recto's CI runs ASan and UBSan for 10 seconds over each real fuzz entry point
+  - Today `fuzz/fuzz_smoke.cpp` discards its input; that CI change is a Recto item
+- [ ] For each of §11 to §20, once every row of the table for it is verified, move it by the 2026-11-23 ledger rule
+  - Add its `**Moved:**` line and its row under `moved` in `todo/imports.json` with the hash of its old text (`11-apps/TODO-15-imported-programs.md` §21)
+  - Replace the section's text with the line naming its new owner, and remove the note at its top in the same commit
+- [ ] Update `docs/apps/pdf-viewer.md` to describe the one shipping build, and remove the superseded text of this file's goal and current state
+- [ ] Commit: `"apps: Recto transferred to the SDK build"`
+
+**Test checkpoint:** `python3 scripts/imports.py --check` exits 0 with the `recto` source pinned and every replaced section carrying its `old` hash; `python3 scripts/imports.py --repro recto` prints `recto: 2 executables match the release`; a table row with no owner or no test makes the review of this section fail; `bash scripts/test-recto.sh` ends with `recto: conformance OK`. Test on: QEMU TCG and KVM at 1 and 2 CPUs.
 
 ---
 

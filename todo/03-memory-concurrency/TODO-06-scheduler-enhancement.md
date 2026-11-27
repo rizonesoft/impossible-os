@@ -366,6 +366,8 @@ Two shipped sections are already blocked on this and neither owns it, which is w
 - `02-kernel-core/TODO-09-x86-64-architecture.md` §17 (AMX tile state + XFD): AMX tile data would leak between sibling threads, so the section is parked rather than shipped -> XREF: `02-kernel-core/TODO-09-x86-64-architecture.md` §17 (item: "PREREQUISITE (blocker) -- per-thread XSAVE")
 - `02-kernel-core/TODO-10-kernel-security-hardening.md` §9 (CET shadow stack): `IA32_XSS`-backed CET state would corrupt `PL0_SSP` across same-process thread switches, so the MVP saves `PL0_SSP` per thread by hand instead of using `XSAVES` -> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` §9 (item: "CET xstate reservation: set `IA32_XSS` bits 11/12")
 
+A third need comes from programs, not from a section: Impossible SDK programs that run threaded on this OS (Office, Isotone, Recto) need the SSE2 baseline kept per user thread; the approved design `impossible-sdk` `docs/specs/2026-11-27-sdk-as-platform-design.md` files this as an OS need, and the last three items below are it -> XREF: `11-apps/TODO-16-office.md` §4, `11-apps/TODO-17-isotone.md` §4, `11-apps/TODO-05-pdf-viewer.md` §21
+
 - [ ] Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`, and audit every reader of both fields rather than only the scheduler's
 - [ ] Allocate and free the per-thread area on the thread lifecycle, not the task lifecycle, keeping the existing `xsave_size_max` sizing and 64-byte alignment
   - `pmm_alloc_contiguous()` is the existing allocator here, and it does not zero: the area needs FCW `0x037F` at offset 0 and MXCSR `0x1F80` at offset 24 before first use, exactly as the task-scoped path does today.
@@ -373,6 +375,13 @@ Two shipped sections are already blocked on this and neither owns it, which is w
   - Found by the TODO-10 section 27 review, 2026-09-30. The save path then also skips it (NULL area), so its own state is lost. Retry, terminate or block, but never run on stale state; add an allocation-failure test.
 - [ ] Save and restore the area in BOTH `schedule()` and `schedule_now()`; a cooperative yield that skips the save is the same corruption with a narrower window
 - [ ] Add a regression test that fails on the CURRENT shared-buffer model: two threads of one process write distinct SIMD register patterns, yield to each other, and each reads its own pattern back
+- [ ] Preserve the x64 baseline per user thread: each starts from its own clean x87 and SSE state and keeps XMM0 to XMM15, MXCSR and the x87 state across every switch
+  - A new thread's state is FCW `0x037F` and MXCSR `0x1F80`, never its creator's or a sibling's; SSE2 is the only vector state a user program may rely on
+  - Impossible SDK programs built with the SDK toolchain (Rizonesoft Office, Isotone and Recto, `11-apps/TODO-16-office.md` §4, `11-apps/TODO-17-isotone.md` §4, `11-apps/TODO-05-pdf-viewer.md` §21) are compiled for that baseline and run threaded here, so each waits for this item
+- [ ] AVX stays optional and is detected at run time: the area holds YMM state only when `g_cpu.xcr0_active` includes it
+  - A program tests CPUID and XGETBV for itself, and a CPU or hypervisor without AVX runs the same program unchanged on its SSE2 path
+- [ ] Add a user-mode threaded regression beside the kernel one, run on QEMU TCG (no AVX) and on KVM (AVX)
+  - Two threads of one user program, started with `CreateThread` through the PE loader, set different XMM and MXCSR values, yield to each other, and each reads its own back
 - [ ] Report what the move costs per thread and confirm the kernel image still links, because `xsave_size_max` on an AMX-capable CPU is several KiB and the thread table is sized in the hundreds
 - [ ] Commit: `"kernel/sched: move XSAVE/FPU state ownership from struct task to struct thread"`
 

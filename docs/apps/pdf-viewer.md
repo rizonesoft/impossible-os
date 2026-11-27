@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/11-apps/TODO-05-pdf-viewer.md sources=include/gfx.h,include/font_mgr.h,include/desktop/controls.h reviewed=2026-11-14 order=5 -->
+<!-- docs: covers=todo/11-apps/TODO-05-pdf-viewer.md sources=include/gfx.h,include/font_mgr.h,include/desktop/controls.h reviewed=2026-11-27 order=5 -->
 # PDF App (Recto)
 
 ## What is it?
@@ -30,6 +30,8 @@ flowchart TD
 3. **Platform seam and backend.** Recto's engine and toolkit call one interface; Impossible OS implements it with its own files, threads, drawing, text and input.
 4. **App and integration.** Recto runs as the system PDF app and supplies thumbnails, the preview pane, file properties and search text for PDFs.
 5. **Later features.** OCR, conversion and page organizing arrive as Recto ships them, by importing a newer commit that passes the conformance suite.
+
+**Under reconciliation (2026-11-27).** The approved design in the [Impossible SDK repository](https://github.com/rizonesoft/ImpossibleSDK/blob/main/docs/specs/2026-11-27-sdk-as-platform-design.md) gives Recto one shipping build, `Recto.exe` and `recto-cli.exe`, made with the SDK toolchain from imported source, with no Impossible OS backend. Sections 11 to 20 of the roadmap file stay as written until section 21 lists a new owner and a test for every obligation of each of them; then each is replaced, never before. Nothing in this paragraph is built yet.
 
 ## What are its interfaces?
 

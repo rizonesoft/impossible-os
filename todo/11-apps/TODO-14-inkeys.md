@@ -24,6 +24,7 @@ title: "TODO-14 -- Inkeys Screen Annotation and Whiteboard"
 - -> XREF: `11-apps/TODO-05-pdf-viewer.md §11` -- the C++23 user-mode runtime Inkeys builds on (§4); one runtime for every bundled C++ app, never a second copy here
 - -> XREF: `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §13` -- Tier 9 owns the Direct3D 11, Direct2D, DirectWrite and DirectComposition prerequisites and lists Inkeys as a real binary target (§3, §5)
 - -> XREF: `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §1` -- the API coverage tracker the §2 inventory feeds
+- -> XREF: `10-platform-services/TODO-13-program-needs.md §7,§8` -- the Direct3D 11 and DXGI subset of Impossible SDK's GPU tier; Inkeys' Direct3D 11 canvas (§3 `d3d11_canvas.c`, §5) is answered by that one list, shared with Isotone and Recto, so §2 points there and keeps no second list of Direct3D 11 entry points
 - -> XREF: `10-platform-services/TODO-12-long-term-features.md §4` -- touch and pen input delivered as `WM_POINTER*` with pressure, the input Inkeys draws with (§5)
 - `src/libs/PROVENANCE.md`, `CREDITS.md` -- vendoring records (§1)
 - `todo/11-apps/TODO-12-screenshot-archive.md` -- the snipping tool annotates a captured image; Inkeys draws live over the running desktop and on a whiteboard. Complement, no shared code

@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **999 of 2822 sections complete (35%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **999 of 2840 sections complete (35%).** 125 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -1466,7 +1466,7 @@ Memory protection, the allocators, paging and reclaim, the scheduler, SMP and th
 | [ ]  | `D03 T06 §13` | Dynamic Task Table + Reusable PID Slot Allocation                                  | none  |     9 |
 | [ ]  | `D03 T06 §14` | Process/Job CPU Bandwidth Control                                                  | none  |     7 |
 | [ ]  | `D03 T06 §15` | Wait/Wake Transaction Locking (Lost-Wakeup Class)                                  | none  |     9 |
-| [ ]  | `D03 T06 §16` | Move XSAVE / FPU State Ownership from `struct task` to `struct thread`             | none  |     7 |
+| [ ]  | `D03 T06 §16` | Move XSAVE / FPU State Ownership from `struct task` to `struct thread`             | none  |    10 |
 | [ ]  | `D03 T07 §8`  | `READ_ONCE` / `WRITE_ONCE` Macros                                                  | none  |     7 |
 | [ ]  | `D03 T07 §1`  | SMP-Safe Atomics Audit + `smp_mb` Barriers                                         | none  |    10 |
 | [ ]  | `D03 T07 §2`  | TLB Shootdown IPI                                                                  | none  |    12 |
@@ -2528,6 +2528,9 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T02 §5`  | File Operations                                                                                                        | none  |     2 |
 | [ ]  | `D10 T02 §6`  | Selection Tool (Stretch)                                                                                               | none  |     2 |
 | [ ]  | `D10 T13 §6`  | Tier 5 Functions: Desktop                                                                                              | none  |     9 |
+| [ ]  | `D10 T13 §7`  | GPU Tier Functions: Direct3D 11 and DXGI                                                                               | none  |     8 |
+| [ ]  | `D10 T13 §8`  | GPU Tier Methods: Direct3D 11 by Interface                                                                             | none  |     8 |
+| [ ]  | `D10 T13 §9`  | The GPU Tier in `--needs`: Resolved Names and Methods                                                                  | none  |     7 |
 | [ ]  | `D10 T06 §9`  | Import Magnifier                                                                                                       | none  |     5 |
 | [ ]  | `D10 T06 §5`  | Screen Magnifier                                                                                                       | none  |     6 |
 | [ ]  | `D10 T06 §8`  | `ease.cpl` -- Accessibility Settings Applet                                                                            | none  |    11 |
@@ -2711,6 +2714,21 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T15 §18` | Import Sound Recorder                              | none        |     5 |
 | [ ]  | `D11 T15 §19` | Import Sudoku                                      | none        |     5 |
 | [ ]  | `D11 T15 §20` | Import Weather                                     | none        |     5 |
+| [ ]  | `D11 T15 §21` | Moved Rows Carry the Old Text's Hash               | none        |     6 |
+| [ ]  | `D11 T15 §22` | Impossible SDK's cxx part here                     | none        |     6 |
+| [ ]  | `D11 T15 §23` | Reproducible Build Check for Imported Programs     | none        |     5 |
+| [ ]  | `D11 T05 §21` | Recto Transfer to the SDK Build                    | none        |     7 |
+| [ ]  | `D11 T16 §1`  | Office Source Import and Provenance                | none        |     7 |
+| [ ]  | `D11 T16 §2`  | Office Boundary Check on Import                    | none        |     5 |
+| [ ]  | `D11 T16 §3`  | Office Build with the SDK Toolchain                | third-party |     5 |
+| [ ]  | `D11 T16 §4`  | Office App on Impossible OS                        | third-party |     6 |
+| [ ]  | `D11 T16 §5`  | Office Conformance and Performance                 | none        |     4 |
+| [ ]  | `D11 T17 §1`  | Isotone Source Import and Provenance               | none        |     7 |
+| [ ]  | `D11 T17 §2`  | Isotone Boundary Check on Import                   | none        |     5 |
+| [ ]  | `D11 T17 §3`  | Isotone Build with the SDK Toolchain               | third-party |     5 |
+| [ ]  | `D11 T17 §4`  | Isotone App on Impossible OS                       | third-party |     6 |
+| [ ]  | `D11 T17 §5`  | Isotone Canvas on the GPU Tier                     | third-party |     4 |
+| [ ]  | `D11 T17 §6`  | Isotone Conformance and Performance                | none        |     5 |
 
 ### Phase 12 -- User platform and SDK
 

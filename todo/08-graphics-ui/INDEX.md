@@ -12,6 +12,7 @@ This domain tracks the low-level and reusable visual building blocks used by the
 
 - Window manager, taskbar, desktop policies, or other shell behavior. Put that in [09 Desktop Shell](../09-desktop-shell/INDEX.md).
 - App-specific UI backlog. Put that in [11 Apps](../11-apps/INDEX.md).
+- A second drawing library, text engine, control set or C++ runtime (owner decision 2026-11-27, no double work): the portable obligation belongs to Impossible SDK and moves there by the 2026-11-23 ledger rule, and the host work stays here. It already conflicts at `TODO-01` §3 and `TODO-02` §3 and §7, which move only through their own ledger rows (see `11-apps/TODO-05-pdf-viewer.md` §21).
 
 ## Likely Source Areas
 
